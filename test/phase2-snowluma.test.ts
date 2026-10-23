@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Core } from '../src/core/core.js';
 import { createCore } from '../src/core/core.js';
 import { silentLogger } from '../src/core/logger.js';
@@ -34,6 +34,9 @@ afterEach(async () => {
 });
 
 interface FakeOptions {
+  uin?: string;
+  probeInfo?: unknown;
+  probeFails?: boolean;
   version?: string;
   hookAutoLoad?: boolean;
   consentRequired?: boolean;
@@ -62,7 +65,7 @@ async function fakeManagement(options: FakeOptions = {}): Promise<FakeManagement
     injected: false,
     connected: false,
     loggedIn: true,
-    uin: '10001',
+    uin: options.uin ?? '10001',
     status: 'ready',
     error: null,
     method: null
@@ -112,7 +115,8 @@ async function fakeManagement(options: FakeOptions = {}): Promise<FakeManagement
       return send(200, { success: true, process });
     }
     if (request.method === 'GET' && url === '/api/processes/4242/probe-login') {
-      return send(200, { info: { uin: 10001, nickname: 'tester' } });
+      if (options.probeFails) return send(503, { message: 'probe unavailable' });
+      return send(200, { info: options.probeInfo ?? { uin: 10001, nickname: 'tester' } });
     }
     send(404, { message: 'not found' });
   });
@@ -184,6 +188,38 @@ async function managerFor(options: FakeOptions = {}): Promise<{
 }
 
 describe('snowluma management client', () => {
+  it('shows pre-injection identity hints without binding an account or loading QQ', async () => {
+    const { manager, fake } = await managerFor({ uin: '0', probeInfo: { uin: '10002', nickName: '青禾', identityKnown: true } });
+    const probe = vi.spyOn(manager, 'probeLogin');
+    const [process] = await manager.listProcesses({ probeIdentity: true });
+    expect(process).toMatchObject({ pid: 4242, nickname: '青禾', accountHint: { uin: '10002', nickname: '青禾' } });
+    expect(process?.uin).toBeUndefined();
+    expect(process?.injected).toBe(false);
+    await manager.listProcesses({ probeIdentity: true });
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(fake.loadCount()).toBe(0);
+  });
+
+  it('does not replace a connected identity with a conflicting probe hint', async () => {
+    const { manager } = await managerFor({ probeInfo: { uin: '10002', nickName: 'another account', identityKnown: true } });
+    const [process] = await manager.listProcesses({ probeIdentity: true });
+    expect(process?.uin).toBe('10001');
+    expect(process?.accountHint).toBeUndefined();
+    expect(process?.nickname).toBeUndefined();
+  });
+
+  it.each([
+    { probeInfo: { uin: '0', nickName: 'invalid' } },
+    { probeInfo: { uin: '10002', nickName: 'unknown', identityKnown: false } },
+    { probeFails: true }
+  ])('keeps an unidentified QQ visible when probing fails or is invalid: %j', async (options) => {
+    const { manager } = await managerFor({ uin: '0', ...options });
+    const processes = await manager.listProcesses({ probeIdentity: true });
+    expect(processes).toHaveLength(1);
+    expect(processes[0]?.uin).toBeUndefined();
+    expect(processes[0]?.accountHint).toBeUndefined();
+  });
+
   it('logs in, lists processes and never exposes the password', async () => {
     const { manager, fake } = await managerFor();
     const processes = await manager.listProcesses();

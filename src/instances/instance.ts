@@ -34,7 +34,7 @@ import { TokenBucket } from '../work/rate-limiter.js';
 
 export interface ChannelHandlers {
   onEvent: (event: InboundEvent) => void;
-  onStatus: (status: { connected: boolean; selfId?: string }) => void;
+  onStatus: (status: { connected: boolean; selfId?: string; nickname?: string }) => void;
 }
 
 export type InstanceChannelFactory = (
@@ -157,6 +157,7 @@ export class QqInstance {
   #endpoints: RuntimeEndpoints | undefined;
   #store: MessageStore | undefined;
   #accountId: string | undefined;
+  #accountNickname: string | undefined;
   #desiredState: 'running' | 'stopped' = 'running';
   #restartAttempts = 0;
   #lastError: { code: string; message: string; at: number; retryable: boolean } | undefined;
@@ -474,6 +475,7 @@ export class QqInstance {
     return {
       id: this.id,
       ...(this.#accountId !== undefined ? { accountId: this.#accountId } : {}),
+      ...(this.#accountNickname ? { accountNickname: this.#accountNickname } : {}),
       backend: this.spec.backend,
       runtimeKey: this.runtimeKey,
       desiredState: this.#desiredState,
@@ -831,11 +833,12 @@ export class QqInstance {
     };
   }
 
-  #onStatus(status: { connected: boolean; selfId?: string }, generation: number): void {
+  #onStatus(status: { connected: boolean; selfId?: string; nickname?: string }, generation: number): void {
     if (generation !== this.#generation || this.#scope?.aborted || this.state.is('stopping', 'stopped', 'failed')) return;
     if (status.selfId) {
       try {
         this.#adoptSelfId(status.selfId);
+        if (typeof status.nickname === 'string') this.#accountNickname = status.nickname.trim() || undefined;
       } catch (error) {
         this.#failAndTeardown(error);
         return;
@@ -905,6 +908,7 @@ export class QqInstance {
     this.#sessionEpoch += 1;
     this.#hostEpoch += 1;
     this.#accountId = undefined;
+    this.#accountNickname = undefined;
     this.#store = undefined;
     this.#pluginState = undefined;
     this.#stateRevision = undefined;

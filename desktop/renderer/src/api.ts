@@ -2,6 +2,7 @@ import type { StreamEvent } from './types';
 
 interface BridgeInfo {
   chooseRuntimeDirectory?: () => Promise<string | null>;
+  openRuntimeDirectory?: () => Promise<boolean>;
   apiBaseUrl: string;
   token: string;
   version: string;

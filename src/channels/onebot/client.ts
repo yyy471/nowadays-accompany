@@ -313,7 +313,8 @@ export class OneBotChannel implements OutboundChannel {
       const info = await this.call<{ user_id?: number | string; nickname?: string }>('get_login_info', {}, 5_000);
       if (info?.user_id !== undefined) {
         this.#selfId = String(info.user_id);
-        this.#context.onStatus?.({ connected: this.#connected, selfId: this.#selfId });
+        this.#context.onStatus?.({ connected: this.#connected, selfId: this.#selfId,
+          ...(typeof info.nickname === 'string' ? { nickname: info.nickname } : {}) });
       }
     } catch (error) {
       if (this.#context.signal?.aborted) throw error;

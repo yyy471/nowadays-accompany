@@ -27,7 +27,7 @@ afterEach(async () => {
   }
 });
 
-async function fixture(options: { autoStart?: boolean; pollMs?: number } = {}) {
+async function fixture(options: { autoStart?: boolean; pollMs?: number; resume?: boolean } = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'accompany-dynamic-review-'));
   roots.push(root);
   const runtime = path.join(root, 'runtime');
@@ -67,6 +67,10 @@ async function fixture(options: { autoStart?: boolean; pollMs?: number } = {}) {
       dataRoot: root, instances: [], persistSlots: true, manualStartOnly: true,
       autoStartSnowLuma: options.autoStart ?? false,
       ...(options.pollMs ? { injectionPollIntervalMs: options.pollMs } : {}),
+      avatarFetchImpl: (async () => new Response(Buffer.from('process-avatar'), {
+        status: 200,
+        headers: { 'content-type': 'image/png' }
+      })) as typeof fetch,
       backendFactory: () => backend,
       channelFactory: (context) => new FakeChannel(context, { selfId: context.spec.accountId }),
       api: { enabled: true, host: '127.0.0.1', port: 0, token: 'dynamic-review-only' },
@@ -74,7 +78,11 @@ async function fixture(options: { autoStart?: boolean; pollMs?: number } = {}) {
     });
     cores.push(core);
     await core.start();
-    await core.setInjectionSettings({ runtimeDir: runtime, baseUrl: `http://127.0.0.1:${port}` }, 'fixture-secret');
+    await core.setInjectionSettings({
+      runtimeDir: runtime,
+      baseUrl: `http://127.0.0.1:${port}`,
+      ...(options.resume ? { resumeLastListen: true } : {})
+    }, 'fixture-secret');
     return core;
   };
   const core = await start();
@@ -106,6 +114,13 @@ describe('independent dynamic QQ connection acceptance', () => {
     expect(await h.core.injectionProcesses()).toHaveLength(2);
     expect(h.core.slotSpecs()).toHaveLength(0);
     expect(h.loads()).toBe(0);
+  });
+
+  it('resolves QQ avatars for process cards through the shared avatar pipeline', async () => {
+    const h = await fixture();
+    const processes = await h.core.injectionProcesses({ avatars: true });
+    const expected = `data:image/png;base64,${Buffer.from('process-avatar').toString('base64')}`;
+    expect(processes.map((process) => process.avatarDataUrl)).toEqual([expected, expected]);
   });
 
   it('accepts a process-only request and merges duplicate clicks into one real-account host', async () => {
@@ -165,6 +180,37 @@ describe('independent dynamic QQ connection acceptance', () => {
     expect(restarted.diagnostics().desired['qq-10001']).toBeUndefined();
     expect(h.loads()).toBe(1);
     expect((await restarted.getAccountDisplay('10001')).nickname).toBe('retained');
+  });
+
+  it('restores the last listening slot after restart but listens only on an explicit resume', async () => {
+    const h = await fixture({ resume: true });
+    expect((await h.core.injectAndListen({ identity: identity() })).state).toBe('succeeded');
+    await h.core.stop();
+    h.processes[0]!.injected = true;
+    h.processes[0]!.connected = true;
+    const restarted = await h.start();
+    expect(restarted.slotSpecs()).toEqual([
+      expect.objectContaining({ id: 'qq-10001', accountId: '10001', backend: 'snowluma' })
+    ]);
+    expect(restarted.status().instances).toEqual([
+      expect.objectContaining({ id: 'qq-10001', desiredState: 'running', state: 'stopped' })
+    ]);
+    expect(h.loads()).toBe(1);
+
+    const result = await restarted.resumeInjectionListening();
+    expect(result).toMatchObject({ attempted: 1, resumed: [{ slotId: 'qq-10001', accountId: '10001', uin: '10001' }] });
+    expect(h.loads()).toBe(1);
+    expect(restarted.status().instances[0]?.state).toBe('online');
+  });
+
+  it('does not restore a listening slot the user stopped before quitting', async () => {
+    const h = await fixture();
+    expect((await h.core.injectAndListen({ identity: identity() })).state).toBe('succeeded');
+    const id = h.core.status().instances[0]!.id;
+    await h.core.stopInstance(id);
+    await h.core.stop();
+    const restarted = await h.start();
+    expect(restarted.slotSpecs()).toHaveLength(0);
   });
 
   it('recycles a stopped internal slot while retaining account display data', async () => {

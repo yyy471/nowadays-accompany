@@ -40,6 +40,15 @@ ipcMain.handle('nowadays:choose-runtime-directory', async (event): Promise<strin
   }
 });
 
+ipcMain.handle('nowadays:open-runtime-directory', async (event): Promise<boolean> => {
+  if (!window || window.isDestroyed() || event.sender !== window.webContents
+    || event.senderFrame !== window.webContents.mainFrame) return false;
+  if (new URL(event.senderFrame.url).origin !== apiUrl) return false;
+  const runtimeDir = core?.injectionSettings().runtimeDir;
+  if (!runtimeDir) return false;
+  return (await shell.openPath(runtimeDir)) === '';
+});
+
 function assetPath(name: string): string {
   return app.isPackaged
     ? path.join(process.resourcesPath, 'assets', name)

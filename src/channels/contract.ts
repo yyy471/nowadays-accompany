@@ -14,7 +14,7 @@ export interface ChannelContext {
   maxConcurrentActions?: number;
   onEvent: (event: InboundEvent) => void;
   /** 连接状态变化（含重连与登录信息回报），实例据此迁移状态 */
-  onStatus?: (status: { connected: boolean; selfId?: string }) => void;
+  onStatus?: (status: { connected: boolean; selfId?: string; nickname?: string }) => void;
 }
 
 /** 一个通道对象只服务一个实例；发送目标必须属于本实例的账号。 */

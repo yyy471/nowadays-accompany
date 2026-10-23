@@ -7,12 +7,15 @@ import { isLoopbackHost } from '../core/net.js';
 export interface InjectionSettings {
   runtimeDir?: string;
   baseUrl?: string;
+  /** 应用启动或服务恢复后，仅重连上次仍在运行且账号匹配的已注入进程。 */
+  resumeLastListen?: boolean;
 }
 
 interface FileShape {
   version: 1;
   runtimeDir?: string;
   baseUrl?: string;
+  resumeLastListen?: boolean;
 }
 
 export interface InjectionSettingsStoreOptions {
@@ -89,12 +92,15 @@ function parseSettings(raw: unknown, source: string): InjectionSettings {
     throw new AccompanyError('injection_settings_invalid', `${source} must be an object`);
   }
   const value = raw as Record<string, unknown>;
-  const unknown = Object.keys(value).filter((key) => !['version', 'runtimeDir', 'baseUrl'].includes(key));
+  const unknown = Object.keys(value).filter((key) => !['version', 'runtimeDir', 'baseUrl', 'resumeLastListen'].includes(key));
   if (unknown.length > 0) {
     throw new AccompanyError('injection_settings_invalid', `${source} has unknown field ${unknown[0]}`);
   }
   if (value.version !== undefined && value.version !== 1) {
     throw new AccompanyError('injection_settings_invalid', `${source}.version must be 1`);
+  }
+  if (value.resumeLastListen !== undefined && typeof value.resumeLastListen !== 'boolean') {
+    throw new AccompanyError('injection_settings_invalid', `${source}.resumeLastListen must be a boolean`);
   }
   let runtimeDir: string | undefined;
   if (value.runtimeDir !== undefined) {
@@ -130,6 +136,7 @@ function parseSettings(raw: unknown, source: string): InjectionSettings {
   }
   return {
     ...(runtimeDir ? { runtimeDir } : {}),
-    ...(baseUrl ? { baseUrl } : {})
+    ...(baseUrl ? { baseUrl } : {}),
+    ...(value.resumeLastListen !== undefined ? { resumeLastListen: value.resumeLastListen } : {})
   };
 }

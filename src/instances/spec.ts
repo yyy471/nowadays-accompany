@@ -75,6 +75,7 @@ export function normalizeSpec(spec: InstanceSpec): NormalizedInstanceSpec {
 export interface InstanceStatus {
   id: string;
   accountId?: string;
+  accountNickname?: string;
   backend: InstanceSpec['backend'];
   runtimeKey?: string;
   desiredState?: 'running' | 'stopped';

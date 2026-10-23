@@ -41,6 +41,7 @@ export interface ProfileSummary {
 export interface InstanceStatus {
   id: string;
   accountId?: string;
+  accountNickname?: string;
   backend: 'snowluma' | 'fake';
   runtimeKey?: string;
   desiredState?: 'running' | 'stopped';
@@ -110,6 +111,8 @@ export interface AccountSummary {
   profile?: ProfileSummary;
   error?: string;
   slots: string[];
+  avatarDataUrl?: string;
+  avatarSource?: 'local' | 'qq';
 }
 
 export interface AccountsResponse {
@@ -413,6 +416,7 @@ export interface InjectionSettings {
   version: 1;
   runtimeDir?: string;
   baseUrl?: string;
+  resumeLastListen?: boolean;
 }
 
 export interface SnowLumaRuntimeStatus {
@@ -442,6 +446,10 @@ export interface SnowLumaProcess {
   connected: boolean;
   loggedIn: boolean;
   uin?: string;
+  accountHint?: { uin: string; nickname?: string };
+  nickname?: string;
+  displayName?: string;
+  avatarDataUrl?: string;
   status: string;
   error?: string;
   method?: string;
@@ -462,6 +470,18 @@ export interface InjectionOperationDto {
 export interface InjectionProcessesResponse {
   ok: true;
   processes: SnowLumaProcess[];
+}
+
+export interface InjectionResumeResponse {
+  ok: true;
+  attempted: number;
+  resumed: Array<{ slotId: string; accountId: string; uin: string; operationId: string }>;
+  skipped: Array<{
+    slotId: string;
+    accountId?: string;
+    reason: 'slot_unavailable' | 'process_not_found' | 'not_injected' | 'listen_failed';
+    message?: string;
+  }>;
 }
 
 export interface InjectionRuntimeResponse {

@@ -1,15 +1,16 @@
-import { Input, ControlButton, ConfirmButton, CancelButton, useConfirm } from '../ui';
+import { Button, CancelButton, Card, Checkbox, ConfirmButton, ControlButton, ErrorNote, Field, Icon, Input, Tag, useConfirm } from '../ui';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { errorMessage, usePoll } from '../hooks';
 import type { InjectionRuntimeResponse, InjectionSettingsResponse, SnowLumaRuntimeStatus } from '../types';
-import { Button, Card, ErrorNote, Field, Icon, Tag } from '../ui';
 
-type Step = 1 | 2 | 3;
-type FormDraft = { runtimeDir: string; baseUrl: string; password: string };
+type Step = 1 | 2;
+type FormDraft = { runtimeDir: string; baseUrl: string; password: string; resumeLastListen: boolean };
 type ConnectionTestResponse = { ok: true; runtime: SnowLumaRuntimeStatus; processCount: number };
 
-const OFFICIAL_RELEASES = 'https://github.com/SnowLuma/SnowLuma/releases';
+const SNOWLUMA_VERSION = '1.14.22';
+const OFFICIAL_RELEASES = `https://github.com/SnowLuma/SnowLuma/releases/tag/v${SNOWLUMA_VERSION}`;
+const OFFICIAL_ASSET = `https://github.com/SnowLuma/SnowLuma/releases/download/v${SNOWLUMA_VERSION}/SnowLuma-v${SNOWLUMA_VERSION}-win-x64.zip`;
 const LICENSE_URL = 'https://github.com/SnowLuma/SnowLuma/blob/main/LICENSE';
 const EULA_URL = 'https://github.com/SnowLuma/SnowLuma/blob/main/EULA.md';
 const PRIVACY_URL = 'https://github.com/SnowLuma/SnowLuma/blob/main/PRIVACY.md';
@@ -36,7 +37,7 @@ export function SnowLumaSetup({
   const confirm = useConfirm();
   const settings = usePoll<InjectionSettingsResponse>('/injection/settings');
   const runtime = usePoll<InjectionRuntimeResponse>('/injection/runtime', 8000);
-  const [form, setForm] = useState<FormDraft>({ runtimeDir: '', baseUrl: '', password: '' });
+  const [form, setForm] = useState<FormDraft>({ runtimeDir: '', baseUrl: '', password: '', resumeLastListen: false });
   const [busy, setBusy] = useState<string>();
   const [step, setStep] = useState<Step>(1);
   const [editing, setEditing] = useState(false);
@@ -51,13 +52,14 @@ export function SnowLumaSetup({
   const configured = Boolean(status?.configured || saved?.runtimeDir);
   const dirty = form.password.length > 0 ||
     form.runtimeDir.trim() !== (saved?.runtimeDir ?? '') ||
-    form.baseUrl.trim() !== (saved?.baseUrl ?? '');
+    form.baseUrl.trim() !== (saved?.baseUrl ?? '') ||
+    form.resumeLastListen !== (saved?.resumeLastListen ?? false);
   const isBusy = Boolean(busy);
 
   useEffect(() => {
     if (!saved || initialized.current) return;
     initialized.current = true;
-    setForm({ runtimeDir: saved.runtimeDir ?? '', baseUrl: saved.baseUrl ?? '', password: '' });
+    setForm({ runtimeDir: saved.runtimeDir ?? '', baseUrl: saved.baseUrl ?? '', password: '', resumeLastListen: saved.resumeLastListen ?? false });
   }, [saved]);
 
   useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
@@ -74,6 +76,15 @@ export function SnowLumaSetup({
     setError(undefined);
     setNotice(undefined);
     setVerified(undefined);
+  };
+
+  const requestConnectionTest = async (): Promise<void> => {
+    const runtimeDataBefore = runtime.data;
+    const result = await api<ConnectionTestResponse>('/injection/connection/test', { method: 'POST', body: JSON.stringify({}) });
+    if (!result.ok) throw new Error('SnowLuma 连接验证失败。');
+    setVerified({ at: Date.now(), processCount: result.processCount, runtimeDataBefore });
+    setNotice(`连接已验证，可读取 ${result.processCount} 个 QQ 进程。验证不会注入或启动 QQ。`);
+    await runtime.refresh();
   };
 
   const save = async (): Promise<void> => {
@@ -95,12 +106,18 @@ export function SnowLumaSetup({
         body: JSON.stringify({
           runtimeDir,
           ...(baseUrl ? { baseUrl } : {}),
+          resumeLastListen: form.resumeLastListen,
           ...(form.password ? { password: form.password } : {})
         })
       });
-      setForm({ runtimeDir, baseUrl, password: '' });
-      setNotice('连接设置已保存。接下来验证现有 SnowLuma 服务。');
+      setForm({ runtimeDir, baseUrl, password: '', resumeLastListen: form.resumeLastListen });
       await Promise.all([settings.refresh(), runtime.refresh()]);
+      try {
+        await requestConnectionTest();
+      } catch (testError) {
+        setError(`连接设置已保存，但验证失败：${errorMessage(testError)}`);
+        setNotice(undefined);
+      }
     } catch (requestError) {
       setError(errorMessage(requestError));
     } finally {
@@ -110,17 +127,50 @@ export function SnowLumaSetup({
 
   const verifyConnection = async (): Promise<void> => {
     if (dirty || !configured) return;
-    const runtimeDataBefore = runtime.data;
     setBusy('test');
     setError(undefined);
     setNotice(undefined);
     setVerified(undefined);
     try {
-      const result = await api<ConnectionTestResponse>('/injection/connection/test', { method: 'POST', body: JSON.stringify({}) });
-      if (!result.ok) throw new Error('SnowLuma 连接验证失败。');
-      setVerified({ at: Date.now(), processCount: result.processCount, runtimeDataBefore });
-      setNotice(`连接已验证，可读取 ${result.processCount} 个 QQ 进程。验证不会注入或启动 QQ。`);
-      await runtime.refresh();
+      await requestConnectionTest();
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+    } finally {
+      setBusy(undefined);
+    }
+  };
+
+  const toggleResume = async (enabled: boolean): Promise<void> => {
+    if (!saved?.runtimeDir) return;
+    setBusy('resume');
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      await api('/injection/settings', {
+        method: 'PUT',
+        body: JSON.stringify({
+          runtimeDir: saved.runtimeDir,
+          ...(saved.baseUrl ? { baseUrl: saved.baseUrl } : {}),
+          resumeLastListen: enabled
+        })
+      });
+      setForm((current) => ({ ...current, resumeLastListen: enabled }));
+      await settings.refresh();
+      setNotice(enabled ? '已开启启动后恢复上次监听。' : '已关闭启动后恢复上次监听。');
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+    } finally {
+      setBusy(undefined);
+    }
+  };
+
+  const openDirectory = async (): Promise<void> => {
+    const opener = (window as unknown as { nowadays?: { openRuntimeDirectory?: () => Promise<boolean> } }).nowadays?.openRuntimeDirectory;
+    if (typeof opener !== 'function') return;
+    setBusy('open');
+    setError(undefined);
+    try {
+      if (!(await opener())) setError('无法打开 SnowLuma 目录，请确认目录仍然存在。');
     } catch (requestError) {
       setError(errorMessage(requestError));
     } finally {
@@ -162,6 +212,7 @@ export function SnowLumaSetup({
 
   const managementUrl = localManagementUrl(status?.baseUrl ?? saved?.baseUrl ?? form.baseUrl);
   const pickerAvailable = typeof (window as unknown as { nowadays?: { chooseRuntimeDirectory?: unknown } }).nowadays?.chooseRuntimeDirectory === 'function';
+  const openerAvailable = typeof (window as unknown as { nowadays?: { openRuntimeDirectory?: unknown } }).nowadays?.openRuntimeDirectory === 'function';
   const currentVerification = Boolean(verified && status?.running && status.authenticated);
   const statusTags = status ? (
     <div className="chip-row">
@@ -186,6 +237,13 @@ export function SnowLumaSetup({
         <Field label="WebUI 管理密码" hint={status?.passwordConfigured ? '已保存；留空表示不修改。' : '填写你在 SnowLuma 官方界面设置的密码。'}>
           <Input type="password" autoComplete="new-password" value={form.password} disabled={isBusy || !settingsLoaded} onChange={(event) => update({ password: event.target.value })} placeholder={status?.passwordConfigured ? '已保存（留空不修改）' : '输入 SnowLuma WebUI 密码'} />
         </Field>
+        <label className="check-row">
+          <Checkbox checked={form.resumeLastListen} disabled={isBusy || !settingsLoaded} onChange={(event) => update({ resumeLastListen: event.target.checked })} />
+          <span>
+            <strong>启动后恢复上次监听</strong>
+            <span className="check-desc">仅在 SnowLuma 在线、QQ 已注入且账号匹配时重新开始监听；不会自动注入新的 QQ。</span>
+          </span>
+        </label>
         <details className="inline-details">
           <summary>高级连接选项</summary>
           <Field label="管理地址" hint="留空时从 SnowLuma 配置自动读取；仅支持本机回环地址。">
@@ -215,8 +273,21 @@ export function SnowLumaSetup({
         <Card title="SnowLuma 已配置" subtitle="由你手动启动；点击“注入并监听”后才开始注入和监听。nowadays 不下载或启动 SnowLuma，也不自动注入 QQ。" actions={<Button size="sm" variant="ghost" icon="refresh" busy={busy === 'test'} disabled={isBusy || dirty} onClick={() => void verifyConnection()}>验证连接</Button>}>
           {statusTags}
           {managementUrl ? <p><a href={managementUrl} target="_blank" rel="noreferrer">打开 SnowLuma 管理页面</a></p> : null}
+          {saved ? (
+            <label className="check-row">
+              <Checkbox checked={saved.resumeLastListen === true} disabled={isBusy} onChange={(event) => void toggleResume(event.target.checked)} />
+              <span>
+                <strong>启动后恢复上次监听</strong>
+                <span className="check-desc">SnowLuma 就绪且 QQ 已注入时自动重新开始监听；不会注入新的 QQ。</span>
+              </span>
+            </label>
+          ) : null}
           {dirty ? <p className="field-hint">当前有未保存修改，请进入编辑并保存后再验证。</p> : null}
-          <div className="form-submit"><Button type="button" variant="default" disabled={isBusy} onClick={() => { setEditing(true); setError(undefined); setNotice(undefined); }}>修改连接设置</Button><Button type="button" variant="ghost" disabled={isBusy} onClick={() => { setStep(1); setShowGuide(true); setError(undefined); }}>查看首次准备说明</Button></div>
+          <div className="form-submit">
+            <Button type="button" variant="default" disabled={isBusy} onClick={() => { setEditing(true); setError(undefined); setNotice(undefined); }}>修改连接设置</Button>
+            {openerAvailable && saved?.runtimeDir ? <Button type="button" variant="ghost" icon="folder" busy={busy === 'open'} disabled={isBusy} onClick={() => void openDirectory()}>打开目录</Button> : null}
+            <Button type="button" variant="ghost" disabled={isBusy} onClick={() => { setStep(1); setShowGuide(true); setError(undefined); }}>查看首次准备说明</Button>
+          </div>
           {error ? <ErrorNote message={error} /> : null}
           {notice && (!verified || currentVerification) ? <div className="notice notice-ok" role="status">{notice}</div> : null}
           {currentVerification && verified ? <p className="field-hint">上次验证成功：{new Date(verified.at).toLocaleTimeString('zh-CN')} · {verified.processCount} 个 QQ 进程</p> : null}
@@ -224,45 +295,40 @@ export function SnowLumaSetup({
         </Card>
       ) : configured && editing ? (
         <>
-          <div className="settings-section-heading"><h2>修改 SnowLuma 连接</h2><p>修改后保存，再验证已保存的连接。取消不会清除现有配置。</p></div>
+          <div className="settings-section-heading"><h2>修改 SnowLuma 连接</h2><p>保存后会立即验证连接；取消不会清除现有配置。</p></div>
           {connectionForm}
-          <div className="form-submit"><CancelButton type="button" variant="ghost" disabled={isBusy} onClick={() => { setEditing(false); setForm({ runtimeDir: saved?.runtimeDir ?? '', baseUrl: saved?.baseUrl ?? '', password: '' }); setError(undefined); setNotice(undefined); }}>取消修改</CancelButton></div>
+          <div className="form-submit"><CancelButton type="button" variant="ghost" disabled={isBusy} onClick={() => { setEditing(false); setForm({ runtimeDir: saved?.runtimeDir ?? '', baseUrl: saved?.baseUrl ?? '', password: '', resumeLastListen: saved?.resumeLastListen ?? false }); setError(undefined); setNotice(undefined); }}>取消修改</CancelButton></div>
           {managementUrl ? <p><a href={managementUrl} target="_blank" rel="noreferrer">打开 SnowLuma 管理页面</a></p> : null}
         </>
       ) : (
-        <Card title="首次连接 SnowLuma" subtitle="按顺序准备并连接一个已运行的本地服务。协议确认、初始化和启动都由你在 SnowLuma 官方界面完成。">
+        <Card title="首次连接 SnowLuma" subtitle="下载官方运行包并完成一次初始化；之后应用只连接你手动启动的本地服务。">
           <nav className="snowluma-stepper" aria-label="SnowLuma首次连接步骤">
-            {([1, 2, 3] as const).map((value) => (
+            {([1, 2] as const).map((value) => (
               <ControlButton key={value} type="button" className={`snowluma-step${step === value ? ' active' : ''}`} aria-current={step === value ? 'step' : undefined} disabled={isBusy} onClick={() => setStep(value)}>
-                <span>{value}</span><strong>{value === 1 ? '官方准备' : value === 2 ? '官方初始化' : '连接已有服务'}</strong>
+                <span>{value}</span><strong>{value === 1 ? '准备运行包' : '连接已有服务'}</strong>
               </ControlButton>
             ))}
           </nav>
           {step === 1 ? (
             <div className="snowluma-step-content">
-              <h3>从 SnowLuma 官方渠道获取</h3>
-              <p>当前集成支持 SnowLuma 1.14.x。请在官方发行页选择兼容版本并自行下载、解压；不要直接选择尚未确认兼容的最新版。nowadays 不会替你下载或安装 SnowLuma。</p>
-              <p className="snowluma-links"><a href={OFFICIAL_RELEASES} target="_blank" rel="noreferrer">打开官方 Releases</a><a href={EULA_URL} target="_blank" rel="noreferrer">阅读发行包 EULA</a><a href={LICENSE_URL} target="_blank" rel="noreferrer">阅读源码 License</a><a href={PRIVACY_URL} target="_blank" rel="noreferrer">阅读隐私说明</a></p>
-              <div className="settings-note"><Icon name="shield" size={15} /><span>请先阅读 SnowLuma 的发行包条款与隐私说明，再决定是否继续使用。</span></div>
-            </div>
-          ) : null}
-          {step === 2 ? (
-            <div className="snowluma-step-content">
-              <h3>在官方入口完成初始化</h3>
+              <h3>下载并准备官方运行包</h3>
+              <p>当前集成支持 SnowLuma 1.14.x。请下载完整包（包含 Node 运行时），解压到一个单独目录；不要选择 2.x 或 lite 包。</p>
+              <p className="snowluma-links"><a href={OFFICIAL_ASSET} target="_blank" rel="noreferrer">下载 SnowLuma-v{SNOWLUMA_VERSION}-win-x64.zip</a><a href={OFFICIAL_RELEASES} target="_blank" rel="noreferrer">查看发行说明</a><a href={EULA_URL} target="_blank" rel="noreferrer">发行包 EULA</a><a href={LICENSE_URL} target="_blank" rel="noreferrer">源码 License</a><a href={PRIVACY_URL} target="_blank" rel="noreferrer">隐私说明</a></p>
               <ol>
-                <li>手动启动 SnowLuma 1.14.x，并在它自己的官方界面完成协议确认。</li>
-                <li>设置 WebUI 管理密码，并将 `hookAutoLoad` 设为 `false`，避免客户端自行注入。</li>
-                <li>确认 SnowLuma 管理服务已经运行。nowadays 不会替你接受协议、修改配置或启动服务。</li>
+                <li>用官方启动器启动 SnowLuma，并在官方界面完成协议确认、设置 WebUI 管理密码。</li>
+                <li>确认 <code>hookAutoLoad</code> 已关闭；应用不会替你接受协议、修改配置或启动服务。</li>
+                <li>保持 SnowLuma 运行，然后点击“下一步”，选择解压目录并填写密码。</li>
               </ol>
-              {managementUrl ? <p><a href={managementUrl} target="_blank" rel="noreferrer">打开本机 SnowLuma 管理页面</a></p> : <p className="muted">连接后可从这里打开已识别的本机管理页面。</p>}
+              {managementUrl ? <p><a href={managementUrl} target="_blank" rel="noreferrer">打开本机 SnowLuma 管理页面</a></p> : null}
+              <div className="settings-note"><Icon name="shield" size={15} /><span>下载由浏览器完成；应用不会下载、解压、安装或启动 SnowLuma。请先阅读官方条款与隐私说明。</span></div>
             </div>
           ) : null}
-          {step === 3 ? <div className="snowluma-step-content">{connectionForm}</div> : null}
+          {step === 2 ? <div className="snowluma-step-content">{connectionForm}</div> : null}
           {error ? <ErrorNote message={error} /> : null}
           {notice && (!verified || currentVerification) ? <div className="notice notice-ok" role="status">{notice}</div> : null}
           <div className="form-submit">
-            <Button type="button" variant="ghost" disabled={isBusy || step === 1} onClick={() => setStep((current) => (current === 3 ? 2 : 1))}>上一步</Button>
-            {step < 3 ? <Button type="button" variant="primary" disabled={isBusy} onClick={() => setStep((current) => (current === 1 ? 2 : 3))}>下一步</Button> : null}
+            <Button type="button" variant="ghost" disabled={isBusy || step === 1} onClick={() => setStep(1)}>上一步</Button>
+            {step === 1 ? <Button type="button" variant="primary" disabled={isBusy} onClick={() => setStep(2)}>下一步</Button> : null}
             {configured && showGuide ? <Button type="button" variant="ghost" disabled={isBusy} onClick={() => setShowGuide(false)}>返回连接状态</Button> : null}
           </div>
         </Card>

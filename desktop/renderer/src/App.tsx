@@ -1,6 +1,7 @@
 import { CancelButton, ControlButton } from './ui';
 import { useEffect, useRef, useState } from 'react';
 import {
+  api,
   apiBaseUrl,
   appVersion,
   hasToken,
@@ -11,6 +12,9 @@ import { usePoll } from './hooks';
 import type {
   AccountsResponse,
   ArtifactsResponse,
+  InjectionResumeResponse,
+  InjectionRuntimeResponse,
+  InjectionSettingsResponse,
   ProvidersResponse,
   SlotsResponse,
   StreamEvent
@@ -92,9 +96,31 @@ export function App() {
   const [streamStatus, setStreamStatus] = useState<StreamStatus>('connecting');
 
   const slots = usePoll<SlotsResponse>(hasToken ? '/slots' : null, 3000);
-  const accounts = usePoll<AccountsResponse>(hasToken ? '/accounts' : null, 8000);
+  const accounts = usePoll<AccountsResponse>(hasToken ? '/accounts?avatars=1' : null, 8000);
   const artifacts = usePoll<ArtifactsResponse>(hasToken ? '/artifacts' : null, 15000);
   const providers = usePoll<ProvidersResponse>(hasToken ? '/providers' : null, 8000);
+  const injectionSettings = usePoll<InjectionSettingsResponse>(hasToken ? '/injection/settings' : null, 15000);
+  const injectionRuntime = usePoll<InjectionRuntimeResponse>(hasToken ? '/injection/runtime' : null, 5000);
+  const resumeKey = useRef<string | undefined>(undefined);
+  const resumeEnabled = injectionSettings.data?.settings.resumeLastListen === true;
+  const runtimeStatus = injectionRuntime.data?.runtime;
+
+  useEffect(() => {
+    if (!resumeEnabled || !runtimeStatus?.running) {
+      resumeKey.current = undefined;
+      return;
+    }
+    const key = `${runtimeStatus.baseUrl ?? ''}|${runtimeStatus.version ?? ''}`;
+    if (resumeKey.current === key) return;
+    resumeKey.current = key;
+    void api<InjectionResumeResponse>('/injection/resume', { method: 'POST' })
+      .then((result) => {
+        if (result.resumed.length > 0) void slots.refresh();
+      })
+      .catch(() => {
+        resumeKey.current = undefined;
+      });
+  }, [resumeEnabled, runtimeStatus?.running, runtimeStatus?.baseUrl, runtimeStatus?.version, slots.refresh]);
 
   useEffect(() => {
     if (isSettingsHash()) {

@@ -33,7 +33,7 @@ import { isCapabilityId } from '../policy/capabilities.js';
 import type { JobDto } from '../jobs/types.js';
 import type { MediaData, MediaRef } from '../media/types.js';
 import type { InjectionSettings } from '../injection/settings.js';
-import type { InjectionOperationDto } from '../injection/manual.js';
+import type { InjectionOperationDto, ManualInjectionResumeResult } from '../injection/manual.js';
 import type { SnowLumaProcess, SnowLumaRuntimeStatus } from '../injection/snowluma/manager.js';
 import type { ConversationRoleBinding } from '../profiles/role-bindings.js';
 import type { AccountDisplayProfile } from '../profiles/display.js';
@@ -46,6 +46,9 @@ export interface AccountSummary {
   profile?: ProfileSummary;
   error?: string;
   slots: string[];
+  /** 本地展示头像优先；缺失时回退到 QQ 公开头像。 */
+  avatarDataUrl?: string;
+  avatarSource?: 'local' | 'qq';
 }
 
 export interface CoreView {
@@ -63,7 +66,7 @@ export interface CoreView {
   listPublicArtifacts(): Promise<ResolvedArtifact[]>;
   listAccountArtifacts(accountId: string): Promise<ResolvedArtifact[]>;
   artifactCatalog(): Promise<Record<string, string>>;
-  listAccounts(): Promise<AccountSummary[]>;
+  listAccounts(options?: { avatars?: boolean }): Promise<AccountSummary[]>;
   slotSpecs(): InstanceSpec[];
   getAccountProfile(accountId: string): Promise<AccountProfileFile | undefined>;
   getAccountDisplay(accountId: string): Promise<AccountDisplayProfile>;
@@ -91,7 +94,8 @@ export interface CoreView {
   injectionStatus(): Promise<SnowLumaRuntimeStatus>;
   testInjectionConnection(): Promise<{ runtime: SnowLumaRuntimeStatus; processCount: number }>;
   retrySnowLumaRuntime(): Promise<SnowLumaRuntimeStatus>;
-  injectionProcesses(): Promise<SnowLumaProcess[]>;
+  resumeInjectionListening(): Promise<ManualInjectionResumeResult>;
+  injectionProcesses(options?: { avatars?: boolean }): Promise<SnowLumaProcess[]>;
   injectAndListen(raw: unknown): Promise<InjectionOperationDto>;
   listenInjection(raw: unknown): Promise<InjectionOperationDto>;
   refreshInjection(raw: unknown): Promise<InjectionOperationDto>;
@@ -403,7 +407,8 @@ export async function createApiServer(options: ApiServerOptions): Promise<ApiHan
     }
 
     if (request.method === 'GET' && pathname === '/accounts') {
-      const accounts = await core.listAccounts();
+      const avatars = url.searchParams.get('avatars') === '1';
+      const accounts = await core.listAccounts(avatars ? { avatars: true } : {});
       sendJson(response, 200, { ok: true, accounts });
       return;
     }
@@ -909,6 +914,16 @@ export async function createApiServer(options: ApiServerOptions): Promise<ApiHan
       return;
     }
 
+    if (request.method === 'POST' && pathname === '/injection/resume') {
+      const remote = request.socket.remoteAddress;
+      const result = await runAudited(
+        { action: 'resume_snowluma_listening', id: 'snowluma', requestId, ...(remote ? { remote } : {}) },
+        () => core.resumeInjectionListening()
+      );
+      sendJson(response, 200, { ok: true, ...result });
+      return;
+    }
+
     if (request.method === 'POST' && pathname === '/injection/runtime/retry') {
       const remote = request.socket.remoteAddress;
       const runtime = await runAudited(
@@ -920,7 +935,8 @@ export async function createApiServer(options: ApiServerOptions): Promise<ApiHan
     }
 
     if (request.method === 'GET' && pathname === '/injection/processes') {
-      sendJson(response, 200, { ok: true, processes: await core.injectionProcesses() });
+      const avatars = url.searchParams.get('avatars') === '1';
+      sendJson(response, 200, { ok: true, processes: await core.injectionProcesses(avatars ? { avatars: true } : {}) });
       return;
     }
 
@@ -988,6 +1004,10 @@ export async function createApiServer(options: ApiServerOptions): Promise<ApiHan
       if (body.baseUrl !== undefined) {
         if (typeof body.baseUrl !== 'string') throw new HttpError(400, 'baseUrl must be a string', 'invalid_settings');
         settings.baseUrl = body.baseUrl;
+      }
+      if (body.resumeLastListen !== undefined) {
+        if (typeof body.resumeLastListen !== 'boolean') throw new HttpError(400, 'resumeLastListen must be a boolean', 'invalid_settings');
+        settings.resumeLastListen = body.resumeLastListen;
       }
       const updated = await core.setInjectionSettings(settings, password);
       sendJson(response, 200, {

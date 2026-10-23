@@ -199,8 +199,8 @@ npm run dist             # NSIS 安装包 + portable exe
 
 产物在 `release/`：
 
-- `nowadays-0.2.3-setup.exe`：可选择安装目录的 NSIS 安装包，带卸载器与桌面快捷方式。
-- `nowadays-0.2.3-portable.exe`：单文件便携版，直接运行；SnowLuma由用户另行准备。
+- `nowadays-0.2.4-setup.exe`：可选择安装目录的 NSIS 安装包，带卸载器与桌面快捷方式。
+- `nowadays-0.2.4-portable.exe`：单文件便携版，直接运行；SnowLuma由用户另行准备。
 
 行为约定：
 

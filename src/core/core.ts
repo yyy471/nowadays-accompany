@@ -28,11 +28,13 @@ import type { OutboundMessage } from '../routing/message.js';
 import { JsonlStore } from '../storage/jsonl-store.js';
 import type { MessageStore, ReadOptions, StoredMessage } from '../storage/contract.js';
 import { DesiredStateStore } from '../storage/desired-state.js';
+import { ListeningStore } from '../storage/listening-store.js';
 import { SlotStore } from '../storage/slot-store.js';
 import { createApiServer, type ApiHandle, type AccountSummary, type CoreView } from '../service/server.js';
 import type { AgentHost, AgentHostFactory, AgentHostFactoryInput } from '../host/contract.js';
 import { InjectionSettingsStore, type InjectionSettings } from '../injection/settings.js';
 import { ManualInjectionService } from '../injection/manual.js';
+import { QqAvatarCache } from '../injection/qq-avatar.js';
 import { SnowLumaRuntimeController, type SnowLumaRuntimeControllerOptions } from '../injection/snowluma/runtime.js';
 import {
   SNOWLUMA_MANAGEMENT_CREDENTIAL_REF,
@@ -132,6 +134,8 @@ export interface CoreOptions {
   manualStartOnly?: boolean;
   /** 测试注入用的管理请求实现。 */
   snowLumaFetchImpl?: typeof fetch;
+  /** 测试注入用的 QQ 公开头像请求实现。 */
+  avatarFetchImpl?: typeof fetch;
   /** Start only the management service; QQ injection/listening still requires a click. */
   autoStartSnowLuma?: boolean;
   snowLumaRuntimeOptions?: Partial<Omit<SnowLumaRuntimeControllerOptions, 'manager' | 'logger'>>;
@@ -220,10 +224,12 @@ export class Core implements CoreView {
   #modelSetupChain: Promise<unknown> = Promise.resolve();
   readonly #desiredStore: DesiredStateStore;
   readonly #slotStore?: SlotStore;
+  readonly #listening: ListeningStore;
   readonly #injectionSettings: InjectionSettingsStore;
   readonly snowLuma: SnowLumaManager;
   readonly #manualInjection: ManualInjectionService;
   readonly #snowLumaRuntime: SnowLumaRuntimeController;
+  readonly #qqAvatars: QqAvatarCache;
   readonly #dynamicSlots = new Set<string>();
   readonly #processSlots = new Map<number, { slotId: string; accountId: string; missing: number; mappedEpoch: number }>();
   #processMappingEpoch = 0;
@@ -244,6 +250,7 @@ export class Core implements CoreView {
     logger: Logger,
     desiredStore: DesiredStateStore,
     injectionSettings: InjectionSettingsStore,
+    listening: ListeningStore,
     slotStore?: SlotStore,
     dataRootLock?: DataRootLock
   ) {
@@ -253,6 +260,7 @@ export class Core implements CoreView {
     this.#limits = normalizeLimits(options.limits);
     this.#desiredStore = desiredStore;
     this.#slotStore = slotStore;
+    this.#listening = listening;
     this.#injectionSettings = injectionSettings;
     this.#dataRootLock = dataRootLock;
     this.config = config;
@@ -294,6 +302,10 @@ export class Core implements CoreView {
     });
     this.#snowLumaRuntime = new SnowLumaRuntimeController({
       ...options.snowLumaRuntimeOptions, manager: this.snowLuma, logger: logger.child('snowluma-runtime')
+    });
+    this.#qqAvatars = new QqAvatarCache({
+      ...(options.avatarFetchImpl ? { fetchImpl: options.avatarFetchImpl } : {}),
+      logger: logger.child('qq-avatar')
     });
     this.extensions = new ExtensionRegistry();
     registerBuiltInAgentTools(this.extensions);
@@ -390,6 +402,14 @@ export class Core implements CoreView {
       logger: logger.child('manual-injection'),
       host: {
         slot: (id) => this.supervisor.get(id)?.spec,
+        resumeCandidates: () => {
+          const runtimeDir = this.#injectionSettings.get().runtimeDir;
+          if (!runtimeDir) return [];
+          const resolved = path.resolve(runtimeDir);
+          return this.supervisor.listSpecs().filter((spec) =>
+            spec.backend === 'snowluma' && spec.runtimeDir !== undefined && path.resolve(spec.runtimeDir) === resolved
+          );
+        },
         instanceStatus: (id) => this.supervisor.get(id)?.status(),
         accountOwner: (accountId) => this.#accountLeases.ownerOf(accountId),
         startSlot: async (id) => {
@@ -401,7 +421,9 @@ export class Core implements CoreView {
         rebindSlot: (id, accountId) => this.#rebindSlotAccount(id, accountId),
         resolveSlotForAccount: (accountId, pid) => this.#ensureDynamicSlot(accountId, pid),
         trackProcess: (pid, slotId, accountId) => { this.#trackProcess(pid, slotId, accountId); },
-        slotForProcess: (pid) => this.#processSlots.get(pid)?.slotId
+        slotForProcess: (pid) => this.#processSlots.get(pid)?.slotId,
+        rememberListening: (slotId, accountId) => this.#rememberListening(slotId, accountId),
+        forgetListening: (slotId) => this.#forgetListening(slotId)
       },
       ...(options.now ? { now: options.now } : {})
     });
@@ -440,8 +462,12 @@ export class Core implements CoreView {
           : path.join(dataRoot, 'injection.json'),
         logger: logger.child('injection')
       });
+      const listening = await ListeningStore.load(
+        path.join(dataRoot, 'state', 'listening.json'),
+        logger.child('listening')
+      );
       const initial = slotStore?.loaded ? slotStore.list() : options.instances;
-      const core = new Core(options, config, configV2, logger, desiredStore, injectionSettings, slotStore, lock);
+      const core = new Core(options, config, configV2, logger, desiredStore, injectionSettings, listening, slotStore, lock);
       try {
         for (const spec of initial) core.supervisor.add(spec);
         if (slotStore && !slotStore.loaded) await slotStore.save(initial);
@@ -462,6 +488,9 @@ export class Core implements CoreView {
     if (this.#started) return;
     this.#started = true;
     try {
+      if (this.#options.manualStartOnly && this.#injectionSettings.get().resumeLastListen === true) {
+        await this.#restoreListeningSlots();
+      }
       // 先起控制面：桌面端窗口要尽快拿到 UI，实例注入可以在后台继续。
       if (this.#options.api?.enabled) {
         this.#api = await createApiServer({
@@ -569,6 +598,7 @@ export class Core implements CoreView {
     await this.#snowLumaRuntime.stop();
     for (const id of this.#dynamicSlots) await this.#desiredStore.delete(id);
     await this.#desiredStore.dispose();
+    await this.#listening.dispose().catch(() => {});
     await this.#slotStore?.dispose();
     this.#accountLeases.clear();
     this.bus.clear();
@@ -584,7 +614,10 @@ export class Core implements CoreView {
   async stopInstance(id: string): Promise<void> {
     await this.#withDynamicLock(async () => {
       if (this.#dynamicSlots.has(id)) await this.removeSlot(id);
-      else await this.supervisor.stop(id);
+      else {
+        await this.supervisor.stop(id);
+        await this.#forgetListening(id);
+      }
       for (const [pid, record] of this.#processSlots) if (record.slotId === id) this.#processSlots.delete(pid);
     });
   }
@@ -663,7 +696,7 @@ export class Core implements CoreView {
     return this.supervisor.listSpecs();
   }
 
-  async listAccounts(): Promise<AccountSummary[]> {
+  async listAccounts(options: { avatars?: boolean } = {}): Promise<AccountSummary[]> {
     const entries = new Map<string, { accountId: string; dir: string; slots: Set<string> }>();
     const add = (accountId: string, dir: string): { slots: Set<string> } => {
       const existing = entries.get(accountId);
@@ -697,6 +730,7 @@ export class Core implements CoreView {
     }
 
     const result: AccountSummary[] = [];
+    const localAvatars = new Map<string, string>();
     for (const entry of entries.values()) {
       let profile: AccountProfileFile | undefined;
       let error: string | undefined;
@@ -711,6 +745,10 @@ export class Core implements CoreView {
       } catch (resolveError) {
         error = resolveError instanceof Error ? resolveError.message : String(resolveError);
       }
+      if (options.avatars) {
+        const display = await loadAccountDisplay(entry.dir).catch(() => undefined);
+        if (display?.avatarDataUrl) localAvatars.set(entry.accountId, display.avatarDataUrl);
+      }
       result.push({
         accountId: entry.accountId,
         dir: entry.dir,
@@ -721,7 +759,13 @@ export class Core implements CoreView {
         slots: [...entry.slots]
       });
     }
-    return result.sort((left, right) => left.accountId.localeCompare(right.accountId));
+    const finalized = options.avatars
+      ? await Promise.all(result.map(async (account) => {
+          const avatar = await this.#resolveAccountAvatar(account.accountId, localAvatars.get(account.accountId));
+          return avatar ? { ...account, avatarDataUrl: avatar.dataUrl, avatarSource: avatar.source } : account;
+        }))
+      : result;
+    return finalized.sort((left, right) => left.accountId.localeCompare(right.accountId));
   }
 
   async readMessages(
@@ -1025,10 +1069,26 @@ export class Core implements CoreView {
     return this.injectionStatus();
   }
 
-  injectionProcesses(): Promise<SnowLumaProcess[]> {
-    if (this.#processScan) return this.#processScan;
+  async resumeInjectionListening() {
+    await this.#restoreListeningSlots();
+    return this.#manualInjection.resume();
+  }
+
+  injectionProcesses(options: { avatars?: boolean } = {}): Promise<SnowLumaProcess[]> {
+    const scan = this.#processScan ?? (this.#processScan = this.#scanProcesses());
+    if (!options.avatars) return scan;
+    return scan.then((processes) => Promise.all(processes.map(async (process) => {
+      if (process.avatarDataUrl) return process;
+      const accountId = process.uin ?? process.accountHint?.uin;
+      if (!accountId) return process;
+      const avatar = await this.#resolveAccountAvatar(accountId);
+      return avatar ? { ...process, avatarDataUrl: avatar.dataUrl } : process;
+    })));
+  }
+
+  #scanProcesses(): Promise<SnowLumaProcess[]> {
     const scanEpoch = this.#processMappingEpoch;
-    const scan = this.snowLuma.listProcesses().then(async (processes) => {
+    const scan = this.snowLuma.listProcesses({ probeIdentity: true }).then(async (processes) => {
       await this.#withDynamicLock(async () => {
         if (this.#stopped) return;
         for (const [pid, record] of this.#processSlots) {
@@ -1045,12 +1105,18 @@ export class Core implements CoreView {
           }
         }
       });
-      return processes.map((proc) => {
+      return Promise.all(processes.map(async (proc) => {
         const instanceId = this.#processSlots.get(proc.pid)?.slotId;
-        return { ...proc, ...(instanceId ? { instanceId } : {}) };
-      });
+        const accountId = proc.uin ?? proc.accountHint?.uin;
+        const display = accountId ? await loadAccountDisplay(path.join(this.#dataRoot, 'accounts', accountId)).catch(() => undefined) : undefined;
+        const connectedAccount = instanceId ? this.supervisor.get(instanceId)?.status() : undefined;
+        const nickname = connectedAccount && connectedAccount.accountId === accountId ? connectedAccount.accountNickname ?? proc.nickname : proc.nickname;
+        return { ...proc, ...(instanceId ? { instanceId } : {}),
+          ...(nickname ? { nickname } : {}),
+          ...(display?.nickname ? { displayName: display.nickname } : {}),
+          ...(display?.avatarDataUrl ? { avatarDataUrl: display.avatarDataUrl } : {}) };
+      }));
     }).finally(() => { if (this.#processScan === scan) this.#processScan = undefined; });
-    this.#processScan = scan;
     return scan;
   }
 
@@ -1267,6 +1333,7 @@ export class Core implements CoreView {
     const lease = this.#runtimeLeases.get(id);
     this.#runtimeLeases.delete(id);
     await lease?.release();
+    await this.#forgetListening(id);
     this.metrics.set('instances.total', this.supervisor.list().length);
     await this.#persistSlots();
   }
@@ -1314,6 +1381,83 @@ export class Core implements CoreView {
     const run = this.#dynamicChain.then(task, task);
     this.#dynamicChain = run.then(() => undefined, () => undefined);
     return run;
+  }
+
+  /** 用上次监听记录重建动态槽位；只恢复待恢复状态，不启动、不注入。 */
+  async #restoreListeningSlots(): Promise<void> {
+    if (!this.#options.manualStartOnly) return;
+    const runtimeDir = this.#injectionSettings.get().runtimeDir;
+    if (!runtimeDir) return;
+    const resolved = path.resolve(runtimeDir);
+    const specs = this.supervisor.listSpecs();
+    let added = 0;
+    for (const record of this.#listening.list()) {
+      if (path.resolve(record.runtimeDir) !== resolved) continue;
+      if (this.supervisor.get(record.slotId)) continue;
+      const bound = specs.some((spec) =>
+        spec.backend === 'snowluma'
+        && spec.accountId === record.accountId
+        && spec.runtimeDir !== undefined
+        && path.resolve(spec.runtimeDir) === resolved
+      );
+      if (bound) continue;
+      const spec: InstanceSpec = {
+        id: record.slotId,
+        backend: 'snowluma',
+        runtimeDir,
+        accountId: record.accountId,
+        restart: { enabled: false }
+      };
+      try {
+        this.supervisor.add(spec);
+        this.#dynamicSlots.add(record.slotId);
+        specs.push(spec);
+        added += 1;
+      } catch (error) {
+        this.#logger.warn('restore listening slot failed', {
+          slotId: record.slotId,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+    if (added > 0) {
+      this.metrics.set('instances.total', this.supervisor.list().length);
+      this.#logger.info('listening slots restored', { count: added });
+    }
+  }
+
+  /** 所有账号头像展示共用：本地展示头像优先，缺失时回退到 QQ 公开头像。 */
+  async #resolveAccountAvatar(
+    accountId: string,
+    localAvatarDataUrl?: string
+  ): Promise<{ dataUrl: string; source: 'local' | 'qq' } | undefined> {
+    if (localAvatarDataUrl) return { dataUrl: localAvatarDataUrl, source: 'local' };
+    const dataUrl = await this.#qqAvatars.get(accountId);
+    return dataUrl ? { dataUrl, source: 'qq' } : undefined;
+  }
+
+  async #rememberListening(slotId: string, accountId: string): Promise<void> {
+    const spec = this.supervisor.get(slotId)?.spec;
+    if (!spec?.runtimeDir) return;
+    try {
+      await this.#listening.remember({ slotId, accountId, runtimeDir: path.resolve(spec.runtimeDir) });
+    } catch (error) {
+      this.#logger.warn('remember listening failed', {
+        slotId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  async #forgetListening(slotId: string): Promise<void> {
+    try {
+      await this.#listening.forget(slotId);
+    } catch (error) {
+      this.#logger.warn('forget listening failed', {
+        slotId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 
   #trackProcess(pid: number, slotId: string, accountId: string): void {

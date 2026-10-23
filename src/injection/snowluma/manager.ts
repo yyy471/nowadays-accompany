@@ -31,6 +31,11 @@ export interface SnowLumaProcess {
   connected: boolean;
   loggedIn: boolean;
   uin?: string;
+  /** Display-only pre-injection hint, never an authenticated account binding. */
+  accountHint?: { uin: string; nickname?: string };
+  nickname?: string;
+  displayName?: string;
+  avatarDataUrl?: string;
   status: string;
   error?: string;
   method?: string;
@@ -88,6 +93,7 @@ export class SnowLumaManager {
   #token: string | undefined;
   #lastError: string | undefined;
   #consentRequired = false;
+  readonly #identityHints = new Map<string, { at: number; info: { uin?: string; nickname?: string } }>();
 
   constructor(options: SnowLumaManagerOptions) {
     this.#vault = options.vault;
@@ -102,6 +108,7 @@ export class SnowLumaManager {
     this.#token = undefined;
     this.#lastError = undefined;
     this.#consentRequired = false;
+    this.#identityHints.clear();
   }
 
   settings(): SnowLumaManagerSettings {
@@ -153,11 +160,34 @@ export class SnowLumaManager {
     };
   }
 
-  async listProcesses(): Promise<SnowLumaProcess[]> {
+  async listProcesses(options: { probeIdentity?: boolean } = {}): Promise<SnowLumaProcess[]> {
     const payload = await this.#request('/api/processes');
     const list = (payload as { list?: unknown }).list;
     if (!Array.isArray(list)) throw new SnowLumaError('snowluma_protocol', 'process list response has no list');
-    return list.map((entry) => normalizeProcess(entry));
+    const processes = list.map((entry) => normalizeProcess(entry));
+    if (!options.probeIdentity) return processes;
+    const keys = new Set(processes.map((proc) => `${proc.pid}:${proc.path ?? ''}:${proc.uin ?? ''}`));
+    for (const key of this.#identityHints.keys()) if (!keys.has(key)) this.#identityHints.delete(key);
+    let next = 0;
+    // Limit probes: one unavailable QQ must not discard the rest of the list.
+    await Promise.all(Array.from({ length: Math.min(4, processes.length) }, async () => {
+      while (next < processes.length) {
+        const proc = processes[next++]!;
+        const key = `${proc.pid}:${proc.path ?? ''}:${proc.uin ?? ''}`;
+        let cached = this.#identityHints.get(key);
+        if (!cached || Date.now() - cached.at > (cached.info.uin ? 15_000 : 5_000)) {
+          const info = await this.probeLogin(proc.pid).catch(() => ({}));
+          cached = { at: Date.now(), info };
+          this.#identityHints.set(key, cached);
+        }
+        const info = cached.info;
+        if (info.uin && (!proc.uin || proc.uin === info.uin)) {
+          proc.accountHint = { uin: info.uin, ...(info.nickname ? { nickname: info.nickname } : {}) };
+          if (info.nickname) proc.nickname = info.nickname;
+        }
+      }
+    }));
+    return processes;
   }
 
   async load(pid: number): Promise<SnowLumaProcess | undefined> {
@@ -179,9 +209,12 @@ export class SnowLumaManager {
     const info = (payload as { info?: unknown }).info;
     if (!info || typeof info !== 'object') return {};
     const record = info as Record<string, unknown>;
+    const uin = normalizeQqUin(record.uin);
+    if (record.identityKnown === false || !uin) return {};
+    const nickname = typeof record.nickName === 'string' ? record.nickName : record.nickname;
     return {
-      ...(typeof record.uin === 'string' || typeof record.uin === 'number' ? { uin: String(record.uin) } : {}),
-      ...(typeof record.nickname === 'string' ? { nickname: record.nickname } : {})
+      uin,
+      ...(typeof nickname === 'string' && nickname.trim() ? { nickname: nickname.trim() } : {})
     };
   }
 
@@ -382,7 +415,7 @@ export function normalizeProcess(raw: unknown): SnowLumaProcess {
   const value = raw as Record<string, unknown>;
   const pid = Number(value.pid);
   assertPid(pid);
-  const uin = value.uin === undefined || value.uin === null || value.uin === '' ? undefined : String(value.uin);
+  const uin = normalizeQqUin(value.uin);
   return {
     pid,
     ...(typeof value.name === 'string' ? { name: value.name } : {}),
@@ -395,6 +428,12 @@ export function normalizeProcess(raw: unknown): SnowLumaProcess {
     ...(typeof value.error === 'string' ? { error: value.error } : {}),
     ...(typeof value.method === 'string' ? { method: value.method } : {})
   };
+}
+
+export function normalizeQqUin(value: unknown): string | undefined {
+  if (typeof value !== 'string' && typeof value !== 'number') return undefined;
+  const uin = String(value).trim();
+  return /^[1-9]\d*$/.test(uin) ? uin : undefined;
 }
 
 function assertPid(pid: number): void {

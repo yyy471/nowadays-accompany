@@ -59,12 +59,12 @@ export function HomePage({ accounts }: { accounts?: AccountsResponse }) {
       {account ? (
         <Card className="home-profile-card">
           <div className="home-profile">
-            <AccountAvatar account={account} display={display} large />
+            <AccountAvatar account={account} large />
             <div className="home-identity">
               <h2 className="home-nickname">{display.nickname || '本地昵称未设置'}</h2>
               <div className="home-qq-number">QQ 号 <strong>{account.accountId}</strong></div>
               <p className={`home-signature${display.signature ? '' : ' is-empty'}`}>{display.signature || '还没有设置签名'}</p>
-              <span className="home-display-note">本地主页展示资料，不代表 QQ 个人资料</span>
+              <span className="home-display-note">昵称与签名保存在本地；头像优先使用本地设置，未设置时显示 QQ 公开头像</span>
             </div>
           </div>
         </Card>
@@ -86,7 +86,7 @@ export function HomePage({ accounts }: { accounts?: AccountsResponse }) {
               onFocus={() => setHovered(index)}
               onClick={() => { setSelected(item.accountId); setError(undefined); }}
             >
-              <AccountAvatar account={item} display={itemDisplay} />
+              <AccountAvatar account={item} />
               <span>{itemDisplay.nickname.trim() || item.accountId}</span>
             </ControlButton>
           );
@@ -96,10 +96,13 @@ export function HomePage({ accounts }: { accounts?: AccountsResponse }) {
   );
 }
 
-function AccountAvatar({ account, display, large = false }: { account: AccountSummary; display: DisplayProfile; large?: boolean }) {
+function AccountAvatar({ account, large = false }: { account: AccountSummary; large?: boolean }) {
+  const label = account.avatarSource === 'local'
+    ? `${account.accountId} 本地展示头像`
+    : account.avatarDataUrl ? `${account.accountId} QQ 头像` : 'QQ 默认头像占位';
   return (
-    <span className={`account-avatar${large ? ' large' : ''}`} role="img" aria-label={display.avatarDataUrl ? `${account.accountId} 本地展示头像` : 'QQ 默认头像占位'}>
-      {display.avatarDataUrl ? <img src={display.avatarDataUrl} alt="" /> : <span className="avatar-fallback"><Icon name="user" size={large ? 42 : 23} /></span>}
+    <span className={`account-avatar${large ? ' large' : ''}`} role="img" aria-label={label}>
+      {account.avatarDataUrl ? <img src={account.avatarDataUrl} alt="" /> : <span className="avatar-fallback"><Icon name="user" size={large ? 42 : 23} /></span>}
     </span>
   );
 }

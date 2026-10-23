@@ -14,13 +14,20 @@ interface Counters {
   start: number;
   stop: number;
   rebind: string[];
+  remembered: string[];
+  forgotten: string[];
 }
 
 const PROCESS_PATH = 'C:/Program Files/Tencent/QQ/QQ.exe';
 
 function harness(
   initial: Partial<SnowLumaProcess> = {},
-  options: { accountId?: string; loginTimeoutMs?: number; extraProcesses?: SnowLumaProcess[] } = {}
+  options: {
+    accountId?: string;
+    loginTimeoutMs?: number;
+    extraProcesses?: SnowLumaProcess[];
+    desiredState?: 'running' | 'stopped';
+  } = {}
 ): {
   service: ManualInjectionService;
   process: SnowLumaProcess;
@@ -38,7 +45,7 @@ function harness(
     status: 'ready',
     ...initial
   };
-  const counters: Counters = { load: 0, unload: 0, refresh: 0, start: 0, stop: 0, rebind: [] };
+  const counters: Counters = { load: 0, unload: 0, refresh: 0, start: 0, stop: 0, rebind: [], remembered: [], forgotten: [] };
   const manager = {
     async listProcesses() {
       return [{ ...process }, ...(options.extraProcesses ?? [])];
@@ -71,14 +78,17 @@ function harness(
     ...(options.accountId ? { accountId: options.accountId } : {})
   };
   let state: InstanceStatus['state'] = 'stopped';
+  const desiredState = options.desiredState ?? 'running';
   const owners = new Map<string, string>();
   const host: ManualInjectionHost = {
     slot: (id) => (id === spec.id ? spec : undefined),
+    resumeCandidates: () => [spec],
     accountOwner: (accountId) => owners.get(accountId),
     instanceStatus: () => ({
       id: 'slot-a',
       ...(spec.accountId ? { accountId: spec.accountId } : {}),
       backend: 'snowluma',
+      desiredState,
       state,
       selfIds: [],
       connected: state === 'online',
@@ -95,6 +105,12 @@ function harness(
     rebindSlot: async (_id, accountId) => {
       counters.rebind.push(accountId);
       spec = { ...spec, accountId };
+    },
+    rememberListening: async (slotId, accountId) => {
+      counters.remembered.push(`${slotId}:${accountId}`);
+    },
+    forgetListening: async (slotId) => {
+      counters.forgotten.push(slotId);
     }
   };
   const service = new ManualInjectionService({
@@ -125,6 +141,7 @@ describe('manual injection service', () => {
     expect(h.counters.load).toBe(1);
     expect(h.counters.rebind).toEqual(['10001']);
     expect(h.counters.start).toBe(1);
+    expect(h.counters.remembered).toEqual(['slot-a:10001']);
     expect(h.spec().accountId).toBe('10001');
 
     const repeated = await h.service.injectAndListen({
@@ -293,12 +310,55 @@ describe('manual injection service', () => {
     expect(unloaded.state).toBe('succeeded');
     expect(h.counters.stop).toBe(1);
     expect(h.counters.unload).toBe(1);
+    expect(h.counters.forgotten).toEqual(['slot-a']);
     expect(h.state()).toBe('stopped');
 
     const mismatch = harness({ uin: '10002', injected: true, connected: true }, { accountId: '10001' });
     const rejected = await mismatch.service.unload({ slotId: 'slot-a', identity });
     expect(rejected).toMatchObject({ state: 'failed', error: { code: 'injection_identity_mismatch' } });
     expect(mismatch.counters.unload).toBe(0);
+  });
+
+  it('resumes only an already injected process whose account matches', async () => {
+    const h = harness({ uin: '10001', injected: true, connected: true }, { accountId: '10001' });
+    const result = await h.service.resume();
+    expect(result).toMatchObject({
+      attempted: 1,
+      resumed: [{ slotId: 'slot-a', accountId: '10001', uin: '10001' }],
+      skipped: []
+    });
+    expect(h.counters.load).toBe(0);
+    expect(h.counters.start).toBe(1);
+    expect(h.state()).toBe('online');
+  });
+
+  it('skips a matching process that is not injected', async () => {
+    const h = harness({ uin: '10001' }, { accountId: '10001' });
+    const result = await h.service.resume();
+    expect(result).toMatchObject({
+      attempted: 1,
+      resumed: [],
+      skipped: [{ slotId: 'slot-a', accountId: '10001', reason: 'not_injected' }]
+    });
+    expect(h.counters.load).toBe(0);
+    expect(h.counters.start).toBe(0);
+  });
+
+  it('does not resume a slot whose desired state is stopped', async () => {
+    const h = harness(
+      { uin: '10001', injected: true, connected: true },
+      { accountId: '10001', desiredState: 'stopped' }
+    );
+    const result = await h.service.resume();
+    expect(result).toEqual({ attempted: 0, resumed: [], skipped: [] });
+    expect(h.counters.start).toBe(0);
+  });
+
+  it('does not resume when no logged-in process owns the slot account', async () => {
+    const h = harness({ uin: '10002', injected: true, connected: true }, { accountId: '10001' });
+    const result = await h.service.resume();
+    expect(result.skipped[0]).toMatchObject({ slotId: 'slot-a', reason: 'process_not_found' });
+    expect(h.counters.start).toBe(0);
   });
 
   it('does not unload when refresh or unload targets an unknown slot', async () => {

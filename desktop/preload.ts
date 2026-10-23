@@ -23,5 +23,6 @@ function readInfo(): BridgeInfo {
 
 contextBridge.exposeInMainWorld('nowadays', Object.freeze({
   ...readInfo(),
-  chooseRuntimeDirectory: (): Promise<string | null> => ipcRenderer.invoke('nowadays:choose-runtime-directory')
+  chooseRuntimeDirectory: (): Promise<string | null> => ipcRenderer.invoke('nowadays:choose-runtime-directory'),
+  openRuntimeDirectory: (): Promise<boolean> => ipcRenderer.invoke('nowadays:open-runtime-directory')
 }));

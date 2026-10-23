@@ -871,6 +871,13 @@ code {
   font-family: var(--mono);
   font-size: 13px;
   font-weight: 600;
+  overflow: hidden;
+}
+
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .account-identity h3 {
@@ -2910,6 +2917,11 @@ code { color: #735a38; }
 .qq-process-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
 .qq-process-heading > div { flex: 1; }
 .qq-process-heading h3 { margin: 0 0 4px; font-size: 18px; }
+.qq-process-heading > div { min-width: 0; overflow-wrap: anywhere; }
+.qq-process-avatar { overflow: hidden; }
+.qq-process-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.qq-process-diagnostics { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; color: var(--muted); font-size: 12px; }
+.qq-process-diagnostics summary { cursor: pointer; }
 .qq-process-card p { line-height: 1.65; }
 .qq-process-path { overflow-wrap: anywhere; font-family: var(--mono); font-size: 12px; color: var(--muted); padding-bottom: 10px; border-bottom: 1px solid var(--line); }
 .qq-process-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; padding-top: 12px; }

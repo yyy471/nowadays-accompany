@@ -42,3 +42,5 @@
 控件外观复核见 [22 控件风格复核](22-control-style-review.md)：暖色语义色、复选框、状态标记与头像作用域修复，含实际页面截图。
 
 目录与版本管理见 [23 仓库规范](23-repository-layout-and-version-control.md)：测试源码保留，验收截图归入本地 test-results，release 与构建产物不纳入 Git。
+
+账号卡片识别见 [24 QQ账号与昵称展示](24-qq-account-identity-display.md)：注入前探测、连接后身份核验、PID诊断折叠和未知账号回退。

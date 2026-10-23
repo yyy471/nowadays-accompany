@@ -39,8 +39,21 @@ export interface InjectionOperationDto {
   error?: { code: string; message: string };
 }
 
+export interface ManualInjectionResumeResult {
+  attempted: number;
+  resumed: Array<{ slotId: string; accountId: string; uin: string; operationId: string }>;
+  skipped: Array<{
+    slotId: string;
+    accountId?: string;
+    reason: 'slot_unavailable' | 'process_not_found' | 'not_injected' | 'listen_failed';
+    message?: string;
+  }>;
+}
+
 export interface ManualInjectionHost {
   slot(id: string): InstanceSpec | undefined;
+  /** 可参与“恢复上次监听”的持久化槽位；由宿主过滤到当前 runtime。 */
+  resumeCandidates?(): InstanceSpec[];
   instanceStatus(id: string): InstanceStatus | undefined;
   /** 当前持有该账号租约的槽位；用于在绑定前拒绝重复宿主。 */
   accountOwner(accountId: string): string | undefined;
@@ -49,6 +62,10 @@ export interface ManualInjectionHost {
   /** 记录进程与已验证账号槽位的临时关系，用于停止、退出和身份变化回收。 */
   trackProcess?(pid: number, slotId: string, accountId: string): void;
   slotForProcess?(pid: number): string | undefined;
+  /** 记住仍在监听的账号；应用重启后可据此重建槽位并按需恢复。 */
+  rememberListening?(slotId: string, accountId: string): Promise<void>;
+  /** 用户停止监听或卸载注入后清除记录，避免下次启动再次恢复。 */
+  forgetListening?(slotId: string): Promise<void>;
   startSlot(id: string): Promise<void>;
   stopSlot(id: string): Promise<void>;
   rebindSlot(id: string, accountId: string): Promise<void>;
@@ -81,10 +98,12 @@ export class ManualInjectionService {
   readonly #operations = new Map<string, OperationRecord>();
   readonly #byId = new Map<string, OperationRecord>();
   readonly #chains = new Map<number, Promise<void>>();
+  #resuming: Promise<ManualInjectionResumeResult> | undefined;
   #closed = false;
 
   async dispose(): Promise<void> {
     this.#closed = true;
+    await this.#resuming?.catch(() => {});
     await Promise.allSettled([...this.#chains.values()]);
   }
 
@@ -133,13 +152,97 @@ export class ManualInjectionService {
         }
       }
       const updated = await this.#options.manager.unload(process.pid);
+      if (slotId) await this.#options.host.forgetListening?.(slotId);
       return { process: updated ?? process };
     });
+  }
+
+  /**
+   * 恢复上次仍在运行的监听。只处理已持久化、期望运行、账号匹配且已注入的进程；
+   * 不调用 load，不创建槽位，也不注入新的 QQ。
+   */
+  resume(): Promise<ManualInjectionResumeResult> {
+    if (this.#closed) throw new AccompanyError('core_stopped', 'injection service has stopped');
+    if (this.#resuming) return this.#resuming;
+    let tracked: Promise<ManualInjectionResumeResult>;
+    tracked = this.#resume().finally(() => {
+      if (this.#resuming === tracked) this.#resuming = undefined;
+    });
+    this.#resuming = tracked;
+    return tracked;
   }
 
   operation(id: string): InjectionOperationDto | undefined {
     const record = this.#byId.get(id);
     return record ? structuredClone(record.dto) : undefined;
+  }
+
+  async #resume(): Promise<ManualInjectionResumeResult> {
+    const candidates = this.#options.host.resumeCandidates?.();
+    if (!candidates) {
+      throw new AccompanyError('injection_resume_unavailable', 'this host cannot enumerate resumable slots');
+    }
+    const eligible: Array<{ slotId: string; accountId: string }> = [];
+    const skipped: ManualInjectionResumeResult['skipped'] = [];
+    for (const spec of candidates) {
+      if (spec.backend !== 'snowluma' || !spec.accountId) continue;
+      const status = this.#options.host.instanceStatus(spec.id);
+      if (!status) {
+        skipped.push({ slotId: spec.id, accountId: spec.accountId, reason: 'slot_unavailable' });
+        continue;
+      }
+      if (status.desiredState !== 'running') continue;
+      if (status.state !== 'stopped' && status.state !== 'failed') continue;
+      eligible.push({ slotId: spec.id, accountId: spec.accountId });
+    }
+    if (eligible.length === 0) return { attempted: 0, resumed: [], skipped };
+
+    const processes = await this.#options.manager.listProcesses();
+    const resumed: ManualInjectionResumeResult['resumed'] = [];
+    for (const candidate of eligible) {
+      if (this.#closed) break;
+      const sameAccount = processes.filter((process) => process.uin === candidate.accountId);
+      const process = sameAccount.find((entry) => entry.injected || entry.connected);
+      if (!process) {
+        skipped.push({
+          ...candidate,
+          reason: sameAccount.length > 0 ? 'not_injected' : 'process_not_found'
+        });
+        continue;
+      }
+      try {
+        const operation = await this.listen({
+          slotId: candidate.slotId,
+          expectedAccountId: candidate.accountId,
+          identity: {
+            pid: process.pid,
+            ...(process.path ? { path: process.path } : {}),
+            ...(process.uin ? { uin: process.uin } : {})
+          }
+        });
+        if (operation.state !== 'succeeded' || !operation.result?.uin) {
+          skipped.push({ ...candidate, reason: 'listen_failed', message: operation.error?.message });
+          continue;
+        }
+        resumed.push({
+          ...candidate,
+          uin: operation.result.uin,
+          operationId: operation.id
+        });
+      } catch (error) {
+        skipped.push({
+          ...candidate,
+          reason: 'listen_failed',
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+    this.#options.logger.info('manual injection resume completed', {
+      attempted: eligible.length,
+      resumed: resumed.length,
+      skipped: skipped.length
+    });
+    return { attempted: eligible.length, resumed, skipped };
   }
 
   #requireSlot(id: string): InstanceSpec {
@@ -297,6 +400,7 @@ export class ManualInjectionService {
         throw new AccompanyError('injection_identity_mismatch', `slot ${slotId} is listening as ${current.accountId}, expected ${uin}`);
       }
       this.#options.host.trackProcess?.(process.pid, slotId, uin);
+      await this.#options.host.rememberListening?.(slotId, uin);
       return { uin, process, instance: current };
     }
     if (current && !['stopped', 'failed', 'awaiting_profile'].includes(current.state)) {
@@ -306,6 +410,7 @@ export class ManualInjectionService {
     await this.#options.host.startSlot(slotId);
     const instance = this.#options.host.instanceStatus(slotId);
     this.#options.host.trackProcess?.(process.pid, slotId, uin);
+    await this.#options.host.rememberListening?.(slotId, uin);
     return {
       uin,
       ...(process ? { process } : {}),

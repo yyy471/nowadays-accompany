@@ -291,7 +291,11 @@ export function AccountsPage({ view, accounts, accountsError, artifacts, refresh
             </Select></Field>
             <span className="muted">下方展示资料与会话角色绑定均针对该账号。</span>
           </div> : null}
-          {view === 'roles' && selected ? <AccountDisplayEditor accountId={selectedAccount} /> : null}
+          {view === 'roles' && selected ? <AccountDisplayEditor
+            accountId={selectedAccount}
+            fallbackAvatarDataUrl={list.find((account) => account.accountId === selectedAccount)?.avatarDataUrl}
+            onSaved={refresh}
+          /> : null}
           {view === 'roles' && selected ? (
             <Card title="会话角色绑定" actions={<Button size="sm" icon="refresh" disabled={Boolean(busy)} onClick={() => setReloadKey((value) => value + 1)}>重新读取</Button>}>
               <div className="policy-toolbar">
@@ -315,7 +319,9 @@ export function AccountsPage({ view, accounts, accountsError, artifacts, refresh
               const isEditing = editing === account.accountId;
               return <div key={account.accountId} className="account-card">
                 <div className="account-head">
-                  <div className="account-identity"><span className="avatar">{account.accountId.slice(-2)}</span><div><h3>{account.accountId}</h3><span className="muted mono">{account.dir}</span></div></div>
+                  <div className="account-identity">{account.avatarDataUrl
+                    ? <span className="avatar" aria-hidden="true"><img src={account.avatarDataUrl} alt="" /></span>
+                    : <span className="avatar">{account.accountId.slice(-2)}</span>}<div><h3>{account.accountId}</h3><span className="muted mono">{account.dir}</span></div></div>
                   <div className="account-head-actions"><Tag tone={account.state === 'ready' ? 'ok' : 'bad'}>{accountStateLabel(account.state)}</Tag>{account.slots.length ? <Tag tone="idle">槽位 {account.slots.join('、')}</Tag> : <Tag tone="idle">未占用槽位</Tag>}</div>
                 </div>
                 <div className="account-body"><div className="account-profile-summary">
@@ -349,7 +355,11 @@ interface DisplayProfile {
 
 const EMPTY_DISPLAY: DisplayProfile = { nickname: '', signature: '' };
 
-function AccountDisplayEditor({ accountId }: { accountId: string }) {
+function AccountDisplayEditor({ accountId, fallbackAvatarDataUrl, onSaved }: {
+  accountId: string;
+  fallbackAvatarDataUrl?: string;
+  onSaved?: () => Promise<void>;
+}) {
   const [profiles, setProfiles] = useState<Record<string, DisplayProfile>>({});
   const [drafts, setDrafts] = useState<Record<string, DisplayProfile>>({});
   const [busyFor, setBusyFor] = useState<string>();
@@ -359,6 +369,10 @@ function AccountDisplayEditor({ accountId }: { accountId: string }) {
   const saved = profiles[accountId] ?? EMPTY_DISPLAY;
   const draft = drafts[accountId] ?? saved;
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
+  const previewAvatarDataUrl = draft.avatarDataUrl ?? fallbackAvatarDataUrl;
+  const previewAvatarLabel = draft.avatarDataUrl
+    ? `${accountId} 本地展示头像`
+    : previewAvatarDataUrl ? `${accountId} QQ 头像` : 'QQ 默认头像占位';
 
   useEffect(() => {
     if (profiles[accountId]) return;
@@ -394,6 +408,7 @@ function AccountDisplayEditor({ accountId }: { accountId: string }) {
         return next;
       });
       setFeedback({ accountId: targetAccount, text: '本地主页展示资料已保存。' });
+      void onSaved?.();
     } catch (error) {
       setFeedback({ accountId: targetAccount, text: errorMessage(error), error: true });
     } finally {
@@ -427,8 +442,8 @@ function AccountDisplayEditor({ accountId }: { accountId: string }) {
   return (
     <Card title={`账号展示资料 · QQ ${accountId}`} subtitle="仅用于 nowadays 主页展示，不读取或修改 QQ 个人资料。昵称、签名和本地头像都按账号保存。">
       <div className="display-profile-editor">
-        <span className="account-avatar large" role="img" aria-label={draft.avatarDataUrl ? `${accountId} 本地展示头像` : 'QQ 默认头像占位'}>
-          {draft.avatarDataUrl ? <img src={draft.avatarDataUrl} alt="" /> : <span className="avatar-fallback"><Icon name="user" size={42} /></span>}
+        <span className="account-avatar large" role="img" aria-label={previewAvatarLabel}>
+          {previewAvatarDataUrl ? <img src={previewAvatarDataUrl} alt="" /> : <span className="avatar-fallback"><Icon name="user" size={42} /></span>}
         </span>
         <div className="display-profile-fields">
           <div className="form-grid">
@@ -441,6 +456,7 @@ function AccountDisplayEditor({ accountId }: { accountId: string }) {
             {draft.avatarDataUrl ? <Button size="sm" variant="ghost" onClick={resetAvatar}>恢复默认头像</Button> : null}
             <ConfirmButton size="sm" variant="primary" busy={busyFor === accountId} disabled={!dirty || busyFor === accountId} onClick={() => void save()}>保存展示资料</ConfirmButton>
           </div>
+          {!draft.avatarDataUrl && fallbackAvatarDataUrl ? <span className="field-hint">未设置本地头像时显示 QQ 公开头像；选择本地头像后优先使用本地图片。</span> : null}
           {feedback?.accountId === accountId ? <div className={feedback.error ? 'inline-error' : 'muted'}>{feedback.text}</div> : null}
         </div>
       </div>
