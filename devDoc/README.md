@@ -1,5 +1,7 @@
 # 开发文档导航
 
+后端改造执行依据：[26 目标架构与调整方案](26-backend-target-architecture.md)、[27 任务包与验收标准](27-backend-refactoring-work-packages.md)。建议先派发B00～B04，再进行业务服务提取；核验依据见[25 收口核验](25-backend-consolidation-review-and-plan.md)。这些是待实施方案，不代表已完成重构。
+
 前端基础控件已统一为共享组件库，见[21 前端控件统一与验收](21-unified-frontend-components.md)。后续页面应使用公共入口及组件样式，不重复实现输入、搜索、按钮和确认弹窗。
 
 当前SnowLuma接入方式见[20 官方手动部署与引导式接入](20-guided-external-snowluma.md)：用户自行下载、初始化并启动，应用仅连接已有服务；覆盖17号文档中的桌面管理服务自启动行为。
@@ -44,3 +46,5 @@
 目录与版本管理见 [23 仓库规范](23-repository-layout-and-version-control.md)：测试源码保留，验收截图归入本地 test-results，release 与构建产物不纳入 Git。
 
 账号卡片识别见 [24 QQ账号与昵称展示](24-qq-account-identity-display.md)：注入前探测、连接后身份核验、PID诊断折叠和未知账号回退。
+
+后端收口核验与后续分工见 [25 后端架构治理计划](25-backend-consolidation-review-and-plan.md)：本轮原子写入/恢复资格收口核验、两项既存并发问题及分阶段改造验收。
