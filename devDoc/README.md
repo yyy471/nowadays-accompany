@@ -1,6 +1,8 @@
 # 开发文档导航
 
-后端改造执行依据：[26 目标架构与调整方案](26-backend-target-architecture.md)、[27 任务包与验收标准](27-backend-refactoring-work-packages.md)。建议先派发B00～B04，再进行业务服务提取；核验依据见[25 收口核验](25-backend-consolidation-review-and-plan.md)。这些是待实施方案，不代表已完成重构。
+后端改造执行依据：[26 目标架构与调整方案](26-backend-target-architecture.md)、[27 任务包与验收标准](27-backend-refactoring-work-packages.md)；核验依据见[25 收口核验](25-backend-consolidation-review-and-plan.md)。B01～B11 已按顺序实现，执行记录与验证证据见[30 后端改造执行报告](30-backend-refactoring-execution-report.md)；独立复核与返修结果见31号记录，真实环境验收未包含在内。
+
+当前前端的逐页用户操作体验分析见[32 前端用户操作体验分析](32-frontend-ux-review.md)：包含页面评级、首次使用路径、横向文案／状态／布局问题与优先级建议；仅分析，未修改代码。后端重构的独立复核记录见[31 后端重构独立复核](31-backend-refactoring-independent-review.md)。
 
 前端基础控件已统一为共享组件库，见[21 前端控件统一与验收](21-unified-frontend-components.md)。后续页面应使用公共入口及组件样式，不重复实现输入、搜索、按钮和确认弹窗。
 
@@ -49,4 +51,6 @@
 
 后端收口核验与后续分工见 [25 后端架构治理计划](25-backend-consolidation-review-and-plan.md)：本轮原子写入/恢复资格收口核验、两项既存并发问题及分阶段改造验收。
 
-B00 基线记录见 [28 基线行为契约](28-baseline-behavior-contract.md)：治理起点提交、不可改变的产品行为、基线核验结果与已知问题。
+B00 基线记录见 [28 基线行为契约](28-baseline-behavior-contract.md)：治理起点提交、不可改变的产品行为、基线核验结果与已知问题。各 Store 的提交/失败语义见 [29 Store 提交失败审计](29-store-commit-failure-audit.md)。B01～B11 的落点、关键不变量、验证结果与未验证边界见 [30 后端改造执行报告](30-backend-refactoring-execution-report.md)。
+
+重构独立复核见 [31 后端重构独立复核](31-backend-refactoring-independent-review.md)：保留原始复核问题与确定性复现，记录R1～R5返修、340项回归及6组独立验收通过的结果。

@@ -17,7 +17,11 @@ import type {
   ProviderMedia
 } from '../contract.js';
 import { ProviderError, sanitizeErrorText } from '../errors.js';
+import { HttpBodyError, readResponseBytes, readResponseText } from '../../platform/http/bounded-body.js';
 import type { CancelMode } from '../types.js';
+
+const MAX_JSON_BYTES = 16 * 1024 * 1024;
+const MAX_AUDIO_BYTES = 64 * 1024 * 1024;
 
 interface OpenAiPayload {
   choices?: Array<{
@@ -218,11 +222,26 @@ export class OpenAiCompatibleAdapter implements ProviderAdapter {
         cause: error
       });
     }
-    if (!response.ok) throw httpError(context, 'audio.generate', response, await response.text().catch(() => ''));
+    if (!response.ok) {
+      const text = await readResponseText(response, { maxBytes: MAX_JSON_BYTES, signal: context.signal, label: 'audio error response' })
+        .catch(() => '');
+      throw httpError(context, 'audio.generate', response, text);
+    }
     let data: Buffer;
     try {
-      data = Buffer.from(await response.arrayBuffer());
+      data = await readResponseBytes(response, {
+        maxBytes: MAX_AUDIO_BYTES,
+        signal: context.signal,
+        label: 'audio response'
+      });
     } catch (error) {
+      if (error instanceof HttpBodyError && error.code === 'http_body_too_large') {
+        throw new ProviderError('provider_protocol', `audio response exceeded ${MAX_AUDIO_BYTES} bytes`, {
+          providerId: context.provider.id,
+          capability: 'audio.generate',
+          retryable: false
+        });
+      }
       throw new ProviderError('provider_generate_unknown', 'audio response was interrupted; remote result is unknown', {
         providerId: context.provider.id,
         capability: 'audio.generate',
@@ -275,7 +294,13 @@ export class OpenAiCompatibleAdapter implements ProviderAdapter {
         cause: error
       });
     }
-    const text = await response.text().catch(() => '');
+    let text: string;
+    try {
+      text = await readResponseText(response, { maxBytes: MAX_JSON_BYTES, signal: context.signal, label: 'provider response' });
+    } catch (error) {
+      if (!response.ok) throw httpError(context, capability, response, '');
+      throw bodyError(context, capability, error);
+    }
     if (!response.ok) throw httpError(context, capability, response, text);
     let payload: OpenAiPayload;
     try {
@@ -359,6 +384,46 @@ function protocolError(context: ProviderCallContext, capability: CapabilityId, m
     capability,
     retryable: false
   });
+}
+
+function bodyError(context: ProviderCallContext, capability: CapabilityId, error: unknown): ProviderError {
+  const body = error instanceof HttpBodyError ? error : undefined;
+  if (body?.code === 'http_body_too_large') {
+    return new ProviderError('provider_protocol', `${capability} response exceeded ${body.limit ?? 'the'} byte limit`, {
+      providerId: context.provider.id,
+      capability,
+      retryable: false,
+      cause: error
+    });
+  }
+  const unknown = capability === 'image.generate' || capability === 'audio.generate';
+  const interrupted = body?.code === 'http_body_aborted'
+    || body?.code === 'http_body_timeout'
+    || body?.code === 'http_body_failed';
+  if (interrupted) {
+    return new ProviderError(
+      unknown ? 'provider_generate_unknown' : 'provider_timeout',
+      unknown
+        ? `${capability === 'audio.generate' ? 'audio' : 'image'} response was interrupted; remote result is unknown`
+        : 'provider request timed out or was aborted while reading the response',
+      {
+        providerId: context.provider.id,
+        capability,
+        retryable: !unknown,
+        cause: error
+      }
+    );
+  }
+  return new ProviderError(
+    'provider_transport',
+    `provider response read failed: ${sanitizeErrorText(body?.message ?? String(error))}`,
+    {
+      providerId: context.provider.id,
+      capability,
+      retryable: !unknown,
+      cause: error
+    }
+  );
 }
 
 function httpError(

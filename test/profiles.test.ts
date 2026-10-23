@@ -152,13 +152,15 @@ describe('account profiles and plugin hosts', () => {
       profileState: 'ready'
     });
     expect(bucket.get('main')?.sent).toHaveLength(0);
-    await expect(fs.access(path.join(root, 'accounts', '10001'))).resolves.toBeUndefined();
+    // 查询/启动不会为未知账号偷偷创建目录；保存资料时才创建。
+    await expect(fs.access(path.join(root, 'accounts', '10001'))).rejects.toThrow();
 
     const saved = await core.saveAccountProfile('10001', {
       version: 1,
       plugins: []
     });
     expect(saved.reload).toEqual({ ok: true });
+    await expect(fs.access(path.join(root, 'accounts', '10001'))).resolves.toBeUndefined();
     await waitFor(() => core.status().instances[0]?.state === 'online');
     expect(core.status().instances[0]).toMatchObject({ state: 'online', profileState: 'ready' });
 

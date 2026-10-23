@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Logger } from '../core/logger.js';
 import { writeFileAtomic } from '../storage/atomic-write.js';
-import { JobError } from '../providers/errors.js';
+import { JobError } from './errors.js';
 import type { MediaJob } from './types.js';
 
 interface JobIndex {

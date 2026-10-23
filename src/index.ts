@@ -141,4 +141,6 @@ export type { CapabilityId } from './policy/capabilities.js';
 export { CAPABILITY_LABELS } from './policy/capabilities.js';
 
 export { createApiServer } from './service/server.js';
-export type { AccountSummary, ApiHandle, ApiServerOptions, CoreView } from './service/server.js';
+export type { AccountSummary } from './contracts/accounts.js';
+export type { CoreView } from './application/ports/control-api.js';
+export type { ApiHandle, ApiServerOptions } from './service/server.js';

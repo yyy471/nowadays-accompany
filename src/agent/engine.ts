@@ -14,7 +14,8 @@ import type {
   ExecutedResult,
   ProviderRouter
 } from '../providers/router.js';
-import { CapabilityUnavailableError, ProviderError, sanitizeErrorText } from '../providers/errors.js';
+import { CapabilityUnavailableError, ProviderError } from '../providers/errors.js';
+import { sanitizeErrorText } from '../platform/security/redaction.js';
 import type { AudioGenerationRequest, ChatRequest, ChatToolCall, ChatToolDefinition, ProviderMedia, VideoObservation } from '../providers/contract.js';
 import type { MediaJob, JobExecution } from '../jobs/types.js';
 import type { MediaJobService } from '../jobs/service.js';

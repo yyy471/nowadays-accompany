@@ -45,7 +45,6 @@ export class AccountProfileService {
   }
 
   async resolve(accountDir: string, accountId: string): Promise<ResolvedProfile> {
-    await fs.mkdir(accountDir, { recursive: true, mode: 0o700 });
     const profile = (await this.load(accountDir)) ?? { version: 1 as const, plugins: [] };
 
     const plugins: ResolvedPlugin[] = [];

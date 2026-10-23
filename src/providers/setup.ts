@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { isCapabilityId, type CapabilityId } from '../policy/capabilities.js';
+import { HttpBodyError, readResponseText } from '../platform/http/bounded-body.js';
 import { ConfigError, ProviderError } from './errors.js';
 import { parseProvider, type ProviderConfig, type ProviderLocation } from './types.js';
 
@@ -60,26 +61,26 @@ export function buildSimpleProvider(input: SimpleModelSetup, existing?: Provider
 }
 
 export async function discoverProviderModels(provider: ProviderConfig, credential?: string): Promise<string[]> {
+  const signal = AbortSignal.timeout(10_000);
   let response: Response;
   try {
-    response = await fetch(`${provider.baseUrl}/models`, { headers: credential ? { authorization: `Bearer ${credential}` } : {}, redirect: 'error', signal: AbortSignal.timeout(10_000) });
+    response = await fetch(`${provider.baseUrl}/models`, { headers: credential ? { authorization: `Bearer ${credential}` } : {}, redirect: 'error', signal });
   } catch { throw new ProviderError('provider_discovery_failed', '无法获取模型列表，请检查地址、网络或手动输入模型名称。', { providerId: provider.id, retryable: true }); }
   if (!response.ok) {
     await response.body?.cancel();
     throw new ProviderError('provider_discovery_failed', response.status === 401 || response.status === 403 ? `API Key 验证失败（HTTP ${response.status}）` : `模型列表不可用（HTTP ${response.status}），可手动输入模型名称。`, { providerId: provider.id, retryable: false, httpStatus: response.status });
   }
-  const reader = response.body?.getReader();
-  const chunks: Uint8Array[] = [];
-  let bytes = 0;
-  if (reader) while (true) {
-    const item = await reader.read();
-    if (item.done) break;
-    bytes += item.value.byteLength;
-    if (bytes > 1024 * 1024) { await reader.cancel(); throw new ConfigError('模型列表响应过大，请手动输入模型名称'); }
-    chunks.push(item.value);
+  let text: string;
+  try {
+    text = await readResponseText(response, { maxBytes: 1024 * 1024, signal, label: 'model list response' });
+  } catch (error) {
+    if (error instanceof HttpBodyError && error.code === 'http_body_too_large') {
+      throw new ConfigError('模型列表响应过大，请手动输入模型名称');
+    }
+    throw new ProviderError('provider_discovery_failed', '无法读取模型列表，请检查地址、网络或手动输入模型名称。', { providerId: provider.id, retryable: true, cause: error });
   }
   let raw: unknown;
-  try { raw = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new ConfigError('服务未返回有效模型列表，可手动输入模型名称'); }
+  try { raw = JSON.parse(text); } catch { throw new ConfigError('服务未返回有效模型列表，可手动输入模型名称'); }
   const payload = raw as { data?: unknown; models?: unknown } | null;
   const list = payload?.data ?? payload?.models;
   if (!Array.isArray(list)) throw new ConfigError('服务不支持模型列表，可手动输入模型名称');

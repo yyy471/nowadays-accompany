@@ -9,7 +9,10 @@ import type {
 } from '../contract.js';
 import { abortReason } from '../contract.js';
 import { ProviderError, sanitizeErrorText } from '../errors.js';
+import { HttpBodyError, readResponseText } from '../../platform/http/bounded-body.js';
 import type { CancelMode } from '../types.js';
+
+const MAX_JSON_BYTES = 8 * 1024 * 1024;
 
 interface VideoPayload {
   id?: string;
@@ -197,8 +200,8 @@ export class VideoPollingAdapter implements ProviderAdapter {
         cause: error
       });
     }
-    const text = await response.text().catch(() => '');
     if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
       if (response.status === 401 || response.status === 403) {
         throw new ProviderError('provider_auth', `video service authentication failed (HTTP ${response.status})`, {
           providerId: context.provider.id,
@@ -221,6 +224,35 @@ export class VideoPollingAdapter implements ProviderAdapter {
         retryable: false,
         httpStatus: response.status
       });
+    }
+    let text: string;
+    try {
+      text = await readResponseText(response, {
+        maxBytes: MAX_JSON_BYTES,
+        signal: context.signal,
+        label: 'video service response'
+      });
+    } catch (error) {
+      if (error instanceof HttpBodyError && error.code === 'http_body_too_large') {
+        throw new ProviderError('provider_protocol', `video service response exceeded ${MAX_JSON_BYTES} bytes`, {
+          providerId: context.provider.id,
+          capability: 'video.understand',
+          retryable: false,
+          cause: error
+        });
+      }
+      throw new ProviderError(
+        phase === 'submit' ? 'provider_submit_unknown' : 'provider_job_unknown',
+        phase === 'submit'
+          ? 'video submission response was interrupted; remote state is unknown'
+          : 'video polling response was interrupted; remote state is unknown',
+        {
+          providerId: context.provider.id,
+          capability: 'video.understand',
+          retryable: false,
+          cause: error
+        }
+      );
     }
     try {
       return JSON.parse(text) as VideoPayload;

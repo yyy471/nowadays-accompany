@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { InvalidSpecError } from '../core/errors.js';
+import { KeyedSerialExecutor } from '../platform/async/keyed-serial-executor.js';
 import { writeJsonAtomic } from '../storage/atomic-write.js';
 
 export interface AccountDisplayProfile {
@@ -10,6 +11,24 @@ export interface AccountDisplayProfile {
 }
 
 const MAX_AVATAR_BYTES = 512 * 1024;
+
+/** 同一账号的展示资料读改写共用一个串行域；不同账号互不阻塞。 */
+export class AccountDisplayStore {
+  readonly #serial = new KeyedSerialExecutor({ maxPendingPerKey: 32 });
+
+  load(accountDir: string): Promise<AccountDisplayProfile> {
+    return loadAccountDisplay(accountDir);
+  }
+
+  save(accountDir: string, raw: unknown): Promise<AccountDisplayProfile> {
+    const key = path.resolve(accountDir);
+    return this.#serial.run(key, () => saveAccountDisplay(accountDir, raw));
+  }
+
+  close(): Promise<void> {
+    return this.#serial.close();
+  }
+}
 
 export async function loadAccountDisplay(accountDir: string): Promise<AccountDisplayProfile> {
   const filename = path.join(accountDir, 'display.json');
@@ -34,7 +53,7 @@ export async function loadAccountDisplay(accountDir: string): Promise<AccountDis
   };
 }
 
-export async function saveAccountDisplay(
+async function saveAccountDisplay(
   accountDir: string,
   raw: unknown
 ): Promise<AccountDisplayProfile> {

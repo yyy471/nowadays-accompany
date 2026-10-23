@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Logger } from '../core/logger.js';
 import { writeFileAtomic } from '../storage/atomic-write.js';
-import { MediaError } from '../providers/errors.js';
+import { MediaError } from './errors.js';
 import type { IngestInput, MediaCleanupResult, MediaData, MediaRef } from './types.js';
 
 interface MediaIndex {

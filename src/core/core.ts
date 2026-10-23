@@ -1,41 +1,38 @@
 import crypto from 'node:crypto';
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import { TypedEventBus } from './bus.js';
 import type { CoreEvents } from './events.js';
-import { AccompanyError, InvalidSpecError, IsolationError } from './errors.js';
-import { createLogger, type Logger, type LogLevel } from './logger.js';
+import { AccompanyError } from './errors.js';
+import { createLogger, type Logger } from './logger.js';
 import { AuditLog } from './audit.js';
 import { DataRootLock } from './data-root-lock.js';
 import { EventLog } from './event-log.js';
 import { withTimeout } from './concurrency.js';
-import { normalizeLimits, type Limits } from './limits.js';
+import type { Limits } from './limits.js';
 import { Metrics } from './metrics.js';
 import { LayeredConfig } from '../config/layered.js';
-import type { ChannelFactory, OutboundChannel } from '../channels/contract.js';
+import type { OutboundChannel } from '../channels/contract.js';
 import { OneBotChannel } from '../channels/onebot/client.js';
 import { FakeChannel } from '../channels/fake.js';
-import { FakeInjectionBackend, type FakeBackendOptions } from '../injection/fake.js';
-import { SnowLumaBackend } from '../injection/snowluma/backend.js';
-import type { BackendFactory, InjectionBackend, RuntimeEndpoints } from '../injection/contract.js';
+import type { RuntimeEndpoints } from '../injection/contract.js';
 import { QqInstance, type ChannelHandlers, type InstanceChannelFactory, type SendOptions, type SendResult } from '../instances/instance.js';
 import { InstanceSupervisor } from '../instances/supervisor.js';
 import type { InstanceSpec, InstanceStatus, NormalizedInstanceSpec } from '../instances/spec.js';
 import { AccountLeases } from '../instances/account-leases.js';
 import { RuntimeRegistry, type RuntimeLease } from '../instances/runtime-registry.js';
-import { assertIdentifier, conversationKey, safePathSegment, type ChatKind, type ConversationRef } from '../routing/identity.js';
+import { assertIdentifier, conversationKey, type ChatKind, type ConversationRef } from '../routing/identity.js';
 import type { OutboundMessage } from '../routing/message.js';
 import { JsonlStore } from '../storage/jsonl-store.js';
 import type { MessageStore, ReadOptions, StoredMessage } from '../storage/contract.js';
 import { DesiredStateStore } from '../storage/desired-state.js';
 import { ListeningStore } from '../storage/listening-store.js';
 import { SlotStore } from '../storage/slot-store.js';
-import { createApiServer, type ApiHandle, type AccountSummary, type CoreView } from '../service/server.js';
-import type { AgentHost, AgentHostFactory, AgentHostFactoryInput } from '../host/contract.js';
+import { createApiServer, type ApiHandle } from '../service/server.js';
+import type { CoreView } from '../application/ports/control-api.js';
+import type { AccountSummary } from '../contracts/accounts.js';
+import type { AgentHost, AgentHostFactoryInput } from '../host/contract.js';
 import { InjectionSettingsStore, type InjectionSettings } from '../injection/settings.js';
-import { ManualInjectionService } from '../injection/manual.js';
-import { QqAvatarCache } from '../injection/qq-avatar.js';
-import { SnowLumaRuntimeController, type SnowLumaRuntimeControllerOptions } from '../injection/snowluma/runtime.js';
+import { SnowLumaRuntimeController } from '../injection/snowluma/runtime.js';
 import {
   SNOWLUMA_MANAGEMENT_CREDENTIAL_REF,
   SnowLumaManager,
@@ -45,118 +42,47 @@ import {
 import { PluginStateStore } from '../host/state.js';
 import { createWorkerHost } from '../host/worker.js';
 import { LocalArtifactStore } from '../artifacts/local.js';
-import { RollingDeployer, type DeploymentRecord } from '../artifacts/deploy.js';
+import type { DeploymentRecord } from '../artifacts/deploy.js';
 import { AccountProfileService } from '../profiles/profile.js';
-import { ConversationRoleBindingStore, type ConversationRoleBinding, type ResolvedConversationRoleBinding } from '../profiles/role-bindings.js';
-import { loadAccountDisplay, saveAccountDisplay, type AccountDisplayProfile } from '../profiles/display.js';
+import { type ConversationRoleBinding, type ResolvedConversationRoleBinding } from '../profiles/role-bindings.js';
+import { AccountDisplayStore, type AccountDisplayProfile } from '../profiles/display.js';
+import { AccountDirectory } from '../profiles/account-directory.js';
+import { AccountService } from '../application/accounts/account-service.js';
+import { QqConnectionService } from '../application/qq-connections/qq-connection-service.js';
+import { ModelSettingsService } from '../application/model-settings/model-settings-service.js';
+import { DeploymentService } from '../application/deployments/deployment-service.js';
+import { RuntimeLifecycle } from '../application/lifecycle/runtime-lifecycle.js';
+import { assembleRuntime, type RuntimeAssembly, type RuntimeHooks } from '../bootstrap/assemble-runtime.js';
 import { ConfigStore } from '../providers/config-store.js';
-import { buildSimpleProvider, discoverProviderModels, parseModelSetup } from '../providers/setup.js';
-import { sanitizeErrorText } from '../providers/errors.js';
 import {
-  accountPolicyFor,
-  defaultAccountPolicy,
-  parseProvider,
-  redactProvider,
   type AccountPolicy,
-  type ProviderConfig,
-  type ProviderDto,
-  type RuntimeConfigV2
+  type ProviderDto
 } from '../providers/types.js';
-import { PolicyService, patchAgentEnabled, patchCapability } from '../policy/policy.js';
-import { ExtensionRegistry, SkillRuntime } from '../extensions/registry.js';
+import { PolicyService } from '../policy/policy.js';
+import { ExtensionRegistry } from '../extensions/registry.js';
 import { ProviderRouter, type EffectiveCapabilitiesDto } from '../providers/router.js';
-import type { ProviderAdapter, ProviderTestResult } from '../providers/contract.js';
+import type { ProviderTestResult } from '../providers/contract.js';
 import type { CapabilityId } from '../policy/capabilities.js';
-import { OpenAiCompatibleAdapter } from '../providers/adapters/openai.js';
-import { VideoPollingAdapter } from '../providers/adapters/video.js';
-import { FakeProviderAdapter } from '../providers/adapters/fake.js';
 import { MediaService } from '../media/service.js';
 import type { MediaData } from '../media/types.js';
 import { MediaJobService } from '../jobs/service.js';
-import type { JobDto, MediaJob } from '../jobs/types.js';
+import type { JobDto } from '../jobs/types.js';
 import type { MediaRef } from '../media/types.js';
 import { TurnScheduler } from '../agent/scheduler.js';
 import { createAgentEngine } from '../agent/engine.js';
-import { registerBuiltInAgentTools } from '../agent/engine.js';
 import {
   CredentialVaultUnavailableError,
-  UnavailableCredentialVault,
-  defaultCredentialRef,
   type CredentialVault
 } from '../secrets/vault.js';
 import {
-  artifactRefKey,
-  summarizeProfile,
   type AccountProfileFile,
   type ArtifactKind,
   type ResolvedArtifact,
   type ResolvedProfile
 } from '../artifacts/types.js';
+import type { CoreOptions } from './options.js';
 
-export interface CoreApiOptions {
-  enabled?: boolean;
-  host?: string;
-  port?: number;
-  token?: string;
-  maxBodyBytes?: number;
-  /** 桌面端构建产物目录；设置后由控制面同源托管 UI，静态资源不需要 token。 */
-  uiDir?: string;
-}
-
-export interface CoreOptions {
-  dataRoot: string;
-  instances: InstanceSpec[];
-  backendFactory?: BackendFactory;
-  channelFactory?: ChannelFactory;
-  /** dataDir 已解析为账号目录（<base>/accounts/<qq>），返回的 store 只服务该账号。 */
-  storeFactory?: (spec: NormalizedInstanceSpec, dataDir: string) => MessageStore;
-  api?: CoreApiOptions;
-  logger?: Logger;
-  logLevel?: LogLevel;
-  maxRecordsPerConversation?: number;
-  segmentRecords?: number;
-  limits?: Partial<Limits>;
-  /** 旧入口：同一个宿主对象服务所有账号；新部署优先用 hostFactory。 */
-  host?: AgentHost;
-  /** 按账号创建宿主；不提供时，有插件的账号使用内置 worker 宿主。 */
-  hostFactory?: AgentHostFactory;
-  profiles?: {
-    /** 公用制品根，默认 <dataRoot>/public。 */
-    publicRoot?: string;
-  };
-  /** 把槽位规格持久化到 <dataRoot>/slots.json；桌面端开启，CLI 默认关闭。 */
-  persistSlots?: boolean;
-  /** 覆盖槽位规格文件路径。 */
-  slotsFile?: string;
-  /** SnowLuma 手动注入设置；默认 <dataRoot>/injection.json。 */
-  injectionSettingsFile?: string;
-  /** 桌面端默认只恢复展示，不自动注入/监听。 */
-  manualStartOnly?: boolean;
-  /** 测试注入用的管理请求实现。 */
-  snowLumaFetchImpl?: typeof fetch;
-  /** 测试注入用的 QQ 公开头像请求实现。 */
-  avatarFetchImpl?: typeof fetch;
-  /** Start only the management service; QQ injection/listening still requires a click. */
-  autoStartSnowLuma?: boolean;
-  snowLumaRuntimeOptions?: Partial<Omit<SnowLumaRuntimeControllerOptions, 'manager' | 'logger'>>;
-  injectionPollIntervalMs?: number;
-  /** backend=fake 时自动接 FakeChannel，便于桌面端演示与本地联调。 */
-  autoFakeChannel?: boolean;
-  lockDataRoot?: boolean;
-  /** 系统保护的凭据库；不提供时拒绝保存 Key，不静默写明文。 */
-  credentialVault?: CredentialVault;
-  /** 额外或覆盖内置适配器；同一 id 后注册者优先。 */
-  providerAdapters?: ProviderAdapter[];
-  /** schemaVersion=2 的模型/策略配置；默认 <dataRoot>/config.v2.json。 */
-  modelConfigFile?: string;
-  agent?: {
-    maxHistoryMessages?: number;
-    maxHistoryChars?: number;
-    maxObservedMedia?: number;
-  };
-  now?: () => number;
-  recordId?: () => string;
-}
+export type { CoreApiOptions, CoreOptions } from './options.js';
 
 export interface CoreStatus {
   dataRoot: string;
@@ -209,287 +135,213 @@ export class Core implements CoreView {
   readonly #dataRoot: string;
   readonly #logger: Logger;
   readonly #options: CoreOptions;
+  readonly #lifecycle: RuntimeLifecycle;
   readonly #limits: Limits;
   readonly #stores = new Map<string, MessageStore>();
   readonly #pluginStates = new Map<string, PluginStateStore>();
   readonly #runtimeLeases = new Map<string, RuntimeLease>();
   readonly #runtimeRegistry: RuntimeRegistry;
-  readonly #accountLeases = new AccountLeases();
+  readonly #accountLeases: AccountLeases;
   readonly #artifacts: LocalArtifactStore;
   readonly #profiles: AccountProfileService;
-  readonly #roleBindings = new ConversationRoleBindingStore();
-  readonly #deployer: RollingDeployer;
-  readonly #deployments: DeploymentRecord[] = [];
-  #deployChain: Promise<void> = Promise.resolve();
-  #modelSetupChain: Promise<unknown> = Promise.resolve();
+  readonly #accountDisplays: AccountDisplayStore;
+  readonly #accountDirectory: AccountDirectory;
+  readonly #accountService: AccountService;
+  readonly #deploymentService: DeploymentService;
+  readonly #modelSettings: ModelSettingsService;
   readonly #desiredStore: DesiredStateStore;
   readonly #slotStore?: SlotStore;
   readonly #listening: ListeningStore;
   readonly #injectionSettings: InjectionSettingsStore;
   readonly snowLuma: SnowLumaManager;
-  readonly #manualInjection: ManualInjectionService;
+  readonly #connections: QqConnectionService;
   readonly #snowLumaRuntime: SnowLumaRuntimeController;
-  readonly #qqAvatars: QqAvatarCache;
-  readonly #dynamicSlots = new Set<string>();
-  readonly #processSlots = new Map<number, { slotId: string; accountId: string; missing: number; mappedEpoch: number }>();
-  #processMappingEpoch = 0;
-  #dynamicChain: Promise<unknown> = Promise.resolve();
-  #processScan: Promise<SnowLumaProcess[]> | undefined;
-  #injectionTimer: NodeJS.Timeout | undefined;
   readonly #dataRootLock?: DataRootLock;
   readonly #credentialVault: CredentialVault;
+  readonly #publicWork = new Set<Promise<unknown>>();
   #api: ApiHandle | undefined;
   #healthTimer: NodeJS.Timeout | undefined;
+  #startPromise: Promise<void> | undefined;
+  #stopPromise: Promise<void> | undefined;
   #started = false;
   #stopped = false;
 
-  private constructor(
-    options: CoreOptions,
-    config: LayeredConfig,
-    configV2: ConfigStore,
-    logger: Logger,
-    desiredStore: DesiredStateStore,
-    injectionSettings: InjectionSettingsStore,
-    listening: ListeningStore,
-    slotStore?: SlotStore,
-    dataRootLock?: DataRootLock
-  ) {
+  private constructor(options: CoreOptions, runtime: RuntimeAssembly) {
     this.#options = options;
     this.#dataRoot = path.resolve(options.dataRoot);
-    this.#logger = logger;
-    this.#limits = normalizeLimits(options.limits);
-    this.#desiredStore = desiredStore;
-    this.#slotStore = slotStore;
-    this.#listening = listening;
-    this.#injectionSettings = injectionSettings;
-    this.#dataRootLock = dataRootLock;
-    this.config = config;
-    this.configV2 = configV2;
-    this.#artifacts = new LocalArtifactStore(
-      options.profiles?.publicRoot ? path.resolve(options.profiles.publicRoot) : path.join(this.#dataRoot, 'public'),
-      logger.child('artifacts')
-    );
-    this.#profiles = new AccountProfileService(this.#artifacts, logger.child('profiles'));
-    this.#deployer = new RollingDeployer({
-      listTargets: () => this.#deployTargets(),
-      logger: logger.child('deploy'),
-      ...(options.now ? { now: options.now } : {})
+    this.#logger = runtime.logger;
+    this.#limits = runtime.limits;
+    this.#desiredStore = runtime.desiredStore;
+    this.#slotStore = runtime.slotStore;
+    this.#listening = runtime.listening;
+    this.#injectionSettings = runtime.injectionSettings;
+    this.#dataRootLock = runtime.dataRootLock;
+    this.config = runtime.config;
+    this.configV2 = runtime.configV2;
+    this.#artifacts = runtime.artifacts;
+    this.#profiles = runtime.profiles;
+    this.#accountDisplays = runtime.accountDisplays;
+    this.#accountDirectory = runtime.accountDirectory;
+    this.#accountService = runtime.accountService;
+    this.#deploymentService = runtime.deploymentService;
+    this.#modelSettings = runtime.modelSettings;
+    this.#credentialVault = runtime.credentialVault;
+    this.snowLuma = runtime.snowLuma;
+    this.#snowLumaRuntime = runtime.snowLumaRuntime;
+    this.extensions = runtime.extensions;
+    this.policy = runtime.policy;
+    this.agentScheduler = runtime.agentScheduler;
+    this.media = runtime.media;
+    this.jobs = runtime.jobs;
+    this.providers = runtime.providers;
+    this.#runtimeRegistry = runtime.runtimeRegistry;
+    this.supervisor = runtime.supervisor;
+    this.#accountLeases = runtime.accountLeases;
+    this.#connections = runtime.connections;
+    this.metrics = runtime.metrics;
+    this.eventLog = runtime.eventLog;
+    this.auditLog = runtime.auditLog;
+    this.bus = runtime.bus;
+    this.#lifecycle = new RuntimeLifecycle({ logger: this.#logger.child('lifecycle') });
+    this.#registerLifecycle();
+  }
+
+  #registerLifecycle(): void {
+    const lifecycle = this.#lifecycle;
+    lifecycle.add('stop', 'model-settings', () => this.#modelSettings.drain());
+    lifecycle.add('stop', 'qq-connections', () => this.#connections.stop());
+    lifecycle.add('stop', 'health-monitor', () => {
+      if (this.#healthTimer) {
+        clearInterval(this.#healthTimer);
+        this.#healthTimer = undefined;
+      }
     });
-    this.metrics = new Metrics();
-    this.eventLog = new EventLog();
-    this.auditLog = new AuditLog();
-    this.bus = new TypedEventBus<CoreEvents>({
-      onHandlerError: (error, info) => {
-        this.#logger.error('event handler failed', {
-          type: info.type,
+    lifecycle.add('stop', 'api', async () => {
+      if (!this.#api) return;
+      await this.#api.close().catch((error: unknown) => {
+        this.#logger.warn('api close failed', {
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
+      this.#api = undefined;
+    });
+    lifecycle.add('stop', 'deployments', async () => {
+      try {
+        await withTimeout(
+          this.#deploymentService.drain(),
+          this.#limits.shutdownTimeoutMs,
+          `deployment drain timed out after ${this.#limits.shutdownTimeoutMs}ms`
+        );
+      } catch (error) {
+        this.#logger.warn('deployment did not finish before shutdown', {
           message: error instanceof Error ? error.message : String(error)
         });
       }
     });
-    this.bus.onAny((type, payload) => {
-      const at = payload && typeof payload === 'object' && typeof (payload as { at?: unknown }).at === 'number'
-        ? (payload as { at: number }).at
-        : Date.now();
-      this.eventLog.append(String(type), payload, at);
-    });
-
-    this.#credentialVault = options.credentialVault ?? new UnavailableCredentialVault();
-    this.snowLuma = new SnowLumaManager({
-      vault: this.#credentialVault,
-      logger: logger.child('snowluma'),
-      settings: injectionSettings.get(),
-      ...(options.snowLumaFetchImpl ? { fetchImpl: options.snowLumaFetchImpl } : {})
-    });
-    this.#snowLumaRuntime = new SnowLumaRuntimeController({
-      ...options.snowLumaRuntimeOptions, manager: this.snowLuma, logger: logger.child('snowluma-runtime')
-    });
-    this.#qqAvatars = new QqAvatarCache({
-      ...(options.avatarFetchImpl ? { fetchImpl: options.avatarFetchImpl } : {}),
-      logger: logger.child('qq-avatar')
-    });
-    this.extensions = new ExtensionRegistry();
-    registerBuiltInAgentTools(this.extensions);
-    this.policy = new PolicyService(configV2);
-    this.agentScheduler = new TurnScheduler({
-      maxGlobal: this.#limits.maxChatConcurrency,
-      maxPerAccount: this.#limits.maxAccountChatConcurrency,
-      maxPending: this.#limits.maxChatPending
-    });
-    this.media = new MediaService({
-      accountDir: (accountId) => this.#accountDirForAccount(accountId),
-      accountIds: () => this.#knownAccountIds(),
-      maxImageBytes: this.#limits.maxImageBytes,
-      maxVideoBytes: this.#limits.maxVideoBytes,
-      maxDownloadMs: this.#limits.mediaDownloadTimeoutMs,
-      retentionDays: () => Math.min(this.#limits.mediaRetentionDays, configV2.snapshot().media.retentionDays),
-      logger: logger.child('media'),
-      ...(options.now ? { now: options.now } : {})
-    });
-    this.jobs = new MediaJobService({
-      accountDir: (accountId) => path.join(this.#accountDirForAccount(accountId), 'jobs'),
-      accountIds: () => this.#knownAccountIds(),
-      maxConcurrentJobs: this.#limits.maxMediaConcurrentJobs,
-      maxAccountConcurrentJobs: this.#limits.maxAccountMediaConcurrentJobs,
-      maxPendingJobs: this.#limits.maxMediaJobPending,
-      maxPerAccountPending: this.#limits.maxPerAccountMediaJobPending,
-      timeoutMs: this.#limits.mediaJobTimeoutMs,
-      logger: logger.child('jobs'),
-      ...(options.now ? { now: options.now } : {}),
-      ...(options.recordId ? { recordId: options.recordId } : {}),
-      onUpdate: (job) => {
-        this.bus.emit('job:update', {
-          accountId: job.accountId,
-          jobId: job.id,
-          state: job.state,
-          capability: job.capability,
-          delivery: job.delivery,
-          at: this.#now()
+    lifecycle.add('drain', 'instances', async () => {
+      try {
+        await withTimeout(
+          this.supervisor.stopAll(),
+          this.#limits.shutdownTimeoutMs,
+          `shutdown timed out after ${this.#limits.shutdownTimeoutMs}ms`
+        );
+      } catch (error) {
+        this.#logger.warn('shutdown timeout; forcing resource release', {
+          message: error instanceof Error ? error.message : String(error)
         });
       }
     });
-    const skills = new SkillRuntime(() => this.configV2.snapshot().skills);
-    this.providers = new ProviderRouter({
-      config: configV2,
-      policy: this.policy,
-      skills,
-      extensions: this.extensions,
-      vault: this.#credentialVault,
-      adapters: [
-        new FakeProviderAdapter(),
-        new OpenAiCompatibleAdapter(),
-        new VideoPollingAdapter(),
-        ...(options.providerAdapters ?? [])
-      ],
-      logger: logger.child('providers'),
-      metrics: this.metrics,
-      ...(options.now ? { now: options.now } : {}),
-      onUsage: (usage) => {
-        this.bus.emit('provider:usage', {
-          accountId: usage.accountId,
-          capability: usage.capability,
-          providerId: usage.providerId,
-          modelId: usage.modelId,
-          ok: usage.ok,
-          durationMs: usage.durationMs,
-          ...(usage.code ? { code: usage.code } : {}),
-          at: this.#now()
-        });
+    lifecycle.add('dispose', 'host', async () => {
+      try {
+        await this.#options.host?.dispose?.();
+      } catch (error) {
+        this.#logger.warn('host dispose failed', { message: error instanceof Error ? error.message : String(error) });
       }
     });
-
-    let supervisor: InstanceSupervisor | undefined;
-    const backendFactory: BackendFactory =
-      options.backendFactory ??
-      ((spec, deps) => this.#defaultBackend(spec, deps, () => supervisor?.get(spec.id)));
-    this.#runtimeRegistry = new RuntimeRegistry({
-      backendFactory,
-      logger: logger.child('runtimes'),
-      ...(options.now ? { now: options.now } : {})
+    lifecycle.add('dispose', 'jobs', async () => {
+      try {
+        await this.jobs.dispose();
+      } catch (error) {
+        this.#logger.warn('media jobs dispose failed', { message: error instanceof Error ? error.message : String(error) });
+      }
     });
-    supervisor = new InstanceSupervisor({
-      bus: this.bus,
-      logger: logger.child('supervisor'),
-      createInstance: (spec) => this.#createInstance(spec),
-      limits: this.#limits,
-      metrics: this.metrics,
-      desiredStore,
-      runtimeRegistry: this.#runtimeRegistry,
-      ...(options.now ? { now: options.now } : {})
+    lifecycle.add('dispose', 'media-cleanup', async () => { await this.media.cleanup(); });
+    lifecycle.add('dispose', 'media', () => this.media.dispose());
+    lifecycle.add('dispose', 'config-v2', () => this.configV2.dispose());
+    lifecycle.add('dispose', 'injection-settings', () => this.#injectionSettings.dispose());
+    lifecycle.add('dispose', 'account-displays', () => this.#accountDisplays.close());
+    lifecycle.add('dispose', 'stores', async () => {
+      await Promise.allSettled([...this.#stores.values()].map((store) => store.dispose()));
+      await Promise.allSettled([...this.#pluginStates.values()].map((store) => store.dispose()));
     });
-    this.supervisor = supervisor;
-    this.#manualInjection = new ManualInjectionService({
-      manager: this.snowLuma,
-      logger: logger.child('manual-injection'),
-      host: {
-        slot: (id) => this.supervisor.get(id)?.spec,
-        resumeCandidates: () => {
-          const runtimeDir = this.#injectionSettings.get().runtimeDir;
-          if (!runtimeDir) return [];
-          const resolved = path.resolve(runtimeDir);
-          return this.supervisor.listSpecs().filter((spec) =>
-            spec.backend === 'snowluma' && spec.runtimeDir !== undefined && path.resolve(spec.runtimeDir) === resolved
-          );
-        },
-        instanceStatus: (id) => this.supervisor.get(id)?.status(),
-        accountOwner: (accountId) => this.#accountLeases.ownerOf(accountId),
-        startSlot: async (id) => {
-          await this.supervisor.start(id);
-        },
-        stopSlot: async (id) => {
-          await this.stopInstance(id);
-        },
-        rebindSlot: (id, accountId) => this.#rebindSlotAccount(id, accountId),
-        resolveSlotForAccount: (accountId, pid) => this.#ensureDynamicSlot(accountId, pid),
-        trackProcess: (pid, slotId, accountId) => { this.#trackProcess(pid, slotId, accountId); },
-        slotForProcess: (pid) => this.#processSlots.get(pid)?.slotId,
-        rememberListening: (slotId, accountId) => this.#rememberListening(slotId, accountId),
-        forgetListening: (slotId) => this.#forgetListening(slotId)
-      },
-      ...(options.now ? { now: options.now } : {})
+    lifecycle.add('dispose', 'supervisor', () => { this.supervisor.dispose(); });
+    lifecycle.add('dispose', 'runtime-leases', async () => {
+      await Promise.allSettled([...this.#runtimeLeases.values()].map((lease) => lease.release()));
+      this.#runtimeLeases.clear();
     });
+    lifecycle.add('dispose', 'runtime-registry', () => this.#runtimeRegistry.dispose());
+    lifecycle.add('dispose', 'snowluma-runtime', () => this.#snowLumaRuntime.stop());
+    lifecycle.add('dispose', 'dynamic-desired', async () => {
+      for (const id of this.#connections.dynamicSlotIds()) {
+        try {
+          await this.#desiredStore.delete(id);
+        } catch (error) {
+          this.#logger.warn('dynamic desired state cleanup failed', {
+            instanceId: id,
+            message: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+    });
+    lifecycle.add('dispose', 'desired-store', () => this.#desiredStore.dispose());
+    lifecycle.add('dispose', 'listening-store', () => this.#listening.dispose());
+    lifecycle.add('dispose', 'slot-store', async () => { await this.#slotStore?.dispose(); });
+    lifecycle.add('dispose', 'account-leases', () => { this.#accountLeases.clear(); });
+    lifecycle.add('dispose', 'observability', () => {
+      this.bus.clear();
+      this.eventLog.clear();
+      this.auditLog.clear();
+    });
+    lifecycle.add('dispose', 'data-root-lock', async () => { await this.#dataRootLock?.release(); });
   }
 
   static async create(options: CoreOptions): Promise<Core> {
-    const dataRoot = path.resolve(options.dataRoot);
     const logger =
       options.logger ?? createLogger({ scope: 'nowadays', level: options.logLevel ?? 'info' });
-    let lock: DataRootLock | undefined;
+    let core: Core | undefined;
+    const hooks: RuntimeHooks = {
+      createInstance: (spec) => {
+        if (!core) throw new Error('runtime is not assembled');
+        return core.#createInstance(spec);
+      },
+      deployTargets: () => (core ? core.#deployTargets() : []),
+      reloadAgents: (accountId) => (core ? core.#reloadAgents(accountId) : Promise.resolve()),
+      cancelRevokedJobs: (accountId) => (core ? core.#cancelRevokedJobs(accountId) : Promise.resolve()),
+      releaseRuntime: (id) => (core ? core.#releaseRuntimeLease(id) : Promise.resolve()),
+      isStopped: () => (core ? core.#stopped : false)
+    };
+    let runtime: RuntimeAssembly | undefined;
     try {
-      if (options.lockDataRoot !== false) {
-        lock = await DataRootLock.acquire(dataRoot, logger.child('lock'));
-      }
-      const config = await LayeredConfig.load(path.join(dataRoot, 'config.json'), logger.child('config'));
-      const configV2 = await ConfigStore.load({
-        filePath: options.modelConfigFile
-          ? path.resolve(options.modelConfigFile)
-          : path.join(dataRoot, 'config.v2.json'),
-        legacyFile: path.join(dataRoot, 'config.json'),
-        logger: logger.child('providers')
-      });
-      const desiredStore = await DesiredStateStore.load(
-        path.join(dataRoot, 'state', 'desired.json'),
-        logger.child('desired')
-      );
-      const slotStore = options.persistSlots
-        ? await SlotStore.load(
-            options.slotsFile ? path.resolve(options.slotsFile) : path.join(dataRoot, 'slots.json'),
-            logger.child('slots')
-          )
-        : undefined;
-      const injectionSettings = await InjectionSettingsStore.load({
-        filePath: options.injectionSettingsFile
-          ? path.resolve(options.injectionSettingsFile)
-          : path.join(dataRoot, 'injection.json'),
-        logger: logger.child('injection')
-      });
-      const listening = await ListeningStore.load(
-        path.join(dataRoot, 'state', 'listening.json'),
-        logger.child('listening')
-      );
-      const initial = slotStore?.loaded ? slotStore.list() : options.instances;
-      const core = new Core(options, config, configV2, logger, desiredStore, injectionSettings, listening, slotStore, lock);
-      try {
-        for (const spec of initial) core.supervisor.add(spec);
-        if (slotStore && !slotStore.loaded) await slotStore.save(initial);
-        core.metrics.set('instances.total', core.supervisor.list().length);
-      } catch (error) {
-        await core.stop();
-        throw error;
-      }
+      runtime = await assembleRuntime({ options, logger, hooks });
+      core = new Core(options, runtime);
+      for (const spec of runtime.initialSpecs) core.supervisor.add(spec);
+      if (runtime.slotStore && !runtime.slotStore.loaded) await runtime.slotStore.save(runtime.initialSpecs);
+      core.metrics.set('instances.total', core.supervisor.list().length);
       return core;
     } catch (error) {
-      await lock?.release();
+      if (core) await core.stop().catch(() => {});
+      else await runtime?.dispose().catch(() => {});
       throw error;
     }
   }
 
   async start(): Promise<void> {
-    if (this.#stopped) throw new Error('core has been stopped');
-    if (this.#started) return;
+    if (this.#stopped) throw new AccompanyError('core_stopped', 'core has been stopped');
+    if (this.#started) return this.#startPromise;
     this.#started = true;
-    try {
+    const starting = (async () => {
       if (this.#options.manualStartOnly && this.#injectionSettings.get().resumeLastListen === true) {
-        await this.#restoreListeningSlots();
+        await this.#connections.restoreListeningSlots();
       }
       // 先起控制面：桌面端窗口要尽快拿到 UI，实例注入可以在后台继续。
       if (this.#options.api?.enabled) {
@@ -506,6 +358,7 @@ export class Core implements CoreView {
           auditLog: this.auditLog,
           logger: this.#logger.child('api')
         });
+        this.#assertNotStopped();
         this.#logger.info('api listening', { url: this.#api.url });
       }
       if (this.#options.manualStartOnly) {
@@ -517,109 +370,77 @@ export class Core implements CoreView {
           this.#logger.warn('some instances failed to start', { failed: result.failed });
         }
       }
+      this.#assertNotStopped();
       this.#startHealthMonitor();
       if (this.#options.autoStartSnowLuma) void this.#snowLumaRuntime.ensureStarted();
-      this.#injectionTimer = setInterval(() => {
-        if (this.#processSlots.size && !this.#stopped) void this.injectionProcesses().catch(() => {});
-      }, this.#options.injectionPollIntervalMs ?? 5000);
-      this.#injectionTimer.unref();
-    } catch (error) {
+      this.#connections.start();
+    })();
+    this.#startPromise = starting.catch(async (error: unknown) => {
+      this.#stopped = true;
       this.#started = false;
-      await this.stop();
+      await this.#drainPublicWork();
+      await this.#lifecycle.close();
       throw error;
+    });
+    return this.#startPromise;
+  }
+
+  stop(): Promise<void> {
+    if (this.#stopPromise) return this.#stopPromise;
+    this.#stopped = true;
+    this.#started = false;
+    const startPromise = this.#startPromise;
+    this.#stopPromise = (async () => {
+      await startPromise?.catch(() => {});
+      await this.#drainPublicWork();
+      await this.#lifecycle.close();
+    })();
+    return this.#stopPromise;
+  }
+
+  #assertNotStopped(): void {
+    if (this.#stopped) throw new AccompanyError('core_stopped', 'core has been stopped');
+  }
+
+  #runPublicWork<T>(operation: () => Promise<T> | T): Promise<T> {
+    if (this.#stopped) return Promise.reject(new AccompanyError('core_stopped', 'core has been stopped'));
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    let reject!: (reason?: unknown) => void;
+    const tracked = new Promise<T>((resolveWork, rejectWork) => {
+      resolve = resolveWork;
+      reject = rejectWork;
+    });
+    this.#publicWork.add(tracked);
+    try {
+      void Promise.resolve(operation()).then(resolve, reject);
+    } catch (error) {
+      reject(error);
+    }
+    void tracked.then(
+      () => this.#publicWork.delete(tracked),
+      () => this.#publicWork.delete(tracked)
+    );
+    return tracked;
+  }
+
+  async #drainPublicWork(): Promise<void> {
+    while (this.#publicWork.size > 0) {
+      await Promise.allSettled([...this.#publicWork]);
     }
   }
 
-  async stop(): Promise<void> {
-    if (this.#stopped) return;
-    this.#stopped = true;
-    this.#started = false;
-    await this.#modelSetupChain.catch(() => {});
-    if (this.#injectionTimer) clearInterval(this.#injectionTimer);
-    await this.#manualInjection.dispose();
-    await this.#processScan?.catch(() => {});
-    await this.#dynamicChain.catch(() => {});
-    if (this.#healthTimer) {
-      clearInterval(this.#healthTimer);
-      this.#healthTimer = undefined;
-    }
-    if (this.#api) {
-      await this.#api.close().catch((error: unknown) => {
-        this.#logger.warn('api close failed', { message: error instanceof Error ? error.message : String(error) });
-      });
-      this.#api = undefined;
-    }
-    try {
-      await withTimeout(
-        this.#deployChain,
-        this.#limits.shutdownTimeoutMs,
-        `deployment drain timed out after ${this.#limits.shutdownTimeoutMs}ms`
-      );
-    } catch (error) {
-      this.#logger.warn('deployment did not finish before shutdown', {
-        message: error instanceof Error ? error.message : String(error)
-      });
-    }
-    try {
-      await withTimeout(
-        this.supervisor.stopAll(),
-        this.#limits.shutdownTimeoutMs,
-        `shutdown timed out after ${this.#limits.shutdownTimeoutMs}ms`
-      );
-    } catch (error) {
-      this.#logger.warn('shutdown timeout; forcing resource release', {
-        message: error instanceof Error ? error.message : String(error)
-      });
-    }
-    try {
-      await this.#options.host?.dispose?.();
-    } catch (error) {
-      this.#logger.warn('host dispose failed', { message: error instanceof Error ? error.message : String(error) });
-    }
-    try {
-      await this.jobs.dispose();
-    } catch (error) {
-      this.#logger.warn('media jobs dispose failed', { message: error instanceof Error ? error.message : String(error) });
-    }
-    try {
-      await this.media.cleanup();
-      await this.media.dispose();
-      await this.configV2.dispose();
-    } catch (error) {
-      this.#logger.warn('media/config dispose failed', { message: error instanceof Error ? error.message : String(error) });
-    }
-    await this.#injectionSettings.dispose().catch(() => {});
-    await Promise.allSettled([...this.#stores.values()].map((store) => store.dispose()));
-    await Promise.allSettled([...this.#pluginStates.values()].map((store) => store.dispose()));
-    this.supervisor.dispose();
-    await Promise.allSettled([...this.#runtimeLeases.values()].map((lease) => lease.release()));
-    this.#runtimeLeases.clear();
-    await this.#runtimeRegistry.dispose();
-    await this.#snowLumaRuntime.stop();
-    for (const id of this.#dynamicSlots) await this.#desiredStore.delete(id);
-    await this.#desiredStore.dispose();
-    await this.#listening.dispose().catch(() => {});
-    await this.#slotStore?.dispose();
-    this.#accountLeases.clear();
-    this.bus.clear();
-    this.eventLog.clear();
-    this.auditLog.clear();
-    await this.#dataRootLock?.release();
+  async #releaseRuntimeLease(id: string): Promise<void> {
+    const lease = this.#runtimeLeases.get(id);
+    this.#runtimeLeases.delete(id);
+    await lease?.release();
   }
 
   async startInstance(id: string): Promise<void> {
-    await this.supervisor.start(id);
+    return this.#runPublicWork(() => this.supervisor.start(id));
   }
 
   async stopInstance(id: string): Promise<void> {
-    await this.#withDynamicLock(async () => {
-      if (this.#dynamicSlots.has(id)) await this.removeSlot(id);
-      else {
-        await this.supervisor.stop(id);
-        await this.#forgetListening(id);
-      }
-      for (const [pid, record] of this.#processSlots) if (record.slotId === id) this.#processSlots.delete(pid);
-    });
+    return this.#runPublicWork(() => this.#connections.stopInstance(id));
   }
 
   async send(
@@ -628,9 +449,11 @@ export class Core implements CoreView {
     message: OutboundMessage,
     options?: SendOptions
   ): Promise<SendResult> {
-    const instance = this.supervisor.get(instanceId);
-    if (!instance) throw new Error(`unknown instance: ${instanceId}`);
-    return instance.send(conversation, message, options);
+    return this.#runPublicWork(() => {
+      const instance = this.supervisor.get(instanceId);
+      if (!instance) throw new Error(`unknown instance: ${instanceId}`);
+      return instance.send(conversation, message, options);
+    });
   }
 
   status(): CoreStatus {
@@ -659,7 +482,7 @@ export class Core implements CoreView {
       audit: this.auditLog.recent(50),
       artifacts: {
         publicRoot: this.#artifacts.publicRoot,
-        deployments: [...this.#deployments]
+        deployments: this.#deploymentService.deployments()
       },
       phase1: {
         configFile: this.configV2.filePath,
@@ -696,171 +519,44 @@ export class Core implements CoreView {
     return this.supervisor.listSpecs();
   }
 
-  async listAccounts(options: { avatars?: boolean } = {}): Promise<AccountSummary[]> {
-    const entries = new Map<string, { accountId: string; dir: string; slots: Set<string> }>();
-    const add = (accountId: string, dir: string): { slots: Set<string> } => {
-      const existing = entries.get(accountId);
-      if (existing) {
-        existing.dir = dir;
-        return existing;
-      }
-      const entry = { accountId, dir, slots: new Set<string>() };
-      entries.set(accountId, entry);
-      return entry;
-    };
-    for (const status of this.supervisor.list()) {
-      const instance = this.supervisor.get(status.id);
-      if (!instance) continue;
-      for (const accountId of new Set(
-        [instance.accountId, instance.spec.accountId].filter((value): value is string => Boolean(value))
-      )) {
-        add(accountId, this.#accountDir(instance.spec, accountId)).slots.add(instance.id);
-      }
-    }
-    const accountsRoot = path.join(this.#dataRoot, 'accounts');
-    for (const name of await safeReaddir(accountsRoot)) {
-      if (name.startsWith('.')) continue;
-      const dir = path.join(accountsRoot, name);
-      try {
-        if (!(await fs.stat(dir)).isDirectory()) continue;
-      } catch {
-        continue;
-      }
-      add(name, dir);
-    }
-
-    const result: AccountSummary[] = [];
-    const localAvatars = new Map<string, string>();
-    for (const entry of entries.values()) {
-      let profile: AccountProfileFile | undefined;
-      let error: string | undefined;
-      try {
-        profile = await this.#profiles.load(entry.dir);
-      } catch (loadError) {
-        error = loadError instanceof Error ? loadError.message : String(loadError);
-      }
-      let summary: AccountSummary['profile'];
-      try {
-        summary = summarizeProfile(await this.#profiles.resolve(entry.dir, entry.accountId));
-      } catch (resolveError) {
-        error = resolveError instanceof Error ? resolveError.message : String(resolveError);
-      }
-      const display = await loadAccountDisplay(entry.dir).catch(() => undefined);
-      if (options.avatars && display?.avatarDataUrl) localAvatars.set(entry.accountId, display.avatarDataUrl);
-      result.push({
-        accountId: entry.accountId,
-        dir: entry.dir,
-        state: error ? 'invalid' : 'ready',
-        ...(profile ? { file: profile } : {}),
-        ...(summary ? { profile: summary } : {}),
-        ...(error ? { error } : {}),
-        ...(display ? { nickname: display.nickname, signature: display.signature } : {}),
-        slots: [...entry.slots]
-      });
-    }
-    const finalized = options.avatars
-      ? await Promise.all(result.map(async (account) => {
-          const avatar = await this.#resolveAccountAvatar(account.accountId, localAvatars.get(account.accountId));
-          return avatar ? { ...account, avatarDataUrl: avatar.dataUrl, avatarSource: avatar.source } : account;
-        }))
-      : result;
-    return finalized.sort((left, right) => left.accountId.localeCompare(right.accountId));
+  listAccounts(options: { avatars?: boolean } = {}): Promise<AccountSummary[]> {
+    return this.#accountService.list(options);
   }
 
-  async readMessages(
+  readMessages(
     accountId: string,
     conversation: ConversationRef,
     options?: ReadOptions
   ): Promise<StoredMessage[]> {
-    const { dir, instance } = this.#locateAccount(accountId);
-    const store = this.#storeFor(instance?.spec, accountId, dir);
-    return store.read({ ...conversation, accountId }, options);
+    return this.#runPublicWork(async () => {
+      const { dir, instance } = this.#locateAccount(accountId);
+      const store = this.#storeFor(instance?.spec, accountId, dir);
+      return store.read({ ...conversation, accountId }, options);
+    });
   }
 
   credentialStore(): { kind: string; available: boolean } {
-    return { kind: this.#credentialVault.kind, available: this.#credentialVault.available };
+    return this.#modelSettings.credentialStore();
   }
 
-  async listProviders(): Promise<ProviderDto[]> {
-    const config = this.configV2.snapshot();
-    const result: ProviderDto[] = [];
-    for (const provider of config.providers) {
-      result.push(redactProvider(provider, await this.providers.credentialConfigured(provider.id)));
-    }
-    return result;
+  listProviders(): Promise<ProviderDto[]> {
+    return this.#modelSettings.listProviders();
   }
 
-  async upsertProvider(raw: unknown, secret?: string, setting?: { capability: string; modelId: string }): Promise<ProviderDto> {
-    const parsed = parseProvider(raw);
-    const previous = this.configV2.provider(parsed.id);
-    const ref = parsed.credentialRef ?? (secret ? defaultCredentialRef(parsed.id) : undefined);
-    const next: ProviderConfig = ref ? { ...parsed, credentialRef: ref } : parsed;
-    let previousSecret: string | undefined;
-    if (secret !== undefined && secret !== '') {
-      if (!this.#credentialVault.available) throw new CredentialVaultUnavailableError();
-      if (ref) previousSecret = await this.#credentialVault.get(ref);
-      await this.#credentialVault.set(ref!, secret);
-    }
-    try {
-      await this.configV2.upsertProvider(next, setting);
-    } catch (error) {
-      if (secret !== undefined && ref) {
-        if (previousSecret !== undefined) await this.#credentialVault.set(ref, previousSecret).catch(() => {});
-        else if (previous?.credentialRef !== ref) await this.#credentialVault.delete(ref).catch(() => {});
-      }
-      throw error;
-    }
-    this.#emitProviderChanged(parsed.id, 'upsert');
-    await this.#reloadAgents();
-    return redactProvider(this.configV2.provider(parsed.id) ?? next, await this.providers.credentialConfigured(parsed.id));
+  upsertProvider(raw: unknown, secret?: string, setting?: { capability: string; modelId: string }): Promise<ProviderDto> {
+    return this.#runPublicWork(() => this.#modelSettings.upsertProvider(raw, secret, setting));
   }
 
-  async deleteProvider(id: string): Promise<{ removed: boolean; affectedAccounts: string[] }> {
-    const provider = this.configV2.provider(id);
-    const result = await this.configV2.removeProvider(id);
-    if (result.removed) {
-      if (provider?.credentialRef) {
-        const stillReferenced = this.configV2
-          .snapshot()
-          .providers.some((entry) => entry.id !== id && entry.credentialRef === provider.credentialRef);
-        if (!stillReferenced) await this.#credentialVault.delete(provider.credentialRef).catch(() => {});
-      }
-      this.#emitProviderChanged(id, 'remove');
-      await this.#reloadAgents();
-      for (const accountId of result.affectedAccounts) await this.#cancelRevokedJobs(accountId);
-    }
-    return result;
+  deleteProvider(id: string): Promise<{ removed: boolean; affectedAccounts: string[] }> {
+    return this.#runPublicWork(() => this.#modelSettings.deleteProvider(id));
   }
 
-  async setProviderCredential(id: string, secret: string): Promise<ProviderDto> {
-    const provider = this.configV2.provider(id);
-    if (!provider) throw new InvalidSpecError(`unknown provider: ${id}`);
-    if (!this.#credentialVault.available) throw new CredentialVaultUnavailableError();
-    let ref = provider.credentialRef;
-    if (!ref) {
-      ref = defaultCredentialRef(id);
-      await this.configV2.upsertProvider({ ...provider, credentialRef: ref });
-      this.#emitProviderChanged(id, 'upsert');
-    }
-    try {
-      await this.#credentialVault.set(ref, secret);
-    } catch (error) {
-      if (!provider.credentialRef) {
-        await this.configV2.upsertProvider(provider).catch(() => {});
-      }
-      throw error;
-    }
-    this.#emitProviderChanged(id, 'credential');
-    const current = this.configV2.provider(id) ?? provider;
-    return redactProvider(current, true);
+  setProviderCredential(id: string, secret: string): Promise<ProviderDto> {
+    return this.#runPublicWork(() => this.#modelSettings.setProviderCredential(id, secret));
   }
 
-  async deleteProviderCredential(id: string): Promise<ProviderDto> {
-    const provider = this.configV2.provider(id);
-    if (!provider) throw new InvalidSpecError(`unknown provider: ${id}`);
-    if (provider.credentialRef) await this.#credentialVault.delete(provider.credentialRef).catch(() => {});
-    this.#emitProviderChanged(id, 'credential');
-    return redactProvider(provider, false);
+  deleteProviderCredential(id: string): Promise<ProviderDto> {
+    return this.#runPublicWork(() => this.#modelSettings.deleteProviderCredential(id));
   }
 
   testProvider(
@@ -869,123 +565,67 @@ export class Core implements CoreView {
     modelId?: string,
     confirmCost = false
   ): Promise<ProviderTestResult> {
-    return this.providers.testProvider(id, capability, modelId, confirmCost);
+    return this.#runPublicWork(() => this.#modelSettings.testProvider(id, capability, modelId, confirmCost));
   }
 
   configureSimpleModel(raw: unknown): Promise<ProviderDto> {
-    const save = this.#modelSetupChain.then(() => {
-      if (this.#stopped) throw new AccompanyError('core_stopped', 'core has stopped');
-      return this.#configureSimpleModel(raw);
-    });
-    this.#modelSetupChain = save.then(() => undefined, () => undefined);
-    return save;
+    return this.#runPublicWork(() => this.#modelSettings.configureSimpleModel(raw));
   }
 
-  async #configureSimpleModel(raw: unknown): Promise<ProviderDto> {
-    const input = parseModelSetup(raw);
-    const existing = input.providerId ? this.configV2.provider(input.providerId) : undefined;
-    const provider = buildSimpleProvider(input, existing);
-    if (!this.providers.adapterSupports(provider.adapterId, input.capability)) {
-      throw new AccompanyError(
-        'provider_adapter_unsupported',
-        `adapter ${provider.adapterId} does not support ${input.capability}`
-      );
-    }
-    if (input.secret && existing?.credentialRef && this.configV2.snapshot().providers.some((item) => item.id !== existing.id && item.credentialRef === existing.credentialRef)) {
-      provider.credentialRef = `provider/${provider.id}/${crypto.randomBytes(4).toString('hex')}`;
-    }
-    return this.upsertProvider(provider, input.secret, { capability: input.capability, modelId: input.modelId });
+  discoverModels(raw: unknown): Promise<string[]> {
+    return this.#runPublicWork(() => this.#modelSettings.discoverModels(raw));
   }
 
-  async #setupCredential(provider: ProviderConfig, secret?: string): Promise<string | undefined> {
-    if (secret) return secret;
-    if (!provider.credentialRef) return undefined;
-    if (!this.#credentialVault.available) throw new CredentialVaultUnavailableError();
-    return this.#credentialVault.get(provider.credentialRef);
-  }
-
-  async discoverModels(raw: unknown): Promise<string[]> {
-    const value = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
-    const input = parseModelSetup({ ...value, capability: 'chat', modelId: 'discovery' });
-    const existing = input.providerId ? this.configV2.provider(input.providerId) : undefined;
-    const provider = buildSimpleProvider(input, existing);
-    return discoverProviderModels(provider, await this.#setupCredential(provider, input.secret));
-  }
-
-  async validateSimpleModel(raw: unknown): Promise<ProviderTestResult> {
-    const input = parseModelSetup(raw);
-    const existing = input.providerId ? this.configV2.provider(input.providerId) : undefined;
-    const provider = buildSimpleProvider(input, existing);
-    const startedAt = Date.now();
-    const credential = await this.#setupCredential(provider, input.secret);
-    const redact = (text: string) => sanitizeErrorText(credential ? text.split(credential).join('[已隐藏]') : text);
-    try {
-      const result = await this.providers.testDraft(provider, input.capability, input.modelId, credential, input.confirmCost);
-      return { ...result, ...(result.detail ? { detail: redact(result.detail) } : {}), capability: input.capability, modelId: input.modelId, durationMs: Date.now() - startedAt };
-    } catch (error) {
-      throw new AccompanyError(error instanceof AccompanyError ? error.code : 'provider_validation_failed', redact(error instanceof Error ? error.message : '模型验证失败'));
-    }
+  validateSimpleModel(raw: unknown): Promise<ProviderTestResult> {
+    return this.#runPublicWork(() => this.#modelSettings.validateSimpleModel(raw));
   }
 
   testAccountCapability(accountId: string, capability: CapabilityId, confirmCost = false): Promise<ProviderTestResult> {
-    const id = assertIdentifier(accountId, 'accountId');
-    return this.providers.testAccountCapability(id, capability, confirmCost);
+    return this.#runPublicWork(() => this.#modelSettings.testAccountCapability(accountId, capability, confirmCost));
   }
 
   getAccountPolicy(accountId: string): AccountPolicy {
-    const id = assertIdentifier(accountId, 'accountId');
-    return this.configV2.accountPolicy(id) ?? defaultAccountPolicy();
+    return this.#modelSettings.getAccountPolicy(accountId);
   }
 
-  async setAccountPolicy(accountId: string, raw: unknown): Promise<AccountPolicy> {
-    const id = assertIdentifier(accountId, 'accountId');
-    const policy = await this.configV2.setAccountPolicy(id, raw);
-    this.#emitPolicyChanged(id);
-    await this.#reloadAgents(id);
-    await this.#cancelRevokedJobs(id);
-    return policy;
+  setAccountPolicy(accountId: string, raw: unknown): Promise<AccountPolicy> {
+    return this.#runPublicWork(() => this.#modelSettings.setAccountPolicy(accountId, raw));
   }
 
-  async patchAgentEnabled(
+  patchAgentEnabled(
     accountId: string,
     enabled: boolean,
     scope?: { kind?: ChatKind; peerId?: string }
   ): Promise<AccountPolicy> {
-    const id = assertIdentifier(accountId, 'accountId');
-    const current = this.getAccountPolicy(id);
-    return this.setAccountPolicy(id, patchAgentEnabled(current, enabled, scope));
+    return this.#runPublicWork(() => this.#modelSettings.patchAgentEnabled(accountId, enabled, scope));
   }
 
-  async patchCapabilityEnabled(
+  patchCapabilityEnabled(
     accountId: string,
     capability: CapabilityId,
     enabled: boolean,
     scope?: { kind?: ChatKind; peerId?: string }
   ): Promise<AccountPolicy> {
-    const id = assertIdentifier(accountId, 'accountId');
-    const current = this.getAccountPolicy(id);
-    return this.setAccountPolicy(id, patchCapability(current, capability, enabled, scope));
+    return this.#runPublicWork(() => this.#modelSettings.patchCapabilityEnabled(accountId, capability, enabled, scope));
   }
 
   effectiveCapabilities(accountId: string, conversation: ConversationRef): Promise<EffectiveCapabilitiesDto> {
-    const id = assertIdentifier(accountId, 'accountId');
-    if (conversation.accountId !== id) {
-      throw new IsolationError('conversation account does not match the requested capability scope');
-    }
-    return this.providers.effective(id, conversation);
+    return this.#modelSettings.effectiveCapabilities(accountId, conversation);
   }
 
   listJobs(accountId?: string): Promise<JobDto[]> {
-    if (accountId) return this.jobs.list(assertIdentifier(accountId, 'accountId'));
-    return this.#knownAccountIds().then((ids) => this.jobs.listAll(ids));
+    return this.#runPublicWork(() => {
+      if (accountId) return this.jobs.list(assertIdentifier(accountId, 'accountId'));
+      return this.#knownAccountIds().then((ids) => this.jobs.listAll(ids));
+    });
   }
 
   getJob(accountId: string, jobId: string): Promise<JobDto | undefined> {
-    return this.jobs.get(assertIdentifier(accountId, 'accountId'), jobId);
+    return this.#runPublicWork(() => this.jobs.get(assertIdentifier(accountId, 'accountId'), jobId));
   }
 
   cancelJob(accountId: string, jobId: string): Promise<JobDto> {
-    return this.jobs.cancel(assertIdentifier(accountId, 'accountId'), jobId);
+    return this.#runPublicWork(() => this.jobs.cancel(assertIdentifier(accountId, 'accountId'), jobId));
   }
 
   listMedia(accountId: string): Promise<MediaRef[]> {
@@ -997,38 +637,42 @@ export class Core implements CoreView {
   }
 
   deleteMedia(accountId: string, mediaId: string): Promise<boolean> {
-    return this.media.delete(assertIdentifier(accountId, 'accountId'), mediaId);
+    return this.#runPublicWork(() => this.media.delete(assertIdentifier(accountId, 'accountId'), mediaId));
   }
 
   injectionSettings(): InjectionSettings {
     return this.#injectionSettings.get();
   }
 
-  async setInjectionSettings(raw: unknown, secret?: string): Promise<{ settings: InjectionSettings; status: SnowLumaRuntimeStatus }> {
-    const previous = this.#injectionSettings.get();
-    if (this.#processSlots.size && raw && typeof raw === 'object') {
-      const requested = raw as { runtimeDir?: unknown; baseUrl?: unknown };
-      const runtimeDir = typeof requested.runtimeDir === 'string' ? path.resolve(requested.runtimeDir.trim()) : undefined;
-      const baseUrl = typeof requested.baseUrl === 'string' ? requested.baseUrl.replace(/\/+$/, '') : undefined;
-      if (runtimeDir !== previous.runtimeDir || baseUrl !== previous.baseUrl) {
-        throw new AccompanyError('injection_settings_busy', '请先停止全部 QQ 监听，再更换 SnowLuma runtime 或管理地址。');
+  setInjectionSettings(raw: unknown, secret?: string): Promise<{ settings: InjectionSettings; status: SnowLumaRuntimeStatus }> {
+    return this.#runPublicWork(async () => {
+      const previous = this.#injectionSettings.get();
+      if (this.#connections.hasMappings() && raw && typeof raw === 'object') {
+        const requested = raw as { runtimeDir?: unknown; baseUrl?: unknown };
+        const runtimeDir = typeof requested.runtimeDir === 'string' ? path.resolve(requested.runtimeDir.trim()) : undefined;
+        const baseUrl = typeof requested.baseUrl === 'string' ? requested.baseUrl.replace(/\/+$/, '') : undefined;
+        if (runtimeDir !== previous.runtimeDir || baseUrl !== previous.baseUrl) {
+          throw new AccompanyError('injection_settings_busy', '请先停止全部 QQ 监听，再更换 SnowLuma runtime 或管理地址。');
+        }
       }
-    }
-    const settings = await this.#injectionSettings.set(raw);
-    if (secret !== undefined && secret !== '') {
-      if (!this.#credentialVault.available) throw new CredentialVaultUnavailableError();
-      await this.#credentialVault.set(SNOWLUMA_MANAGEMENT_CREDENTIAL_REF, secret);
-    }
-    if (previous.runtimeDir !== settings.runtimeDir || previous.baseUrl !== settings.baseUrl) await this.#snowLumaRuntime.stop();
-    this.snowLuma.configure(settings);
-    if (this.#started && this.#options.autoStartSnowLuma) void this.#snowLumaRuntime.ensureStarted();
-    return { settings, status: await this.injectionStatus() };
+      const settings = await this.#injectionSettings.set(raw);
+      if (secret !== undefined && secret !== '') {
+        if (!this.#credentialVault.available) throw new CredentialVaultUnavailableError();
+        await this.#credentialVault.set(SNOWLUMA_MANAGEMENT_CREDENTIAL_REF, secret);
+      }
+      if (previous.runtimeDir !== settings.runtimeDir || previous.baseUrl !== settings.baseUrl) await this.#snowLumaRuntime.stop();
+      this.snowLuma.configure(settings);
+      if (this.#started && this.#options.autoStartSnowLuma) void this.#snowLumaRuntime.ensureStarted();
+      return { settings, status: await this.injectionStatus() };
+    });
   }
 
-  async clearInjectionPassword(): Promise<{ status: SnowLumaRuntimeStatus }> {
-    await this.#credentialVault.delete(SNOWLUMA_MANAGEMENT_CREDENTIAL_REF).catch(() => {});
-    this.snowLuma.configure(this.#injectionSettings.get());
-    return { status: await this.snowLuma.status() };
+  clearInjectionPassword(): Promise<{ status: SnowLumaRuntimeStatus }> {
+    return this.#runPublicWork(async () => {
+      await this.#credentialVault.delete(SNOWLUMA_MANAGEMENT_CREDENTIAL_REF).catch(() => {});
+      this.snowLuma.configure(this.#injectionSettings.get());
+      return { status: await this.snowLuma.status() };
+    });
   }
 
   async injectionStatus(): Promise<SnowLumaRuntimeStatus> {
@@ -1054,454 +698,149 @@ export class Core implements CoreView {
     return { runtime: await this.injectionStatus(), processCount: processes.length };
   }
 
-  async retrySnowLumaRuntime(): Promise<SnowLumaRuntimeStatus> {
-    if (!this.#options.autoStartSnowLuma) {
-      throw new AccompanyError('snowluma_managed_disabled', 'this core does not own the SnowLuma management service');
-    }
-    if (!this.#started || this.#stopped) {
-      throw new AccompanyError('core_not_started', 'core has not started');
-    }
-    // Only a failed startup is retried; a live managed or external service is left untouched.
-    if (this.#snowLumaRuntime.status().state !== 'error') return this.injectionStatus();
-    await this.#snowLumaRuntime.stop();
-    await this.#snowLumaRuntime.ensureStarted();
-    return this.injectionStatus();
+  retrySnowLumaRuntime(): Promise<SnowLumaRuntimeStatus> {
+    return this.#runPublicWork(async () => {
+      if (!this.#options.autoStartSnowLuma) {
+        throw new AccompanyError('snowluma_managed_disabled', 'this core does not own the SnowLuma management service');
+      }
+      if (!this.#started || this.#stopped) {
+        throw new AccompanyError('core_not_started', 'core has not started');
+      }
+      // Only a failed startup is retried; a live managed or external service is left untouched.
+      if (this.#snowLumaRuntime.status().state !== 'error') return this.injectionStatus();
+      await this.#snowLumaRuntime.stop();
+      await this.#snowLumaRuntime.ensureStarted();
+      return this.injectionStatus();
+    });
   }
 
   async resumeInjectionListening() {
-    await this.#restoreListeningSlots();
-    return this.#manualInjection.resume();
+    return this.#runPublicWork(() => this.#connections.resumeInjectionListening());
   }
 
   injectionResumeCandidates(): Array<{ slotId: string; accountId: string }> {
-    return this.#manualInjection.resumeCandidates();
+    return this.#connections.resumeCandidates();
   }
 
   injectionProcesses(options: { avatars?: boolean } = {}): Promise<SnowLumaProcess[]> {
-    const scan = this.#processScan ?? (this.#processScan = this.#scanProcesses());
-    if (!options.avatars) return scan;
-    return scan.then((processes) => Promise.all(processes.map(async (process) => {
-      if (process.avatarDataUrl) return process;
-      const accountId = process.uin ?? process.accountHint?.uin;
-      if (!accountId) return process;
-      const avatar = await this.#resolveAccountAvatar(accountId);
-      return avatar ? { ...process, avatarDataUrl: avatar.dataUrl } : process;
-    })));
-  }
-
-  #scanProcesses(): Promise<SnowLumaProcess[]> {
-    const scanEpoch = this.#processMappingEpoch;
-    const scan = this.snowLuma.listProcesses({ probeIdentity: true }).then(async (processes) => {
-      await this.#withDynamicLock(async () => {
-        if (this.#stopped) return;
-        for (const [pid, record] of this.#processSlots) {
-          // 旧快照不能用来否定刚建立的映射，否则换号重连时可能误删新监听。
-          if (record.mappedEpoch > scanEpoch) continue;
-          const proc = processes.find((item) => item.pid === pid);
-          const changed = proc?.uin && proc.uin !== record.accountId;
-          const disconnected = proc && !proc.injected && !proc.connected;
-          record.missing = proc && !changed && !disconnected ? 0 : record.missing + 1;
-          if (changed || record.missing >= 2) {
-            if (this.#dynamicSlots.has(record.slotId)) await this.removeSlot(record.slotId);
-            else await this.supervisor.stop(record.slotId);
-            this.#processSlots.delete(pid);
-          }
-        }
-      });
-      return Promise.all(processes.map(async (proc) => {
-        const instanceId = this.#processSlots.get(proc.pid)?.slotId;
-        const accountId = proc.uin ?? proc.accountHint?.uin;
-        const display = accountId ? await loadAccountDisplay(path.join(this.#dataRoot, 'accounts', accountId)).catch(() => undefined) : undefined;
-        const connectedAccount = instanceId ? this.supervisor.get(instanceId)?.status() : undefined;
-        const nickname = connectedAccount && connectedAccount.accountId === accountId ? connectedAccount.accountNickname ?? proc.nickname : proc.nickname;
-        return { ...proc, ...(instanceId ? { instanceId } : {}),
-          ...(nickname ? { nickname } : {}),
-          ...(display?.nickname ? { displayName: display.nickname } : {}),
-          ...(display?.avatarDataUrl ? { avatarDataUrl: display.avatarDataUrl } : {}) };
-      }));
-    }).finally(() => { if (this.#processScan === scan) this.#processScan = undefined; });
-    return scan;
+    return this.#runPublicWork(() => this.#connections.processes(options));
   }
 
   injectAndListen(raw: unknown) {
-    return this.#manualInjection.injectAndListen(raw);
+    return this.#runPublicWork(() => this.#connections.injectAndListen(raw));
   }
 
   listenInjection(raw: unknown) {
-    return this.#manualInjection.listen(raw);
+    return this.#runPublicWork(() => this.#connections.listen(raw));
   }
 
   refreshInjection(raw: unknown) {
-    return this.#manualInjection.refresh(raw);
+    return this.#runPublicWork(() => this.#connections.refresh(raw));
   }
 
   unloadInjection(raw: unknown) {
-    return this.#manualInjection.unload(raw);
+    return this.#runPublicWork(() => this.#connections.unload(raw));
   }
 
   injectionOperation(id: string) {
-    return this.#manualInjection.operation(id);
+    return this.#connections.operation(id);
   }
 
-  async cleanupMedia(): Promise<{ deleted: number; skippedInUse: number; failed: number }> {
-    const accounts = await this.#knownAccountIds();
-    const inUse = new Map<string, Set<string>>();
-    for (const accountId of accounts) inUse.set(accountId, await this.jobs.inUseMedia(accountId));
-    const result = await this.media.cleanup(inUse);
-    this.bus.emit('media:cleanup', {
-      deleted: result.deleted.length,
-      skippedInUse: result.skippedInUse.length,
-      failed: result.failed.length,
-      at: this.#now()
+  cleanupMedia(): Promise<{ deleted: number; skippedInUse: number; failed: number }> {
+    return this.#runPublicWork(async () => {
+      const accounts = await this.#knownAccountIds();
+      const inUse = new Map<string, Set<string>>();
+      for (const accountId of accounts) inUse.set(accountId, await this.jobs.inUseMedia(accountId));
+      const result = await this.media.cleanup(inUse);
+      this.bus.emit('media:cleanup', {
+        deleted: result.deleted.length,
+        skippedInUse: result.skippedInUse.length,
+        failed: result.failed.length,
+        at: this.#now()
+      });
+      return {
+        deleted: result.deleted.length,
+        skippedInUse: result.skippedInUse.length,
+        failed: result.failed.length
+      };
     });
-    return {
-      deleted: result.deleted.length,
-      skippedInUse: result.skippedInUse.length,
-      failed: result.failed.length
-    };
   }
 
-  async getAccountProfile(accountId: string): Promise<AccountProfileFile | undefined> {
-    return this.#profiles.load(this.#locateAccount(accountId).dir);
+  getAccountProfile(accountId: string): Promise<AccountProfileFile | undefined> {
+    return this.#accountService.getProfile(accountId);
   }
 
-  async getAccountDisplay(accountId: string): Promise<AccountDisplayProfile> {
-    return loadAccountDisplay(this.#locateAccount(accountId).dir);
+  getAccountDisplay(accountId: string): Promise<AccountDisplayProfile> {
+    return this.#accountService.getDisplay(accountId);
   }
 
-  async saveAccountDisplay(accountId: string, raw: unknown): Promise<AccountDisplayProfile> {
-    return saveAccountDisplay(this.#locateAccount(accountId).dir, raw);
+  saveAccountDisplay(accountId: string, raw: unknown): Promise<AccountDisplayProfile> {
+    return this.#runPublicWork(() => this.#accountService.saveDisplay(accountId, raw));
   }
 
-  async listConversationRoleBindings(
-    accountId: string
-  ): Promise<Array<ConversationRoleBinding & { state: 'ready' | 'missing'; cardName?: string; resolvedRevision?: string }>> {
-    assertIdentifier(accountId, 'accountId');
-    const { dir } = this.#locateAccount(accountId);
-    const bindings = await this.#roleBindings.list(dir, accountId);
-    return Promise.all(
-      bindings.map(async (binding) => {
-        const card = await this.#artifacts.resolve('role-card', binding.roleCard, dir);
-        return {
-          ...binding,
-          state: card?.manifest.content ? 'ready' as const : 'missing' as const,
-          ...(card?.manifest.name ? { cardName: card.manifest.name } : {}),
-          ...(card?.ref.revision ? { resolvedRevision: card.ref.revision } : {})
-        };
-      })
-    );
+  listConversationRoleBindings(accountId: string): ReturnType<AccountService['listRoleBindings']> {
+    return this.#accountService.listRoleBindings(accountId);
   }
 
-  async listAccountArtifacts(accountId: string): Promise<ResolvedArtifact[]> {
-    const { dir } = this.#locateAccount(accountId);
-    const store = new LocalArtifactStore(dir, this.#logger.child(`account:${accountId}:artifacts`));
-    return (await store.listPublic()).map((artifact) => ({
-      ...artifact,
-      ref: { ...artifact.ref, source: 'private' as const }
-    }));
+  listAccountArtifacts(accountId: string): Promise<ResolvedArtifact[]> {
+    return this.#accountService.listAccountArtifacts(accountId);
   }
 
-  async setConversationRoleBinding(
+  setConversationRoleBinding(
     conversation: ConversationRef,
     roleCard: { source: 'public' | 'private'; id: string; revision?: string } | null
   ): Promise<ConversationRoleBinding | undefined> {
-    assertIdentifier(conversation.accountId, 'accountId');
-    const normalized = {
-      ...conversation,
-      accountId: conversation.accountId
-    };
-    const { dir } = this.#locateAccount(normalized.accountId);
-    if (roleCard) {
-      const card = await this.#artifacts.resolve('role-card', roleCard, dir);
-      if (!card?.manifest.content) {
-        throw new InvalidSpecError(`role card ${roleCard.source}:${roleCard.id} cannot be resolved`);
-      }
-    }
-    return this.#roleBindings.set(dir, normalized, roleCard, this.#now());
+    return this.#runPublicWork(() => this.#accountService.setRoleBinding(conversation, roleCard));
   }
 
-  async resolveConversationRoleBinding(
+  resolveConversationRoleBinding(
     accountId: string,
     conversation: ConversationRef
   ): Promise<ResolvedConversationRoleBinding | undefined> {
-    if (conversation.accountId !== accountId) throw new IsolationError('role binding account does not match conversation');
-    const { dir } = this.#locateAccount(accountId);
-    const binding = await this.#roleBindings.get(dir, conversation);
-    if (!binding) return undefined;
-    const artifact = await this.#artifacts.resolve('role-card', binding.roleCard, dir);
-    if (!artifact?.manifest.content) return undefined;
-    const artifactBaseDir = binding.roleCard.source === 'public' ? this.#artifacts.publicRoot : dir;
-    const catalogEpoch = binding.roleCard.revision
-      ? 0
-      : await this.#artifacts.catalogEpoch(artifactBaseDir, 'role-card', binding.roleCard.id);
-    return {
-      ...binding,
-      // Follow-current bindings change context on every catalog transition, even A→B→A.
-      // The generation is persisted with the catalog so an unchanged restart retains history.
-      revision: `${binding.revision}:${artifact.ref.source}:${artifact.ref.id}:${artifact.ref.revision}:${catalogEpoch}`,
-      card: { ...artifact, content: artifact.manifest.content }
-    };
+    return this.#accountService.resolveRoleBinding(accountId, conversation);
   }
 
-  async saveAccountProfile(
+  saveAccountProfile(
     accountId: string,
     raw: unknown
   ): Promise<{ profile: AccountProfileFile; reload?: { ok: boolean; error?: string } }> {
-    const { dir, instance } = this.#locateAccount(accountId);
-    const profile = await this.#profiles.save(dir, raw);
-    if (!instance || !instance.state.is('online', 'degraded', 'awaiting_profile')) return { profile };
-    try {
-      await instance.reloadProfile();
-      return { profile, reload: { ok: true } };
-    } catch (error) {
-      return {
-        profile,
-        reload: { ok: false, error: error instanceof Error ? error.message : String(error) }
-      };
-    }
+    return this.#runPublicWork(() => this.#accountService.saveProfile(accountId, raw));
   }
 
-  async reloadAccount(accountId: string): Promise<Array<{ instanceId: string; ok: boolean; error?: string }>> {
-    const results: Array<{ instanceId: string; ok: boolean; error?: string }> = [];
-    for (const status of this.supervisor.list()) {
-      const instance = this.supervisor.get(status.id);
-      if (!instance || instance.accountId !== accountId) continue;
-      if (!instance.state.is('online', 'degraded', 'awaiting_profile')) continue;
-      try {
-        await instance.reloadProfile();
-        results.push({ instanceId: instance.id, ok: true });
-      } catch (error) {
-        results.push({
-          instanceId: instance.id,
-          ok: false,
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    }
-    return results;
+  reloadAccount(accountId: string): Promise<Array<{ instanceId: string; ok: boolean; error?: string }>> {
+    return this.#runPublicWork(() => this.#accountService.reload(accountId));
   }
 
-  async deployArtifact(kind: ArtifactKind, id: string, revision: string): Promise<DeploymentRecord> {
-    if (this.#stopped) throw new AccompanyError('core_stopped', 'core has been stopped');
-    return this.#runDeployment(async () => {
-      const catalog = await this.#artifacts.readCatalog(this.#artifacts.publicRoot);
-      const from = catalog[artifactRefKey(kind, id)];
-      const { current } = await this.#artifacts.setPublicRevision(kind, id, revision);
-      const record = await this.#deployer.reloadAll('deploy', {
-        kind,
-        id,
-        ...(from ? { from } : {}),
-        to: current
-      });
-      this.#recordDeployment(record);
-      return record;
-    });
+  deployArtifact(kind: ArtifactKind, id: string, revision: string): Promise<DeploymentRecord> {
+    return this.#runPublicWork(() => this.#deploymentService.deployArtifact(kind, id, revision));
   }
 
-  async rollbackArtifacts(): Promise<DeploymentRecord> {
-    if (this.#stopped) throw new AccompanyError('core_stopped', 'core has been stopped');
-    return this.#runDeployment(async () => {
-      const { restored, replaced } = await this.#artifacts.rollbackPublic();
-      const record = await this.#deployer.reloadAll('rollback', { restored, replaced });
-      this.#recordDeployment(record);
-      return record;
-    });
+  rollbackArtifacts(): Promise<DeploymentRecord> {
+    return this.#runPublicWork(() => this.#deploymentService.rollbackArtifacts());
   }
 
   deployments(): DeploymentRecord[] {
-    return [...this.#deployments];
+    return this.#deploymentService.deployments();
   }
 
-  async addSlot(spec: InstanceSpec): Promise<InstanceStatus> {
-    const instance = this.supervisor.add(spec);
-    this.metrics.set('instances.total', this.supervisor.list().length);
-    try {
-      await this.#persistSlots();
-    } catch (error) {
-      await this.supervisor.remove(instance.id);
+  addSlot(spec: InstanceSpec): Promise<InstanceStatus> {
+    return this.#runPublicWork(async () => {
+      const instance = this.supervisor.add(spec);
       this.metrics.set('instances.total', this.supervisor.list().length);
-      throw error;
-    }
-    if (this.#started) await this.supervisor.start(instance.id);
-    return instance.status();
-  }
-
-  async removeSlot(id: string): Promise<void> {
-    const instance = this.supervisor.get(id);
-    if (!instance) throw new InvalidSpecError(`unknown slot: ${id}`);
-    await this.supervisor.stop(id);
-    await this.supervisor.remove(id);
-    this.#dynamicSlots.delete(id);
-    for (const [pid, record] of this.#processSlots) if (record.slotId === id) this.#processSlots.delete(pid);
-    const lease = this.#runtimeLeases.get(id);
-    this.#runtimeLeases.delete(id);
-    await lease?.release();
-    await this.#forgetListening(id);
-    this.metrics.set('instances.total', this.supervisor.list().length);
-    await this.#persistSlots();
-  }
-
-  /** 手动注入确认 QQ 号后，把未绑定的槽位重绑到该账号；必须停在槽位后再换号。 */
-  async #rebindSlotAccount(id: string, accountId: string): Promise<void> {
-    const instance = this.supervisor.get(id);
-    if (!instance) throw new InvalidSpecError(`unknown slot: ${id}`);
-    const spec = structuredClone(instance.spec);
-    if (spec.accountId === accountId) return;
-    if (spec.accountId) {
-      throw new AccompanyError('injection_slot_bound', `slot ${id} is already bound to ${spec.accountId}`);
-    }
-    if (!instance.state.is('stopped')) await this.supervisor.stop(id);
-    if (!instance.state.is('stopped')) {
-      throw new AccompanyError('injection_slot_busy', `slot ${id} did not stop before account binding`);
-    }
-    const lease = this.#runtimeLeases.get(id);
-    this.#runtimeLeases.delete(id);
-    await lease?.release();
-    await this.supervisor.remove(id);
-    try {
-      this.supervisor.add({ ...spec, accountId });
-      await this.#persistSlots();
-    } catch (error) {
-      await this.supervisor.remove(id).catch(() => {});
       try {
-        this.supervisor.add(spec);
-        await this.#persistSlots();
-      } catch {
-        // 恢复失败时保留原始错误，槽位缺失会在下一次持久化或重启时暴露。
-      }
-      throw error;
-    }
-    this.metrics.set('instances.total', this.supervisor.list().length);
-    this.#logger.info('slot bound to injected account', { instanceId: id, accountId });
-  }
-
-  async #persistSlots(): Promise<void> {
-    if (!this.#slotStore) return;
-    await this.#slotStore.save(this.supervisor.listSpecs().filter((spec) => !this.#dynamicSlots.has(spec.id)));
-  }
-
-  #withDynamicLock<T>(task: () => Promise<T>): Promise<T> {
-    const run = this.#dynamicChain.then(task, task);
-    this.#dynamicChain = run.then(() => undefined, () => undefined);
-    return run;
-  }
-
-  /** 用上次监听记录重建动态槽位；只恢复待恢复状态，不启动、不注入。 */
-  async #restoreListeningSlots(): Promise<void> {
-    if (!this.#options.manualStartOnly) return;
-    const runtimeDir = this.#injectionSettings.get().runtimeDir;
-    if (!runtimeDir) return;
-    const resolved = path.resolve(runtimeDir);
-    const specs = this.supervisor.listSpecs();
-    let added = 0;
-    for (const record of this.#listening.list()) {
-      if (path.resolve(record.runtimeDir) !== resolved) continue;
-      if (this.supervisor.get(record.slotId)) continue;
-      const bound = specs.some((spec) =>
-        spec.backend === 'snowluma'
-        && spec.accountId === record.accountId
-        && spec.runtimeDir !== undefined
-        && path.resolve(spec.runtimeDir) === resolved
-      );
-      if (bound) continue;
-      const spec: InstanceSpec = {
-        id: record.slotId,
-        backend: 'snowluma',
-        runtimeDir,
-        accountId: record.accountId,
-        restart: { enabled: false }
-      };
-      try {
-        this.supervisor.add(spec);
-        this.#dynamicSlots.add(record.slotId);
-        specs.push(spec);
-        added += 1;
+        await this.#connections.saveConfiguredSlots();
       } catch (error) {
-        this.#logger.warn('restore listening slot failed', {
-          slotId: record.slotId,
-          message: error instanceof Error ? error.message : String(error)
-        });
+        await this.supervisor.remove(instance.id);
+        this.metrics.set('instances.total', this.supervisor.list().length);
+        throw error;
       }
-    }
-    if (added > 0) {
-      this.metrics.set('instances.total', this.supervisor.list().length);
-      this.#logger.info('listening slots restored', { count: added });
-    }
-  }
-
-  /** 所有账号头像展示共用：本地展示头像优先，缺失时回退到 QQ 公开头像。 */
-  async #resolveAccountAvatar(
-    accountId: string,
-    localAvatarDataUrl?: string
-  ): Promise<{ dataUrl: string; source: 'local' | 'qq' } | undefined> {
-    if (localAvatarDataUrl) return { dataUrl: localAvatarDataUrl, source: 'local' };
-    const dataUrl = await this.#qqAvatars.get(accountId);
-    return dataUrl ? { dataUrl, source: 'qq' } : undefined;
-  }
-
-  async #rememberListening(slotId: string, accountId: string): Promise<void> {
-    const spec = this.supervisor.get(slotId)?.spec;
-    if (!spec?.runtimeDir) return;
-    try {
-      await this.#listening.remember({ slotId, accountId, runtimeDir: path.resolve(spec.runtimeDir) });
-    } catch (error) {
-      this.#logger.warn('remember listening failed', {
-        slotId,
-        message: error instanceof Error ? error.message : String(error)
-      });
-    }
-  }
-
-  async #forgetListening(slotId: string): Promise<void> {
-    try {
-      await this.#listening.forget(slotId);
-    } catch (error) {
-      this.#logger.warn('forget listening failed', {
-        slotId,
-        message: error instanceof Error ? error.message : String(error)
-      });
-    }
-  }
-
-  #trackProcess(pid: number, slotId: string, accountId: string): void {
-    this.#processMappingEpoch += 1;
-    this.#processSlots.set(pid, { slotId, accountId, missing: 0, mappedEpoch: this.#processMappingEpoch });
-  }
-
-  #ensureDynamicSlot(accountId: string, pid: number): Promise<string> {
-    return this.#withDynamicLock(async () => {
-      if (this.#stopped) throw new AccompanyError('core_stopped', 'core has stopped');
-      assertIdentifier(accountId, 'accountId');
-      const runtimeDir = this.#injectionSettings.get().runtimeDir;
-      if (!runtimeDir) throw new AccompanyError('snowluma_runtime_unavailable', 'configure the SnowLuma runtime directory first');
-      const previous = this.#processSlots.get(pid);
-      if (previous && previous.accountId !== accountId) {
-        if (this.#dynamicSlots.has(previous.slotId)) {
-          if (this.supervisor.get(previous.slotId)) await this.removeSlot(previous.slotId);
-        } else if (this.supervisor.get(previous.slotId)) {
-          await this.supervisor.stop(previous.slotId);
-        }
-        this.#processSlots.delete(pid);
-      }
-      for (const [otherPid, record] of this.#processSlots) {
-        if (record.accountId === accountId && otherPid !== pid) throw new AccompanyError('injection_account_in_use', `QQ ${accountId} is already listening through another process`);
-      }
-      const existing = this.supervisor.listSpecs().find((spec) => spec.backend === 'snowluma' && spec.accountId === accountId && path.resolve(spec.runtimeDir ?? '') === path.resolve(runtimeDir));
-      if (existing) {
-        this.#trackProcess(pid, existing.id, accountId);
-        return existing.id;
-      }
-      const base = `qq-${accountId}`;
-      let id = base;
-      while (this.supervisor.get(id)) id = `${base}-${crypto.randomBytes(3).toString('hex')}`;
-      const spec: InstanceSpec = { id, backend: 'snowluma', runtimeDir, accountId, restart: { enabled: false } };
-      this.#dynamicSlots.add(id);
-      try { this.supervisor.add(spec); }
-      catch (error) { this.#dynamicSlots.delete(id); throw error; }
-      this.metrics.set('instances.total', this.supervisor.list().length);
-      this.#trackProcess(pid, id, accountId);
-      return id;
+      if (this.#started) await this.supervisor.start(instance.id);
+      return instance.status();
     });
+  }
+
+  removeSlot(id: string): Promise<void> {
+    return this.#runPublicWork(() => this.#connections.removeSlot(id));
   }
 
   instanceDataDir(instanceId: string): string {
@@ -1509,25 +848,11 @@ export class Core implements CoreView {
   }
 
   #locateAccount(accountId: string): { dir: string; instance?: QqInstance } {
-    for (const status of this.supervisor.list()) {
-      const instance = this.supervisor.get(status.id);
-      if (!instance) continue;
-      if (instance.accountId === accountId || instance.spec.accountId === accountId) {
-        return { dir: this.#accountDir(instance.spec, accountId), instance };
-      }
-    }
-    return { dir: this.#accountDir(undefined, accountId) };
-  }
-
-  #emitProviderChanged(providerId: string, action: 'upsert' | 'remove' | 'credential'): void {
-    this.bus.emit('provider:changed', { providerId, action, at: this.#now() });
-  }
-
-  #emitPolicyChanged(accountId?: string): void {
-    this.bus.emit('policy:changed', {
-      ...(accountId ? { accountId } : {}),
-      at: this.#now()
-    });
+    const located = this.#accountService.locate(accountId);
+    return {
+      dir: located.dir,
+      ...(located.instanceId ? { instance: this.supervisor.get(located.instanceId) } : {})
+    };
   }
 
   async #reloadAgents(accountId?: string): Promise<void> {
@@ -1589,22 +914,6 @@ export class Core implements CoreView {
     }
   }
 
-  #recordDeployment(record: DeploymentRecord): void {
-    this.#deployments.push(record);
-    if (this.#deployments.length > 20) this.#deployments.shift();
-    this.metrics.inc('deployments.total');
-    if (!record.ok) this.metrics.inc('deployments.partial');
-  }
-
-  #runDeployment<T>(task: () => Promise<T>): Promise<T> {
-    const run = this.#deployChain.catch(() => {}).then(task);
-    this.#deployChain = run.then(
-      () => undefined,
-      () => undefined
-    );
-    return run;
-  }
-
   #startHealthMonitor(): void {
     if (this.#limits.healthCheckIntervalMs <= 0 || this.#healthTimer) return;
     const timer = setInterval(() => {
@@ -1643,7 +952,7 @@ export class Core implements CoreView {
       backend: lease,
       createChannel,
       resolveStore: (accountId) => this.#storeFor(spec, accountId),
-      resolveProfile: (accountId) => this.#profiles.resolve(this.#accountDir(spec, accountId), accountId),
+      resolveProfile: (accountId) => this.#profiles.resolve(this.#accountDirectory.forSpec(spec, accountId), accountId),
       stateFor: (accountId) => this.#pluginStateFor(spec, accountId),
       ...(createHost ? { createHost } : {}),
       profileFingerprint: (profile) => this.#profileFingerprint(profile),
@@ -1732,43 +1041,16 @@ export class Core implements CoreView {
       .slice(0, 16);
   }
 
-  async #knownAccountIds(): Promise<string[]> {
-    const ids = new Set<string>();
-    for (const status of this.supervisor.list()) {
-      const instance = this.supervisor.get(status.id);
-      if (!instance) continue;
-      if (instance.accountId) ids.add(instance.accountId);
-      if (instance.spec.accountId) ids.add(instance.spec.accountId);
-    }
-    for (const name of await safeReaddir(path.join(this.#dataRoot, 'accounts'))) {
-      if (name.startsWith('.')) continue;
-      try {
-        if ((await fs.stat(path.join(this.#dataRoot, 'accounts', name))).isDirectory()) ids.add(name);
-      } catch {
-        // 目录可能在枚举时被删除
-      }
-    }
-    return [...ids];
-  }
-
-  #accountDirForAccount(accountId: string): string {
-    return this.#locateAccount(accountId).dir;
+  #knownAccountIds(): Promise<string[]> {
+    return this.#accountDirectory.listKnown();
   }
 
   #now(): number {
     return this.#options.now ? this.#options.now() : Date.now();
   }
 
-  #accountDir(spec: NormalizedInstanceSpec | undefined, accountId: string): string {
-    return path.join(
-      spec?.dataDir ? path.resolve(spec.dataDir) : this.#dataRoot,
-      'accounts',
-      safePathSegment(accountId)
-    );
-  }
-
   #storeFor(spec: NormalizedInstanceSpec | undefined, accountId: string, dirOverride?: string): MessageStore {
-    const accountDir = dirOverride ?? this.#accountDir(spec, accountId);
+    const accountDir = dirOverride ?? this.#accountDirectory.forSpec(spec, accountId);
     const existing = this.#stores.get(accountDir);
     if (existing) return existing;
     const createDefault = (): MessageStore =>
@@ -1787,7 +1069,7 @@ export class Core implements CoreView {
   }
 
   #pluginStateFor(spec: NormalizedInstanceSpec, accountId: string): PluginStateStore {
-    const key = path.join(this.#accountDir(spec, accountId), 'plugin-state');
+    const key = path.join(this.#accountDirectory.forSpec(spec, accountId), 'plugin-state');
     const existing = this.#pluginStates.get(key);
     if (existing) return existing;
     const store = new PluginStateStore(key, this.#logger.child(`${spec.id}:${accountId}:plugin-state`));
@@ -1863,33 +1145,8 @@ export class Core implements CoreView {
       onStatus: handlers.onStatus
     });
   }
-
-  #defaultBackend(
-    spec: NormalizedInstanceSpec,
-    deps: { logger: Logger },
-    lookup: () => QqInstance | undefined
-  ): InjectionBackend {
-    if (spec.backend === 'snowluma') {
-      return new SnowLumaBackend({
-        runtimeDir: spec.runtimeDir as string,
-        allowTokenless: spec.backendOptions?.allowTokenless === true,
-        logger: deps.logger
-      });
-    }
-    return new FakeInjectionBackend((spec.backendOptions ?? {}) as FakeBackendOptions, (error) => {
-      lookup()?.handleExternalFailure(error);
-    });
-  }
 }
 
 export function createCore(options: CoreOptions): Promise<Core> {
   return Core.create(options);
-}
-
-async function safeReaddir(dir: string): Promise<string[]> {
-  try {
-    return await fs.readdir(dir);
-  } catch {
-    return [];
-  }
 }

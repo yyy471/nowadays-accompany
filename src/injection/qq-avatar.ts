@@ -1,4 +1,5 @@
 import type { Logger } from '../core/logger.js';
+import { readResponseBytes } from '../platform/http/bounded-body.js';
 
 const UIN_RE = /^\d{5,12}$/;
 const SUCCESS_TTL_MS = 6 * 60 * 60 * 1000;
@@ -51,8 +52,12 @@ export class QqAvatarCache {
       if (!response.ok || !contentType.startsWith('image/')) {
         throw new Error(`avatar upstream responded with ${response.status}`);
       }
-      const bytes = Buffer.from(await response.arrayBuffer());
-      if (bytes.length === 0 || bytes.length > MAX_BYTES) throw new Error('avatar payload size is out of range');
+      const bytes = await readResponseBytes(response, {
+        maxBytes: MAX_BYTES,
+        timeoutMs: 3_000,
+        label: 'QQ avatar'
+      });
+      if (bytes.length === 0) throw new Error('avatar payload is empty');
       const dataUrl = `data:${contentType};base64,${bytes.toString('base64')}`;
       this.#remember(uin, { at, expiresAt: at + SUCCESS_TTL_MS, dataUrl });
       return dataUrl;

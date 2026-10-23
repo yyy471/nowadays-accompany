@@ -49,38 +49,7 @@ export class ProviderError extends AccompanyError {
   }
 }
 
-export class MediaError extends AccompanyError {
-  readonly retryable: boolean;
-
-  constructor(code: string, message: string, options?: { retryable?: boolean; cause?: unknown }) {
-    super(code, message, options);
-    this.retryable = options?.retryable ?? false;
-  }
-}
-
-export class JobError extends AccompanyError {
-  readonly retryable = false;
-
-  constructor(code: string, message: string) {
-    super(code, message);
-  }
-}
-
-/** 错误文本里可能出现带鉴权的 URL，不能原样进入日志或 API。 */
-export function sanitizeUrl(raw: string): string {
-  try {
-    const url = new URL(raw);
-    return `${url.protocol}//${url.host}${url.pathname}`;
-  } catch {
-    return '<invalid-url>';
-  }
-}
-
-export function sanitizeErrorText(raw: string, limit = 300): string {
-  let text = raw
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [redacted]')
-    .replace(/\bsk-[A-Za-z0-9_-]{12,}/g, '[redacted]')
-    .replace(/https?:\/\/[^\s"'<>]+/gi, (match) => sanitizeUrl(match));
-  if (text.length > limit) text = `${text.slice(0, limit)}…`;
-  return text;
-}
+// 旧路径兼容：错误类仍是同一个构造器，领域模块已改用各自路径。
+export { MediaError } from '../media/errors.js';
+export { JobError } from '../jobs/errors.js';
+export { sanitizeErrorText, sanitizeUrl } from '../platform/security/redaction.js';

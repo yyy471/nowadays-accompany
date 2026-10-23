@@ -1,11 +1,14 @@
 import { AccompanyError } from '../../core/errors.js';
 import type { Logger } from '../../core/logger.js';
 import { isLoopbackHost } from '../../core/net.js';
+import { HttpBodyError, readResponseText } from '../../platform/http/bounded-body.js';
 import type { CredentialVault } from '../../secrets/vault.js';
 import { formatHostPort, probeTcp, readRuntimeInfo, readRuntimeVersion } from './config.js';
 
 export const SNOWLUMA_MANAGEMENT_CREDENTIAL_REF = 'snowluma/management';
 export const SUPPORTED_SNOWLUMA_VERSION = '1.14.x';
+const MAX_MANAGEMENT_BYTES = 2 * 1024 * 1024;
+const MAX_LOGIN_BYTES = 64 * 1024;
 
 export class SnowLumaError extends AccompanyError {
   readonly retryable: boolean;
@@ -274,7 +277,23 @@ export class SnowLumaManager {
         signal: AbortSignal.timeout(this.#requestTimeoutMs)
       });
     }
-    const text = await response.text().catch(() => '');
+    let text: string;
+    try {
+      text = await readResponseText(response, {
+        maxBytes: MAX_MANAGEMENT_BYTES,
+        timeoutMs: this.#requestTimeoutMs,
+        label: 'SnowLuma response'
+      });
+    } catch (error) {
+      const tooLarge = error instanceof HttpBodyError && error.code === 'http_body_too_large';
+      throw new SnowLumaError(
+        tooLarge ? 'snowluma_protocol' : 'snowluma_unreachable',
+        tooLarge
+          ? `SnowLuma response exceeded ${MAX_MANAGEMENT_BYTES} bytes`
+          : 'SnowLuma response was interrupted before it completed',
+        { retryable: !tooLarge, cause: error }
+      );
+    }
     let payload: unknown;
     try {
       payload = text ? JSON.parse(text) : {};
@@ -321,7 +340,23 @@ export class SnowLumaManager {
         cause: error
       });
     }
-    const text = await response.text().catch(() => '');
+    let text: string;
+    try {
+      text = await readResponseText(response, {
+        maxBytes: MAX_LOGIN_BYTES,
+        timeoutMs: this.#requestTimeoutMs,
+        label: 'SnowLuma login response'
+      });
+    } catch (error) {
+      const tooLarge = error instanceof HttpBodyError && error.code === 'http_body_too_large';
+      throw new SnowLumaError(
+        tooLarge ? 'snowluma_protocol' : 'snowluma_unreachable',
+        tooLarge
+          ? `SnowLuma login response exceeded ${MAX_LOGIN_BYTES} bytes`
+          : 'SnowLuma login response was interrupted before it completed',
+        { retryable: !tooLarge, cause: error }
+      );
+    }
     let payload: LoginPayload = {};
     try {
       payload = text ? (JSON.parse(text) as LoginPayload) : {};

@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
 import type { Logger } from '../core/logger.js';
 import { Semaphore, withTimeout } from '../core/concurrency.js';
-import { JobError, sanitizeErrorText } from '../providers/errors.js';
+import { sanitizeErrorText } from '../platform/security/redaction.js';
+import { JobError } from './errors.js';
 import { AccountJobStore, isTerminal } from './store.js';
 import type {
   JobDto,

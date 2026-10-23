@@ -19,13 +19,14 @@ export class Semaphore {
   }
 
   async acquire(): Promise<() => void> {
-    if (this.#active < this.#limit) {
+    if (this.#active < this.#limit && this.#waiters.length === 0) {
       this.#active += 1;
-      return () => this.#release();
+      return this.#lease();
     }
+    // 名额由释放者直接交接：等待者被唤醒时 active 已经计入它，
+    // 避免新请求在唤醒与自增之间看到空位而突破上限。
     await new Promise<void>((resolve) => this.#waiters.push(resolve));
-    this.#active += 1;
-    return () => this.#release();
+    return this.#lease();
   }
 
   async run<T>(task: () => Promise<T>): Promise<T> {
@@ -37,10 +38,22 @@ export class Semaphore {
     }
   }
 
+  #lease(): () => void {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.#release();
+    };
+  }
+
   #release(): void {
-    this.#active = Math.max(0, this.#active - 1);
     const next = this.#waiters.shift();
-    if (next) next();
+    if (next) {
+      next();
+      return;
+    }
+    this.#active = Math.max(0, this.#active - 1);
   }
 }
 
