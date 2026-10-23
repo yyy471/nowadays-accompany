@@ -39,6 +39,11 @@ export interface InjectionOperationDto {
   error?: { code: string; message: string };
 }
 
+export interface ManualInjectionResumeCandidate {
+  slotId: string;
+  accountId: string;
+}
+
 export interface ManualInjectionResumeResult {
   attempted: number;
   resumed: Array<{ slotId: string; accountId: string; uin: string; operationId: string }>;
@@ -177,12 +182,17 @@ export class ManualInjectionService {
     return record ? structuredClone(record.dto) : undefined;
   }
 
-  async #resume(): Promise<ManualInjectionResumeResult> {
-    const candidates = this.#options.host.resumeCandidates?.();
-    if (!candidates) {
-      throw new AccompanyError('injection_resume_unavailable', 'this host cannot enumerate resumable slots');
-    }
-    const eligible: Array<{ slotId: string; accountId: string }> = [];
+  /** 与 resume() 共用同一资格规则；供控制面展示“恢复上次监听”入口。 */
+  resumeCandidates(): ManualInjectionResumeCandidate[] {
+    return this.#eligibleCandidates().eligible;
+  }
+
+  #eligibleCandidates(): {
+    eligible: ManualInjectionResumeCandidate[];
+    skipped: ManualInjectionResumeResult['skipped'];
+  } {
+    const candidates = this.#options.host.resumeCandidates?.() ?? [];
+    const eligible: ManualInjectionResumeCandidate[] = [];
     const skipped: ManualInjectionResumeResult['skipped'] = [];
     for (const spec of candidates) {
       if (spec.backend !== 'snowluma' || !spec.accountId) continue;
@@ -195,6 +205,14 @@ export class ManualInjectionService {
       if (status.state !== 'stopped' && status.state !== 'failed') continue;
       eligible.push({ slotId: spec.id, accountId: spec.accountId });
     }
+    return { eligible, skipped };
+  }
+
+  async #resume(): Promise<ManualInjectionResumeResult> {
+    if (!this.#options.host.resumeCandidates) {
+      throw new AccompanyError('injection_resume_unavailable', 'this host cannot enumerate resumable slots');
+    }
+    const { eligible, skipped } = this.#eligibleCandidates();
     if (eligible.length === 0) return { attempted: 0, resumed: [], skipped };
 
     const processes = await this.#options.manager.listProcesses();

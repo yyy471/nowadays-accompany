@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { InvalidSpecError, ProfileNotReadyError } from '../core/errors.js';
 import type { Logger } from '../core/logger.js';
+import { writeJsonAtomic } from '../storage/atomic-write.js';
 import type { LocalArtifactStore } from '../artifacts/local.js';
 import type {
   AccountPluginEntry,
@@ -39,11 +40,7 @@ export class AccountProfileService {
 
   async save(accountDir: string, raw: unknown): Promise<AccountProfileFile> {
     const profile = parseProfile(raw, path.join(accountDir, 'profile.json'));
-    await fs.mkdir(accountDir, { recursive: true, mode: 0o700 });
-    const file = path.join(accountDir, 'profile.json');
-    const tmp = `${file}.${process.pid}.tmp`;
-    await fs.writeFile(tmp, `${JSON.stringify(profile, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-    await fs.rename(tmp, file);
+    await writeJsonAtomic(path.join(accountDir, 'profile.json'), profile);
     return profile;
   }
 

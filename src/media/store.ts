@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Logger } from '../core/logger.js';
+import { writeFileAtomic } from '../storage/atomic-write.js';
 import { MediaError } from '../providers/errors.js';
 import type { IngestInput, MediaCleanupResult, MediaData, MediaRef } from './types.js';
 
@@ -63,11 +64,8 @@ export class AccountMediaStore {
       ...(input.height !== undefined ? { height: input.height } : {}),
       ...(input.durationMs !== undefined ? { durationMs: input.durationMs } : {})
     };
-    await fs.mkdir(this.#filesDir, { recursive: true, mode: 0o700 });
-    const tmp = path.join(this.#filesDir, `${mediaId}.${process.pid}.tmp`);
     const file = this.#fileFor(mediaId);
-    await fs.writeFile(tmp, input.data, { mode: 0o600 });
-    await fs.rename(tmp, file);
+    await writeFileAtomic(file, input.data);
     this.#index!.media[mediaId] = ref;
     try {
       await this.#persist();
@@ -222,13 +220,7 @@ export class AccountMediaStore {
     )}\n`;
     const task = this.#writeChain
       .catch(() => {})
-      .then(async () => {
-        await fs.mkdir(this.#root, { recursive: true, mode: 0o700 });
-        const file = path.join(this.#root, 'index.json');
-        const tmp = `${file}.${process.pid}.tmp`;
-        await fs.writeFile(tmp, payload, { encoding: 'utf8', mode: 0o600 });
-        await fs.rename(tmp, file);
-      });
+      .then(() => writeFileAtomic(path.join(this.#root, 'index.json'), payload));
     this.#writeChain = task.then(
       () => undefined,
       () => undefined

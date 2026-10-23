@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { InvalidSpecError } from '../core/errors.js';
 import type { Logger } from '../core/logger.js';
+import { writeJsonAtomic } from '../storage/atomic-write.js';
 import {
   artifactRefKey,
   type ArtifactKind,
@@ -215,10 +216,7 @@ export class LocalArtifactStore {
       epochs: Object.fromEntries(Object.entries(epochs).sort(([left], [right]) => left.localeCompare(right))),
       savedAt: Date.now()
     };
-    await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
-    const tmp = `${file}.${process.pid}.tmp`;
-    await fs.writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-    await fs.rename(tmp, file);
+    await writeJsonAtomic(file, payload);
   }
 }
 

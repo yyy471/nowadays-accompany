@@ -3,6 +3,7 @@ import path from 'node:path';
 import { AccompanyError } from '../core/errors.js';
 import type { Logger } from '../core/logger.js';
 import { isLoopbackHost } from '../core/net.js';
+import { writeJsonAtomic } from '../storage/atomic-write.js';
 
 export interface InjectionSettings {
   runtimeDir?: string;
@@ -59,14 +60,10 @@ export class InjectionSettingsStore {
   async set(raw: unknown): Promise<InjectionSettings> {
     const next = parseSettings(raw, 'injectionSettings');
     const task = this.#chain.catch(() => {}).then(async () => {
-      await fs.mkdir(path.dirname(this.#filePath), { recursive: true, mode: 0o700 });
-      const tmp = `${this.#filePath}.${process.pid}.tmp`;
       const payload: FileShape = { version: 1, ...next };
       try {
-        await fs.writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-        await fs.rename(tmp, this.#filePath);
+        await writeJsonAtomic(this.#filePath, payload);
       } catch (error) {
-        await fs.unlink(tmp).catch(() => {});
         throw new AccompanyError('injection_settings_write_failed', 'failed to persist injection settings', {
           cause: error
         });

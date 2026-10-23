@@ -3,6 +3,7 @@ import { api } from '../api';
 import { errorMessage } from '../hooks';
 import type { AccountSummary, ArtifactItem, ArtifactsResponse, AccountsResponse, ArtifactRef } from '../types';
 import { Button, CancelButton, Card, Checkbox, ConfirmButton, Empty, ErrorNote, Field, Icon, Input, Select, Tag, copyText } from '../ui';
+import { AccountAvatar } from '../components/AccountAvatar';
 
 interface AccountsPageProps {
   view: 'roles' | 'plugins';
@@ -319,9 +320,7 @@ export function AccountsPage({ view, accounts, accountsError, artifacts, refresh
               const isEditing = editing === account.accountId;
               return <div key={account.accountId} className="account-card">
                 <div className="account-head">
-                  <div className="account-identity">{account.avatarDataUrl
-                    ? <span className="avatar" aria-hidden="true"><img src={account.avatarDataUrl} alt="" /></span>
-                    : <span className="avatar">{account.accountId.slice(-2)}</span>}<div><h3>{account.accountId}</h3><span className="muted mono">{account.dir}</span></div></div>
+                  <div className="account-identity"><AccountAvatar dataUrl={account.avatarDataUrl} label={`${account.accountId} 头像`} className="avatar" iconSize={16} /><div><h3>{account.accountId}</h3><span className="muted mono">{account.dir}</span></div></div>
                   <div className="account-head-actions"><Tag tone={account.state === 'ready' ? 'ok' : 'bad'}>{accountStateLabel(account.state)}</Tag>{account.slots.length ? <Tag tone="idle">槽位 {account.slots.join('、')}</Tag> : <Tag tone="idle">未占用槽位</Tag>}</div>
                 </div>
                 <div className="account-body"><div className="account-profile-summary">
@@ -370,9 +369,7 @@ function AccountDisplayEditor({ accountId, fallbackAvatarDataUrl, onSaved }: {
   const draft = drafts[accountId] ?? saved;
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
   const previewAvatarDataUrl = draft.avatarDataUrl ?? fallbackAvatarDataUrl;
-  const previewAvatarLabel = draft.avatarDataUrl
-    ? `${accountId} 本地展示头像`
-    : previewAvatarDataUrl ? `${accountId} QQ 头像` : 'QQ 默认头像占位';
+  const previewAvatarLabel = draft.avatarDataUrl ? `${accountId} 本地展示头像` : `${accountId} QQ 头像`;
 
   useEffect(() => {
     if (profiles[accountId]) return;
@@ -442,9 +439,7 @@ function AccountDisplayEditor({ accountId, fallbackAvatarDataUrl, onSaved }: {
   return (
     <Card title={`账号展示资料 · QQ ${accountId}`} subtitle="仅用于 nowadays 主页展示，不读取或修改 QQ 个人资料。昵称、签名和本地头像都按账号保存。">
       <div className="display-profile-editor">
-        <span className="account-avatar large" role="img" aria-label={previewAvatarLabel}>
-          {previewAvatarDataUrl ? <img src={previewAvatarDataUrl} alt="" /> : <span className="avatar-fallback"><Icon name="user" size={42} /></span>}
-        </span>
+        <AccountAvatar dataUrl={previewAvatarDataUrl} label={previewAvatarLabel} className="account-avatar large" iconSize={42} />
         <div className="display-profile-fields">
           <div className="form-grid">
             <Field label="主页昵称（本地展示）"><Input maxLength={64} value={draft.nickname} onChange={(event) => updateDraft((current) => ({ ...current, nickname: event.target.value }))} placeholder="例如：晚风" /></Field>

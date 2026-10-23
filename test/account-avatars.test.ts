@@ -48,6 +48,7 @@ describe('account avatar pipeline', () => {
     expect(calls).toBe(1);
 
     const [withoutAvatars] = await core.listAccounts();
+    expect(withoutAvatars).toMatchObject({ nickname: '青禾', signature: '' });
     expect(withoutAvatars?.avatarDataUrl).toBeUndefined();
   });
 });

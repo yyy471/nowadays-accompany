@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { InvalidSpecError } from '../core/errors.js';
 import type { Logger } from '../core/logger.js';
+import { writeJsonAtomic } from '../storage/atomic-write.js';
 
 // `~` 只用于 source/kind 限定的复合状态键（如 private~plugin~echo），普通插件 id 不允许。
 const PLUGIN_ID = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/;
@@ -35,12 +36,7 @@ export class PluginStateStore {
   async write(pluginId: string, value: Record<string, unknown>): Promise<void> {
     const file = this.#fileFor(pluginId);
     const previous = this.#chains.get(file) ?? Promise.resolve();
-    const task = previous.catch(() => {}).then(async () => {
-      await fs.mkdir(this.#root, { recursive: true, mode: 0o700 });
-      const tmp = `${file}.${process.pid}.tmp`;
-      await fs.writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-      await fs.rename(tmp, file);
-    });
+    const task = previous.catch(() => {}).then(() => writeJsonAtomic(file, value));
     this.#chains.set(file, task);
     try {
       await task;

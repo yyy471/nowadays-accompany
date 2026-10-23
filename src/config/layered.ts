@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Logger } from '../core/logger.js';
+import { writeFileAtomic } from '../storage/atomic-write.js';
 import type { ChatKind } from '../routing/identity.js';
 import { conversationKey } from '../routing/identity.js';
 
@@ -128,12 +129,7 @@ export class LayeredConfig {
     if (!this.#filePath) return;
     const filePath = this.#filePath;
     const payload = `${JSON.stringify(this.#layers, null, 2)}\n`;
-    const task = this.#writeChain.catch(() => {}).then(async () => {
-      await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
-      const tmp = `${filePath}.${process.pid}.tmp`;
-      await fs.writeFile(tmp, payload, { encoding: 'utf8', mode: 0o600 });
-      await fs.rename(tmp, filePath);
-    });
+    const task = this.#writeChain.catch(() => {}).then(() => writeFileAtomic(filePath, payload));
     this.#writeChain = task.then(
       () => undefined,
       () => undefined

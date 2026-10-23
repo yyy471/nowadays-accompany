@@ -5,6 +5,7 @@ import {
   CredentialVaultUnavailableError,
   type CredentialVault
 } from '../src/index.js';
+import { writeJsonAtomic } from '../src/storage/atomic-write.js';
 
 interface VaultFile {
   version: 1;
@@ -72,11 +73,8 @@ export class SafeStorageCredentialVault implements CredentialVault {
     const task = this.#chain.catch(() => {}).then(async () => {
       const entries = await this.#read();
       mutate(entries);
-      await fs.mkdir(path.dirname(this.#file), { recursive: true, mode: 0o700 });
       const payload: VaultFile = { version: 1, entries };
-      const tmp = `${this.#file}.${process.pid}.tmp`;
-      await fs.writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-      await fs.rename(tmp, this.#file);
+      await writeJsonAtomic(this.#file, payload);
       this.#entries = entries;
     });
     this.#chain = task;

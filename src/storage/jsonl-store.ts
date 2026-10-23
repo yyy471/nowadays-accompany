@@ -4,6 +4,7 @@ import { IsolationError } from '../core/errors.js';
 import type { Logger } from '../core/logger.js';
 import type { ConversationRef } from '../routing/identity.js';
 import { conversationKey, safePathSegment } from '../routing/identity.js';
+import { writeFileAtomic } from './atomic-write.js';
 import type { AppendResult, MessageStore, ReadOptions, StoredMessage } from './contract.js';
 
 export interface JsonlStoreOptions {
@@ -368,10 +369,8 @@ export class JsonlStore implements MessageStore {
     }
     const records = await this.#readFile(segment.file);
     const kept = records.slice(-keep);
-    const tmp = `${segment.file}.${process.pid}.tmp`;
     const payload = kept.map((record) => `${JSON.stringify(record)}\n`).join('');
-    await fs.writeFile(tmp, payload, { encoding: 'utf8', mode: 0o600 });
-    await fs.rename(tmp, segment.file);
+    await writeFileAtomic(segment.file, payload);
     segment.count = kept.length;
     segment.entries = kept.map((record) => ({
       ...(record.messageId ? { messageId: record.messageId } : {}),

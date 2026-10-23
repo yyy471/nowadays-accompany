@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Logger } from '../core/logger.js';
+import { writeFileAtomic } from '../storage/atomic-write.js';
 import { JobError } from '../providers/errors.js';
 import type { MediaJob } from './types.js';
 
@@ -160,13 +161,7 @@ export class AccountJobStore {
     )}\n`;
     const task = this.#writeChain
       .catch(() => {})
-      .then(async () => {
-        await fs.mkdir(this.#root, { recursive: true, mode: 0o700 });
-        const file = path.join(this.#root, 'jobs.json');
-        const tmp = `${file}.${process.pid}.tmp`;
-        await fs.writeFile(tmp, payload, { encoding: 'utf8', mode: 0o600 });
-        await fs.rename(tmp, file);
-      });
+      .then(() => writeFileAtomic(path.join(this.#root, 'jobs.json'), payload));
     this.#writeChain = task.then(
       () => undefined,
       () => undefined

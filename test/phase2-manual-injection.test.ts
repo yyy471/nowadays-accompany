@@ -332,6 +332,20 @@ describe('manual injection service', () => {
     expect(h.state()).toBe('online');
   });
 
+  it('exposes the same resumable candidates used by resume', () => {
+    const resumable = harness({ uin: '10001' }, { accountId: '10001' });
+    expect(resumable.service.resumeCandidates()).toEqual([{ slotId: 'slot-a', accountId: '10001' }]);
+
+    const stopped = harness(
+      { uin: '10001' },
+      { accountId: '10001', desiredState: 'stopped' }
+    );
+    expect(stopped.service.resumeCandidates()).toEqual([]);
+
+    const unbound = harness({ uin: '10001' });
+    expect(unbound.service.resumeCandidates()).toEqual([]);
+  });
+
   it('skips a matching process that is not injected', async () => {
     const h = harness({ uin: '10001' }, { accountId: '10001' });
     const result = await h.service.resume();

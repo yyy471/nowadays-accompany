@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { InvalidSpecError } from '../core/errors.js';
+import { writeJsonAtomic } from '../storage/atomic-write.js';
 import { assertIdentifier, assertKind, type ConversationRef } from '../routing/identity.js';
 import type { ArtifactRef, ResolvedRoleCard } from '../artifacts/types.js';
 
@@ -108,10 +109,7 @@ export class ConversationRoleBindingStore {
   }
 
   async #write(filePath: string, file: BindingFile): Promise<void> {
-    await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
-    const temporary = `${filePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
-    await fs.writeFile(temporary, `${JSON.stringify(file, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-    await fs.rename(temporary, filePath);
+    await writeJsonAtomic(filePath, file);
   }
 }
 

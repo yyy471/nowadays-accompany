@@ -75,10 +75,16 @@ export interface SlotSpec {
   restart?: { enabled: boolean; maxAttempts: number; baseDelayMs: number; maxDelayMs: number };
 }
 
+export interface ResumeCandidate {
+  slotId: string;
+  accountId: string;
+}
+
 export interface SlotsResponse {
   ok: true;
   slots: InstanceStatus[];
   specs: SlotSpec[];
+  resumable: ResumeCandidate[];
 }
 
 export interface ArtifactManifest {
@@ -111,6 +117,8 @@ export interface AccountSummary {
   profile?: ProfileSummary;
   error?: string;
   slots: string[];
+  nickname?: string;
+  signature?: string;
   avatarDataUrl?: string;
   avatarSource?: 'local' | 'qq';
 }

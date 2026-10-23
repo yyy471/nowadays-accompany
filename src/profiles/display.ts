@@ -1,7 +1,7 @@
-import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { InvalidSpecError } from '../core/errors.js';
+import { writeJsonAtomic } from '../storage/atomic-write.js';
 
 export interface AccountDisplayProfile {
   nickname: string;
@@ -55,11 +55,7 @@ export async function saveAccountDisplay(
     else if (typeof input.avatarDataUrl === 'string') next.avatarDataUrl = parseAvatar(input.avatarDataUrl, 'avatarDataUrl');
     else throw new InvalidSpecError('avatarDataUrl must be an image data URL or null');
   }
-  await fs.mkdir(accountDir, { recursive: true, mode: 0o700 });
-  const filename = path.join(accountDir, 'display.json');
-  const temporary = `${filename}.${process.pid}.${crypto.randomUUID()}.tmp`;
-  await fs.writeFile(temporary, `${JSON.stringify(next, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-  await fs.rename(temporary, filename);
+  await writeJsonAtomic(path.join(accountDir, 'display.json'), next);
   return next;
 }
 

@@ -101,11 +101,10 @@ describe('LayeredConfig', () => {
     roots.push(root);
     const file = path.join(root, 'config.json');
     const config = await LayeredConfig.load(file, silentLogger());
-    const tmp = `${file}.${process.pid}.tmp`;
-    await fs.mkdir(tmp, { recursive: true });
+    await fs.mkdir(file, { recursive: true });
 
     await expect(config.setGlobal({ a: 1 })).rejects.toThrow();
-    await fs.rm(tmp, { recursive: true, force: true });
+    await fs.rm(file, { recursive: true, force: true });
     await config.setGlobal({ a: 2 });
 
     const raw = JSON.parse(await fs.readFile(file, 'utf8')) as { global: Record<string, number> };

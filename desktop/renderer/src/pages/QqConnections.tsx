@@ -3,6 +3,7 @@ import { api } from '../api';
 import { errorMessage, usePoll } from '../hooks';
 import type { InjectionOperationResponse, InjectionProcessesResponse, InjectionResumeResponse, InjectionRuntimeResponse, SlotsResponse, SnowLumaProcess } from '../types';
 import { Button, Card, ConfirmButton, Empty, ErrorNote, Icon, StatePill, useConfirm } from '../ui';
+import { AccountAvatar } from '../components/AccountAvatar';
 
 export function QqConnections({ data, error, refresh, onSettings }: {
   data?: SlotsResponse; error?: string; refresh: () => Promise<void>; onSettings?: () => void;
@@ -16,12 +17,7 @@ export function QqConnections({ data, error, refresh, onSettings }: {
   const confirm = useConfirm();
   const status = runtime.data?.runtime;
   const instances = data?.slots ?? [];
-  const resumable = instances.filter((instance) =>
-    instance.backend === 'snowluma'
-    && Boolean(instance.accountId ?? data?.specs.find((spec) => spec.id === instance.id)?.accountId)
-    && instance.desiredState === 'running'
-    && (instance.state === 'stopped' || instance.state === 'failed')
-  );
+  const resumable = data?.resumable ?? [];
   const ready = Boolean(status?.running && status.compatible && status.passwordConfigured && status.autoLoadKnown && !status.autoLoadEnabled && !status.consentRequired);
 
   async function run(key: string, action: () => Promise<void>) {
@@ -129,7 +125,7 @@ export function QqConnections({ data, error, refresh, onSettings }: {
           const nickname = instance?.accountNickname ?? process.nickname ?? process.displayName;
           return <article className="qq-process-card" key={process.pid}>
             <div className="qq-process-heading">
-              <span className="qq-process-avatar">{process.avatarDataUrl ? <img src={process.avatarDataUrl} alt="账号头像"/> : <Icon name="user" size={26}/>}</span>
+              <AccountAvatar dataUrl={process.avatarDataUrl} label={`${nickname || (accountId ? `QQ ${accountId}` : `QQ ${index + 1}`)} 头像`} className="qq-process-avatar" iconSize={26}/>
               <div><h3>{nickname || (accountId ? `QQ ${accountId}` : `待识别的 QQ ${index + 1}`)}</h3><span className="muted">{accountId ? `QQ ${accountId}` : '暂未读取到账号信息'}</span></div>
               {instance ? <StatePill state={instance.state}/> : <Button variant="primary" icon="play" disabled={Boolean(busy) || !ready} busy={busy === `connect-${process.pid}`} onClick={() => connect(process)}>{injected ? '开始监听' : '注入并监听'}</Button>}
             </div>

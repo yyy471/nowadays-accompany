@@ -196,11 +196,13 @@ describe('independent dynamic QQ connection acceptance', () => {
       expect.objectContaining({ id: 'qq-10001', desiredState: 'running', state: 'stopped' })
     ]);
     expect(h.loads()).toBe(1);
+    expect(restarted.injectionResumeCandidates()).toEqual([{ slotId: 'qq-10001', accountId: '10001' }]);
 
     const result = await restarted.resumeInjectionListening();
     expect(result).toMatchObject({ attempted: 1, resumed: [{ slotId: 'qq-10001', accountId: '10001', uin: '10001' }] });
     expect(h.loads()).toBe(1);
     expect(restarted.status().instances[0]?.state).toBe('online');
+    expect(restarted.injectionResumeCandidates()).toEqual([]);
   });
 
   it('does not restore a listening slot the user stopped before quitting', async () => {

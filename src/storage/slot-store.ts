@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Logger } from '../core/logger.js';
+import { writeFileAtomic } from './atomic-write.js';
 import type { InstanceSpec } from '../instances/spec.js';
 
 interface SlotFile {
@@ -83,12 +84,7 @@ export class SlotStore {
       slots: this.#slots
     };
     const body = `${JSON.stringify(payload, null, 2)}\n`;
-    const task = this.#writeChain.catch(() => {}).then(async () => {
-      await fs.mkdir(path.dirname(this.#filePath), { recursive: true, mode: 0o700 });
-      const tmp = `${this.#filePath}.${process.pid}.tmp`;
-      await fs.writeFile(tmp, body, { encoding: 'utf8', mode: 0o600 });
-      await fs.rename(tmp, this.#filePath);
-    });
+    const task = this.#writeChain.catch(() => {}).then(() => writeFileAtomic(this.#filePath, body));
     this.#writeChain = task;
     try {
       await task;

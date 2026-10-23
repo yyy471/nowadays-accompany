@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Logger } from '../core/logger.js';
+import { writeFileAtomic } from '../storage/atomic-write.js';
 import type { AccountPolicy, ProviderConfig, RuntimeConfigV2 } from './types.js';
 import {
   configFingerprint,
@@ -248,17 +249,13 @@ export class ConfigStore {
     const task = this.#writeChain
       .catch(() => {})
       .then(async () => {
-        await fs.mkdir(path.dirname(this.#filePath), { recursive: true, mode: 0o700 });
-        const tmp = `${this.#filePath}.${process.pid}.tmp`;
         try {
-          await fs.writeFile(tmp, payload, { encoding: 'utf8', mode: 0o600 });
           if (this.#loaded) {
             await fs.copyFile(this.#filePath, this.backupPath);
             await fs.chmod(this.backupPath, 0o600).catch(() => {});
           }
-          await fs.rename(tmp, this.#filePath);
+          await writeFileAtomic(this.#filePath, payload);
         } catch (error) {
-          await fs.unlink(tmp).catch(() => {});
           throw new ConfigError(`failed to persist config: ${this.#filePath}`, { cause: error });
         }
       });

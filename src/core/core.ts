@@ -745,10 +745,8 @@ export class Core implements CoreView {
       } catch (resolveError) {
         error = resolveError instanceof Error ? resolveError.message : String(resolveError);
       }
-      if (options.avatars) {
-        const display = await loadAccountDisplay(entry.dir).catch(() => undefined);
-        if (display?.avatarDataUrl) localAvatars.set(entry.accountId, display.avatarDataUrl);
-      }
+      const display = await loadAccountDisplay(entry.dir).catch(() => undefined);
+      if (options.avatars && display?.avatarDataUrl) localAvatars.set(entry.accountId, display.avatarDataUrl);
       result.push({
         accountId: entry.accountId,
         dir: entry.dir,
@@ -756,6 +754,7 @@ export class Core implements CoreView {
         ...(profile ? { file: profile } : {}),
         ...(summary ? { profile: summary } : {}),
         ...(error ? { error } : {}),
+        ...(display ? { nickname: display.nickname, signature: display.signature } : {}),
         slots: [...entry.slots]
       });
     }
@@ -1072,6 +1071,10 @@ export class Core implements CoreView {
   async resumeInjectionListening() {
     await this.#restoreListeningSlots();
     return this.#manualInjection.resume();
+  }
+
+  injectionResumeCandidates(): Array<{ slotId: string; accountId: string }> {
+    return this.#manualInjection.resumeCandidates();
   }
 
   injectionProcesses(options: { avatars?: boolean } = {}): Promise<SnowLumaProcess[]> {

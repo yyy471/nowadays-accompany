@@ -46,6 +46,9 @@ export interface AccountSummary {
   profile?: ProfileSummary;
   error?: string;
   slots: string[];
+  /** 本地展示资料；没有 display.json 时省略。 */
+  nickname?: string;
+  signature?: string;
   /** 本地展示头像优先；缺失时回退到 QQ 公开头像。 */
   avatarDataUrl?: string;
   avatarSource?: 'local' | 'qq';
@@ -95,6 +98,7 @@ export interface CoreView {
   testInjectionConnection(): Promise<{ runtime: SnowLumaRuntimeStatus; processCount: number }>;
   retrySnowLumaRuntime(): Promise<SnowLumaRuntimeStatus>;
   resumeInjectionListening(): Promise<ManualInjectionResumeResult>;
+  injectionResumeCandidates(): Array<{ slotId: string; accountId: string }>;
   injectionProcesses(options?: { avatars?: boolean }): Promise<SnowLumaProcess[]>;
   injectAndListen(raw: unknown): Promise<InjectionOperationDto>;
   listenInjection(raw: unknown): Promise<InjectionOperationDto>;
@@ -875,7 +879,12 @@ export async function createApiServer(options: ApiServerOptions): Promise<ApiHan
     }
 
     if (request.method === 'GET' && pathname === '/slots') {
-      sendJson(response, 200, { ok: true, slots: core.status().instances, specs: core.slotSpecs() });
+      sendJson(response, 200, {
+        ok: true,
+        slots: core.status().instances,
+        specs: core.slotSpecs(),
+        resumable: core.injectionResumeCandidates()
+      });
       return;
     }
 
