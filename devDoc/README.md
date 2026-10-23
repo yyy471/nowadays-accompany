@@ -48,3 +48,5 @@
 账号卡片识别见 [24 QQ账号与昵称展示](24-qq-account-identity-display.md)：注入前探测、连接后身份核验、PID诊断折叠和未知账号回退。
 
 后端收口核验与后续分工见 [25 后端架构治理计划](25-backend-consolidation-review-and-plan.md)：本轮原子写入/恢复资格收口核验、两项既存并发问题及分阶段改造验收。
+
+B00 基线记录见 [28 基线行为契约](28-baseline-behavior-contract.md)：治理起点提交、不可改变的产品行为、基线核验结果与已知问题。
