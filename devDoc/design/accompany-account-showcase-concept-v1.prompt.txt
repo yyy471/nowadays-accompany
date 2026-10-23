@@ -1,0 +1,31 @@
+Use case: ui-mockup.
+Revise the provided Accompany companion-stage screenshot to precisely match these requested product changes. Reference image is an edit target. Create a single high-resolution 16:10 front-on desktop UI screenshot, no device frame, no outer captions.
+
+PRESERVE: immersive account showcase as main page, full-width canvas, simple top navigation, account selection near bottom, generous negative space, warm sophisticated art direction.
+REPLACE: all conversation transcript and composer on the right with the SELECTED QQ ACCOUNT'S PERSONAL SIGNATURE. This is a display-only account portrait page, not a chat interface and not an operational console.
+NO message history, speech bubbles, input box, send button, model controls, role settings, pause/resume/stop buttons, injection buttons, process rows, connection diagram or account management actions anywhere on the home page. All real operations happen on the separate "工作台" page. Account switching is presentation-only.
+
+PALETTE: no pure black and no near-black base. Main canvas warm cream #F2EDE3, light oat #E8E0D3, titlebar and fine text warm taupe #62584D / #8C7B68, warm dark-brown text #433B34. Amber accent #C08F4A. The application is warm, airy, quietly luxurious, like a personal portrait album. A small amount of light warm frosted material for the Dock. No black bands at top or bottom; NO dark charcoal navigation/background. Plenty of cream whitespace. No neon or strong orange gradient.
+
+TOP BAR: 38px high, warm ivory, fine bottom hairline, small Accompany at left. Center three text navigation tabs "主页" active with amber underline, "工作台", "资源". Windows-style controls at far right. Small unobtrusive "示例账号" text. Keep hierarchy restrained.
+
+MAIN SHOWCASE:
+Left 43%: one large vertical account image, beautiful painterly portrait of a young adult companion in warm natural window light, olive and honey botanical details, quiet tasteful clothing, face not exaggerated. This is a sample uploaded ACCOUNT SHOWCASE IMAGE (not role model configuration). Fade artwork softly into the cream canvas to the right and bottom; integrated portrait area without a hard bordered photo card. It may extend from upper third down to lower edge but keep whitespace at top. No QQ interface operations over art. A small faint label at lower-left "账号展示" is optional, not necessary.
+Right 50%: mostly EMPTY. Beautiful typographic composition around middle-upper center. Small overline "QQ 10001". The account nickname "青禾" in elegant Chinese display serif around 44px, not giant. A delicate small divider or understated quote mark. The personal signature in legible spacious Chinese type in two short lines:
+"把日子过慢一点，"
+"把喜欢留久一点。"
+Small caption "个性签名" below, subdued and with generous separation. This is explicitly the QQ profile signature, not an assistant reply.
+No author timestamp. No "与青禾的会话". No huge cards or profile metadata grids. Do not fear blank space; leave at least 35% of the central display open cream surface.
+Tiny muted status near the nickname "正在展示" is optional; NO online/paused operational state on this view.
+Account identity is nickname plus QQ number; do not call it "角色".
+
+BOTTOM DOCK:
+Replace the entire wide account rail with a FLOATING macOS-inspired Dock, centered near the bottom, approximately 500px wide and 90px high, warm translucent oat/ivory material, subtle warm shadow, 22px corners, 12px padding, not a full-width strip.
+Dock contains five account portrait icons with softly rounded SQUARE masks, not circles, compact spacing, no panels around each icon. Selected "青禾" icon is visibly larger (about 66px) than idle icons (about 44px). An unselected hovered account "晚晴" expands to around 58px and its two neighbors gently rise/scale to illustrate macOS-style hover magnification. Keep selected account unmistakable with tiny amber dot/short line under it even while other icon is hovered; hovering does NOT change selected account or the main portrait/signature. Only clicking an avatar switches the showcase.
+Add a small floating warm-ivory tooltip above the hovered icon reading "晚晴", not a permanent label wall. Dock elevation should remain subtle, no huge glossy reflection or fake metal.
+The other small icons represent accounts "晴川", "知秋", "星野" with varied restrained sample portraits or botanical imagery, cohesive and tasteful. No app logos, process plus, gear, injection button or playback controls in this dock. Optional tiny account nicknames only in tooltip.
+Bottommost small line "当前展示 · 青禾" very quiet, can be omitted if redundant.
+
+This screenshot demonstrates a hover state: 青禾 is SELECTED, 晚晴 is HOVERED; main portrait and signature remain 青禾.
+A still image cannot show motion, but the icon sizes/raised hover state must communicate the intended animated magnification.
+Maintain readable Chinese labels and elegant restrained spacing. The whole result must feel sunny-warm, minimal, calm and premium, with distinctly nonblack framing and a true floating account Dock.

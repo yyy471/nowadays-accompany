@@ -1,0 +1,47 @@
+Use case: ui-mockup.
+Create one new high-fidelity Windows desktop application design screenshot for "Accompany", a personal AI companion app connecting multiple QQ accounts. The user rejected two dark-mint standard dashboard concepts as too templated and now wants to explore WARM DARK GRAY + AMBER. This must be a genuinely different art direction and composition, not a recoloring of a generic admin dashboard.
+Landscape 16:10, crisp high-resolution front-on screenshot, the usable desktop application fills the frame. No laptop frame, no perspective, no desk scene, no external poster captions, no watermark.
+
+ART DIRECTION:
+An intimate, exquisitely typeset personal desktop workspace with a quiet atelier / reading-room feeling. Warm charcoal #24221F outer background, smoky taupe #302D28 secondary planes, warm ivory #E9E2D5 text, muted warm-gray #B1A89B secondary text, muted amber #DCA960 accent with near-black #211A12 text. Subtle material sophistication, a tiny amount of warm grazing light, extremely subtle fine surface grain, never a leather/wood skeuomorphic texture. Contrast must remain readable. No mint/cyan/teal anywhere. Avoid gaming RGB, orange neon, giant gradient glow, glassmorphism stacks, rounded bento cards, KPI boxes and generic SaaS dashboard styling. ONE principal amber CTA. No sepia filter over a previous UI. The interface should feel deliberately composed and private, with typography, editorial rhythm and purposeful empty space. Professional software, not a website hero or an anime wallpaper.
+
+LAYOUT THAT DEPARTS FROM GENERIC DASHBOARD:
+Slim neutral Windows title bar 32px, Accompany wordmark at left, standard minimize/maximize/close at right.
+A slim 190px left navigation rail in warm charcoal, with subdued small line icons, grouped navigation labels in legible Chinese: "实例与监听" active, "会话", "活动"; secondary "角色", "插件与 Skill"; lower "模型服务", "资源库", "设置". The active row is a tiny amber square plus ivory text, with NO big filled pill. Small bottom user initials.
+The main work surface starts 40px inside the rail and uses a clear two-zone composition:
+- Left 65% of remaining space is the operational workspace.
+- Right 35% is a quiet ACCOUNT NOTEBOOK region integrated into the same warm surface, separated by one very fine vertical hairline. Not an image drawer and not a large boxed card.
+
+MAIN operational zone:
+Tiny uppercase letterspaced eyebrow "YOUR COMPANIONS".
+Moderate Chinese title "实例与监听" at 28px, regular/medium weight rather than huge bold.
+Small subtitle "连接由你开始，陪伴各自独立。"
+On the right side of this header a tiny neutral connection indicator "SnowLuma 已连接".
+Below leave considered breathing space, then a small section header "正在陪伴" with muted "02".
+Present TWO refined flat, borderless account rows, each 92px tall with a 40px small thumbnail and precise column alignment, thin horizontal separation only:
+First row: small muted terracotta botanical portrait thumbnail, "青禾", underneath "QQ 10001"; separate columns "正在监听" (small subdued sage dot + text) and "私聊 · 群聊"; role label "角色：青禾" in secondary text. Selected row gets a barely visible warm highlight with a single amber bracket-like marker at the left. Quiet text action "暂停" at the far right.
+Second row: small abstract dark-ochre thumbnail, "晚晴", beneath "QQ 10002", "已暂停" (amber small pause icon + text), "仅私聊", "角色：晚晴". Quiet text action "恢复".
+No account row boxed borders or big filled background panels. Do NOT use large circular anime avatars.
+
+Further down, a section "待连接" with a small outlined process symbol, "QQ · PID 24680", muted "身份待识别 · 未注入". Put a modest solid muted amber button "注入并监听" aligned with the right end of this row. Below short helper "仅在你点击后执行". No other colored main buttons.
+At bottom of this operational zone a calm, narrow activity rail titled "最近", two thin timeline entries "14:28  青禾收到一条消息" and "12:16  晚晴已暂停自动处理". Minimal divider, no console panel.
+Keep this operational area easily scannable and accessible, not oversized art or excessive blankness.
+
+RIGHT NOTEBOOK zone:
+This is a beautifully edited portrait dossier, with the largest expressive element being elegant TYPE and a small illustration, not an enormous anime picture.
+At top very small label "当前角色 / 01".
+Then name "青禾" in a graceful large Chinese Song-style display type around 40px; all other UI text remains neutral Chinese sans serif for legibility. A fine small line "绑定 QQ 10001".
+A WIDE BUT SHALLOW illustration panel no taller than 180px below the name: tasteful hand-painted botanical still life, amber late-afternoon light, a small ceramic cup and ginkgo/olive leaves on a windowsill, quiet painterly editorial image. Soft brush edge blending into the warm charcoal background, not a glossy photorealistic render and NO dominant anime girl or giant face. This is a sample character's atmosphere, not a functional illustration.
+Under it a short restrained role note "安静倾听，认真回应。" and small "角色资料" text link.
+A generous gap followed by a clean two-column definition list with tiny labels and readable values:
+"对话" / "本地模型"
+"视觉" / "云端识图"
+"扩展" / "2 个 Skill · 1 个插件"
+"响应范围" / "私聊与群聊"
+Minimal horizontal fine hairlines. Not card tiles.
+Near the bottom a small outlined secondary "编辑角色" and separate quiet "停止监听" text action. No bright stop button, no delete/unload row.
+Bottom small note "内容与记录仅归属此账号".
+Make the dossier feel curated through precise typography and visual rhythm. No quote marks, fake signatures, marketing slogans or giant em dashes.
+
+Overall geometry: restrained 4-8px control radii, mostly square panel composition, a stable 8px spacing grid, no rounded-pill overload. UI must look practical at 1280-1600px desktop widths. Small consistent 16px icons. Main text warm white; enough contrast on muted labels. Thin separators, sparse amber accents. Include tiny unobtrusive "示例账号" in status bar. No progress percentages or claim of automatic QQ launch.
+The screenshot must express warm minimal sophistication, individuality and comfort rather than a generic template. Every functional label is short legible Chinese. Static visual concept only.

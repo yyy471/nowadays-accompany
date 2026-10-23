@@ -1,0 +1,35 @@
+/* Design handoff only; not imported by the application. */
+:root,[data-accompany-theme="warm"] {
+  /* Primitive */
+  --warm-50:#FBF8F2; --warm-100:#F2EDE3; --warm-200:#E8E0D3;
+  --warm-300:#D5CAB9; --warm-500:#746756; --warm-700:#433B34;
+  --amber-500:#C08F4A; --ink-900:#2D241A;
+  /* Semantic */
+  --color-bg:var(--warm-100); --color-sidebar:var(--warm-200);
+  --color-surface:var(--warm-50); --color-border:var(--warm-300);
+  --color-text:var(--warm-700); --color-muted:var(--warm-500);
+  --color-accent:var(--amber-500); --color-on-accent:var(--ink-900);
+  --color-focus:#865915; --color-success:#42664C; --color-warning:#805B24;
+  --color-danger:#A13D32; --color-info:#426271;
+  --font-ui:"Segoe UI Variable","Microsoft YaHei UI","Microsoft YaHei",sans-serif;
+  --font-display:"Noto Serif SC","Source Han Serif SC",serif;
+  --font-size-body:14px; --font-size-small:12px; --line-height:1.6;
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px;
+  --space-5:24px; --space-6:32px; --space-7:48px;
+  --duration-fast:120ms; --duration-normal:200ms; --duration-slow:280ms;
+  --ease-out:cubic-bezier(.2,.8,.2,1);
+  /* Component */
+  --button-bg:var(--color-accent); --button-text:var(--color-on-accent);
+  --button-radius:10px; --button-min-height:36px;
+  --input-bg:var(--color-surface); --input-border:var(--color-border);
+  --input-radius:8px; --input-min-height:36px;
+  --panel-radius:16px; --sidebar-width:190px; --inspector-width:300px;
+  --dock-icon-size:44px; --dock-selected-size:56px; --dock-hover-scale:1.22;
+  --dock-bg:rgba(251,248,242,.82);
+}
+@media(prefers-reduced-motion:reduce) {
+  :root,[data-accompany-theme="warm"] {
+    --duration-fast:0ms; --duration-normal:0ms; --duration-slow:0ms;
+    --dock-hover-scale:1;
+  }
+}

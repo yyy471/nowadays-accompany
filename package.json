@@ -1,0 +1,105 @@
+{
+  "name": "nowadays",
+  "version": "0.2.3",
+  "private": true,
+  "description": "nowadays — a warm desktop AI companion and QQ orchestration core",
+  "type": "module",
+  "main": "desktop-dist/main.mjs",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "bin": {
+    "nowadays": "./dist/bin/nowadays.js",
+    "accompany": "./dist/bin/accompany.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json && tsc -p desktop/renderer/tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "tsx src/bin/nowadays.ts",
+    "probe": "tsx src/bin/nowadays.ts probe",
+    "desktop:icon": "electron desktop/scripts/build-icon.cjs",
+    "desktop:renderer": "vite build --config desktop/renderer/vite.config.ts",
+    "desktop:main": "node desktop/scripts/build.mjs",
+    "desktop:build": "npm run build && npm run desktop:renderer && npm run desktop:main",
+    "desktop:start": "npm run desktop:build && electron .",
+    "desktop:pack": "npm run desktop:build && node desktop/scripts/package.mjs --portable",
+    "dist": "npm run desktop:build && node desktop/scripts/package.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/ws": "^8.5.12",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^39.8.10",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
+    "png-to-ico": "^2.1.8",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vite": "^7.3.7",
+    "vitest": "^2.1.0"
+  },
+  "build": {
+    "appId": "com.nowadays.desktop",
+    "productName": "nowadays",
+    "asar": true,
+    "npmRebuild": false,
+    "directories": {
+      "output": "release",
+      "buildResources": "desktop/assets"
+    },
+    "files": [
+      "desktop-dist/**/*",
+      "desktop/renderer/dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "desktop/assets",
+        "to": "assets"
+      }
+    ],
+    "win": {
+      "icon": "desktop/assets/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "nowadays",
+      "artifactName": "nowadays-${version}-setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "nowadays-${version}-portable.${ext}"
+    }
+  }
+}

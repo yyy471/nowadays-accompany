@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Accompany · 十二页设计图集</title><link rel="stylesheet" href="design-tokens.css">
+<style>
+*{box-sizing:border-box}body{margin:0;background:var(--color-bg);color:var(--color-text);font:14px/1.7 var(--font-ui)}main{max-width:1440px;margin:auto;padding:48px 40px}
+header{display:flex;justify-content:space-between;align-items:end;gap:24px;margin-bottom:28px}
+small,.muted{color:var(--color-muted)}h1{font-size:36px;font-weight:500;letter-spacing:-1px;margin:4px 0 8px}h2{font-size:17px;margin:0}p{margin:0}
+a{color:var(--color-focus)}nav{display:flex;gap:12px;flex-wrap:wrap;margin:24px 0}
+button{font:inherit;color:inherit;cursor:pointer;border:1px solid var(--color-border);border-radius:10px;padding:8px 16px;background:transparent}
+button[aria-pressed=true]{background:var(--button-bg);color:var(--button-text);border-color:transparent}
+button:focus-visible,a:focus-visible{outline:3px solid var(--color-focus);outline-offset:4px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px}
+figure{margin:0;background:var(--color-surface);border:1px solid var(--color-border);border-radius:16px;overflow:hidden}
+figure button{display:block;padding:0;border:0;border-radius:0;width:100%;background:var(--color-sidebar)}
+figure img{display:block;width:100%;aspect-ratio:1.6;object-fit:contain}
+figcaption{padding:18px 20px}figcaption small{display:block;margin-bottom:4px}figcaption p{margin-top:6px}
+footer{margin-top:40px;padding-top:20px;border-top:1px solid var(--color-border)}
+dialog{padding:0;border:1px solid var(--color-border);border-radius:16px;background:var(--color-surface);color:var(--color-text);max-width:96vw;width:1440px;max-height:96vh}
+dialog::backdrop{background:rgba(67,59,52,.65)}.viewerbar{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;gap:12px}.viewerbar div{display:flex;gap:8px}
+dialog img{display:block;width:100%;max-height:80vh;object-fit:contain;background:var(--color-bg)}
+@media(max-width:800px){main{padding:24px 16px}header{display:block}h1{font-size:28px}.grid{grid-template-columns:1fr}}
+</style></head>
+<body><main><header><div><small>ACCOMPANY / DESIGN HANDOFF / 2026.10</small><h1>温暖有留白，工作有秩序。</h1><p class="muted">十二页视觉方案 · 主页 / 工作台 / 资源库</p></div><p><a href="../../13-frontend-design-and-implementation.md">前端方案</a> · <a href="../../14-frontend-design-acceptance.md">验收标准</a> · <a href="REVIEW.md">图稿复核</a></p></header>
+<p><strong>此为历史12页图集，旧页面与导航已失效。</strong>请查看<a href="../ui-suite-v2/index.html">当前关键页修订图</a>与<a href="../../15-account-models-and-conversation-roles.md">最新方案</a>。已取消会话页及任务媒体历史，模型配置为账号五能力，角色卡逐群/私聊显式绑定且无默认卡。旧图仅参考视觉。</p>
+<nav aria-label="图稿分类"></nav><section class="grid" aria-label="页面图稿"></section>
+<footer><p>保持已确认的账号展示主页；工作台沿用清晰的侧栏、列表和详情结构，统一暖米白与琥珀色。</p><small>图片不能验证动效和接口。未实现功能需按开发方案标注；无自动启动 QQ、自动注入或自动恢复监听。</small></footer></main>
+<dialog aria-labelledby="viewer-title"><div class="viewerbar"><h2 id="viewer-title"></h2><div><button id="prev" aria-label="上一页">←</button><button id="next" aria-label="下一页">→</button><button id="close">关闭</button></div></div><img alt=""></dialog>
+<script>
+const pages=[{"id":"01-home","title":"账号展示主页","group":"主页","summary":"大幅账号展示图、个性签名和账号 Dock。仅展示，操作进入工作台。"},{"id":"02-overview","title":"工作台总览","group":"工作台","summary":"实例概况、账号状态、最近活动与任务。"},{"id":"03-instances","title":"实例与监听","group":"工作台","summary":"PAGE: 实例与监听, active sidebar corresponding item, scope 全部账号"},{"id":"04-profile","title":"账号资料与角色","group":"工作台","summary":"PAGE: 资料与角色, active sidebar \"资料与角色\", account scope \"青禾 · QQ 10001\""},{"id":"05-extensions","title":"插件与 Skill","group":"工作台","summary":"PAGE: 插件与 Skill, active corresponding sidebar, account \"青禾 · QQ 10001\""},{"id":"06-models","title":"模型服务","group":"工作台","summary":"PAGE: 模型服务, active corresponding sidebar, scope \"全局服务\""},{"id":"07-policy","title":"账号策略","group":"工作台","summary":"PAGE: 账号策略, scope \"青禾 · QQ 10001\", active sidebar matching"},{"id":"08-conversations","title":"会话","group":"工作台","summary":"PAGE: 会话, account scope \"青禾 · QQ 10001\", active sidebar matching"},{"id":"09-tasks","title":"任务与媒体","group":"工作台","summary":"PAGE: 任务与媒体, scope \"青禾 · QQ 10001\", active sidebar matching"},{"id":"10-diagnostics","title":"事件诊断","group":"工作台","summary":"PAGE: 事件诊断, active sidebar matching, scope 全部账号"},{"id":"11-settings","title":"应用设置","group":"工作台","summary":"PAGE: 应用设置, active sidebar matching, scope \"应用\""},{"id":"12-resources","title":"资源库","group":"资源","summary":"PAGE: 资源库 under TOP-LEVEL \"资源\" ACTIVE instead of 工作台"}];
+const grid=document.querySelector('.grid'),nav=document.querySelector('nav'),dialog=document.querySelector('dialog');
+let current=0;
+function show(i){current=(i+pages.length)%pages.length;const p=pages[current];document.querySelector('#viewer-title').textContent=p.id.slice(0,2)+' / '+p.title;const img=dialog.querySelector('img');img.src=p.id+'.png';img.alt=p.title;if(!dialog.open)dialog.showModal();}
+function render(group){grid.replaceChildren();pages.forEach((p,i)=>{if(group!=='全部'&&p.group!==group)return;const f=document.createElement('figure'),b=document.createElement('button'),img=document.createElement('img'),cap=document.createElement('figcaption'),tag=document.createElement('small'),h=document.createElement('h2');img.src=p.id+'.png';img.alt=p.title+'静态设计图';img.loading='lazy';b.setAttribute('aria-label','放大'+p.title);b.onclick=()=>show(i);b.append(img);tag.textContent=p.id.slice(0,2)+' / '+p.group;h.textContent=p.title;cap.append(tag,h);f.append(b,cap);grid.append(f);});}
+['全部','主页','工作台','资源'].forEach(group=>{const b=document.createElement('button');b.textContent=group;b.setAttribute('aria-pressed',String(group==='全部'));b.onclick=()=>{nav.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));render(group);};nav.append(b);});
+document.querySelector('#prev').onclick=()=>show(current-1);document.querySelector('#next').onclick=()=>show(current+1);document.querySelector('#close').onclick=()=>dialog.close();
+document.addEventListener('keydown',e=>{if(!dialog.open)return;if(e.key==='ArrowLeft'){e.preventDefault();show(current-1);}if(e.key==='ArrowRight'){e.preventDefault();show(current+1);}});
+render('全部');
+</script></body></html>

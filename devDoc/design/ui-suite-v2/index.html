@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Accompany · 修订设计图集</title>
+<link rel="stylesheet" href="../ui-suite/design-tokens.css">
+<style>
+*{box-sizing:border-box}body{margin:0;background:var(--color-bg);color:var(--color-text);font:14px/1.7 var(--font-ui)}
+main{max-width:1400px;margin:auto;padding:42px 32px}h1{font-size:32px;font-weight:500;margin:8px 0}h2{font-size:20px;margin:0}p{margin:8px 0}small{color:var(--color-muted)}a{color:var(--color-focus)}
+nav{display:flex;gap:16px;margin:24px 0;flex-wrap:wrap}.structure{padding:18px 22px;border:1px solid var(--color-border);border-radius:12px;margin:24px 0}
+figure{margin:28px 0;border:1px solid var(--color-border);border-radius:16px;overflow:hidden;background:var(--color-surface)}
+figure button{display:block;padding:0;border:0;background:transparent;width:100%;cursor:zoom-in}figure img{width:100%;display:block}figcaption{padding:20px 24px}
+button{font:inherit;color:inherit;background:var(--color-surface);border:1px solid var(--color-border);border-radius:8px;padding:8px 16px;cursor:pointer}
+:focus-visible{outline:3px solid var(--color-focus);outline-offset:4px}
+dialog{width:96vw;max-width:1800px;padding:12px;border:1px solid var(--color-border);border-radius:12px;background:var(--color-surface);max-height:96vh;color:var(--color-text)}
+dialog::backdrop{background:rgba(67,59,52,.7)}dialog img{width:100%;max-height:85vh;object-fit:contain;display:block}dialog header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+@media(max-width:700px){main{padding:24px 12px}h1{font-size:26px}}
+</style>
+<main><small>ACCOMPANY / DESIGN REVISION / 2026.10.22</small>
+<h1>账号选模型，会话定角色。</h1>
+<p>温暖展示主页保持原方向；本轮修订三个关键页面。图片为虚构数据的静态生图，非应用截图。</p>
+<nav><a href="../../15-account-models-and-conversation-roles.md">最新设计与改造方案</a><a href="../../14-frontend-design-acceptance.md">40项验收</a><a href="README.md">图稿复核与提示词</a></nav>
+<section class="structure"><strong>当前 9 个主页面</strong><p>主页 · 总览 · 实例与监听 · 资料与角色 · 插件与 Skill · 模型配置 · 事件诊断 · 应用设置 · 资源库</p><p>无会话页面、任务/媒体历史或独立模型服务入口。五类模型按账号选；全局服务在设置维护。每个群聊/私聊必须显式绑卡，没有账号默认卡。</p></section>
+<figure><button aria-label="放大账号模型配置" data-title="账号模型配置" data-src="01-account-models.png"><img src="01-account-models.png" alt="账号模型配置修订概念图" loading="lazy"></button><figcaption><h2>账号模型配置</h2><p>五类能力：对话、识图、视频识别、生图、语音生成；只保留配置与本次测试。</p></figcaption></figure>
+<figure><button aria-label="放大会话角色绑定" data-title="会话角色绑定" data-src="02-conversation-roles.png"><img src="02-conversation-roles.png" alt="会话角色绑定修订概念图" loading="lazy"></button><figcaption><h2>会话角色绑定</h2><p>为不同群聊、私聊显式选择不同角色卡；未绑定不自动回复，无默认继承。</p></figcaption></figure>
+<figure><button aria-label="放大设置中的全局模型服务" data-title="设置中的全局模型服务" data-src="03-settings-services.png"><img src="03-settings-services.png" alt="设置中的全局模型服务修订概念图" loading="lazy"></button><figcaption><h2>设置中的全局模型服务</h2><p>全局维护本地/云端模型服务、密钥与模型；账号页面快速选择。具体适配器待开发。</p></figcaption></figure>
+<p>其余旧图仍可参考材质与留白，但旧侧栏和四能力、账号单卡结构已失效；当前开发以15号文档为准。</p>
+</main><dialog><header><h2></h2><button id="close">关闭</button></header><img alt=""></dialog>
+<script>
+const d=document.querySelector('dialog');
+document.querySelectorAll('figure button').forEach(b=>b.onclick=()=>{d.querySelector('h2').textContent=b.dataset.title;d.querySelector('img').src=b.dataset.src;d.querySelector('img').alt=b.dataset.title;d.showModal();});
+document.querySelector('#close').onclick=()=>d.close();
+</script></html>

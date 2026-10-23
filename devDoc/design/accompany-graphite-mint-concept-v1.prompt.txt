@@ -1,0 +1,23 @@
+Use case: ui-mockup.
+Create a single premium, realistic, implementation-ready Windows desktop application UI design screenshot for "Accompany", a personal QQ AI companion manager. This is an actual product workspace mockup, NOT a marketing landing page or poster. Landscape image approximately 16:10, high resolution with crisp text. Front-on orthographic screen, no device frame, no perspective, no desk, no outer scene, no watermark. The application fills the canvas.
+
+Design direction: minimalist graphite-black workspace, ice-mint/cyan accent, refined subtle depth, approachable personal companion identity. Use background #0B0D12, flat solid surfaces #131720 and #1B212D, light text #E8EDF5, secondary text #A4AFBF, primary accent #67E8D1 with almost-black button text. Tasteful single thin highlights, faint separation rather than excessive boxed cards. No purple, no magenta, no full-screen gradients, no cyberpunk HUD, no neon outlines around everything, no particles, no decorative dashboards/charts. Main content readable and calm, generous but practical spacing. Fluent-like crisp control proportions, small consistent line icons, 8px button radii, 12px panel radii, excellent Chinese sans-serif typography. Subtle frosted effect only on the right-hand floating details panel. Accent should occupy under 8 percent of the frame. Graphite flat planes must dominate. No giant marketing title.
+
+Layout:
+A subtle 38px Windows-style app title bar, "Accompany" on left, native-style minimize/maximize/close controls on right.
+A narrow 200px muted dark left sidebar. Small brand mark (simple two curved strokes) and name. Navigation groups with concise legible Chinese labels:
+"工作空间" group: "实例管理" (active with a restrained cyan-tinted selected pill), "会话", "任务".
+"角色与扩展" group: "角色", "插件与 Skill".
+"公用资源" group: "模型服务", "资源库".
+Bottom "设置" and tiny version "0.2.0".
+Main header "实例管理", small subtitle "选择 QQ 进程，手动注入并开始监听". A subtle runtime pill "SnowLuma 已连接". Right header secondary button "刷新检测". No automatic QQ startup controls.
+Main content top slim summary text "2 个账号 · 1 个监听中 · 1 个已暂停" rather than three big metric cards.
+Main section heading "我的实例". Two spacious horizontal account rows, each around 110px high with an avatar, name, account number, small status, role and model labels; no dense multi-column spreadsheet.
+First selected row: small illustrated botanical avatar with warm pale green color, name "青禾", account "10001", status mint dot plus text "监听中"; metadata "角色：青禾" and "本地对话 + 云端识图". Small activity "刚刚收到消息". Selected row has only a thin cyan left indicator and a very subtle tinted surface, not a glowing full frame. Actions "暂停" outlined and an unobtrusive "更多" menu.
+Second row: minimal warm amber avatar, name "晚晴", account "10002", amber icon plus text "已暂停"; metadata "角色：晚晴", "仅私聊". Secondary action "恢复".
+Below section "发现的 QQ 进程". One compact unbound row with generic neutral QQ-process icon, "QQ · PID 24680", muted text "账号待识别 · 未注入". Primary solid mint button "注入并监听" at right. Explicit fine helper text below "仅在点击后执行注入，不会自动启动 QQ".
+Lower remaining central space should remain quiet, with a small restrained "最近活动" section containing two timestamped events, no wall of logs.
+A right-side detail panel approx 300px wide for selected account, with close control, caption "实例详情", a medium tasteful illustrated botanical/forest character portrait (small, not full-screen anime), name "青禾", secondary "10001", mint status "正在监听". Sections with compact labels and values "对话模型 / 本地模型", "图片理解 / 云端视觉", "已启用 / 2 个 Skill · 1 个插件". A miniature visual connection path of three simple labeled steps "QQ → SnowLuma → Agent", no giant network chart. Lower controls "编辑角色" and "停止监听"; danger/unload action under a small more-menu, not a red primary button.
+Bottom slim status bar "本地工作区" and a quiet healthy connection indicator. Add small "示例账号" label unobtrusively.
+
+Make the distinction between running, paused, and discovered states unmistakable with text as well as colors. Keep Chinese text short, exact, sharp, well-spaced, legible. The screenshot must feel like polished shipping desktop software with a personal warmth, not generic AI-generated dark admin cards. Static screenshot only: no motion arrows, no extraneous captions.

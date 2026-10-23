@@ -1,0 +1,41 @@
+# Dependencies and generated builds (including renderer builds)
+node_modules/
+dist/
+/desktop-dist/
+/.packaging*/
+/release/
+/release-*/
+*.tsbuildinfo
+
+# Test results and local tool caches; test/ contains versioned source
+/test-results/
+/coverage/
+/playwright-report/
+/.nyc_output/
+/.vitest/
+.cache/
+*.log
+
+# Local runtime data and credentials; *.example.json remains versioned
+/data/
+/.accompany/
+/.nowadays/
+/config.json
+/config.v2.json
+/credentials.json
+/accompany.config.json
+/accompany.config.v2.json
+/nowadays.config.json
+/nowadays.config.v2.json
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Editor and operating-system files
+/.idea/
+/.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.stackdump

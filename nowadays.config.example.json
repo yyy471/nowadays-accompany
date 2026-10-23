@@ -1,0 +1,38 @@
+{
+  "dataRoot": "./data",
+  "logLevel": "info",
+  "maxRecordsPerConversation": 2000,
+  "segmentRecords": 500,
+  "limits": {
+    "maxIngressQueue": 1000,
+    "maxMessageBytes": 262144,
+    "sendRatePerSecond": 10,
+    "sendBurst": 20,
+    "healthCheckIntervalMs": 5000,
+    "unhealthyThreshold": 2,
+    "drainTimeoutMs": 5000,
+    "hostDrainTimeoutMs": 30000,
+    "pluginTimeoutMs": 30000,
+    "maxHostHistory": 50
+  },
+  "api": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": 7280,
+    "token": "replace-with-a-local-token"
+  },
+  "instances": [
+    {
+      "id": "main",
+      "backend": "snowluma",
+      "runtimeDir": "D:/path/to/snowluma",
+      "accountId": "10001",
+      "restart": {
+        "enabled": true,
+        "maxAttempts": 3,
+        "baseDelayMs": 1000,
+        "maxDelayMs": 30000
+      }
+    }
+  ]
+}

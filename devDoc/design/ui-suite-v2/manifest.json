@@ -1,0 +1,29 @@
+{
+  "date": "2026-10-22",
+  "status": "当前3张关键页修订；非业务实现",
+  "mainPageCount": 9,
+  "pages": [
+    {
+      "id": "01-account-models",
+      "title": "账号模型配置",
+      "image": "01-account-models.png",
+      "prompt": "01-account-models.prompt.txt",
+      "reviewed": true
+    },
+    {
+      "id": "02-conversation-roles",
+      "title": "会话角色绑定",
+      "image": "02-conversation-roles.png",
+      "prompt": "02-conversation-roles.prompt.txt",
+      "reviewed": true
+    },
+    {
+      "id": "03-settings-services",
+      "title": "设置中的全局模型服务",
+      "image": "03-settings-services.png",
+      "prompt": "03-settings-services.prompt.txt",
+      "reviewed": true
+    }
+  ],
+  "plan": "../../15-account-models-and-conversation-roles.md"
+}

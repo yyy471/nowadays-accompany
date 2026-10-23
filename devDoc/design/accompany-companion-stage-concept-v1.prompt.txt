@@ -1,0 +1,32 @@
+Use case: ui-mockup.
+Create a radical new UI CONCEPT for a Windows desktop personal AI companion app named Accompany. The user explicitly requests a bold, paradigm-shifting design, having rejected all conventional left sidebar / center account list / right details layouts. This MUST have a COMPLETELY DIFFERENT INFORMATION ARCHITECTURE and visibly different silhouette. A single crisp, high-fidelity 16:10 landscape product screenshot, no perspective, no device frame, no external poster headline, no watermark.
+
+CONCEPT: "a companion stage with a bottom account rail". A personal conversational instrument, closer to a beautifully crafted creative desktop tool than a system administration dashboard. FULL WIDTH immersive workspace. No left sidebar. No right permanent inspector. No account table or stack of cards in the middle. Navigation is a thin horizontal utility header and a bottom rail of selectable companion accounts. Deep WARM GRAPHITE and matte near-black frame, softly lit warm ivory central canvas, restrained AMBER accent. This should be striking even as a thumbnail because its large composition is fundamentally different.
+
+COMPOSITION:
+Top: slim 40px warm charcoal Windows title bar, small "Accompany" at far left, tiny workspace name "私人工作区" beside it. At the horizontal center a simple text navigation "陪伴" active, "工作台", "资源". At far right a tiny icon/status "SnowLuma 已连接", window controls. No rainbow icons, no left navigation.
+Main: a warm almost-ivory / mushroom-gray conversational STAGE spanning the full width between the header and bottom rail, with only thin graphite frame edges. Subtly off-white, not plain white. Delicate warm natural light, realistic interface readability. A clearly asymmetric layout:
+Left 36% contains a beautifully integrated stylized editorial illustration of the selected fictional companion "青禾": waist-up small dignified young adult woman with botanical olive/amber details, contemporary quiet clothing, softly painted hair and a few autumn leaves. ART is confined to this left part of the stage, not a full wallpaper. Fine painterly linework and understated paper-like shading. Not glossy anime pinup, not photoreal person, no sexualization. It fades subtly into the light stage background at the right. Character stands within an abstract open architectural arch/window shape. Large graceful negative space above and beside her. Near the lower-left, bold but restrained dark typography "青禾", then smaller "绑定 QQ 10001", an understated sage-dot "正在监听", and tiny action links "暂停自动处理" and "账号详情".
+Right 60% is a CONVERSATIONAL reading area, spacious and elegant, without comic speech bubbles. A narrow centered column around 600px width. Top small overline "与青禾的会话". A small neutral context chip "当前预览 · 私聊 12345" to indicate whose conversation is being previewed, not an actual all-account blended chat.
+Conversation is expressed as an editorial transcript:
+tiny "你 · 14:28" above text "今天想安静地聊一会儿。"
+Then tiny "青禾 · 14:28" above two lines "好，我在。" and "不用急着找话题，慢慢说就好。"
+Beautiful dark readable Chinese sans-serif for body. Spacious paragraph rhythm; only role name may use subtle Chinese serif display typography.
+Below the transcript a quiet small action row with icons and labels "角色设定", "记忆", "能力"; memory label includes tiny subdued "规划中" so it doesn't pretend current feature is implemented.
+At lower part of this transcript column, a minimal standalone composer line with a faint border/underline and placeholder "输入消息，或选择一个动作…", an attachment icon at left and a dark small square send arrow at right, NOT a giant pill. A tiny clear label "本地预览" distinguishes this composer from automatic QQ group sending. Do not imply messages automatically broadcast to all QQ peers.
+Far upper-right INSIDE stage a single unobtrusive outlined button "实例控制" with a small sliders icon. It opens management controls in the actual product, no permanent inspector in screenshot.
+
+BOTTOM ACCOUNT RAIL:
+A 110px-high warm charcoal strip that spans the full application width, separated from stage by one hairline and a beautifully proportioned small amber active tab marker. This rail is the defining functional element, NOT a Mac app icon dock.
+Left small label "我的实例".
+Then horizontally arranged compact companion selectors, on one flat plane, NOT individual floating cards:
+selected "青禾" with tiny rectangular 32px portrait, "QQ 10001", tiny sage dot "监听中", a thin amber top line spanning just this selector.
+second "晚晴" with tiny neutral amber avatar, "QQ 10002", small amber pause dot "已暂停".
+Then a subtle separator, a selectable pending process slot with a small plus/process icon and label "发现 QQ" / "PID 24680 · 未注入".
+At the right edge, ONE amber primary button "注入并监听", visually associated with the pending process, plus tiny note "选择进程后开始". The selected viewing account is Qinghe, so keep no ambiguity: show small caption above this button "目标 PID 24680". No automatic QQ start button.
+Rail far-right tiny gear icon.
+At absolute bottom minimal status line inside rail or thin footnote "示例账号 · 本地工作区" and "对话与配置按账号隔离".
+
+ART DIRECTION:
+Sophisticated, bold high contrast BETWEEN a quiet off-white stage and the deep warm graphite rail/frame. Amber only as a selected marker and one main action. This is not a recolor of a standard dark dashboard. It should feel like a private companion atelier with a consistent interaction model. Clean, refined, cinematic through composition rather than glow. No 3D orb, no cyberpunk HUD, no card grid, no background particles, no giant header hero slogan, no random network node diagram. No purple/teal/cyan. No text overlay obscured by illustration. No overloaded labels. Maintain recognizable window controls, keyboard/composer affordances and account identity.
+Legible short exact Chinese labels. Static concept only, no arrows pointing at design or external annotations. The radical switch is: FULL WIDTH LIGHT STAGE, large integrated left companion art, right transcript, DARK BOTTOM ACCOUNT RAIL, top horizontal navigation. Absolutely NO vertical sidebar and NO right hand account detail panel.

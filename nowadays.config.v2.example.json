@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 2,
+  "providers": [
+    {
+      "id": "local-openai",
+      "adapterId": "openai-compatible-v1",
+      "baseUrl": "http://127.0.0.1:11434/v1",
+      "location": "local",
+      "models": [
+        {
+          "id": "local-chat",
+          "capabilities": ["chat"],
+          "input": ["text"],
+          "supportsTools": true
+        },
+        {
+          "id": "local-vision",
+          "capabilities": ["image.understand"],
+          "input": ["text", "image"]
+        },
+        {
+          "id": "local-image",
+          "capabilities": ["image.generate"],
+          "input": ["text"]
+        }
+      ],
+      "mediaTransports": ["inline"],
+      "limits": { "maxConcurrent": 2, "maxQueue": 8 },
+      "timeouts": { "requestMs": 60000, "pollIntervalMs": 1000, "pollTimeoutMs": 120000 },
+      "retry": { "maxAttempts": 2, "baseDelayMs": 500, "maxDelayMs": 4000 },
+      "options": {}
+    },
+    {
+      "id": "cloud-video",
+      "adapterId": "video-polling-v1",
+      "baseUrl": "https://video.example.com/v1",
+      "location": "cloud",
+      "models": [
+        {
+          "id": "video-v1",
+          "capabilities": ["video.understand"],
+          "input": ["video"]
+        }
+      ],
+      "mediaTransports": ["inline"],
+      "limits": { "maxConcurrent": 1, "maxQueue": 4 },
+      "timeouts": { "requestMs": 60000, "pollIntervalMs": 2000, "pollTimeoutMs": 300000 },
+      "retry": { "maxAttempts": 1, "baseDelayMs": 500, "maxDelayMs": 4000 },
+      "options": {}
+    }
+  ],
+  "accountPolicies": {
+    "10001": {
+      "allowedProviders": ["local-openai", "cloud-video"],
+      "crossProviderFallback": false,
+      "media": { "allowCloudUpload": false },
+      "replyMode": "auto",
+      "skills": { "disabled": ["concise-replies"] },
+      "bindings": {
+        "chat": { "providerId": "local-openai", "modelId": "local-chat" },
+        "image.understand": { "providerId": "local-openai", "modelId": "local-vision" },
+        "video.understand": { "providerId": "cloud-video", "modelId": "video-v1" },
+        "image.generate": { "providerId": "local-openai", "modelId": "local-image" }
+      },
+      "byKind": {
+        "group": { "capabilities": { "image.generate": false } }
+      },
+      "byConversation": {}
+    }
+  },
+  "skills": [
+    {
+      "id": "concise-replies",
+      "name": "简洁回复",
+      "instructions": "优先给出结论，避免重复用户已经说过的内容。",
+      "tools": []
+    }
+  ],
+  "media": { "retentionDays": 7 }
+}

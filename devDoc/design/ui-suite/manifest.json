@@ -1,0 +1,102 @@
+{
+  "date": "2026-10-22",
+  "status": "静态视觉概念，非运行截图",
+  "pages": [
+    {
+      "id": "01-home",
+      "title": "账号展示主页",
+      "group": "主页",
+      "summary": "大幅账号展示图、个性签名和账号 Dock。仅展示，操作进入工作台。",
+      "image": "01-home.png",
+      "prompt": "01-home.prompt.txt"
+    },
+    {
+      "id": "02-overview",
+      "title": "工作台总览",
+      "group": "工作台",
+      "summary": "实例概况、账号状态、最近活动与任务。",
+      "image": "02-overview.png",
+      "prompt": "02-overview.prompt.txt"
+    },
+    {
+      "id": "03-instances",
+      "title": "实例与监听",
+      "group": "工作台",
+      "summary": "PAGE: 实例与监听, active sidebar corresponding item, scope 全部账号",
+      "image": "03-instances.png",
+      "prompt": "03-instances.prompt.txt"
+    },
+    {
+      "id": "04-profile",
+      "title": "账号资料与角色",
+      "group": "工作台",
+      "summary": "PAGE: 资料与角色, active sidebar \"资料与角色\", account scope \"青禾 · QQ 10001\"",
+      "image": "04-profile.png",
+      "prompt": "04-profile.prompt.txt"
+    },
+    {
+      "id": "05-extensions",
+      "title": "插件与 Skill",
+      "group": "工作台",
+      "summary": "PAGE: 插件与 Skill, active corresponding sidebar, account \"青禾 · QQ 10001\"",
+      "image": "05-extensions.png",
+      "prompt": "05-extensions.prompt.txt"
+    },
+    {
+      "id": "06-models",
+      "title": "模型服务",
+      "group": "工作台",
+      "summary": "PAGE: 模型服务, active corresponding sidebar, scope \"全局服务\"",
+      "image": "06-models.png",
+      "prompt": "06-models.prompt.txt"
+    },
+    {
+      "id": "07-policy",
+      "title": "账号策略",
+      "group": "工作台",
+      "summary": "PAGE: 账号策略, scope \"青禾 · QQ 10001\", active sidebar matching",
+      "image": "07-policy.png",
+      "prompt": "07-policy.prompt.txt"
+    },
+    {
+      "id": "08-conversations",
+      "title": "会话",
+      "group": "工作台",
+      "summary": "PAGE: 会话, account scope \"青禾 · QQ 10001\", active sidebar matching",
+      "image": "08-conversations.png",
+      "prompt": "08-conversations.prompt.txt"
+    },
+    {
+      "id": "09-tasks",
+      "title": "任务与媒体",
+      "group": "工作台",
+      "summary": "PAGE: 任务与媒体, scope \"青禾 · QQ 10001\", active sidebar matching",
+      "image": "09-tasks.png",
+      "prompt": "09-tasks.prompt.txt"
+    },
+    {
+      "id": "10-diagnostics",
+      "title": "事件诊断",
+      "group": "工作台",
+      "summary": "PAGE: 事件诊断, active sidebar matching, scope 全部账号",
+      "image": "10-diagnostics.png",
+      "prompt": "10-diagnostics.prompt.txt"
+    },
+    {
+      "id": "11-settings",
+      "title": "应用设置",
+      "group": "工作台",
+      "summary": "PAGE: 应用设置, active sidebar matching, scope \"应用\"",
+      "image": "11-settings.png",
+      "prompt": "11-settings.prompt.txt"
+    },
+    {
+      "id": "12-resources",
+      "title": "资源库",
+      "group": "资源",
+      "summary": "PAGE: 资源库 under TOP-LEVEL \"资源\" ACTIVE instead of 工作台",
+      "image": "12-resources.png",
+      "prompt": "12-resources.prompt.txt"
+    }
+  ]
+}
