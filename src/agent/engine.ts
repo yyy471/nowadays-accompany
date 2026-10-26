@@ -8,6 +8,17 @@ import type { ConversationRef } from '../routing/identity.js';
 import { messageText, textMessage, type MessageSegment, type OutboundMessage } from '../routing/message.js';
 import type { InboundMessageEvent } from '../channels/events.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
+import type { ExtensionTurnSnapshot, ExtensionHookResult } from '../application/extensions/extension-tool-service.js';
+import type { PluginHookBudget, PluginHookInput, PluginAfterTurnInput } from '../extensions/runtime/plugin-worker.js';
+import type {
+  ToolBatchContext,
+  ToolBatchResult,
+  ToolCallRequest,
+  ToolHandlerOutcome,
+  ToolHandlerResolver
+} from '../extensions/execution/executor.js';
+import { TOOL_EXECUTION_LIMITS } from '../extensions/execution/executor.js';
+import type { ToolInvocationResult } from '../extensions/contracts.js';
 import type {
   CapabilityResolution,
   EffectiveCapabilitiesDto,
@@ -16,18 +27,47 @@ import type {
 } from '../providers/router.js';
 import { CapabilityUnavailableError, ProviderError } from '../providers/errors.js';
 import { sanitizeErrorText } from '../platform/security/redaction.js';
-import type { AudioGenerationRequest, ChatRequest, ChatToolCall, ChatToolDefinition, ProviderMedia, VideoObservation } from '../providers/contract.js';
+import { truncateTextToFit } from '../platform/text/truncate.js';
+import type {
+  AudioGenerationRequest,
+  ChatAssistantToolCall,
+  ChatInputMessage,
+  ChatToolCall,
+  ChatToolDefinition,
+  ProviderMedia,
+  VideoObservation
+} from '../providers/contract.js';
 import type { MediaJob, JobExecution } from '../jobs/types.js';
 import type { MediaJobService } from '../jobs/service.js';
 import type { MediaService } from '../media/service.js';
 import type { MediaRef } from '../media/types.js';
 import type { TurnScheduler } from './scheduler.js';
-import { buildChatContext, type MediaObservationInput } from './context.js';
+import { buildChatContext, formatSupplementalData, type ContextBuildInput, type MediaObservationInput } from './context.js';
 
 export const GENERATE_IMAGE_TOOL_ID = 'builtin.image.generate';
 export const GENERATE_IMAGE_TOOL_NAME = 'generate_image';
 export const GENERATE_AUDIO_TOOL_ID = 'builtin.audio.generate';
 export const GENERATE_AUDIO_TOOL_NAME = 'generate_speech';
+const BUILTIN_TOOL_GENERATION = 'builtin-media-v1';
+const TOOL_RESULT_BUDGET_NOTICE = '工具结果超出本轮上下文预算，内容已省略。';
+
+/** 一轮对话的硬预算：模型续答次数、工具回合数与工具调用总数；拒绝也计入调用数。 */
+export const AGENT_TOOL_BUDGET = {
+  maxModelCalls: 4,
+  maxToolRounds: 3,
+  maxToolCalls: 4
+} as const;
+
+export interface AgentToolRunner {
+  executeBatch(calls: ToolCallRequest[], context: ToolBatchContext): Promise<ToolBatchResult>;
+  captureTurn(accountId: string, conversation: ConversationRef): Promise<ExtensionTurnSnapshot>;
+  isTurnSnapshotCurrent(snapshot: ExtensionTurnSnapshot): Promise<boolean>;
+  isTurnPolicyCurrent(snapshot: ExtensionTurnSnapshot): Promise<boolean>;
+  excludeFailedPlugins(snapshot: ExtensionTurnSnapshot, pluginKeys: readonly string[]): ExtensionTurnSnapshot;
+  newHookBudget(): PluginHookBudget;
+  beforeContext(snapshot: ExtensionTurnSnapshot, input: PluginHookInput, budget: PluginHookBudget): Promise<ExtensionHookResult>;
+  afterTurn(snapshot: ExtensionTurnSnapshot, input: PluginAfterTurnInput, budget: PluginHookBudget): Promise<void>;
+}
 
 export interface AgentTurnEvent {
   instanceId: string;
@@ -57,6 +97,7 @@ export interface AgentEngineOptions {
   jobs: MediaJobService;
   scheduler: TurnScheduler;
   extensions: ExtensionRegistry;
+  tools?: AgentToolRunner;
   maxHistoryMessages: number;
   maxHistoryChars: number;
   maxObservedMedia: number;
@@ -93,12 +134,13 @@ export function registerBuiltInAgentTools(extensions: ExtensionRegistry): void {
       name: GENERATE_IMAGE_TOOL_NAME,
       description: 'Generate one or more images when the request or conversation context would benefit from an image. Decide per turn; do not generate one by default or for every message.',
       capability: 'image.generate',
+      effect: 'action',
       inputSchema: {
         type: 'object',
         properties: {
-          prompt: { type: 'string', description: 'Detailed image prompt.' },
+          prompt: { type: 'string', description: 'Detailed image prompt.', maxLength: 4_000 },
           count: { type: 'integer', minimum: 1, maximum: 4 },
-          size: { type: 'string', description: 'Optional provider-supported size such as 1024x1024.' }
+          size: { type: 'string', description: 'Optional provider-supported size such as 1024x1024.', maxLength: 32 }
         },
         required: ['prompt'],
         additionalProperties: false
@@ -111,11 +153,12 @@ export function registerBuiltInAgentTools(extensions: ExtensionRegistry): void {
       name: GENERATE_AUDIO_TOOL_NAME,
       description: 'Create a spoken audio file when voice output would meaningfully help the current request. Decide per turn; do not generate audio by default or for every message. Use the configured default voice unless a different authorized voice is needed.',
       capability: 'audio.generate',
+      effect: 'action',
       inputSchema: {
         type: 'object',
         properties: {
-          text: { type: 'string', description: 'Exact text to speak.' },
-          voice: { type: 'string', description: 'Optional provider-supported voice id.' },
+          text: { type: 'string', description: 'Exact text to speak.', maxLength: 4_000 },
+          voice: { type: 'string', description: 'Optional provider-supported voice id.', maxLength: 80 },
           format: { type: 'string', enum: ['mp3', 'wav', 'opus', 'aac', 'flac'] }
         },
         required: ['text'],
@@ -151,7 +194,8 @@ class BuiltInAgentEngine implements AgentHost {
       return undefined;
     }
     if (context.sessionSignal.aborted) return undefined;
-    if (!(await context.isRoleBindingCurrent())) return undefined;
+    if (context.memory?.state === 'unavailable') return undefined;
+    if (!(await isTurnCurrent(context))) return undefined;
     const startedAt = this.#now();
     try {
       const reply = await this.#options.scheduler.run(
@@ -239,7 +283,7 @@ class BuiltInAgentEngine implements AgentHost {
     text: string,
     images: MessageSegment[]
   ): Promise<OutboundMessage | void> {
-    if (!(await context.isRoleBindingCurrent())) return undefined;
+    if (!(await isTurnCurrent(context))) return undefined;
     const accountId = this.#options.accountId;
     const conversation = context.conversation;
     if (images.length > this.#options.maxObservedMedia) {
@@ -317,7 +361,7 @@ class BuiltInAgentEngine implements AgentHost {
           context.signal,
           undefined,
           imageResolution,
-          context.isRoleBindingCurrent
+          () => isTurnCurrent(context)
         );
         observations.push({
           capability: 'image.understand',
@@ -396,7 +440,7 @@ class BuiltInAgentEngine implements AgentHost {
       ...(context.message.messageId ? { originMessageId: context.message.messageId } : {}),
       signal: context.sessionSignal,
       executor: async (jobContext) => {
-        if (!(await context.isRoleBindingCurrent())) throw new Error('conversation role binding changed before video understanding');
+        if (!(await isTurnCurrent(context))) throw new Error('conversation role binding or extension snapshot changed before video understanding');
         const executed = await this.#options.providers.videoUnderstand(
           accountId,
           conversation,
@@ -408,9 +452,9 @@ class BuiltInAgentEngine implements AgentHost {
           },
           undefined,
           resolution,
-          context.isRoleBindingCurrent
+          () => isTurnCurrent(context)
         );
-        if (!(await context.isRoleBindingCurrent())) throw new Error('conversation role binding changed during video understanding');
+        if (!(await isTurnCurrent(context))) throw new Error('conversation role binding or extension snapshot changed during video understanding');
         await jobContext.setProvider(executed.used.providerId, executed.used.modelId);
         return {
           text: formatVideoObservation(executed.result),
@@ -453,23 +497,83 @@ class BuiltInAgentEngine implements AgentHost {
     directImages: ProviderMedia[] = [],
     suffixNote?: string
   ): Promise<OutboundMessage | void> {
-    if (!(await context.isRoleBindingCurrent())) return undefined;
+    if (!(await isTurnCurrent(context))) return undefined;
     const accountId = this.#options.accountId;
     const conversation = context.conversation;
     const requirements = directImages.length > 0 ? { media: 'image' as const, directVision: true } : {};
     const resolution = this.#options.providers.resolve(accountId, conversation, 'chat', requirements);
+    // ProviderRouter adds merged parameters even when empty; reserve the largest fallback envelope.
+    const parameterOverhead = Math.max(...[{}, resolution.primary?.parameters, ...resolution.fallbackTargets.map(target => target.parameters)]
+      .filter((parameters) => parameters !== undefined)
+      .map((parameters) => JSON.stringify({ messages: [], parameters }).length - JSON.stringify({ messages: [] }).length));
+    const maxContextChars = Math.max(0, this.#options.maxHistoryChars - parameterOverhead);
     const history = await this.#history(context);
-    const availableTools = resolution.supportsTools
-      ? this.#options.providers.availableTools(accountId, conversation)
-      : [];
-    const chatTools: ChatToolDefinition[] = availableTools.map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.inputSchema
-    }));
-    const built = buildChatContext({
+    const tools = this.#options.tools;
+    const toolIdsByModelName = new Map<string, string>();
+    const chatTools: ChatToolDefinition[] = [];
+    const hookBudget = tools?.newHookBudget?.() ?? { remainingMs: 2_000 };
+    let extensionSnapshot: ExtensionTurnSnapshot | undefined;
+    let hookAdditions: ExtensionHookResult['additions'] = [];
+    let contextSkills = effective.skills.available.map((skill) => ({ name: skill.name, instructions: skill.instructions }));
+    if (tools) {
+      try {
+        extensionSnapshot = await tools.captureTurn(accountId, conversation);
+        contextSkills = extensionSnapshot.skills;
+        context.setExtensionGuard?.(() => tools.isTurnSnapshotCurrent(extensionSnapshot!));
+        const hookInput: PluginHookInput = {
+          conversation,
+          contextEpoch: context.roleBinding?.contextEpoch ?? context.roleBinding?.revision ?? '',
+          turnId: context.turnId,
+          message: {
+            text,
+            ...(context.message.senderId ? { senderId: context.message.senderId } : {}),
+          },
+          history: history.map((record) => ({ direction: record.direction, text: messageText(record.segments) })),
+          signal: context.signal,
+          guard: () => isTurnCurrent(context)
+        };
+        const hookResult = await tools.beforeContext(extensionSnapshot, hookInput, hookBudget);
+        hookAdditions = hookResult.additions;
+        if (hookResult.failedPluginKeys.length > 0) {
+          // A failed hook may terminate only its own Worker; check live scope/config policy
+          // before excluding that generation so an external revocation cannot be hidden.
+          if (!(await tools.isTurnPolicyCurrent(extensionSnapshot))) return undefined;
+          extensionSnapshot = tools.excludeFailedPlugins(extensionSnapshot, hookResult.failedPluginKeys);
+          const failed = new Set(hookResult.failedPluginKeys);
+          hookAdditions = hookAdditions.filter((addition) => !failed.has(addition.pluginKey));
+          contextSkills = extensionSnapshot.skills;
+        }
+        context.setExtensionGuard?.(() => tools.isTurnSnapshotCurrent(extensionSnapshot!));
+        if (!(await isTurnCurrent(context))) return undefined;
+        context.setAfterTurnHandler?.((outcome) => tools.afterTurn(extensionSnapshot!, {
+            conversation,
+            contextEpoch: context.roleBinding?.contextEpoch ?? context.roleBinding?.revision ?? '',
+            turnId: context.turnId,
+            history: history.map((record) => ({ direction: record.direction, text: messageText(record.segments) })),
+            signal: context.signal,
+            guard: () => isTurnCurrent(context),
+            ...outcome
+          }, hookBudget));
+      } catch (error) {
+        // A broken extension profile/runtime removes extensions for this turn, while text chat continues.
+        this.#options.logger.warn('extension snapshot unavailable; continuing without extension data', {
+          conversation,
+          message: shortError(error)
+        });
+        extensionSnapshot = undefined;
+        hookAdditions = [];
+        contextSkills = [];
+        context.setExtensionGuard?.(() => true);
+      }
+    }
+
+    const baseContextInput: ContextBuildInput = {
       roleCard: context.roleBinding?.card.content ?? '',
-      skills: effective.skills.available.map((skill) => ({ name: skill.name, instructions: skill.instructions })),
+      ...((context.roleBinding?.worldbookSnapshot ? context.roleBinding.worldbookSnapshot.book : context.roleBinding?.card.manifest.worldbook)
+        ? { worldbook: context.roleBinding?.worldbookSnapshot ? context.roleBinding.worldbookSnapshot.book : context.roleBinding?.card.manifest.worldbook } : {}),
+      ...(context.roleBinding?.worldbook ? { worldbookOptions: context.roleBinding.worldbook } : {}),
+      skills: contextSkills,
+      ...(context.memory ? { memory: context.memory } : {}),
       history,
       currentText: text,
       ...(context.message.messageId ? { currentMessageId: context.message.messageId } : {}),
@@ -478,74 +582,214 @@ class BuiltInAgentEngine implements AgentHost {
       observations,
       directImages,
       maxHistoryMessages: this.#options.maxHistoryMessages,
-      maxHistoryChars: this.#options.maxHistoryChars
-    });
-    const request: ChatRequest = {
-      messages: built.messages,
-      ...(chatTools.length > 0 ? { tools: chatTools } : {})
+      maxHistoryChars: maxContextChars
     };
-    const executed = await this.#options.providers.chat(
-      accountId,
-      conversation,
-      request,
-      context.signal,
-      resolution,
-      requirements,
-      context.isRoleBindingCurrent
+    if (extensionSnapshot) {
+      for (const tool of extensionSnapshot.toolView.tools) {
+        toolIdsByModelName.set(tool.name, tool.id);
+        chatTools.push({ name: tool.name, description: tool.description, parameters: tool.inputSchema });
+      }
+    }
+    const rawBase = buildChatContext(baseContextInput);
+    const mandatoryBase = buildChatContext({ ...baseContextInput, history: [], maxHistoryMessages: 0 });
+    const mandatoryChars = serializedMessagesChars(mandatoryBase.messages);
+    const toolDefinitionChars = JSON.stringify({ messages: [], tools: chatTools }).length - JSON.stringify({ messages: [] }).length;
+    const canReserveForTools = Boolean(tools && extensionSnapshot && chatTools.length > 0 && resolution.supportsTools
+      && context.invocationMessageId && mandatoryChars + toolDefinitionChars + 512 <= maxContextChars);
+    const protocolReserveChars = canReserveForTools
+      ? Math.min(24 * 1024, Math.floor(maxContextChars / 4), maxContextChars - mandatoryChars - toolDefinitionChars)
+      : 0;
+    const reservedChars = canReserveForTools ? protocolReserveChars + toolDefinitionChars : 0;
+    const buildSupplemented = (candidate: Array<{ source: string; text: string }>) => buildBudgetedContext({
+      ...baseContextInput,
+      ...(candidate.length > 0 ? { supplementalData: candidate } : {}),
+      protocolReserveChars: reservedChars
+    }, reservedChars);
+    const additionsBudget = Math.max(0, maxContextChars - mandatoryChars - reservedChars);
+    const supplementalData = boundHookAdditions(
+      hookAdditions,
+      additionsBudget,
+      (candidate) => serializedMessagesChars(buildSupplemented(candidate).messages) + reservedChars <= maxContextChars
     );
-    if (!(await context.isRoleBindingCurrent())) return undefined;
-    const toolCall = executed.result.toolCalls?.[0];
-    if (toolCall?.name === GENERATE_IMAGE_TOOL_NAME) {
-      const stillAllowed = this.#options.providers.availableTools(accountId, conversation).some((tool) => tool.id === GENERATE_IMAGE_TOOL_ID);
-      const allowed = stillAllowed && chatTools.some((tool) => tool.name === GENERATE_IMAGE_TOOL_NAME) && resolution.supportsTools;
-      if (!allowed) {
-        this.#options.logger.warn('model attempted an unavailable tool', {
+    // Preserve the existing oversized original-input path; only extension additions/protocol need new space.
+    const built = supplementalData.length > 0 || canReserveForTools ? buildSupplemented(supplementalData) : rawBase;
+    const canOfferTools = canReserveForTools && serializedMessagesChars(built.messages) + toolDefinitionChars <= maxContextChars;
+    // 工具协议消息只活在本次续答里：历史最终只保留用户输入与实际发出的回复。
+    const messages: ChatInputMessage[] = [...built.messages];
+    let modelCalls = 0;
+    let toolRounds = 0;
+    let usedToolCalls = 0;
+    let protocolResultBytesUsed = 0;
+    let submittedNotice: string | undefined;
+    let failedNotice: string | undefined;
+
+    while (modelCalls < AGENT_TOOL_BUDGET.maxModelCalls) {
+      if (!(await isTurnCurrent(context))) return undefined;
+      const offerTools = canOfferTools
+        && serializedMessagesChars(messages) + toolDefinitionChars <= maxContextChars
+        && toolRounds < AGENT_TOOL_BUDGET.maxToolRounds
+        && usedToolCalls < AGENT_TOOL_BUDGET.maxToolCalls
+        && modelCalls + 1 < AGENT_TOOL_BUDGET.maxModelCalls;
+      modelCalls += 1;
+      const executed = await this.#options.providers.chat(
+        accountId,
+        conversation,
+        { messages, ...(offerTools ? { tools: chatTools } : {}) },
+        context.signal,
+        resolution,
+        requirements,
+        () => isTurnCurrent(context)
+      );
+      if (!(await isTurnCurrent(context))) return undefined;
+      const replyText = executed.result.text?.trim() ?? '';
+      const requested = offerTools ? executed.result.toolCalls ?? [] : [];
+      if (requested.length === 0 || !tools) {
+        if (!replyText) {
+          if (suffixNote) return textMessage(suffixNote);
+          if (submittedNotice) return textMessage(submittedNotice);
+          // 模型吃完预算却没写收尾时，把已有的有限拒绝理由告诉用户，而不是静默吞掉这条消息。
+          return failedNotice ? textMessage(failedNotice) : undefined;
+        }
+        // Only a plain text conversation turn is a fact-extraction candidate: tool rounds,
+        // media observations, direct vision turns and suffix notes all mark a non-plain turn.
+        if (toolRounds === 0 && observations.length === 0 && directImages.length === 0 && suffixNote === undefined && supplementalData.length === 0) {
+          context.markExtractable?.();
+        }
+        return textMessage(suffixNote ? `${replyText}\n\n（${suffixNote}）` : replyText);
+      }
+      const calls = requested.map((call, index) => protocolToolCall(call, index, toolRounds, context.turnId));
+      const assistantProtocolMessage: ChatInputMessage = {
+        role: 'assistant',
+        content: replyText ? [{ type: 'text', text: replyText }] : [],
+        toolCalls: calls
+      };
+      const fallbackMessages = calls.map((call): ChatInputMessage => ({
+        role: 'tool', content: [{ type: 'text', text: '工具结果超出本轮预算，内容已省略。' }], toolCallId: call.id
+      }));
+      const minimumResultBytes = fallbackMessages.reduce((sum, message) => sum + Buffer.byteLength(message.content[0]!.type === 'text' ? message.content[0]!.text : '', 'utf8'), 0);
+      const protocolBase = [...messages, assistantProtocolMessage];
+      const resultBudgetLeft = Math.max(0, TOOL_EXECUTION_LIMITS.maxRoundResultBytes - protocolResultBytesUsed);
+      const remainingContextChars = Math.max(0, maxContextChars - serializedMessagesChars([...protocolBase, ...fallbackMessages]));
+      const remainingResultBytes = Math.min(
+        resultBudgetLeft,
+        remainingContextChars + minimumResultBytes
+      );
+      if (serializedMessagesChars([...protocolBase, ...fallbackMessages]) > maxContextChars
+        || remainingResultBytes < minimumResultBytes) {
+        return textMessage(submittedNotice ?? failedNotice ?? (toolRounds > 0
+          ? '本轮工具调用已结束，剩余上下文不足以继续请求工具。'
+          : '工具请求超出本轮上下文预算，未执行工具。'));
+      }
+      messages.push(assistantProtocolMessage);
+      const batch = await tools.executeBatch(
+        calls.map((call) => ({ callId: call.id, name: call.name, arguments: call.arguments })),
+        {
+          accountId,
           conversation,
-          tool: GENERATE_IMAGE_TOOL_NAME
-        });
-        return textMessage('模型尝试调用当前不可用的生图工具，已拒绝。');
+          messageId: context.invocationMessageId ?? '',
+          turn: toolRounds,
+          toolIdsByModelName,
+          signal: context.signal,
+          guard: () => isTurnCurrent(context),
+          remainingCalls: AGENT_TOOL_BUDGET.maxToolCalls - usedToolCalls,
+          remainingResultBytes,
+          ...(context.roleBinding?.contextEpoch ? { contextEpoch: context.roleBinding.contextEpoch } : {}),
+          ...(extensionSnapshot ? { runtimeGeneration: extensionSnapshot.runtimeGeneration } : {}),
+          extraHandlers: this.#builtinToolHandlers(context)
+        }
+      );
+      usedToolCalls += calls.length;
+      toolRounds += 1;
+      for (const [index, result] of batch.results.entries()) {
+        const later = fallbackMessages.slice(index + 1);
+        const laterBytes = later.reduce((sum, message) => sum + Buffer.byteLength(message.content[0]!.type === 'text' ? message.content[0]!.text : '', 'utf8'), 0);
+        const makeMessage = (text: string): ChatInputMessage => ({ role: 'tool', content: [{ type: 'text', text }], toolCallId: calls[index]!.id });
+        const resultBytesLeft = Math.max(0, TOOL_EXECUTION_LIMITS.maxRoundResultBytes - protocolResultBytesUsed - laterBytes);
+        const fits = (text: string): boolean => Buffer.byteLength(text, 'utf8') <= resultBytesLeft
+          && serializedMessagesChars([...messages, makeMessage(text), ...later]) <= maxContextChars;
+        const fullText = toolResultText(result);
+        const resultText = truncateTextToFit(fullText, fits)
+          ?? (fallbackMessages[index]!.content[0] as { type: 'text'; text: string }).text;
+        messages.push(makeMessage(resultText));
+        protocolResultBytesUsed += Buffer.byteLength(resultText, 'utf8');
+        if (result.status === 'submitted' && result.text) submittedNotice = result.text;
+        else if (result.text && (result.status === 'error' || result.status === 'unknown')) {
+          failedNotice ??= result.text;
+        }
       }
-      const args = parseImageToolCall(toolCall);
-      if ('error' in args) return textMessage(`生图参数无效：${args.error}`);
-      const submitted = await this.#submitImageJob({
-        prompt: args.prompt,
-        ...(args.count !== undefined ? { count: args.count } : {}),
-        ...(args.size !== undefined ? { size: args.size } : {}),
-        actionKey: toolCall.id ?? `${context.turnId}:tool`,
-        context
-      });
-      const replyText = executed.result.text?.trim();
-      if (replyText) return textMessage(replyText);
-      return textMessage(submitted.duplicate ? '这个生图请求已经提交过，不会重复发起。' : '正在生成图片，完成后会发送。');
     }
-    if (toolCall?.name === GENERATE_AUDIO_TOOL_NAME) {
-      const stillAllowed = this.#options.providers.availableTools(accountId, conversation).some((tool) => tool.id === GENERATE_AUDIO_TOOL_ID);
-      const allowed = stillAllowed && chatTools.some((tool) => tool.name === GENERATE_AUDIO_TOOL_NAME) && resolution.supportsTools;
-      if (!allowed) {
-        this.#options.logger.warn('model attempted an unavailable tool', { conversation, tool: GENERATE_AUDIO_TOOL_NAME });
-        return textMessage('模型尝试调用当前未授权的语音生成工具，已拒绝。');
-      }
-      const args = parseAudioToolCall(toolCall);
-      if ('error' in args) return textMessage(`语音生成参数无效：${args.error}`);
-      const submitted = await this.#submitAudioJob({
-        ...args,
-        actionKey: toolCall.id ?? `${context.turnId}:tool`,
-        context
-      });
-      return textMessage(submitted.duplicate ? '这个语音请求已经提交过，不会重复发起。' : '正在生成语音；完成后会尝试按当前通道能力发送。');
-    }
-    const reply = executed.result.text?.trim();
-    if (!reply) {
-      if (suffixNote) return textMessage(suffixNote);
-      return undefined;
-    }
-    return textMessage(suffixNote ? `${reply}\n\n（${suffixNote}）` : reply);
+    if (suffixNote) return textMessage(suffixNote);
+    if (submittedNotice) return textMessage(submittedNotice);
+    return failedNotice ? textMessage(failedNotice) : undefined;
   }
+
+  /** 内置媒体工具的实现按 turn 注入：它们需要当前消息的交付与取消边界。 */
+  #builtinToolHandlers(context: AgentMessageContext): ToolHandlerResolver {
+    return (toolId) => {
+      if (toolId === GENERATE_IMAGE_TOOL_ID) {
+        return {
+          generation: BUILTIN_TOOL_GENERATION,
+          handler: (args, toolContext) => this.#generateImageTool(context, args, toolContext.invocationKey)
+        };
+      }
+      if (toolId === GENERATE_AUDIO_TOOL_ID) {
+        return {
+          generation: BUILTIN_TOOL_GENERATION,
+          handler: (args, toolContext) => this.#generateAudioTool(context, args, toolContext.invocationKey)
+        };
+      }
+      return undefined;
+    };
+  }
+
+  async #generateImageTool(
+    context: AgentMessageContext,
+    args: Record<string, unknown>,
+    invocationId: string
+  ): Promise<ToolHandlerOutcome> {
+    const parsed = parseImageToolCall({ id: invocationId, name: GENERATE_IMAGE_TOOL_NAME, arguments: args });
+    if ('error' in parsed) return { status: 'error', errorCode: 'invalid_arguments', text: `生图参数无效：${parsed.error}` };
+    const submitted = await this.#submitImageJob({
+      prompt: parsed.prompt,
+      ...(parsed.count !== undefined ? { count: parsed.count } : {}),
+      ...(parsed.size !== undefined ? { size: parsed.size } : {}),
+      // 服务方给的 callId 只保证单请求内唯一，必须带会话作用域，否则不同会话的同名 callId 会被当成同一动作压掉。
+      actionKey: invocationId,
+      context
+    });
+    return {
+      status: 'submitted',
+      text: submitted.duplicate ? '这个生图请求已经提交过，不会重复发起。' : '正在生成图片，完成后会发送。',
+      jobId: submitted.job.id,
+      data: { duplicate: submitted.duplicate }
+    };
+  }
+
+  async #generateAudioTool(
+    context: AgentMessageContext,
+    args: Record<string, unknown>,
+    invocationId: string
+  ): Promise<ToolHandlerOutcome> {
+    const parsed = parseAudioToolCall({ id: invocationId, name: GENERATE_AUDIO_TOOL_NAME, arguments: args });
+    if ('error' in parsed) return { status: 'error', errorCode: 'invalid_arguments', text: `语音生成参数无效：${parsed.error}` };
+    const submitted = await this.#submitAudioJob({
+      ...parsed,
+      actionKey: invocationId,
+      context
+    });
+    return {
+      status: 'submitted',
+      text: submitted.duplicate ? '这个语音请求已经提交过，不会重复发起。' : '正在生成语音；完成后会尝试按当前通道能力发送。',
+      jobId: submitted.job.id,
+      data: { duplicate: submitted.duplicate }
+    };
+  }
+
 
   async #submitImageJob(options: ImageJobOptions): Promise<{ job: MediaJob; duplicate: boolean }> {
     const context = options.context;
     const conversation = context.conversation;
-    if (!(await context.isRoleBindingCurrent())) throw new Error('conversation role binding changed before tool execution');
+    if (!(await isTurnCurrent(context))) throw new Error('conversation role binding or extension snapshot changed before tool execution');
     if (!this.#options.providers.availableTools(this.#options.accountId, conversation).some((tool) => tool.id === GENERATE_IMAGE_TOOL_ID)) {
       throw new CapabilityUnavailableError('image.generate', 'tool_not_authorized', '账号尚未允许 AI 调用生图工具。');
     }
@@ -571,7 +815,7 @@ class BuiltInAgentEngine implements AgentHost {
       ...(resolution.modelId ? { modelId: resolution.modelId } : {}),
       signal: context.sessionSignal,
       executor: async (jobContext) => {
-        if (!(await context.isRoleBindingCurrent())) throw new Error('conversation role binding changed before image generation');
+        if (!(await isTurnCurrent(context))) throw new Error('conversation role binding or extension snapshot changed before image generation');
         if (!this.#options.providers.availableTools(this.#options.accountId, conversation).some((tool) => tool.id === GENERATE_IMAGE_TOOL_ID)) {
           throw new CapabilityUnavailableError('image.generate', 'tool_not_authorized', '生图工具授权已撤销。');
         }
@@ -587,9 +831,9 @@ class BuiltInAgentEngine implements AgentHost {
           undefined,
           resolution,
           GENERATE_IMAGE_TOOL_ID,
-          context.isRoleBindingCurrent
+          () => isTurnCurrent(context)
         );
-        if (!(await context.isRoleBindingCurrent())) {
+        if (!(await isTurnCurrent(context))) {
           throw new Error('conversation role binding changed during image generation');
         }
         await jobContext.setProvider(executed.used.providerId, executed.used.modelId);
@@ -609,7 +853,7 @@ class BuiltInAgentEngine implements AgentHost {
   async #submitAudioJob(options: AudioJobOptions): Promise<{ job: MediaJob; duplicate: boolean }> {
     const context = options.context;
     const conversation = context.conversation;
-    if (!(await context.isRoleBindingCurrent())) throw new Error('conversation role binding changed before tool execution');
+    if (!(await isTurnCurrent(context))) throw new Error('conversation role binding or extension snapshot changed before tool execution');
     const isToolAllowed = (): boolean => this.#options.providers.availableTools(this.#options.accountId, conversation)
       .some((tool) => tool.id === GENERATE_AUDIO_TOOL_ID);
     if (!isToolAllowed()) throw new CapabilityUnavailableError('audio.generate', 'tool_not_authorized', '账号尚未允许 AI 调用语音生成工具。');
@@ -631,7 +875,7 @@ class BuiltInAgentEngine implements AgentHost {
       signal: context.sessionSignal,
       executor: async (jobContext) => {
         if (!isToolAllowed()) throw new CapabilityUnavailableError('audio.generate', 'tool_not_authorized', '语音工具授权已撤销。');
-        if (!(await context.isRoleBindingCurrent())) throw new Error('conversation role binding changed before audio generation');
+        if (!(await isTurnCurrent(context))) throw new Error('conversation role binding or extension snapshot changed before audio generation');
         const executed = await this.#options.providers.audioGenerate(
           this.#options.accountId,
           conversation,
@@ -640,9 +884,9 @@ class BuiltInAgentEngine implements AgentHost {
           undefined,
           resolution,
           GENERATE_AUDIO_TOOL_ID,
-          context.isRoleBindingCurrent
+          () => isTurnCurrent(context)
         );
-        if (!(await context.isRoleBindingCurrent())) throw new Error('conversation role binding changed during audio generation');
+        if (!(await isTurnCurrent(context))) throw new Error('conversation role binding or extension snapshot changed during audio generation');
         if (!isToolAllowed()) throw new CapabilityUnavailableError('audio.generate', 'tool_not_authorized', '语音工具授权已撤销。');
         await jobContext.setProvider(executed.used.providerId, executed.used.modelId);
         const media = await this.#options.media.ingestGeneratedAudio(this.#options.accountId, conversation, jobContext.jobId, executed.result, jobContext.signal);
@@ -660,25 +904,25 @@ class BuiltInAgentEngine implements AgentHost {
     }
     try {
       await context.enqueueConversation(async () => {
-        if (!(await context.isRoleBindingCurrent())) {
+        if (!(await isTurnCurrent(context))) {
           await this.#options.jobs.markDelivery(job.accountId, job.id, 'skipped', 'conversation role binding changed before image delivery');
           return;
         }
         const effective = await this.#options.providers.effective(job.accountId, job.conversation);
         const permitted = this.#options.providers.availableTools(job.accountId, job.conversation).some((tool) => tool.id === GENERATE_AUDIO_TOOL_ID);
-        if (!effective.agentEnabled || effective.replyMode === 'plugins' || !permitted || !effective.capabilities.find((cap) => cap.capability === 'audio.generate')?.enabled) {
+        if (!effective.agentEnabled || !permitted || !effective.capabilities.find((cap) => cap.capability === 'audio.generate')?.enabled) {
           await this.#options.jobs.markDelivery(job.accountId, job.id, 'skipped', 'audio generated but tool permission or capability was revoked before delivery');
           return;
         }
         if (context.voiceDeliverySupport !== 'supported') {
           const reason = context.voiceDeliverySupport === 'unsupported' ? 'channel does not support voice delivery' : 'channel voice delivery support is unknown';
           await this.#options.jobs.markDelivery(job.accountId, job.id, 'skipped', `audio generated; ${reason}`);
-          if (await context.isRoleBindingCurrent()) {
+          if (await isTurnCurrent(context)) {
             await context.deliver(textMessage('语音已生成，但当前通道尚未确认支持语音交付。'), { idempotencyKey: `job:${job.id}:delivery-note` });
           }
           return;
         }
-        if (!(await context.isRoleBindingCurrent())) {
+        if (!(await isTurnCurrent(context))) {
           await this.#options.jobs.markDelivery(job.accountId, job.id, 'skipped', 'role binding changed before voice delivery');
           return;
         }
@@ -703,8 +947,8 @@ class BuiltInAgentEngine implements AgentHost {
     try {
       await context.enqueueConversation(async () => {
         const effective = await this.#options.providers.effective(job.accountId, job.conversation);
-        if (!effective.agentEnabled || effective.replyMode === 'plugins') {
-          await this.#options.jobs.markDelivery(job.accountId, job.id, 'skipped', 'agent paused or reply mode changed');
+        if (!effective.agentEnabled) {
+          await this.#options.jobs.markDelivery(job.accountId, job.id, 'skipped', 'agent paused before image delivery');
           return;
         }
         if (!effective.capabilities.find((capability) => capability.capability === 'image.generate')?.enabled) {
@@ -753,13 +997,13 @@ class BuiltInAgentEngine implements AgentHost {
     }
     try {
       await context.enqueueConversation(async () => {
-        if (!(await context.isRoleBindingCurrent())) {
+        if (!(await isTurnCurrent(context))) {
           await this.#options.jobs.markDelivery(job.accountId, job.id, 'skipped', 'conversation role binding changed before video follow-up');
           return;
         }
         const current = await this.#options.providers.effective(job.accountId, job.conversation);
-        if (!current.agentEnabled || current.replyMode === 'plugins') {
-          await this.#options.jobs.markDelivery(job.accountId, job.id, 'skipped', 'agent paused or reply mode changed');
+        if (!current.agentEnabled) {
+          await this.#options.jobs.markDelivery(job.accountId, job.id, 'skipped', 'agent paused before video follow-up');
           return;
         }
         if (!current.capabilities.find((capability) => capability.capability === 'video.understand')?.enabled) {
@@ -813,7 +1057,7 @@ class BuiltInAgentEngine implements AgentHost {
 
   async #history(context: AgentMessageContext): Promise<Awaited<ReturnType<AgentMessageContext['history']>>> {
     const options = {
-      limit: this.#options.maxHistoryMessages,
+      limit: Math.max(this.#options.maxHistoryMessages, context.roleBinding?.worldbook?.enabled ? context.roleBinding.worldbook.scanDepth : 0),
       ...(context.sequence !== undefined ? { beforeSeq: context.sequence } : {})
     };
     const history = await context.history(options);
@@ -917,6 +1161,31 @@ function parseAudioToolCall(call: ChatToolCall): Omit<AudioJobOptions, 'actionKe
   };
 }
 
+function protocolToolCall(call: ChatToolCall, index: number, round: number, turnId: string): ChatAssistantToolCall {
+  return {
+    id: (typeof call.id === 'string' && call.id.trim()) || `${turnId}:r${round}:c${index}`,
+    name: call.name,
+    // 参数必须是对象才能进入协议消息；非法形状由执行器预检拒绝并计入预算，这里只做占位。
+    arguments: call.arguments && typeof call.arguments === 'object' && !Array.isArray(call.arguments)
+      ? (call.arguments as Record<string, unknown>)
+      : {}
+  };
+}
+
+function toolResultText(result: ToolInvocationResult): string {
+  const parts: string[] = [];
+  if (result.text) parts.push(result.text);
+  else if (result.status === 'ok') parts.push('工具已完成。');
+  else if (result.status === 'submitted') parts.push('任务已接受，完成后会单独发送。');
+  else if (result.status === 'unknown') parts.push('工具动作可能已开始，但结果未知。');
+  else parts.push('工具未执行成功。');
+  if (result.errorCode) parts.push(`code=${result.errorCode}`);
+  if (result.media) parts.push(`media=${result.media.mediaId}`);
+  if (result.data !== undefined) parts.push(`data=${JSON.stringify(result.data)}`);
+  if (result.truncated) parts.push('[结果已截断]');
+  return parts.join('\n');
+}
+
 function formatVideoObservation(observation: VideoObservation): string {
   const parts = [observation.summary];
   if (observation.segments && observation.segments.length > 0) {
@@ -937,4 +1206,41 @@ function shortError(error: unknown): string {
 
 function asString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
+}
+
+async function isTurnCurrent(context: AgentMessageContext): Promise<boolean> {
+  return context.isTurnCurrent ? context.isTurnCurrent() : context.isRoleBindingCurrent();
+}
+
+function boundHookAdditions(
+  additions: ExtensionHookResult['additions'],
+  maxChars: number,
+  fitsContext: (candidate: Array<{ source: string; text: string }>) => boolean
+): Array<{ source: string; text: string }> {
+  let remaining = Math.max(0, maxChars);
+  const bounded: Array<{ source: string; text: string }> = [];
+  for (const addition of additions) {
+    if (bounded.length >= 8 || remaining <= 0) break;
+    const text = truncateTextToFit(addition.text, (candidate) =>
+      formatSupplementalData(addition.source, candidate).length <= remaining
+      && fitsContext([...bounded, { source: addition.source, text: candidate }]));
+    if (!text) continue;
+    const cost = formatSupplementalData(addition.source, text).length;
+    bounded.push({ source: addition.source, text });
+    remaining -= cost;
+  }
+  return bounded;
+}
+
+function serializedMessagesChars(messages: ChatInputMessage[]): number {
+  return JSON.stringify({ messages }).length;
+}
+
+function buildBudgetedContext(input: ContextBuildInput, reservedChars: number) {
+  let built = buildChatContext(input);
+  // Trim history only. Original user input and the role retain their existing semantics.
+  while (built.historyCount > 0 && serializedMessagesChars(built.messages) + reservedChars > input.maxHistoryChars) {
+    built = buildChatContext({ ...input, maxHistoryMessages: built.historyCount - 1 });
+  }
+  return built;
 }

@@ -9,24 +9,12 @@ import { createCore } from '../src/core/core.js';
 import { seedRoleCard, TEST_ROLE_CARD_CONTENT, TEST_ROLE_CARD_ID, TEST_ROLE_CARD_REVISION } from './helpers.js';
 import type { ChannelFactory } from '../src/channels/contract.js';
 import type { CoreEvents } from '../src/core/events.js';
+import type { ProviderAdapter } from '../src/providers/contract.js';
 import { textMessage } from '../src/routing/message.js';
+import { accountPolicy, bind, fakeProvider, writePhase1Config } from './phase1-helpers.js';
 
 const roots: string[] = [];
 const cores: Core[] = [];
-
-const ECHO_PLUGIN = String.raw`
-export async function onSessionStart(ctx) {
-  ctx.state.starts = (ctx.state.starts ?? 0) + 1;
-}
-export async function onMessage(ctx) {
-  const count = (ctx.state.count ?? 0) + 1;
-  ctx.state.count = count;
-  ctx.state.historySeen = ctx.history.length;
-  const text = (ctx.message.segments.find((segment) => segment.type === 'text')?.data?.text) ?? '';
-  ctx.send({ segments: [{ type: 'text', data: { text: 'extra-' + count } }] });
-  return { segments: [{ type: 'text', data: { text: ctx.profile.roleCard.content + '|' + text + '|' + count } }] };
-}
-`;
 
 afterEach(async () => {
   await Promise.allSettled(cores.splice(0).map((core) => core.stop()));
@@ -88,22 +76,7 @@ async function setCatalog(root: string, key: string, revision: string): Promise<
   await fs.writeFile(file, `${JSON.stringify(catalog, null, 2)}\n`);
 }
 
-async function seedPlugin(root: string, id: string, source: string, revision = 'r1'): Promise<void> {
-  const dir = path.join(root, 'public', 'artifacts', 'plugin', id, revision);
-  await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(
-    path.join(dir, 'manifest.json'),
-    `${JSON.stringify({ id, kind: 'plugin', revision, entry: `${id}.mjs`, apiVersion: 1 }, null, 2)}\n`
-  );
-  await fs.writeFile(path.join(dir, `${id}.mjs`), source);
-  await setCatalog(root, `plugin:${id}`, revision);
-}
-
-async function seedEchoPlugin(root: string): Promise<void> {
-  await seedPlugin(root, 'echo', ECHO_PLUGIN);
-}
-
-describe('account profiles and plugin hosts', () => {
+describe('account profiles and role bindings', () => {
   it('persists stable role-context generations across restarts and advances them on deploy and rollback', async () => {
     const root = await tempRoot('accompany-role-generation-');
     await seedRoleCard(root);
@@ -193,74 +166,6 @@ describe('account profiles and plugin hosts', () => {
     expect(status?.profileError).toMatch(/version/);
   });
 
-  it('passes the selected conversation role to each worker message with scoped state', async () => {
-    const root = await tempRoot('accompany-worker-');
-    await seedRoleCard(root);
-    await seedEchoPlugin(root);
-    await writeProfile(root, '10001', {
-      version: 1,
-      roleCard: { source: 'public', id: TEST_ROLE_CARD_ID },
-      plugins: [{ source: 'public', id: 'echo' }]
-    });
-
-    const bucket = new Map<string, FakeChannel>();
-    const core = await createCore({
-      dataRoot: root,
-      instances: [{ id: 'main', backend: 'fake', accountId: '10001' }],
-      channelFactory: channels(bucket),
-      logger: silentLogger()
-    });
-    cores.push(core);
-    await core.setConversationRoleBinding({ accountId: '10001', kind: 'private', peerId: '555' }, { source: 'public', id: TEST_ROLE_CARD_ID });
-    await core.start();
-    expect(core.status().instances[0]?.state).toBe('online');
-
-    const channel = bucket.get('main');
-    channel?.emitInbound({
-      type: 'message',
-      instanceId: 'main',
-      selfId: '10001',
-      kind: 'private',
-      peerId: '555',
-      senderId: '555',
-      messageId: 'p1',
-      at: 1,
-      segments: [{ type: 'text', data: { text: 'ping' } }],
-      selfEcho: false
-    });
-    await waitFor(() => (channel?.sent.length ?? 0) === 2);
-    expect(channel?.sent.map((item) => item.message.segments)).toEqual([
-      [{ type: 'text', data: { text: 'extra-1' } }],
-      [{ type: 'text', data: { text: `${TEST_ROLE_CARD_CONTENT}|ping|1` } }]
-    ]);
-
-    channel?.emitInbound({
-      type: 'message',
-      instanceId: 'main',
-      selfId: '10001',
-      kind: 'private',
-      peerId: '555',
-      senderId: '555',
-      messageId: 'p2',
-      at: 2,
-      segments: [{ type: 'text', data: { text: 'again' } }],
-      selfEcho: false
-    });
-    await waitFor(() => (channel?.sent.length ?? 0) === 4);
-    expect(channel?.sent[3]?.message.segments).toEqual([
-      { type: 'text', data: { text: `${TEST_ROLE_CARD_CONTENT}|again|2` } }
-    ]);
-
-    const stateFile = path.join(root, 'accounts', '10001', 'plugin-state', 'echo.json');
-    const state = JSON.parse(await fs.readFile(stateFile, 'utf8')) as {
-      starts: number;
-      count: number;
-      historySeen: number;
-    };
-    expect(state).toMatchObject({ starts: 1, count: 2 });
-    expect(state.historySeen).toBeGreaterThanOrEqual(1);
-  });
-
   it('resolves a private role card only through an explicit conversation binding', async () => {
     const root = await tempRoot('accompany-private-card-');
     const artifactDir = path.join(root, 'accounts', '10001', 'artifacts', 'role-card', 'personal', 'r1');
@@ -300,154 +205,45 @@ describe('account profiles and plugin hosts', () => {
     expect(await core.listPublicArtifacts()).toEqual([]);
   });
 
-  it('times out a hanging plugin without blocking later plugins', async () => {
-    const root = await tempRoot('accompany-plugin-timeout-');
-    await seedRoleCard(root);
-    await seedPlugin(root, 'hang', 'export async function onMessage() { await new Promise(() => {}); }');
-    await seedPlugin(
-      root,
-      'fast',
-      "export async function onMessage() { return { segments: [{ type: 'text', data: { text: 'fast' } }] }; }"
-    );
-    await writeProfile(root, '10001', {
-      version: 1,
-      roleCard: { source: 'public', id: TEST_ROLE_CARD_ID },
-      plugins: [
-        { source: 'public', id: 'hang' },
-        { source: 'public', id: 'fast' }
-      ]
-    });
-
-    const bucket = new Map<string, FakeChannel>();
-    const core = await createCore({
-      dataRoot: root,
-      instances: [{ id: 'main', backend: 'fake', accountId: '10001' }],
-      channelFactory: channels(bucket),
-      limits: { pluginTimeoutMs: 50 },
-      logger: silentLogger()
-    });
-    cores.push(core);
-    await core.setConversationRoleBinding({ accountId: '10001', kind: 'private', peerId: '555' }, { source: 'public', id: TEST_ROLE_CARD_ID });
-    await core.start();
-
-    const channel = bucket.get('main');
-    channel?.emitInbound({
-      type: 'message',
-      instanceId: 'main',
-      selfId: '10001',
-      kind: 'private',
-      peerId: '555',
-      senderId: '555',
-      messageId: 't1',
-      at: 1,
-      segments: [{ type: 'text', data: { text: 'ping' } }],
-      selfEcho: false
-    });
-    await waitFor(() => (channel?.sent.length ?? 0) === 1);
-    expect(channel?.sent[0]?.message.segments).toEqual([{ type: 'text', data: { text: 'fast' } }]);
-    expect(core.status().instances[0]?.state).toBe('online');
-  });
-
-  it('isolates a crashing plugin worker and respawns for the next message', async () => {
-    const root = await tempRoot('accompany-plugin-crash-');
-    await seedRoleCard(root);
-    const marker = path.join(root, 'crash.marker');
-    await seedPlugin(
-      root,
-      'crasher',
-      String.raw`
-import fs from 'node:fs';
-export async function onMessage(ctx) {
-  const marker = ctx.config.marker;
-  if (marker && !fs.existsSync(marker)) {
-    fs.writeFileSync(marker, '1');
-    process.exit(1);
-  }
-  return { segments: [{ type: 'text', data: { text: 'recovered' } }] };
-}
-`
-    );
-    await writeProfile(root, '10001', {
-      version: 1,
-      roleCard: { source: 'public', id: TEST_ROLE_CARD_ID },
-      plugins: [{ source: 'public', id: 'crasher', config: { marker } }]
-    });
-
-    const bucket = new Map<string, FakeChannel>();
-    const core = await createCore({
-      dataRoot: root,
-      instances: [{ id: 'main', backend: 'fake', accountId: '10001' }],
-      channelFactory: channels(bucket),
-      logger: silentLogger()
-    });
-    cores.push(core);
-    await core.setConversationRoleBinding({ accountId: '10001', kind: 'private', peerId: '555' }, { source: 'public', id: TEST_ROLE_CARD_ID });
-    await core.start();
-    const errors: CoreEvents['instance:error'][] = [];
-    core.bus.on('instance:error', (event) => errors.push(event));
-
-    const channel = bucket.get('main');
-    channel?.emitInbound({
-      type: 'message',
-      instanceId: 'main',
-      selfId: '10001',
-      kind: 'private',
-      peerId: '555',
-      senderId: '555',
-      messageId: 'crash-1',
-      at: 1,
-      segments: [{ type: 'text', data: { text: 'first' } }],
-      selfEcho: false
-    });
-    await waitFor(() => errors.some((event) => event.code === 'host_failed'));
-    expect(channel?.sent).toHaveLength(0);
-    expect(core.status().instances[0]?.state).toBe('online');
-
-    channel?.emitInbound({
-      type: 'message',
-      instanceId: 'main',
-      selfId: '10001',
-      kind: 'private',
-      peerId: '555',
-      senderId: '555',
-      messageId: 'crash-2',
-      at: 2,
-      segments: [{ type: 'text', data: { text: 'second' } }],
-      selfEcho: false
-    });
-    await waitFor(() => (channel?.sent.length ?? 0) === 1);
-    expect(channel?.sent[0]?.message.segments).toEqual([{ type: 'text', data: { text: 'recovered' } }]);
-  });
-
   it('rejects an in-flight turn after the bound public card rolls to a new revision', async () => {
     const root = await tempRoot('accompany-revision-pin-');
     await seedRoleCard(root);
     await seedRoleCardRevision(root, 'r2', 'version two');
-    const startedMarker = path.join(root, 'slow.started');
-    await seedPlugin(
-      root,
-      'slow',
-      String.raw`
-import fs from 'node:fs';
-export async function onMessage(ctx) {
-  if (ctx.config.marker) fs.writeFileSync(ctx.config.marker, 'started');
-  await new Promise((resolve) => setTimeout(resolve, 80));
-  const text = (ctx.message.segments.find((segment) => segment.type === 'text')?.data?.text) ?? '';
-  return { segments: [{ type: 'text', data: { text: text + ':' + ctx.profile.roleCard.content } }] };
-}
-`
-    );
     await writeProfile(root, '10001', {
       version: 1,
       roleCard: { source: 'public', id: TEST_ROLE_CARD_ID },
-      plugins: [{ source: 'public', id: 'slow', config: { marker: startedMarker } }]
+      plugins: []
     });
+    await writePhase1Config(root, {
+      providers: [fakeProvider('fake-chat')],
+      accountPolicies: {
+        '10001': accountPolicy({
+          allowedProviders: ['fake-chat'],
+          bindings: { chat: bind('fake-chat', 'text-model') }
+        })
+      }
+    });
+
+    const seen: string[] = [];
+    const adapter: ProviderAdapter = {
+      id: 'fake-v1',
+      supports: (capability) => capability === 'chat',
+      cancelMode: () => 'none',
+      async chat(_context, request) {
+        const last = request.messages[request.messages.length - 1];
+        const text = last?.content.find((part) => part.type === 'text')?.text ?? '';
+        seen.push(text);
+        if (text === 'first') await new Promise((resolve) => setTimeout(resolve, 150));
+        return { text };
+      }
+    };
 
     const bucket = new Map<string, FakeChannel>();
     const core = await createCore({
       dataRoot: root,
       instances: [{ id: 'main', backend: 'fake', accountId: '10001' }],
       channelFactory: channels(bucket),
+      providerAdapters: [adapter],
       logger: silentLogger()
     });
     cores.push(core);
@@ -467,14 +263,7 @@ export async function onMessage(ctx) {
       segments: [{ type: 'text', data: { text: 'first' } }],
       selfEcho: false
     });
-    await waitFor(async () => {
-      try {
-        await fs.access(startedMarker);
-        return true;
-      } catch {
-        return false;
-      }
-    });
+    await waitFor(() => seen.includes('first'));
 
     const deployment = await core.deployArtifact('role-card', TEST_ROLE_CARD_ID, 'r2');
     expect(deployment.ok).toBe(true);
@@ -496,7 +285,8 @@ export async function onMessage(ctx) {
     const texts = (channel?.sent ?? []).map(
       (item) => (item.message.segments[0] as { data?: { text?: string } } | undefined)?.data?.text
     );
-    expect(texts).toEqual(['second:version two']);
+    expect(texts).toEqual(['second']);
+    expect(seen).toEqual(['first', 'second']);
     await expect(core.resolveConversationRoleBinding('10001', { accountId: '10001', kind: 'private', peerId: '555' }))
       .resolves.toMatchObject({ card: { ref: { revision: 'r2' }, content: 'version two' } });
   });

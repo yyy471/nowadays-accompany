@@ -29,9 +29,30 @@ export interface ReadOptions {
   contextEpoch?: string;
 }
 
+export interface ReadRangeOptions {
+  /** Exclusive lower bound. */
+  afterSeq: number;
+  /** Inclusive upper bound. */
+  throughSeq: number;
+  /** Maximum records inspected per call; includes every direction and history epoch. */
+  limit: number;
+}
+
+export interface ReadRangeResult {
+  /** Records in ascending seq order, without filtering by direction or epoch. */
+  records: StoredMessage[];
+  /** Highest inspected seq, or afterSeq when nothing was read. */
+  scannedThroughSeq: number;
+  /** True when no record in (scannedThroughSeq, throughSeq] remains. */
+  exhausted: boolean;
+}
+
 export interface MessageStore {
   append(conversation: ConversationRef, message: StoredMessage): Promise<AppendResult>;
   read(conversation: ConversationRef, options?: ReadOptions): Promise<StoredMessage[]>;
+  /** Stable highest persisted seq after pending writes drain; 0 when the conversation has no messages. */
+  lastSeq(conversation: ConversationRef): Promise<number>;
+  readRange(conversation: ConversationRef, options: ReadRangeOptions): Promise<ReadRangeResult>;
   listConversations?(accountId?: string): Promise<ConversationRef[]>;
   dispose(): Promise<void>;
 }

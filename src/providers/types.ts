@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { assertIdentifier, type ChatKind } from '../routing/identity.js';
 import { CAPABILITY_IDS, isCapabilityId, type CapabilityId } from '../policy/capabilities.js';
 import type { SkillConfig } from '../extensions/types.js';
+import { isPluginKey, isPluginSkillId, isToolId } from '../extensions/contracts.js';
 import { ConfigError } from './errors.js';
 
 export const CONFIG_SCHEMA_VERSION = 2;
@@ -13,7 +14,6 @@ export type MediaTransport = (typeof MEDIA_TRANSPORTS)[number];
 export type InputModality = 'text' | 'image' | 'video';
 export type ProviderLocation = 'local' | 'cloud';
 export type VisionMode = 'external' | 'direct';
-export type ReplyMode = 'auto' | 'agent' | 'plugins';
 export type CancelMode = 'remote' | 'localOnly' | 'none';
 
 export interface ProviderModelConfig {
@@ -79,19 +79,42 @@ export interface AccountMediaPolicy {
 
 /** 公用 Skill 定义之外，账号可选择启用/禁用，并用同 id 定义覆盖为私有版本。 */
 export interface AccountSkillPolicy {
+  /** Legacy input only; parsed policies migrate these to extension run switches. */
   enabled?: string[];
+  /** Legacy input only; parsed policies migrate these to extension run switches. */
   disabled?: string[];
   definitions?: SkillConfig[];
+}
+
+export type ExtensionSwitch = 'inherit' | 'on' | 'off';
+
+/** Per-scope soft switches for plugins, tools and skills. Absent/inherit keeps the lower layer. */
+export interface ExtensionRunPolicy {
+  plugins?: Record<string, ExtensionSwitch>;
+  tools?: Record<string, ExtensionSwitch>;
+  skills?: Record<string, ExtensionSwitch>;
+  /** Account-shared plugin state is valid only when the plugin manifest declares it. */
+  state?: Record<string, ExtensionSwitch>;
+}
+
+/**
+ * The account extension subtree. It owns hard tool authorization as well as run switches;
+ * profile installation stays in the account profile.
+ */
+export interface AccountExtensionPolicy {
+  /** Hard tool authorization; a session switch can only narrow this list, never extend it. */
+  authorizedTools?: string[];
+  defaults: ExtensionRunPolicy;
+  byKind: Partial<Record<ChatKind, ExtensionRunPolicy>>;
+  byConversation: Record<string, ExtensionRunPolicy>;
 }
 
 export interface AccountPolicy extends ScopePolicy {
   allowedProviders: string[];
   crossProviderFallback: boolean;
   media: AccountMediaPolicy;
-  replyMode?: ReplyMode;
-  /** Built-in tools explicitly available to model calls; provider configuration alone never opens a tool. */
-  enabledTools?: string[];
   skills?: AccountSkillPolicy;
+  extensions?: AccountExtensionPolicy;
   byKind: Partial<Record<ChatKind, ScopePolicy>>;
   byConversation: Record<string, ScopePolicy>;
 }
@@ -140,7 +163,6 @@ const CREDENTIAL_REF = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
 const INPUT_MODALITIES = new Set<InputModality>(['text', 'image', 'video']);
 const LOCATIONS = new Set<ProviderLocation>(['local', 'cloud']);
 const VISION_MODES = new Set<VisionMode>(['external', 'direct']);
-const REPLY_MODES = new Set<ReplyMode>(['auto', 'agent', 'plugins']);
 const MEDIA_TRANSPORT_SET = new Set<string>(MEDIA_TRANSPORTS);
 const ACCOUNT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
@@ -466,11 +488,129 @@ export function parseScopePolicy(raw: unknown, path: string): ScopePolicy {
   return policy;
 }
 
+function parseExtensionSwitch(raw: unknown, path: string): ExtensionSwitch {
+  if (raw !== 'inherit' && raw !== 'on' && raw !== 'off') fail(path, 'must be inherit, on or off');
+  return raw;
+}
+
+function parseExtensionRunPolicy(raw: unknown, path: string): ExtensionRunPolicy {
+  const value = object(raw, path);
+  exactKeys(value, ['plugins', 'tools', 'skills'], path);
+  const policy: ExtensionRunPolicy = {};
+  const sections = [
+    ['plugins', (key: string) => isPluginKey(key)],
+    ['tools', (key: string) => isToolId(key)],
+    ['skills', (key: string) => ID.test(key) || isPluginSkillId(key)],
+    ['state', (key: string) => isPluginKey(key)]
+  ] as const;
+  for (const [section, validKey] of sections) {
+    const entriesRaw = value[section];
+    if (entriesRaw === undefined) continue;
+    const entries = object(entriesRaw, `${path}.${section}`);
+    if (Object.keys(entries).length > 128) fail(`${path}.${section}`, 'must contain at most 128 entries');
+    const parsed: Record<string, 'on' | 'off'> = {};
+    for (const [key, switchRaw] of Object.entries(entries)) {
+      if (!validKey(key)) fail(`${path}.${section}`, `invalid key ${key}`);
+      const resolved = parseExtensionSwitch(switchRaw, `${path}.${section}.${key}`);
+      if (resolved !== 'inherit') parsed[key] = resolved;
+    }
+    if (Object.keys(parsed).length > 0) policy[section] = parsed;
+  }
+  return policy;
+}
+
+function parseAccountExtensions(raw: unknown, path: string): AccountExtensionPolicy | undefined {
+  const value = object(raw, path);
+  exactKeys(value, ['authorizedTools', 'defaults', 'byKind', 'byConversation'], path);
+  const authorizedTools: string[] = [];
+  if (value.authorizedTools !== undefined) {
+    if (!Array.isArray(value.authorizedTools)) fail(`${path}.authorizedTools`, 'must be an array');
+    for (const entry of value.authorizedTools) {
+      if (typeof entry !== 'string' || !isToolId(entry)) {
+        fail(`${path}.authorizedTools`, `invalid tool id ${String(entry)}`);
+      }
+      if (!authorizedTools.includes(entry)) authorizedTools.push(entry);
+    }
+  }
+  const defaults = value.defaults === undefined ? {} : parseExtensionRunPolicy(value.defaults, `${path}.defaults`);
+  const byKindRaw = value.byKind === undefined ? {} : object(value.byKind, `${path}.byKind`);
+  exactKeys(byKindRaw, ['private', 'group'], `${path}.byKind`);
+  const byKind: Partial<Record<ChatKind, ExtensionRunPolicy>> = {};
+  for (const kind of ['private', 'group'] as const) {
+    if (byKindRaw[kind] === undefined) continue;
+    const parsed = parseExtensionRunPolicy(byKindRaw[kind], `${path}.byKind.${kind}`);
+    if (!extensionRunPolicyEmpty(parsed)) byKind[kind] = parsed;
+  }
+  const byConversationRaw = value.byConversation === undefined ? {} : object(value.byConversation, `${path}.byConversation`);
+  const byConversation: Record<string, ExtensionRunPolicy> = {};
+  for (const [key, entry] of Object.entries(byConversationRaw)) {
+    const [kind, peerId, ...rest] = key.split('/');
+    if (rest.length > 0 || (kind !== 'private' && kind !== 'group') || !peerId || !ID.test(peerId)) {
+      fail(`${path}.byConversation`, `invalid conversation key ${key}; expected private/<peerId> or group/<peerId>`);
+    }
+    const parsed = parseExtensionRunPolicy(entry, `${path}.byConversation.${key}`);
+    if (!extensionRunPolicyEmpty(parsed)) byConversation[key] = parsed;
+  }
+  return pruneAccountExtensionPolicy({
+    ...(authorizedTools.length > 0 ? { authorizedTools } : {}),
+    defaults,
+    byKind,
+    byConversation
+  });
+}
+
+function migrateLegacySkillSwitches(
+  base: AccountExtensionPolicy | undefined,
+  enabled: string[],
+  disabled: string[]
+): AccountExtensionPolicy | undefined {
+  if (enabled.length === 0 && disabled.length === 0) return base;
+  const next: AccountExtensionPolicy = base
+    ? structuredClone(base)
+    : { defaults: {}, byKind: {}, byConversation: {} };
+  const switches = { ...(next.defaults.skills ?? {}) };
+  for (const id of enabled) if (switches[id] === undefined) switches[id] = 'on';
+  for (const id of disabled) if (switches[id] === undefined) switches[id] = 'off';
+  next.defaults = {
+    ...next.defaults,
+    ...(Object.keys(switches).length > 0 ? { skills: switches } : {})
+  };
+  return pruneAccountExtensionPolicy(next);
+}
+
+function pruneAccountExtensionPolicy(policy: AccountExtensionPolicy): AccountExtensionPolicy | undefined {
+  const authorizedTools = policy.authorizedTools && policy.authorizedTools.length > 0
+    ? [...policy.authorizedTools]
+    : undefined;
+  const byKind = Object.fromEntries(
+    Object.entries(policy.byKind).filter(([, entry]) => !extensionRunPolicyEmpty(entry))
+  ) as AccountExtensionPolicy['byKind'];
+  const byConversation = Object.fromEntries(
+    Object.entries(policy.byConversation).filter(([, entry]) => !extensionRunPolicyEmpty(entry))
+  );
+  if (extensionRunPolicyEmpty(policy.defaults)
+    && Object.keys(byKind).length === 0
+    && Object.keys(byConversation).length === 0) {
+    if (!authorizedTools) return undefined;
+    return { authorizedTools, defaults: {}, byKind: {}, byConversation: {} };
+  }
+  return {
+    ...(authorizedTools ? { authorizedTools } : {}),
+    defaults: policy.defaults,
+    byKind,
+    byConversation
+  };
+}
+
+function extensionRunPolicyEmpty(policy: ExtensionRunPolicy): boolean {
+  return !policy.plugins && !policy.tools && !policy.skills && !policy.state;
+}
+
 export function parseAccountPolicy(raw: unknown, path = 'accountPolicy'): AccountPolicy {
   const value = object(raw, path);
   exactKeys(
     value,
-    ['allowedProviders', 'crossProviderFallback', 'media', 'replyMode', 'enabledTools', 'skills', 'byKind', 'byConversation', 'agentEnabled', 'capabilities', 'bindings', 'visionMode'],
+    ['allowedProviders', 'crossProviderFallback', 'media', 'enabledTools', 'skills', 'extensions', 'byKind', 'byConversation', 'agentEnabled', 'capabilities', 'bindings', 'visionMode'],
     path
   );
   const scope = parseScopePolicy(
@@ -492,28 +632,33 @@ export function parseAccountPolicy(raw: unknown, path = 'accountPolicy'): Accoun
   }
   const media = value.media === undefined ? {} : object(value.media, `${path}.media`);
   exactKeys(media, ['allowCloudUpload'], `${path}.media`);
-  let replyMode: ReplyMode | undefined;
-  if (value.replyMode !== undefined) {
-    if (typeof value.replyMode !== 'string' || !REPLY_MODES.has(value.replyMode as ReplyMode)) {
-      fail(`${path}.replyMode`, 'must be auto, agent or plugins');
-    }
-    replyMode = value.replyMode as ReplyMode;
-  }
-  const enabledTools: string[] = [];
+  const legacyAuthorizedTools: string[] = [];
   if (value.enabledTools !== undefined) {
     if (!Array.isArray(value.enabledTools)) fail(`${path}.enabledTools`, 'must be an array');
     for (const entry of value.enabledTools) {
-      if (typeof entry !== 'string' || !ID.test(entry)) fail(`${path}.enabledTools`, `invalid tool id ${String(entry)}`);
-      if (!enabledTools.includes(entry)) enabledTools.push(entry);
+      if (typeof entry !== 'string' || !isToolId(entry)) fail(`${path}.enabledTools`, `invalid tool id ${String(entry)}`);
+      if (!legacyAuthorizedTools.includes(entry)) legacyAuthorizedTools.push(entry);
     }
   }
+  let parsedExtensions = value.extensions === undefined
+    ? undefined
+    : parseAccountExtensions(value.extensions, `${path}.extensions`);
+  if (legacyAuthorizedTools.length > 0) {
+    if (parsedExtensions?.authorizedTools?.length) {
+      fail(path, 'enabledTools and extensions.authorizedTools cannot both be set; use extensions.authorizedTools');
+    }
+    parsedExtensions = pruneAccountExtensionPolicy({
+      ...(parsedExtensions ?? { defaults: {}, byKind: {}, byConversation: {} }),
+      authorizedTools: legacyAuthorizedTools
+    });
+  }
   let skills: AccountSkillPolicy | undefined;
+  const legacySkillEnabled: string[] = [];
+  const legacySkillDisabled: string[] = [];
   if (value.skills !== undefined) {
     const skillsRaw = object(value.skills, `${path}.skills`);
     exactKeys(skillsRaw, ['enabled', 'disabled', 'definitions'], `${path}.skills`);
-    const enabled: string[] = [];
-    const disabled: string[] = [];
-    for (const [key, target] of [['enabled', enabled], ['disabled', disabled]] as const) {
+    for (const [key, target] of [['enabled', legacySkillEnabled], ['disabled', legacySkillDisabled]] as const) {
       const rawList = skillsRaw[key];
       if (rawList === undefined) continue;
       if (!Array.isArray(rawList)) fail(`${path}.skills.${key}`, 'must be an array');
@@ -524,7 +669,7 @@ export function parseAccountPolicy(raw: unknown, path = 'accountPolicy'): Accoun
         if (!target.includes(entry)) target.push(entry);
       }
     }
-    const overlap = enabled.find((id) => disabled.includes(id));
+    const overlap = legacySkillEnabled.find((id) => legacySkillDisabled.includes(id));
     if (overlap) fail(`${path}.skills`, `skill ${overlap} cannot be both enabled and disabled`);
     const definitions: SkillConfig[] = [];
     if (skillsRaw.definitions !== undefined) {
@@ -540,12 +685,9 @@ export function parseAccountPolicy(raw: unknown, path = 'accountPolicy'): Accoun
         ids.add(definition.id);
       }
     }
-    skills = {
-      ...(enabled.length > 0 ? { enabled } : {}),
-      ...(disabled.length > 0 ? { disabled } : {}),
-      ...(definitions.length > 0 ? { definitions } : {})
-    };
+    skills = definitions.length > 0 ? { definitions } : undefined;
   }
+  const extensions = migrateLegacySkillSwitches(parsedExtensions, legacySkillEnabled, legacySkillDisabled);
   const byKindRaw = value.byKind === undefined ? {} : object(value.byKind, `${path}.byKind`);
   exactKeys(byKindRaw, ['private', 'group'], `${path}.byKind`);
   const byKind: Partial<Record<ChatKind, ScopePolicy>> = {};
@@ -567,9 +709,8 @@ export function parseAccountPolicy(raw: unknown, path = 'accountPolicy'): Accoun
     allowedProviders,
     crossProviderFallback: boolean(value.crossProviderFallback, `${path}.crossProviderFallback`, false),
     media: { allowCloudUpload: boolean(media.allowCloudUpload, `${path}.media.allowCloudUpload`, false) },
-    ...(replyMode ? { replyMode } : {}),
-    ...(enabledTools.length > 0 ? { enabledTools } : {}),
     ...(skills ? { skills } : {}),
+    ...(extensions ? { extensions } : {}),
     byKind,
     byConversation
   };
@@ -584,7 +725,7 @@ function parseSkill(raw: unknown, path: string): SkillConfig {
   if (!Array.isArray(value.tools)) fail(`${path}.tools`, 'must be an array');
   const tools: string[] = [];
   for (const entry of value.tools) {
-    if (typeof entry !== 'string' || !ID.test(entry)) fail(`${path}.tools`, `invalid tool ${String(entry)}`);
+    if (typeof entry !== 'string' || !(ID.test(entry) || isToolId(entry))) fail(`${path}.tools`, `invalid tool ${String(entry)}`);
     // Earlier configs referenced image.generate as a Skill tool id. Keep that
     // spelling as an explicit compatibility alias for the now-namespaced tool.
     const toolId = entry === 'image.generate' ? 'builtin.image.generate' : entry;

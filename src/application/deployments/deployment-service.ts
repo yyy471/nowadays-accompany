@@ -1,7 +1,7 @@
 import type { DeploymentRecord, RollingDeployer } from '../../artifacts/deploy.js';
 import type { LocalArtifactStore } from '../../artifacts/local.js';
 import { artifactRefKey, type ArtifactKind } from '../../artifacts/types.js';
-import { AccompanyError } from '../../core/errors.js';
+import { AccompanyError, InvalidSpecError } from '../../core/errors.js';
 
 export interface DeploymentHost {
   stopped(): boolean;
@@ -26,6 +26,9 @@ export class DeploymentService {
   }
 
   deployArtifact(kind: ArtifactKind, id: string, revision: string): Promise<DeploymentRecord> {
+    if (kind === 'worldbook') {
+      return Promise.reject(new InvalidSpecError('worldbook资源不参与部署、catalog跟随或worker重载；请在会话中固定选择版本。'));
+    }
     if (this.#options.host.stopped()) {
       return Promise.reject(new AccompanyError('core_stopped', 'core has been stopped'));
     }

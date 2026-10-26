@@ -1,8 +1,84 @@
 # 开发文档导航
 
+最新主进程验收见[90 EXT-D独立复核](90-ext-d-independent-review.md)，实现见[89 D-D/D-E执行](89-ext-d-hooks-execution.md)，原始端到端失败及修复见[89a E2E证据](89a-ext-d-e2e-evidence.md)。已接通带来源 beforeContext、真实发送结果 afterTurn、500ms/2s钩子预算与会话扩展快照；补修同会话媒体误去重、原子重试撤权、挂起档案关闭、配置换代和Worker迟到执行。冻结后主进程定向138项、全量110文件1046项通过/1项既有跳过，类型检查、桌面构建与diff检查通过。范围限本地自动化，未提交、未打包、未替换EXE；EXT-E/F/G/H及真实服务验收仍按79/80推进。
+
+上一轮[87 D-A～D-C执行](87-ext-d-agent-composition-execution.md)保留单一回复宿主、assistant/tool协议与统一执行器的原始证据；其“D-D/D-E未做”以及按provider callId/会话去重、关闭等待账号同步链的表述由89/90中的实现和复验取代。原子写重试提交guard的补修另见[88](88-atomic-retry-guard-fix.md)。
+
+上一次主进程独立复核见[86 EXT-C修复独立复核](86-ext-c-fixes-independent-review.md)，子代理实现见[85 修复记录](85-ext-a-c-remediation.md)：原5项及复核追加的submitted、完整工具授权、在途unknown、软覆盖边界已关闭；主进程反向脚本全部通过、定向98/98通过、类型与构建通过。原始全量1000通过、1跳过、1记忆提取E2E等待超时，不能宣称项目整体全绿；需保留稳定性待查。
+
+历史执行记录见[85 EXT-A～C复核修复](85-ext-a-c-remediation.md)：FIX1～5及授权边界修复完成；定向78项、类型检查、桌面构建通过。主进程最终全量105/106文件通过，1000项通过、1项跳过，唯一失败为memory runtime E2E的waitFor超时；EXT runtime 37项全通过。记忆链路失败保留且有单文件复跑证据，本轮未实施EXT-D，未提交、打包或替换EXE。
+
+问题来源见[84 EXT-A～C独立复核](84-ext-a-c-independent-review.md)：修复前离线复现5项P1并给出FIX1～5要求；实际实现与验证以85号记录为准。
+
+下一阶段执行依据：[79 Agent主体、统一工具与扩展作用域方案](79-agent-extension-execution-plan.md)、[80 验收标准](80-agent-extension-acceptance.md)。落实阶段回顾第2/3/4项；用户明确无旧插件，采用单一协议和Agent编排，清理互斥回复模式；按EXT-A～H实施，覆盖统一执行、插件Worker、群私聊授权、Skill管理及页面闭环。记忆管理页面明确后置，具体浏览工具不在本轮范围。当前为待实施方案。
+
+最新独立复验见[78 MEM03修复独立复验](78-memory-extraction-fixes-independent-review.md)：76号R1/R2两项P1通过，相同完整链路复现确认长文本水位推进、提取单次调用后冷却；最终原始全量916项通过、1项既有跳过，类型检查及桌面构建通过。但本次前两次全量分别出现O09/E2E水位等待超时，后续未再现，保留M3-VERIFY1稳定性/诊断待查；77号无保留收口结论需收窄，不能忽略之前失败。未改生产代码、未提交或打包。
+
+最新修复与复验见[77 MEM03复核修复](77-memory-extraction-review-fixes.md)：76号R1（字符预算与六条门槛冲突导致长文本永久停滞）与R2（提取继承Provider自动重试/回退）已修复；准入计数与批次分离、有界续扫不重读旧前缀、提取固定单次调用且无fallback。102文件、916项通过、1项既有跳过，类型检查、桌面构建和diff检查通过。MEM03自动提取可收口；摘要、MEM04管理页面、真实QQ/付费服务仍待实施或验收，未提交/打包/更新发行包。
+
+最近独立复核见[76 MEM03复核与修复计划](76-memory-extraction-independent-review.md)：曾以完整链路复现上述两项P1并暂缓收口；R1/R2已由77号关闭。76号未改生产代码、未提交或打包。
+
+最新执行与验收见[75 MEM03自动提取](75-memory-extraction-execution.md)：显式激活、删除暂停/重激活边界、有界输入与续扫、协调器/配额/单次调用/冷却/退出、严格输出、同文件原子提交与会话队列顺序已完成；首轮复核的并发裁剪切页与空文本积压、76号R1/R2均已修复。102文件、916项通过、1项既有跳过，类型检查、桌面构建和diff检查通过。摘要生成、MEM04管理页面、真实QQ/付费服务仍待实施或验收，未提交/打包/更新发行包。
+
+MEM03方案与验收依据为[73 可选自动提取方案](73-memory-extraction-implementation-plan.md)、[74 详细验收](74-memory-extraction-acceptance.md)：旧autoExtract=true不静默付费，首轮仅fact，不含summary/页面/遗忘曲线。
+
+最新独立复验见[72 MEM02修复复核](72-memory-runtime-fixes-independent-review.md)：70号R1/R2通过，旧轮工具准入与OR缓存遍历已修复；93文件、833项通过、1项既有跳过，类型检查及构建通过。MEM02可收口。
+
+最新修复与复验见[71 MEM02复核修复](71-memory-runtime-review-fixes.md)：70号R1（工具执行前未携带本轮memory guard）与R2（耗尽后提前break遗漏OR缓存命中）已修复；新增旧响应工具调用、排队job、Provider已开始、其他scope/回执重放及缓存遍历回归。93文件、833项通过、1项既有跳过，类型检查和桌面构建通过。MEM02可收口；自动提取、摘要、记忆页面与真实QQ/付费服务仍待实施，未提交/打包/更新发行包。
+
+上一轮独立复核见[70 MEM02复核与修复要求](70-memory-runtime-independent-review.md)：曾复现P1旧记忆轮次仍可执行生图、P2计算耗尽后漏掉后续OR缓存命中；R1/R2已由71号关闭，70号“暂不完全通过”结论以71号复验为准。
+
+上一阶段执行与验收见[69 MEM02检索、预览与Agent运行链路](69-memory-retrieval-runtime-execution.md)：纯选择器、只读预览、不可变记忆快照、上下文预算与最终发送guard已完成，R01～R09/P01～P08/C01～C09/G01～G07通过；70号复核项以71号修复结果为准。
+
+上一阶段方案与验收为[67 检索、预览与Agent运行链路](67-memory-retrieval-runtime-implementation-plan.md)、[68 详细验收](68-memory-retrieval-runtime-acceptance.md)。
+
+最新独立复验见[66 MEM01修复复核](66-memory-management-fixes-independent-review.md)：64号R1/R2通过，R3按65号逻辑提交点约定通过，781项通过、1项既有跳过，类型检查和构建通过；MEM01管理存储可收口，下一步MEM02-A/B检索预览与Agent快照/发送guard。跨文件物理原子性未承诺，记忆页面与自动提取仍待实施。
+
+最新独立复核见[64 MEM01复核与修复要求](64-memory-management-independent-review.md)：776项基线通过、1项既有跳过，类型检查和构建通过；但已复现原请求重试被CAS提前拒绝、合法字段组合写出超过读取上限的文件、等待中角色变化后仍提交旧scope三项P1。MEM01暂未通过，先执行MEM-FIX1～3，再进入MEM02；63号全部通过结论以64号收窄。
+
+最新独立复验见[60 加载修复复核](60-worldbook-loading-fix-independent-review.md)：58号P2已关闭，758项通过、1项既有跳过，类型检查与构建通过，本轮未发现新的阻塞项。下一阶段MEM00设计见[61 长期记忆实现方案](61-memory-foundation-implementation-plan.md)、[62 详细验收标准](62-memory-foundation-acceptance.md)，下一可派发包为MEM01-A/B手工记忆Store/API；原生/视觉/真实QQ仍独立待验收。
+
+最新修复见[65 MEM01复核修复](65-memory-management-review-fixes.md)：64号R1～R3（回执先于CAS、实际落盘字节上限、提交前角色作用域复验）已修复；87文件、781项通过、1项既有跳过，类型检查与构建通过。MEM01管理存储可重新收口，但记忆仍未注入Agent、未检索/提取、无管理界面，MEM02～MEM04待实施；未提交或更新发行包。
+
+上一轮执行见[63 长期记忆管理存储](63-memory-foundation-execution.md)：MEM01-A/B已完成，S01～S12通过；87文件、776项通过、1项既有跳过，类型检查与构建通过。受64/65号影响的条目以65号为准。
+
+上一轮复验见[59 详情加载状态修复](59-worldbook-detail-loading-execution.md)：58号P2已修复，详情请求在锁定/隐藏/身份变化作废时立即结束加载，恢复时按当前来源启动新ticket，旧响应不能清除新请求；补4项正式回归后85文件、758项通过、1项既有跳过，类型检查与构建通过。原生/视觉/真实QQ仍待验收，未提交或更新发行包。
+
+上一轮独立复核见[58 修复复核](58-worldbook-ui-fixes-independent-review.md)：56号R1～R4已修复并通过复核；其中记录的P2按59号关闭。
+
+最新独立复核见[56 世界书页面复核与修复计划](56-worldbook-ui-independent-review.md)：744项基线通过、1项既有跳过，类型检查/构建通过；但复现编辑器卸载旧回调仍保存、异步来源覆盖后续选择，另有分页和副本身份问题。本轮暂不完全通过，先执行UI-FIX1～3再复验；55号相关自验结论以56号收窄。
+
+WB04/WB05世界书编辑器、草稿试算与逐会话来源已完成；56号独立复核发现的R1～R4（卸载旧回调、来源意图竞态、选书分页、副本语义）已在[57 修复与复验记录](57-worldbook-ui-review-fixes.md)关闭：85文件、754项通过、1项既有跳过，类型检查与桌面构建通过；真实浏览器结构链路复核通过，Electron原生/视觉缩放/真实QQ与付费服务待验收。下一步按[53 实现计划](53-remaining-development-implementation-plan.md)进入长期记忆（MEM00起），验收继续对照[54 标准](54-remaining-development-acceptance.md)。本轮未提交、未打包、未更新发行包。
+
+WB03会话来源与实际Agent链路已接通，见[52 执行与验收记录](52-worldbook-conversation-runtime-execution.md)：来源/参数一次CAS保存，固定版本与本轮书快照，guard拦截版本切换/外部改写/缺失的旧回复，保留同角色历史，禁用可恢复。726项通过、1项既有跳过，类型检查及构建通过；下一步WB04编辑器、WB05会话选书，再做WB06完整验收，未提交/更新发行包。
+
+WB02资源服务已实现，见[51 执行与验收记录](51-worldbook-resource-service-execution.md)：固定版本列表/详情、不可变创建/派生、跨重试请求绑定、受控JSON导入与桌面桥接，共用发布原语，不改catalog或会话。717项通过、1项既有跳过，类型检查及桌面构建通过。页面编辑器和Agent独立来源尚未接通；下一步WB03，原生选择器待实机验收，未提交/更新发行包。
+
+最新边界修复与接管记录见[50 修复复核](50-worldbook-boundary-fixes-review.md)：来源假成功已改为明确拒绝，新kind展示、原生manifest校验与固定版本入口已修正；补修目录名、有界读取/链接检查、输入对象副作用，并增加回归。706项通过、1项既有跳过，类型检查与构建通过。FIX-WB1/WB2已收口；独立世界书整体尚未完成，下一步按49号执行WB02资源服务。
+
+独立世界书首轮代码复核见[48 复核结果](48-independent-worldbook-code-review.md)：当前主要完成领域契约，693项通过、1项既有跳过，类型检查和构建通过，但资源服务、独立来源运行时和编辑器尚未接通，阶段未验收。下一轮按[49 修复与剩余实现任务](49-independent-worldbook-remediation-plan.md)先修来源提交假成功及新kind误展示，再补齐WB02～WB06；暂不推进长期记忆。
+
+下一阶段完整派发依据已整理：[46 独立世界书与条目管理实现方案](46-independent-worldbook-implementation-plan.md)、[47 完整验收标准](47-independent-worldbook-acceptance.md)。覆盖资源版本、导入编辑、逐会话来源、运行时边界、失败恢复、WB01～WB06任务包与逐项验收；当前为待实施方案，不包含长期记忆开发。
+
+世界书基础阶段已完成，见[45 实现与验收记录](45-worldbook-foundation-review.md)，方案见[44 基础方案](44-worldbook-foundation-plan.md)：角色卡世界书转换、逐群聊/私聊独立启用、受预算约束的上下文注入与只读关键词测试。663项通过、1项既有权限相关跳过，类型检查及桌面构建通过；独立世界书编辑与长期记忆未实现，未提交或更新发行包。
+
+酒馆角色卡基础转换见[43 酒馆JSON/PNG导入](43-tavern-card-import.md)：V1/V2、PNG chara、原文件归档、纯文本预览与兼容性提示，沿用不自动部署/逐会话绑定。该轮559项通过、1项权限跳过；世界书后续实现以45号记录为准。V3、开场白自动发送与完整宏运行时未实现；原生选择器待实机验收。
+
+阶段E首轮收口见[42 布局与可访问性](42-stage-e-layout-and-accessibility.md)：Dock键盘/稳定放大、公共弹窗焦点、主页矮窗口裁切与缩放适配已修复；有真实隔离浏览器的窗口/键盘/滚动验证。477项通过、1项权限跳过，类型检查与桌面构建通过。Electron原生选择器、托盘及Windows实际缩放仍待实机验收，未更新发行包。
+
+最新实现与自动验收见[41 并发写入修复与阶段D集成验收](41-storage-fix-and-stage-d-review.md)：此前Windows并发rename失败已修复，资源目录选择/预览/导入已接通；最终473项通过、1项权限相关跳过，类型检查与桌面构建通过。资源格式与使用样例见[40 资源导入执行记录](40-stage-d-artifact-import.md)。未提交、未更新发行包，原生窗口与布局实机验收待完成。
+
+阶段 C 设置与模型服务管理已实现，集成复核见[39 阶段C集成复核](39-stage-c-integration-review.md)，分任务记录见[37 设置壳](37-stage-c-settings-execution.md)、[38 模型管理](38-stage-c-models-execution.md)。类型检查、桌面构建及26项定向回归通过；全量424项中423通过，既有Windows原子写入并发测试EPERM待独立修复。未更新发行包，实机验收待完成。历史条目中的“待实施”以39号最新状态为准。
+
+草稿保护实现及返修记录见[36 草稿保护独立复核](36-draft-protection-independent-review.md)：最新第7节记录退出Portal冻结、响应拒绝与ACK后失联的直接修复，404项测试通过；Electron实机验收仍待完成。
+
+下一阶段实施依据见[35 入口收尾与统一草稿保护](35-navigation-draft-protection-plan.md)：限定A收尾与B草稿保护，包含统一登记/导航准入、各编辑器接入、托盘隐藏与真实退出的区别、任务包和验收标准；这是待实施方案。
+
+前端首批调整的独立复核与后续派发计划见[34 前端独立复核与后续计划](34-frontend-independent-review-and-next-plan.md)：列出账号上下文、请求状态与重新读取反馈的返修项，以及草稿保护、设置管理和资源导入的分阶段验收。阶段A及第二轮F4返修已完成，执行记录见33号第10节。
+
 后端改造执行依据：[26 目标架构与调整方案](26-backend-target-architecture.md)、[27 任务包与验收标准](27-backend-refactoring-work-packages.md)；核验依据见[25 收口核验](25-backend-consolidation-review-and-plan.md)。B01～B11 已按顺序实现，执行记录与验证证据见[30 后端改造执行报告](30-backend-refactoring-execution-report.md)；独立复核与返修结果见31号记录，真实环境验收未包含在内。
 
-当前前端的逐页用户操作体验分析见[32 前端用户操作体验分析](32-frontend-ux-review.md)：包含页面评级、首次使用路径、横向文案／状态／布局问题与优先级建议；仅分析，未修改代码。后端重构的独立复核记录见[31 后端重构独立复核](31-backend-refactoring-independent-review.md)。
+当前前端的逐页用户操作体验分析见[32 前端用户操作体验分析](32-frontend-ux-review.md)：包含页面评级、首次使用路径、横向文案／状态／布局问题与优先级建议；仅分析，未修改代码。对应的修复工作包、依赖与验收标准见[33 前端体验修复方案](33-frontend-ux-remediation-plan.md)，其中记录了 2026-10-23 的首批实现（U0、U1、U3.1–U3.3 与部分 U5）及阶段A返修（F1～F3、展示资料首载保护、插件合并纯函数）；资源导入、设置拆分、模型服务管理、统一导航dirty保护和视觉收口仍延后，改动未提交且未包含真实环境验收。后端重构的独立复核记录见[31 后端重构独立复核](31-backend-refactoring-independent-review.md)。
 
 前端基础控件已统一为共享组件库，见[21 前端控件统一与验收](21-unified-frontend-components.md)。后续页面应使用公共入口及组件样式，不重复实现输入、搜索、按钮和确认弹窗。
 
@@ -36,6 +112,34 @@
 | [15 账号模型与会话角色修订](15-account-models-and-conversation-roles.md) | 五类模型账号级配置、设置全局服务、逐会话角色绑定与迁移 | 最新要求，覆盖旧方案冲突条目 |
 | [16 开发独立验收记录](16-independent-development-acceptance.md) | 返修循环、最终222项测试与页面验证、尚未实机验收项 | 本轮开发交付与验收结论 |
 | [17 动态QQ接入与暖浅色修复](17-dynamic-qq-connection-review.md) | 服务自启动、无需手动槽位、账号自动配对与视觉修复 | 最新实现与验收记录，含首次配置和实机边界 |
+| [79 Agent与扩展执行方案](79-agent-extension-execution-plan.md) | 单一插件标准、统一工具、作用域策略与EXT任务包 | 后续实施依据 |
+| [80 Agent与扩展验收](80-agent-extension-acceptance.md) | EXT-A～H验收场景和放行门槛 | 逐项验收依据 |
+| [81 EXT-A契约执行](81-ext-a-contracts-execution.md) | 扩展契约、策略与目录解析 | EXT-A记录 |
+| [82 EXT-B工具执行底座](82-ext-b-tool-execution-execution.md) | 工具预检、执行、幂等账本与并发控制 | EXT-B记录 |
+| [83 EXT-C插件运行时执行](83-ext-c-plugin-runtime-execution.md) | 插件Worker、RPC与状态命名空间 | 修复前记录，以85号为准 |
+| [84 EXT-A～C独立复核](84-ext-a-c-independent-review.md) | 修复前P1复现与FIX1～5要求 | 问题来源 |
+| [85 EXT-A～C复核修复](85-ext-a-c-remediation.md) | FIX1～5、执行授权边界与验证证据 | 本轮执行记录 |
+| [86 EXT-C修复独立复核](86-ext-c-fixes-independent-review.md) | 修复项复核与submitted/授权边界追加要求 | 复核结论 |
+| [87 EXT-D Agent组合与工具循环执行](87-ext-d-agent-composition-execution.md) | 单一宿主、assistant/tool协议、预算循环与执行器接入 | D-A～D-C历史记录，当前以90为准 |
+| [88 原子写重试guard补修](88-atomic-retry-guard-fix.md) | 每次rename前撤权复验、Windows冲突重试边界 | 已复验 |
+| [89 D-D/D-E执行](89-ext-d-hooks-execution.md) | 钩子、真实outcome、预算、配置换代与快照 | 本轮实现说明 |
+| [89a 端到端证据](89a-ext-d-e2e-evidence.md) | 真实Core/Worker装配、首轮失败与20项复验 | 保留原始失败 |
+| [90 EXT-D主进程独立验收](90-ext-d-independent-review.md) | 独立反向探针、A01～A06、最终138项/1046项及构建 | 当前放行范围与后续边界 |
+| [46 独立世界书与条目管理实现方案](46-independent-worldbook-implementation-plan.md) | 资源版本、导入编辑、逐会话来源、运行时边界与验收 | WB01～WB06实施依据 |
+| [47 独立世界书完整验收](47-independent-worldbook-acceptance.md) | D/S/B/M/A/U 全项验收与人工清单 | 逐项证据与WB06收口 |
+| [53 后续实现计划](53-remaining-development-implementation-plan.md) | WB04～WB06、长期记忆、插件/Skill、多模态与桌面发行 | 后续派发顺序 |
+| [54 后续验收标准](54-remaining-development-acceptance.md) | W/M/E/V/D 验收ID与统一命令 | 各阶段放行门槛 |
+| [55 世界书编辑器与来源执行](55-worldbook-editor-and-source-execution.md) | WB04/WB05实现、W01～W12映射、浏览器与待人工项 | 本轮交付记录 |
+| [56 世界书UI独立复核](56-worldbook-ui-independent-review.md) | R1～R4问题、复现与放行条件 | 复核问题来源 |
+| [57 WBU复核修复与复验](57-worldbook-ui-review-fixes.md) | R1～R4修复、正式回归、754项与浏览器复验 | 修复关闭记录 |
+| [58 世界书UI修复独立复核](58-worldbook-ui-fixes-independent-review.md) | R1～R4复核通过、详情加载P2复现 | 问题来源，P2已由59关闭 |
+| [59 详情加载状态修复](59-worldbook-detail-loading-execution.md) | P2所有权与恢复、4项正式回归、758项 | 修复关闭记录 |
+| [60 世界书加载修复独立复核](60-worldbook-loading-fix-independent-review.md) | 59修复复核、4项回归核验 | 修复关闭核验 |
+| [61 MEM00长期记忆方案](61-memory-foundation-implementation-plan.md) | MEM01～MEM04边界、作用域/Store/API/提取设计 | 实施依据 |
+| [62 长期记忆验收](62-memory-foundation-acceptance.md) | S/C/T/U验收ID与放行条件 | 阶段放行门槛 |
+| [63 MEM01执行记录](63-memory-foundation-execution.md) | Store/服务/API、S01～S12、776项 | 管理存储交付记录 |
+| [64 MEM01独立复核](64-memory-management-independent-review.md) | R1～R3问题、复现与放行条件 | 复核问题来源 |
+| [65 MEM01复核修复](65-memory-management-review-fixes.md) | R1～R3修复、5项正式回归、781项 | 修复关闭记录 |
 | [当前关键页修订图](design/ui-suite-v2/index.html) | 账号五能力、群聊/私聊角色绑定、设置全局服务 | 配合15使用，静态概念稿 |
 | [原12页UI图集](design/ui-suite/index.html) | 历史视觉参考 | 旧导航、任务媒体/会话页和账号单卡结构已失效 |
 

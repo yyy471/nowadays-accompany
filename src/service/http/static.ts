@@ -38,6 +38,7 @@ const API_PREFIXES = new Set([
   'conversations',
   'accounts',
   'artifacts',
+  'worldbooks',
   'deployments',
   'slots',
   'metrics',

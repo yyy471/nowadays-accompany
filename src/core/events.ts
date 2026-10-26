@@ -2,6 +2,7 @@ import type { InboundEvent } from '../channels/events.js';
 import type { ProfileSummary } from '../artifacts/types.js';
 import type { InstanceState } from './state.js';
 import type { ConversationRef } from '../routing/identity.js';
+import type { ExtractionTurnCompletion } from './extraction-events.js';
 
 export interface CoreEvents extends Record<string, unknown> {
   'instance:state': { instanceId: string; from: InstanceState; to: InstanceState; at: number };
@@ -57,6 +58,7 @@ export interface CoreEvents extends Record<string, unknown> {
     at: number;
   };
   'media:cleanup': { deleted: number; skippedInUse: number; failed: number; at: number };
+  'memory:extraction-candidate': ExtractionTurnCompletion;
   'instance:profile': {
     instanceId: string;
     accountId: string;

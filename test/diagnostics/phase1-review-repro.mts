@@ -103,17 +103,17 @@ try {
   await fs.writeFile(path.join(pluginDir,'echo.mjs'),"export function onMessage(){return 'plugin reply';}");
   await fs.writeFile(path.join(appRoot,'public','catalog.json'),JSON.stringify({version:1,artifacts:{'role-card:default':'r1','plugin:echo':'r1'}}));
   await fs.writeFile(path.join(appRoot,'accounts','10001','profile.json'),JSON.stringify({version:1,roleCard:{source:'public',id:'default'},plugins:[{source:'public',id:'echo'}]}));
-  const cp=accountPolicy({allowedProviders:['chat'],replyMode:'agent',bindings:{chat:bind('chat','text-model')}});
+  const cp=accountPolicy({allowedProviders:['chat'],bindings:{chat:bind('chat','text-model')}});
   await writePhase1Config(appRoot,{providers:[{id:'chat',adapterId:'fake-v1',baseUrl:'http://127.0.0.1:9',location:'local',models:[{id:'text-model',capabilities:['chat'],input:['text']}],options:{chatText:'agent reply'}}],accountPolicies:{'10001':cp}});
   let channel: FakeChannel;
   const core=await createCore({dataRoot:appRoot,instances:[{id:'a',backend:'fake',accountId:'10001'}],logger:silentLogger('review'),channelFactory:ctx=>(channel=new FakeChannel(ctx,{selfId:'10001'}))});
   try {
     await bindTestConversation(core,'10001','private','42');
     await core.start();
-    await core.setAccountPolicy('10001',{...cp,replyMode:'plugins'});
+    // EXT-D 起不再有回复模式切换：插件已安装也只由内置 Agent 回复。
     channel!.emitInbound(textInbound('a','10001','42','mode-message','hello'));
     await waitFor(()=>channel!.sent.length>0);
-    log('agent_to_plugins_switch',{configuredMode:core.policy.resolveAccount('10001').replyMode,reply:channel!.sent[0]?.message.segments,instanceAgent:core.status().instances[0]?.agent});
+    log('agent_replies_with_plugin_installed',{reply:channel!.sent[0]?.message.segments,instanceAgent:core.status().instances[0]?.agent});
   } finally {await core.stop();}
 } finally {
   if (!path.resolve(root).startsWith(path.resolve(os.tmpdir()) + path.sep)) throw new Error('Unexpected review temporary directory');

@@ -89,7 +89,7 @@ export interface InstanceStatus {
   sessionEpoch?: number;
   hostEpoch?: number;
   profileFingerprint?: string;
-  agent?: { mode: 'agent' | 'plugins' | 'custom'; configured: boolean };
+  agent?: { mode: 'agent' | 'custom'; configured: boolean };
   lastError?: { code: string; message: string; at: number; retryable?: boolean };
   profileState?: 'idle' | 'loading' | 'ready' | 'missing';
   profile?: ProfileSummary;

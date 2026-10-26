@@ -1,0 +1,9 @@
+{
+  "name": "示例独立书",
+  "scan_depth": 3,
+  "entries": [
+    { "id": 0, "keys": ["花园"], "content": "数组顺序：花园条目。", "enabled": true, "insertion_order": 10, "position": "after_char" },
+    { "id": "role", "keys": ["角色"], "content": "角色前常驻。", "enabled": true, "constant": true, "insertion_order": 5, "position": "before_char" },
+    { "id": 2, "keys": ["银杏"], "content": "银杏条目。", "enabled": true, "insertion_order": 20, "position": "after_char" }
+  ]
+}

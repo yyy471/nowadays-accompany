@@ -327,29 +327,65 @@ export class OpenAiCompatibleAdapter implements ProviderAdapter {
 }
 
 function toOpenAiMessage(message: ChatInputMessage, context: ProviderCallContext): Record<string, unknown> {
+  if (message.role === 'tool' && !message.toolCallId) {
+    throw new ProviderError('provider_protocol', 'tool message requires a tool call id', {
+      providerId: context.provider.id,
+      capability: 'chat',
+      retryable: false
+    });
+  }
+  if (message.toolCalls && message.role !== 'assistant') {
+    throw new ProviderError('provider_protocol', 'tool calls are only allowed on an assistant message', {
+      providerId: context.provider.id,
+      capability: 'chat',
+      retryable: false
+    });
+  }
   const textParts = message.content.filter((part) => part.type === 'text');
   const nonText = message.content.filter((part) => part.type !== 'text');
-  if (nonText.length === 0) {
-    return {
-      role: message.role,
-      content: textParts.map((part) => part.text).join(''),
-      ...(message.name ? { name: message.name } : {}),
-      ...(message.toolCallId ? { tool_call_id: message.toolCallId } : {})
-    };
+  if (message.toolCalls && nonText.length > 0) {
+    throw new ProviderError('provider_protocol', 'an assistant tool-call message cannot carry media parts', {
+      providerId: context.provider.id,
+      capability: 'chat',
+      retryable: false
+    });
   }
-  const parts: Array<Record<string, unknown>> = [];
-  for (const part of message.content) {
-    if (part.type === 'text') parts.push({ type: 'text', text: part.text });
-    else if (part.type === 'image') parts.push({ type: 'image_url', image_url: { url: mediaDataUrl(part) } });
-    else if (part.type === 'video') {
-      throw new ProviderError('provider_protocol', 'chat adapter does not accept direct video input', {
-        providerId: context.provider.id,
-        capability: 'chat',
-        retryable: false
-      });
-    }
+  const body: Record<string, unknown> = {
+    role: message.role,
+    content: nonText.length === 0
+      ? textParts.map((part) => part.text).join('')
+      : message.content.map((part) => toOpenAiPart(part, context))
+  };
+  if (message.name) body.name = message.name;
+  if (message.toolCallId) body.tool_call_id = message.toolCallId;
+  if (message.toolCalls) {
+    if (textParts.length === 0 && nonText.length === 0) body.content = null;
+    body.tool_calls = message.toolCalls.map((call) => {
+      if (!call.id) {
+        throw new ProviderError('provider_protocol', 'assistant tool call requires a pairing id', {
+          providerId: context.provider.id,
+          capability: 'chat',
+          retryable: false
+        });
+      }
+      return {
+        id: call.id,
+        type: 'function',
+        function: { name: call.name, arguments: JSON.stringify(call.arguments ?? {}) }
+      };
+    });
   }
-  return { role: message.role, content: parts, ...(message.name ? { name: message.name } : {}) };
+  return body;
+}
+
+function toOpenAiPart(part: ChatContentPart, context: ProviderCallContext): Record<string, unknown> {
+  if (part.type === 'text') return { type: 'text', text: part.text };
+  if (part.type === 'image') return { type: 'image_url', image_url: { url: mediaDataUrl(part) } };
+  throw new ProviderError('provider_protocol', 'chat adapter does not accept direct video input', {
+    providerId: context.provider.id,
+    capability: 'chat',
+    retryable: false
+  });
 }
 
 function mediaDataUrl(part: Extract<ChatContentPart, { type: 'image' }>): string {

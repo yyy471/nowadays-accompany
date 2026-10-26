@@ -3,12 +3,16 @@ import path from 'node:path';
 import { InvalidSpecError } from '../core/errors.js';
 import type { Logger } from '../core/logger.js';
 import { writeJsonAtomic } from '../storage/atomic-write.js';
+import { ARTIFACT_SEGMENT as SEGMENT, IMPORTED_ARTIFACT_MARKER, parseArtifactManifest } from './manifest.js';
+import { assertArtifactSegment } from './manifest.js';
+import { readArtifactSourceFile } from './source-file.js';
 import {
   artifactRefKey,
   type ArtifactKind,
   type ArtifactManifest,
   type ArtifactRef,
-  type ResolvedArtifact
+  type ResolvedArtifact,
+  type WorldbookResolution
 } from './types.js';
 
 interface CatalogFile {
@@ -24,8 +28,6 @@ interface CatalogState {
   epochs: Record<string, number>;
 }
 
-const SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-
 function assertSegment(value: string, label: string): string {
   if (typeof value !== 'string' || !SEGMENT.test(value) || value === '.' || value === '..') {
     throw new InvalidSpecError(`${label} must match ${SEGMENT} (got ${JSON.stringify(value)})`);
@@ -34,8 +36,8 @@ function assertSegment(value: string, label: string): string {
 }
 
 function assertKind(kind: string): ArtifactKind {
-  if (kind !== 'plugin' && kind !== 'role-card') {
-    throw new InvalidSpecError(`artifact kind must be plugin or role-card (got ${kind})`);
+  if (kind !== 'plugin' && kind !== 'role-card' && kind !== 'worldbook') {
+    throw new InvalidSpecError(`artifact kind must be plugin, role-card or worldbook (got ${kind})`);
   }
   return kind;
 }
@@ -60,6 +62,9 @@ export class LocalArtifactStore {
 
   async resolve(kindInput: ArtifactKind, ref: ArtifactRef, accountDir?: string): Promise<ResolvedArtifact | undefined> {
     const kind = assertKind(kindInput);
+    if (kind === 'worldbook') {
+      throw new InvalidSpecError('独立世界书请使用 resolveWorldbook 按固定 public revision 解析，不能跟随 catalog 或 latest。');
+    }
     const id = assertSegment(ref.id, 'artifact id');
     const baseDir = ref.source === 'public' ? this.#publicRoot : accountDir;
     if (!baseDir) return undefined;
@@ -89,11 +94,51 @@ export class LocalArtifactStore {
     return { ref: { source: ref.source, id, revision }, manifest, dir };
   }
 
+  /**
+   * Resolve an independent worldbook strictly at a fixed public revision. Never follows the
+   * catalog or latest, and keeps a missing file, an invalid/desynced manifest and a real I/O
+   * failure as distinct outcomes so callers can show a recoverable status.
+   */
+  async resolveWorldbook(ref: ArtifactRef): Promise<WorldbookResolution> {
+    if (ref.source !== 'public') return Promise.reject(new InvalidSpecError('独立世界书来源当前只支持 public。'));
+    if (!ref.revision) return Promise.reject(new InvalidSpecError('独立世界书必须固定 revision，不能省略或跟随最新。'));
+    let id: string;
+    let revision: string;
+    try {
+      assertArtifactSegment(ref.id, '世界书 id');
+      assertArtifactSegment(ref.revision, '世界书 revision');
+      id = ref.id;
+      revision = ref.revision;
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    const dir = path.join(this.#publicRoot, 'artifacts', 'worldbook', id, revision);
+    let text: string;
+    try {
+      text = (await readArtifactSourceFile(path.join(dir, 'manifest.json'), 2 * 1024 * 1024)).toString('utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { status: 'missing' };
+      if (error instanceof InvalidSpecError) return { status: 'invalid' };
+      this.#logger?.warn('worldbook manifest read failed', { id, revision });
+      return { status: 'error' };
+    }
+    try {
+      const manifest = parseArtifactManifest(JSON.parse(text) as unknown, { strict: true });
+      if (manifest.kind !== 'worldbook' || manifest.id !== id || manifest.revision !== revision || !manifest.worldbook) {
+        this.#logger?.warn('worldbook manifest does not match its path or body', { id, revision });
+        return { status: 'invalid' };
+      }
+      return { status: 'ready', worldbook: manifest.worldbook, ...(manifest.name ? { name: manifest.name } : {}), ref: { source: 'public', id, revision } };
+    } catch {
+      return { status: 'invalid' };
+    }
+  }
+
   async listPublic(): Promise<ResolvedArtifact[]> {
     const result: ResolvedArtifact[] = [];
     const artifactsRoot = path.join(this.#publicRoot, 'artifacts');
     for (const kind of await safeReaddir(artifactsRoot)) {
-      if (kind !== 'plugin' && kind !== 'role-card') continue;
+      if (kind !== 'plugin' && kind !== 'role-card' && kind !== 'worldbook') continue;
       for (const id of await safeReaddir(path.join(artifactsRoot, kind))) {
         if (!SEGMENT.test(id)) continue;
         for (const revision of await safeReaddir(path.join(artifactsRoot, kind, id))) {
@@ -119,6 +164,9 @@ export class LocalArtifactStore {
 
   async setPublicRevision(kind: ArtifactKind, id: string, revision: string): Promise<{ previous?: string; current: string }> {
     assertKind(kind);
+    if (kind === 'worldbook') {
+      throw new InvalidSpecError('独立世界书不写入 catalog、不跟随当前版本，也不参与部署；请在会话中固定选择 revision。');
+    }
     assertSegment(id, 'artifact id');
     assertSegment(revision, 'artifact revision');
     const artifactsRoot = path.join(this.#publicRoot, 'artifacts');
@@ -173,20 +221,17 @@ export class LocalArtifactStore {
   async #latestRevision(baseDir: string, kind: ArtifactKind, id: string): Promise<string | undefined> {
     const dir = path.join(baseDir, 'artifacts', kind, id);
     const revisions = (await safeReaddir(dir)).filter((name) => SEGMENT.test(name)).sort();
-    return revisions.at(-1);
+    // Imported revisions remain visible, but require explicit catalog deployment before following current.
+    for (const revision of revisions.reverse()) {
+      try { await fs.lstat(path.join(dir, revision, IMPORTED_ARTIFACT_MARKER)); }
+      catch (error) { if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return revision; }
+    }
+    return undefined;
   }
 
   async #readManifest(dir: string): Promise<ArtifactManifest | undefined> {
     try {
-      const parsed = JSON.parse(await fs.readFile(path.join(dir, 'manifest.json'), 'utf8')) as Partial<ArtifactManifest>;
-      if (
-        typeof parsed.id !== 'string' ||
-        (parsed.kind !== 'plugin' && parsed.kind !== 'role-card') ||
-        typeof parsed.revision !== 'string'
-      ) {
-        return undefined;
-      }
-      return parsed as ArtifactManifest;
+      return parseArtifactManifest(JSON.parse(await fs.readFile(path.join(dir, 'manifest.json'), 'utf8')));
     } catch {
       return undefined;
     }

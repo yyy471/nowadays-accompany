@@ -1,5 +1,6 @@
 import type { ChatKind } from '../routing/identity.js';
 import type { CapabilityId } from '../policy/capabilities.js';
+import type { ToolEffect, ToolOwner } from './contracts.js';
 
 /** 受支持的 Skill 内容：说明、工具引用、依赖能力与作用域；不是任意 JS 的别名。 */
 export interface SkillConfig {
@@ -15,11 +16,28 @@ export interface SkillConfig {
 }
 
 export interface ToolDefinition {
+  /** Full identity: `builtin.<id>` or `<source>/plugin/<pluginId>/<toolId>`. */
   id: string;
-  name: string;
+  /** Protocol-facing stable model tool name; derived for plugin tools when omitted. */
+  name?: string;
+  label?: string;
   description: string;
   capability?: CapabilityId;
   inputSchema: Record<string, unknown>;
+  owner?: ToolOwner;
+  effect?: ToolEffect;
+  timeoutMs?: number;
+  maxArgumentBytes?: number;
+  maxResultBytes?: number;
+}
+
+export interface RegisteredToolDefinition extends ToolDefinition {
+  name: string;
+  owner: ToolOwner;
+  effect: ToolEffect;
+  timeoutMs: number;
+  maxArgumentBytes: number;
+  maxResultBytes: number;
 }
 
 export interface SkillStatus {
@@ -29,7 +47,7 @@ export interface SkillStatus {
   requires?: CapabilityId[];
   available: boolean;
   reason?: string;
-  source?: 'public' | 'private';
+  source?: 'public' | 'private' | 'plugin';
 }
 
 export type HookName = 'capability:before' | 'capability:after';

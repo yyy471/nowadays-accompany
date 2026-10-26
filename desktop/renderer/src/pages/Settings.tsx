@@ -7,13 +7,9 @@ import { Button, Card, ErrorNote, Field, Icon, IconButton, Select, Tag, copyText
 import { SnowLumaSetup } from '../components/SnowLumaSetup';
 
 export function SettingsPage({
-  section = 'snowluma',
-  onDirtyChange,
-  onBusyChange
+  section = 'snowluma'
 }: {
-  section?: 'appearance' | 'snowluma';
-  onDirtyChange?: (dirty: boolean) => void;
-  onBusyChange?: (busy: boolean) => void;
+  section?: 'appearance' | 'snowluma' | 'diagnostics';
 }) {
   const diagnostics = usePoll<Diagnostics>('/diagnostics', 10000);
   const [copied, setCopied] = useState<string>();
@@ -33,7 +29,7 @@ export function SettingsPage({
 
   return (
     <div className="page-stack">
-      {section === 'snowluma' && diagnostics.error ? (
+      {section === 'diagnostics' && diagnostics.error ? (
         <ErrorNote message={diagnostics.error} onRetry={() => void diagnostics.refresh()} />
       ) : null}
 
@@ -61,14 +57,20 @@ export function SettingsPage({
         </Card>
       </section>
 
-      <section className="settings-section" aria-labelledby="runtime-settings-heading" hidden={section !== 'snowluma'}>
+      <section className="settings-section" aria-labelledby="connection-settings-heading" hidden={section !== 'snowluma'}>
         <div className="settings-section-heading">
-          <h2 id="runtime-settings-heading">SnowLuma 与运行信息</h2>
+          <h2 id="connection-settings-heading">连接</h2>
           <p>连接你手动启动的 SnowLuma；只有你明确点击后，应用才会注入 QQ 并开始监听。</p>
         </div>
 
-      <SnowLumaSetup onDirtyChange={onDirtyChange} onBusyChange={onBusyChange} />
+      <SnowLumaSetup />
+      </section>
 
+      <section className="settings-section" aria-labelledby="runtime-settings-heading" hidden={section !== 'diagnostics'}>
+        <div className="settings-section-heading">
+          <h2 id="runtime-settings-heading">诊断</h2>
+          <p>查看当前应用的运行信息、容量限制与诊断快照。</p>
+        </div>
       <div className="settings-grid">
                 <Card
           title="运行信息"

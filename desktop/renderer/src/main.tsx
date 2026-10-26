@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { ConfirmProvider } from './ui';
+import { DraftProtectionProvider } from './components/DraftProtectionProvider';
 import { applyMotionPreference, readMotionPreference } from './preferences';
 import './styles.css';
 import './ui/theme.css';
@@ -13,6 +14,6 @@ applyMotionPreference(readMotionPreference());
 
 createRoot(root).render(
   <StrictMode>
-    <ConfirmProvider><App /></ConfirmProvider>
+    <ConfirmProvider><DraftProtectionProvider><App /></DraftProtectionProvider></ConfirmProvider>
   </StrictMode>
 );

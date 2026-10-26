@@ -3,21 +3,27 @@ import { api } from '../api';
 import { errorMessage, usePoll } from '../hooks';
 import type {
   ArtifactItem,
+  ArtifactManifest,
   ArtifactsResponse,
   DeploymentRecord,
   DeploymentsResponse,
   Diagnostics
 } from '../types';
-import { Button, Card, ConfirmButton, Empty, ErrorNote, Icon, Tag, copyText, formatDateTime, useConfirm } from '../ui';
+import { AsyncBoundary, Button, Card, ConfirmButton, Empty, ErrorNote, Icon, LoadingNote, Tag, copyText, formatDateTime, useConfirm } from '../ui';
+import { deploymentActionLabel } from '../lib/labels';
+import { ArtifactImport } from '../components/ArtifactImport';
+import { WorldbookLibrary } from '../components/WorldbookLibrary';
 
 interface ArtifactsPageProps {
+  locked?: boolean;
   data?: ArtifactsResponse;
+  loading: boolean;
   error?: string;
   refresh: () => Promise<void>;
 }
 
 interface ArtifactGroup {
-  kind: 'plugin' | 'role-card';
+  kind: ArtifactManifest['kind'];
   id: string;
   name: string;
   description?: string;
@@ -25,10 +31,13 @@ interface ArtifactGroup {
   current?: string;
 }
 
+const KIND_LABELS: Record<ArtifactManifest['kind'], string> = { 'role-card': '角色卡', plugin: '插件', worldbook: '世界书' };
+
 function groupArtifacts(data?: ArtifactsResponse): ArtifactGroup[] {
   if (!data) return [];
   const groups = new Map<string, ArtifactGroup>();
   for (const item of data.artifacts) {
+    if (item.manifest.kind === 'worldbook') continue;
     const key = `${item.manifest.kind}:${item.ref.id}`;
     const group = groups.get(key) ?? {
       kind: item.manifest.kind,
@@ -63,21 +72,22 @@ function deploymentSummary(record: DeploymentRecord): string {
   return `更新 ${updated} · 跳过 ${skipped} · 失败 ${failed}`;
 }
 
-export function ArtifactsPage({ data, error, refresh }: ArtifactsPageProps) {
+export function ArtifactsPage({ data, loading, error, refresh, locked = false }: ArtifactsPageProps) {
   const groups = useMemo(() => groupArtifacts(data), [data]);
   const deployments = usePoll<DeploymentsResponse>('/deployments', 8000);
   const diagnostics = usePoll<Diagnostics>('/diagnostics', 15000);
   const [busy, setBusy] = useState<string>();
   const [actionError, setActionError] = useState<string>();
   const [notice, setNotice] = useState<string>();
+  const [worldbookReload, setWorldbookReload] = useState(0);
   const confirm = useConfirm();
 
   const publicRoot = diagnostics.data?.artifacts.publicRoot;
 
   const deploy = async (group: ArtifactGroup, revision: string): Promise<void> => {
     if (!(await confirm({
-      title: '部署制品版本',
-      description: `部署 ${group.kind}:${group.id}@${revision}？所有已绑定账号会按顺序滚动切换，单个失败会保留旧版本。`,
+      title: '部署资源版本',
+      description: `部署${KIND_LABELS[group.kind]}「${group.name}」的版本 ${revision}？部署会逐个账号切换；失败的账号会继续使用旧版本。`,
       confirmLabel: '部署'
     }))) {
       return;
@@ -103,8 +113,8 @@ export function ArtifactsPage({ data, error, refresh }: ArtifactsPageProps) {
 
   const rollback = async (): Promise<void> => {
     if (!(await confirm({
-      title: '回滚公用制品目录',
-      description: '回滚到上一个 catalog 快照？回滚同样会滚动应用到所有账号。',
+      title: '回滚公用资源目录',
+      description: '回滚到上一个资源目录快照？回滚同样会逐个账号应用，失败的账号会继续使用旧版本。',
       confirmLabel: '回滚目录',
       tone: 'danger'
     }))) return;
@@ -127,10 +137,8 @@ export function ArtifactsPage({ data, error, refresh }: ArtifactsPageProps) {
       <div className="banner">
         <Icon name="package" size={18} />
         <div>
-          <strong>公用层只做制品分发，实例之间没有互相调用。</strong>
-          <span>
-            角色卡和插件都通过 catalog 指向当前 revision。部署会先验证每个账号的解析结果，再逐个切到新 worker；失败账号保留 last-known-good。
-          </span>
+          <strong>公用资源只负责分发，正在运行的账号不会互相调用。</strong>
+          <span>部署新版本时会逐个账号切换；单个账号失败会继续保留它的旧版本。详细结果见下方部署记录。</span>
         </div>
         <div className="banner-actions">
           <Button variant="ghost" icon="refresh" onClick={() => void refresh()}>
@@ -142,13 +150,16 @@ export function ArtifactsPage({ data, error, refresh }: ArtifactsPageProps) {
         </div>
       </div>
 
-      {error ? <ErrorNote message={error} onRetry={() => void refresh()} /> : null}
       {actionError ? <ErrorNote message={actionError} /> : null}
       {notice ? <div className="notice">{notice}</div> : null}
 
+      <ArtifactImport refresh={refresh} disabled={Boolean(busy)} locked={locked} onImported={(kind) => { if (kind === 'worldbook') setWorldbookReload((value) => value + 1); }} />
+
+      <WorldbookLibrary reloadKey={worldbookReload} locked={locked} />
+
       <Card
-        title="公用制品目录"
-        subtitle="catalog.json 记录每个制品当前生效的 revision"
+        title="公用资源目录"
+        subtitle="这里记录每个角色卡和插件当前生效的版本；独立世界书使用固定版本，不参与部署"
         actions={
           publicRoot ? (
             <Button size="sm" icon="copy" onClick={() => void copyText(publicRoot)}>
@@ -157,33 +168,38 @@ export function ArtifactsPage({ data, error, refresh }: ArtifactsPageProps) {
           ) : null
         }
       >
-        <code className="path-block">{publicRoot ?? '正在读取…'}</code>
+        {publicRoot ? <code className="path-block">{publicRoot}</code> : diagnostics.error ? (
+          <ErrorNote message={`无法读取公用资源目录：${diagnostics.error}`} onRetry={() => void diagnostics.refresh()} />
+        ) : <LoadingNote label="正在读取公用资源目录…" />}
       </Card>
 
-      {groups.length === 0 ? (
-        <Card>
-          <Empty
-            icon="package"
-            title="公用层还没有制品"
-            description={
-              <>
-                把角色卡或插件放入下面的目录结构，刷新后即可在此部署。
-                <pre className="snippet">{`public/
-├─ catalog.json
-└─ artifacts/
-   ├─ role-card/<id>/<revision>/manifest.json
-   └─ plugin/<id>/<revision>/manifest.json`}</pre>
-              </>
-            }
-            action={
-              <Button icon="refresh" onClick={() => void refresh()}>
-                重新扫描
-              </Button>
-            }
-          />
-        </Card>
-      ) : (
-        <div className="artifact-grid">
+      <AsyncBoundary
+        loading={loading}
+        error={error}
+        hasData={Boolean(data)}
+        onRetry={() => void refresh()}
+        loadingText="正在读取资源…"
+        errorPrefix="资源读取失败"
+      >
+        {groups.length === 0 ? (
+          <Card>
+            <Empty
+              icon="package"
+              title="还没有公用资源"
+              description={
+                <>
+                  使用上方“导入资源”选择包含 manifest.json 的单个版本目录，预览并确认后即可在这里查看。导入后需要另行部署，不会自动绑定账号。也可打开资源目录查看已导入文件。
+                </>
+              }
+              action={
+                <Button icon="refresh" onClick={() => void refresh()}>
+                  重新扫描
+                </Button>
+              }
+            />
+          </Card>
+        ) : (
+          <div className="artifact-grid">
           {groups.map((group) => {
             const key = `${group.kind}:${group.id}`;
             const currentItem = group.items.find((item) => item.ref.revision === group.current);
@@ -193,9 +209,7 @@ export function ArtifactsPage({ data, error, refresh }: ArtifactsPageProps) {
                 <div className="artifact-head">
                   <div>
                     <div className="artifact-kind-row">
-                      <Tag tone={group.kind === 'role-card' ? 'ok' : 'idle'}>
-                        {group.kind === 'role-card' ? '角色卡' : '插件'}
-                      </Tag>
+                      <Tag tone={group.kind === 'role-card' ? 'ok' : 'idle'}>{KIND_LABELS[group.kind]}</Tag>
                       <span className="mono muted">{group.id}</span>
                     </div>
                     <h3>{group.name}</h3>
@@ -203,7 +217,7 @@ export function ArtifactsPage({ data, error, refresh }: ArtifactsPageProps) {
                   </div>
                   <div className="artifact-current">
                     <span className="meta-label">当前版本</span>
-                    <span className="mono">{group.current ?? '未部署'}</span>
+                    <span className="mono">{group.kind === 'worldbook' ? '不参与部署' : group.current ?? '未部署'}</span>
                   </div>
                 </div>
 
@@ -237,15 +251,19 @@ export function ArtifactsPage({ data, error, refresh }: ArtifactsPageProps) {
                             <summary>manifest</summary>
                             <pre className="snippet">{JSON.stringify(item.manifest, null, 2)}</pre>
                           </details>
-                          <ConfirmButton
-                            size="sm"
-                            variant={isCurrent ? 'ghost' : 'primary'}
-                            disabled={isCurrent}
-                            busy={busy === busyKey}
-                            onClick={() => void deploy(group, item.ref.revision)}
-                          >
-                            {isCurrent ? '当前版本' : '部署'}
-                          </ConfirmButton>
+                          {group.kind === 'worldbook' ? (
+                            <span className="muted">固定版本，需在会话中选择</span>
+                          ) : (
+                            <ConfirmButton
+                              size="sm"
+                              variant={isCurrent ? 'ghost' : 'primary'}
+                              disabled={isCurrent}
+                              busy={busy === busyKey}
+                              onClick={() => void deploy(group, item.ref.revision)}
+                            >
+                              {isCurrent ? '当前版本' : '部署'}
+                            </ConfirmButton>
+                          )}
                         </div>
                       </div>
                     );
@@ -254,20 +272,23 @@ export function ArtifactsPage({ data, error, refresh }: ArtifactsPageProps) {
               </Card>
             );
           })}
-        </div>
-      )}
+          </div>
+        )}
+      </AsyncBoundary>
 
       <Card
         title="部署记录"
-        subtitle="滚动部署按账号串行执行；失败账号不会切断旧 worker"
+        subtitle="部署按账号依次执行；失败的账号会继续使用旧版本"
         actions={
           <Button size="sm" variant="ghost" icon="refresh" onClick={() => void deployments.refresh()}>
             刷新
           </Button>
         }
       >
-        {deployments.error ? <ErrorNote message={deployments.error} /> : null}
-        {!deployments.data?.deployments.length ? (
+        {deployments.error ? <ErrorNote message={deployments.error} onRetry={() => void deployments.refresh()} /> : null}
+        {!deployments.data ? (
+          deployments.loading ? <LoadingNote label="正在读取部署记录…" /> : deployments.error ? null : <p className="muted">本次会话还没有部署记录。</p>
+        ) : !deployments.data.deployments.length ? (
           <p className="muted">本次会话还没有部署记录。</p>
         ) : (
           <div className="table-wrap">
@@ -284,7 +305,7 @@ export function ArtifactsPage({ data, error, refresh }: ArtifactsPageProps) {
                 {[...deployments.data.deployments].reverse().slice(0, 12).map((record) => (
                   <tr key={record.id}>
                     <td className="mono">{formatDateTime(record.startedAt)}</td>
-                    <td>{record.action}</td>
+                    <td>{deploymentActionLabel(record.action)}</td>
                     <td>
                       <Tag tone={record.ok ? 'ok' : 'warn'}>{record.ok ? '全部成功' : '部分失败'}</Tag>
                     </td>

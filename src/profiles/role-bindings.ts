@@ -1,7 +1,10 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { InvalidSpecError } from '../core/errors.js';
+import { AccompanyError, InvalidSpecError } from '../core/errors.js';
+import { KeyedSerialExecutor } from '../platform/async/keyed-serial-executor.js';
+import { parseConversationWorldbookSource, parseWorldbookOptions } from '../worldbook/schema.js';
+import type { ConversationWorldbookSource, EffectiveWorldbook, Worldbook, WorldbookOptions } from '../worldbook/types.js';
 import { writeJsonAtomic } from '../storage/atomic-write.js';
 import { assertIdentifier, assertKind, type ConversationRef } from '../routing/identity.js';
 import type { ArtifactRef, ResolvedRoleCard } from '../artifacts/types.js';
@@ -14,10 +17,18 @@ export interface ConversationRoleBinding {
   /** Changes on every edit so work started under an older card can be rejected at delivery. */
   revision: string;
   updatedAt: number;
+  worldbook?: WorldbookOptions;
+  worldbookSource?: ConversationWorldbookSource;
+  /** Stable chat history namespace when only worldbook options change. */
+  contextRevision?: string;
 }
 
 export interface ResolvedConversationRoleBinding extends ConversationRoleBinding {
   card: ResolvedRoleCard;
+  contextEpoch?: string;
+  worldbookSnapshot?: { book?: Worldbook };
+  effectiveWorldbook?: EffectiveWorldbook;
+  worldbookUnavailable?: boolean;
 }
 
 interface BindingFile {
@@ -29,7 +40,7 @@ const REF_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 /** Persisted per account and keyed by accountId/kind/peerId. Missing bindings stay missing. */
 export class ConversationRoleBindingStore {
-  readonly #writes = new Map<string, Promise<void>>();
+  readonly #writes = new KeyedSerialExecutor();
 
   async list(accountDir: string, accountId: string): Promise<ConversationRoleBinding[]> {
     const file = await this.#read(accountDir, accountId);
@@ -55,10 +66,9 @@ export class ConversationRoleBindingStore {
     const normalized = normalizeConversation(conversation);
     const key = bindingKey(normalized);
     const filePath = path.join(accountDir, 'role-bindings.json');
-    const previous = this.#writes.get(filePath) ?? Promise.resolve();
-    let result: ConversationRoleBinding | undefined;
-    const write = previous.catch(() => {}).then(async () => {
+    return this.#writes.run(filePath, async () => {
       const file = await this.#read(accountDir, normalized.accountId);
+      let result: ConversationRoleBinding | undefined;
       if (roleCard === null) {
         delete file.bindings[key];
         result = undefined;
@@ -73,14 +83,24 @@ export class ConversationRoleBindingStore {
         file.bindings[key] = result;
       }
       await this.#write(filePath, file);
-    });
-    this.#writes.set(filePath, write);
-    try {
-      await write;
       return result;
-    } finally {
-      if (this.#writes.get(filePath) === write) this.#writes.delete(filePath);
-    }
+    });
+  }
+
+  async setWorldbook(accountDir: string, conversation: ConversationRef, raw: unknown, expectedRevision: string, now = Date.now(), source?: ConversationWorldbookSource): Promise<ConversationRoleBinding> {
+    const normalized = normalizeConversation(conversation);
+    const options = parseWorldbookOptions(raw);
+    const filePath = path.join(accountDir, 'role-bindings.json');
+    return this.#writes.run(filePath, async () => {
+      const file = await this.#read(accountDir, normalized.accountId);
+      const key = bindingKey(normalized);
+      const binding = file.bindings[key];
+      if (!binding || binding.revision !== expectedRevision) throw new AccompanyError('worldbook_conflict', '会话绑定已变化，请重新读取后再保存世界书设置。');
+      const next = { ...binding, worldbook: options, ...(source === undefined ? {} : { worldbookSource: parseConversationWorldbookSource(source) }), contextRevision: binding.contextRevision ?? binding.revision, revision: crypto.randomUUID(), updatedAt: now };
+      file.bindings[key] = next;
+      await this.#write(filePath, file);
+      return next;
+    });
   }
 
   async #read(accountDir: string, accountId: string): Promise<BindingFile> {
@@ -140,11 +160,15 @@ function parseBinding(raw: unknown, accountId: string, file: string): Conversati
   if (typeof input.revision !== 'string' || !input.revision || typeof input.updatedAt !== 'number' || !Number.isFinite(input.updatedAt)) {
     throw new InvalidSpecError(`conversation role binding revision is invalid: ${file}`);
   }
+  if (input.contextRevision !== undefined && (typeof input.contextRevision !== 'string' || !input.contextRevision || input.contextRevision.length > 128)) throw new InvalidSpecError('invalid role history context revision');
   return {
     ...conversation,
     roleCard: parseArtifactRef(input.roleCard, 'roleCard'),
     revision: input.revision,
-    updatedAt: input.updatedAt
+    updatedAt: input.updatedAt,
+    ...(input.contextRevision !== undefined ? { contextRevision: input.contextRevision } : {}),
+    ...(input.worldbook !== undefined ? { worldbook: parseWorldbookOptions(input.worldbook) } : {}),
+    ...(input.worldbookSource !== undefined ? { worldbookSource: parseConversationWorldbookSource(input.worldbookSource) } : {})
   };
 }
 

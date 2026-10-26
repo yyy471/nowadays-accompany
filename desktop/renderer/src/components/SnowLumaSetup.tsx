@@ -1,8 +1,11 @@
-import { Button, CancelButton, Card, Checkbox, ConfirmButton, ControlButton, ErrorNote, Field, Icon, Input, Tag, useConfirm } from '../ui';
+import { Button, CancelButton, Card, Checkbox, ConfirmButton, ControlButton, ErrorNote, Field, Icon, Input, useConfirm } from '../ui';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { errorMessage, usePoll } from '../hooks';
 import type { InjectionRuntimeResponse, InjectionSettingsResponse, SnowLumaRuntimeStatus } from '../types';
+import { SnowLumaStatusTags } from './SnowLumaStatusTags';
+import { hashRevision } from '../lib/drafts/registry';
+import { useDraftRegistration } from '../lib/use-draft-registration';
 
 type Step = 1 | 2;
 type FormDraft = { runtimeDir: string; baseUrl: string; password: string; resumeLastListen: boolean };
@@ -27,13 +30,7 @@ function localManagementUrl(value: string | undefined): string | undefined {
   }
 }
 
-export function SnowLumaSetup({
-  onDirtyChange,
-  onBusyChange
-}: {
-  onDirtyChange?: (dirty: boolean) => void;
-  onBusyChange?: (busy: boolean) => void;
-}) {
+export function SnowLumaSetup() {
   const confirm = useConfirm();
   const settings = usePoll<InjectionSettingsResponse>('/injection/settings');
   const runtime = usePoll<InjectionRuntimeResponse>('/injection/runtime', 8000);
@@ -62,8 +59,24 @@ export function SnowLumaSetup({
     setForm({ runtimeDir: saved.runtimeDir ?? '', baseUrl: saved.baseUrl ?? '', password: '', resumeLastListen: saved.resumeLastListen ?? false });
   }, [saved]);
 
-  useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
-  useEffect(() => onBusyChange?.(isBusy), [isBusy, onBusyChange]);
+  const discardDraft = (): void => {
+    setForm({ runtimeDir: saved?.runtimeDir ?? '', baseUrl: saved?.baseUrl ?? '', password: '', resumeLastListen: saved?.resumeLastListen ?? false });
+    setError(undefined);
+    setNotice(undefined);
+    setVerified(undefined);
+    if (configured) setEditing(false);
+  };
+
+  useDraftRegistration({
+    id: 'settings:snowluma',
+    owner: 'settings',
+    label: 'SnowLuma 连接设置',
+    dirty,
+    busy: isBusy,
+    revision: hashRevision(form),
+    discard: discardDraft
+  });
+
   useEffect(() => {
     if (verified && runtime.data && runtime.data !== verified.runtimeDataBefore && (!runtime.data.runtime.running || !runtime.data.runtime.authenticated)) {
       setVerified(undefined);
@@ -214,16 +227,7 @@ export function SnowLumaSetup({
   const pickerAvailable = typeof (window as unknown as { nowadays?: { chooseRuntimeDirectory?: unknown } }).nowadays?.chooseRuntimeDirectory === 'function';
   const openerAvailable = typeof (window as unknown as { nowadays?: { openRuntimeDirectory?: unknown } }).nowadays?.openRuntimeDirectory === 'function';
   const currentVerification = Boolean(verified && status?.running && status.authenticated);
-  const statusTags = status ? (
-    <div className="chip-row">
-      <Tag tone={status.running ? 'ok' : 'idle'}>{status.running ? '管理服务在线' : '管理服务未运行'}</Tag>
-      <Tag tone={status.compatible ? 'ok' : 'bad'}>{status.version ?? '版本未知'} / 支持 {status.supportedVersion}</Tag>
-      <Tag tone={status.authenticated ? 'ok' : 'warn'}>{status.authenticated ? '已验证密码' : '尚未验证'}</Tag>
-      <Tag tone={status.autoLoadKnown ? status.autoLoadEnabled ? 'bad' : 'ok' : 'warn'}>{status.autoLoadKnown ? status.autoLoadEnabled ? '自动注入已开启' : '自动注入已关闭' : '自动注入状态未知'}</Tag>
-      {status.consentRequired ? <Tag tone="warn">尚未完成官方协议确认</Tag> : null}
-      {status.owner === 'external' && status.running ? <Tag tone="idle">复用现有服务</Tag> : null}
-    </div>
-  ) : <p className="muted" role="status">正在读取 SnowLuma 状态…</p>;
+  const statusTags = <SnowLumaStatusTags status={status} />;
 
   const connectionForm = (
     <Card title={configured ? '连接设置' : '连接已有 SnowLuma'} subtitle="填写已初始化的目录和 WebUI 密码；密码由本机凭据库保护，界面不会回显。">

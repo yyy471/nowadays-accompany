@@ -93,6 +93,10 @@ export class ModelSettingsService {
     );
   }
 
+  providerRemovalImpact(id: string): { providerId: string; exists: boolean; affectedAccounts: string[] } {
+    return this.#options.config.providerRemovalImpact(id);
+  }
+
   async deleteProvider(id: string): Promise<{ removed: boolean; affectedAccounts: string[] }> {
     const provider = this.#options.config.provider(id);
     const result = await this.#options.config.removeProvider(id);

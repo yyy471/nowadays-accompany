@@ -2,6 +2,7 @@ import type { ArtifactRef } from '../../artifacts/types.js';
 import { assertIdentifier, assertKind, type ConversationRef } from '../../routing/identity.js';
 import { HttpError } from '../http/errors.js';
 import type { Route } from './types.js';
+import { parseWorldbookSettings } from '../../worldbook/schema.js';
 
 export function accountRoutes(): Route {
   return async (ctx) => {
@@ -34,6 +35,26 @@ export function accountRoutes(): Route {
         accountId,
         bindings: await core.listConversationRoleBindings(accountId)
       });
+      return true;
+    }
+
+    const worldbookMatch = /^\/accounts\/([A-Za-z0-9_-]{1,64})\/role-bindings\/(group|private)\/([A-Za-z0-9._-]{1,64})\/worldbook(\/preview)?$/.exec(pathname);
+    if (worldbookMatch && ((worldbookMatch[4] && request.method === 'POST') || (!worldbookMatch[4] && request.method === 'PUT'))) {
+      const conversation: ConversationRef = { accountId: assertIdentifier(worldbookMatch[1]!, 'accountId'), kind: assertKind(worldbookMatch[2]!), peerId: assertIdentifier(worldbookMatch[3]!, 'peerId') };
+      const body = await readJson(request);
+      if (worldbookMatch[4]) {
+        if (typeof body.text !== 'string' || body.text.length > 16000) throw new HttpError(400, '测试文本必须是最多16000字符的文本。', 'invalid_body');
+        sendJson(response, 200, { ok: true, evaluation: await core.previewConversationWorldbook(conversation, body.text) });
+      } else {
+        if (!body.worldbook || typeof body.worldbook !== 'object' || Array.isArray(body.worldbook)
+          || typeof body.expectedRevision !== 'string' || !body.expectedRevision || body.expectedRevision.length > 128) throw new HttpError(400, 'worldbook和expectedRevision为必填项。', 'invalid_body');
+        const remoteAddress = remote();
+        const { expectedRevision, ...rawSettings } = body;
+        const settings = parseWorldbookSettings(rawSettings);
+        const binding = await runAudited({ action: 'configure_worldbook', id: `${conversation.accountId}/${conversation.kind}/${conversation.peerId}`, requestId,
+          ...(remoteAddress ? { remote: remoteAddress } : {}) }, () => core.configureConversationWorldbook(conversation, settings.options, expectedRevision as string, settings.source));
+        sendJson(response, 200, { ok: true, binding });
+      }
       return true;
     }
 

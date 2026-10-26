@@ -3,7 +3,6 @@ import type {
   AccountPolicy,
   CapabilityBinding,
   CapabilityTarget,
-  ReplyMode,
   RuntimeConfigV2,
   ScopePolicy,
   VisionMode
@@ -25,7 +24,6 @@ export interface EffectivePolicy {
   visionSource: PolicySource;
   crossProviderFallback: boolean;
   allowCloudUpload: boolean;
-  replyMode: ReplyMode;
   capabilities: Record<
     CapabilityId,
     {
@@ -124,7 +122,6 @@ export class PolicyService {
       visionSource,
       crossProviderFallback: accountPolicy.crossProviderFallback,
       allowCloudUpload: accountPolicy.media.allowCloudUpload,
-      replyMode: accountPolicy.replyMode ?? 'auto',
       capabilities: capabilityState
     };
   }
@@ -141,13 +138,6 @@ export class PolicyService {
   hasAnyPolicy(accountId: string): boolean {
     const config = this.#config.snapshot();
     return Boolean(config.accountPolicies[accountId]);
-  }
-
-  replyModeFor(accountId: string, legacyPluginsPresent: boolean): 'agent' | 'plugins' {
-    const requested = accountPolicyFor(this.#config.snapshot(), accountId).replyMode ?? 'auto';
-    if (requested === 'agent') return 'agent';
-    if (requested === 'plugins') return legacyPluginsPresent ? 'plugins' : 'agent';
-    return legacyPluginsPresent ? 'plugins' : 'agent';
   }
 
   /** 精确列出 fallback 候选；跨服务授权由 router 再检查。 */

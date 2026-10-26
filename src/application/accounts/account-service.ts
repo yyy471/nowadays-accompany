@@ -3,7 +3,7 @@ import path from 'node:path';
 import { LocalArtifactStore } from '../../artifacts/local.js';
 import { summarizeProfile, type AccountProfileFile, type ArtifactRef, type ResolvedArtifact } from '../../artifacts/types.js';
 import type { AccountSummary } from '../../contracts/accounts.js';
-import { InvalidSpecError, IsolationError } from '../../core/errors.js';
+import { AccompanyError, InvalidSpecError, IsolationError } from '../../core/errors.js';
 import type { Logger } from '../../core/logger.js';
 import type { ConversationRoleBinding, ConversationRoleBindingStore, ResolvedConversationRoleBinding } from '../../profiles/role-bindings.js';
 import type { AccountDirectory } from '../../profiles/account-directory.js';
@@ -12,6 +12,10 @@ import type { AccountProfileService } from '../../profiles/profile.js';
 import { assertIdentifier, type ConversationRef } from '../../routing/identity.js';
 import type { AccountPresentation } from './account-presentation.js';
 import type { AccountRuntimePort } from '../ports/account-runtime.js';
+import { parseWorldbookOptions, parseConversationWorldbookSource } from '../../worldbook/schema.js';
+import { resolveEffectiveWorldbook } from '../worldbooks/effective-worldbook.js';
+import { evaluateWorldbook } from '../../worldbook/matcher.js';
+import type { EffectiveWorldbook, WorldbookEvaluation } from '../../worldbook/types.js';
 
 export interface AccountServiceOptions {
   directory: AccountDirectory;
@@ -29,6 +33,9 @@ interface RoleBindingView extends ConversationRoleBinding {
   state: 'ready' | 'missing';
   cardName?: string;
   resolvedRevision?: string;
+  worldbookEntryCount?: number;
+  worldbookDefaults?: { scanDepth: number; budgetChars: number };
+  effectiveWorldbook?: EffectiveWorldbook;
 }
 
 /** 账号列表、展示资料、插件资料、角色绑定与重载用例。 */
@@ -199,11 +206,16 @@ export class AccountService {
     return Promise.all(
       bindings.map(async (binding) => {
         const card = await this.#options.artifacts.resolve('role-card', binding.roleCard, dir);
+        const effective = await resolveEffectiveWorldbook(this.#options.artifacts,
+          card?.manifest.content ? { ...card, content: card.manifest.content } : undefined, binding.worldbookSource);
         return {
           ...binding,
           state: card?.manifest.content ? 'ready' as const : 'missing' as const,
           ...(card?.manifest.name ? { cardName: card.manifest.name } : {}),
-          ...(card?.ref.revision ? { resolvedRevision: card.ref.revision } : {})
+          ...(card?.ref.revision ? { resolvedRevision: card.ref.revision } : {}),
+          effectiveWorldbook: effective.view,
+          worldbookEntryCount: effective.view.entryCount,
+          ...(effective.book ? { worldbookDefaults: { scanDepth: effective.book.scanDepth, budgetChars: effective.book.budgetChars } } : {})
         };
       })
     );
@@ -224,6 +236,33 @@ export class AccountService {
     return this.#options.roleBindings.set(dir, conversation, roleCard, this.#now());
   }
 
+  async configureWorldbook(conversation: ConversationRef, raw: unknown, expectedRevision: string, rawSource?: unknown): Promise<ConversationRoleBinding> {
+    const options = parseWorldbookOptions(raw);
+    const binding = await this.resolveRoleBinding(conversation.accountId, conversation);
+    if (!binding) throw new InvalidSpecError('请先为该会话绑定有效角色卡。');
+    const source = rawSource === undefined ? undefined : parseConversationWorldbookSource(rawSource);
+    const mustResolve = options.enabled || (source !== undefined && JSON.stringify(source) !== JSON.stringify(parseConversationWorldbookSource(binding.worldbookSource)));
+    const effective = await resolveEffectiveWorldbook(this.#options.artifacts, binding.card, source ?? binding.worldbookSource,
+      mustResolve);
+    if (mustResolve && effective.view.state === 'missing') throw new AccompanyError('worldbook_not_found', effective.view.error!);
+    if (mustResolve && effective.view.state === 'invalid') throw new InvalidSpecError(effective.view.error!);
+    if (options.enabled && !effective.view.entryCount) throw new InvalidSpecError('当前来源没有可用世界书，请选择包含条目的版本。');
+    const { dir } = this.locate(conversation.accountId);
+    return this.#options.roleBindings.setWorldbook(dir, conversation, options, expectedRevision, this.#now(), source);
+  }
+
+  async previewWorldbook(conversation: ConversationRef, text: string): Promise<WorldbookEvaluation> {
+    if (typeof text !== 'string' || text.length > 16000) throw new InvalidSpecError('测试文本必须是最多16000字符的文本。');
+    const binding = await this.resolveRoleBinding(conversation.accountId, conversation);
+    if (!binding) throw new InvalidSpecError('请先为该会话绑定有效角色卡。');
+    if (binding.worldbookUnavailable) throw new AccompanyError('worldbook_unavailable', binding.effectiveWorldbook?.error ?? '世界书不可用。');
+    const book = binding.worldbookSnapshot?.book;
+    if (!book) return { beforeRole: '', afterRole: '', selectedIds: [], skippedIds: [], usedChars: 0 };
+    const options = parseWorldbookOptions(binding.worldbook);
+    // A dry run uses only the supplied sample text, never private conversation history.
+    return evaluateWorldbook(book, { currentText: text, historyTexts: [], ...options });
+  }
+
   async resolveRoleBinding(
     accountId: string,
     conversation: ConversationRef
@@ -242,12 +281,43 @@ export class AccountService {
     const catalogEpoch = binding.roleCard.revision
       ? 0
       : await this.#options.artifacts.catalogEpoch(artifactBaseDir, 'role-card', binding.roleCard.id);
+    const effective = await resolveEffectiveWorldbook(this.#options.artifacts, { ...artifact, content: artifact.manifest.content }, binding.worldbookSource,
+      parseWorldbookOptions(binding.worldbook).enabled);
     return {
       ...binding,
-      revision: `${binding.revision}:${artifact.ref.source}:${artifact.ref.id}:${artifact.ref.revision}:${catalogEpoch}`,
-      card: { ...artifact, content: artifact.manifest.content }
+      revision: `${binding.revision}:${artifact.ref.source}:${artifact.ref.id}:${artifact.ref.revision}:${catalogEpoch}:${effective.guard}`,
+      contextEpoch: contextEpochFor(binding, artifact, catalogEpoch),
+      card: { ...artifact, content: artifact.manifest.content },
+      effectiveWorldbook: effective.view,
+      worldbookSnapshot: { ...(effective.book ? { book: effective.book } : {}) },
+      worldbookUnavailable: Boolean(binding.worldbook?.enabled && ['missing', 'invalid'].includes(effective.view.state))
     };
   }
+
+  /**
+   * History epoch only: role binding revision + resolved card identity.
+   * Deliberately excludes the worldbook guard so memory namespaces survive book changes.
+   */
+  async historyEpoch(accountId: string, conversation: ConversationRef): Promise<string | undefined> {
+    assertIdentifier(accountId, 'accountId');
+    if (conversation.accountId !== accountId) {
+      throw new IsolationError('role binding account does not match conversation');
+    }
+    const { dir } = this.locate(accountId);
+    const binding = await this.#options.roleBindings.get(dir, conversation);
+    if (!binding) return undefined;
+    const artifact = await this.#options.artifacts.resolve('role-card', binding.roleCard, dir);
+    if (!artifact?.manifest.content) return undefined;
+    const artifactBaseDir = binding.roleCard.source === 'public' ? this.#options.artifacts.publicRoot : dir;
+    const catalogEpoch = binding.roleCard.revision
+      ? 0
+      : await this.#options.artifacts.catalogEpoch(artifactBaseDir, 'role-card', binding.roleCard.id);
+    return contextEpochFor(binding, artifact, catalogEpoch);
+  }
+}
+
+function contextEpochFor(binding: ConversationRoleBinding, artifact: ResolvedArtifact, catalogEpoch: number): string {
+  return `${binding.contextRevision ?? binding.revision}:${artifact.ref.source}:${artifact.ref.id}:${artifact.ref.revision}:${catalogEpoch}`;
 }
 
 async function safeReaddir(dir: string): Promise<string[]> {

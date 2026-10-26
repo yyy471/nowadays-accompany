@@ -1,4 +1,5 @@
 import { isCapabilityId, type CapabilityId } from '../../policy/capabilities.js';
+import { inferProviderLocation } from '../../providers/setup.js';
 import { assertIdentifier, assertKind, type ConversationRef } from '../../routing/identity.js';
 import { HttpError } from '../http/errors.js';
 import type { Route } from './types.js';
@@ -52,6 +53,12 @@ export function modelRoutes(): Route {
         () => core.upsertProvider(provider, secret)
       );
       sendJson(response, 201, { ok: true, provider: saved });
+      return true;
+    }
+
+    const impactMatch = /^\/providers\/([A-Za-z0-9._-]{1,64})\/impact$/.exec(pathname);
+    if (impactMatch && request.method === 'GET') {
+      sendJson(response, 200, { ok: true, ...core.providerRemovalImpact(impactMatch[1]!) });
       return true;
     }
 
@@ -225,9 +232,20 @@ function providerPayload(body: Record<string, unknown>): {
     provider = { ...nested };
     credential = body.credential ?? body.secret;
   } else {
-    const { credential: rawCredential, secret: rawSecret, ...rest } = body;
+    const { credential: rawCredential, secret: rawSecret, inferLocationFromUrl: _infer, ...rest } = body;
     provider = rest;
     credential = rawCredential ?? rawSecret;
+  }
+  if (body.inferLocationFromUrl !== undefined && typeof body.inferLocationFromUrl !== 'boolean') {
+    throw new HttpError(400, 'inferLocationFromUrl must be a boolean', 'invalid_body');
+  }
+  if (body.inferLocationFromUrl === true) {
+    if (typeof provider.baseUrl !== 'string') throw new HttpError(400, 'baseUrl must be a URL', 'invalid_body');
+    try {
+      provider.location = inferProviderLocation(provider.baseUrl);
+    } catch {
+      throw new HttpError(400, 'baseUrl must be a URL', 'invalid_body');
+    }
   }
   return {
     provider,

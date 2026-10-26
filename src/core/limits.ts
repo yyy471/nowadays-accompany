@@ -17,7 +17,6 @@ export interface Limits {
   drainTimeoutMs: number;
   hostDrainTimeoutMs: number;
   hostTimeoutMs: number;
-  pluginTimeoutMs: number;
   maxHostHistory: number;
   /** 对话 turn 的全局/账号并发上限；同会话仍由会话链串行。 */
   maxChatConcurrency: number;
@@ -52,7 +51,6 @@ export const DEFAULT_LIMITS: Limits = {
   drainTimeoutMs: 5_000,
   hostDrainTimeoutMs: 30_000,
   hostTimeoutMs: 120_000,
-  pluginTimeoutMs: 30_000,
   maxHostHistory: 50,
   maxChatConcurrency: 4,
   maxAccountChatConcurrency: 2,

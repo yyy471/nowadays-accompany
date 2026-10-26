@@ -11,7 +11,11 @@ export function artifactRoutes(): Route {
       sendJson(response, 200, {
         ok: true,
         current,
-        artifacts: artifacts.map((artifact) => ({ ref: artifact.ref, manifest: artifact.manifest }))
+        artifacts: artifacts.map((artifact) => {
+          // Independent books have an explicit bounded detail endpoint; do not copy their bodies into the global list.
+          const { worldbook, ...summary } = artifact.manifest;
+          return { ref: artifact.ref, manifest: artifact.manifest.kind === 'worldbook' ? summary : artifact.manifest };
+        })
       });
       return true;
     }

@@ -1,4 +1,7 @@
-export type ArtifactKind = 'plugin' | 'role-card';
+import type { Worldbook } from '../worldbook/types.js';
+import type { PluginHookDeclaration, PluginSkillDeclaration, PluginStateDeclaration, PluginToolDeclaration } from '../extensions/contracts.js';
+
+export type ArtifactKind = 'plugin' | 'role-card' | 'worldbook';
 export type ArtifactSourceName = 'public' | 'private';
 
 export interface ArtifactRef {
@@ -17,8 +20,18 @@ export interface ArtifactManifest {
   entry?: string;
   /** plugin：宿主协议版本 */
   apiVersion?: number;
+  /** plugin：声明式工具；未声明的模块导出不能成为工具。 */
+  tools?: PluginToolDeclaration[];
+  /** plugin：声明式生命周期钩子。 */
+  hooks?: PluginHookDeclaration[];
+  /** plugin：插件提供的 Skill 声明。 */
+  skills?: PluginSkillDeclaration[];
+  /** plugin：插件状态命名空间版本；账号共享必须显声明并由账号启用。 */
+  state?: PluginStateDeclaration;
   /** role-card：角色设定文本 */
   content?: string;
+  /** role-card：随卡内置世界书；worldbook：独立世界书正文（必填由校验保证） */
+  worldbook?: Worldbook;
 }
 
 export interface ResolvedArtifact {
@@ -30,6 +43,17 @@ export interface ResolvedArtifact {
 export interface ResolvedRoleCard extends ResolvedArtifact {
   content: string;
 }
+
+export interface ResolvedWorldbook extends ResolvedArtifact {
+  worldbook: Worldbook;
+}
+
+/** Outcome of resolving a fixed independent worldbook; keeps missing/invalid/real I/O failure distinct. */
+export type WorldbookResolution =
+  | { status: 'ready'; worldbook: Worldbook; name?: string; ref: { source: 'public'; id: string; revision: string } }
+  | { status: 'missing' }
+  | { status: 'invalid' }
+  | { status: 'error' };
 
 export interface ResolvedPlugin extends ResolvedArtifact {
   entry: string;

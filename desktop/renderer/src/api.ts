@@ -1,8 +1,18 @@
 import type { StreamEvent } from './types';
+import type { ArtifactImportPreview, ArtifactImportResult } from './types';
+import type { ArtifactImportMode } from '../../../src/contracts/artifact-import.js';
 
 interface BridgeInfo {
+  openArtifactsDirectory?: () => Promise<void>;
+  previewArtifactImport?: (mode?: ArtifactImportMode) => Promise<ArtifactImportPreview | undefined>;
+  commitArtifactImport?: (token: string) => Promise<ArtifactImportResult>;
   chooseRuntimeDirectory?: () => Promise<string | null>;
   openRuntimeDirectory?: () => Promise<boolean>;
+  onQuitCheck?: (handler: (request: { requestId: string }) => void) => () => void;
+  ackQuit?: (requestId: string) => Promise<boolean>;
+  keepQuitAlive?: (requestId: string) => Promise<boolean>;
+  onQuitState?: (handler: (event: { requestId: string; state: 'cancelled' | 'shuttingDown' }) => void) => () => void;
+  respondQuit?: (requestId: string, allowed: boolean) => Promise<boolean>;
   apiBaseUrl: string;
   token: string;
   version: string;

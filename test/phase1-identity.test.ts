@@ -226,118 +226,8 @@ describe('phase 1 identity, epochs and artifact isolation', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('keeps public and private plugins with the same id in separate state namespaces', async () => {
-    const root = await tempRoot('accompany-iso08-');
-    await seedRoleCard(root);
-    const pluginSource = String.raw`
-export async function onMessage(ctx) {
-  const count = (ctx.state.count ?? 0) + 1;
-  ctx.state.count = count;
-  ctx.state.tag = ctx.config.tag;
-  return { segments: [{ type: 'text', data: { text: ctx.config.tag + ':' + count } }] };
-}
-`;
-    await seedPlugin(root, 'public', 'echo', pluginSource);
-    await seedPlugin(root, 'private', 'echo', pluginSource);
-    await writeProfile(root, '10001', {
-      version: 1,
-      roleCard: { source: 'public', id: TEST_ROLE_CARD_ID },
-      plugins: [
-        { source: 'public', id: 'echo', config: { tag: 'public' } },
-        { source: 'private', id: 'echo', config: { tag: 'private' } }
-      ]
-    });
-
-    const bucket = new Map<string, FakeChannel>();
-    const core = await createTestCore({
-      dataRoot: root,
-      instances: [{ id: 'main', backend: 'fake', accountId: '10001', restart: { enabled: false } }],
-      channelFactory: channels(new Map([['main', '10001']]), bucket),
-      logger: silentLogger()
-    });
-    cores.push(core);
-    await bindTestConversation(core, '10001', 'private', '555');
-    await core.start();
-    await waitFor(() => core.status().instances[0]?.state === 'online');
-
-    const channel = bucket.get('main')!;
-    channel.emitInbound(textInbound('main', '10001', '555', 'iso08-1', 'ping'));
-    await waitFor(() => (channel.sent.length ?? 0) === 1);
-    expect(channel.sent[0]?.message.segments).toEqual([
-      { type: 'text', data: { text: 'private:1' } }
-    ]);
-
-    const stateDir = path.join(root, 'accounts', '10001', 'plugin-state');
-    expect(JSON.parse(await fs.readFile(path.join(stateDir, 'echo.json'), 'utf8'))).toEqual({
-      count: 1,
-      tag: 'public'
-    });
-    expect(
-      JSON.parse(await fs.readFile(path.join(stateDir, 'private~plugin~echo.json'), 'utf8'))
-    ).toEqual({ count: 1, tag: 'private' });
-  });
-
-  it('keeps public plugin state separate for two accounts using the same artifact', async () => {
-    const root = await tempRoot('accompany-iso07-');
-    await seedRoleCard(root);
-    await seedPlugin(
-      root,
-      'public',
-      'echo',
-      String.raw`
-export async function onMessage(ctx) {
-  const count = (ctx.state.count ?? 0) + 1;
-  ctx.state.count = count;
-  return { segments: [{ type: 'text', data: { text: 'public:' + count } }] };
-}
-`
-    );
-    for (const accountId of ['10001', '10002']) {
-      await writeProfile(root, accountId, {
-        version: 1,
-        roleCard: { source: 'public', id: TEST_ROLE_CARD_ID },
-        plugins: [{ source: 'public', id: 'echo' }]
-      });
-    }
-
-    const bucket = new Map<string, FakeChannel>();
-    const core = await createCore({
-      dataRoot: root,
-      instances: [
-        { id: 'a', backend: 'fake', accountId: '10001', restart: { enabled: false } },
-        { id: 'b', backend: 'fake', accountId: '10002', restart: { enabled: false } }
-      ],
-      channelFactory: channels(new Map([['a', '10001'], ['b', '10002']]), bucket),
-      logger: silentLogger('iso07')
-    });
-    cores.push(core);
-    await bindTestConversation(core, '10001', 'private', '555');
-    await bindTestConversation(core, '10002', 'private', '777');
-    await core.start();
-    await waitFor(() => core.status().instances.every((instance) => instance.state === 'online'));
-
-    bucket.get('a')?.emitInbound(textInbound('a', '10001', '555', 'iso07-a', 'a'));
-    bucket.get('b')?.emitInbound(textInbound('b', '10002', '777', 'iso07-b', 'b'));
-    await waitFor(
-      () => (bucket.get('a')?.sent.length ?? 0) === 1 && (bucket.get('b')?.sent.length ?? 0) === 1
-    );
-    expect(bucket.get('a')?.sent[0]?.message.segments).toEqual([
-      { type: 'text', data: { text: 'public:1' } }
-    ]);
-    expect(bucket.get('b')?.sent[0]?.message.segments).toEqual([
-      { type: 'text', data: { text: 'public:1' } }
-    ]);
-
-    for (const accountId of ['10001', '10002']) {
-      const state = JSON.parse(
-        await fs.readFile(path.join(root, 'accounts', accountId, 'plugin-state', 'echo.json'), 'utf8')
-      );
-      expect(state).toEqual({ count: 1 });
-    }
-  });
-
-  it('lets only the selected reply owner answer when plugins and the built-in agent are both configured', async () => {
-    const root = await tempRoot('accompany-pol07-');
+  it('keeps the built-in agent as the only reply owner when a plugin is installed', async () => {
+    const root = await tempRoot('accompany-owner-');
     await seedRoleCard(root);
     await seedPlugin(
       root,
@@ -366,97 +256,27 @@ export async function onMessage(ctx) {
       instances: [{ id: 'main', backend: 'fake', accountId: '10001', restart: { enabled: false } }],
       channelFactory: channels(new Map([['main', '10001']]), bucket),
       providerAdapters: [adapter],
-      logger: silentLogger('pol07')
+      logger: silentLogger('owner')
     });
     cores.push(core);
     await bindTestConversation(core, '10001', 'private', '555');
     await core.start();
     await waitFor(() => core.status().instances[0]?.state === 'online');
-
-    bucket.get('main')?.emitInbound(textInbound('main', '10001', '555', 'pol07-1', 'first'));
-    await waitFor(() => (bucket.get('main')?.sent.length ?? 0) === 1);
-    expect(bucket.get('main')?.sent[0]?.message.segments).toEqual([
-      { type: 'text', data: { text: 'plugin-reply' } }
-    ]);
-    expect(adapter.calls.filter((call) => call.capability === 'chat')).toHaveLength(0);
-
-    await core.setAccountPolicy('10001', {
-      ...core.getAccountPolicy('10001'),
-      replyMode: 'agent'
-    });
-    await waitFor(() => core.status().instances[0]?.hostEpoch === 2);
-    bucket.get('main')?.emitInbound(textInbound('main', '10001', '555', 'pol07-2', 'second'));
-    await waitFor(() => (bucket.get('main')?.sent.length ?? 0) === 2);
-    expect(bucket.get('main')?.sent[1]?.message.segments).toEqual([
-      { type: 'text', data: { text: 'agent-reply' } }
-    ]);
-    expect(adapter.calls.filter((call) => call.capability === 'chat')).toHaveLength(1);
-    const state = JSON.parse(
-      await fs.readFile(path.join(root, 'accounts', '10001', 'plugin-state', 'echo.json'), 'utf8')
-    );
-    expect(state).toEqual({});
-  });
-
-  it('switches an online instance from agent to plugin replies without a restart', async () => {
-    const root = await tempRoot('accompany-pol07-reverse-');
-    await seedRoleCard(root);
-    await seedPlugin(
-      root,
-      'public',
-      'echo',
-      "export async function onMessage() { return { segments: [{ type: 'text', data: { text: 'plugin-reply' } }] }; }"
-    );
-    await writeProfile(root, '10001', {
-      version: 1,
-      roleCard: { source: 'public', id: TEST_ROLE_CARD_ID },
-      plugins: [{ source: 'public', id: 'echo' }]
-    });
-    await writePhase1Config(root, {
-      providers: [fakeProvider('fake-chat', { chatText: 'agent-reply' })],
-      accountPolicies: {
-        '10001': accountPolicy({
-          allowedProviders: ['fake-chat'],
-          bindings: { chat: bind('fake-chat', 'text-model') },
-          replyMode: 'agent'
-        })
-      }
-    });
-    const adapter = new FakeProviderAdapter();
-    const bucket = new Map<string, FakeChannel>();
-    const core = await createCore({
-      dataRoot: root,
-      instances: [{ id: 'main', backend: 'fake', accountId: '10001', restart: { enabled: false } }],
-      channelFactory: channels(new Map([['main', '10001']]), bucket),
-      providerAdapters: [adapter],
-      logger: silentLogger('pol07-reverse')
-    });
-    cores.push(core);
-    await bindTestConversation(core, '10001', 'private', '555');
-    await core.start();
-    await waitFor(() => core.status().instances[0]?.state === 'online');
-
-    bucket.get('main')?.emitInbound(textInbound('main', '10001', '555', 'rev-1', 'first'));
-    await waitFor(() => (bucket.get('main')?.sent.length ?? 0) === 1);
-    expect(bucket.get('main')?.sent[0]?.message.segments).toEqual([
-      { type: 'text', data: { text: 'agent-reply' } }
-    ]);
     expect(core.status().instances[0]?.agent).toMatchObject({ mode: 'agent' });
-    expect(adapter.calls.filter((call) => call.capability === 'chat')).toHaveLength(1);
 
-    await core.setAccountPolicy('10001', {
-      ...core.getAccountPolicy('10001'),
-      replyMode: 'plugins'
-    });
-    await waitFor(() => core.status().instances[0]?.hostEpoch === 2);
-    expect(core.status().instances[0]?.agent).toMatchObject({ mode: 'plugins', configured: true });
-
-    bucket.get('main')?.emitInbound(textInbound('main', '10001', '555', 'rev-2', 'second'));
-    await waitFor(() => (bucket.get('main')?.sent.length ?? 0) === 2);
-    expect(bucket.get('main')?.sent[1]?.message.segments).toEqual([
-      { type: 'text', data: { text: 'plugin-reply' } }
+    bucket.get('main')?.emitInbound(textInbound('main', '10001', '555', 'own-1', 'first'));
+    await waitFor(() => (bucket.get('main')?.sent.length ?? 0) === 1);
+    expect(bucket.get('main')?.sent[0]?.message.segments).toEqual([
+      { type: 'text', data: { text: 'agent-reply' } }
     ]);
     expect(adapter.calls.filter((call) => call.capability === 'chat')).toHaveLength(1);
+
+    // 旧 onMessage 导出不再是回复者，也不会创建旧插件状态文件。
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(JSON.stringify(bucket.get('main')?.sent ?? [])).not.toContain('plugin-reply');
+    await expect(fs.access(path.join(root, 'accounts', '10001', 'plugin-state', 'echo.json'))).rejects.toThrow();
   });
+
 });
 
 async function seedPlugin(

@@ -84,7 +84,7 @@ export class FakeProviderAdapter implements ProviderAdapter {
       ...(request.tools?.length ? { toolNames: request.tools.map((tool) => tool.name) } : {}),
       requestText: request.messages.map((message) => message.content.map((part) => (part.type === 'text' ? part.text : `[${part.type}]`)).join('')).join('\n')
     });
-    if (options.toolCall && request.tools?.some((tool) => tool.name === options.toolCall?.name)) {
+    if (options.toolCall && !continuingRound(request) && request.tools?.some((tool) => tool.name === options.toolCall?.name)) {
       return { toolCalls: [{ id: `fake-tool-${this.calls.length}`, ...options.toolCall }] };
     }
     const text = options.chatText ?? `fake reply to ${messageLength(request.messages)} chars`;
@@ -230,6 +230,11 @@ function silentWave(): Buffer {
   header.write('data', 36, 'ascii');
   header.writeUInt32LE(data.length, 40);
   return Buffer.concat([header, data]);
+}
+
+/** 已经在同一轮工具续答里：脚本化假服务不再重复发起工具调用，保证循环可终止。 */
+function continuingRound(request: ChatRequest): boolean {
+  return request.messages.some((message) => message.role === 'tool' || message.toolCalls !== undefined);
 }
 
 function messageLength(messages: ChatRequest['messages']): number {

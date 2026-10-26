@@ -17,7 +17,7 @@
 .btn-ghost { background: transparent; border-color: transparent; color: var(--muted); }
 .btn-ghost:hover:not(:disabled) { background: rgba(67,59,52,.06); border-color: transparent; color: var(--text); }
 .btn:disabled,.ui-icon-button:disabled { opacity: .45; cursor: not-allowed; }
-.btn:focus-visible,.ui-icon-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.btn:focus-visible,.ui-icon-button:focus-visible,button:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 3px; }
 .field { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
 .field-label { color: var(--muted); font-size: 12px; letter-spacing: .01em; }
 .field-hint { color: var(--muted); font-size: 11.5px; line-height: 1.6; }
@@ -45,15 +45,16 @@ input.ui-input-checkbox:focus-visible,input.ui-input-radio:focus-visible { outli
 .ui-icon-button { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; flex-shrink: 0; border: 1px solid var(--line); border-radius: var(--control-radius); padding: 0; color: var(--muted); background: transparent; cursor: pointer; }
 .ui-icon-button:hover:not(:disabled) { color: var(--text); background: var(--panel-2); }
 .ui-modal-backdrop { position: fixed; inset: 0; display: grid; place-items: center; padding: 28px; background: rgba(67,59,52,.25); backdrop-filter: blur(7px); }
-.ui-modal-panel { width: min(560px,100%); max-height: calc(100dvh - 56px); overflow: auto; border: 1px solid var(--line); border-radius: 22px; background: var(--panel); color: var(--text); box-shadow: 0 30px 100px rgba(67,59,52,.2); outline: none; }
+.ui-modal-panel { width: min(560px,100%); min-width: 0; max-height: calc(100dvh - 56px); overflow: auto; overscroll-behavior: contain; overflow-wrap: anywhere; border: 1px solid var(--line); border-radius: 22px; background: var(--panel); color: var(--text); box-shadow: 0 30px 100px rgba(67,59,52,.2); outline: none; }
 .ui-modal-header { display: flex; align-items: center; gap: 16px; justify-content: space-between; padding: 24px; }
 .ui-modal-header h2 { margin: 0; font-size: 20px; }
 .ui-modal-header p { margin: 14px 0 0; color: var(--muted); white-space: pre-line; line-height: 1.8; font-size: 13px; }
 .ui-modal-header > div { min-width: 0; flex: 1; }
+.ui-modal-content { padding: 0 24px 24px; }
 .ui-dialog-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 0 24px 24px; }
 .ui-confirm-dialog .ui-modal-header { align-items: flex-start; }
 .ui-modal-panel.settings-dialog { width: min(1120px,100%); overflow: hidden; }
 @media (max-width: 600px) { .ui-modal-backdrop { padding: 14px; } .ui-modal-panel { max-height: calc(100dvh - 28px); } .ui-dialog-actions { flex-wrap: wrap; } }
-@media (prefers-reduced-motion: reduce) { .btn,.ui-input,.ui-select,.ui-textarea,.ui-input-checkbox,.ui-input-radio { transition: none; } }
+@media (prefers-reduced-motion: reduce) { :root:not([data-motion="full"]) :is(.btn,.ui-input,.ui-select,.ui-textarea,.ui-input-checkbox,.ui-input-radio) { transition: none; } }
 /* Retain system-drawn marks when the OS overrides the palette for contrast. */
 @media (forced-colors: active) { input.ui-input-checkbox,input.ui-input-radio { appearance: auto; background-image: none; } }

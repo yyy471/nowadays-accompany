@@ -1,6 +1,7 @@
 import { createPortal } from 'react-dom';
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { IconButton } from './actions';
+import { canReceiveFocus, focusableControls } from './focus';
 
 type Layer = { backdrop: HTMLDivElement; panel: HTMLDivElement; restoreFocus?: HTMLElement };
 const layers: Layer[] = [];
@@ -22,7 +23,6 @@ function isolateTopLayer() {
     child.setAttribute('aria-hidden', 'true');
   }
 }
-const FOCUSABLE = 'button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
 /** All application dialogs share isolation, focus trapping, Escape and focus restoration. */
 export function Modal({ open, title, description, children, onClose, closeDisabled = false, className = '', backdropClassName = '', headerClassName = '', eyebrow, headerExtra, role = 'dialog' }: {
@@ -42,7 +42,9 @@ export function Modal({ open, title, description, children, onClose, closeDisabl
     layers.push(layer);
     isolateTopLayer();
     const frame = requestAnimationFrame(() => {
-      (layer.panel.querySelector<HTMLElement>('[data-autofocus]') ?? layer.panel.querySelector<HTMLElement>(FOCUSABLE) ?? layer.panel).focus();
+      if (layers.at(-1) !== layer || !layer.panel.isConnected) return;
+      const requested = layer.panel.querySelector<HTMLElement>('[data-autofocus]');
+      (requested && canReceiveFocus(requested) ? requested : focusableControls(layer.panel)[0] ?? layer.panel).focus();
     });
     const keydown = (event: KeyboardEvent) => {
       if (layers.at(-1) !== layer) return;
@@ -50,7 +52,7 @@ export function Modal({ open, title, description, children, onClose, closeDisabl
         event.preventDefault(); event.stopPropagation();
         if (!closeState.current.closeDisabled) closeState.current.onClose();
       } else if (event.key === 'Tab') {
-        const controls = [...layer.panel.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((item) => item.getClientRects().length > 0);
+        const controls = focusableControls(layer.panel);
         const first = controls[0], last = controls.at(-1);
         if (!first || !last) { event.preventDefault(); layer.panel.focus(); }
         else if (event.shiftKey && (document.activeElement === first || !layer.panel.contains(document.activeElement))) {
@@ -68,7 +70,7 @@ export function Modal({ open, title, description, children, onClose, closeDisabl
       if (index !== -1) layers.splice(index, 1);
       isolateTopLayer();
       const target = layer.restoreFocus;
-      if (target?.isConnected && !target.closest('[inert]')) target.focus();
+      if (target?.isConnected && canReceiveFocus(target)) target.focus();
       else {
         const remaining = layers.at(-1);
         if (remaining && target?.isConnected) remaining.restoreFocus = target;

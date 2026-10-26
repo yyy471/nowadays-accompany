@@ -20,6 +20,7 @@ export function statusForError(error: unknown): number {
     case 'message_too_large':
     case 'media_too_large':
     case 'body_too_large':
+    case 'memory_capacity':
       return 413;
     case 'media_unsupported_type':
       return 415;
@@ -27,6 +28,11 @@ export function statusForError(error: unknown): number {
     case 'backpressure':
       return 429;
     case 'job_state_invalid':
+    case 'worldbook_conflict':
+    case 'worldbook_unavailable':
+    case 'memory_conflict':
+    case 'memory_extraction_disabled':
+    case 'memory_extraction_unavailable':
     case 'credential_store_unavailable':
     case 'capability_unavailable':
     case 'snowluma_runtime_unavailable':
@@ -47,12 +53,17 @@ export function statusForError(error: unknown): number {
     case 'injection_account_in_use':
       return 409;
     case 'snowluma_unreachable':
+    case 'worldbook_io_error':
+    case 'memory_io_error':
     case 'snowluma_http_error':
     case 'snowluma_process_action_failed':
     case 'injection_failed':
     case 'injection_login_timeout':
       return 503;
     case 'media_not_found':
+    case 'worldbook_not_found':
+    case 'memory_record_not_found':
+    case 'memory_scope_missing':
     case 'job_not_found':
     case 'unknown_provider':
     case 'injection_slot_not_found':

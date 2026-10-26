@@ -173,6 +173,69 @@ describe('openai-compatible adapter over local HTTP', () => {
     );
   });
 
+  it('serializes assistant tool calls and paired tool results for the follow-up request', async () => {
+    await withServer(
+      (_request, response) => {
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ choices: [{ message: { content: 'final answer' }, finish_reason: 'stop' }] }));
+      },
+      async (baseUrl, requests) => {
+        const provider = openAiProvider(baseUrl);
+        const result = await new OpenAiCompatibleAdapter().chat(
+          contextFor(provider, provider.models[0]!, new AbortController().signal, 'sk-abcdefghijklmnop'),
+          {
+            messages: [
+              { role: 'system', content: [{ type: 'text', text: 'be brief' }] },
+              { role: 'user', content: [{ type: 'text', text: 'lookup cats' }] },
+              { role: 'assistant', content: [], toolCalls: [{ id: 'call-1', name: 'lookup', arguments: { q: 'cats' } }] },
+              { role: 'tool', content: [{ type: 'text', text: '{"result":"four lives"}' }], name: 'lookup', toolCallId: 'call-1' },
+              {
+                role: 'assistant',
+                content: [{ type: 'text', text: '中间说明' }],
+                toolCalls: [{ id: 'call-2', name: 'lookup', arguments: { q: 'dogs' } }]
+              },
+              { role: 'tool', content: [{ type: 'text', text: '{"result":"ok"}' }], toolCallId: 'call-2' }
+            ]
+          }
+        );
+        expect(result.text).toBe('final answer');
+        const body = parseBody(requests[0]);
+        expect(body.messages[2]).toEqual({
+          role: 'assistant',
+          content: null,
+          tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'lookup', arguments: '{"q":"cats"}' } }]
+        });
+        expect(body.messages[3]).toEqual({
+          role: 'tool',
+          content: '{"result":"four lives"}',
+          name: 'lookup',
+          tool_call_id: 'call-1'
+        });
+        expect(body.messages[4]).toMatchObject({ role: 'assistant', content: '中间说明' });
+        expect(body.messages[5]).toMatchObject({ role: 'tool', content: '{"result":"ok"}', tool_call_id: 'call-2' });
+        expect(body.messages[5]).not.toHaveProperty('name');
+      }
+    );
+  });
+
+  it('refuses protocol-invalid tool messages before sending the request', async () => {
+    const adapter = new OpenAiCompatibleAdapter();
+    const provider = openAiProvider('http://127.0.0.1:9/unused');
+    const context = contextFor(provider, provider.models[0]!, new AbortController().signal, 'sk-abcdefghijklmnop');
+
+    await expect(adapter.chat(context, {
+      messages: [{ role: 'tool', content: [{ type: 'text', text: 'orphan result' }] }]
+    })).rejects.toMatchObject({ code: 'provider_protocol' });
+
+    await expect(adapter.chat(context, {
+      messages: [{ role: 'user', content: [], toolCalls: [{ id: 'call-9', name: 'lookup', arguments: {} }] }]
+    })).rejects.toMatchObject({ code: 'provider_protocol' });
+
+    await expect(adapter.chat(context, {
+      messages: [{ role: 'assistant', content: [], toolCalls: [{ id: '', name: 'lookup', arguments: {} }] }]
+    })).rejects.toMatchObject({ code: 'provider_protocol' });
+  });
+
   it('classifies 401 and redacts credentials from the error text', async () => {
     const credential = 'sk-abcdefghijklmnopqrstuvwxyz';
     await withServer(

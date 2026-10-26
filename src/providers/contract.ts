@@ -26,11 +26,21 @@ export type ChatContentPart =
   | { type: 'image'; media: ProviderMedia }
   | { type: 'video'; media: ProviderMedia };
 
+export interface ChatAssistantToolCall {
+  /** 与本轮 tool 消息的 toolCallId 配对；缺 ID 的调用由宿主先确定后再进入消息。 */
+  id: string;
+  name: string;
+  /** 已校验的参数对象；适配器负责按协议序列化为 JSON 文本。 */
+  arguments: Record<string, unknown>;
+}
+
 export interface ChatInputMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: ChatContentPart[];
   name?: string;
   toolCallId?: string;
+  /** 仅 assistant：本轮模型发起的调用，工具结果必须与之配对后才能续答。 */
+  toolCalls?: ChatAssistantToolCall[];
 }
 
 export interface ChatToolDefinition {

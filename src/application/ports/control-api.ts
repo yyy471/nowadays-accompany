@@ -22,6 +22,9 @@ import type { SnowLumaProcess, SnowLumaRuntimeStatus } from '../../injection/sno
 import type { ConversationRoleBinding } from '../../profiles/role-bindings.js';
 import type { AccountDisplayProfile } from '../../profiles/display.js';
 import type { AccountSummary } from '../../contracts/accounts.js';
+import type { WorldbookEvaluation } from '../../worldbook/types.js';
+import type { WorldbookList, WorldbookResourceDetail, WorldbookSaveResult } from '../../contracts/worldbook-resources.js';
+import type { MemoryDeleteResult, MemoryExtractionStatusView, MemoryPreviewResult, MemoryRecordDetail, MemoryRecordMutation, MemoryRecordPage, MemoryStateView } from '../../contracts/memory.js';
 
 /** HTTP/CLI 使用的应用端口；实现由 Core 提供。 */
 export interface CoreView {
@@ -37,6 +40,22 @@ export interface CoreView {
   readMessages(accountId: string, conversation: ConversationRef, options?: ReadOptions): Promise<StoredMessage[]>;
   diagnostics(): unknown;
   listPublicArtifacts(): Promise<ResolvedArtifact[]>;
+  listWorldbooks(query?: unknown): Promise<WorldbookList>;
+  getWorldbook(id: string, revision: string): Promise<WorldbookResourceDetail>;
+  saveWorldbook(raw: unknown): Promise<WorldbookSaveResult>;
+  previewWorldbookDraft(raw: unknown): Promise<WorldbookEvaluation>;
+  memorySettings(conversation: ConversationRef): Promise<MemoryStateView>;
+  saveMemorySettings(conversation: ConversationRef, raw: unknown): Promise<MemoryStateView>;
+  previewMemory(conversation: ConversationRef, raw: unknown): Promise<MemoryPreviewResult>;
+  listMemoryRecords(conversation: ConversationRef, query?: unknown): Promise<MemoryRecordPage>;
+  getMemoryRecord(conversation: ConversationRef, id: string): Promise<MemoryRecordDetail>;
+  createMemoryRecord(conversation: ConversationRef, raw: unknown): Promise<MemoryRecordMutation>;
+  updateMemoryRecord(conversation: ConversationRef, id: string, raw: unknown): Promise<MemoryRecordMutation>;
+  deleteMemoryRecord(conversation: ConversationRef, id: string, raw: unknown): Promise<MemoryDeleteResult>;
+  clearMemoryRecords(conversation: ConversationRef, raw: unknown): Promise<MemoryStateView>;
+  memoryExtraction(conversation: ConversationRef): Promise<MemoryExtractionStatusView>;
+  activateMemoryExtraction(conversation: ConversationRef, raw: unknown): Promise<MemoryStateView>;
+  pauseMemoryExtraction(conversation: ConversationRef, raw: unknown): Promise<MemoryStateView>;
   listAccountArtifacts(accountId: string): Promise<ResolvedArtifact[]>;
   artifactCatalog(): Promise<Record<string, string>>;
   listAccounts(options?: { avatars?: boolean }): Promise<AccountSummary[]>;
@@ -55,6 +74,8 @@ export interface CoreView {
     conversation: ConversationRef,
     roleCard: ArtifactRef | null
   ): Promise<ConversationRoleBinding | undefined>;
+  configureConversationWorldbook(conversation: ConversationRef, raw: unknown, expectedRevision: string, source?: unknown): Promise<ConversationRoleBinding>;
+  previewConversationWorldbook(conversation: ConversationRef, text: string): Promise<WorldbookEvaluation>;
   reloadAccount(accountId: string): Promise<Array<{ instanceId: string; ok: boolean; error?: string }>>;
   deployArtifact(kind: ArtifactKind, id: string, revision: string): Promise<DeploymentRecord>;
   rollbackArtifacts(): Promise<DeploymentRecord>;
@@ -81,6 +102,7 @@ export interface CoreView {
   configureSimpleModel(raw: unknown): Promise<ProviderDto>;
   discoverModels(raw: unknown): Promise<string[]>;
   validateSimpleModel(raw: unknown): Promise<ProviderTestResult>;
+  providerRemovalImpact(id: string): { providerId: string; exists: boolean; affectedAccounts: string[] };
   deleteProvider(id: string): Promise<{ removed: boolean; affectedAccounts: string[] }>;
   setProviderCredential(id: string, secret: string): Promise<ProviderDto>;
   deleteProviderCredential(id: string): Promise<ProviderDto>;

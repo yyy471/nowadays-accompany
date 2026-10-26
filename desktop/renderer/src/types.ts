@@ -1,3 +1,5 @@
+export type { ArtifactImportPreview, ArtifactImportResult } from '../../../src/contracts/artifact-import.js';
+
 export type InstanceState =
   | 'provisioning'
   | 'starting'
@@ -55,7 +57,7 @@ export interface InstanceStatus {
   sessionEpoch?: number;
   hostEpoch?: number;
   profileFingerprint?: string;
-  agent?: { mode: 'agent' | 'plugins' | 'custom'; configured: boolean };
+  agent?: { mode: 'agent' | 'custom'; configured: boolean };
   lastError?: { code: string; message: string; at: number; retryable?: boolean };
   profileState?: 'idle' | 'loading' | 'ready' | 'missing';
   profile?: ProfileSummary;
@@ -89,13 +91,14 @@ export interface SlotsResponse {
 
 export interface ArtifactManifest {
   id: string;
-  kind: 'plugin' | 'role-card';
+  kind: 'plugin' | 'role-card' | 'worldbook';
   revision: string;
   name?: string;
   description?: string;
   entry?: string;
   apiVersion?: number;
   content?: string;
+  worldbook?: unknown;
 }
 
 export interface ArtifactItem {
@@ -210,7 +213,6 @@ export interface Diagnostics {
 export type CapabilityId = 'chat' | 'image.understand' | 'video.understand' | 'image.generate' | 'audio.generate';
 export type ProviderLocation = 'local' | 'cloud';
 export type VisionMode = 'external' | 'direct';
-export type ReplyMode = 'auto' | 'agent' | 'plugins';
 export type CancelMode = 'remote' | 'localOnly' | 'none';
 export type PolicySource = 'account' | 'kind' | 'conversation' | 'default';
 export type JobState = 'queued' | 'running' | 'waiting_remote' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
@@ -281,9 +283,13 @@ export interface AccountPolicy extends ScopePolicy {
   allowedProviders: string[];
   crossProviderFallback: boolean;
   media: { allowCloudUpload: boolean };
-  replyMode?: ReplyMode;
-  enabledTools?: string[];
   skills?: AccountSkillPolicy;
+  extensions?: {
+    authorizedTools?: string[];
+    defaults?: Record<string, unknown>;
+    byKind?: Record<string, unknown>;
+    byConversation?: Record<string, unknown>;
+  };
   byKind: Partial<Record<'private' | 'group', ScopePolicy>>;
   byConversation: Record<string, ScopePolicy>;
 }
@@ -335,7 +341,6 @@ export interface EffectiveCapabilitiesDto {
   agentSource: PolicySource;
   visionMode: VisionMode;
   visionSource: PolicySource;
-  replyMode: ReplyMode;
   allowCloudUpload: boolean;
   capabilities: CapabilityDto[];
   skills: { available: Array<SkillStatus & { instructions: string }>; unavailable: SkillStatus[] };

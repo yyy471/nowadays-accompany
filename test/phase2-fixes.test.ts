@@ -19,6 +19,7 @@ import type {
   ProviderMedia
 } from '../src/providers/contract.js';
 import type { CancelMode } from '../src/providers/types.js';
+import type { CapabilityId } from '../src/policy/capabilities.js';
 import { createCore } from '../src/core/core.js';
 import { bindTestConversation, createTestCore, seedRoleCard, TEST_ROLE_CARD_ID } from './helpers.js';
 import {
@@ -307,31 +308,60 @@ function channelFactory(bucket: Map<string, FakeChannel>): ChannelFactory {
   };
 }
 
-describe('phase 2 S2 pause across hosts', () => {
-  it('stops legacy plugin replies but keeps messages and manual sends', async () => {
-    const root = await tempRoot('accompany-p2-plugin-pause-');
-    await seedRoleCard(root);
-    await seedPlugin(
-      root,
-      'echo',
-      "export async function onMessage(ctx) { return { segments: [{ type: 'text', data: { text: 'plugin:' + ctx.message.messageId } }] }; }"
-    );
-    await writeProfile(root, '10001', {
-      version: 1,
-      roleCard: { source: 'public', id: TEST_ROLE_CARD_ID },
-      plugins: [{ source: 'public', id: 'echo' }]
+class GatedChatAdapter implements ProviderAdapter {
+  readonly id = 'gated-v1';
+  started = 0;
+  readonly #gate: Promise<void>;
+  #release: () => void = () => {};
+
+  constructor() {
+    this.#gate = new Promise<void>((resolve) => {
+      this.#release = resolve;
     });
+  }
+
+  supports(capability: CapabilityId): boolean {
+    return capability === 'chat';
+  }
+
+  cancelMode(): CancelMode {
+    return 'localOnly';
+  }
+
+  async chat(): Promise<ChatResponse> {
+    this.started += 1;
+    await this.#gate;
+    return { text: 'late agent reply' };
+  }
+
+  release(): void {
+    this.#release();
+  }
+}
+
+describe('phase 2 S2 pause across hosts', () => {
+  it('stops automatic agent replies while paused and keeps messages and manual sends', async () => {
+    const root = await tempRoot('accompany-p2-agent-pause-');
+    await seedRoleCard(root);
     await writePhase1Config(root, {
-      providers: [],
-      accountPolicies: { '10001': accountPolicy({ replyMode: 'plugins' }) }
+      providers: [fakeProvider('fake-chat', { chatText: 'agent reply' })],
+      accountPolicies: {
+        '10001': accountPolicy({
+          allowedProviders: ['fake-chat'],
+          bindings: { chat: bind('fake-chat', 'text-model') }
+        })
+      }
     });
     const bucket = new Map<string, FakeChannel>();
-    const core = await createCore({
-      dataRoot: root,
-      instances: [{ id: 'a', backend: 'fake', accountId: '10001', restart: { enabled: false } }],
-      channelFactory: channelFactory(bucket),
-      logger: silentLogger('p2-plugin-pause')
-    });
+    const core = await createTestCore(
+      {
+        dataRoot: root,
+        instances: [{ id: 'a', backend: 'fake', accountId: '10001', restart: { enabled: false } }],
+        channelFactory: channelFactory(bucket),
+        logger: silentLogger('p2-agent-pause')
+      },
+      ['10001']
+    );
     cores.push(core);
     await bindTestConversation(core, '10001', 'private', '42');
     await core.start();
@@ -340,6 +370,7 @@ describe('phase 2 S2 pause across hosts', () => {
 
     channel.emitInbound(textInbound('a', '10001', '42', 'before-pause', 'hello'));
     await waitFor(() => channel.sent.length === 1);
+    expect(channel.sent[0]?.message.segments).toEqual([{ type: 'text', data: { text: 'agent reply' } }]);
 
     await core.patchAgentEnabled('10001', false);
     await waitFor(() => core.status().instances[0]?.hostEpoch === 2);
@@ -355,7 +386,7 @@ describe('phase 2 S2 pause across hosts', () => {
     await core.patchAgentEnabled('10001', true);
     channel.emitInbound(textInbound('a', '10001', '42', 'after-resume', 'hello'));
     await waitFor(() => channel.sent.length === 3);
-    expect(JSON.stringify(channel.sent[2]?.message)).toContain('after-resume');
+    expect(channel.sent[2]?.message.segments).toEqual([{ type: 'text', data: { text: 'agent reply' } }]);
     expect(JSON.stringify(channel.sent)).not.toContain('while-paused');
   });
 
@@ -399,41 +430,25 @@ describe('phase 2 S2 pause across hosts', () => {
     expect(channel.sent[0]?.conversation.kind).toBe('private');
   });
 
-  it('drops an in-flight plugin reply after pause and does not replay it on resume', async () => {
+  it('drops an in-flight agent reply after pause and does not replay it on resume', async () => {
     const root = await tempRoot('accompany-p2-inflight-pause-');
     await seedRoleCard(root);
-    const started = path.join(root, 'slow.started');
-    const release = path.join(root, 'slow.release');
-    await seedPlugin(
-      root,
-      'slow',
-      String.raw`
-import fs from 'node:fs';
-export async function onMessage(ctx) {
-  fs.writeFileSync(ctx.config.started, '1');
-  const deadline = Date.now() + 15000;
-  while (!fs.existsSync(ctx.config.release) && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  return { segments: [{ type: 'text', data: { text: 'late plugin reply' } }] };
-}
-`
-    );
-    await writeProfile(root, '10001', {
-      version: 1,
-      roleCard: { source: 'public', id: TEST_ROLE_CARD_ID },
-      plugins: [{ source: 'public', id: 'slow', config: { started, release } }]
-    });
+    const adapter = new GatedChatAdapter();
     await writePhase1Config(root, {
-      providers: [],
-      accountPolicies: { '10001': accountPolicy({ replyMode: 'plugins' }) }
+      providers: [fakeProvider('gated-chat', {}, { adapterId: 'gated-v1' })],
+      accountPolicies: {
+        '10001': accountPolicy({
+          allowedProviders: ['gated-chat'],
+          bindings: { chat: bind('gated-chat', 'text-model') }
+        })
+      }
     });
     const bucket = new Map<string, FakeChannel>();
     const core = await createCore({
       dataRoot: root,
       instances: [{ id: 'a', backend: 'fake', accountId: '10001', restart: { enabled: false } }],
       channelFactory: channelFactory(bucket),
-      limits: { pluginTimeoutMs: 15_000 },
+      providerAdapters: [adapter],
       logger: silentLogger('p2-inflight')
     });
     cores.push(core);
@@ -443,16 +458,9 @@ export async function onMessage(ctx) {
     const channel = bucket.get('a')!;
 
     channel.emitInbound(textInbound('a', '10001', '42', 'slow-1', 'slow'));
-    await waitFor(async () => {
-      try {
-        await fs.access(started);
-        return true;
-      } catch {
-        return false;
-      }
-    });
+    await waitFor(() => adapter.started === 1);
     await core.patchAgentEnabled('10001', false);
-    await fs.writeFile(release, '1');
+    adapter.release();
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(channel.sent).toHaveLength(0);
 

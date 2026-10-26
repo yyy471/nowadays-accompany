@@ -49,7 +49,7 @@ try {
   await fs.writeFile(path.join(pluginDir,'echo.mjs'),"export function onMessage(){return 'legacy plugin still replies';}");
   await fs.writeFile(path.join(appRoot,'public','catalog.json'),JSON.stringify({version:1,artifacts:{'role-card:default':'r1','plugin:echo':'r1'}}));
   await fs.writeFile(path.join(appRoot,'accounts','10001','profile.json'),JSON.stringify({version:1,roleCard:{source:'public',id:'default'},plugins:[{source:'public',id:'echo'}]}));
-  await writePhase1Config(appRoot,{providers:[],accountPolicies:{'10001':accountPolicy({replyMode:'plugins',agentEnabled:true})}});
+  await writePhase1Config(appRoot,{providers:[],accountPolicies:{'10001':accountPolicy({agentEnabled:true})}});
   let channel:FakeChannel;
   const core=await createCore({dataRoot:appRoot,instances:[{id:'a',backend:'fake',accountId:'10001'}],logger:silentLogger('review'),channelFactory:ctx=>(channel=new FakeChannel(ctx,{selfId:'10001'}))});
   try {

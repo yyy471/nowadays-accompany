@@ -6,7 +6,7 @@
 
 QQ 进程注入编排与交互核心。目标是把「注入一个 QQ、连上它、收发消息」做成**可多实例、彼此隔离、无单例**的底座；私聊/群聊策略、插件、角色卡、Skill 都属于功能层，通过 `AgentHost` 契约接入。
 
-当前版本实现：SnowLuma attach 探测与 1.14.x 手动注入/监听管理、OneBot 通道、实例状态机、声明式收敛、多实例监督、QQ 维度账号档案、公用/私有制品分发、每账号 worker 插件宿主、按账号滚动热部署、账号命名空间存储、分层配置、本地控制 API、指标/诊断，以及 Windows 桌面端（Electron + React）与安装包。第一阶段增加了四项模型能力路由、账号策略与硬授权、凭据库、内置最小 Agent、账号媒体制品与有限异步任务；第二轮补齐执行计划/凭据版本一致性与全宿主暂停，并加入手动注入操作状态机、进程身份校验和桌面操作界面。
+当前版本实现：SnowLuma attach 探测与 1.14.x 手动注入/监听管理、OneBot 通道、实例状态机、声明式收敛、多实例监督、QQ 维度账号档案、公用/私有制品分发、账号级插件运行 Worker、按账号滚动热部署、账号命名空间存储、分层配置、本地控制 API、指标/诊断，以及 Windows 桌面端（Electron + React）与安装包。第一阶段增加了四项模型能力路由、账号策略与硬授权、凭据库、内置最小 Agent、账号媒体制品与有限异步任务；第二轮补齐执行计划/凭据版本一致性与全宿主暂停，并加入手动注入操作状态机、进程身份校验和桌面操作界面。
 
 ## 分层与职责
 
@@ -21,7 +21,7 @@ QQ 进程注入编排与交互核心。目标是把「注入一个 QQ、连上�
 | 配置 | `src/config/` | global → account → kind → account:kind → conversation 合并与原子写 |
 | 账号档案 | `src/profiles/` | `profile.json`、角色卡必填、插件启用集、revision 快照 |
 | 制品分发 | `src/artifacts/` | 公用/私有 manifest、catalog、滚动部署与回滚 |
-| 插件宿主 | `src/host/` | 每账号 worker、profile/history/state、热切换、崩溃隔离 |
+| 插件运行时 | `src/extensions/runtime/` | 每账号每插件一个 Worker、声明与 handler 握手、作用域化插件状态、超时终止代际；`src/host/` 只保留内部注入宿主端口 |
 | 控制面 | `src/service/` | 本地 HTTP + SSE，指标、诊断、审计、事件续传、档案/制品/slot API，桌面 UI 静态托管 |
 | 桌面端 | `desktop/` | Electron 主进程内嵌 Core、preload 注入本地 token、托盘、React 控制台与打包脚本 |
 
@@ -35,8 +35,8 @@ QQ 进程注入编排与交互核心。目标是把「注入一个 QQ、连上�
 - **runtime 共享**：SnowLuma 按 `runtimeDir` 共享 backend，引用计数归零后释放；熔断按账号隔离，一个号掉线不拖累同 runtime 的其他号。
 - **数据不共用**：`<dataRoot>/accounts/<accountId>/` 下保存该 QQ 的 `profile.json`、`messages/`、私有制品和 `plugin-state/`；旧 `<dataRoot>/messages/` 目录不会被自动迁移。
 - **槽位可恢复**：桌面端把槽位规格写入 `<dataRoot>/slots.json`；重启后按文件恢复。desired 状态另行持久化，二者互不覆盖。
-- **角色卡必填**：账号没有可解析的角色卡时停在 `awaiting_profile`，不进入 `online`，也不启动插件宿主。
-- **插件宿主**：默认每个账号一个 worker，承载该账号启用的全部插件；插件拿不到 bus/store/backend/token，只能通过受限上下文收发消息、读历史、读写自己的状态。
+- **角色卡必填**：账号没有可解析的角色卡时停在 `awaiting_profile`，不进入 `online`，也不启动回复宿主。
+- **唯一回复者**：内置 Agent 是账号唯一的自动回复者；插件不再接管回复，只能提供工具、钩子补充数据和插件自己的状态。插件拿不到 bus/store/backend/token，也拿不到发送端口。
 - **身份不串**：实例只允许以自己绑定的账号发送；`spec.accountId` 与通道回报的 selfId 不一致直接失败。
 - **失败不扩散**：`startAll` 使用 allSettled 语义；重启只重启失败实例，并受全局并发和抖动限制。
 - **事件不串**：每个 Core 有自己的 `TypedEventBus` / `EventLog`，事件带 `instanceId`。
@@ -106,13 +106,13 @@ QQ 进程注入编排与交互核心。目标是把「注入一个 QQ、连上�
 { "id": "echo", "kind": "plugin", "revision": "r1", "entry": "echo.mjs", "apiVersion": 1 }
 ```
 
-插件入口导出 `onSessionStart` / `onMessage` / `onSessionStop`。`onMessage` 上下文提供 `profile`、`conversation`、`message`、`history`、`config`、`resolvedConfig`、`state` 和 `send`；可以返回一条回复，或 `{ reply, sends }`。
+插件 manifest 用 `tools` / `hooks` / `skills` / `state` 声明可执行项，模块入口只提供与声明对应的 handler：`beforeContext` 返回带来源标记的补充数据，`afterTurn` 收到本轮真实结果摘要，工具 handler 接收校验后的参数与宿主生成的只读上下文并返回结构化结果。插件没有 `send`、没有回复出口，未声明的导出不能成为工具。
 
-热部署是**按账号滚动**的：`POST /artifacts/:kind/:id/deploy` 先更新 catalog，再逐个账号校验新档案、启动新 worker、原子切换、排空旧 worker。单个账号失败时保留旧 revision 和旧宿主，继续处理其他账号；`GET /deployments` 查看部分成功结果。`POST /artifacts/rollback` 恢复 `catalog.previous.json` 后再次滚动。系统不做长期版本并行，但会保留历史 revision 目录用于回滚。
+热部署是**按账号滚动**的：`POST /artifacts/:kind/:id/deploy` 先更新 catalog，再逐个账号校验新档案、为新 revision 建立运行代际、原子切换、排空旧代际。单个账号失败时保留旧 revision 与旧宿主，继续处理其他账号；`GET /deployments` 查看部分成功结果。`POST /artifacts/rollback` 恢复 `catalog.previous.json` 后再次滚动。系统不做长期版本并行，但会保留历史 revision 目录用于回滚。
 
-默认对有插件的账号启动 worker 宿主；需要自定义隔离/接入方式时，通过 `CoreOptions.hostFactory` 替换，宿主仍只能使用能力受限的上下文。同一账号的插件 turn 串行执行、跨账号并行，避免多个会话同时改写同一份插件状态。
+内置 Agent 是唯一的自动回复宿主；需要自定义隔离或接入方式时，只能通过 `CoreOptions.hostFactory` 注入内部端口，不再提供第二套面向用户的插件标准。插件工具与内置工具走同一条执行通道：每账号一个执行器共享一份全局并发额度，可执行清单来自该账号 Worker 的握手结果，握手未就绪或授权被撤销时既不会进入模型请求，也不会在动作前通过复核。同一插件的钩子与工具在该插件 Worker 内串行，避免多个会话同时改写同一份插件状态；其他插件及账号的工具按共享限额运行，每轮钩子另按累计预算调度。
 
-热切换后，旧 revision 的在途 turn 会继续完成，但它的插件状态写入会被丢弃，避免覆盖新 revision 的状态。worker 提供故障与状态隔离，但不是安全沙箱：插件代码按受信任代码对待。
+换代际后，旧代际的在途 turn 仍会结束，但它的结果与插件状态写入会被丢弃，不会覆盖新 revision 的状态。Worker 提供生命周期与故障隔离，但不是安全沙箱：插件代码按受信任代码对待。
 
 ## 第一阶段：模型能力、策略与任务
 
@@ -147,7 +147,6 @@ QQ 进程注入编排与交互核心。目标是把「注入一个 QQ、连上�
 - `allowedProviders`、`media.allowCloudUpload`、`crossProviderFallback` 是账号硬授权，作用域覆盖不能绕过。
 - `bindings` 把四项能力绑定到 provider/model；`fallback` 只在账号允许跨服务回退且目标能力兼容时才有效。
 - `agentEnabled`、`capabilities`、`visionMode` 可在 `byKind`、`byConversation` 中逐层覆盖。
-- `replyMode`：`auto`（有插件时走兼容插件，否则用内置 Agent）、`agent`（只用内置 Agent）、`plugins`（只用兼容插件），避免同一入站消息被两个回复者重复答复。
 - `skills.enabled` / `skills.disabled` 按账号选择公用 Skill；`skills.definitions` 可用同 id 覆盖为私有版本。未显式配置时保持公用定义默认继承，私有定义只进入该账号的上下文。
 - 暂停 Agent 只停止自动回复，QQ 连接、人工发送和媒体任务仍可用。
 - 撤销能力开关、服务授权或云端上传许可后，排队任务会被取消；每次提交、重试与 fallback 前都会按当前策略复核，旧授权快照不能继续发起请求。
@@ -156,10 +155,13 @@ QQ 进程注入编排与交互核心。目标是把「注入一个 QQ、连上�
 
 ### 内置 Agent、媒体与任务
 
-- 上下文 = 角色卡 + Skill 可用说明 + 有界历史 + 当前消息；当前输入只出现一次，跨账号/跨会话历史不混用。
+- 上下文包含角色卡、启用的世界书与事实记忆、有效Skill、有界历史、当前消息及带来源的观察/插件数据；当前输入只出现一次，跨账号/跨会话历史不混用。
+- 插件 `beforeContext` 只补充非system数据，`afterTurn` 收到实际发送结果；单钩子500ms、每轮before/after共用2s，模型等待不计入。相关作用域、插件配置或代际失效时，旧结果不能交付；带插件补充数据或工具协议的轮次不作为MEM03事实候选。独立验收见[90号记录](devDoc/90-ext-d-independent-review.md)。
 - 图片默认先交给授权的外部识图服务，再以带来源标记的观察数据进入对话；`visionMode=direct` 时直接交给支持图片输入的对话模型。关闭图片理解时两条路径都不会偷偷执行。
 - 视频走独立媒体任务，成功后回到原会话追加一轮对话；没有视频能力时明确说明，不假装看过视频，也不静默抽帧外发。
 - 显式 `/draw`、`!draw`、`/img`、`!img` 命令和模型工具 `generate_image` 都走同一生图任务与统一发送出口。
+- 模型工具调用按预算循环：最多 3 个工具回合、4 次工具调用、4 次模型续答；被拒绝的调用同样计入预算，最后一次模型请求不再提供工具。assistant 的 `tool_calls` 与配对的 `tool` 结果只活在本轮续答里，不写入历史、不提前发出中间文本，一轮对话只有一条最终回复。
+- 生图与语音工具经统一执行器提交原有媒体任务，返回 `submitted` 与 jobId；同一宿主调用在账本与媒体任务两层去重。Provider的callId只用于协议配对，不同消息或模型回合是独立宿主调用，不能仅因复用call_1而合并。
 - 媒体按账号保存，下载大小/类型/重定向/私网地址都受限；生成结果支持 base64 与 URL，不接受远端文件系统路径或无法获取的 assetId。
 - 任务状态：`queued`、`running`、`waiting_remote`、`succeeded`、`failed`、`cancelled`、`interrupted`；投递状态单独记录。重启后遗留非终态任务标记 `interrupted`，不会自动重新提交付费请求。
 - 取消模式按适配器声明区分 `remote` / `localOnly` / `none`；本地取消不会被说成远端已取消。
@@ -177,7 +179,16 @@ QQ 进程注入编排与交互核心。目标是把「注入一个 QQ、连上�
 - **任务与媒体**：任务筛选、取消、失败/远端未知说明、账号媒体缩略图、删除与过期清理。
 - **运行槽位**：只读展示 SnowLuma 进程（PID、路径、QQ 身份、注入/连接状态），按用户点击执行“注入并监听 / 开始监听 / 刷新 / 请求卸载”；槽位卡片区分“暂停自动处理”“停止监听”和“请求卸载”三种语义。
 
-设置页提供 SnowLuma runtime 目录、管理地址、管理密码（只写凭据库）与版本/鉴权/hookAutoLoad 状态，并明确列出世界书、长期记忆与受管 launch 为后续阶段，**不提供保存后实际不生效的入口**。
+设置页提供 SnowLuma runtime 目录、管理地址、管理密码（只写凭据库）与版本/鉴权/hookAutoLoad 状态，并明确列出记忆管理页面、情绪/遗忘曲线与受管 launch 为后续阶段，**不提供保存后实际不生效的入口**。
+
+### 独立世界书
+
+- 资源库可新建或导入世界书 JSON（原生/酒馆数组/酒馆对象），列表只读取版本摘要；选择版本后才读取正文。
+- 编辑器支持条目增删复制、关键词/正文/常驻/大小写/优先级/位置与搜索筛选；保存使用稳定 requestId、`baseRef` 与基础指纹创建不可变新版本，原版本和已有会话都不会被覆盖或自动切换。复制为新书会生成独立 id（长 id 也保留后缀），可直接保存。
+- `POST /worldbooks/preview` 只对调用方给出的草稿和文本执行与运行时相同的匹配器；不读真实历史、不调用模型、不写资源或记忆，扫描/预算受限会明确标出。
+- 每个私聊/群聊二选一：角色卡内置书，或公共独立书的固定 revision；来源与参数一次 CAS 保存，旧客户端省略 `source` 时保留已存来源。有效状态、版本、条目数与“建议参数”在会话设置中展示，建议参数只改草稿且不自动启用；版本超过一页时可“加载更多版本”。
+- 关闭快照继续携带角色与历史 epoch；换书/切版本/参数变化进入发送前 guard，旧上下文生成的回复会被拒绝。换角色不读取旧角色来源，保留旧数据供明确管理。
+
 
 ### 迁移与备份
 
@@ -278,6 +289,20 @@ npx tsx src/bin/nowadays.ts start --config nowadays.config.example.json
 | GET/DELETE | `/accounts/:accountId/media/:mediaId` | 读取媒体字节 / 删除 |
 | POST | `/media/cleanup` | 按保留策略清理，跳过任务仍在引用的媒体 |
 | GET | `/artifacts` | 公用层制品清单 + 当前 catalog revision |
+| GET | `/worldbooks` | 有界世界书版本摘要（`id`/`offset`/`limit`，不含正文） |
+| GET | `/worldbooks/:id/revisions/:revision` | 指定固定版本的完整正文与指纹 |
+| POST | `/worldbooks/revisions` | 不可变新版本/派生（`requestId`、`baseRef`、`expectedBaseFingerprint`） |
+| POST | `/worldbooks/preview` | 草稿试算 `{ book, text, scanDepth?, budgetChars? }`，只读匹配 |
+| PUT | `/accounts/:accountId/role-bindings/:kind/:peerId/worldbook` | 来源 + 参数 CAS 保存（`expectedRevision`） |
+| POST | `/accounts/:accountId/role-bindings/:kind/:peerId/worldbook/preview` | 使用已保存来源与会话参数做只读关键词测试 |
+| POST | `/accounts/:accountId/memory/:kind/:peerId/preview` | 只读检索预览 `{ text, expectedScope }`，按已保存设置计算，标注 `budgetBasis: memory-only` |
+| GET/PUT | `/accounts/:accountId/memory/:kind/:peerId/settings` | 记忆开关、预算与最多选用条数；PUT 携带 `expectedScope` 与 `expectedRevision` |
+| GET/POST | `/accounts/:accountId/memory/:kind/:peerId/records` | 有界摘要列表（不含正文）/ 手工 fact 新增（`requestId` + 双 expected） |
+| GET/PUT/DELETE | `/accounts/:accountId/memory/:kind/:peerId/records/:id` | 指定正文 / 编辑 / 删除（记录版本 + 双 expected） |
+| POST | `/accounts/:accountId/memory/:kind/:peerId/clear` | 清空记录并关闭自动提取，保留设置与状态文件 |
+| GET | `/accounts/:accountId/memory/:kind/:peerId/extraction` | 提取状态、水位、冷却、本地配额与运行时状态；不含聊天或模型输出 |
+| POST | `/accounts/:accountId/memory/:kind/:peerId/extraction/activate` | 显式付费授权：`startFrom:"now"`、`confirmModelUse:true` + 双 expected；只处理此后的新消息 |
+| POST | `/accounts/:accountId/memory/:kind/:peerId/extraction/pause` | 双 expected 暂停自动提取并失效旧任务 |
 | POST | `/artifacts/:kind/:id/deploy` | `{ revision }`，更新 catalog 并滚动部署 |
 | POST | `/artifacts/rollback` | 回滚到上一份 catalog 并滚动 |
 | GET | `/deployments` | 最近的部署记录（含逐账号结果） |
@@ -287,9 +312,11 @@ npx tsx src/bin/nowadays.ts start --config nowadays.config.example.json
 
 错误响应包含 `{ ok: false, error, code, retryable? }`，并通过 `x-request-id` 回传请求 id。
 
+长期记忆（MEM03）已在MEM02上下文之上完成可选自动fact提取：默认关闭，必须先开启记忆并显式确认`startFrom:"now"`的付费模型使用；旧`autoExtract=true`不会静默授权。只在内置Agent纯文本回复成功发送并持久化后触发，按当前账号/群私聊/角色epoch有界读取新消息；准入按合格文本计数，长消息不会阻塞后续，扫描达到上限时有界续扫而不重读旧前缀。至少6条且距上次尝试5分钟才调用，每次提取只向Provider发出一次尝试、不自动重试或fallback，失败冷却至少10分钟；每scope最多1个运行+1个合并任务、全局并发2、每账号12次/小时且全局30次/小时（本地成本闸）。模型输出必须是无tools调用的单个严格JSON对象；服务端生成model fact与证据范围，提交在原始会话队列内重验scope/generation/水位，删除、清空、关闭或编辑模型事实会原子暂停并拒绝在途旧结果。相同sourceKey幂等，容量不足整批拒绝并暂停。自动提取无QQ消息输出、无摘要生成、无管理页面；真实付费服务尚未验收。详见`devDoc/75-memory-extraction-execution.md`，独立复核修复见`devDoc/77-memory-extraction-review-fixes.md`，方案与验收为`devDoc/73`、`devDoc/74`。
+
 ## 容量上限
 
-`limits` 可覆盖：`maxInstances`、`maxIngressQueue`、`maxConversationQueue`、`maxMessageBytes`、`maxSseClients`、`maxConcurrentActions`、`sendRatePerSecond`、`sendBurst`、`startConcurrency`、`restartConcurrency`、`healthCheckIntervalMs`、`unhealthyThreshold`、`shutdownTimeoutMs`、`drainTimeoutMs`、`hostDrainTimeoutMs`、`hostTimeoutMs`、`pluginTimeoutMs`、`maxHostHistory`、`maxChatConcurrency`、`maxAccountChatConcurrency`、`maxChatPending`、`maxMediaConcurrentJobs`、`maxAccountMediaConcurrentJobs`、`maxMediaJobPending`、`maxPerAccountMediaJobPending`、`mediaJobTimeoutMs`、`maxImageBytes`、`maxVideoBytes`、`mediaDownloadTimeoutMs`、`mediaRetentionDays`。
+`limits` 可覆盖：`maxInstances`、`maxIngressQueue`、`maxConversationQueue`、`maxMessageBytes`、`maxSseClients`、`maxConcurrentActions`、`sendRatePerSecond`、`sendBurst`、`startConcurrency`、`restartConcurrency`、`healthCheckIntervalMs`、`unhealthyThreshold`、`shutdownTimeoutMs`、`drainTimeoutMs`、`hostDrainTimeoutMs`、`hostTimeoutMs`、`maxHostHistory`、`maxChatConcurrency`、`maxAccountChatConcurrency`、`maxChatPending`、`maxMediaConcurrentJobs`、`maxAccountMediaConcurrentJobs`、`maxMediaJobPending`、`maxPerAccountMediaJobPending`、`mediaJobTimeoutMs`、`maxImageBytes`、`maxVideoBytes`、`mediaDownloadTimeoutMs`、`mediaRetentionDays`。
 
 ## 关键不变量（给未来的修改者）
 
@@ -304,7 +331,8 @@ npx tsx src/bin/nowadays.ts start --config nowadays.config.example.json
 
 ## 未实现（下一阶段）
 
-- 世界书/设定触发、长期记忆提取与检索、人格关系与情绪状态。
+- 长期记忆摘要生成、摘要替换历史与 MEM04 管理页面，以及人格关系与情绪/遗忘曲线（需另写隔离、预算与删除方案）。
+- 插件/Skill 体验完善、多模态真实服务矩阵与桌面发行收尾（见 `devDoc/53`、`devDoc/54`）。
 - `launch`：拉起 QQ、生成/改写每号端口、runtime 进程级所有权；`PortAllocator` 目前只服务未来的 launch。
 - 跨进程账号租约与多写者存储。
 - 远端制品仓库与签名校验；当前公用层是本地目录。

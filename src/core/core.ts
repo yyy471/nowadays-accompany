@@ -1,7 +1,16 @@
+import { WorldbookResourceService } from '../application/worldbooks/worldbook-resource-service.js';
+import type { WorldbookList, WorldbookResourceDetail, WorldbookSaveResult } from '../contracts/worldbook-resources.js';
+import { MemoryService } from '../application/memory/memory-service.js';
+import { ConversationMemoryContextService, type ConversationMemoryCapture } from '../application/memory/conversation-memory-context.js';
+import { ExtractionCoordinator } from '../application/memory/extraction/coordinator.js';
+import { ExtractionQuotaStore } from '../application/memory/extraction/quota.js';
+import { MemoryExtractionRunner, type ExtractionChatPort } from '../application/memory/extraction/runner.js';
+import type { MemoryDeleteResult, MemoryExtractionStatusView, MemoryPreviewResult, MemoryRecordDetail, MemoryRecordMutation, MemoryRecordPage, MemoryStateView } from '../contracts/memory.js';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { TypedEventBus } from './bus.js';
 import type { CoreEvents } from './events.js';
+import type { ExtractionTurnCompletion } from './extraction-events.js';
 import { AccompanyError } from './errors.js';
 import { createLogger, type Logger } from './logger.js';
 import { AuditLog } from './audit.js';
@@ -40,7 +49,6 @@ import {
   type SnowLumaRuntimeStatus
 } from '../injection/snowluma/manager.js';
 import { PluginStateStore } from '../host/state.js';
-import { createWorkerHost } from '../host/worker.js';
 import { LocalArtifactStore } from '../artifacts/local.js';
 import type { DeploymentRecord } from '../artifacts/deploy.js';
 import { AccountProfileService } from '../profiles/profile.js';
@@ -60,6 +68,8 @@ import {
 } from '../providers/types.js';
 import { PolicyService } from '../policy/policy.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
+import { ExtensionToolService } from '../application/extensions/extension-tool-service.js';
+import { PluginRuntimeService } from '../application/extensions/plugin-runtime-service.js';
 import { ProviderRouter, type EffectiveCapabilitiesDto } from '../providers/router.js';
 import type { ProviderTestResult } from '../providers/contract.js';
 import type { CapabilityId } from '../policy/capabilities.js';
@@ -130,6 +140,7 @@ export class Core implements CoreView {
   readonly media: MediaService;
   readonly jobs: MediaJobService;
   readonly extensions: ExtensionRegistry;
+  readonly extensionTools: ExtensionToolService;
   readonly agentScheduler: TurnScheduler;
 
   readonly #dataRoot: string;
@@ -139,10 +150,16 @@ export class Core implements CoreView {
   readonly #limits: Limits;
   readonly #stores = new Map<string, MessageStore>();
   readonly #pluginStates = new Map<string, PluginStateStore>();
+  readonly #pluginRuntimes: PluginRuntimeService;
   readonly #runtimeLeases = new Map<string, RuntimeLease>();
   readonly #runtimeRegistry: RuntimeRegistry;
   readonly #accountLeases: AccountLeases;
   readonly #artifacts: LocalArtifactStore;
+  readonly #worldbooks: WorldbookResourceService;
+  readonly #memories: MemoryService;
+  readonly #extractionQuota: ExtractionQuotaStore;
+  readonly #extractionCoordinator: ExtractionCoordinator;
+  readonly #conversationMemory: ConversationMemoryContextService;
   readonly #profiles: AccountProfileService;
   readonly #accountDisplays: AccountDisplayStore;
   readonly #accountDirectory: AccountDirectory;
@@ -166,7 +183,7 @@ export class Core implements CoreView {
   #started = false;
   #stopped = false;
 
-  private constructor(options: CoreOptions, runtime: RuntimeAssembly) {
+  private constructor(options: CoreOptions, runtime: RuntimeAssembly, extractionQuota: ExtractionQuotaStore) {
     this.#options = options;
     this.#dataRoot = path.resolve(options.dataRoot);
     this.#logger = runtime.logger;
@@ -179,16 +196,29 @@ export class Core implements CoreView {
     this.config = runtime.config;
     this.configV2 = runtime.configV2;
     this.#artifacts = runtime.artifacts;
+    this.#worldbooks = new WorldbookResourceService({ publicRoot: runtime.artifacts.publicRoot });
     this.#profiles = runtime.profiles;
     this.#accountDisplays = runtime.accountDisplays;
     this.#accountDirectory = runtime.accountDirectory;
     this.#accountService = runtime.accountService;
+    this.#memories = new MemoryService({
+      roles: { contextEpoch: (accountId, conversation) => this.#accountService.historyEpoch(accountId, conversation) },
+      accountDir: (accountId) => this.#accountService.locate(accountId).dir,
+      messages: { lastSeq: (accountId, conversation) => this.#messageStore(accountId).lastSeq({ ...conversation, accountId }) },
+      ...(options.now ? { now: options.now } : {})
+    });
+    this.#conversationMemory = new ConversationMemoryContextService({
+      memories: this.#memories,
+      roles: { resolve: (accountId, conversation) => this.#accountService.resolveRoleBinding(accountId, conversation) }
+    });
     this.#deploymentService = runtime.deploymentService;
     this.#modelSettings = runtime.modelSettings;
     this.#credentialVault = runtime.credentialVault;
     this.snowLuma = runtime.snowLuma;
     this.#snowLumaRuntime = runtime.snowLumaRuntime;
     this.extensions = runtime.extensions;
+    this.extensionTools = runtime.extensionTools;
+    this.#pluginRuntimes = runtime.pluginRuntimes;
     this.policy = runtime.policy;
     this.agentScheduler = runtime.agentScheduler;
     this.media = runtime.media;
@@ -202,12 +232,81 @@ export class Core implements CoreView {
     this.eventLog = runtime.eventLog;
     this.auditLog = runtime.auditLog;
     this.bus = runtime.bus;
+    this.#extractionQuota = extractionQuota;
+    const extractionLogger = this.#logger.child('memory-extraction');
+    const enqueueOnConversation = async (
+      completion: ExtractionTurnCompletion,
+      task: () => Promise<void>
+    ): Promise<void> => {
+      const instance = this.supervisor.get(completion.instanceId);
+      if (!instance) throw new AccompanyError('not_connected', `instance ${completion.instanceId} is not running`);
+      await instance.enqueueConversationTask({
+        accountId: completion.accountId,
+        conversation: completion.conversation,
+        sessionEpoch: completion.sessionEpoch
+      }, task);
+    };
+    const extractionChat: ExtractionChatPort = {
+      resolve: (accountId, conversation) => {
+        const resolution = this.providers.resolve(accountId, conversation, 'chat');
+        return {
+          enabled: resolution.enabled,
+          ...(resolution.providerId ? { providerId: resolution.providerId } : {}),
+          ...(resolution.modelId ? { modelId: resolution.modelId } : {})
+        };
+      },
+      chat: async (input) => {
+        const executed = await this.providers.chat(
+          input.accountId,
+          input.conversation,
+          { messages: input.messages },
+          input.signal,
+          undefined,
+          {},
+          input.isStillAllowed,
+          { fallback: false, retry: false }
+        );
+        return {
+          ...(executed.result.text !== undefined ? { text: executed.result.text } : {}),
+          ...(executed.result.toolCalls ? { toolCalls: executed.result.toolCalls } : {}),
+          used: executed.used
+        };
+      }
+    };
+    const extractionRunner = new MemoryExtractionRunner({
+      memories: this.#memories,
+      chat: extractionChat,
+      contextEpoch: (accountId, conversation) => this.#accountService.historyEpoch(accountId, conversation),
+      memoryGuard: async (accountId, conversation, contextEpoch) =>
+        (await this.#memories.runtimeSnapshot(accountId, conversation, contextEpoch)).guard,
+      enqueueCommit: enqueueOnConversation,
+      logger: extractionLogger
+    });
+    this.#extractionCoordinator = new ExtractionCoordinator({
+      memories: {
+        status: (conversation) => this.#memories.extractionStatus(conversation),
+        beginAttempt: (conversation, expectedScope, expectedGeneration, expectedThroughSeq, at) =>
+          this.#memories.beginExtractionAttempt(conversation, expectedScope, expectedGeneration, expectedThroughSeq, at),
+        recordFailure: (conversation, expectedScope, expectedGeneration, failure) =>
+          this.#memories.recordExtractionFailure(conversation, expectedScope, expectedGeneration, failure),
+        advance: (conversation, input) => this.#memories.advanceExtraction(conversation, input)
+      },
+      quota: this.#extractionQuota,
+      store: (accountId) => this.#messageStore(accountId),
+      contextEpoch: (accountId, conversation) => this.#accountService.historyEpoch(accountId, conversation),
+      runner: extractionRunner,
+      enqueue: enqueueOnConversation,
+      ...(options.now ? { now: options.now } : {}),
+      logger: extractionLogger
+    });
+    this.bus.on('memory:extraction-candidate', (completion) => this.#extractionCoordinator.notify(completion));
     this.#lifecycle = new RuntimeLifecycle({ logger: this.#logger.child('lifecycle') });
     this.#registerLifecycle();
   }
 
   #registerLifecycle(): void {
     const lifecycle = this.#lifecycle;
+    lifecycle.add('stop', 'memory-extraction', () => { this.#extractionCoordinator.close(); });
     lifecycle.add('stop', 'model-settings', () => this.#modelSettings.drain());
     lifecycle.add('stop', 'qq-connections', () => this.#connections.stop());
     lifecycle.add('stop', 'health-monitor', () => {
@@ -238,6 +337,7 @@ export class Core implements CoreView {
         });
       }
     });
+    lifecycle.add('drain', 'memory-extraction', () => this.#extractionCoordinator.drain());
     lifecycle.add('drain', 'instances', async () => {
       try {
         await withTimeout(
@@ -258,6 +358,8 @@ export class Core implements CoreView {
         this.#logger.warn('host dispose failed', { message: error instanceof Error ? error.message : String(error) });
       }
     });
+    lifecycle.add('dispose', 'extension-tools', () => this.extensionTools.close());
+    lifecycle.add('dispose', 'plugin-runtimes', () => this.#pluginRuntimes.close());
     lifecycle.add('dispose', 'jobs', async () => {
       try {
         await this.jobs.dispose();
@@ -268,6 +370,7 @@ export class Core implements CoreView {
     lifecycle.add('dispose', 'media-cleanup', async () => { await this.media.cleanup(); });
     lifecycle.add('dispose', 'media', () => this.media.dispose());
     lifecycle.add('dispose', 'config-v2', () => this.configV2.dispose());
+    lifecycle.add('dispose', 'memory-extraction-quota', () => this.#extractionQuota.dispose());
     lifecycle.add('dispose', 'injection-settings', () => this.#injectionSettings.dispose());
     lifecycle.add('dispose', 'account-displays', () => this.#accountDisplays.close());
     lifecycle.add('dispose', 'stores', async () => {
@@ -323,7 +426,11 @@ export class Core implements CoreView {
     let runtime: RuntimeAssembly | undefined;
     try {
       runtime = await assembleRuntime({ options, logger, hooks });
-      core = new Core(options, runtime);
+      const extractionQuota = await ExtractionQuotaStore.load(
+        path.join(path.resolve(options.dataRoot), 'state', 'memory-extraction-quota.json'),
+        options.now ? { now: options.now } : {}
+      );
+      core = new Core(options, runtime, extractionQuota);
       for (const spec of runtime.initialSpecs) core.supervisor.add(spec);
       if (runtime.slotStore && !runtime.slotStore.loaded) await runtime.slotStore.save(runtime.initialSpecs);
       core.metrics.set('instances.total', core.supervisor.list().length);
@@ -511,6 +618,73 @@ export class Core implements CoreView {
     return this.#artifacts.listPublic();
   }
 
+  listWorldbooks(query: unknown = {}): Promise<WorldbookList> {
+    return this.#runPublicWork(() => this.#worldbooks.list(query));
+  }
+
+  getWorldbook(id: string, revision: string): Promise<WorldbookResourceDetail> {
+    return this.#runPublicWork(() => this.#worldbooks.detail(id, revision));
+  }
+
+  saveWorldbook(raw: unknown): Promise<WorldbookSaveResult> {
+    return this.#runPublicWork(() => this.#worldbooks.save(raw));
+  }
+
+  previewWorldbookDraft(raw: unknown): ReturnType<WorldbookResourceService['previewDraft']> {
+    return this.#runPublicWork(() => this.#worldbooks.previewDraft(raw));
+  }
+
+  memorySettings(conversation: ConversationRef): Promise<MemoryStateView> {
+    return this.#runPublicWork(() => this.#memories.settings(conversation));
+  }
+
+  saveMemorySettings(conversation: ConversationRef, raw: unknown): Promise<MemoryStateView> {
+    return this.#runPublicWork(() => this.#memories.saveSettings(conversation, raw));
+  }
+
+  previewMemory(conversation: ConversationRef, raw: unknown): Promise<MemoryPreviewResult> {
+    return this.#runPublicWork(() => this.#memories.preview(conversation, raw));
+  }
+
+  listMemoryRecords(conversation: ConversationRef, query: unknown = {}): Promise<MemoryRecordPage> {
+    return this.#runPublicWork(() => this.#memories.listRecords(conversation, query));
+  }
+
+  getMemoryRecord(conversation: ConversationRef, id: string): Promise<MemoryRecordDetail> {
+    return this.#runPublicWork(() => this.#memories.getRecord(conversation, id));
+  }
+
+  createMemoryRecord(conversation: ConversationRef, raw: unknown): Promise<MemoryRecordMutation> {
+    return this.#runPublicWork(() => this.#memories.createRecord(conversation, raw));
+  }
+
+  updateMemoryRecord(conversation: ConversationRef, id: string, raw: unknown): Promise<MemoryRecordMutation> {
+    return this.#runPublicWork(() => this.#memories.updateRecord(conversation, id, raw));
+  }
+
+  deleteMemoryRecord(conversation: ConversationRef, id: string, raw: unknown): Promise<MemoryDeleteResult> {
+    return this.#runPublicWork(() => this.#memories.deleteRecord(conversation, id, raw));
+  }
+
+  clearMemoryRecords(conversation: ConversationRef, raw: unknown): Promise<MemoryStateView> {
+    return this.#runPublicWork(() => this.#memories.clear(conversation, raw));
+  }
+
+  memoryExtraction(conversation: ConversationRef): Promise<MemoryExtractionStatusView> {
+    return this.#runPublicWork(async () => ({
+      ...await this.#memories.extractionStatus(conversation),
+      ...this.#extractionCoordinator.status(conversation)
+    }));
+  }
+
+  activateMemoryExtraction(conversation: ConversationRef, raw: unknown): Promise<MemoryStateView> {
+    return this.#runPublicWork(() => this.#memories.activateExtraction(conversation, raw));
+  }
+
+  pauseMemoryExtraction(conversation: ConversationRef, raw: unknown): Promise<MemoryStateView> {
+    return this.#runPublicWork(() => this.#memories.pauseExtraction(conversation, raw));
+  }
+
   artifactCatalog(): Promise<Record<string, string>> {
     return this.#artifacts.readCatalog(this.#artifacts.publicRoot);
   }
@@ -545,6 +719,10 @@ export class Core implements CoreView {
 
   upsertProvider(raw: unknown, secret?: string, setting?: { capability: string; modelId: string }): Promise<ProviderDto> {
     return this.#runPublicWork(() => this.#modelSettings.upsertProvider(raw, secret, setting));
+  }
+
+  providerRemovalImpact(id: string): { providerId: string; exists: boolean; affectedAccounts: string[] } {
+    return this.#modelSettings.providerRemovalImpact(id);
   }
 
   deleteProvider(id: string): Promise<{ removed: boolean; affectedAccounts: string[] }> {
@@ -793,11 +971,26 @@ export class Core implements CoreView {
     return this.#runPublicWork(() => this.#accountService.setRoleBinding(conversation, roleCard));
   }
 
+  configureConversationWorldbook(conversation: ConversationRef, raw: unknown, expectedRevision: string, source?: unknown): ReturnType<AccountService['configureWorldbook']> {
+    return this.#runPublicWork(() => this.#accountService.configureWorldbook(conversation, raw, expectedRevision, source));
+  }
+
+  previewConversationWorldbook(conversation: ConversationRef, text: string): ReturnType<AccountService['previewWorldbook']> {
+    return this.#runPublicWork(() => this.#accountService.previewWorldbook(conversation, text));
+  }
+
   resolveConversationRoleBinding(
     accountId: string,
     conversation: ConversationRef
   ): Promise<ResolvedConversationRoleBinding | undefined> {
     return this.#accountService.resolveRoleBinding(accountId, conversation);
+  }
+
+  resolveConversationMemory(
+    accountId: string,
+    conversation: ConversationRef
+  ): Promise<ConversationMemoryCapture | undefined> {
+    return this.#conversationMemory.capture(accountId, conversation);
   }
 
   saveAccountProfile(
@@ -865,12 +1058,7 @@ export class Core implements CoreView {
       const profile = instance.currentProfile;
       if (!profile) continue;
       if (!instance.state.is('online', 'degraded')) continue;
-      const mode = this.policy.replyModeFor(bound, profile.plugins.length > 0);
-      // 只有当前宿主已经是插件模式时才无需替换；agent → plugins 或暂停态变化必须重新装载，
-      // 后者同时推进 hostEpoch，让暂停前在途插件的旧状态写入失效。
-      const currentHostMode = instance.status().agent?.mode;
-      const paused = this.policy.resolveAccount(bound).agentEnabled === false;
-      if (mode === 'plugins' && profile.plugins.length > 0 && currentHostMode === 'plugins' && !paused) continue;
+      // 宿主只有一种：配置或档案变化后统一重建，hostEpoch 前进让旧宿主在途状态失效。
       try {
         await instance.reloadProfile();
       } catch (error) {
@@ -963,10 +1151,21 @@ export class Core implements CoreView {
       metrics: this.metrics,
       runtimeKey: lease.key,
       claimAccount: (accountId) => this.#accountLeases.acquire(accountId, spec.id),
-      releaseAccount: (accountId) => this.#accountLeases.release(accountId, spec.id),
+      releaseAccount: (accountId) => {
+        this.#accountLeases.release(accountId, spec.id);
+        // 该账号最后一个实例释放后，插件 Worker 不再为它保留执行能力。
+        if (this.#accountLeases.ownerOf(accountId)) return;
+        this.#pluginRuntimes.close(accountId).catch((error: unknown) => {
+          this.#logger.warn('plugin runtime close after release failed', {
+            accountId,
+            message: error instanceof Error ? error.message : String(error)
+          });
+        });
+      },
       automaticReplyAllowed: (accountId, conversation) =>
         this.policy.resolve(accountId, conversation).agentEnabled,
       resolveConversationRole: (accountId, conversation) => this.resolveConversationRoleBinding(accountId, conversation),
+      resolveConversationMemory: (accountId, conversation) => this.resolveConversationMemory(accountId, conversation),
       configResolver: (scope) => this.config.resolve(scope),
       ...(this.#options.host ? { host: this.#options.host } : {}),
       ...(this.#options.now ? { now: this.#options.now } : {}),
@@ -975,18 +1174,9 @@ export class Core implements CoreView {
   }
 
   async #createDefaultHost(input: AgentHostFactoryInput): Promise<AgentHost | undefined> {
-    const hasPlugins = input.profile.plugins.length > 0;
-    const mode = this.policy.replyModeFor(input.accountId, hasPlugins);
-    if (mode === 'plugins' && hasPlugins) {
-      return createWorkerHost({
-        accountId: input.accountId,
-        profile: input.profile,
-        logger: input.logger,
-        historyLimit: this.#limits.maxHostHistory,
-        pluginTimeoutMs: this.#limits.pluginTimeoutMs
-      });
-    }
     if (!this.policy.hasBindings(input.accountId)) return undefined;
+    // 宿主代际重建时同步插件 Worker：新的 handshake 结果决定这一代能看到并执行哪些插件工具。
+    await this.#pluginRuntimes.sync(input.accountId);
     const configuredHistory = this.#options.agent?.maxHistoryMessages ?? 40;
     const maxHistoryMessages = Math.max(
       1,
@@ -1006,6 +1196,7 @@ export class Core implements CoreView {
       jobs: this.jobs,
       scheduler: this.agentScheduler,
       extensions: this.extensions,
+      tools: this.extensionTools,
       maxHistoryMessages,
       maxHistoryChars: this.#options.agent?.maxHistoryChars ?? 12_000,
       maxObservedMedia: this.#options.agent?.maxObservedMedia ?? 4,
@@ -1016,24 +1207,19 @@ export class Core implements CoreView {
     });
   }
 
-  #agentStatus(profile: ResolvedProfile): { mode: 'agent' | 'plugins' | 'custom'; configured: boolean } {
+  #agentStatus(profile: ResolvedProfile): { mode: 'agent' | 'custom'; configured: boolean } {
     if (this.#options.host || this.#options.hostFactory) return { mode: 'custom', configured: true };
-    const hasPlugins = profile.plugins.length > 0;
-    const mode = this.policy.replyModeFor(profile.accountId, hasPlugins);
-    if (mode === 'plugins') return { mode: 'plugins', configured: hasPlugins };
     return { mode: 'agent', configured: this.policy.hasBindings(profile.accountId) };
   }
 
   #profileFingerprint(profile: ResolvedProfile): string {
     const policy = this.policy.resolveAccount(profile.accountId);
-    const mode = this.policy.replyModeFor(profile.accountId, profile.plugins.length > 0);
     return crypto
       .createHash('sha1')
       .update(
         JSON.stringify({
           revision: profile.revision,
           config: this.configV2.fingerprint,
-          mode,
           policy
         })
       )
@@ -1047,6 +1233,11 @@ export class Core implements CoreView {
 
   #now(): number {
     return this.#options.now ? this.#options.now() : Date.now();
+  }
+
+  #messageStore(accountId: string): MessageStore {
+    const { dir, instance } = this.#locateAccount(accountId);
+    return this.#storeFor(instance?.spec, accountId, dir);
   }
 
   #storeFor(spec: NormalizedInstanceSpec | undefined, accountId: string, dirOverride?: string): MessageStore {

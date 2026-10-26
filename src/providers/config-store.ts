@@ -5,12 +5,15 @@ import { writeFileAtomic } from '../storage/atomic-write.js';
 import type { AccountPolicy, ProviderConfig, RuntimeConfigV2 } from './types.js';
 import {
   configFingerprint,
+  defaultAccountPolicy,
   emptyRuntimeConfig,
   parseAccountPolicy,
   parseProvider,
   parseRuntimeConfig
 } from './types.js';
+import { AccompanyError } from '../core/errors.js';
 import { ConfigError } from './errors.js';
+import { removeProviderFromConfig } from './provider-removal.js';
 
 export interface ConfigStoreOptions {
   filePath: string;
@@ -119,38 +122,13 @@ export class ConfigStore {
     });
   }
 
+  providerRemovalImpact(id: string): { providerId: string; exists: boolean; affectedAccounts: string[] } {
+    const result = removeProviderFromConfig(this.snapshot(), id);
+    return { providerId: id, exists: result.removed, affectedAccounts: result.affectedAccounts };
+  }
+
   async removeProvider(id: string): Promise<{ removed: boolean; affectedAccounts: string[] }> {
-    return this.#mutate((next) => {
-      const index = next.providers.findIndex((provider) => provider.id === id);
-      if (index < 0) return { removed: false, affectedAccounts: [] };
-      next.providers.splice(index, 1);
-      const affectedAccounts: string[] = [];
-      for (const [accountId, policy] of Object.entries(next.accountPolicies)) {
-        let changed = false;
-        const before = policy.allowedProviders.length;
-        policy.allowedProviders = policy.allowedProviders.filter((providerId) => providerId !== id);
-        if (policy.allowedProviders.length !== before) changed = true;
-        for (const scope of [policy, ...Object.values(policy.byKind), ...Object.values(policy.byConversation)]) {
-          if (!scope) continue;
-          for (const capability of Object.keys(scope.bindings ?? {})) {
-            const binding = scope.bindings?.[capability as keyof typeof scope.bindings];
-            if (!binding) continue;
-            if (binding.providerId === id) {
-              delete scope.bindings?.[capability as keyof typeof scope.bindings];
-              changed = true;
-              continue;
-            }
-            if (binding.fallback?.some((target) => target.providerId === id)) {
-              binding.fallback = binding.fallback.filter((target) => target.providerId !== id);
-              if (binding.fallback.length === 0) delete binding.fallback;
-              changed = true;
-            }
-          }
-        }
-        if (changed) affectedAccounts.push(accountId);
-      }
-      return { removed: true, affectedAccounts };
-    });
+    return this.#mutate(next => removeProviderFromConfig(next, id));
   }
 
   async setAccountPolicy(accountId: string, raw: unknown): Promise<AccountPolicy> {
@@ -166,6 +144,35 @@ export class ConfigStore {
       if (!next.accountPolicies[accountId]) return false;
       delete next.accountPolicies[accountId];
       return true;
+    });
+  }
+
+  /**
+   * CAS for one account policy subtree. `expectedVersion` is the store version observed by the
+   * caller; any intervening config write fails the update instead of overwriting it. `beforeCommit`
+   * runs inside the mutation queue so cross-file preconditions (for example the profile revision)
+   * cannot be satisfied by a stale read.
+   */
+  async updateAccountPolicy(
+    accountId: string,
+    expectedVersion: number,
+    apply: (current: AccountPolicy) => AccountPolicy,
+    beforeCommit?: () => Promise<void>
+  ): Promise<AccountPolicy> {
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) {
+      throw new ConfigError('expected config version must be a non-negative integer');
+    }
+    return this.#runMutation(async () => {
+      if (this.#version !== expectedVersion) {
+        throw new AccompanyError('extension_conflict', '扩展配置已被其他窗口修改，请刷新后重试。');
+      }
+      await beforeCommit?.();
+      const next = this.snapshot();
+      const current = next.accountPolicies[accountId] ?? defaultAccountPolicy();
+      const updated = parseAccountPolicy(apply(current), `accountPolicies.${accountId}`);
+      next.accountPolicies[accountId] = updated;
+      await this.#commit(next);
+      return updated;
     });
   }
 

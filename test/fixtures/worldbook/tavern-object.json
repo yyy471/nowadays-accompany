@@ -1,0 +1,8 @@
+{
+  "name": "对象编号独立书",
+  "entries": {
+    "10": { "keys": ["银杏"], "content": "编号10条目。", "enabled": true, "position": "after_char" },
+    "2": { "keys": ["花园"], "content": "编号2条目。", "enabled": true, "position": "after_char" },
+    "1": { "keys": ["门前"], "content": "编号1条目。", "enabled": true, "position": "before_char" }
+  }
+}

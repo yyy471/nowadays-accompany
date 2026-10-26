@@ -2,8 +2,10 @@ import { useRef, useState } from 'react';
 import { api } from '../api';
 import { errorMessage, usePoll } from '../hooks';
 import type { InjectionOperationResponse, InjectionProcessesResponse, InjectionResumeResponse, InjectionRuntimeResponse, SlotsResponse, SnowLumaProcess } from '../types';
-import { Button, Card, ConfirmButton, Empty, ErrorNote, Icon, StatePill, useConfirm } from '../ui';
+import { Button, Card, ConfirmButton, Empty, ErrorNote, Icon, LoadingNote, StatePill, useConfirm } from '../ui';
 import { AccountAvatar } from '../components/AccountAvatar';
+import { SnowLumaStatusTags } from '../components/SnowLumaStatusTags';
+import { connectionReadiness } from '../lib/connection-readiness';
 
 export function QqConnections({ data, error, refresh, onSettings }: {
   data?: SlotsResponse; error?: string; refresh: () => Promise<void>; onSettings?: () => void;
@@ -18,7 +20,9 @@ export function QqConnections({ data, error, refresh, onSettings }: {
   const status = runtime.data?.runtime;
   const instances = data?.slots ?? [];
   const resumable = data?.resumable ?? [];
-  const ready = Boolean(status?.running && status.compatible && status.passwordConfigured && status.autoLoadKnown && !status.autoLoadEnabled && !status.consentRequired);
+  const readiness = connectionReadiness(status);
+  const ready = readiness.ready;
+  const visibleBlockers = readiness.blockers.filter((blocker) => blocker.code !== 'not_running' && blocker.code !== 'status_unknown');
 
   async function run(key: string, action: () => Promise<void>) {
     if (busyRef.current) return;
@@ -47,7 +51,7 @@ export function QqConnections({ data, error, refresh, onSettings }: {
     const action = process.injected || process.connected ? 'listen' : 'inject-and-listen';
     void run(`connect-${process.pid}`, async () => {
       const operation = await operate(process, action);
-      setNotice(`${operation.result?.uin ? `QQ ${operation.result.uin}` : accountLabel(process)} 已开始监听，已按账号匹配本地数据。请为需要回复的群聊和私聊绑定角色卡。`);
+      setNotice(`${operation.result?.uin ? `QQ ${operation.result.uin}` : accountLabel(process)} 已开始监听，并已按账号匹配本地数据。请到“资料与角色”为需要回复的会话绑定角色卡。`);
     });
   }
 
@@ -98,26 +102,29 @@ export function QqConnections({ data, error, refresh, onSettings }: {
   return <div className="page-stack">
     <div className="connection-intro">
       <span className="connection-symbol"><Icon name="radio" size={25} /></span>
-      <div><h2>选择一个 QQ，开始陪伴</h2><p>打开并登录 QQ，在这里点击连接。账号识别、数据匹配和运行实例由应用管理。</p></div>
-      <Button icon="refresh" disabled={Boolean(busy)} onClick={() => void run('refresh', async () => {})}>刷新账号</Button>
+      <div><h2>选择一个 QQ，开始陪伴</h2><p>打开并登录 QQ，确认账号后再注入。应用只在你明确点击后注入和监听，不会自动连接。</p></div>
+      <Button icon="refresh" disabled={Boolean(busy)} busy={busy === 'refresh'} onClick={() => void run('refresh', async () => {})}>刷新状态</Button>
     </div>
     <div className="connection-service">
+      <SnowLumaStatusTags status={status} />
       <div className="connection-service-actions">
         {resumable.length > 0 && status?.running ? <Button size="sm" variant="ghost" icon="refresh" disabled={Boolean(busy)} busy={busy === 'resume'} onClick={resumeLastListening}>恢复上次监听</Button> : null}
         {onSettings ? <Button size="sm" variant="ghost" icon="settings" onClick={onSettings}>连接设置</Button> : <a href="#/settings">连接设置</a>}
       </div>
     </div>
     {!status?.running && !runtime.loading ? <div className="notice"><Icon name="folder" size={18}/><span>请先<a href="https://github.com/SnowLuma/SnowLuma/releases/tag/v1.14.22" target="_blank" rel="noreferrer">从 SnowLuma 官方发行页</a>获取 1.14.22 完整包并手动启动 SnowLuma，在官方界面完成初始化后返回这里刷新。应用不会下载或启动 SnowLuma；QQ 仍由你启动，注入与监听需要你明确点击。</span></div> : null}
-    {status?.consentRequired ? <div className="notice"><Icon name="shield" size={18}/><span>SnowLuma 尚未获得用户协议与隐私政策同意。请先在 SnowLuma 自己的界面完成确认，再回到这里刷新；应用不会代你同意。</span></div> : null}
-    {status?.autoLoadEnabled ? <div className="notice"><Icon name="warning" size={18}/><span>SnowLuma 的自动加载已开启。为避免重复注入，请先在 SnowLuma 配置中关闭自动加载，再从应用内连接。</span></div> : null}
+    {visibleBlockers.length ? <div className="connection-blockers" role="status">
+      <strong>连接前还需要</strong>
+      <ul>{visibleBlockers.map((blocker) => <li key={blocker.code}><span>{blocker.title}</span><small>{blocker.detail}</small></li>)}</ul>
+    </div> : null}
     {status?.error ? <ErrorNote message={status.error} /> : null}
     {runtime.error ? <ErrorNote message={runtime.error} onRetry={() => void runtime.refresh()} /> : null}
-    {processes.error && status?.configured ? <ErrorNote message={`暂时无法读取 QQ 进程：${processes.error}`} onRetry={() => void processes.refresh()} /> : null}
+    {processes.error ? <ErrorNote message={`暂时无法读取 QQ 进程：${processes.error}`} onRetry={() => void processes.refresh()} /> : null}
     {error ? <ErrorNote message={error} /> : null}
     {failure ? <ErrorNote message={failure} /> : null}
     {notice ? <div className="notice notice-ok" role="status"><Icon name="check" size={16}/><span>{notice}</span></div> : null}
-    <Card title="可连接的 QQ">
-      {processes.loading && !processes.data ? <p className="muted" role="status">正在检测 QQ 进程…</p> : !(processes.data?.processes.length) ? <Empty icon="user" title={status?.running ? '暂未发现 QQ 进程' : '等待 SnowLuma 管理服务'} description={status?.running ? '请先打开并登录 QQ，然后刷新进程列表。进程发现不会自动注入。' : '手动启动 SnowLuma 官方服务后，返回这里刷新以检测 QQ 进程。'} /> : <div className="connection-grid">
+    <Card title="QQ 进程">
+      {processes.loading && !processes.data ? <LoadingNote label="正在检测 QQ 进程…" /> : processes.error && !processes.data ? <p className="muted">进程列表暂不可用，请重试。</p> : !(processes.data?.processes.length) ? <Empty icon="user" title={status?.running ? '暂未发现 QQ 进程' : '等待 SnowLuma 管理服务'} description={status?.running ? '请先打开并登录 QQ，然后刷新状态。进程发现不会自动注入。' : '手动启动 SnowLuma 官方服务后，返回这里刷新以检测 QQ 进程。'} /> : <div className="connection-grid">
         {processes.data.processes.map((process, index) => {
           const instance = instances.find((item) => item.id === process.instanceId && !['stopped', 'failed'].includes(item.state));
           const injected = process.injected || process.connected;
@@ -129,11 +136,11 @@ export function QqConnections({ data, error, refresh, onSettings }: {
               <div><h3>{nickname || (accountId ? `QQ ${accountId}` : `待识别的 QQ ${index + 1}`)}</h3><span className="muted">{accountId ? `QQ ${accountId}` : '暂未读取到账号信息'}</span></div>
               {instance ? <StatePill state={instance.state}/> : <Button variant="primary" icon="play" disabled={Boolean(busy) || !ready} busy={busy === `connect-${process.pid}`} onClick={() => connect(process)}>{injected ? '开始监听' : '注入并监听'}</Button>}
             </div>
-            {instance ? <p className="muted">正在管理此账号的连接。</p> : !accountId ? <p className="muted">请确认 QQ 已登录。连接后将重新识别账号，不会按未知账号创建资料。</p> : null}
+            {instance ? <p className="muted">正在管理此账号的连接。</p> : !accountId ? <p className="muted">请确认 QQ 已登录。连接后会重新识别账号，不会按未知账号创建资料。</p> : !ready ? <p className="muted">请先完成上方“连接前还需要”的条件，再注入并监听。</p> : null}
             {process.error ? <p className="inline-error">{process.error}</p> : null}
             {instance || injected ? <div className="qq-process-actions">
               {instance ? <Button icon="stop" disabled={Boolean(busy)} busy={busy === `stop-${instance.id}`} onClick={() => stop(instance.id)}>停止监听</Button> : null}
-              {injected ? <Button variant="ghost" icon="refresh" disabled={Boolean(busy)} busy={busy === `refresh-${process.pid}`} onClick={() => refreshConnection(process)}>刷新状态</Button> : null}
+              {injected ? <Button variant="ghost" icon="refresh" disabled={Boolean(busy)} busy={busy === `refresh-${process.pid}`} onClick={() => refreshConnection(process)}>同步连接</Button> : null}
               {process.injected ? <ConfirmButton variant="ghost" icon="close" disabled={Boolean(busy)} busy={busy === `unload-${process.pid}`} onClick={() => void unload(process)}>卸载注入</ConfirmButton> : null}
             </div> : null}
             <details className="qq-process-diagnostics"><summary>诊断详情</summary><p className="qq-process-path">PID {process.pid}<br/>{process.path ?? process.name ?? 'QQ 客户端'}</p></details>
@@ -141,7 +148,7 @@ export function QqConnections({ data, error, refresh, onSettings }: {
         })}
       </div>}
     </Card>
-    {instances.length ? <details className="connection-details"><summary>连接详情 · {instances.length} 个运行实例</summary><div className="connection-detail-list">{instances.map((instance) => <div className="connection-detail" key={instance.id}><span><strong>{instance.accountId ? `QQ ${instance.accountId}` : instance.id}</strong><small className="muted">{instance.id} · {instance.backend}</small></span><StatePill state={instance.state}/><Button size="sm" disabled={Boolean(busy)} onClick={() => stop(instance.id)}>停止 / 释放</Button></div>)}</div></details> : null}
+    {instances.length ? <details className="connection-details"><summary>运行实例 · {instances.length} 个</summary><div className="connection-detail-list">{instances.map((instance) => <div className="connection-detail" key={instance.id}><span><strong>{instance.accountId ? `QQ ${instance.accountId}` : instance.id}</strong><small className="muted">{instance.id} · {instance.backend}</small></span><StatePill state={instance.state}/><Button size="sm" disabled={Boolean(busy)} onClick={() => stop(instance.id)}>停止监听</Button></div>)}</div></details> : null}
   </div>;
 }
 

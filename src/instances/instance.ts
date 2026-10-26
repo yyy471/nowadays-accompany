@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import {
   AccompanyError,
   BackendError,
@@ -23,11 +24,12 @@ import type { InboundEvent, InboundMessageEvent } from '../channels/events.js';
 import type { MessageStore, StoredMessage } from '../storage/contract.js';
 import { summarizeProfile, type ResolvedProfile } from '../artifacts/types.js';
 import type { ResolvedConversationRoleBinding } from '../profiles/role-bindings.js';
-import type { AgentHost, AgentMessageContext, AgentPluginState, AgentSessionContext } from '../host/contract.js';
+import type { MemorySnapshot } from '../memory/types.js';
+import type { AgentHost, AgentMessageContext, AgentPluginState, AgentSessionContext, AgentTurnOutcome } from '../host/contract.js';
 import type { PluginStateStore } from '../host/state.js';
 import { LoopbackGuard } from '../routing/loopback.js';
 import { conversationKey, type ConversationRef } from '../routing/identity.js';
-import type { MessageSegment, OutboundMessage } from '../routing/message.js';
+import { messageText, type MessageSegment, type OutboundMessage } from '../routing/message.js';
 import type { InstanceSpec, InstanceStatus, NormalizedInstanceSpec } from './spec.js';
 import { ConversationQueues } from '../work/conversation-queues.js';
 import { TokenBucket } from '../work/rate-limiter.js';
@@ -54,6 +56,12 @@ export interface SendResult {
   duplicate?: boolean;
 }
 
+/** One captured role/worldbook context plus the memory read from its history epoch. */
+export interface InstanceMemoryCapture {
+  roleBinding: ResolvedConversationRoleBinding;
+  memory: MemorySnapshot;
+}
+
 export interface QqInstanceOptions {
   spec: NormalizedInstanceSpec;
   backend: InjectionBackend;
@@ -72,6 +80,8 @@ export interface QqInstanceOptions {
   automaticReplyAllowed?: (accountId: string, conversation: ConversationRef) => boolean | Promise<boolean>;
   /** Resolves an explicit per-conversation role. Core-backed instances fail closed when it is absent. */
   resolveConversationRole?: (accountId: string, conversation: ConversationRef) => Promise<ResolvedConversationRoleBinding | undefined>;
+  /** Core-backed role + memory capture; preferred over resolveConversationRole when present. */
+  resolveConversationMemory?: (accountId: string, conversation: ConversationRef) => Promise<InstanceMemoryCapture | undefined>;
   /** 按账号组装宿主；与 profile 一起用于热部署和每账号隔离。 */
   createHost?: (input: {
     instanceId: string;
@@ -86,7 +96,7 @@ export interface QqInstanceOptions {
   /** 行为配置指纹：provider/policy 改变时由 Core 注入；默认使用 profile.revision。 */
   profileFingerprint?: (profile: ResolvedProfile) => string;
   /** 状态页展示的回复者与配置可用性。 */
-  agentStatus?: (profile: ResolvedProfile) => { mode: 'agent' | 'plugins' | 'custom'; configured: boolean };
+  agentStatus?: (profile: ResolvedProfile) => { mode: 'agent' | 'custom'; configured: boolean };
   /** 角色卡/插件档案解析；不设置时不做 profile 门禁（直接构造场景）。 */
   resolveProfile?: (accountId: string) => Promise<ResolvedProfile>;
   stateFor?: (accountId: string) => PluginStateStore;
@@ -138,6 +148,7 @@ export class QqInstance {
   readonly #createHost?: QqInstanceOptions['createHost'];
   readonly #automaticReplyAllowed?: QqInstanceOptions['automaticReplyAllowed'];
   readonly #resolveConversationRole?: QqInstanceOptions['resolveConversationRole'];
+  readonly #resolveConversationMemory?: QqInstanceOptions['resolveConversationMemory'];
   readonly #fingerprintFor?: QqInstanceOptions['profileFingerprint'];
   readonly #agentStatusFor?: QqInstanceOptions['agentStatus'];
   readonly #resolveProfile?: QqInstanceOptions['resolveProfile'];
@@ -178,7 +189,7 @@ export class QqInstance {
   #sessionEpoch = 0;
   #hostEpoch = 0;
   #profileFingerprint: string | undefined;
-  #agentStatus: { mode: 'agent' | 'plugins' | 'custom'; configured: boolean } | undefined;
+  #agentStatus: { mode: 'agent' | 'custom'; configured: boolean } | undefined;
 
   constructor(options: QqInstanceOptions) {
     this.spec = options.spec;
@@ -195,6 +206,7 @@ export class QqInstance {
     this.#createHost = options.createHost;
     this.#automaticReplyAllowed = options.automaticReplyAllowed;
     this.#resolveConversationRole = options.resolveConversationRole;
+    this.#resolveConversationMemory = options.resolveConversationMemory;
     this.#fingerprintFor = options.profileFingerprint;
     this.#agentStatusFor = options.agentStatus;
     this.#resolveProfile = options.resolveProfile;
@@ -330,11 +342,33 @@ export class QqInstance {
     return this.#send(conversation, message, options);
   }
 
+  /**
+   * Runs a follow-up on the conversation queue that this session already owns.
+   * Refuses sessions that were replaced, stopped, or never owned the conversation.
+   */
+  async enqueueConversationTask(
+    input: { accountId: string; conversation: ConversationRef; sessionEpoch: number },
+    task: () => Promise<void>
+  ): Promise<void> {
+    const account = this.#accountId;
+    if (!account || input.accountId !== account || input.conversation.accountId !== account) {
+      throw new IsolationError(`instance ${this.id}: conversation does not belong to ${account ?? 'unknown'}`);
+    }
+    const scope = this.#scope;
+    if (!scope || input.sessionEpoch !== this.#sessionEpoch) {
+      throw new AccompanyError('session_teardown', `instance ${this.id}: session ${input.sessionEpoch} is no longer active`);
+    }
+    await this.#enqueueConversation(input.conversation, task, this.#generation, this.#sessionEpoch, scope.signal);
+  }
+
   async #send(
     conversation: ConversationRef,
     message: OutboundMessage,
     options: SendOptions = {},
-    contextEpoch?: string
+    contextEpoch?: string,
+    historyEpoch?: string,
+    memoryGuard?: string,
+    currentGuard?: () => boolean | Promise<boolean>
   ): Promise<SendResult> {
     if (this.state.is('stopped', 'failed')) {
       throw new AccompanyError('not_connected', `instance ${this.id} is not running`);
@@ -344,6 +378,9 @@ export class QqInstance {
     if (!account || !store) throw new IsolationError(`instance ${this.id}: account unknown, refusing to send`);
     if (conversation.accountId !== account) {
       throw new IsolationError(`instance ${this.id} owns account ${account}, refusing to send as ${conversation.accountId}`);
+    }
+    if (contextEpoch && currentGuard && !(await currentGuard())) {
+      throw new AccompanyError('extension_guard_changed', 'effective extension snapshot changed before send');
     }
     this.#assertMessageSize(message);
     const channel = this.#channel;
@@ -371,8 +408,11 @@ export class QqInstance {
       if (!activeChannel || !activeChannel.isConnected()) {
         throw new AccompanyError('not_connected', `instance ${this.id} is not connected`);
       }
-      if (contextEpoch && !(await this.#automaticAllowed(account, conversation, contextEpoch))) {
+      if (contextEpoch && !(await this.#automaticAllowed(account, conversation, contextEpoch, memoryGuard))) {
         throw new IsolationError(`instance ${this.id}: role binding changed before queued delivery`);
+      }
+      if (contextEpoch && currentGuard && !(await currentGuard())) {
+        throw new AccompanyError('extension_guard_changed', 'effective extension snapshot changed before queued delivery');
       }
       const result = await activeChannel.send(conversation, message);
       const now = this.#now();
@@ -382,7 +422,7 @@ export class QqInstance {
           id: this.#recordId(),
           at: now,
           direction: 'out',
-          ...(contextEpoch ? { contextEpoch } : {}),
+          ...(historyEpoch ?? contextEpoch ? { contextEpoch: historyEpoch ?? contextEpoch } : {}),
           segments: compactSegmentsForStorage(message.segments),
           ...(result.messageId ? { messageId: result.messageId } : {}),
           meta: {
@@ -563,8 +603,16 @@ export class QqInstance {
     }
     if (generation !== this.#generation || this.#scope?.aborted || this.state.is('stopped', 'failed')) return;
     let roleBinding: ResolvedConversationRoleBinding | undefined;
+    let memorySnapshot: MemorySnapshot | undefined;
     try {
-      roleBinding = await this.#resolveConversationRole?.(conversation.accountId, conversation);
+      if (this.#resolveConversationMemory) {
+        const captured = await this.#resolveConversationMemory(conversation.accountId, conversation);
+        roleBinding = captured?.roleBinding;
+        memorySnapshot = captured?.memory;
+      } else {
+        roleBinding = await this.#resolveConversationRole?.(conversation.accountId, conversation);
+      }
+      if (roleBinding?.worldbookUnavailable) this.#reportError('worldbook_unavailable', roleBinding.effectiveWorldbook?.error ?? '世界书不可用，请重新选择版本或关闭。', true);
     } catch (error) {
       this.#logger.warn('conversation role binding lookup failed; automatic reply suppressed', {
         accountId: conversation.accountId,
@@ -579,7 +627,7 @@ export class QqInstance {
         id: this.#recordId(),
         at: event.at,
         direction: 'in',
-        ...(roleBinding ? { contextEpoch: roleBinding.revision } : {}),
+        ...(roleBinding ? { contextEpoch: roleBinding.contextEpoch ?? roleBinding.revision } : {}),
         senderId: event.senderId,
         ...(event.messageId ? { messageId: event.messageId } : {}),
         segments: event.segments
@@ -601,7 +649,7 @@ export class QqInstance {
       at: this.#now(),
       ...(seq !== undefined ? { seq } : {})
     });
-    await this.#dispatchHost(conversation, event, seq, roleBinding);
+    await this.#dispatchHost(conversation, event, seq, roleBinding, memorySnapshot);
     this.#gauge('ingress.pending', this.#ingress.pending);
   }
 
@@ -609,7 +657,8 @@ export class QqInstance {
     conversation: ConversationRef,
     event: InboundMessageEvent,
     seq?: number,
-    capturedRoleBinding?: ResolvedConversationRoleBinding
+    capturedRoleBinding?: ResolvedConversationRoleBinding,
+    capturedMemory?: MemorySnapshot
   ): Promise<void> {
     const entry = this.#hostEntry;
     const scope = this.#scope;
@@ -617,17 +666,32 @@ export class QqInstance {
     const account = this.#accountId ?? this.spec.accountId;
     if (!account) return;
     const roleBinding = capturedRoleBinding;
-    if (this.#resolveConversationRole && !roleBinding) {
+    if ((this.#resolveConversationRole || this.#resolveConversationMemory) && !roleBinding) {
       this.#inc('auto_reply.suppressed');
       return;
     }
-    if (!(await this.#automaticAllowed(account, conversation, roleBinding?.revision))) {
+    if (this.#resolveConversationMemory && (!capturedMemory || capturedMemory.state !== 'ready')) {
+      this.#inc('auto_reply.suppressed');
+      return;
+    }
+    if (!(await this.#automaticAllowed(account, conversation, roleBinding?.revision, capturedMemory?.guard))) {
       this.#inc('auto_reply.suppressed');
       return;
     }
     const generation = this.#generation;
     const sessionEpoch = this.#sessionEpoch;
     const turnId = `turn-${this.#recordId()}`;
+    const invocationMessageId = event.messageId
+      ? `msg:${crypto.createHash('sha256').update(event.messageId).digest('hex').slice(0, 40)}`
+      : seq !== undefined ? `seq:${seq}` : undefined;
+    let extractable = false;
+    let extensionGuard: () => boolean | Promise<boolean> = () => true;
+    let afterTurnHandler: ((outcome: AgentTurnOutcome) => void | Promise<void>) | undefined;
+    let turnOutcome: AgentTurnOutcome = { outcome: 'suppressed' };
+    const isTurnCurrent = async (): Promise<boolean> => {
+      if (!(await this.#automaticAllowed(account, conversation, roleBinding?.revision, capturedMemory?.guard))) return false;
+      try { return await extensionGuard(); } catch { return false; }
+    };
 
     entry.active += 1;
     const timeoutError = new AccompanyError('host_timeout', `host timed out after ${this.#limits.hostTimeoutMs}ms`);
@@ -645,14 +709,24 @@ export class QqInstance {
               : entry.profile
           }
         : {}),
-      ...(roleBinding ? { roleBinding: { revision: roleBinding.revision, card: roleBinding.card } } : {}),
+      ...(roleBinding ? { roleBinding: { revision: roleBinding.revision,
+        ...(roleBinding.contextEpoch ? { contextEpoch: roleBinding.contextEpoch } : {}),
+        card: roleBinding.card,
+        ...(roleBinding.worldbookSnapshot ? { worldbookSnapshot: roleBinding.worldbookSnapshot } : {}),
+        ...(roleBinding.worldbook ? { worldbook: roleBinding.worldbook } : {}) } } : {}),
+      ...(capturedMemory ? { memory: capturedMemory } : {}),
       conversation,
       voiceDeliverySupport: this.#channel?.voiceDeliverySupport?.() ?? 'unknown',
       message: event,
       turnId,
+      ...(invocationMessageId ? { invocationMessageId } : {}),
       ...(seq !== undefined ? { sequence: seq } : {}),
       sessionSignal: scope.signal,
-      isRoleBindingCurrent: () => this.#automaticAllowed(account, conversation, roleBinding?.revision),
+      isRoleBindingCurrent: () => this.#automaticAllowed(account, conversation, roleBinding?.revision, capturedMemory?.guard),
+      isTurnCurrent,
+      setExtensionGuard: (guard) => { extensionGuard = guard; },
+      setAfterTurnHandler: (handler) => { afterTurnHandler = handler; },
+      markExtractable: () => { extractable = true; },
       sessionEpoch: entry.context.sessionEpoch,
       hostEpoch: entry.epoch,
       ...(entry.fingerprint ? { profileFingerprint: entry.fingerprint } : {}),
@@ -662,17 +736,18 @@ export class QqInstance {
         if (signal.aborted) {
           throw signal.reason instanceof Error ? signal.reason : timeoutError;
         }
-        if (!(await this.#automaticAllowed(account, conversation, roleBinding?.revision))) {
+        if (!(await isTurnCurrent())) {
           this.#inc('auto_reply.suppressed');
           return Promise.resolve({ duplicate: true });
         }
-        return this.#send(conversation, message, options, roleBinding?.revision);
+        return this.#send(conversation, message, options, roleBinding?.revision, roleBinding?.contextEpoch, capturedMemory?.guard, isTurnCurrent);
       },
       deliver: (message, options) =>
-        this.#deliver(conversation, message, options, generation, sessionEpoch, roleBinding?.revision),
+        this.#deliver(conversation, message, options, generation, sessionEpoch, roleBinding?.revision, roleBinding?.contextEpoch,
+          capturedMemory?.guard, isTurnCurrent),
       enqueueConversation: (task) => this.#enqueueConversation(conversation, task, generation, sessionEpoch, scope.signal),
       resolveConfig: () => this.#resolveConfig(conversation),
-      history: (options) => this.#readHistory(conversation, options, roleBinding?.revision),
+      history: (options) => this.#readHistory(conversation, options, roleBinding?.contextEpoch ?? roleBinding?.revision),
       state: (pluginId) =>
         this.#stateAccessor(pluginId, {
           revision: entry.profile?.revision,
@@ -692,21 +767,55 @@ export class QqInstance {
       const reply = await Promise.race([Promise.resolve(entry.host.onMessage(context, event)), aborted]);
       if (!reply) return;
       if (scope.aborted || signal.aborted) return;
-      if (!(await this.#automaticAllowed(account, conversation, roleBinding?.revision))) {
+      if (!(await isTurnCurrent())) {
         this.#inc('auto_reply.suppressed');
         return;
       }
       const key = event.messageId ? `reply:${event.messageId}` : seq !== undefined ? `reply:${seq}` : undefined;
-      await this.#send(conversation, reply, {
+      const sent = await this.#send(conversation, reply, {
         ...(key ? { idempotencyKey: key, operationId: key } : {})
-      }, roleBinding?.revision);
+      }, roleBinding?.revision, roleBinding?.contextEpoch, capturedMemory?.guard, isTurnCurrent);
+      turnOutcome = sent.duplicate
+        ? { outcome: 'suppressed' }
+        : { outcome: 'sent', ...(messageText(reply.segments) ? { replyText: messageText(reply.segments) } : {}) };
+      const contextEpoch = roleBinding?.contextEpoch ?? roleBinding?.revision;
+      if (extractable && sent.seq !== undefined && !sent.duplicate && seq !== undefined && contextEpoch && capturedMemory) {
+        this.#bus.emit('memory:extraction-candidate', {
+          instanceId: this.id,
+          accountId: account,
+          conversation,
+          contextEpoch,
+          turnId,
+          inboundSeq: seq,
+          outboundSeq: sent.seq,
+          ...(event.messageId ? { inboundMessageId: event.messageId } : {}),
+          sessionEpoch,
+          memoryGuard: capturedMemory.guard,
+          at: this.#now()
+        });
+      }
     } catch (error) {
+      const errorCode = error instanceof AccompanyError ? error.code : 'send_failed';
+      const suppressed = error instanceof IsolationError
+        || errorCode === 'auto_reply_paused'
+        || errorCode === 'extension_guard_changed';
+      turnOutcome = suppressed ? { outcome: 'suppressed' } : { outcome: 'failed', errorCode };
       const code = error instanceof AccompanyError && error.code === 'host_timeout' ? 'host_timeout' : 'host_failed';
       this.#reportError(code, error, false);
       this.#inc('host.failed');
     } finally {
       clearTimeout(timer);
       if (onAbort) signal.removeEventListener('abort', onAbort);
+      if (afterTurnHandler) {
+        try {
+          await afterTurnHandler(turnOutcome);
+        } catch (error) {
+          this.#logger.warn('agent afterTurn callback failed', {
+            conversation,
+            message: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
       entry.active = Math.max(0, entry.active - 1);
     }
   }
@@ -717,7 +826,10 @@ export class QqInstance {
     options: SendOptions | undefined,
     generation: number,
     sessionEpoch: number,
-    roleBindingRevision?: string
+    roleBindingRevision?: string,
+    historyEpoch?: string,
+    memoryGuard?: string,
+    currentGuard?: () => boolean | Promise<boolean>
   ): Promise<SendResult> {
     if (
       generation !== this.#generation ||
@@ -733,23 +845,37 @@ export class QqInstance {
     if (!account || conversation.accountId !== account) {
       throw new IsolationError(`instance ${this.id}: delivery conversation does not belong to ${account ?? 'unknown'}`);
     }
-    if (!(await this.#automaticAllowed(account, conversation, roleBindingRevision))) {
+    if (!(await this.#automaticAllowed(account, conversation, roleBindingRevision, memoryGuard))) {
       this.#inc('auto_reply.suppressed');
       throw new AccompanyError('auto_reply_paused', 'automatic replies are paused in this scope');
     }
-    return this.#send(conversation, message, options, roleBindingRevision);
+    if (currentGuard && !(await currentGuard())) {
+      this.#inc('auto_reply.suppressed');
+      throw new AccompanyError('extension_guard_changed', 'effective extension snapshot changed before delivery');
+    }
+    return this.#send(conversation, message, options, roleBindingRevision, historyEpoch, memoryGuard, currentGuard);
   }
 
   async #automaticAllowed(
     accountId: string,
     conversation: ConversationRef,
-    expectedRoleRevision?: string
+    expectedRoleRevision?: string,
+    expectedMemoryGuard?: string
   ): Promise<boolean> {
     try {
       if (this.#automaticReplyAllowed && !(await this.#automaticReplyAllowed(accountId, conversation))) return false;
+      if (this.#resolveConversationMemory) {
+        const current = await this.#resolveConversationMemory(accountId, conversation);
+        if (!current || current.roleBinding.worldbookUnavailable) return false;
+        if (expectedRoleRevision !== undefined && current.roleBinding.revision !== expectedRoleRevision) return false;
+        const memory = current.memory;
+        if (memory.state !== 'ready') return false;
+        if (expectedMemoryGuard !== undefined && memory.guard !== expectedMemoryGuard) return false;
+        return true;
+      }
       if (!this.#resolveConversationRole) return true;
       const current = await this.#resolveConversationRole(accountId, conversation);
-      return Boolean(current && (expectedRoleRevision === undefined || current.revision === expectedRoleRevision));
+      return Boolean(current && !current.worldbookUnavailable && (expectedRoleRevision === undefined || current.revision === expectedRoleRevision));
     } catch (error) {
       this.#logger.warn('automatic reply policy check failed; failing closed', {
         accountId,
@@ -1124,7 +1250,7 @@ export class QqInstance {
     this.#hostEpoch = epoch;
     const fingerprint = 'legacy-v1';
     this.#profileFingerprint = fingerprint;
-    this.#agentStatus = { mode: 'plugins', configured: true };
+    this.#agentStatus = { mode: 'custom', configured: true };
     const entry: HostEntry = {
       host: this.#legacyHost,
       owned: false,

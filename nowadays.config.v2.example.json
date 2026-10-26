@@ -54,7 +54,6 @@
       "allowedProviders": ["local-openai", "cloud-video"],
       "crossProviderFallback": false,
       "media": { "allowCloudUpload": false },
-      "replyMode": "auto",
       "skills": { "disabled": ["concise-replies"] },
       "bindings": {
         "chat": { "providerId": "local-openai", "modelId": "local-chat" },

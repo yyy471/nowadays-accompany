@@ -5,7 +5,7 @@ import type { Logger } from '../core/logger.js';
 import type { ConversationRef } from '../routing/identity.js';
 import { conversationKey, safePathSegment } from '../routing/identity.js';
 import { writeFileAtomic } from './atomic-write.js';
-import type { AppendResult, MessageStore, ReadOptions, StoredMessage } from './contract.js';
+import type { AppendResult, MessageStore, ReadOptions, ReadRangeOptions, ReadRangeResult, StoredMessage } from './contract.js';
 
 export interface JsonlStoreOptions {
   root: string;
@@ -132,6 +132,55 @@ export class JsonlStore implements MessageStore {
     const records = chunks.flat();
     if (options.limit !== undefined && options.limit >= 0) return records.slice(-options.limit);
     return records;
+  }
+
+  async lastSeq(conversation: ConversationRef): Promise<number> {
+    const state = this.#stateFor(conversation);
+    await this.#ensureInit(state);
+    await this.#drain(state);
+    // A failed flush can leave an empty newest segment; only persisted entries count.
+    for (let index = state.segments.length - 1; index >= 0; index -= 1) {
+      const entry = state.segments[index]?.entries.at(-1);
+      if (entry) return entry.seq;
+    }
+    return 0;
+  }
+
+  /**
+   * Forward, bounded scan. It reads whole segments (the store's natural page) but never loads
+   * the full conversation; callers advance by scannedThroughSeq until exhausted.
+   */
+  async readRange(conversation: ConversationRef, options: ReadRangeOptions): Promise<ReadRangeResult> {
+    const state = this.#stateFor(conversation);
+    await this.#ensureInit(state);
+    await this.#drain(state);
+    const limit = Math.max(1, Math.floor(options.limit));
+    const records: StoredMessage[] = [];
+    if (options.throughSeq <= options.afterSeq) {
+      return { records, scannedThroughSeq: options.afterSeq, exhausted: true };
+    }
+    let scanned = options.afterSeq;
+    // Pruning can shift the live segment array while a segment read is awaited; iterate a snapshot
+    // so a removed oldest segment cannot cause the next surviving segment to be skipped.
+    for (const segment of [...state.segments]) {
+      const last = segment.entries.at(-1);
+      if (!last || last.seq <= scanned) continue;
+      const first = segment.entries[0];
+      if (first && first.seq > options.throughSeq) {
+        return { records, scannedThroughSeq: options.throughSeq, exhausted: true };
+      }
+      for (const record of await this.#readSegment(segment)) {
+        const seq = record.seq;
+        if (seq === undefined || seq <= scanned) continue;
+        if (seq > options.throughSeq) {
+          return { records, scannedThroughSeq: options.throughSeq, exhausted: true };
+        }
+        records.push(record);
+        scanned = seq;
+        if (records.length >= limit) return { records, scannedThroughSeq: scanned, exhausted: false };
+      }
+    }
+    return { records, scannedThroughSeq: options.throughSeq, exhausted: true };
   }
 
   async listConversations(accountId?: string): Promise<ConversationRef[]> {

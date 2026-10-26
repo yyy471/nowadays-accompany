@@ -13,6 +13,10 @@ import { InstanceSupervisor } from '../instances/supervisor.js';
 import type { NormalizedInstanceSpec } from '../instances/spec.js';
 import type { QqInstance } from '../instances/instance.js';
 import { ExtensionRegistry, SkillRuntime } from '../extensions/registry.js';
+import { ExtensionPolicyService } from '../application/extensions/extension-policy-service.js';
+import { ExtensionToolService } from '../application/extensions/extension-tool-service.js';
+import { PluginRuntimeService } from '../application/extensions/plugin-runtime-service.js';
+import { defaultAccountPolicy } from '../providers/types.js';
 import { registerBuiltInAgentTools } from '../agent/engine.js';
 import { TurnScheduler } from '../agent/scheduler.js';
 import { FakeProviderAdapter } from '../providers/adapters/fake.js';
@@ -96,6 +100,9 @@ export interface RuntimeAssembly {
   readonly snowLumaRuntime: SnowLumaRuntimeController;
   readonly qqAvatars: QqAvatarCache;
   readonly extensions: ExtensionRegistry;
+  readonly extensionPolicy: ExtensionPolicyService;
+  readonly extensionTools: ExtensionToolService;
+  readonly pluginRuntimes: PluginRuntimeService;
   readonly policy: PolicyService;
   readonly agentScheduler: TurnScheduler;
   readonly media: MediaService;
@@ -325,6 +332,30 @@ export async function assembleRuntime(input: AssembleRuntimeInput): Promise<Runt
       }
     });
 
+    const accountDirOf = (accountId: string) => accountService.locate(accountId).dir;
+    const pluginRuntimes = new PluginRuntimeService({
+      accountDir: accountDirOf,
+      profiles: (accountId) => profiles.resolve(accountDirOf(accountId), accountId),
+      accountPolicy: (accountId) => configV2!.snapshot().accountPolicies[accountId] ?? defaultAccountPolicy(),
+      logger: logger.child('plugin-runtime')
+    });
+    const extensionPolicy = new ExtensionPolicyService({
+      config: configV2,
+      registry: extensions,
+      profiles: (accountId) => profiles.resolve(accountDirOf(accountId), accountId),
+      readyPlugins: (accountId) => pluginRuntimes.readyPlugins(accountId),
+      readyTools: (accountId) => pluginRuntimes.readyTools(accountId)
+    });
+    const extensionTools = new ExtensionToolService({
+      policy: extensionPolicy,
+      accountDir: accountDirOf,
+      logger: logger.child('tools'),
+      capabilityEnabled: (accountId, conversation) => (capability) =>
+        providers.resolve(accountId, conversation, capability).enabled,
+      runtime: (accountId) => pluginRuntimes.port(accountId),
+      ...(options.now ? { now: options.now } : {})
+    });
+
     const modelSettings = new ModelSettingsService({
       config: configV2,
       providers,
@@ -416,6 +447,9 @@ export async function assembleRuntime(input: AssembleRuntimeInput): Promise<Runt
       snowLumaRuntime,
       qqAvatars,
       extensions,
+      extensionPolicy,
+      extensionTools,
+      pluginRuntimes,
       policy,
       agentScheduler,
       media,
@@ -433,6 +467,8 @@ export async function assembleRuntime(input: AssembleRuntimeInput): Promise<Runt
         await Promise.allSettled([
           connections.stop(),
           snowLumaRuntime.stop(),
+          // Executors must drain before their plugin Workers disappear.
+          extensionTools.close().then(() => pluginRuntimes.close()),
           jobs.dispose(),
           media.dispose(),
           configV2!.dispose(),

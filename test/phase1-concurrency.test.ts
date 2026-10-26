@@ -16,18 +16,6 @@ import type { CancelMode } from '../src/providers/types.js';
 const roots: string[] = [];
 const cores: Core[] = [];
 
-const SLOW_PLUGIN = String.raw`
-import fs from 'node:fs';
-export async function onMessage(ctx) {
-  fs.writeFileSync(ctx.config.started, '1');
-  const deadline = Date.now() + 15000;
-  while (!fs.existsSync(ctx.config.release) && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  return { segments: [{ type: 'text', data: { text: 'slow plugin done' } }] };
-}
-`;
-
 afterEach(async () => {
   await Promise.allSettled(cores.splice(0).map((core) => core.stop()));
   await Promise.allSettled(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
@@ -112,76 +100,6 @@ async function tempRoot(prefix: string): Promise<string> {
 }
 
 describe('phase 1 cross-session scheduling', () => {
-  it('does not let a slow v1 plugin on one account block the modern agent on another', async () => {
-    const root = await tempRoot('accompany-con07-');
-    await seedRoleCard(root);
-    const started = path.join(root, 'slow.started');
-    const release = path.join(root, 'slow.release');
-    await seedPlugin(root, 'slow', SLOW_PLUGIN);
-    await writeProfile(root, '10001', {
-      version: 1,
-      roleCard: { source: 'public', id: TEST_ROLE_CARD_ID },
-      plugins: [{ source: 'public', id: 'slow', config: { started, release } }]
-    });
-    await writePhase1Config(root, {
-      providers: [fakeProvider('fake-chat', { chatText: 'fast agent on B' })],
-      accountPolicies: {
-        '10002': accountPolicy({
-          allowedProviders: ['fake-chat'],
-          bindings: { chat: bind('fake-chat', 'text-model') }
-        })
-      }
-    });
-
-    const bucket = new Map<string, FakeChannel>();
-    const factory: ChannelFactory = (context) => {
-      const channel = new FakeChannel(context, { selfId: context.spec.accountId });
-      bucket.set(context.instanceId, channel);
-      return channel;
-    };
-    const core = await createTestCore(
-      {
-        dataRoot: root,
-        instances: [
-          { id: 'a', backend: 'fake', accountId: '10001', restart: { enabled: false } },
-          { id: 'b', backend: 'fake', accountId: '10002', restart: { enabled: false } }
-        ],
-        channelFactory: factory,
-        limits: { pluginTimeoutMs: 15_000 },
-        logger: silentLogger('con07')
-      },
-      ['10001', '10002']
-    );
-    cores.push(core);
-    await bindTestConversation(core, '10001', 'private', '555');
-    await bindTestConversation(core, '10002', 'private', '777');
-    await core.start();
-    await waitFor(() => core.status().instances.every((instance) => instance.state === 'online'));
-
-    bucket.get('a')?.emitInbound(textInbound('a', '10001', '555', 'slow-1', 'run slow plugin'));
-    await waitFor(async () => {
-      try {
-        await fs.access(started);
-        return true;
-      } catch {
-        return false;
-      }
-    });
-
-    bucket.get('b')?.emitInbound(textInbound('b', '10002', '777', 'fast-1', 'hello agent'));
-    await waitFor(() => (bucket.get('b')?.sent.length ?? 0) === 1);
-    expect(bucket.get('b')?.sent[0]?.message.segments).toEqual([
-      { type: 'text', data: { text: 'fast agent on B' } }
-    ]);
-    expect(bucket.get('a')?.sent).toHaveLength(0);
-
-    await fs.writeFile(release, '1');
-    await waitFor(() => (bucket.get('a')?.sent.length ?? 0) === 1);
-    expect(bucket.get('a')?.sent[0]?.message.segments).toEqual([
-      { type: 'text', data: { text: 'slow plugin done' } }
-    ]);
-  });
-
   it('keeps one account online when the other is stopped and restarted', async () => {
     const root = await tempRoot('accompany-iso02-');
     const bucket = new Map<string, FakeChannel>();
@@ -344,32 +262,3 @@ describe('phase 1 cross-session scheduling', () => {
     expect(adapter.texts.find((text) => text.startsWith('slow-a:'))).not.toContain('account B question');
   });
 });
-
-async function seedPlugin(root: string, id: string, code: string): Promise<void> {
-  const dir = path.join(root, 'public', 'artifacts', 'plugin', id, 'r1');
-  await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(
-    path.join(dir, 'manifest.json'),
-    `${JSON.stringify({ id, kind: 'plugin', revision: 'r1', entry: `${id}.mjs`, apiVersion: 1 }, null, 2)}\n`
-  );
-  await fs.writeFile(path.join(dir, `${id}.mjs`), code);
-  const catalogFile = path.join(root, 'public', 'catalog.json');
-  let catalog: { version: number; artifacts: Record<string, string> } = { version: 1, artifacts: {} };
-  try {
-    catalog = JSON.parse(await fs.readFile(catalogFile, 'utf8')) as typeof catalog;
-  } catch {
-    // 首次写入
-  }
-  catalog.artifacts[`plugin:${id}`] = 'r1';
-  await fs.writeFile(catalogFile, `${JSON.stringify(catalog, null, 2)}\n`);
-}
-
-async function writeProfile(
-  root: string,
-  accountId: string,
-  profile: Record<string, unknown>
-): Promise<void> {
-  const dir = path.join(root, 'accounts', accountId);
-  await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(path.join(dir, 'profile.json'), `${JSON.stringify(profile, null, 2)}\n`);
-}

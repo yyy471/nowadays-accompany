@@ -24,6 +24,7 @@ import type { CapabilityId } from '../src/policy/capabilities.js';
 import {
   accountPolicy,
   bind,
+  fakeProvider,
   TINY_PNG,
   writePhase1Config,
   type RawProvider
@@ -192,6 +193,67 @@ describe('phase 1 provider routing', () => {
     }, new AbortController().signal);
     expect(result.result.text).toBe('fallback-reply');
     expect(result.used.modelId).toBe('backup');
+  });
+
+  it('applies an explicit single-attempt/no-fallback policy without changing normal retry and fallback', async () => {
+    let primaryMode: 'fail-once' | 'always-fail' = 'fail-once';
+    let primaryCalls = 0;
+    let fallbackCalls = 0;
+    const adapter: ProviderAdapter = {
+      id: 'fake-v1',
+      supports: (capability) => capability === 'chat',
+      cancelMode: () => 'localOnly',
+      async chat(context: ProviderCallContext): Promise<ChatResponse> {
+        if (context.provider.id === 'primary') {
+          primaryCalls += 1;
+          if (primaryMode === 'fail-once' && primaryCalls > 1) return { text: 'primary-after-retry' };
+          throw new ProviderError('provider_rate_limited', 'limited', {
+            providerId: 'primary',
+            capability: 'chat',
+            retryable: true
+          });
+        }
+        fallbackCalls += 1;
+        return { text: 'fallback-reply' };
+      }
+    };
+    const primary = fakeProvider('primary', {}, { retry: { maxAttempts: 2, baseDelayMs: 1, maxDelayMs: 2 } });
+    const fallback = fakeProvider('fallback');
+    const router = await routerFor(
+      [primary, fallback],
+      {
+        '10001': accountPolicy({
+          allowedProviders: ['primary', 'fallback'],
+          crossProviderFallback: true,
+          bindings: {
+            chat: bind('primary', 'text-model', {
+              fallback: [{ providerId: 'fallback', modelId: 'text-model' }]
+            })
+          }
+        })
+      },
+      [adapter]
+    );
+    const request = { messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: 'hi' }] }] };
+
+    const normal = await router.chat('10001', conversation(), request, new AbortController().signal);
+    expect(normal.result.text).toBe('primary-after-retry');
+    expect([primaryCalls, fallbackCalls]).toEqual([2, 0]);
+
+    primaryMode = 'always-fail';
+    primaryCalls = 0;
+    fallbackCalls = 0;
+    await expect(router.chat('10001', conversation(), request, new AbortController().signal, undefined, {}, undefined, {
+      retry: false,
+      fallback: false
+    })).rejects.toMatchObject({ code: 'provider_rate_limited' });
+    expect([primaryCalls, fallbackCalls]).toEqual([1, 0]);
+
+    primaryCalls = 0;
+    fallbackCalls = 0;
+    const fallbackResult = await router.chat('10001', conversation(), request, new AbortController().signal);
+    expect(fallbackResult.result.text).toBe('fallback-reply');
+    expect([primaryCalls, fallbackCalls]).toEqual([2, 1]);
   });
 
   it('shares endpoint concurrency across providers with the same baseUrl', async () => {

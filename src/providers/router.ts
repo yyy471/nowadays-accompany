@@ -6,7 +6,8 @@ import { sleep } from '../core/concurrency.js';
 import type { CredentialVault } from '../secrets/vault.js';
 import type { ExtensionRegistry } from '../extensions/registry.js';
 import type { SkillRuntime, SkillResolution } from '../extensions/registry.js';
-import type { ToolDefinition } from '../extensions/types.js';
+import type { RegisteredToolDefinition } from '../extensions/types.js';
+import { resolveToolGate } from '../extensions/effective.js';
 import { CAPABILITY_IDS, CAPABILITY_LABELS, type CapabilityId } from '../policy/capabilities.js';
 import type { EffectivePolicy, PolicyService } from '../policy/policy.js';
 import type { ConfigStore } from './config-store.js';
@@ -130,7 +131,6 @@ export interface EffectiveCapabilitiesDto {
   agentSource: EffectivePolicy['agentSource'];
   visionMode: EffectivePolicy['visionMode'];
   visionSource: EffectivePolicy['visionSource'];
-  replyMode: EffectivePolicy['replyMode'];
   allowCloudUpload: boolean;
   capabilities: CapabilityDto[];
   skills: SkillResolution;
@@ -140,6 +140,14 @@ export interface ExecutedResult<T> {
   result: T;
   resolution: CapabilityResolution;
   used: { providerId: string; modelId: string };
+}
+
+/** Per-call override; omitted fields keep the configured Agent behavior. */
+export interface ProviderExecutionPolicy {
+  /** false: fail on the bound primary without trying configured fallback targets. */
+  fallback?: boolean;
+  /** false: one attempt per target, ignoring the provider retry configuration. */
+  retry?: boolean;
 }
 
 export interface ProviderRouterOptions {
@@ -244,23 +252,26 @@ export class ProviderRouter {
       agentSource: policy.agentSource,
       visionMode: policy.visionMode,
       visionSource: policy.visionSource,
-      replyMode: policy.replyMode,
       allowCloudUpload: policy.allowCloudUpload,
       capabilities,
       skills
     };
   }
 
-  availableTools(accountId: string, conversation: ConversationRef): ToolDefinition[] {
+  availableTools(accountId: string, conversation: ConversationRef): RegisteredToolDefinition[] {
     const config = this.#config.snapshot();
     const policy = this.#policy.resolveWithConfig(config, accountId, conversation);
-    return this.#extensions.listTools().filter((tool) => {
-      if ((tool.id === 'builtin.image.generate' || tool.id === 'builtin.audio.generate') && !policy.accountPolicy.enabledTools?.includes(tool.id)) {
-        return false;
-      }
-      if (!tool.capability) return true;
-      return this.#resolveWith(config, policy, tool.capability, {}).enabled;
-    });
+    const authorized = new Set(policy.accountPolicy.extensions?.authorizedTools ?? []);
+    return this.#extensions.listTools().filter((tool) => resolveToolGate({
+      id: tool.id,
+      owner: tool.owner,
+      handlerReady: true,
+      authorized: authorized.has(tool.id),
+      ...(tool.capability ? { capability: tool.capability } : {}),
+      conversation,
+      ...(policy.accountPolicy.extensions ? { extensions: policy.accountPolicy.extensions } : {}),
+      capabilityEnabled: (capability) => this.#resolveWith(config, policy, capability, {}).enabled
+    }).enabled);
   }
 
   async audioGenerate(
@@ -308,7 +319,8 @@ export class ProviderRouter {
     signal: AbortSignal,
     resolution?: CapabilityResolution,
     requirements: CapabilityRequirements = {},
-    executionGuard?: () => boolean | Promise<boolean>
+    executionGuard?: () => boolean | Promise<boolean>,
+    policy?: ProviderExecutionPolicy
   ): Promise<ExecutedResult<ChatResponse>> {
     throwIfAborted(signal);
     const resolved = resolution ?? this.resolve(accountId, conversation, 'chat', requirements);
@@ -324,7 +336,7 @@ export class ProviderRouter {
         ...request,
         parameters: mergeParameters(target.parameters, request.parameters)
       });
-    }, 'request', undefined, executionGuard);
+    }, 'request', undefined, executionGuard, policy);
   }
 
   async imageUnderstand(
@@ -632,7 +644,8 @@ export class ProviderRouter {
     operation: (target: ResolvedTarget, context: ProviderCallContext) => Promise<T>,
     timeoutKind: 'request' | 'video' = 'request',
     requiredToolId?: string,
-    executionGuard?: () => boolean | Promise<boolean>
+    executionGuard?: () => boolean | Promise<boolean>,
+    policy?: ProviderExecutionPolicy
   ): Promise<ExecutedResult<T>> {
     if (!resolution.enabled || !resolution.primary) {
       throw new CapabilityUnavailableError(
@@ -641,7 +654,9 @@ export class ProviderRouter {
         `${CAPABILITY_LABELS[capability]}不可用: ${resolution.detail ?? resolution.reason ?? 'not_configured'}`
       );
     }
-    const targets = [resolution.primary, ...resolution.fallbackTargets];
+    const targets = policy?.fallback === false
+      ? [resolution.primary]
+      : [resolution.primary, ...resolution.fallbackTargets];
     let lastError: unknown;
     for (const [index, target] of targets.entries()) {
       try {
@@ -656,7 +671,8 @@ export class ProviderRouter {
           operation,
           timeoutKind,
           requiredToolId,
-          executionGuard
+          executionGuard,
+          policy
         );
         return { result, resolution, used: { providerId: target.provider.id, modelId: target.model.id } };
       } catch (error) {
@@ -696,7 +712,8 @@ export class ProviderRouter {
     operation: (target: ResolvedTarget, context: ProviderCallContext) => Promise<T>,
     timeoutKind: 'request' | 'video',
     requiredToolId?: string,
-    executionGuard?: () => boolean | Promise<boolean>
+    executionGuard?: () => boolean | Promise<boolean>,
+    policy?: ProviderExecutionPolicy
   ): Promise<T> {
     throwIfAborted(signal);
     let current = this.#currentTarget(accountId, conversation, capability, planned, requirements, isFallback);
@@ -722,7 +739,9 @@ export class ProviderRouter {
       await this.#assertExecutionGuard(capability, executionGuard);
       let attempt = 0;
       let lastError: unknown;
-      while (attempt < current.provider.retry.maxAttempts) {
+      const attemptsFor = (target: ResolvedTarget): number =>
+        policy?.retry === false ? 1 : target.provider.retry.maxAttempts;
+      while (attempt < attemptsFor(current)) {
         attempt += 1;
         current = this.#currentTarget(accountId, conversation, capability, planned, requirements, isFallback);
         const credential = await this.#credentialFor(current.provider, capability);
@@ -777,7 +796,7 @@ export class ProviderRouter {
           lastError = this.#normalizeProviderError(error, current.provider.id, capability, signal, context.signal);
           if (signal.aborted) throw abortReason(signal);
           if (isUnknownOutcome(lastError)) throw lastError;
-          if (!(lastError instanceof ProviderError) || !lastError.retryable || attempt >= current.provider.retry.maxAttempts) {
+          if (!(lastError instanceof ProviderError) || !lastError.retryable || attempt >= attemptsFor(current)) {
             throw lastError;
           }
           const backoff = Math.min(
@@ -825,7 +844,7 @@ export class ProviderRouter {
     if (!requiredToolId) return;
     const config = this.#config.snapshot();
     const policy = this.#policy.resolveWithConfig(config, accountId, conversation);
-    if (!policy.accountPolicy.enabledTools?.includes(requiredToolId)) {
+    if (!policy.accountPolicy.extensions?.authorizedTools?.includes(requiredToolId)) {
       throw new CapabilityUnavailableError(capability, 'tool_not_authorized', `tool ${requiredToolId} is not authorized for this account`);
     }
   }

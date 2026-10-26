@@ -1,0 +1,16 @@
+{
+  "id": "garden-guide",
+  "kind": "worldbook",
+  "revision": "w-001",
+  "name": "花园手册",
+  "description": "公共世界设定",
+  "worldbook": {
+    "version": 1,
+    "scanDepth": 4,
+    "budgetChars": 2000,
+    "entries": [
+      { "id": "garden", "keys": ["花园", "银杏"], "content": "花园里有一棵银杏树。", "enabled": true, "constant": false, "caseSensitive": false, "priority": 0, "position": "after-role" },
+      { "id": "weather", "keys": [], "content": "此地常年温和。", "enabled": true, "constant": true, "caseSensitive": false, "priority": 0, "position": "before-role" }
+    ]
+  }
+}

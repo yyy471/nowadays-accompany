@@ -99,8 +99,6 @@ export type {
   AgentSendOptions,
   AgentSessionContext
 } from './host/contract.js';
-export { createWorkerHost } from './host/worker.js';
-export type { WorkerHostOptions } from './host/worker.js';
 export { PluginStateStore } from './host/state.js';
 
 export { LocalArtifactStore } from './artifacts/local.js';
@@ -121,6 +119,24 @@ export type {
   ResolvedRoleCard
 } from './artifacts/types.js';
 export { AccountProfileService } from './profiles/profile.js';
+
+export { evaluateWorldbook } from './worldbook/matcher.js';
+export { DEFAULT_WORLDBOOK_OPTIONS, parseWorldbook, parseWorldbookOptions, parseConversationWorldbookSource, parseWorldbookSettings, summarizeWorldbook } from './worldbook/schema.js';
+export { convertTavernWorldbook } from './worldbook/tavern.js';
+export { convertWorldbookImport } from './worldbook/import-adapter.js';
+export type {
+  ConversationWorldbookSource,
+  EffectiveWorldbook,
+  Worldbook,
+  WorldbookEntry,
+  WorldbookEvaluation,
+  WorldbookEvaluationInput,
+  WorldbookImportFormat,
+  WorldbookImportResult,
+  WorldbookOptions,
+  WorldbookResourceState,
+  WorldbookSettings
+} from './worldbook/types.js';
 
 export { CredentialVaultUnavailableError, MemoryCredentialVault, UnavailableCredentialVault, defaultCredentialRef } from './secrets/vault.js';
 export type { CredentialVault } from './secrets/vault.js';
@@ -144,3 +160,9 @@ export { createApiServer } from './service/server.js';
 export type { AccountSummary } from './contracts/accounts.js';
 export type { CoreView } from './application/ports/control-api.js';
 export type { ApiHandle, ApiServerOptions } from './service/server.js';
+export { WorldbookResourceService } from './application/worldbooks/worldbook-resource-service.js';
+export type { WorldbookManifest, WorldbookList, WorldbookResourceDetail, WorldbookSaveResult, WorldbookSummary, WorldbookFilePreview } from './contracts/worldbook-resources.js';
+export { MemoryService } from './application/memory/memory-service.js';
+export { selectMemory } from './memory/selector.js';
+export type { MemoryEvaluation, MemoryRecord, MemoryRecordOrigin, MemoryRecordType, MemoryScope, MemorySettings, MemorySnapshot, MemoryState } from './memory/types.js';
+export type { MemoryDeleteResult, MemoryExtractionEffectiveStatus, MemoryExtractionStatusView, MemoryExtractionView, MemoryPreviewResult, MemoryRecordDetail, MemoryRecordMutation, MemoryRecordPage, MemoryRecordSummary, MemoryStateView } from './contracts/memory.js';

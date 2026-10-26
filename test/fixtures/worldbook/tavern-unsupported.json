@@ -1,0 +1,10 @@
+{
+  "name": "含不支持规则独立书",
+  "recursive_scanning": true,
+  "entries": {
+    "0": { "keys": ["普通"], "content": "普通可用条目。", "enabled": true },
+    "1": { "keys": ["^正则.*"], "content": "使用正则。", "enabled": true, "use_regex": true },
+    "2": { "keys": ["主词"], "secondary_keys": ["次词"], "content": "使用选择性匹配。", "enabled": true, "selective": true },
+    "3": { "keys": ["概率"], "content": "带概率。", "enabled": true, "extensions": { "probability": 50 } }
+  }
+}

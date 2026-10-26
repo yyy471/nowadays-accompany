@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, session, shell } from 'electron';
+import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, session, shell, type IpcMainInvokeEvent } from 'electron';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -6,6 +6,8 @@ import path from 'node:path';
 import { createCore, createLogger, type Core, type Logger, type LogLevel } from '../src/index.js';
 import { SafeStorageCredentialVault } from './safe-storage-vault.js';
 import { desktopUserDataPath } from './branding.js';
+import { QuitCoordinator } from './quit-coordinator.js';
+import { ArtifactImportController } from './artifact-import-controller.js';
 
 app.setName('nowadays');
 app.setPath('userData', desktopUserDataPath(app.getPath('appData'), existsSync));
@@ -19,14 +21,51 @@ let logger: Logger | undefined;
 let dataRoot = '';
 let apiUrl = '';
 let quitting = false;
-let shutdown: Promise<void> | undefined;
+let quitCoordinator: QuitCoordinator | undefined;
 let hiddenHintShown = false;
 let choosingRuntime = false;
+let artifactImports: ArtifactImportController | undefined;
+
+function artifactRoot(): string {
+  if (!core || quitting || (quitCoordinator && quitCoordinator.current !== 'idle')) throw new Error('应用尚未就绪或正在退出。');
+  return core.diagnostics().artifacts.publicRoot;
+}
+
+ipcMain.handle('nowadays:open-artifacts-directory', async (event): Promise<void> => {
+  if (!isTrustedWindowSender(event)) throw new Error('无效的资源操作来源。');
+  const root = artifactRoot();
+  await fs.mkdir(root, { recursive: true });
+  const failure = await shell.openPath(root);
+  if (failure) throw new Error(`无法打开资源目录：${failure}`);
+});
+
+ipcMain.handle('nowadays:preview-artifact-import', async (event, mode: unknown = 'directory') => {
+  if (!isTrustedWindowSender(event)) throw new Error('无效的资源操作来源。');
+  if (mode !== 'directory' && mode !== 'tavern-card' && mode !== 'worldbook') throw new Error('不支持的导入类型。');
+  const root = artifactRoot();
+  artifactImports ??= new ArtifactImportController(root);
+  return artifactImports.preview(async () => {
+    const target = window;
+    if (!target || target.isDestroyed() || quitting) throw new Error('应用窗口不可用。');
+    const result = await dialog.showOpenDialog(target, mode === 'worldbook'
+      ? { title: '选择独立世界书 JSON', properties: ['openFile'], filters: [{ name: '世界书', extensions: ['json'] }] }
+      : mode === 'tavern-card'
+      ? { title: '选择酒馆角色卡 JSON 或 PNG', properties: ['openFile'], filters: [{ name: '酒馆角色卡', extensions: ['json', 'png'] }] }
+      : { title: '选择包含 manifest.json 的资源目录', properties: ['openDirectory'] });
+    if (!isTrustedWindowSender(event) || quitting || (quitCoordinator && quitCoordinator.current !== 'idle')) return;
+    return result.canceled ? undefined : result.filePaths[0];
+  }, mode);
+});
+
+ipcMain.handle('nowadays:commit-artifact-import', async (event, token: unknown) => {
+  if (!isTrustedWindowSender(event)) throw new Error('无效的资源操作来源。');
+  artifactRoot();
+  if (!artifactImports) throw new Error('请先选择资源并检查预览。');
+  return artifactImports.commit(token);
+});
 
 ipcMain.handle('nowadays:choose-runtime-directory', async (event): Promise<string | null> => {
-  if (!window || window.isDestroyed() || event.sender !== window.webContents
-    || event.senderFrame !== window.webContents.mainFrame || choosingRuntime) return null;
-  if (new URL(event.senderFrame.url).origin !== apiUrl) return null;
+  if (!isTrustedWindowSender(event) || choosingRuntime || !window) return null;
   choosingRuntime = true;
   try {
     const result = await dialog.showOpenDialog(window, {
@@ -41,12 +80,36 @@ ipcMain.handle('nowadays:choose-runtime-directory', async (event): Promise<strin
 });
 
 ipcMain.handle('nowadays:open-runtime-directory', async (event): Promise<boolean> => {
-  if (!window || window.isDestroyed() || event.sender !== window.webContents
-    || event.senderFrame !== window.webContents.mainFrame) return false;
-  if (new URL(event.senderFrame.url).origin !== apiUrl) return false;
+  if (!isTrustedWindowSender(event)) return false;
   const runtimeDir = core?.injectionSettings().runtimeDir;
   if (!runtimeDir) return false;
   return (await shell.openPath(runtimeDir)) === '';
+});
+
+function isTrustedWindowSender(event: IpcMainInvokeEvent): boolean {
+  if (!window || window.isDestroyed() || event.sender !== window.webContents
+    || event.senderFrame !== window.webContents.mainFrame) return false;
+  try { return Boolean(apiUrl && new URL(event.senderFrame.url).origin === apiUrl); } catch { return false; }
+}
+
+ipcMain.handle('nowadays:quit-alive', (event, requestId: unknown): boolean => {
+  return isTrustedWindowSender(event) && typeof requestId === 'string' && (quitCoordinator?.keepAlive(requestId) ?? false);
+});
+
+ipcMain.handle('nowadays:quit-response', (event, payload: unknown): boolean => {
+  if (!isTrustedWindowSender(event)) return false;
+  if (!payload || typeof payload !== 'object') return false;
+  const { requestId, allowed } = payload as { requestId?: unknown; allowed?: unknown };
+  if (typeof requestId !== 'string' || typeof allowed !== 'boolean') return false;
+  return quitCoordinator?.respond(requestId, allowed) ?? false;
+});
+
+ipcMain.handle('nowadays:quit-ack', (event, payload: unknown): boolean => {
+  if (!isTrustedWindowSender(event)) return false;
+  if (!payload || typeof payload !== 'object') return false;
+  const { requestId } = payload as { requestId?: unknown };
+  if (typeof requestId !== 'string') return false;
+  return quitCoordinator?.ack(requestId) ?? false;
 });
 
 function assetPath(name: string): string {
@@ -110,9 +173,13 @@ function createWindow(token: string): void {
     logger?.info('desktop window shown', { visible: win.isVisible() });
   });
   win.on('close', (event) => {
-    logger?.info('desktop window close requested', { quitting });
+    logger?.info('desktop window close requested', { quitting, quitState: quitCoordinator?.current });
     if (quitting) return;
     event.preventDefault();
+    if (quitCoordinator?.current === 'checking') {
+      showWindow();
+      return;
+    }
     win.hide();
     if (!hiddenHintShown && process.platform === 'win32') {
       hiddenHintShown = true;
@@ -125,6 +192,12 @@ function createWindow(token: string): void {
   win.on('closed', () => {
     window = undefined;
   });
+  win.webContents.on('render-process-gone', (_event, details) => {
+    // 渲染进程在退出预检期间消失：按通信失联放弃本轮，回到空闲且不停止 Core。
+    logger?.warn('desktop renderer gone', { reason: details.reason, quitState: quitCoordinator?.current });
+    quitCoordinator?.cancel();
+  });
+  win.on('unresponsive', () => { quitCoordinator?.unavailable(); });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('http://') || url.startsWith('https://')) void shell.openExternal(url);
     return { action: 'deny' };
@@ -163,27 +236,62 @@ function createTray(): void {
   tray.on('double-click', showWindow);
 }
 
+function quitCoordinatorInstance(): QuitCoordinator {
+  if (quitCoordinator) return quitCoordinator;
+  quitCoordinator = new QuitCoordinator({
+    onStateChange: (event) => {
+      if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) {
+        window.webContents.send('nowadays:quit-state', event);
+      }
+    },
+    requestId: () => crypto.randomUUID(),
+    sendCheck: (requestId) => {
+      if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return false;
+      showWindow();
+      window.webContents.send('nowadays:quit-check', { requestId });
+      return true;
+    },
+    showUnavailableDialog: async () => {
+      showWindow();
+      const options = {
+        type: 'warning' as const,
+        buttons: ['取消', '继续退出'],
+        defaultId: 0,
+        cancelId: 0,
+        title: 'nowadays 无法确认未保存修改',
+        message: '界面未能确认是否有未保存的修改。',
+        detail: '继续退出可能丢失尚未保存的编辑。'
+      };
+      const target = window && !window.isDestroyed() ? window : undefined;
+      const result = target ? await dialog.showMessageBox(target, options) : await dialog.showMessageBox(options);
+      return result.response === 1;
+    },
+    shutdown: async () => {
+      quitting = true;
+      logger?.info('desktop quitting');
+      try {
+        // Imports are independent of Core; let an already accepted atomic publication finish.
+        await artifactImports?.drain();
+        await core?.stop();
+      } catch (error) {
+        logger?.warn('core stop failed during quit', {
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+      try {
+        tray?.destroy();
+      } catch {
+        // tray may already be gone
+      }
+      window?.destroy();
+      app.exit(0);
+    }
+  });
+  return quitCoordinator;
+}
+
 function requestQuit(): Promise<void> {
-  if (shutdown) return shutdown;
-  quitting = true;
-  shutdown = (async () => {
-    logger?.info('desktop quitting');
-    try {
-      await core?.stop();
-    } catch (error) {
-      logger?.warn('core stop failed during quit', {
-        message: error instanceof Error ? error.message : String(error)
-      });
-    }
-    try {
-      tray?.destroy();
-    } catch {
-      // tray may already be gone
-    }
-    window?.destroy();
-    app.exit(0);
-  })();
-  return shutdown;
+  return quitCoordinatorInstance().request();
 }
 
 async function prepareLogFile(): Promise<string> {

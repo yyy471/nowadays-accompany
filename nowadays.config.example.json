@@ -12,7 +12,6 @@
     "unhealthyThreshold": 2,
     "drainTimeoutMs": 5000,
     "hostDrainTimeoutMs": 30000,
-    "pluginTimeoutMs": 30000,
     "maxHostHistory": 50
   },
   "api": {

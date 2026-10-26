@@ -3,6 +3,9 @@ import { api, appVersion } from '../api';
 import { errorMessage } from '../hooks';
 import type { CapabilityId, ProviderDto, ProviderTestResult, ProvidersResponse } from '../types';
 import { Button, Card, Checkbox, ConfirmButton, ControlButton, ErrorNote, Field, Icon, Input, Select, Tag } from '../ui';
+import { hashRevision } from '../lib/drafts/registry';
+import { useDraftRegistration } from '../lib/use-draft-registration';
+import { ProviderManager } from '../components/ProviderManager';
 
 type SimpleDraft = {
   providerId: string;
@@ -27,6 +30,7 @@ const EXTENSION_ROWS: CapabilityRow[] = [
   { id: 'image.generate', title: '图片生成', description: '作为可授权的对话工具按需调用。' },
   { id: 'audio.generate', title: '语音生成', description: '作为可授权的对话工具按需调用。' }
 ];
+const ALL_ROWS = [...PRIMARY_ROWS, ...EXTENSION_ROWS];
 const CAPABILITY_LABEL: Record<CapabilityId, string> = {
   chat: '文本模型',
   'image.understand': '视觉模型',
@@ -83,14 +87,12 @@ export function ModelsPage({
   data,
   error,
   refresh,
-  onDirtyChange,
-  onBusyChange
+  onGoAccountModels
 }: {
   data?: ProvidersResponse;
   error?: string;
   refresh: () => Promise<unknown>;
-  onDirtyChange?: (dirty: boolean) => void;
-  onBusyChange?: (busy: boolean) => void;
+  onGoAccountModels?: () => void;
 }) {
   const providers = data?.providers ?? [];
   const [drafts, setDrafts] = useState<Partial<Record<CapabilityId, SimpleDraft>>>({});
@@ -147,7 +149,7 @@ export function ModelsPage({
 
   const dirtyCapabilities = useMemo(() => {
     const dirty = new Set<CapabilityId>();
-    for (const row of [...PRIMARY_ROWS, ...EXTENSION_ROWS]) {
+    for (const row of ALL_ROWS) {
       const draft = drafts[row.id];
       if (!draft) continue;
       const value = JSON.stringify({ ...draft, secret: '' });
@@ -155,9 +157,38 @@ export function ModelsPage({
     }
     return dirty;
   }, [drafts, baseline]);
-  useEffect(() => onDirtyChange?.(dirtyCapabilities.size > 0), [dirtyCapabilities, onDirtyChange]);
   const hasBusyAction = Object.values(busy).some(Boolean);
-  useEffect(() => onBusyChange?.(hasBusyAction), [hasBusyAction, onBusyChange]);
+
+  const discardDrafts = (): void => {
+    setDrafts((current) => {
+      const next = { ...current };
+      for (const row of ALL_ROWS) {
+        const stored = baseline[row.id];
+        let base = resolveInitial(row.id, providers);
+        if (stored) {
+          try { base = JSON.parse(stored) as SimpleDraft; } catch { base = resolveInitial(row.id, providers); }
+        }
+        next[row.id] = { ...base, secret: '' };
+      }
+      return next;
+    });
+    setErrors({});
+    setNotices({});
+    setModelsByCapability({});
+    setModelsFingerprint({});
+    setResults({});
+    setResultsFingerprint({});
+  };
+
+  useDraftRegistration({
+    id: 'settings:models',
+    owner: 'settings',
+    label: '模型服务设置',
+    dirty: dirtyCapabilities.size > 0,
+    busy: hasBusyAction,
+    revision: hashRevision({ drafts, baseline }),
+    discard: discardDrafts
+  });
 
   const updateDraft = (capability: CapabilityId, update: Partial<SimpleDraft>): void => {
     setDrafts((current) => ({
@@ -345,7 +376,7 @@ export function ModelsPage({
                   {providers.map((provider) => {
                     const models = candidateModels(provider, row.id);
                     const label = models.length ? models.map((model) => model.id).join(', ') : '已有其他能力';
-                    return <option key={provider.id} value={provider.id}>{provider.baseUrl} · {label}</option>;
+                    return <option key={provider.id} value={provider.id}>{provider.id} · {label} · {provider.baseUrl}</option>;
                   })}
                 </Select>
               </Field> : null}
@@ -391,6 +422,7 @@ export function ModelsPage({
             </div>
             {errors[row.id] ? <ErrorNote message={errors[row.id]!} /> : null}
             {notices[row.id] ? <div className="notice" role="status">{notices[row.id]}</div> : null}
+            {notices[row.id]?.startsWith('模型服务已保存') && onGoAccountModels ? <Button disabled={hasBusyAction} onClick={onGoAccountModels}>去账号模型配置</Button> : null}
             {resultsFingerprint[row.id] === draftFingerprint && results[row.id]?.sample?.kind === 'image' ? <img className="provider-test-image" src={`data:${results[row.id]!.sample!.mimeType};base64,${results[row.id]!.sample!.base64}`} alt="模型测试生成的图片" /> : null}
             {resultsFingerprint[row.id] === draftFingerprint && results[row.id]?.sample?.kind === 'audio' ? <audio className="provider-test-audio" controls preload="metadata" src={`data:${results[row.id]!.sample!.mimeType};base64,${results[row.id]!.sample!.base64}`} /> : null}
           </div>
@@ -403,7 +435,7 @@ export function ModelsPage({
     <div className="page-stack model-settings-page">
       {error ? <ErrorNote message={error} /> : null}
       <Card title="基础模型服务" subtitle="固定配置文本、视觉和视频理解服务。未配置时也保留对应入口；服务保存后，还需在账号模型配置中授权与选择。">
-        {!data ? <p className="muted">正在读取模型服务…</p> : <div className="simple-model-list">{PRIMARY_ROWS.map(renderRow)}</div>}
+        {!data ? error ? <Button onClick={() => void refresh()}>重试读取模型服务</Button> : <p className="muted">正在读取模型服务…</p> : <div className="simple-model-list">{PRIMARY_ROWS.map(renderRow)}</div>}
       </Card>
       <Card title="扩展模型" subtitle="仅在需要相应能力时配置。服务可用不代表已向对话 AI 开放，账号工具授权需单独设置。">
         <ControlButton type="button" className="extension-toggle" aria-expanded={extensionsOpen} onClick={() => setExtensionsOpen((open) => !open)}>
@@ -411,6 +443,7 @@ export function ModelsPage({
         </ControlButton>
         {extensionsOpen ? <div className="simple-model-list simple-model-list-extension">{EXTENSION_ROWS.map(renderRow)}</div> : null}
       </Card>
+      {data ? <ProviderManager providers={providers} refresh={refresh} onGoAccountModels={onGoAccountModels} /> : null}
       <p className="settings-note"><Icon name="shield" size={15} /><span>测试会发送一次最小服务请求并可能产生少量费用；验证按钮旁会再次提示。测试不会保存配置或向 QQ 发消息。模型服务、账号授权、AI 工具开放和本轮实际调用是彼此独立的设置。</span></p>
     </div>
   );
