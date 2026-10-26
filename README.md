@@ -1,5 +1,9 @@
 # nowadays
 
+> **项目状态：开发中（Development）**
+>
+> 当前代码为开发快照，尚未发布稳定版本。本次快照标记为 `v0.2.4-dev.1`；已完成的功能、自动化验证及尚待验收的范围见 [EXT-D 主进程验收记录](devDoc/90-ext-d-independent-review.md)，后续任务见 [开发方案](devDoc/79-agent-extension-execution-plan.md)。
+
 目录与Git约定见[仓库规范](devDoc/23-repository-layout-and-version-control.md)：测试源码保留，测试截图/报告、运行数据、构建输出和`release/`发行包不进入Git。
 
 当前桌面版采用引导式外部 SnowLuma 接入：用户从官方页面自行下载、解压、初始化并启动，nowadays 记住目录和加密管理密码、检测 QQ 并在点击后注入/监听。应用不自动部署或启动 SnowLuma。详见 [首次配置与验收](devDoc/20-guided-external-snowluma.md)。
