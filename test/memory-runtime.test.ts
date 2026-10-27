@@ -21,7 +21,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   await Promise.allSettled(cores.splice(0).map(core => core.stop()));
   for (const root of roots.splice(0)) {
-    if (path.dirname(path.resolve(root)) !== path.resolve(os.tmpdir()) || !path.basename(root).startsWith('nowadays-memory-runtime-')) throw new Error('Unexpected test root');
+    if (path.dirname(path.resolve(root)) !== path.resolve(await fs.realpath(os.tmpdir())) || !path.basename(root).startsWith('nowadays-memory-runtime-')) throw new Error('Unexpected test root');
     await fs.rm(root, { recursive: true, force: true });
   }
 });
@@ -37,7 +37,7 @@ interface FixtureOptions {
 }
 
 async function setup(options: FixtureOptions = {}) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'nowadays-memory-runtime-'));
+  const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'nowadays-memory-runtime-'));
   roots.push(root);
   await writePhase1Config(root, {
     providers: [

@@ -13,12 +13,12 @@ const roots: string[] = [];
 afterEach(async () => {
   for (const root of roots.splice(0)) {
     const resolved = path.resolve(root);
-    if (path.dirname(resolved) !== path.resolve(os.tmpdir()) || !path.basename(resolved).startsWith('nowadays-tavern-test-')) throw new Error('Unexpected test root');
+    if (path.dirname(resolved) !== path.resolve(await fs.realpath(os.tmpdir())) || !path.basename(resolved).startsWith('nowadays-tavern-test-')) throw new Error('Unexpected test root');
     await fs.rm(resolved, { recursive: true, force: true });
   }
 });
 async function setup() {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'nowadays-tavern-test-'));
+  const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'nowadays-tavern-test-'));
   roots.push(root);
   const source = path.join(root, '角色卡.json'), publicRoot = path.join(root, 'public');
   const original = JSON.stringify({ name: 'Alice', description: 'You are {{char}}.', personality: 'Kind', scenario: '', first_mes: 'Hello', mes_example: '',

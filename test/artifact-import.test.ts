@@ -8,13 +8,13 @@ import { IMPORTED_ARTIFACT_MARKER, parseArtifactManifest } from '../src/artifact
 
 let root: string, source: string, publicRoot: string, service: ArtifactImportService;
 beforeEach(async () => {
-  root = await fs.mkdtemp(path.join(os.tmpdir(), 'nowadays-import-test-'));
+  root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'nowadays-import-test-'));
   source = path.join(root, 'source'); publicRoot = path.join(root, 'public');
   await fs.mkdir(source); service = new ArtifactImportService({ publicRoot });
 });
 afterEach(async () => {
   vi.restoreAllMocks();
-  const absolute = path.resolve(root); const relative = path.relative(path.resolve(os.tmpdir()), absolute);
+  const absolute = path.resolve(root); const relative = path.relative(path.resolve(await fs.realpath(os.tmpdir())), absolute);
   if (!relative || relative.startsWith('..') || path.isAbsolute(relative) || !path.basename(absolute).startsWith('nowadays-import-test-')) throw new Error('Unsafe test cleanup target');
   await fs.rm(absolute, { recursive: true, force: true });
 });
@@ -106,7 +106,7 @@ it.each([
 it('rejects directory junctions including source roots and destination ancestors', async () => {
   await manifest(); const outside = path.join(root, 'outside'); await fs.mkdir(outside);
   await fs.symlink(outside, path.join(source, 'linked'), 'junction');
-  await expect(service.import(source)).rejects.toThrow('链接'); await fs.rmdir(path.join(source, 'linked'));
+  await expect(service.import(source)).rejects.toThrow('链接'); await fs.rm(path.join(source, 'linked'), { force: true });
   const linkedSource = path.join(root, 'linked-source'); await fs.symlink(source, linkedSource, 'junction');
   await expect(service.preview(linkedSource)).rejects.toThrow('链接');
   await fs.symlink(outside, publicRoot, 'junction'); await expect(service.import(source)).rejects.toThrow('链接');

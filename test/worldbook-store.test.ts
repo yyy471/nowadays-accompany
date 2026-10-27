@@ -9,13 +9,13 @@ afterEach(async () => {
   vi.restoreAllMocks();
   for (const root of roots.splice(0)) {
     const resolved = path.resolve(root);
-    if (path.dirname(resolved) !== path.resolve(os.tmpdir()) || !path.basename(resolved).startsWith('nowadays-wb-store-')) throw new Error('Unexpected test root');
+    if (path.dirname(resolved) !== path.resolve(await fs.realpath(os.tmpdir())) || !path.basename(resolved).startsWith('nowadays-wb-store-')) throw new Error('Unexpected test root');
     await fs.rm(resolved, { recursive: true, force: true });
   }
 });
 
 async function setup() {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'nowadays-wb-store-'));
+  const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'nowadays-wb-store-'));
   roots.push(root);
   const publicRoot = path.join(root, 'public');
   return { publicRoot, store: new LocalArtifactStore(publicRoot) };

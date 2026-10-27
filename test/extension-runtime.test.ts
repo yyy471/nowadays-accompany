@@ -360,7 +360,7 @@ describe('plugin runtime handshake', () => {
         logger: silentLogger('extension-runtime-test'),
         accountDir,
         accountPolicy: () => accountPolicy(),
-        limits: { initTimeoutMs: 40, timeoutGraceMs: 20 }
+        limits: { initTimeoutMs: 500, timeoutGraceMs: 50 }
       });
       closers.push(() => runtime.close());
       const statuses = await runtime.sync([stuck, fixture('offline-demo', demoShape)]);

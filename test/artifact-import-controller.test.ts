@@ -8,12 +8,12 @@ const roots: string[] = [];
 afterEach(async () => {
   vi.restoreAllMocks();
   for (const root of roots.splice(0)) {
-    if (!path.resolve(root).startsWith(path.resolve(os.tmpdir()) + path.sep)) throw new Error('Unexpected test root');
+    if (!path.resolve(root).startsWith(path.resolve(await fs.realpath(os.tmpdir())) + path.sep)) throw new Error('Unexpected test root');
     await fs.rm(root, { recursive: true, force: true });
   }
 });
 async function setup() {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'nowadays-import-bridge-'));
+  const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'nowadays-import-bridge-'));
   roots.push(root);
   const source = path.join(root, 'source');
   const publicRoot = path.join(root, 'public');

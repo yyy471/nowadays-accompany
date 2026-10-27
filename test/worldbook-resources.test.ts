@@ -14,12 +14,12 @@ afterEach(async () => {
   vi.restoreAllMocks();
   await Promise.all(cores.splice(0).map(core => core.stop()));
   for (const root of roots.splice(0)) {
-    if (path.dirname(path.resolve(root)) !== path.resolve(os.tmpdir()) || !path.basename(root).startsWith('nowadays-wb-resource-')) throw new Error('Unexpected root');
+    if (path.dirname(path.resolve(root)) !== path.resolve(await fs.realpath(os.tmpdir())) || !path.basename(root).startsWith('nowadays-wb-resource-')) throw new Error('Unexpected root');
     await fs.rm(root, { recursive: true, force: true });
   }
 });
 async function setup() {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'nowadays-wb-resource-')); roots.push(root);
+  const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'nowadays-wb-resource-')); roots.push(root);
   const publicRoot = path.join(root, 'public');
   return { root, publicRoot, service: new WorldbookResourceService({ publicRoot }) };
 }

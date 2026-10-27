@@ -17,7 +17,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   await Promise.allSettled(cores.splice(0).map(core => core.stop()));
   for (const root of roots.splice(0)) {
-    if (path.dirname(path.resolve(root)) !== path.resolve(os.tmpdir()) || !path.basename(root).startsWith('nowadays-memory-api-')) throw new Error('Unexpected test root');
+    if (path.dirname(path.resolve(root)) !== path.resolve(await fs.realpath(os.tmpdir())) || !path.basename(root).startsWith('nowadays-memory-api-')) throw new Error('Unexpected test root');
     await fs.rm(root, { recursive: true, force: true });
   }
 });
@@ -33,7 +33,7 @@ async function seedSecondRole(root: string): Promise<void> {
 interface FixtureOptions { maxBodyBytes?: number }
 
 async function setup(options: FixtureOptions = {}) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'nowadays-memory-api-'));
+  const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'nowadays-memory-api-'));
   roots.push(root);
   const core = await createTestCore({
     dataRoot: root,

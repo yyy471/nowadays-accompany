@@ -19,14 +19,14 @@ afterEach(async () => {
   vi.restoreAllMocks();
   await Promise.allSettled(cores.splice(0).map(core => core.stop()));
   for (const root of roots.splice(0)) {
-    if (path.dirname(path.resolve(root)) !== path.resolve(os.tmpdir()) || !path.basename(root).startsWith('nowadays-worldbook-')) throw new Error('Unexpected test root');
+    if (path.dirname(path.resolve(root)) !== path.resolve(await fs.realpath(os.tmpdir())) || !path.basename(root).startsWith('nowadays-worldbook-')) throw new Error('Unexpected test root');
     await fs.rm(root, { recursive: true, force: true });
   }
 });
 const conversation = { accountId: '10001', kind: 'private' as const, peerId: '555' };
 const enabled = { enabled: true, scanDepth: 4, budgetChars: 2000 };
 async function setup(runtime = false) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'nowadays-worldbook-')); roots.push(root);
+  const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'nowadays-worldbook-')); roots.push(root);
   const source = path.join(root, 'role.json');
   await fs.writeFile(source, JSON.stringify({ spec: 'chara_card_v2', spec_version: '2.0', data: { name: 'World role', description: 'BASE_ROLE', character_book: { scan_depth: 3, entries: [{ id: 'orchard', keys: ['orchard'], content: 'PRIVATE_ORCHARD_LORE', enabled: true, insertion_order: 0 }] } } }));
   const card = await new TavernCardImportService({ publicRoot: path.join(root, 'public') }).import(source);

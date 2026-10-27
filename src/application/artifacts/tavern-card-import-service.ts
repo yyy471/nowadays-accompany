@@ -33,7 +33,8 @@ export class TavernCardImportService {
     const fingerprint = createHash('sha256').update(bytes).digest('hex');
     if (expectedFingerprint !== undefined && fingerprint !== expectedFingerprint) throw new InvalidSpecError('角色卡内容已变化，请重新选择并预览。');
     const converted = parseTavernCard(bytes, extension === '.json' ? 'json' : 'png');
-    const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'nowadays-tavern-conversion-'));
+    // macOS 的 os.tmpdir()（/var/folders、/tmp）本身是符号链接，制品导入的链接检查会拒绝这类路径，因此先解析真实路径。
+    const temporary = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'nowadays-tavern-conversion-'));
     try {
       await fs.writeFile(path.join(temporary, 'manifest.json'), `${JSON.stringify(converted.manifest, null, 2)}\n`, { flag: 'wx' });
       // Preserve all unimplemented fields verbatim without letting them become executable configuration.
@@ -43,7 +44,7 @@ export class TavernCardImportService {
       return { ...published, fingerprint, sourceFormat: converted.format, warnings: converted.warnings,
         contentPreview: converted.manifest.content!.slice(0, 2000), contentLength: converted.contentLength };
     } finally {
-      const parent = path.resolve(os.tmpdir());
+      const parent = path.resolve(await fs.realpath(os.tmpdir()));
       const resolved = path.resolve(temporary);
       if (path.dirname(resolved) !== parent || !path.basename(resolved).startsWith('nowadays-tavern-conversion-')) throw new Error('Invalid conversion cleanup path');
       await fs.rm(resolved, { recursive: true, force: true });
