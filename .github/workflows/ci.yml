@@ -50,3 +50,30 @@ jobs:
 
       - name: 桌面端构建 (main + renderer)
         run: npm run desktop:build
+
+  windows-package:
+    name: Windows 打包
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 桌面端构建 (main + renderer)
+        run: npm run desktop:build
+
+      - name: 打包 NSIS 安装包与便携版
+        run: node desktop/scripts/package.mjs
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: nowadays-windows-${{ github.sha }}
+          path: release/*.exe
+          if-no-files-found: error
