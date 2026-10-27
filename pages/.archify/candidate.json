@@ -4,7 +4,7 @@
   "meta": {
     "title": "nowadays 架构总览",
     "locale": "zh-CN",
-    "output": ".Archify/nowadays-architecture.html",
+    "output": "pages/.archify/nowadays-architecture.html",
     "quality_profile": "showcase",
     "visual_preset": "signal-flow",
     "repository": {
