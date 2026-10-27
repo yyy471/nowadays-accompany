@@ -16,7 +16,7 @@ QQ 进程注入编排与交互核心。目标是把「注入一个 QQ、连上�
 
 ![nowadays 架构总览](pages/.archify/static/nowadays.png)
 
-上图为主链路静态快照；交互版（缩放、路径高亮、深浅主题、导出）见 [nowadays 架构总览（GitHub Pages）](https://yyy471.github.io/nowadays-accompany/pages/.archify/nowadays-architecture.html)，也可克隆仓库后直接打开 `pages/.archify/nowadays-architecture.html`。
+上图为主链路静态快照；交互版（缩放、路径高亮、深浅主题、导出）见 [nowadays 架构总览（GitHub Pages）](https://yyy471.github.io/nowadays-accompany/.archify/nowadays-architecture.html)，也可克隆仓库后直接打开 `pages/.archify/nowadays-architecture.html`。
 
 ## 分层与职责
 
