@@ -129,7 +129,10 @@ async function packageApp() {
       '--prepackaged',
       winUnpacked,
       '--config.directories.output',
-      outputDir
+      outputDir,
+      // 仅本地打包，不发布；否则 CI 环境下 electron-builder 会默认走发布流程并要求 GH_TOKEN。
+      '--publish',
+      'never'
     ],
     {
       stdio: 'inherit',
