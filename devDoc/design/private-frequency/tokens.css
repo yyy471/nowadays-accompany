@@ -1,0 +1,14 @@
+/* Hallmark · custom / bespoke · 私人频段
+ * Structure: account turntable / relationship tracks / capability patch rack
+ * Previous structure: sidebar + white panels. Current: top tabs + open stage + transport strip.
+ * Pre-emit critique: P5 H4 E4 S5 R4 V5. Native desktop type is an intentional offline choice. */
+:root{
+ --paper:#e9e8df;--paper-soft:#d9d9cf;--ink:#151917;--surface:#1d231f;--raised:#282f29;
+ --text:#e9e8df;--muted:#a3aea2;--rule:#414b40;--rule-light:#bdc1b3;
+ --acid:#d7f958;--acid-ink:#172015;--orange:#f29b72;--shade:#00000055;--clear:transparent;
+ --font:'Segoe UI Variable Text','Microsoft YaHei UI',sans-serif;
+ --display:'Bahnschrift','Arial Narrow','Microsoft YaHei UI',sans-serif;
+ --poster:'Impact','Bahnschrift',sans-serif;
+ --mono:'Cascadia Mono','Consolas',monospace;
+ --fast:140ms;--slide:340ms;--ease:cubic-bezier(.2,.75,.15,1);
+}

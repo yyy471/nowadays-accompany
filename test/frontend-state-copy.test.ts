@@ -115,8 +115,10 @@ describe('frontend copy contract', () => {
   it('names the extension page for every resource it manages', async () => {
     const root = path.join(process.cwd(), 'desktop', 'renderer', 'src');
     const app = await fs.readFile(path.join(root, 'App.tsx'), 'utf8');
-    expect(app).toContain("title: '插件与Skill'");
-    expect(app).toContain("label: '插件与Skill'");
+    const navigation = await fs.readFile(path.join(root, 'lib', 'navigation.ts'), 'utf8');
+    expect(app).toContain("import { PAGES } from './lib/navigation'");
+    expect(navigation).toContain("title: '插件与Skill'");
+    expect(navigation).toContain("label: '插件与Skill'");
     expect(app).not.toContain("view={page === 'roles' ? 'roles' : 'plugins'}");
     const policy = await fs.readFile(path.join(root, 'pages', 'Policy.tsx'), 'utf8');
     expect(policy).not.toContain('允许 AI 调用的工具');

@@ -2,9 +2,13 @@
 
 > **项目状态：开发中（Development）**
 >
-> 当前代码为开发快照，尚未发布稳定版本。本次快照标记为 `v0.2.4-dev.2`；EXT-E/F/G 已完成本地自动化复核，最新证据见 [EXT-G 独立复验](devDoc/101-ext-g-fixes-independent-recheck.md)（118 文件、1101 项通过、1 项既有跳过）。真实 QQ、模型服务、原生界面和发行包仍待 EXT-H 验收，后续任务见 [开发方案](devDoc/79-agent-extension-execution-plan.md)。
+> 当前代码为持续开发快照，尚未发布稳定版本；此前归档标签为 `v0.2.4-dev.2`。本轮包括首页与全局菜单重写、白昼/晚风主题、天气过渡和原生窗口主题，以及已登记但尚待完整接入的精细动效规范，实际状态见 [开发文档导航](devDoc/README.md)。EXT-E/F/G 的本地自动化证据见 [EXT-G 独立复验](devDoc/101-ext-g-fixes-independent-recheck.md)；真实 QQ、模型服务和完整发行包验收仍待完成，后续任务见 [开发方案](devDoc/79-agent-extension-execution-plan.md)。
 
 目录与Git约定见[仓库规范](devDoc/23-repository-layout-and-version-control.md)：测试源码保留，测试截图/报告、运行数据、构建输出和`release/`发行包不进入Git。
+
+前端开发遵循 [视觉基准](DESIGN.md)、[105共用UI规范](devDoc/105-frontend-design-system.md) 和 [110晚风深色标准](devDoc/110-nightwave-ui-standard.md)，数值来源为[三层token](devDoc/design/character-studio/tokens.json)。字体、尺寸与交互共用，白昼/晚风使用各自配色与素材。协作要求已登记在根及渲染层AGENTS，实际实施状态见[开发文档导航](devDoc/README.md)。
+
+动效遵循[117书签与落款规范](devDoc/117-frontend-motion-standard.md)，已认可的[离线HTML样板](devDoc/design/character-studio/motion-notes/motion-library-demo.html)包含按钮、保存反馈、页面、弹窗/抽屉与减少动效。精细动效规范与参数已登记，正式组件接入状态按117区分。
 
 当前桌面版采用引导式外部 SnowLuma 接入：用户从官方页面自行下载、解压、初始化并启动，nowadays 记住目录和加密管理密码、检测 QQ 并在点击后注入/监听。应用不自动部署或启动 SnowLuma。详见 [首次配置与验收](devDoc/20-guided-external-snowluma.md)。
 

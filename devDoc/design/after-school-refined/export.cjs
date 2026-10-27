@@ -1,0 +1,11 @@
+const fs=require('node:fs'),path=require('node:path');
+let html=fs.readFileSync(path.join(__dirname,'index.html'),'utf8');
+for(const name of ['tokens.css','style.css','refinement.css'])html=html.replace(`<link rel="stylesheet" href="${name}">`,()=>'<style>'+fs.readFileSync(path.join(__dirname,name),'utf8')+'</style>');
+const heroine='data:image/png;base64,'+fs.readFileSync(path.join(__dirname,'heroine.png')).toString('base64');
+const scene='data:image/png;base64,'+fs.readFileSync(path.join(__dirname,'clubroom.png')).toString('base64');
+const app=fs.readFileSync(path.join(__dirname,'app.js'),'utf8').replaceAll('heroine.png','${heroineAsset}').replaceAll('clubroom.png','${sceneAsset}');
+const refinement=fs.readFileSync(path.join(__dirname,'refinement.js'),'utf8');
+html=html.replace('<script src="app.js"></script>',()=>'<script>const heroineAsset='+JSON.stringify(heroine)+';const sceneAsset='+JSON.stringify(scene)+';\n'+app+'</script>');
+html=html.replace('<script src="refinement.js"></script>',()=>'<script>'+refinement+'</script>');
+fs.writeFileSync(path.join(__dirname,'nowadays-after-school-refined.html'),html);
+console.log('Created standalone refined design with both original artwork assets.');

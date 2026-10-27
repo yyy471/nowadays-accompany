@@ -1,0 +1,95 @@
+{
+  "date": "2026-10-27T12:29:49.791Z",
+  "url": "http://127.0.0.1:50318/ui-workbench.html",
+  "checks": [
+    "eight layout sizes, loaded art and no horizontal control overflow",
+    "field error association, body scale and 44px control alignment",
+    "long account name remains selectable and does not stretch a small window",
+    "keyboard switch blocks repeated busy activation and preserves focus",
+    "password reveal, number bounds, radio and native file input stay usable",
+    "busy button preserves focus, width and feedback; error hover stays readable",
+    "themed portal, nested draft cancellation/discard, focus trap and restoration",
+    "disclosure supports keyboard, keeps draft inputs and hides folded content",
+    "confirmation queue inherits caller theme and resets cancel focus for each request",
+    "saving dialog rejects Escape without replaying a delayed close",
+    "menu keyboard navigation, all nine actions, Escape and focus return",
+    "menu stays inside viewport when anchored at bottom left",
+    "application and OS reduced motion both stop decorative animation",
+    "art failure keeps reserved geometry and primary controls usable",
+    "async failure, empty, stale and ready remain distinct",
+    "forced colors retains switch shape and visible keyboard focus",
+    "native Electron window, sandbox, modal and no product bridge"
+  ],
+  "layouts": [
+    {
+      "width": 1440,
+      "height": 960,
+      "rootWidth": 1425,
+      "controls": [],
+      "brokenImages": 0
+    },
+    {
+      "width": 1280,
+      "height": 800,
+      "rootWidth": 1265,
+      "controls": [],
+      "brokenImages": 0
+    },
+    {
+      "width": 1024,
+      "height": 720,
+      "rootWidth": 1009,
+      "controls": [],
+      "brokenImages": 0
+    },
+    {
+      "width": 819,
+      "height": 576,
+      "rootWidth": 804,
+      "controls": [],
+      "brokenImages": 0
+    },
+    {
+      "width": 768,
+      "height": 900,
+      "rootWidth": 753,
+      "controls": [],
+      "brokenImages": 0
+    },
+    {
+      "width": 414,
+      "height": 896,
+      "rootWidth": 399,
+      "controls": [],
+      "brokenImages": 0
+    },
+    {
+      "width": 375,
+      "height": 812,
+      "rootWidth": 360,
+      "controls": [],
+      "brokenImages": 0
+    },
+    {
+      "width": 320,
+      "height": 780,
+      "rootWidth": 305,
+      "controls": [],
+      "brokenImages": 0
+    }
+  ],
+  "errors": [],
+  "businessRequests": [],
+  "native": {
+    "version": "39.8.10",
+    "scaleFactor": 1.5,
+    "windows": 1,
+    "preferences": {
+      "sandbox": true,
+      "contextIsolation": true,
+      "nodeIntegration": false
+    },
+    "note": "Isolated native sample window; no product tray/Core integration or OS scale setting was changed."
+  },
+  "status": "passed"
+}

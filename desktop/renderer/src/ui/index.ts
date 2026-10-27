@@ -5,3 +5,7 @@ export * from './actions';
 export * from './modal';
 export * from './confirm';
 export * from './async-state';
+export { UiThemeScope, UiThemeProvider } from './appearance';
+export * from './switch';
+export * from './menu';
+export * from './disclosure';

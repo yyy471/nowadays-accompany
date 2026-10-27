@@ -1,0 +1,26 @@
+{
+  "date": "2026-10-27T13:12:50.587Z",
+  "status": "passed",
+  "scope": "Actual production dist served by Vite preview, with isolated memory API; no art interception or product Core.",
+  "states": [
+    {
+      "name": "晚风电台",
+      "src": "/assets/character-night-B6r49Gji.png",
+      "width": 1024,
+      "filter": "none"
+    },
+    {
+      "name": "白昼来信",
+      "src": "/assets/character-CW7SKCqJ.png",
+      "width": 1024,
+      "filter": "none"
+    },
+    {
+      "name": "晚风电台",
+      "src": "/assets/character-night-B6r49Gji.png",
+      "width": 1024,
+      "filter": "none"
+    }
+  ],
+  "errors": []
+}

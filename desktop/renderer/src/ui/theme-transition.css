@@ -1,0 +1,32 @@
+@property --theme-weather-reveal { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
+.ui-theme-weather { position: fixed; inset: 0; pointer-events: none; overflow: clip; contain: layout style; }
+.ui-theme-leaf { position: absolute; width: 38px; height: 57px; color: var(--nd-semantic-color-accent-decorative); }
+.ui-theme-leaf-1 { right: 4%; top: 8%; view-transition-name: theme-leaf-1; }
+.ui-theme-leaf-2 { right: 1%; top: 25%; width: 26px; height: 39px; color: var(--nd-semantic-color-entry); view-transition-name: theme-leaf-2; }
+.ui-theme-leaf-3 { right: 12%; top: 3%; width: 31px; height: 47px; view-transition-name: theme-leaf-3; }
+.ui-theme-dawn {
+  position: absolute; inset: 0; view-transition-name: theme-dawn; transform-origin: left bottom;
+  background: radial-gradient(ellipse at 0% 100%, var(--nd-semantic-color-warning-surface), var(--nd-semantic-color-selection) 24%, transparent 68%);
+}
+/* 命名快照位于浏览器过渡层；整个层透传输入，编辑器和焦点仍属于真实DOM。 */
+html[data-theme-transition]::view-transition { pointer-events: none; }
+html[data-theme-transition] * { transition: none !important; }
+html[data-theme-transition-live] { view-transition-name: none; }
+html[data-theme-transition]::view-transition-group(*),
+html[data-theme-transition]::view-transition-image-pair(*),
+html[data-theme-transition]::view-transition-old(*),
+html[data-theme-transition]::view-transition-new(*) { animation: none; mix-blend-mode: normal; pointer-events: none; }
+html[data-theme-transition]::view-transition-group(root) { z-index: 0; }
+html[data-theme-transition]::view-transition-image-pair(root) { isolation: isolate; }
+html[data-theme-transition]::view-transition-old(root) {
+  opacity: 1;
+  mask-image: radial-gradient(ellipse farthest-corner at 100% 0%, transparent calc(var(--theme-weather-reveal) - 5%), #000 var(--theme-weather-reveal));
+}
+html[data-theme-transition="daylight"]::view-transition-old(root) {
+  mask-image: radial-gradient(ellipse farthest-corner at 0% 100%, transparent calc(var(--theme-weather-reveal) - 5%), #000 var(--theme-weather-reveal));
+}
+html[data-theme-transition]::view-transition-group(theme-leaf-1),
+html[data-theme-transition]::view-transition-group(theme-leaf-2),
+html[data-theme-transition]::view-transition-group(theme-leaf-3),
+html[data-theme-transition]::view-transition-group(theme-dawn) { z-index: 1; }
+html[data-theme-transition]::view-transition-new(theme-dawn) { transform-origin: left bottom; }

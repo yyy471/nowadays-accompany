@@ -1,0 +1,119 @@
+{
+  "date": "2026-10-27T10:17:28.399Z",
+  "checks": [
+    "actual homepage composition, real-shaped reads and no writes on browsing",
+    "desktop and narrow layouts do not overflow or overlap the dock",
+    "selected account changes data and preserves private/group target identity",
+    "all menu routes reach existing pages and settings remains an actual modal",
+    "draft cancellation preserves page/account/input; accepting changes account atomically",
+    "account-agent mutation uses only the captured account and blocks duplicate/navigation while busy",
+    "browser Back cancellation preserves URL and draft; legacy settings deep link still works",
+    "unknown mutation results are re-read, remain gated, and never auto-retry POST",
+    "A to B late reads cannot overwrite B",
+    "offline is separate from enabled configuration",
+    "first-load failures remain failures instead of empty accounts or a false paused switch",
+    "a failed account refresh retains labelled cached data, blocks switching and recovers by GET",
+    "a rejected agent write does not claim success or flip the confirmed state",
+    "confirmed empty account list offers explicit connection entry without starting it",
+    "removed selection stays missing until the user explicitly chooses a replacement",
+    "long names and many accounts remain searchable without layout expansion",
+    "theme and avatar failures keep controls available, and reduced motion clears parallax",
+    "actual homepage in isolated native Electron window",
+    "native process at forced 125% rendering scale, separate from OS scaling"
+  ],
+  "layouts": [
+    {
+      "width": 1440,
+      "height": 960,
+      "rootWidth": 1440,
+      "mainBottom": 856,
+      "footerTop": 856,
+      "overflow": [],
+      "brokenImages": 0
+    },
+    {
+      "width": 1440,
+      "height": 900,
+      "rootWidth": 1440,
+      "mainBottom": 796,
+      "footerTop": 796,
+      "overflow": [],
+      "brokenImages": 0
+    },
+    {
+      "width": 1280,
+      "height": 800,
+      "rootWidth": 1280,
+      "mainBottom": 696,
+      "footerTop": 696,
+      "overflow": [],
+      "brokenImages": 0
+    },
+    {
+      "width": 1024,
+      "height": 720,
+      "rootWidth": 1024,
+      "mainBottom": 616,
+      "footerTop": 616,
+      "overflow": [],
+      "brokenImages": 0
+    },
+    {
+      "width": 819,
+      "height": 576,
+      "rootWidth": 819,
+      "mainBottom": 496,
+      "footerTop": 496,
+      "overflow": [],
+      "brokenImages": 0
+    },
+    {
+      "width": 768,
+      "height": 900,
+      "rootWidth": 768,
+      "mainBottom": 812,
+      "footerTop": 812,
+      "overflow": [],
+      "brokenImages": 0
+    },
+    {
+      "width": 414,
+      "height": 896,
+      "rootWidth": 414,
+      "mainBottom": 816,
+      "footerTop": 816,
+      "overflow": [],
+      "brokenImages": 0
+    },
+    {
+      "width": 375,
+      "height": 812,
+      "rootWidth": 375,
+      "mainBottom": 732,
+      "footerTop": 732,
+      "overflow": [],
+      "brokenImages": 0
+    },
+    {
+      "width": 320,
+      "height": 780,
+      "rootWidth": 320,
+      "mainBottom": 700,
+      "footerTop": 700,
+      "overflow": [],
+      "brokenImages": 0
+    }
+  ],
+  "pageErrors": [],
+  "native": {
+    "version": "39.8.10",
+    "scaleFactor": 1.5,
+    "windows": 1,
+    "processScale125": {
+      "scaleFactor": 1.25,
+      "method": "Chromium process flag; host OS scale unchanged"
+    }
+  },
+  "scope": "Actual React application with isolated memory API; no real QQ or providers.",
+  "status": "passed"
+}

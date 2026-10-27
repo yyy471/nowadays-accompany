@@ -24,6 +24,7 @@ function readInfo(): BridgeInfo {
 
 contextBridge.exposeInMainWorld('nowadays', Object.freeze({
   ...readInfo(),
+  setWindowTheme: (preset: 'daylight' | 'nightwave'): Promise<boolean> => ipcRenderer.invoke('nowadays:set-window-theme', preset),
   openArtifactsDirectory: (): Promise<void> => ipcRenderer.invoke('nowadays:open-artifacts-directory'),
   previewArtifactImport: (mode?: ArtifactImportMode): Promise<ArtifactImportPreview | undefined> => ipcRenderer.invoke('nowadays:preview-artifact-import', mode),
   commitArtifactImport: (token: string): Promise<ArtifactImportResult> => ipcRenderer.invoke('nowadays:commit-artifact-import', token),

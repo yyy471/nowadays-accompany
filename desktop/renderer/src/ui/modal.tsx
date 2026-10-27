@@ -2,10 +2,12 @@ import { createPortal } from 'react-dom';
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { IconButton } from './actions';
 import { canReceiveFocus, focusableControls } from './focus';
+import { useUiAppearance } from './appearance';
 
 type Layer = { backdrop: HTMLDivElement; panel: HTMLDivElement; restoreFocus?: HTMLElement };
 const layers: Layer[] = [];
 const backgroundState = new Map<HTMLElement, { inert: boolean; hidden: string | null }>();
+let previousBodyOverflow: string | undefined;
 function isolateTopLayer() {
   for (const [element, previous] of backgroundState) {
     element.inert = previous.inert;
@@ -14,7 +16,11 @@ function isolateTopLayer() {
   }
   backgroundState.clear();
   const top = layers.at(-1);
-  if (!top) return;
+  if (!top) {
+    if (previousBodyOverflow !== undefined) { document.body.style.overflow = previousBodyOverflow; previousBodyOverflow = undefined; }
+    return;
+  }
+  if (previousBodyOverflow === undefined) { previousBodyOverflow = document.body.style.overflow; document.body.style.overflow = 'hidden'; }
   layers.forEach((layer, index) => { layer.backdrop.style.zIndex = String(1000 + index * 10); });
   for (const child of document.body.children) {
     if (!(child instanceof HTMLElement) || child === top.backdrop || ['SCRIPT', 'STYLE'].includes(child.tagName)) continue;
@@ -35,6 +41,7 @@ export function Modal({ open, title, description, children, onClose, closeDisabl
   const closeState = useRef({ onClose, closeDisabled });
   closeState.current = { onClose, closeDisabled };
   const id = useId();
+  const appearance = useUiAppearance();
   useEffect(() => {
     if (!open || !panel.current || !backdrop.current) return;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
@@ -79,7 +86,7 @@ export function Modal({ open, title, description, children, onClose, closeDisabl
     };
   }, [open]);
   if (!open) return null;
-  return createPortal(<div ref={backdrop} className={`ui-modal-backdrop ${backdropClassName}`} onMouseDown={(event) => {
+  return createPortal(<div ref={backdrop} data-ui-theme={appearance.theme} data-motion={appearance.motion} data-ui-preset={appearance.preset} className={`ui-modal-backdrop ${backdropClassName}`} onMouseDown={(event) => {
     if (event.target === event.currentTarget && !closeDisabled) onClose();
   }}>
     <div ref={panel} className={`ui-modal-panel ${className}`} role={role} aria-modal="true" aria-busy={closeDisabled || undefined}

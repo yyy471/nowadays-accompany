@@ -1,0 +1,397 @@
+{
+  "date": "2026-10-27",
+  "layouts": [
+    {
+      "route": "home",
+      "width": 1440,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "roles",
+      "width": 1440,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "models",
+      "width": 1440,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "library",
+      "width": 1440,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "overview",
+      "width": 1440,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "connect",
+      "width": 1440,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "extensions",
+      "width": 1440,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "diagnostics",
+      "width": 1440,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "settings",
+      "width": 1440,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "home",
+      "width": 1280,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "roles",
+      "width": 1280,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "models",
+      "width": 1280,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "library",
+      "width": 1280,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "overview",
+      "width": 1280,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "connect",
+      "width": 1280,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "extensions",
+      "width": 1280,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "diagnostics",
+      "width": 1280,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "settings",
+      "width": 1280,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "home",
+      "width": 768,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "roles",
+      "width": 768,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "models",
+      "width": 768,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "library",
+      "width": 768,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "overview",
+      "width": 768,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "connect",
+      "width": 768,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "extensions",
+      "width": 768,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "diagnostics",
+      "width": 768,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "settings",
+      "width": 768,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "home",
+      "width": 414,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "roles",
+      "width": 414,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "models",
+      "width": 414,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "library",
+      "width": 414,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "overview",
+      "width": 414,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "connect",
+      "width": 414,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "extensions",
+      "width": 414,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "diagnostics",
+      "width": 414,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "settings",
+      "width": 414,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "home",
+      "width": 375,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "roles",
+      "width": 375,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "models",
+      "width": 375,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "library",
+      "width": 375,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "overview",
+      "width": 375,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "connect",
+      "width": 375,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "extensions",
+      "width": 375,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "diagnostics",
+      "width": 375,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "settings",
+      "width": 375,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "home",
+      "width": 320,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "roles",
+      "width": 320,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "models",
+      "width": 320,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "library",
+      "width": 320,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "overview",
+      "width": 320,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "connect",
+      "width": 320,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "extensions",
+      "width": 320,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "diagnostics",
+      "width": 320,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    },
+    {
+      "route": "settings",
+      "width": 320,
+      "overflow": false,
+      "missingImages": 0,
+      "offscreen": []
+    }
+  ],
+  "checks": {
+    "pause": true,
+    "search": true,
+    "draftGuard": true,
+    "discard": true,
+    "loading": true,
+    "testResult": true,
+    "ninePages": true,
+    "details": true,
+    "account": true,
+    "isolatedRoles": true
+  },
+  "errors": [],
+  "scope": "Independent design prototype only; no production code or actual services inspected."
+}

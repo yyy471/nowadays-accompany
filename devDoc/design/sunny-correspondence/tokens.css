@@ -1,0 +1,33 @@
+/* Hallmark · custom bespoke: 晴日通信 · companion desktop / persistent side rail / account stage
+   Pre-emit critique: P5 H5 E4 S5 R5 V4. Illustration is a product atmosphere, never an action surface. */
+:root {
+  --color-paper: #fafaf6;
+  --color-sidebar: #f0f1e9;
+  --color-surface: #fffffc;
+  --color-soft: #eeefe8;
+  --color-ink: #252e2c;
+  --color-ink-2: #49534e;
+  --color-muted: #68716a;
+  --color-rule: #d9ddd3;
+  --color-accent: #bb452d;
+  --color-accent-soft: #fae9df;
+  --color-accent-ink: #fffaf3;
+  --color-sea: #dce9e4;
+  --color-sea-ink: #356859;
+  --color-sun: #f2b84a;
+  --color-warning: #79591c;
+  --color-warning-soft: #f6edce;
+  --color-backdrop: #252e2c55;
+  --color-shadow: #252e2c12;
+  --color-transparent: transparent;
+  --font-display: 'Segoe UI Variable Display', 'Microsoft YaHei UI', sans-serif;
+  --font-body: 'Segoe UI Variable Text', 'Microsoft YaHei UI', sans-serif;
+  --font-reading: 'Noto Serif SC', 'STSong', 'SimSun', serif;
+  --font-mono: 'Cascadia Code', 'Consolas', monospace;
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --duration-fast: 140ms;
+  --duration-page: 240ms;
+  --ease-out: cubic-bezier(.22, .68, .2, 1);
+}

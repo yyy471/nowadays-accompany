@@ -1,0 +1,68 @@
+{
+  "date": "2026-10-27T13:59:58.912Z",
+  "checks": [
+    "real preload bridge and native window follow both presets; invalid data rejected",
+    "saved theme restored after reload",
+    "captured real Windows caption changes from dark to light"
+  ],
+  "states": [
+    {
+      "preset": "nightwave",
+      "source": "dark",
+      "dark": true,
+      "background": "#171D29",
+      "accent": "#202836",
+      "bounds": {
+        "x": 213,
+        "y": 36,
+        "width": 1281,
+        "height": 840
+      },
+      "titlebarRGB": [
+        32,
+        40,
+        54
+      ],
+      "captureMethod": "Win32 PrintWindow with native non-client frame; own isolated test window only"
+    },
+    {
+      "preset": "daylight",
+      "source": "light",
+      "dark": false,
+      "background": "#F5F0E8",
+      "accent": "#FFFCF7",
+      "bounds": {
+        "x": 213,
+        "y": 36,
+        "width": 1281,
+        "height": 840
+      },
+      "titlebarRGB": [
+        255,
+        252,
+        247
+      ],
+      "captureMethod": "Win32 PrintWindow with native non-client frame; own isolated test window only"
+    },
+    {
+      "preset": "nightwave",
+      "source": "dark",
+      "dark": true,
+      "background": "#171D29",
+      "accent": "#202836",
+      "bounds": {
+        "x": 213,
+        "y": 36,
+        "width": 1281,
+        "height": 840
+      },
+      "titlebarRGB": [
+        32,
+        40,
+        54
+      ],
+      "captureMethod": "Win32 PrintWindow with native non-client frame; own isolated test window only"
+    }
+  ],
+  "status": "passed"
+}

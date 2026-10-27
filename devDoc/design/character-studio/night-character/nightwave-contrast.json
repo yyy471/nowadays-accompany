@@ -1,0 +1,177 @@
+{
+  "date": "2026-10-27T12:52:06.657Z",
+  "source": "devDoc/design/character-studio/tokens.json",
+  "preset": "nightwave",
+  "method": "sRGB linearized relative luminance; (Lmax + .05) / (Lmin + .05)",
+  "scope": "Opaque named token combinations only; not full UI accessibility certification.",
+  "previousFinding": {
+    "foreground": "#B78FA0",
+    "background": "#343140",
+    "ratio": 4.49,
+    "minimum": 4.5,
+    "resolution": "Night note caption now uses semantic.color.textMuted; decorative color stays decorative."
+  },
+  "measurements": [
+    {
+      "name": "body on canvas",
+      "foreground": "#EEE5D8",
+      "background": "#171D29",
+      "ratio": 13.531,
+      "minimum": 4.5,
+      "passed": true
+    },
+    {
+      "name": "body on surface",
+      "foreground": "#EEE5D8",
+      "background": "#202836",
+      "ratio": 11.87,
+      "minimum": 4.5,
+      "passed": true
+    },
+    {
+      "name": "secondary on canvas",
+      "foreground": "#ABB0BE",
+      "background": "#171D29",
+      "ratio": 7.784,
+      "minimum": 4.5,
+      "passed": true
+    },
+    {
+      "name": "secondary on surface",
+      "foreground": "#ABB0BE",
+      "background": "#202836",
+      "ratio": 6.829,
+      "minimum": 4.5,
+      "passed": true
+    },
+    {
+      "name": "note caption after correction",
+      "foreground": "#ABB0BE",
+      "background": "#343140",
+      "ratio": 5.837,
+      "minimum": 4.5,
+      "passed": true
+    },
+    {
+      "name": "note text",
+      "foreground": "#EEE5D8",
+      "background": "#343140",
+      "ratio": 10.145,
+      "minimum": 4.5,
+      "passed": true
+    },
+    {
+      "name": "commit label",
+      "foreground": "#1B2230",
+      "background": "#BDCBDE",
+      "ratio": 9.681,
+      "minimum": 4.5,
+      "passed": true
+    },
+    {
+      "name": "commit hover label",
+      "foreground": "#1B2230",
+      "background": "#D7E1EF",
+      "ratio": 12.067,
+      "minimum": 4.5,
+      "passed": true
+    },
+    {
+      "name": "entry label",
+      "foreground": "#1B2230",
+      "background": "#D4AA87",
+      "ratio": 7.51,
+      "minimum": 4.5,
+      "passed": true
+    },
+    {
+      "name": "entry hover label",
+      "foreground": "#1B2230",
+      "background": "#E8BF99",
+      "ratio": 9.365,
+      "minimum": 4.5,
+      "passed": true
+    },
+    {
+      "name": "entry arrow icon",
+      "foreground": "#1B2230",
+      "background": "#896C56",
+      "ratio": 3.295,
+      "minimum": 3,
+      "passed": true
+    },
+    {
+      "name": "disabled text",
+      "foreground": "#9A9FAF",
+      "background": "#2D3545",
+      "ratio": 4.659,
+      "minimum": 4.5,
+      "passed": true
+    },
+    {
+      "name": "danger feedback",
+      "foreground": "#F0A4B2",
+      "background": "#462D3A",
+      "ratio": 6.281,
+      "minimum": 4.5,
+      "passed": true
+    },
+    {
+      "name": "warning feedback",
+      "foreground": "#E0BC83",
+      "background": "#42392E",
+      "ratio": 6.298,
+      "minimum": 4.5,
+      "passed": true
+    },
+    {
+      "name": "success feedback",
+      "foreground": "#A2CABB",
+      "background": "#253D38",
+      "ratio": 6.489,
+      "minimum": 4.5,
+      "passed": true
+    },
+    {
+      "name": "danger hover label",
+      "foreground": "#1B2230",
+      "background": "#F0A4B2",
+      "ratio": 8.086,
+      "minimum": 4.5,
+      "passed": true
+    },
+    {
+      "name": "control boundary",
+      "foreground": "#7F8B9E",
+      "background": "#202836",
+      "ratio": 4.294,
+      "minimum": 3,
+      "passed": true
+    },
+    {
+      "name": "focus on surface",
+      "foreground": "#BDCBDE",
+      "background": "#202836",
+      "ratio": 8.998,
+      "minimum": 3,
+      "passed": true
+    },
+    {
+      "name": "focus on canvas",
+      "foreground": "#BDCBDE",
+      "background": "#171D29",
+      "ratio": 10.256,
+      "minimum": 3,
+      "passed": true
+    },
+    {
+      "name": "ghost action",
+      "foreground": "#BDCBDE",
+      "background": "#202836",
+      "ratio": 8.998,
+      "minimum": 4.5,
+      "passed": true
+    }
+  ],
+  "status": "passed"
+}

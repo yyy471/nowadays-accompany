@@ -1,8 +1,7 @@
-import { CancelButton, ControlButton, Modal } from './ui';
+import { CancelButton, ControlButton, Modal, UiThemeProvider, UiThemeScope } from './ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   api,
-  apiBaseUrl,
   appVersion,
   hasToken,
   subscribeEvents,
@@ -27,30 +26,16 @@ import { OverviewPage } from './pages/Overview';
 import { PolicyPage } from './pages/Policy';
 import { SlotsPage } from './pages/Slots';
 import { HomePage } from './pages/Home';
-import { Icon, type IconName } from './ui';
+import { Icon } from './ui';
 import { SettingsDialog, type SettingsTab } from './components/SettingsDialog';
 import { useDraftProtection } from './components/DraftProtectionProvider';
 import { historyIndex, planHistoryGuard } from './lib/drafts/navigation-history';
 
-interface PageDef {
-  id: string;
-  label: string;
-  icon: IconName;
-  title: string;
-  subtitle: string;
-}
-
-const PAGES: PageDef[] = [
-  { id: 'home', label: '主页', icon: 'user', title: '主页', subtitle: '展示当前所选账号的本地资料' },
-  { id: 'overview', label: '总览', icon: 'overview', title: '总览', subtitle: '查看运行摘要；连接操作在“实例与监听”完成' },
-  { id: 'instances', label: '实例与监听', icon: 'slots', title: '实例与监听', subtitle: '检测 QQ 状态；由你明确点击注入与监听' },
-  { id: 'roles', label: '资料与角色', icon: 'accounts', title: '资料与角色', subtitle: '按账号维护展示资料，并为私聊或群聊绑定角色卡' },
-  { id: 'plugins', label: '插件与Skill', icon: 'package', title: '插件与Skill', subtitle: '按账号管理插件、工具授权与 Skill 的生效范围' },
-  { id: 'model-config', label: '模型配置', icon: 'shield', title: '模型配置', subtitle: '按账号配置五类模型服务与能力' },
-  { id: 'diagnostics', label: '事件诊断', icon: 'activity', title: '事件诊断', subtitle: '检查本次运行的实例与通道事件' },
-  { id: 'artifacts', label: '资源库', icon: 'artifacts', title: '资源库', subtitle: '管理角色卡、插件与公用 Skill 资源、版本和部署' }
-];
-const WORKBENCH_PAGES = PAGES.filter((item) => !['home', 'artifacts'].includes(item.id));
+import { PAGES } from './lib/navigation';
+import { readHomeAccount, type BindingTarget } from './lib/home-presentation';
+import { ThemeSwitcher } from './components/shell/ThemeSwitcher';
+import { useThemePreset } from './ui/presets';
+import { PageDock } from './components/shell/PageDock';
 
 const STREAM_LABELS: Record<StreamStatus, string> = {
   connecting: '事件连接中',
@@ -113,6 +98,7 @@ function historyState(index: number): Record<string, unknown> {
 }
 
 export function App() {
+  const { preset } = useThemePreset();
   const [page, setPage] = useState(pageFromHash);
   const pageRef = useRef(page);
   const contentRef = useRef<HTMLElement>(null);
@@ -122,6 +108,10 @@ export function App() {
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [streamStatus, setStreamStatus] = useState<StreamStatus>('connecting');
   const [focusDisplay, setFocusDisplay] = useState<{ accountId: string; requestId: number }>();
+  const [focusBinding,setFocusBinding] = useState<BindingTarget>();
+  const [selectedHomeAccount,setSelectedHomeAccount] = useState(readHomeAccount);
+  const selectedHomeRef = useRef(selectedHomeAccount);
+  selectedHomeRef.current = selectedHomeAccount;
   const [transitionNotice, setTransitionNotice] = useState<string>();
   const [quitPhase, setQuitPhase] = useState<'idle' | 'checking' | 'approved'>('idle');
   const focusRequestId = useRef(0);
@@ -137,6 +127,14 @@ export function App() {
 
   const slots = usePoll<SlotsResponse>(hasToken ? '/slots' : null, 3000);
   const accounts = usePoll<AccountsResponse>(hasToken ? '/accounts?avatars=1' : null, 8000);
+  const accountsRef = useRef(accounts.data);
+  accountsRef.current = accounts.data;
+  useEffect(()=>{
+    if(!selectedHomeRef.current && accounts.data?.accounts.length) {
+      selectedHomeRef.current=accounts.data.accounts[0]!.accountId;
+      setSelectedHomeAccount(selectedHomeRef.current);
+    }
+  },[accounts.data]);
   const artifacts = usePoll<ArtifactsResponse>(hasToken ? '/artifacts' : null, 15000);
   const providers = usePoll<ProvidersResponse>(hasToken ? '/providers' : null, 8000);
   const injectionSettings = usePoll<InjectionSettingsResponse>(hasToken ? '/injection/settings' : null, 15000);
@@ -176,8 +174,9 @@ export function App() {
   }, []);
 
   const current = PAGES.find((item) => item.id === page) ?? PAGES[0]!;
-  const onlineCount = (slots.data?.slots ?? []).filter((instance) => instance.state === 'online').length;
-  const isWorkbench = !['home', 'artifacts'].includes(page);
+  const isPreview = import.meta.env.DEV && new URLSearchParams(window.location.search).get('preview')==='1';
+  const activeHomeAccount = selectedHomeAccount || accounts.data?.accounts[0]?.accountId || '';
+  const onlineCount = (slots.data?.slots ?? []).filter((instance) => instance.state === 'online' && instance.connected).length;
 
   useEffect(() => {
     pageRef.current = page;
@@ -191,13 +190,13 @@ export function App() {
     if (settingsOpen || page === 'model-config' || page === 'overview') void providers.refresh();
   }, [page, settingsOpen, slots.refresh, accounts.refresh, artifacts.refresh, providers.refresh]);
 
-  const navigate = async (next: string, options: { focusAccountId?: string } = {}): Promise<void> => {
+  const navigate = async (next: string, options: { focusAccountId?: string; focusBinding?: BindingTarget } = {}): Promise<void> => {
     if (quitPhaseRef.current !== 'idle') return;
     if (next === 'settings') {
       openSettings('snowluma');
       return;
     }
-    if (next === pageRef.current) {
+    if (next === pageRef.current && !options.focusAccountId) {
       contentRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
@@ -206,13 +205,17 @@ export function App() {
       if (result.message) setTransitionNotice(result.message);
       return;
     }
-    applyRoute(next, { push: true, focusAccountId: options.focusAccountId });
+    if(quitPhaseRef.current!=='idle')return;
+    if(options.focusAccountId&&!accountsRef.current?.accounts.some(account=>account.accountId===options.focusAccountId)) {
+      setTransitionNotice('目标账号已不在当前列表中，请重新选择。'); return;
+    }
+    applyRoute(next, { push: next!==pageRef.current, focusAccountId: options.focusAccountId, focusBinding:options.focusBinding });
   };
 
   const transitionScope = (): { kind: 'page' } | { kind: 'all' } =>
     settingsOpenRef.current ? { kind: 'all' } : { kind: 'page' };
 
-  const applyRoute = (next: string, options: { push?: boolean; index?: number; focusAccountId?: string; notice?: string } = {}): void => {
+  const applyRoute = (next: string, options: { push?: boolean; index?: number; focusAccountId?: string; focusBinding?: BindingTarget; notice?: string } = {}): void => {
     const url = urlForPage(next);
     let index = options.index;
     if (index === undefined) {
@@ -239,6 +242,7 @@ export function App() {
     setSettingsOpen(false);
     setLegacyNotice(options.notice);
     setTransitionNotice(undefined);
+    setFocusBinding(options.focusBinding);
     contentRef.current?.scrollTo({ top: 0 });
   };
 
@@ -435,6 +439,8 @@ export function App() {
     applyRoute('model-config', { push: pageRef.current !== 'model-config' });
   };
 
+  const goPage = (next:string):void => { void navigate(next,next==='roles'&&accounts.data?.accounts.some(account=>account.accountId===selectedHomeAccount)?{focusAccountId:selectedHomeAccount}:{}); };
+
   if (!hasToken) {
     return (
       <div className="auth-screen">
@@ -452,82 +458,35 @@ export function App() {
 
   return (
     <>
-      <div className="app-shell" inert={quitPhase !== 'idle' || undefined}>
-      <ControlButton className="skip-content" onClick={() => contentRef.current?.focus()}>跳到主内容</ControlButton>
-      <header className="app-global-header">
-        <div className="brand">
-          <img src="/nowadays-icon.png" alt="" width={34} height={34} />
-          <div>
-            <strong>nowadays</strong>
-            <span>QQ 注入控制台</span>
-          </div>
-        </div>
-        <nav className="primary-nav" aria-label="主导航">
-          <ControlButton type="button" className={`primary-nav-item${page === 'home' ? ' active' : ''}`} onClick={() => navigate('home')}>
-            <Icon name="user" size={17} /><span>主页</span>
-          </ControlButton>
-          <ControlButton type="button" className={`primary-nav-item${!['home', 'artifacts'].includes(page) ? ' active' : ''}`} onClick={() => navigate('overview')}>
-            <Icon name="overview" size={17} /><span>工作台</span>
-          </ControlButton>
-          <ControlButton type="button" className={`primary-nav-item${page === 'artifacts' ? ' active' : ''}`} onClick={() => navigate('artifacts')}>
-            <Icon name="artifacts" size={17} /><span>资源</span>
-          </ControlButton>
-        </nav>
-        <div className="app-global-meta">
-          <span className={`stream-pill stream-${streamStatus}`}>
-            <span className="stock-dot" />{STREAM_LABELS[streamStatus]}
-          </span>
-          <span className="online-pill"><strong>{onlineCount}</strong> 个实例在线</span>
-          <span className="app-build mono">{appVersion === 'dev' ? 'dev build' : `v${appVersion}`}</span>
-        </div>
+      <div className="studio-shell" data-ui-palette="xiacheng" data-ui-preset={preset} data-page={page} inert={quitPhase !== 'idle' || undefined}>
+      <UiThemeScope theme="xiacheng" className="studio-header-scope">
+      <ControlButton className="ui-skip-content" onClick={() => contentRef.current?.focus()}>跳到主内容</ControlButton>
+      <header className="studio-header">
+        <ControlButton className="ui-studio-brand" aria-label="nowadays，返回主页" onClick={()=>goPage('home')}><span className="ui-brand-mark" aria-hidden="true">n<span>•</span></span><span>nowadays<small>{isPreview?'隔离界面预览 / 样例数据':'A NOTE FOR YOUR EVERYDAY.'}</small></span></ControlButton>
+        <ThemeSwitcher disabled={quitPhase!=='idle'}/>
+        <div className="studio-header-actions"><ControlButton className="ui-settings-launcher" aria-label="应用设置" aria-haspopup="dialog" aria-expanded={settingsOpen} onClick={()=>openSettings()}><Icon name="settings" size={20}/></ControlButton></div>
       </header>
-
-      <div className="app-workarea">
-        {isWorkbench ? <aside className="sidebar">
-          <nav className="nav" aria-label="工作台页面">
-          {WORKBENCH_PAGES.map((item) => (
-            <ControlButton
-              type="button"
-              key={item.id}
-              className={`nav-item${item.id === page ? ' active' : ''}`}
-              onClick={() => navigate(item.id)}
-            >
-              <Icon name={item.icon} size={18} />
-              <span>{item.label}</span>
-              {item.id === 'instances' && onlineCount > 0 ? <span className="nav-badge">{onlineCount}</span> : null}
-            </ControlButton>
-          ))}
-          </nav>
-          <div className="sidebar-foot">
-            <div className={`core-state ${slots.error ? 'is-bad' : 'is-ok'}`}>
-              <span className="stock-dot" />
-              <span>{slots.error ? '核心不可达' : '核心已连接'}</span>
-            </div>
-            <span className="muted mono">{apiBaseUrl.replace(/^http:\/\//, '')}</span>
-          </div>
-        </aside> : null}
-
-      <div className="main-column">
-        <header className="topbar">
-          <div className="topbar-title">
-            <h1>{current.title}</h1>
-            <p>{current.subtitle}</p>
-          </div>
-        </header>
-
-        <main className="content" ref={contentRef} tabIndex={-1} aria-label="当前页面内容">
+      </UiThemeScope>
+        <main className="studio-content" ref={contentRef} tabIndex={-1} aria-label="当前页面内容">
+          <UiThemeScope theme="xiacheng" className="studio-notices">
           {legacyNotice ? <div className="notice legacy-route-notice" role="status"><span>{legacyNotice}</span><CancelButton size="sm" onClick={() => setLegacyNotice(undefined)}>关闭</CancelButton></div> : null}
           {transitionNotice ? <div className="notice notice-warn" role="status"><span>{transitionNotice}</span><CancelButton size="sm" onClick={() => setTransitionNotice(undefined)}>关闭</CancelButton></div> : null}
+          </UiThemeScope>
+          <UiThemeProvider theme={page==='home'?'xiacheng':undefined}>
+          <div className={page==='home'?'studio-home-content':'studio-legacy-page'}>
+          {page!=='home'?<header className="studio-page-heading"><h1>{current.title}</h1><p>{current.subtitle}</p></header>:null}
           {page === 'home' ? (
+            <UiThemeScope theme="xiacheng">
             <HomePage
               accounts={accounts.data}
-              slots={slots.data}
+              selectedAccountId={activeHomeAccount}
               loading={accounts.loading}
               error={accounts.error}
+              locked={quitPhase!=='idle'}
               onRetry={accounts.refresh}
-              onGoConnections={() => navigate('instances')}
-              onEditProfile={(accountId) => { void navigate('roles', { focusAccountId: accountId }); }}
+              onGoWorkbench={()=>goPage('overview')}
             />
+            </UiThemeScope>
           ) : null}
           {page === 'overview' ? (
             <OverviewPage
@@ -562,6 +521,8 @@ export function App() {
               onGoSlots={() => navigate('instances')}
               onGoArtifacts={() => navigate('artifacts')}
               focusDisplay={focusDisplay}
+              focusBinding={focusBinding}
+              onFocusBindingHandled={()=>setFocusBinding(undefined)}
               onFocusDisplayHandled={() => setFocusDisplay(undefined)}
             />
           ) : null}
@@ -583,6 +544,7 @@ export function App() {
           ) : null}
           {page === 'model-config' ? (
             <PolicyPage
+              initialAccountId={activeHomeAccount}
               providers={providers.data}
               providersLoading={providers.loading}
               providersError={providers.error}
@@ -605,12 +567,15 @@ export function App() {
           {page === 'diagnostics' ? (
             <ActivityPage events={events} status={streamStatus} onClear={() => setEvents([])} />
           ) : null}
+          </div>
+          </UiThemeProvider>
         </main>
-      </div>
-      </div>
-      <ControlButton type="button" className="global-settings-launcher" onClick={() => openSettings()} aria-haspopup="dialog" aria-expanded={settingsOpen}>
-        <Icon name="settings" size={17} /><span>设置</span>
-      </ControlButton>
+      <UiThemeScope theme="xiacheng" className="studio-footer-scope"><footer className="studio-footer">
+        <span className="studio-runtime">{slots.error?'连接状态待更新':!slots.data?'正在读取连接':`${onlineCount} 个实例已连接`} · {STREAM_LABELS[streamStatus]}</span>
+        <PageDock page={page} onNavigate={goPage}/>
+        <span className="studio-edition">CHARACTER STUDIO / {appVersion==='dev'?'开发版':`v${appVersion}`}</span>
+      </footer></UiThemeScope>
+      <UiThemeProvider>
       <SettingsDialog
         open={settingsOpen}
         locked={quitPhase !== 'idle'}
@@ -622,6 +587,7 @@ export function App() {
         providersError={providers.error}
         refreshProviders={providers.refresh}
       />
+      </UiThemeProvider>
       </div>
       <Modal open={quitPhase === 'approved'} title="正在安全退出" className="quit-dialog" closeDisabled onClose={() => {}}>
         <p role="status" aria-live="polite">正在释放运行资源，请稍候…</p>

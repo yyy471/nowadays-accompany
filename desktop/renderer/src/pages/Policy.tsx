@@ -60,7 +60,8 @@ export function PolicyPage({
   onGoConnections,
   onRetryAccounts,
   onRetrySlots,
-  onRetryProviders
+  onRetryProviders,
+  initialAccountId
 }: {
   providers?: ProvidersResponse;
   providersLoading: boolean;
@@ -76,6 +77,7 @@ export function PolicyPage({
   onRetryAccounts: () => Promise<void>;
   onRetrySlots: () => Promise<void>;
   onRetryProviders: () => Promise<void>;
+  initialAccountId?: string;
 }) {
   const accountIds = useMemo(() => {
     const ids = new Set<string>();
@@ -189,7 +191,7 @@ export function PolicyPage({
 
   useEffect(() => {
     if (!accountId && accountIds.length) {
-      selectAccount(accountIds[0]!);
+      selectAccount(initialAccountId&&accountIds.includes(initialAccountId)?initialAccountId:accountIds[0]!);
       return;
     }
     if (accountId && !accountIds.includes(accountId)) {
@@ -199,7 +201,7 @@ export function PolicyPage({
       }
       selectAccount(accountIds[0] ?? '');
     }
-  }, [accountId, accountIds, dirty]);
+  }, [accountId, accountIds, dirty, initialAccountId]);
 
   const requestPolicyTransition = async (
     actionLabel: string,

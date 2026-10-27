@@ -10,6 +10,7 @@ import { useDraftRegistration } from '../lib/use-draft-registration';
 import { useDraftProtection } from '../components/DraftProtectionProvider';
 import { WorldbookSettings, type WorldbookOptions } from '../components/WorldbookSettings';
 import type { ConversationWorldbookSource, EffectiveWorldbook } from '../../../../src/contracts/worldbook.js';
+import { bindingElementId, type BindingTarget } from '../lib/home-presentation';
 
 interface AccountsPageProps {
   locked?: boolean;
@@ -24,6 +25,8 @@ interface AccountsPageProps {
   onGoSlots: () => void;
   onGoArtifacts: () => void;
   focusDisplay?: { accountId: string };
+  focusBinding?: BindingTarget;
+  onFocusBindingHandled?: () => void;
   onFocusDisplayHandled: () => void;
 }
 
@@ -107,7 +110,7 @@ function roleCardChoices(versions: ArtifactItem[], current: ArtifactItem[]): Rol
   });
 }
 
-export function AccountsPage({ accounts, accountsLoading, accountsError, artifacts, artifactsLoading, artifactsError, refresh, onRetryArtifacts, onGoSlots, onGoArtifacts, focusDisplay, onFocusDisplayHandled, locked = false }: AccountsPageProps) {
+export function AccountsPage({ accounts, accountsLoading, accountsError, artifacts, artifactsLoading, artifactsError, refresh, onRetryArtifacts, onGoSlots, onGoArtifacts, focusDisplay, onFocusBindingHandled, focusBinding, onFocusDisplayHandled, locked = false }: AccountsPageProps) {
   const list = accounts?.accounts ?? [];
   const confirm = useConfirm();
   const { requestTransition, registry } = useDraftProtection();
@@ -219,6 +222,14 @@ export function AccountsPage({ accounts, accountsLoading, accountsError, artifac
     });
     return () => { cancelled = true; };
   }, [selectedAccount, reloadKey]);
+
+  useEffect(()=>{
+    if(!focusBinding||loadedAccountId!==focusBinding.accountId||bindingsLoading||bindingsError)return;
+    const target=activeBindings.find(binding=>binding.kind===focusBinding.kind&&binding.peerId===focusBinding.peerId);
+    if(target){const node=document.getElementById(bindingElementId(target));node?.focus({preventScroll:true});node?.scrollIntoView({block:'center',behavior:'auto'});}
+    else setNotice('请求查看的角色绑定已不存在，请在当前账号重新选择。');
+    onFocusBindingHandled?.();
+  },[focusBinding,loadedAccountId,bindingsLoading,bindingsError,activeBindings,onFocusBindingHandled]);
 
   const selectAccountWithGuard = async (next: string): Promise<void> => {
     if (accountRef.current === next) return;
@@ -335,7 +346,7 @@ export function AccountsPage({ accounts, accountsLoading, accountsError, artifac
               {bindingsLoading ? <LoadingNote label={loadedAccountId === selectedAccount ? '正在重新读取会话绑定…' : '正在读取该账号的会话绑定…'} /> : null}
               {loadedAccountId === selectedAccount ? (
                 activeBindings.length ? <div className="binding-list">{activeBindings.map((binding) => (
-                  <div key={`${binding.accountId}/${bindingKey(binding)}`}><div className="binding-row">
+                  <div key={`${binding.accountId}/${bindingKey(binding)}`} id={bindingElementId(binding)} tabIndex={-1} className="binding-entry"><div className="binding-row">
                     <div className="binding-row-info"><strong>{binding.kind === 'private' ? '私聊' : '群聊'} {binding.peerId}</strong><span>{binding.cardName ?? binding.roleCard.id} · {binding.roleCard.source === 'public' ? '公用' : '私有'} · {binding.roleCard.revision ? `固定版本 @${binding.roleCard.revision}` : `跟随当前${binding.resolvedRevision ? `（${binding.resolvedRevision}）` : ''}`}</span></div>
                     <Tag tone={binding.state === 'ready' ? 'ok' : 'bad'}>{binding.state === 'ready' ? '已解析' : '缺少角色卡'}</Tag>
                     <Button size="sm" variant="ghost" busy={busy === `remove:${bindingKey(binding)}`} disabled={Boolean(busy) || bindingsLoading || binding.accountId !== selectedAccount} onClick={() => void removeBinding(binding)}>解除</Button>

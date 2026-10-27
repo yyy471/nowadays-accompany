@@ -14,6 +14,7 @@ interface QuerySnapshot<T = unknown> {
 
 interface QueryEntry {
   path: string;
+  version: number;
   snapshot: QuerySnapshot;
   listeners: Map<(snapshot: QuerySnapshot) => void, number>;
   timer?: ReturnType<typeof setInterval>;
@@ -28,7 +29,7 @@ const queries = new Map<string, QueryEntry>();
 function queryEntry(path: string): QueryEntry {
   let entry = queries.get(path);
   if (!entry) {
-    entry = { path, snapshot: { loading: true }, listeners: new Map() };
+    entry = { path, version: 0, snapshot: { loading: true }, listeners: new Map() };
     queries.set(path, entry);
   }
   if (entry.idleTimer) {
@@ -44,12 +45,13 @@ function notify(entry: QueryEntry): void {
 
 function load(entry: QueryEntry): Promise<void> {
   if (entry.inFlight) return entry.inFlight;
+  const version = entry.version;
   const task = api<unknown>(entry.path)
     .then((data) => {
-      entry.snapshot = { data, loading: false };
+      if (entry.version === version) entry.snapshot = { data, loading: false };
     })
     .catch((error: unknown) => {
-      entry.snapshot = { ...entry.snapshot, error: errorMessage(error), loading: false };
+      if (entry.version === version) entry.snapshot = { ...entry.snapshot, error: errorMessage(error), loading: false };
     })
     .finally(() => {
       entry.inFlight = undefined;
@@ -85,12 +87,13 @@ function schedule(entry: QueryEntry): void {
 function subscribe(
   path: string,
   intervalMs: number,
-  listener: (snapshot: QuerySnapshot) => void
+  listener: (snapshot: QuerySnapshot) => void,
+  revalidate: boolean
 ): () => void {
   const entry = queryEntry(path);
   entry.listeners.set(listener, intervalMs);
   listener(entry.snapshot);
-  if (!entry.inFlight && (entry.snapshot.data === undefined || entry.snapshot.error)) void load(entry);
+  if (!entry.inFlight && (revalidate || entry.snapshot.data === undefined || entry.snapshot.error)) void load(entry);
   schedule(entry);
   return () => {
     entry.listeners.delete(listener);
@@ -106,7 +109,8 @@ function subscribe(
 
 export function usePoll<T>(
   path: string | null,
-  intervalMs = 0
+  intervalMs = 0,
+  revalidate = false
 ): { data?: T; error?: string; loading: boolean; refresh: () => Promise<void> } {
   const [state, setState] = useState<{ path: string | null; snapshot: QuerySnapshot<T> }>({
     path,
@@ -123,8 +127,8 @@ export function usePoll<T>(
     const listener = (snapshot: QuerySnapshot): void => {
       setState({ path, snapshot: snapshot as QuerySnapshot<T> });
     };
-    return subscribe(path, intervalMs, listener);
-  }, [path, intervalMs]);
+    return subscribe(path, intervalMs, listener, revalidate);
+  }, [path, intervalMs, revalidate]);
 
   const refreshNow = useCallback(async () => {
     if (!pathRef.current) return;
@@ -133,4 +137,13 @@ export function usePoll<T>(
 
   const snapshot = state.path === path ? state.snapshot : { loading: Boolean(path) };
   return { data: snapshot.data, error: snapshot.error, loading: snapshot.loading, refresh: refreshNow };
+}
+
+/** Publish a confirmed mutation without allowing an older in-flight read to undo it. */
+export function updateQueryData<T>(path: string, data: T): void {
+  const entry = queries.get(path);
+  if (!entry) return;
+  entry.version += 1;
+  entry.snapshot = { data, loading: false };
+  notify(entry);
 }

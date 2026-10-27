@@ -3,6 +3,7 @@ import type { ArtifactImportPreview, ArtifactImportResult } from './types';
 import type { ArtifactImportMode } from '../../../src/contracts/artifact-import.js';
 
 interface BridgeInfo {
+  setWindowTheme?: (preset: 'daylight' | 'nightwave') => Promise<boolean>;
   openArtifactsDirectory?: () => Promise<void>;
   previewArtifactImport?: (mode?: ArtifactImportMode) => Promise<ArtifactImportPreview | undefined>;
   commitArtifactImport?: (token: string) => Promise<ArtifactImportResult>;

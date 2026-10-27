@@ -1,0 +1,545 @@
+{
+  "date": "2026-10-27T13:42:15.972Z",
+  "checks": [
+    "both weather directions render named snapshots and settle without leftover layers",
+    "rapid reverse selection is last-choice-wins and pointer input is not blocked",
+    "profile draft, editor node, selection, scroll and focus survive switching",
+    "system reduced motion, explicit full override and preference changes mid-flight",
+    "unavailable transition API and denied storage still update the theme",
+    "appearance persists across reload, with no business writes",
+    "both themes settle without overflow at desktop and narrow widths",
+    "Electron 39 renders both transitions in an isolated sandboxed window"
+  ],
+  "errors": [],
+  "samples": [
+    {
+      "preset": "nightwave",
+      "animations": [
+        {
+          "pseudo": "::view-transition-old(root)",
+          "frames": [
+            {
+              "offset": null,
+              "easing": "linear",
+              "composite": "auto",
+              "--theme-weather-reveal": "0%",
+              "computedOffset": 0
+            },
+            {
+              "offset": null,
+              "easing": "linear",
+              "composite": "auto",
+              "--theme-weather-reveal": "110%",
+              "computedOffset": 1
+            }
+          ],
+          "duration": 400
+        },
+        {
+          "pseudo": "::view-transition-new(theme-leaf-1)",
+          "frames": [
+            {
+              "offset": 0,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "translate(8vw, -8vh) rotate(-13deg)",
+              "opacity": "0",
+              "computedOffset": 0
+            },
+            {
+              "offset": 0.18,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "translate(-12vw, 3vh) rotate(22deg)",
+              "opacity": "0.85",
+              "computedOffset": 0.18
+            },
+            {
+              "offset": 0.63,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "translate(-54vw, 27vh) rotate(85deg)",
+              "opacity": "0.7",
+              "computedOffset": 0.63
+            },
+            {
+              "offset": 1,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "translate(-110vw, 73vh) rotate(160deg)",
+              "opacity": "0",
+              "computedOffset": 1
+            }
+          ],
+          "duration": 550
+        },
+        {
+          "pseudo": "::view-transition-new(theme-leaf-2)",
+          "frames": [
+            {
+              "offset": 0,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "translate(8vw, -8vh) rotate(-1deg)",
+              "opacity": "0",
+              "computedOffset": 0
+            },
+            {
+              "offset": 0.18,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "translate(-12vw, 6vh) rotate(44deg)",
+              "opacity": "0.85",
+              "computedOffset": 0.18
+            },
+            {
+              "offset": 0.63,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "translate(-54vw, 34vh) rotate(110deg)",
+              "opacity": "0.7",
+              "computedOffset": 0.63
+            },
+            {
+              "offset": 1,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "translate(-110vw, 81vh) rotate(195deg)",
+              "opacity": "0",
+              "computedOffset": 1
+            }
+          ],
+          "duration": 550
+        },
+        {
+          "pseudo": "::view-transition-new(theme-leaf-3)",
+          "frames": [
+            {
+              "offset": 0,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "translate(8vw, -8vh) rotate(11deg)",
+              "opacity": "0",
+              "computedOffset": 0
+            },
+            {
+              "offset": 0.18,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "translate(-12vw, 9vh) rotate(66deg)",
+              "opacity": "0.85",
+              "computedOffset": 0.18
+            },
+            {
+              "offset": 0.63,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "translate(-54vw, 41vh) rotate(135deg)",
+              "opacity": "0.7",
+              "computedOffset": 0.63
+            },
+            {
+              "offset": 1,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "translate(-110vw, 89vh) rotate(230deg)",
+              "opacity": "0",
+              "computedOffset": 1
+            }
+          ],
+          "duration": 550
+        }
+      ]
+    },
+    {
+      "preset": "daylight",
+      "animations": [
+        {
+          "pseudo": "::view-transition-old(root)",
+          "frames": [
+            {
+              "offset": null,
+              "easing": "linear",
+              "composite": "auto",
+              "--theme-weather-reveal": "0%",
+              "computedOffset": 0
+            },
+            {
+              "offset": null,
+              "easing": "linear",
+              "composite": "auto",
+              "--theme-weather-reveal": "110%",
+              "computedOffset": 1
+            }
+          ],
+          "duration": 400
+        },
+        {
+          "pseudo": "::view-transition-new(theme-dawn)",
+          "frames": [
+            {
+              "offset": 0,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "scale(0.8)",
+              "opacity": "0",
+              "computedOffset": 0
+            },
+            {
+              "offset": 0.3,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "scale(1)",
+              "opacity": "0.55",
+              "computedOffset": 0.3
+            },
+            {
+              "offset": 1,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "scale(1.25)",
+              "opacity": "0",
+              "computedOffset": 1
+            }
+          ],
+          "duration": 550
+        }
+      ]
+    },
+    {
+      "preset": "nightwave",
+      "animations": [
+        {
+          "pseudo": "::view-transition-old(root)",
+          "frames": [
+            {
+              "offset": null,
+              "easing": "linear",
+              "composite": "auto",
+              "--theme-weather-reveal": "0%",
+              "computedOffset": 0
+            },
+            {
+              "offset": null,
+              "easing": "linear",
+              "composite": "auto",
+              "--theme-weather-reveal": "110%",
+              "computedOffset": 1
+            }
+          ],
+          "duration": 400
+        },
+        {
+          "pseudo": "::view-transition-new(theme-leaf-1)",
+          "frames": [
+            {
+              "offset": 0,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "translate(8vw, -8vh) rotate(-13deg)",
+              "opacity": "0",
+              "computedOffset": 0
+            },
+            {
+              "offset": 0.18,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "translate(-12vw, 3vh) rotate(22deg)",
+              "opacity": "0.85",
+              "computedOffset": 0.18
+            },
+            {
+              "offset": 0.63,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "translate(-54vw, 27vh) rotate(85deg)",
+              "opacity": "0.7",
+              "computedOffset": 0.63
+            },
+            {
+              "offset": 1,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "translate(-110vw, 73vh) rotate(160deg)",
+              "opacity": "0",
+              "computedOffset": 1
+            }
+          ],
+          "duration": 550
+        },
+        {
+          "pseudo": "::view-transition-new(theme-leaf-2)",
+          "frames": [
+            {
+              "offset": 0,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "translate(8vw, -8vh) rotate(-1deg)",
+              "opacity": "0",
+              "computedOffset": 0
+            },
+            {
+              "offset": 0.18,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "translate(-12vw, 6vh) rotate(44deg)",
+              "opacity": "0.85",
+              "computedOffset": 0.18
+            },
+            {
+              "offset": 0.63,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "translate(-54vw, 34vh) rotate(110deg)",
+              "opacity": "0.7",
+              "computedOffset": 0.63
+            },
+            {
+              "offset": 1,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "translate(-110vw, 81vh) rotate(195deg)",
+              "opacity": "0",
+              "computedOffset": 1
+            }
+          ],
+          "duration": 550
+        },
+        {
+          "pseudo": "::view-transition-new(theme-leaf-3)",
+          "frames": [
+            {
+              "offset": 0,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "translate(8vw, -8vh) rotate(11deg)",
+              "opacity": "0",
+              "computedOffset": 0
+            },
+            {
+              "offset": 0.18,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "translate(-12vw, 9vh) rotate(66deg)",
+              "opacity": "0.85",
+              "computedOffset": 0.18
+            },
+            {
+              "offset": 0.63,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "translate(-54vw, 41vh) rotate(135deg)",
+              "opacity": "0.7",
+              "computedOffset": 0.63
+            },
+            {
+              "offset": 1,
+              "easing": "linear",
+              "composite": "auto",
+              "transform": "translate(-110vw, 89vh) rotate(230deg)",
+              "opacity": "0",
+              "computedOffset": 1
+            }
+          ],
+          "duration": 550
+        }
+      ]
+    },
+    {
+      "preset": "nightwave",
+      "animations": [
+        {
+          "pseudo": "::view-transition-old(root)",
+          "frames": [
+            {
+              "offset": null,
+              "easing": "linear",
+              "composite": "auto",
+              "--theme-weather-reveal": "0%",
+              "computedOffset": 0
+            },
+            {
+              "offset": null,
+              "easing": "linear",
+              "composite": "auto",
+              "--theme-weather-reveal": "110%",
+              "computedOffset": 1
+            }
+          ],
+          "duration": 400
+        },
+        {
+          "pseudo": "::view-transition-new(theme-leaf-1)",
+          "frames": [
+            {
+              "offset": 0,
+              "easing": "linear",
+              "composite": "auto",
+              "opacity": "0",
+              "transform": "translate(8vw, -8vh) rotate(-13deg)",
+              "computedOffset": 0
+            },
+            {
+              "offset": 0.18,
+              "easing": "linear",
+              "composite": "auto",
+              "opacity": "0.85",
+              "transform": "translate(-12vw, 3vh) rotate(22deg)",
+              "computedOffset": 0.18
+            },
+            {
+              "offset": 0.63,
+              "easing": "linear",
+              "composite": "auto",
+              "opacity": "0.7",
+              "transform": "translate(-54vw, 27vh) rotate(85deg)",
+              "computedOffset": 0.63
+            },
+            {
+              "offset": 1,
+              "easing": "linear",
+              "composite": "auto",
+              "opacity": "0",
+              "transform": "translate(-110vw, 73vh) rotate(160deg)",
+              "computedOffset": 1
+            }
+          ],
+          "duration": 550
+        },
+        {
+          "pseudo": "::view-transition-new(theme-leaf-2)",
+          "frames": [
+            {
+              "offset": 0,
+              "easing": "linear",
+              "composite": "auto",
+              "opacity": "0",
+              "transform": "translate(8vw, -8vh) rotate(-1deg)",
+              "computedOffset": 0
+            },
+            {
+              "offset": 0.18,
+              "easing": "linear",
+              "composite": "auto",
+              "opacity": "0.85",
+              "transform": "translate(-12vw, 6vh) rotate(44deg)",
+              "computedOffset": 0.18
+            },
+            {
+              "offset": 0.63,
+              "easing": "linear",
+              "composite": "auto",
+              "opacity": "0.7",
+              "transform": "translate(-54vw, 34vh) rotate(110deg)",
+              "computedOffset": 0.63
+            },
+            {
+              "offset": 1,
+              "easing": "linear",
+              "composite": "auto",
+              "opacity": "0",
+              "transform": "translate(-110vw, 81vh) rotate(195deg)",
+              "computedOffset": 1
+            }
+          ],
+          "duration": 550
+        },
+        {
+          "pseudo": "::view-transition-new(theme-leaf-3)",
+          "frames": [
+            {
+              "offset": 0,
+              "easing": "linear",
+              "composite": "auto",
+              "opacity": "0",
+              "transform": "translate(8vw, -8vh) rotate(11deg)",
+              "computedOffset": 0
+            },
+            {
+              "offset": 0.18,
+              "easing": "linear",
+              "composite": "auto",
+              "opacity": "0.85",
+              "transform": "translate(-12vw, 9vh) rotate(66deg)",
+              "computedOffset": 0.18
+            },
+            {
+              "offset": 0.63,
+              "easing": "linear",
+              "composite": "auto",
+              "opacity": "0.7",
+              "transform": "translate(-54vw, 41vh) rotate(135deg)",
+              "computedOffset": 0.63
+            },
+            {
+              "offset": 1,
+              "easing": "linear",
+              "composite": "auto",
+              "opacity": "0",
+              "transform": "translate(-110vw, 89vh) rotate(230deg)",
+              "computedOffset": 1
+            }
+          ],
+          "duration": 550
+        }
+      ]
+    },
+    {
+      "preset": "daylight",
+      "animations": [
+        {
+          "pseudo": "::view-transition-old(root)",
+          "frames": [
+            {
+              "offset": null,
+              "easing": "linear",
+              "composite": "auto",
+              "--theme-weather-reveal": "0%",
+              "computedOffset": 0
+            },
+            {
+              "offset": null,
+              "easing": "linear",
+              "composite": "auto",
+              "--theme-weather-reveal": "110%",
+              "computedOffset": 1
+            }
+          ],
+          "duration": 400
+        },
+        {
+          "pseudo": "::view-transition-new(theme-dawn)",
+          "frames": [
+            {
+              "offset": 0,
+              "easing": "linear",
+              "composite": "auto",
+              "opacity": "0",
+              "transform": "scale(0.8)",
+              "computedOffset": 0
+            },
+            {
+              "offset": 0.3,
+              "easing": "linear",
+              "composite": "auto",
+              "opacity": "0.55",
+              "transform": "scale(1)",
+              "computedOffset": 0.3
+            },
+            {
+              "offset": 1,
+              "easing": "linear",
+              "composite": "auto",
+              "opacity": "0",
+              "transform": "scale(1.25)",
+              "computedOffset": 1
+            }
+          ],
+          "duration": 550
+        }
+      ]
+    }
+  ],
+  "electron": "39.8.10",
+  "status": "passed"
+}

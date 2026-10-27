@@ -1,0 +1,10 @@
+{
+  "date": "2026-10-27",
+  "scope": "one-screen homepage refinement and matched daylight/nightwave presets",
+  "framework": { "source": "package.json#/devDependencies", "react": "^19.3.1", "typescript": "^5.6.0", "vite": "^7.3.7", "electron": "^39.8.10" },
+  "existing": { "source": "desktop/renderer/src/styles.css", "font": "Segoe UI Variable Text and system CJK fallbacks", "palette": "warm brown legacy theme", "motionLibrary": "none declared", "sharedControls": "desktop/renderer/src/ui/index.ts" },
+  "locked": { "source": "DESIGN.md", "specification": "devDoc/105-frontend-design-system.md", "tokens": "devDoc/design/character-studio/tokens.json", "theme": "xiacheng-daylight-and-nightwave", "catalogRotation": false, "spacing": "4px base with documented component exceptions" },
+  "preserve": ["React/TypeScript/Vite", "shared control entry", "draft transitions", "modal layer manager", "legacy production pages"],
+  "introduce": ["opt-in theme scope", "generated three-layer tokens", "development-only React component notebook", "caller-themed confirmations"],
+  "runtimeBoundary": "Actual homepage and shell replaced; isolated preview uses memory fixtures, no Core or QQ launch, no release executable replacement"
+}

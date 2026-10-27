@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, session, shell, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, nativeTheme, session, shell, type IpcMainInvokeEvent } from 'electron';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -8,6 +8,8 @@ import { SafeStorageCredentialVault } from './safe-storage-vault.js';
 import { desktopUserDataPath } from './branding.js';
 import { QuitCoordinator } from './quit-coordinator.js';
 import { ArtifactImportController } from './artifact-import-controller.js';
+import { applyWindowTheme } from './window-theme.js';
+import { WINDOW_THEME_TOKENS } from './window-theme-tokens.js';
 
 app.setName('nowadays');
 app.setPath('userData', desktopUserDataPath(app.getPath('appData'), existsSync));
@@ -92,6 +94,11 @@ function isTrustedWindowSender(event: IpcMainInvokeEvent): boolean {
   try { return Boolean(apiUrl && new URL(event.senderFrame.url).origin === apiUrl); } catch { return false; }
 }
 
+ipcMain.handle('nowadays:set-window-theme', (event, preset: unknown): boolean => {
+  if (!isTrustedWindowSender(event) || !window || quitting) return false;
+  return applyWindowTheme(window, nativeTheme, preset, process.platform);
+});
+
 ipcMain.handle('nowadays:quit-alive', (event, requestId: unknown): boolean => {
   return isTrustedWindowSender(event) && typeof requestId === 'string' && (quitCoordinator?.keepAlive(requestId) ?? false);
 });
@@ -154,7 +161,7 @@ function createWindow(token: string): void {
     minWidth: 980,
     minHeight: 640,
     show: false,
-    backgroundColor: '#f2eee5',
+    backgroundColor: WINDOW_THEME_TOKENS.daylight.backgroundColor,
     title: 'nowadays',
     icon: assetPath('icon.png'),
     autoHideMenuBar: true,

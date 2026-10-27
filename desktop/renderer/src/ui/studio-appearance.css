@@ -1,0 +1,31 @@
+/* Shell controls share the same scoped appearance as the component notebook. */
+[data-ui-theme="xiacheng"] .ui-studio-brand { display:flex;align-items:center;gap:12px;min-width:0;padding:0;border:0;color:var(--nd-semantic-color-commit);background:var(--nd-semantic-color-transparent);font-family:var(--nd-semantic-font-display);font-size:24px;font-weight:var(--nd-semantic-type-heading);line-height:28px;letter-spacing:-1px;text-align:left;cursor:pointer; }
+[data-ui-theme="xiacheng"] .ui-studio-brand>span:last-child { min-width:0; }
+[data-ui-theme="xiacheng"] .ui-studio-brand small { display:block;overflow:hidden;text-overflow:ellipsis;font-family:var(--nd-semantic-font-code);font-size:var(--nd-semantic-type-caption-size);line-height:var(--nd-semantic-type-caption-line);font-weight:var(--nd-semantic-type-regular);letter-spacing:0;white-space:nowrap; }
+[data-ui-theme="xiacheng"] .ui-brand-mark { position:relative;font-size:52px;line-height:54px;font-weight:var(--nd-semantic-type-regular); }
+[data-ui-theme="xiacheng"] .ui-brand-mark>span { position:absolute;right:-8px;top:-12px;font-size:28px;color:var(--nd-semantic-color-entry); }
+[data-ui-theme="xiacheng"] .ui-settings-launcher { display:grid;place-items:center;width:40px;height:44px;padding:0;flex-shrink:0;border:1px solid var(--nd-semantic-color-line-control);border-radius:var(--nd-semantic-radius-action);color:var(--nd-semantic-color-commit);background:var(--nd-semantic-color-surface);cursor:pointer; }
+[data-ui-theme="xiacheng"] .ui-skip-content { position:fixed;z-index:var(--nd-semantic-layer-tooltip);top:12px;left:12px;padding:12px 16px;border:1px solid var(--nd-semantic-color-focus);border-radius:var(--nd-semantic-radius-action);background:var(--nd-semantic-color-surface);color:var(--nd-semantic-color-text);font-size:var(--nd-semantic-type-control-size);transform:translateY(-180%); }
+[data-ui-theme="xiacheng"] .ui-skip-content:focus { transform:none; }
+[data-ui-theme="xiacheng"] .ui-account-picker { display:grid;gap:16px; }
+[data-ui-theme="xiacheng"] .ui-account-full-name { margin:0;min-height:44px;overflow-wrap:anywhere;color:var(--nd-semantic-color-text-muted);font-size:var(--nd-semantic-type-body-size); }
+[data-ui-theme="xiacheng"] .ui-account-picker-list { display:grid;gap:4px;max-height:360px;overflow:auto;padding:4px; }
+[data-ui-theme="xiacheng"] .ui-account-choice { display:flex;align-items:center;gap:12px;min-width:0;min-height:48px;padding:8px 12px;border:1px solid var(--nd-semantic-color-line-decorative);border-radius:var(--nd-semantic-radius-action);background:var(--nd-semantic-color-surface);color:var(--nd-semantic-color-text);text-align:left;font-size:var(--nd-semantic-type-control-size);cursor:pointer; }
+[data-ui-theme="xiacheng"] .ui-account-choice>span { flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+[data-ui-theme="xiacheng"] .ui-account-choice>code { flex-shrink:0;font-family:var(--nd-semantic-font-code);font-size:var(--nd-semantic-type-caption-size); }
+[data-ui-theme="xiacheng"] .ui-account-choice[aria-pressed="true"], [data-ui-theme="xiacheng"] .ui-account-choice:hover:not(:disabled) { background:var(--nd-semantic-color-selection);border-color:var(--nd-semantic-color-line-control); }
+[data-ui-theme="xiacheng"] .ui-account-choice:disabled { color:var(--nd-semantic-color-disabled-text);cursor:not-allowed; }
+[data-ui-theme="xiacheng"] .home-avatar { display:grid;place-items:center;flex-shrink:0;width:48px;height:48px;overflow:hidden;border:1px solid var(--nd-semantic-color-line-decorative);border-radius:var(--nd-semantic-radius-field);background:var(--nd-semantic-color-selection);color:var(--nd-semantic-color-entry); }
+[data-ui-theme="xiacheng"] .home-avatar>img { width:100%;height:100%;object-fit:cover; }
+[data-ui-theme="xiacheng"] .home-avatar .avatar-fallback { display:grid;place-items:center;width:100%;height:100%;color:var(--nd-semantic-color-entry);background:var(--nd-semantic-color-transparent); }
+[data-ui-theme="xiacheng"] .ui-switch-trailing .ui-switch-label { order:1;font-weight:var(--nd-semantic-type-emphasis); }
+[data-ui-theme="xiacheng"] .ui-switch-trailing .ui-switch-value { order:2;margin-left:0; }
+[data-ui-theme="xiacheng"] .ui-switch-trailing .ui-switch-track { order:3;margin-left:auto; }
+[data-ui-theme="xiacheng"] .notice { color:var(--nd-semantic-color-text);border:1px solid var(--nd-semantic-color-warning);background:var(--nd-semantic-color-warning-surface);font-size:var(--nd-semantic-type-body-size); }
+[data-ui-theme="xiacheng"] .ui-binding-shortcut { display:inline-flex;align-items:center;gap:12px;min-width:0;max-width:100%;min-height:44px;padding:8px 0;border:0;border-radius:var(--nd-semantic-radius-action);color:var(--nd-semantic-color-text-muted);background:var(--nd-semantic-color-transparent);font-size:var(--nd-semantic-type-control-size);cursor:pointer; }
+[data-ui-theme="xiacheng"] .ui-binding-shortcut>span { max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+[data-ui-theme="xiacheng"] .ui-binding-shortcut>i { display:block;width:24px;height:1px;flex-shrink:0;background:var(--nd-semantic-color-accent-decorative); }
+[data-ui-theme="xiacheng"] .ui-binding-shortcut>strong { min-width:0;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--nd-semantic-color-entry);background:var(--nd-semantic-color-selection);padding:4px 8px;border-radius:4px; }
+[data-ui-theme="xiacheng"] .ui-binding-shortcut:disabled { color:var(--nd-semantic-color-disabled-text);cursor:not-allowed; }
+[data-ui-theme="xiacheng"] .btn-entry:is(:active,[data-preview-state="pressed"]):not([aria-disabled="true"]) { box-shadow:0 1px 0 var(--nd-component-entry-button-depth-color); }
+@media (max-width:599px) { [data-ui-theme="xiacheng"] .ui-studio-brand { gap:8px;font-size:20px; } [data-ui-theme="xiacheng"] .ui-studio-brand small { font-size:var(--nd-semantic-type-caption-size); } [data-ui-theme="xiacheng"] .ui-brand-mark { font-size:44px; } }

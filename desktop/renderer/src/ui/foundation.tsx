@@ -1,7 +1,8 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import { useLayoutEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import type { InstanceState } from '../types';
 import { Icon, type IconName } from './icons';
 import { ControlButton } from './controls';
+import { useUiAppearance } from './appearance';
 const STATE_LABELS: Record<InstanceState, string> = {
   provisioning: '准备中',
   starting: '启动中',
@@ -44,10 +45,11 @@ export function Tag({ children, tone = 'idle' }: { children: ReactNode; tone?: s
 }
 
 export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: 'default' | 'primary' | 'danger' | 'ghost';
+  variant?: 'default' | 'primary' | 'danger' | 'ghost' | 'entry';
   size?: 'sm' | 'md';
   busy?: boolean;
   icon?: IconName;
+  feedback?: 'error' | 'success';
 };
 
 export function Button({
@@ -58,17 +60,34 @@ export function Button({
   children,
   className,
   disabled,
+  feedback,
+  onClick,
+  style,
   ...rest
 }: ButtonProps) {
+  const appearance = useUiAppearance();
+  const element = useRef<HTMLButtonElement>(null);
+  const restingWidth = useRef(0);
+  useLayoutEffect(() => {
+    if (appearance.theme === 'xiacheng' && !busy && element.current) restingWidth.current = element.current.getBoundingClientRect().width;
+  }, [appearance.theme, busy, children, size, variant]);
+  const blocked = disabled || busy || rest['aria-disabled'] === true || rest['aria-disabled'] === 'true';
+  const leading = busy ? <span className="spinner" aria-hidden="true" /> : feedback ? <Icon name={feedback === 'error' ? 'warning' : 'check'} size={16} /> : icon ? <Icon name={icon} size={appearance.theme === 'xiacheng' ? 16 : 15} /> : null;
   return (
     <ControlButton
       {...rest}
+      ref={element}
+      style={appearance.theme === 'xiacheng' && busy && restingWidth.current ? { ...style, minWidth: restingWidth.current } : style}
       aria-busy={busy || undefined}
-      disabled={disabled || busy}
+      disabled={disabled || (busy && appearance.theme !== 'xiacheng')}
+      aria-disabled={blocked || undefined}
+      aria-invalid={rest['aria-invalid'] ?? (feedback === 'error' || undefined)}
+      data-feedback={feedback}
+      onClick={(event) => { if (blocked) { event.preventDefault(); event.stopPropagation(); return; } onClick?.(event); }}
       className={`btn btn-${variant} btn-${size}${className ? ` ${className}` : ''}`}
     >
-      {busy ? <span className="spinner" aria-hidden="true" /> : icon ? <Icon name={icon} size={15} /> : null}
-      {children}
+      {appearance.theme === 'xiacheng' ? <span className="ui-button-leading" aria-hidden="true">{leading}</span> : leading}
+      {variant === 'entry' ? <><span className="ui-button-label">{children}</span><span className="ui-button-end" aria-hidden="true"><Icon name="chevron" size={20} /></span></> : children}
     </ControlButton>
   );
 }

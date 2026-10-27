@@ -1,0 +1,15 @@
+/* Hallmark · custom bespoke · 放课后通信 / AFTER SCHOOL LETTERS
+   Structure: visual-novel prologue / character dossier / ability manuscript / right bookmarks.
+   Previous structure: toy display + bottom dock. Contrast now: narrative scene + paper files.
+   Pre-emit critique: P5 H4 E4 S5 R4 V5. */
+:root{
+ --paper:#f6f0f1;--sheet:#fffcf8;--ink:#2b334f;--muted:#747786;--rule:#d9ccd3;
+ --pink:#eab3c1;--pink-light:#f7e0e6;--pink-dark:#854558;--blue:#445676;
+ --green:#3c6f60;--green-light:#e0ebe3;--orange:#bd613c;--clear:transparent;
+ --shadow:#2b334f14;--backdrop:#2b334f55;
+ --body:'Segoe UI Variable Text','Microsoft YaHei UI',sans-serif;
+ --reading:'STKaiti','KaiTi','Noto Serif SC','SimSun',serif;
+ --display:'Georgia','Noto Serif SC','SimSun',serif;
+ --mono:'Cascadia Mono','Consolas',monospace;
+ --fast:150ms;--page:350ms;--ease:cubic-bezier(.2,.7,.2,1);
+}

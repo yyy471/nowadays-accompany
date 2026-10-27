@@ -5,7 +5,7 @@ import { TransitionController } from '../desktop/renderer/src/lib/drafts/transit
 
 vi.stubGlobal('React', React);
 afterAll(() => vi.unstubAllGlobals());
-const h = vi.hoisted(() => ({ cells: [] as any[], index: 0, effects: [] as Array<() => any>, protection: null as any, listeners: new Map<string, any>() }));
+const h = vi.hoisted(() => ({ cells: [] as any[], index: 0, effects: [] as Array<() => any>, protection: null as any, listeners: new Map<string, any>(), accountData:undefined as any }));
 vi.mock('react', async original => ({
   ...await original<typeof import('react')>(),
   useState: (initial: any) => {
@@ -21,10 +21,11 @@ vi.mock('react', async original => ({
     h.cells[index] = deps;
   }
 }));
+vi.mock('../desktop/renderer/src/ui/presets', () => ({ useThemePreset: () => ({ preset: 'daylight', select() {} }) }));
 vi.mock('../desktop/renderer/src/components/DraftProtectionProvider', () => ({ useDraftProtection: () => h.protection }));
 vi.mock('../desktop/renderer/src/api', () => ({ api: async () => ({}), apiBaseUrl: 'http://fixture.invalid', appVersion: 'fixture', appPlatform: 'fixture', hasToken: true, subscribeEvents() {} }));
-vi.mock('../desktop/renderer/src/hooks', () => ({ errorMessage: String, usePoll: () => ({ data: undefined, loading: false, refresh: async () => {} }) }));
-vi.mock('../desktop/renderer/src/ui', () => ({ Button: 'Button', CancelButton: 'CancelButton', ConfirmButton: 'ConfirmButton', ControlButton: 'ControlButton', Icon: 'Icon', Modal: 'Modal', Card: 'Card', Checkbox: 'Checkbox', ErrorNote: 'ErrorNote', Field: 'Field', Input: 'Input', Select: 'Select', Tag: 'Tag', IconButton: 'IconButton', copyText: async () => true, formatDateTime: String, useConfirm: () => async () => true }));
+vi.mock('../desktop/renderer/src/hooks', () => ({ errorMessage: String, usePoll: (path:string|null) => ({ data: path?.startsWith('/accounts?')?h.accountData:undefined, loading: false, refresh: async () => {} }) }));
+vi.mock('../desktop/renderer/src/ui', () => ({ UiThemeScope:'UiThemeScope',UiThemeProvider:'UiThemeProvider', Button: 'Button', CancelButton: 'CancelButton', ConfirmButton: 'ConfirmButton', ControlButton: 'ControlButton', Icon: 'Icon', Modal: 'Modal', Card: 'Card', Checkbox: 'Checkbox', ErrorNote: 'ErrorNote', Field: 'Field', Input: 'Input', Select: 'Select', Tag: 'Tag', IconButton: 'IconButton', copyText: async () => true, formatDateTime: String, useConfirm: () => async () => true }));
 vi.mock('../desktop/renderer/src/pages/Accounts', () => ({ AccountsPage: 'AccountsPage' }));
 vi.mock('../desktop/renderer/src/pages/Activity', () => ({ ActivityPage: 'ActivityPage' }));
 vi.mock('../desktop/renderer/src/pages/Artifacts', () => ({ ArtifactsPage: 'ArtifactsPage' }));
@@ -38,6 +39,7 @@ vi.mock('../desktop/renderer/src/pages/Settings', () => ({ SettingsPage: 'Settin
 import { App } from '../desktop/renderer/src/App';
 import { SettingsDialog, type SettingsTab } from '../desktop/renderer/src/components/SettingsDialog';
 import { SnowLumaSetup } from '../desktop/renderer/src/components/SnowLumaSetup';
+import { ThemeSwitcher } from '../desktop/renderer/src/components/shell/ThemeSwitcher';
 
 function find(node: any, predicate: (node: any) => boolean): any {
   if (!node || typeof node !== 'object') return;
@@ -58,7 +60,7 @@ async function settle() { for (let i = 0; i < 8; i++) await Promise.resolve(); }
 let registry: DraftRegistry;
 let confirm: ReturnType<typeof vi.fn>;
 beforeEach(() => {
-  h.cells = []; h.listeners.clear(); registry = new DraftRegistry(); confirm = vi.fn(async () => false);
+  h.cells = []; h.listeners.clear(); h.accountData=undefined; registry = new DraftRegistry(); confirm = vi.fn(async () => false);
   const controller = new TransitionController(registry);
   h.protection = { registry, requestTransition: vi.fn((options: any) => controller.request({ ...options, confirm })), transitionPending: () => controller.pending };
   vi.stubGlobal('document', { title: '' });
@@ -70,7 +72,7 @@ it('remembers the session tab while connection and model entry points override i
   let tree = render(App);
   const dialog = () => find(tree, n => n.type === SettingsDialog).props;
   dialog().onTabChange('diagnostics'); tree = render(App);
-  find(tree, n => n.props?.className === 'global-settings-launcher').props.onClick(); tree = render(App);
+  find(tree, n => n.props?.className === 'ui-settings-launcher').props.onClick(); tree = render(App);
   expect(dialog()).toMatchObject({ open: true, initialTab: 'diagnostics' });
   dialog().onRequestClose(); tree = render(App);
   find(tree, n => n.type === 'PolicyPage').props.onGoModels(); tree = render(App);
@@ -80,7 +82,7 @@ it('remembers the session tab while connection and model entry points override i
   find(tree, n => n.type === 'SlotsPage').props.onSettings(); tree = render(App);
   expect(dialog().initialTab).toBe('snowluma');
   dialog().onRequestClose(); tree = render(App);
-  find(tree, n => n.props?.className === 'global-settings-launcher').props.onClick(); tree = render(App);
+  find(tree, n => n.props?.className === 'ui-settings-launcher').props.onClick(); tree = render(App);
   expect(dialog().initialTab).toBe('snowluma');
 });
 
@@ -148,4 +150,26 @@ it('keeps one connection editor and one diagnostic presentation in separate sect
   tree = render(() => SettingsPage({ section: 'diagnostics' }));
   expect(find(tree, n => n.props?.['aria-labelledby'] === 'connection-settings-heading').props.hidden).toBe(true);
   expect(find(tree, n => n.props?.['aria-labelledby'] === 'runtime-settings-heading').props.hidden).toBe(false);
+});
+
+it('keeps workspace entry behind the existing draft guard',async()=>{
+  window.location.hash='#/home';window.location.href='http://fixture.invalid/#/home';
+  let draft='unsaved';registry.register({id:'workspace-guard',owner:'page',getSnapshot:()=>({label:'draft',dirty:Boolean(draft),busy:false,revision:1,discard:()=>{draft='';}})});
+  let tree=render(App);
+  find(tree,n=>n.type==='HomePage').props.onGoWorkbench();await settle();tree=render(App);
+  expect(find(tree,n=>n.type==='HomePage')).toBeDefined();expect(draft).toBe('unsaved');
+  confirm.mockResolvedValue(true);find(tree,n=>n.type==='HomePage').props.onGoWorkbench();await settle();tree=render(App);
+  expect(find(tree,n=>n.type==='OverviewPage')).toBeDefined();expect(draft).toBe('');
+});
+it('blocks workspace navigation while an existing write is busy',async()=>{
+  window.location.hash='#/home';window.location.href='http://fixture.invalid/#/home';
+  registry.register({id:'write',owner:'page',getSnapshot:()=>({label:'pending write',dirty:false,busy:true,revision:0,discard(){}})});
+  const tree=render(App);find(tree,n=>n.type==='HomePage').props.onGoWorkbench();await settle();
+  expect(confirm).not.toHaveBeenCalled();expect(find(render(App),n=>n.type==='HomePage')).toBeDefined();
+});
+it('replaces global account navigation with a separate theme control',()=>{
+  const tree=render(App);
+  expect(find(tree,n=>n.type===ThemeSwitcher)).toBeDefined();
+  expect(find(tree,n=>n.props?.['aria-label']==='选择主页账号')).toBeUndefined();
+  expect(find(tree,n=>n.type===ThemeSwitcher).props).not.toHaveProperty('onSelect');
 });

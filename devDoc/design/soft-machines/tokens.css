@@ -1,0 +1,14 @@
+/* Hallmark · custom bespoke · SOFT MACHINES / 桌面玩具
+   Structure: open object display + pairing ledger + capability drawers + bottom dock.
+   Previous: dark turntable / top tabs. New: light tactile / bottom navigation.
+   Pre-emit critique: P5 H4 E4 S5 R4 V5. */
+:root{
+ --paper:#f1f0e7;--surface:#fcfcf6;--tint:#e1e8f5;--ink:#222b36;--muted:#67717a;
+ --blue:#2348c5;--blue-dark:#183799;--orange:#ce4b26;--orange-soft:#fae2d2;
+ --line:#cdd1ca;--green:#2f715c;--green-soft:#deeadf;--white:#fcfcf6;
+ --shadow:#222b3620;--shade:#222b3655;--clear:transparent;
+ --body:'Segoe UI Variable Text','Microsoft YaHei UI',sans-serif;
+ --display:'Arial Rounded MT Bold','Trebuchet MS','Microsoft YaHei UI',sans-serif;
+ --mono:'Cascadia Mono','Consolas',monospace;
+ --fast:150ms;--enter:320ms;--ease:cubic-bezier(.2,.7,.2,1);
+}

@@ -20,10 +20,11 @@ vi.mock('react', async original => ({
 }));
 vi.mock('../desktop/renderer/src/api', () => ({ api: async () => ({}), apiBaseUrl: 'http://fixture.invalid', appVersion: 'fixture', hasToken: true, subscribeEvents() {} }));
 vi.mock('../desktop/renderer/src/hooks', () => ({ errorMessage: String, usePoll: () => ({ data: undefined, loading: false, refresh: async () => {} }) }));
+vi.mock('../desktop/renderer/src/ui/presets', () => ({ useThemePreset: () => ({ preset: 'daylight', select() {} }) }));
 vi.mock('../desktop/renderer/src/components/DraftProtectionProvider', () => ({ useDraftProtection: () => ({
   registry: { hasPending: () => true }, requestTransition: async () => h.decision ?? { ok: true }, transitionPending: () => false
 }) }));
-vi.mock('../desktop/renderer/src/ui', () => ({ CancelButton: 'CancelButton', ControlButton: 'ControlButton', Icon: 'Icon', Modal: 'Modal' }));
+vi.mock('../desktop/renderer/src/ui', () => ({ UiThemeScope:'UiThemeScope',UiThemeProvider:'UiThemeProvider', CancelButton: 'CancelButton', ControlButton: 'ControlButton', Icon: 'Icon', Modal: 'Modal' }));
 vi.mock('../desktop/renderer/src/pages/Accounts', () => ({ AccountsPage: 'AccountsPage' }));
 vi.mock('../desktop/renderer/src/pages/Activity', () => ({ ActivityPage: 'ActivityPage' }));
 vi.mock('../desktop/renderer/src/pages/Artifacts', () => ({ ArtifactsPage: 'ArtifactsPage' }));
@@ -65,14 +66,14 @@ it.each([false, new Error('fixture IPC failure')])('unlocks when main rejects or
   setup(false); h.response = response; render();
   h.listener({ requestId: 'rejected' }); await settle();
   const tree = render();
-  expect(find(tree, n => n.props?.className === 'app-shell').props.inert).toBeUndefined();
+  expect(find(tree, n => n.props?.className === 'studio-shell').props.inert).toBeUndefined();
   expect(find(tree, n => n.type === 'Modal').props.open).toBe(false);
   expect(find(tree, n => n.type === 'SettingsDialog').props.locked).toBe(false);
 });
 it('keeps the settings portal locked and uses a non-dismissible top modal during slow shutdown', async () => {
   setup(true); render(); h.listener({ requestId: 'approved' }); await settle();
   const tree = render();
-  expect(find(tree, n => n.props?.className === 'app-shell').props.inert).toBe(true);
+  expect(find(tree, n => n.props?.className === 'studio-shell').props.inert).toBe(true);
   expect(find(tree, n => n.type === 'SettingsDialog').props.locked).toBe(true);
   expect(find(tree, n => n.type === 'Modal').props).toMatchObject({ open: true, closeDisabled: true });
 });
