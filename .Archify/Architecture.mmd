@@ -1,0 +1,82 @@
+flowchart LR
+    %% 定义颜色主题
+    classDef client fill:#f9f9f9,stroke:#333,stroke-width:2px,color:#333
+    classDef gateway fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#01579b
+    classDef interface fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#e65100
+    classDef service fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#1b5e20
+    classDef core fill:#ffebee,stroke:#d32f2f,stroke-width:3px,color:#b71c1c
+    classDef storage fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#4a148c
+
+    subgraph Client["👤 用户层"]
+        direction TB
+        qq(["QQ实例会话"]):::client
+    end
+
+    subgraph Gateway["🌐 网关与路由层"]
+        direction TB
+        one("OneBot通道"):::gateway
+        arch("SnowLuma框架"):::gateway
+        qqapi("QQ机器人API"):::gateway
+        agent{"AgentHost\n(核心枢纽)"}:::core
+    end
+
+    subgraph Interface["🔌 接口与能力层"]
+        direction TB
+        jiuguan("酒馆"):::interface
+        execute("统一工具执行器"):::interface
+        skill("SKILL"):::interface
+        mcp("MCP"):::interface
+    end
+
+    subgraph Service["⚙️ 应用与业务层"]
+        direction TB
+        subgraph Context["上下文与会话"]
+            direction TB
+            cm("上下文构建"):::service
+            sm("会话管理"):::service
+            role("设置角色卡"):::service
+            dialogue[("聊天记录保存")]:::storage
+        end
+        
+        subgraph Tools["工具与媒体"]
+            direction TB
+            tool("账号级插件Worker"):::service
+            media("媒体任务服务"):::service
+        end
+    end
+
+    subgraph ModelLayer["🧠 模型层"]
+        direction TB
+        provider{"Provider路由"}:::core
+        model("本地/云端模型"):::service
+    end
+
+    %% 主链路连线 (实线)
+    qq ==> one
+    one ==> arch
+    arch ==> qqapi
+    qqapi ==> agent
+
+    %% AgentHost 分发到各能力 (加粗)
+    agent ==> jiuguan
+    agent ==> execute
+    agent ==> skill
+    agent ==> mcp
+    agent ==> provider
+
+    %% 酒馆能力细分 (虚线表示内部流转)
+    jiuguan -.-> cm
+    jiuguan -.-> sm
+    jiuguan -.-> role
+    jiuguan -.-> dialogue
+
+    %% 执行器能力 (虚线)
+    execute -.-> tool
+    execute -.-> media
+
+    %% 模型调用链路
+    media -.-> provider
+    provider ==> model
+
+    %% 整体层级对齐强制
+    Client ~~~ Gateway ~~~ Interface

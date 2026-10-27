@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "nowadays 架构总览",
+    "locale": "zh-CN",
+    "output": ".Archify/nowadays-architecture.html",
+    "quality_profile": "showcase",
+    "visual_preset": "signal-flow",
+    "repository": {
+      "url": "git@github.com:yyy471/nowadays-accompany.git",
+      "revision": "fba7afc669980aafa0e62ab71f4c188fd4e0faa7",
+      "link_mode": "local-only"
+    }
+  },
+  "components": [
+    { "id": "qq", "type": "external", "label": "QQ 会话", "sublabel": "私聊 / 群聊", "icon": "person", "pos": [40, 250], "size": [116, 60] },
+    { "id": "snowluma", "type": "external", "label": "SnowLuma", "sublabel": "注入 QQ 进程", "tag": "OneBot 11", "pos": [230, 250], "size": [160, 60], "sources": [
+      { "path": "src/injection/snowluma/backend.ts", "line": 106, "end_line": 156 },
+      { "path": "src/core/core.ts", "line": 486, "end_line": 497, "label": "manualStartOnly 门控" }
+    ] },
+    { "id": "channel", "type": "backend", "label": "OneBot 通道", "sublabel": "规范化 InboundEvent", "tag": "WS / HTTP", "pos": [460, 250], "size": [160, 60], "sources": [
+      { "path": "src/channels/onebot/client.ts", "line": 22, "end_line": 25, "label": "事件 WS / 动作 HTTP" },
+      { "path": "src/channels/onebot/normalize.ts", "line": 28, "end_line": 56 }
+    ] },
+    { "id": "instance", "type": "backend", "label": "QqInstance 实例会话", "sublabel": "队列 · 去重 · 回环判定", "pos": [700, 250], "size": [190, 60], "sources": [
+      { "path": "src/instances/instance.ts", "line": 549, "end_line": 596, "label": "入站队列与分发" },
+      { "path": "src/instances/instance.ts", "line": 624, "end_line": 651, "label": "先落盘再发事件" },
+      { "path": "src/instances/instance.ts", "line": 364, "end_line": 458, "label": "出站 FIFO + 令牌桶" }
+    ] },
+    { "id": "engine", "type": "backend", "label": "AgentHost 内置引擎", "sublabel": "上下文构建 + 工具循环", "tag": "预算 4 / 3 / 4", "pos": [970, 250], "size": [180, 60], "sources": [
+      { "path": "src/agent/engine.ts", "line": 60, "end_line": 65, "label": "工具循环预算" },
+      { "path": "src/agent/engine.ts", "line": 671, "end_line": 765 },
+      { "path": "src/agent/context.ts", "line": 59, "end_line": 177, "label": "上下文构建" }
+    ] },
+    { "id": "provider", "type": "backend", "label": "Provider 路由", "sublabel": "按能力路由", "tag": "5 类能力", "pos": [1210, 250], "size": [150, 60], "sources": [
+      { "path": "src/providers/router.ts", "line": 315, "end_line": 402 },
+      { "path": "src/policy/capabilities.ts", "line": 1, "label": "能力枚举" }
+    ] },
+    { "id": "model", "type": "cloud", "label": "本地 / 云端模型服务", "tag": "OpenAI 兼容", "pos": [1210, 120], "size": [150, 56] },
+    { "id": "desktop", "type": "frontend", "label": "桌面端 UI", "sublabel": "Electron 渲染层", "tag": "React 19", "pos": [700, 40], "size": [180, 56], "sources": [
+      { "path": "desktop/main.ts", "line": 331, "end_line": 344, "label": "内嵌 createCore" }
+    ] },
+    { "id": "service", "type": "backend", "label": "本地控制面", "sublabel": "HTTP + SSE", "pos": [700, 130], "size": [180, 56], "sources": [
+      { "path": "src/service/server.ts", "line": 45, "end_line": 54 },
+      { "path": "src/service/server.ts", "line": 169, "label": "默认随机端口" }
+    ] },
+    { "id": "tavern", "type": "external", "label": "酒馆", "sublabel": "角色卡 / 世界书导出", "pos": [40, 450], "size": [150, 60] },
+    { "id": "importsvc", "type": "backend", "label": "制品导入转换", "sublabel": "tavern-card / worldbook", "pos": [240, 450], "size": [170, 60], "sources": [
+      { "path": "src/application/artifacts/tavern-card-import-service.ts", "line": 17, "end_line": 53 },
+      { "path": "src/worldbook/import-adapter.ts", "line": 40, "end_line": 69 }
+    ] },
+    { "id": "artifacts", "type": "backend", "label": "制品与档案", "sublabel": "公共层 / 账号私有层", "pos": [480, 450], "size": [190, 60], "sources": [
+      { "path": "src/profiles/profile.ts", "line": 47, "end_line": 79 },
+      { "path": "src/instances/instance.ts", "line": 1143, "end_line": 1157, "label": "档案解析" },
+      { "path": "src/artifacts/manifest.ts", "line": 33 }
+    ] },
+    { "id": "store", "type": "database", "label": "聊天记录 JSONL", "sublabel": "先落盘再发事件", "tag": "分段存储", "pos": [700, 450], "size": [190, 60], "sources": [
+      { "path": "src/storage/jsonl-store.ts", "line": 58, "end_line": 69 }
+    ] },
+    { "id": "executor", "type": "backend", "label": "统一工具执行器", "tag": "账本 / 限流", "pos": [970, 450], "size": [180, 60], "sources": [
+      { "path": "src/extensions/execution/executor.ts", "line": 21, "end_line": 29 }
+    ] },
+    { "id": "worker", "type": "security", "label": "插件 Worker", "sublabel": "每账号每插件 · 无发送出口", "tag": "Worker Threads", "pos": [970, 590], "size": [190, 60], "sources": [
+      { "path": "src/extensions/runtime/plugin-worker.ts", "line": 101, "end_line": 104, "label": "Worker Threads" },
+      { "path": "src/extensions/runtime/protocol.ts", "line": 72, "end_line": 115, "label": "协议仅四类消息" }
+    ] },
+    { "id": "media", "type": "backend", "label": "媒体任务服务", "sublabel": "异步任务", "tag": "Semaphore", "pos": [1210, 450], "size": [150, 60], "sources": [
+      { "path": "src/jobs/service.ts", "line": 67, "label": "Semaphore 限并发" },
+      { "path": "src/providers/adapters/video.ts", "line": 36, "end_line": 39 }
+    ] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "插件运行时（Worker Threads 沙箱）", "wraps": ["executor", "worker"] }
+  ],
+  "connections": [
+    { "id": "qq-snowluma", "from": "qq", "to": "snowluma", "label": "收发消息", "variant": "emphasis" },
+    { "id": "snowluma-channel", "from": "snowluma", "to": "channel", "label": "事件 WS", "variant": "emphasis" },
+    { "id": "channel-snowluma", "from": "channel", "to": "snowluma", "label": "动作 HTTP" },
+    { "id": "channel-instance", "from": "channel", "to": "instance", "label": "规范化事件", "variant": "emphasis" },
+    { "id": "instance-engine", "from": "instance", "to": "engine", "label": "onMessage", "variant": "emphasis" },
+    { "id": "engine-provider", "from": "engine", "to": "provider", "label": "调模型", "variant": "emphasis" },
+    { "id": "provider-model", "from": "provider", "to": "model" },
+    { "id": "instance-store", "from": "instance", "to": "store", "label": "先落盘再发事件" },
+    { "id": "engine-executor", "from": "engine", "to": "executor", "label": "工具调用" },
+    { "id": "executor-worker", "from": "executor", "to": "worker", "label": "串行任务" },
+    { "id": "engine-media", "from": "engine", "to": "media", "label": "媒体任务", "variant": "dashed" },
+    { "id": "media-provider", "from": "media", "to": "provider", "label": "生成 / 理解" },
+    { "id": "tavern-import", "from": "tavern", "to": "importsvc" },
+    { "id": "import-artifacts", "from": "importsvc", "to": "artifacts", "label": "转换导入", "variant": "dashed" },
+    { "id": "artifacts-instance", "from": "artifacts", "to": "instance", "label": "档案 / 角色绑定" },
+    { "id": "desktop-service", "from": "desktop", "to": "service" },
+    { "id": "service-instance", "from": "service", "to": "instance", "label": "编排 / 部署" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "主链路与预算", "items": [
+      "回复唯一出口是 QqInstance.send()：出站 FIFO + 令牌桶 + idempotencyKey 去重",
+      "工具循环预算：4 次模型调用 / 3 工具回合 / 4 次工具调用",
+      "入站先落盘 JSONL 再发事件，按实例归属判定回环"
+    ] },
+    { "dot": "cyan", "title": "上下文构建", "items": [
+      "角色卡（会话显式绑定）+ 世界书 + 事实记忆 + Skill + 有界历史",
+      "插件经 beforeContext 提供补充数据，本身没有 send/回复出口",
+      "Skill 来自 v2 配置 skills[] 与插件 Worker 声明"
+    ] },
+    { "dot": "rose", "title": "边界与更正", "items": [
+      "SnowLuma 与 QQ 是外部依赖，应用绝不自动部署或启动（manualStartOnly）",
+      "酒馆只在导入期做格式转换，运行时零调用",
+      "没有 MCP 实现；凭据只走 credentialRef 凭据库"
+    ] }
+  ]
+}
