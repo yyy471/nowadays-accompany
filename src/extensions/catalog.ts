@@ -52,7 +52,9 @@ export interface CatalogSkill {
   peers?: string[];
   source: CatalogSkillSource;
   pluginKey?: string;
-  /** User definitions keep their historical on-by-default; plugin Skills need an explicit scope. */
+  /** Set on a private definition that replaces a public definition with the same id. */
+  overrides?: 'public';
+  /** User definitions default on unless their definition disables it; plugin Skills need an explicit scope. */
   defaultEnabled: boolean;
 }
 
@@ -123,6 +125,7 @@ export function buildExtensionCatalog(input: BuildExtensionCatalogInput): Extens
   }
 
   const definitions = new Map<string, { skill: SkillConfig; source: 'public' | 'private' }>();
+  const publicIds = new Set(input.publicSkills.map((skill) => skill.id));
   for (const skill of input.publicSkills) definitions.set(skill.id, { skill, source: 'public' });
   for (const skill of input.privateSkills) definitions.set(skill.id, { skill, source: 'private' });
   for (const { skill, source } of definitions.values()) {
@@ -136,6 +139,7 @@ export function buildExtensionCatalog(input: BuildExtensionCatalogInput): Extens
       ...(skill.kinds?.length ? { kinds: [...skill.kinds] } : {}),
       ...(skill.peers?.length ? { peers: [...skill.peers] } : {}),
       source,
+      ...(source === 'private' && publicIds.has(skill.id) ? { overrides: 'public' as const } : {}),
       defaultEnabled: skill.enabled !== false
     });
   }

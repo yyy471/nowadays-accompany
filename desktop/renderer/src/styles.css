@@ -3140,3 +3140,28 @@ code { color: #735a38; }
   .home-profile .account-avatar.large { width: clamp(160px,24vw,260px); height: clamp(160px,24vw,260px); }
   .home-signature { min-height: 88px; }
 }
+
+/* EXT-G: account extension policy, plugin runtime and Skill management. */
+.extension-scope-toolbar { margin-bottom: 12px; }
+.extension-scope-hint { max-width: 340px; line-height: 1.6; }
+.extension-section { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.extension-rows { display: flex; flex-direction: column; gap: 8px; }
+.extension-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }
+.extension-row-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.extension-row-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.extension-row-title h4 { margin: 0; }
+.extension-row-state { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.extension-switch { width: 176px; }
+.extension-auth { padding: 4px 8px; background: transparent; }
+.extension-auth:hover { border-color: var(--line); }
+.extension-effective-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 11px; }
+.extension-inline-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.extension-skills-manage { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; padding-top: 14px; border-top: 1px solid var(--line); }
+.extension-skill-editor-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.extension-effective-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.extension-preview { display: flex; flex-direction: column; gap: 6px; }
+@media (max-width: 720px) {
+  .extension-row { grid-template-columns: minmax(0, 1fr); }
+  .extension-row-state { justify-content: flex-start; }
+  .extension-switch { width: 100%; }
+}

@@ -93,7 +93,7 @@ describe('frontend copy contract', () => {
       '模型服務',
       '去槽位页',
       '会话绑定数',
-      '插件与Skill',
+      'Skill 由账号插件提供',
       'profile.json',
       'last-known-good',
       '停止 / 释放',
@@ -112,9 +112,15 @@ describe('frontend copy contract', () => {
     expect(violations).toEqual([]);
   });
 
-  it('names the plugin page after what it actually manages', async () => {
-    const app = await fs.readFile(path.join(process.cwd(), 'desktop', 'renderer', 'src', 'App.tsx'), 'utf8');
-    expect(app).toContain("title: '账号插件'");
-    expect(app).toContain("label: '账号插件'");
+  it('names the extension page for every resource it manages', async () => {
+    const root = path.join(process.cwd(), 'desktop', 'renderer', 'src');
+    const app = await fs.readFile(path.join(root, 'App.tsx'), 'utf8');
+    expect(app).toContain("title: '插件与Skill'");
+    expect(app).toContain("label: '插件与Skill'");
+    expect(app).not.toContain("view={page === 'roles' ? 'roles' : 'plugins'}");
+    const policy = await fs.readFile(path.join(root, 'pages', 'Policy.tsx'), 'utf8');
+    expect(policy).not.toContain('允许 AI 调用的工具');
+    const accounts = await fs.readFile(path.join(root, 'pages', 'Accounts.tsx'), 'utf8');
+    expect(accounts).not.toContain('账号插件资料');
   });
 });

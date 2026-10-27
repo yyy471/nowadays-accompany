@@ -1,5 +1,19 @@
 # 开发文档导航
 
+最新独立复验见[101 EXT-G修复独立复验](101-ext-g-fixes-independent-recheck.md)：99-R1～R4均关闭，未发现新增阻塞问题，EXT-G在本地自动化与代码复核范围内通过。主进程独立全量118文件1101项通过/1项既有跳过，原4项探针与真实Core往返通过，类型检查、桌面构建与空白检查通过。可进入EXT-H的真实服务、原生界面和发行包验收；未提交、推送或打包。
+
+最新修复见[100 EXT-G复核修复](100-ext-g-review-fixes.md)：99号R1～R4（重载覆盖草稿、Skill隐式启用、编辑会话旧草稿配新revision、历史握手误判就绪）已修复；Skill新建/复制默认关闭、私有定义可保留默认关闭，刷新拆分为运行状态/目录且硬刷新保护全部草稿。慢钩子fixture保留生产500ms/2s契约并增加余量与失败证据。定向8文件84项、全量连续三次118文件1101项通过/1项既有跳过，类型检查、桌面构建与空白检查通过。属实现方自验，待独立复验；未提交、打包或替换EXE。
+
+最新独立复核见[99 EXT-G复核与修复要求](99-ext-g-independent-review.md)：暂不通过，发现重载丢弃草稿、编辑停用公用Skill时隐式启用、旧草稿携带刷新后revision覆盖新值三项P1，以及历史握手状态误报当前就绪一项P2。类型检查、桌面构建、定向72项通过；独立全量1088通过/1失败/1既有跳过，保留钩子时限失败待查。99号结论以100号修复与后续复验为准；98号记录保留为实现方自验。
+
+最新执行记录见[98 EXT-G页面闭环](98-ext-g-page-closure-execution.md)：扩展策略HTTP、插件与Skill页面、资源库公用Skill、按会话有效状态、草稿/失败态与旧入口清理已实现，E05真实Core闭环通过；其中私有定义enabled、刷新入口和全量数字以100号为准。
+
+最终独立复验见[97 EXT-E/F修复收口](97-ext-e-f-final-independent-recheck.md)：95-R3异步等待与95-R4超时原因竞争均关闭，原预算/选择状态探针保持通过。主进程全量113文件1078项通过/1项既有跳过，4项独立探针、完整类型检查、桌面构建及空白检查通过；本地自动化范围内EXT-E/F可收口，下一阶段为EXT-G策略路由与页面。未提交、推送或打包，真实服务与原生交互仍待验收。
+
+最新主进程复核见[93 EXT-E/F复核](93-ext-e-f-independent-review.md)、[94 修复记录](94-ext-ef-review-fixes.md)与[95 复验](95-ext-e-f-fixes-independent-recheck.md)/[96 修复](96-ext-ef-recheck-fixes.md)：EXT-E 媒体补证在本地自动化范围内成立；EXT-F 的 R1（非工具模型 Skill 撑破实际请求）、R2（能力接口缺少选择状态）、R3（host 测试等待边界）与 95-R4（超时原因码竞争）已修复，95-R3（异步 wait 未 await）也已关闭。EXT-F 的 Skill 服务实现见[92](92-ext-f-skill-service-execution.md)：多来源解析与私有覆盖、公用/私有CRUD与复制、CAS、删除影响、只读预览、名称/正文/工具/16000预算及统一注入；预览与运行共用同一选择函数，运行时按实际序列化请求收紧。修复后类型检查、定向45项、全量连续两次113文件1078项通过/1项既有跳过、桌面构建均通过。策略开关的HTTP路由与页面仍在EXT-G。
+
+EXT-E 媒体验收补证见[91 EXT-E内置媒体迁移](91-ext-e-builtin-media-execution.md)：媒体工具迁移已在 D-C 落地，本包补齐 M01（submitted+jobId，图像与语音）、M02（宿主调用键幂等与跨消息独立）、M03（语音通道未知、生成中暂停、撤权/角色变化不交付）证据，并为测试假通道增加 `voiceDeliverySupport` 选项。类型检查通过、新用例 4/4、全量 111 文件 1050 项通过 1 跳过。本包只动测试与假通道；独立复核见[93](93-ext-e-f-independent-review.md)，已在本地自动化范围成立。
+
 最新主进程验收见[90 EXT-D独立复核](90-ext-d-independent-review.md)，实现见[89 D-D/D-E执行](89-ext-d-hooks-execution.md)，原始端到端失败及修复见[89a E2E证据](89a-ext-d-e2e-evidence.md)。已接通带来源 beforeContext、真实发送结果 afterTurn、500ms/2s钩子预算与会话扩展快照；补修同会话媒体误去重、原子重试撤权、挂起档案关闭、配置换代和Worker迟到执行。冻结后主进程定向138项、全量110文件1046项通过/1项既有跳过，类型检查、桌面构建与diff检查通过。范围限本地自动化，未提交、未打包、未替换EXE；EXT-E/F/G/H及真实服务验收仍按79/80推进。
 
 上一轮[87 D-A～D-C执行](87-ext-d-agent-composition-execution.md)保留单一回复宿主、assistant/tool协议与统一执行器的原始证据；其“D-D/D-E未做”以及按provider callId/会话去重、关闭等待账号同步链的表述由89/90中的实现和复验取代。原子写重试提交guard的补修另见[88](88-atomic-retry-guard-fix.md)。
@@ -125,6 +139,12 @@ WB02资源服务已实现，见[51 执行与验收记录](51-worldbook-resource-
 | [89 D-D/D-E执行](89-ext-d-hooks-execution.md) | 钩子、真实outcome、预算、配置换代与快照 | 本轮实现说明 |
 | [89a 端到端证据](89a-ext-d-e2e-evidence.md) | 真实Core/Worker装配、首轮失败与20项复验 | 保留原始失败 |
 | [90 EXT-D主进程独立验收](90-ext-d-independent-review.md) | 独立反向探针、A01～A06、最终138项/1046项及构建 | 当前放行范围与后续边界 |
+| [91 EXT-E内置媒体迁移](91-ext-e-builtin-media-execution.md) | M01～M04证据、宿主键幂等语义、语音通道边界 | 待独立复核 |
+| [92 EXT-F Skill服务](92-ext-f-skill-service-execution.md) | 多来源、CRUD/CAS/复制/影响、预算选择、只读预览与统一注入 | S01～S06后端证据；R1/R2见94 |
+| [93 EXT-E/F主进程复核](93-ext-e-f-independent-review.md) | EXT-E 放行；EXT-F R1非工具预算、R2 DTO状态、R3测试边界 | 复核原始结果与门槛 |
+| [94 EXT-E/F复核修复](94-ext-ef-review-fixes.md) | R1/R2/R3修复、非工具预算回归、能力选择状态、host门控用例 | 定向67项、全量1077项、构建通过 |
+| [95 EXT-E/F修复复验](95-ext-e-f-fixes-independent-recheck.md) | R1/R2通过；95-R3异步等待、95-R4超时原因竞争 | 独立复验原始结果 |
+| [96 EXT-E/F复验修复](96-ext-ef-recheck-fixes.md) | await异步谓词、门控反向检查、双超时原因契约 | 定向45项、连续两次全量1078项、构建通过 |
 | [46 独立世界书与条目管理实现方案](46-independent-worldbook-implementation-plan.md) | 资源版本、导入编辑、逐会话来源、运行时边界与验收 | WB01～WB06实施依据 |
 | [47 独立世界书完整验收](47-independent-worldbook-acceptance.md) | D/S/B/M/A/U 全项验收与人工清单 | 逐项证据与WB06收口 |
 | [53 后续实现计划](53-remaining-development-implementation-plan.md) | WB04～WB06、长期记忆、插件/Skill、多模态与桌面发行 | 后续派发顺序 |

@@ -420,18 +420,17 @@ it('retains local edits when the server binding revision changes and prevents st
   click(tree, '保存世界书设置'); expect(h.api).not.toHaveBeenCalled();
 });
 
-it('keeps worldbook editors mounted in plugins view and includes their dirty registrations in account switch', async () => {
+it('keeps worldbook editors mounted across re-renders and includes their dirty registrations in account switch', async () => {
   const accounts = { accounts: ['10001', '10002'].map(accountId => ({ accountId, state: 'ready', nickname: accountId, dir: '', slots: [] })) } as any;
   h.api.mockImplementation(async (url: string) => url.endsWith('/role-bindings') ? { bindings: [{ ...binding, roleCard: { source: 'public', id: 'card' }, state: 'ready', updatedAt: 0 }] } : { artifacts: [] });
   const pageCells: any[] = []; const editorCells: any[] = [];
   const props: any = { accounts, accountsLoading: false, artifacts: { artifacts: [], current: {} }, artifactsLoading: false, refresh: async () => {}, onRetryArtifacts: async () => {}, onGoSlots() {}, onGoArtifacts() {}, onFocusDisplayHandled() {} };
-  let tree = run(() => AccountsPage({ ...props, view: 'roles' }), pageCells);
-  tree = run(() => AccountsPage({ ...props, view: 'roles' }), pageCells); await settle(); tree = run(() => AccountsPage({ ...props, view: 'roles' }), pageCells);
-  let worldbook = find(tree, n => n.type === WorldbookSettings); expect(worldbook).toBeDefined(); expect(worldbook.props.visible).toBe(true);
+  let tree = run(() => AccountsPage(props), pageCells);
+  tree = run(() => AccountsPage(props), pageCells); await settle(); tree = run(() => AccountsPage(props), pageCells);
+  const worldbook = find(tree, n => n.type === WorldbookSettings); expect(worldbook).toBeDefined();
   const editor = run(() => WorldbookSettings(worldbook.props), editorCells); input(editor, 20, '3'); run(() => WorldbookSettings(worldbook.props), editorCells);
-  tree = run(() => AccountsPage({ ...props, view: 'plugins' }), pageCells); worldbook = find(tree, n => n.type === WorldbookSettings); expect(worldbook).toBeDefined(); expect(worldbook.props.visible).toBe(false);
-  tree = run(() => AccountsPage({ ...props, view: 'roles' }), pageCells);
-  find(tree, n => n.type === 'Select' && n.props.value === '10001').props.onChange({ target: { value: '10002' } }); await settle(); tree = run(() => AccountsPage({ ...props, view: 'roles' }), pageCells);
+  tree = run(() => AccountsPage(props), pageCells);
+  find(tree, n => n.type === 'Select' && n.props.value === '10001').props.onChange({ target: { value: '10002' } }); await settle(); tree = run(() => AccountsPage(props), pageCells);
   expect(h.protection.requestTransition).toHaveBeenLastCalledWith(expect.objectContaining({ scope: { kind: 'ids', ids: expect.arrayContaining(['worldbook:10001/private/peer/A']) } }));
   expect(find(tree, n => n.type === 'Select' && n.props.value === '10001')).toBeDefined();
   expect(h.protection.registry.snapshot().some((entry: any) => entry.id.startsWith('worldbook:') && entry.dirty)).toBe(true);

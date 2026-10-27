@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
 import type { ResolvedProfile } from '../../artifacts/types.js';
+import type { ExtensionPolicyDto, ExtensionRuntimeView } from '../../contracts/extensions.js';
 import { AccompanyError, InvalidSpecError } from '../../core/errors.js';
 import { buildExtensionCatalog, type ExtensionCatalog } from '../../extensions/catalog.js';
 import { isToolId, type PluginSource } from '../../extensions/contracts.js';
 import { resolveEffectiveExtensions, type EffectiveExtensions } from '../../extensions/effective.js';
 import type { ExtensionRegistry } from '../../extensions/registry.js';
+import type { PluginRuntimeStatus } from '../../extensions/runtime/account-runtime.js';
 import type { CapabilityId } from '../../policy/capabilities.js';
 import type { ConfigStore } from '../../providers/config-store.js';
 import type {
@@ -38,20 +40,6 @@ export interface UpdateExtensionPolicyInput {
   patch: ExtensionPolicyPatch;
 }
 
-export interface ExtensionPolicyView {
-  accountId: string;
-  /** Computed from the extension subtree, hard tool authorization and installed plugin refs. */
-  revision: string;
-  profileRevision: string;
-  /** Store version that must still match when the patch is committed. */
-  configVersion: number;
-  authorizedTools: string[];
-  defaults: ExtensionRunPolicy;
-  byKind: Partial<Record<ChatKind, ExtensionRunPolicy>>;
-  byConversation: Record<string, ExtensionRunPolicy>;
-  catalog: ExtensionCatalog;
-}
-
 export interface ExtensionPolicyServiceOptions {
   config: ConfigStore;
   registry: ExtensionRegistry;
@@ -59,6 +47,8 @@ export interface ExtensionPolicyServiceOptions {
   /** Account-scoped handshake results; a 0-arg provider is a process-wide constant. */
   readyPlugins?: (accountId: string) => ReadonlySet<string>;
   readyTools?: (accountId: string) => ReadonlySet<string>;
+  /** Last handshake statuses, including failure reasons, for the management page. */
+  pluginRuntime?: (accountId: string) => { synced: boolean; plugins: PluginRuntimeStatus[] };
 }
 
 /**
@@ -73,20 +63,23 @@ export class ExtensionPolicyService {
     this.#options = options;
   }
 
-  async read(accountId: string): Promise<ExtensionPolicyView> {
+  async read(accountId: string): Promise<ExtensionPolicyDto> {
     const profile = await this.#options.profiles(accountId);
     // Read the version first: a concurrent commit then makes the CAS fail instead of accepting
     // an update computed from a snapshot the caller has not observed.
     const configVersion = this.#options.config.version;
     const snapshot = this.#options.config.snapshot();
     const policy = snapshot.accountPolicies[accountId] ?? defaultAccountPolicy();
+    const readyPlugins = this.#options.readyPlugins?.(accountId);
+    const readyTools = this.#options.readyTools?.(accountId);
+    const runtime = this.#options.pluginRuntime?.(accountId);
     const catalog = buildExtensionCatalog({
       profile,
       registry: this.#options.registry,
       publicSkills: snapshot.skills,
       privateSkills: policy.skills?.definitions ?? [],
-      ...(this.#options.readyPlugins ? { readyPlugins: this.#options.readyPlugins(accountId) } : {}),
-      ...(this.#options.readyTools ? { readyTools: this.#options.readyTools(accountId) } : {})
+      ...(readyPlugins ? { readyPlugins } : {}),
+      ...(readyTools ? { readyTools } : {})
     });
     return {
       accountId,
@@ -97,7 +90,13 @@ export class ExtensionPolicyService {
       defaults: cloneRunPolicy(policy.extensions?.defaults ?? {}),
       byKind: cloneByKind(policy.extensions?.byKind ?? {}),
       byConversation: cloneByConversation(policy.extensions?.byConversation ?? {}),
-      catalog
+      catalog,
+      runtime: {
+        synced: runtime?.synced === true,
+        readyPlugins: [...(readyPlugins ?? [])].sort(),
+        readyTools: [...(readyTools ?? [])].sort(),
+        plugins: runtime?.plugins ?? []
+      }
     };
   }
 
@@ -119,7 +118,7 @@ export class ExtensionPolicyService {
     });
   }
 
-  async update(accountId: string, input: UpdateExtensionPolicyInput): Promise<ExtensionPolicyView> {
+  async update(accountId: string, input: UpdateExtensionPolicyInput): Promise<ExtensionPolicyDto> {
     if (typeof input.expectedRevision !== 'string' || !input.expectedRevision) {
       throw new InvalidSpecError('expectedRevision 必须是当前扩展策略 revision。');
     }
@@ -296,7 +295,7 @@ function runPolicyEmpty(policy: ExtensionRunPolicy): boolean {
   return !policy.plugins && !policy.tools && !policy.skills && !policy.state;
 }
 
-function extensionTree(view: ExtensionPolicyView): AccountExtensionPolicy | undefined {
+function extensionTree(view: ExtensionPolicyDto): AccountExtensionPolicy | undefined {
   if (runPolicyEmpty(view.defaults) && Object.keys(view.byKind).length === 0 && Object.keys(view.byConversation).length === 0) {
     return undefined;
   }

@@ -25,6 +25,13 @@ import type { AccountSummary } from '../../contracts/accounts.js';
 import type { WorldbookEvaluation } from '../../worldbook/types.js';
 import type { WorldbookList, WorldbookResourceDetail, WorldbookSaveResult } from '../../contracts/worldbook-resources.js';
 import type { MemoryDeleteResult, MemoryExtractionStatusView, MemoryPreviewResult, MemoryRecordDetail, MemoryRecordMutation, MemoryRecordPage, MemoryStateView } from '../../contracts/memory.js';
+import type { PrivateSkillList, PrivateSkillMutation, PublicSkillList, SkillCopyResult, SkillDeleteResult, SkillImpact, SkillPreview } from '../../contracts/skills.js';
+import type {
+  ExtensionEffectiveDto,
+  ExtensionPolicyDto,
+  ExtensionPolicyUpdateDto,
+  ExtensionReloadDto
+} from '../../contracts/extensions.js';
 
 /** HTTP/CLI 使用的应用端口；实现由 Core 提供。 */
 export interface CoreView {
@@ -56,6 +63,19 @@ export interface CoreView {
   memoryExtraction(conversation: ConversationRef): Promise<MemoryExtractionStatusView>;
   activateMemoryExtraction(conversation: ConversationRef, raw: unknown): Promise<MemoryStateView>;
   pauseMemoryExtraction(conversation: ConversationRef, raw: unknown): Promise<MemoryStateView>;
+  listPublicSkills(): PublicSkillList;
+  savePublicSkill(raw: unknown, expectedRevision: string): Promise<PublicSkillList>;
+  deletePublicSkill(id: string, expectedRevision: string): Promise<SkillDeleteResult>;
+  publicSkillImpact(id: string): SkillImpact;
+  listPrivateSkills(accountId: string): PrivateSkillList;
+  savePrivateSkill(accountId: string, raw: unknown, expectedRevision: string): Promise<PrivateSkillMutation>;
+  deletePrivateSkill(accountId: string, id: string, expectedRevision: string): Promise<PrivateSkillMutation>;
+  copyPublicSkillToPrivate(accountId: string, publicId: string, expectedRevision: string): Promise<SkillCopyResult>;
+  previewSkills(accountId: string, conversation: ConversationRef): Promise<SkillPreview>;
+  getExtensionPolicy(accountId: string): Promise<ExtensionPolicyDto>;
+  updateExtensionPolicy(accountId: string, input: ExtensionPolicyUpdateDto): Promise<ExtensionPolicyDto>;
+  effectiveExtensions(accountId: string, conversation: ConversationRef): Promise<ExtensionEffectiveDto>;
+  reloadExtensions(accountId: string): Promise<ExtensionReloadDto>;
   listAccountArtifacts(accountId: string): Promise<ResolvedArtifact[]>;
   artifactCatalog(): Promise<Record<string, string>>;
   listAccounts(options?: { avatars?: boolean }): Promise<AccountSummary[]>;

@@ -19,6 +19,11 @@ import type {
 } from '../extensions/execution/executor.js';
 import { TOOL_EXECUTION_LIMITS } from '../extensions/execution/executor.js';
 import type { ToolInvocationResult } from '../extensions/contracts.js';
+import {
+  SKILL_PROMPT_LIMITS,
+  selectSkillsForPrompt,
+  type SkillPromptCandidate
+} from '../extensions/skill-selection.js';
 import type {
   CapabilityResolution,
   EffectiveCapabilitiesDto,
@@ -50,6 +55,7 @@ export const GENERATE_AUDIO_TOOL_ID = 'builtin.audio.generate';
 export const GENERATE_AUDIO_TOOL_NAME = 'generate_speech';
 const BUILTIN_TOOL_GENERATION = 'builtin-media-v1';
 const TOOL_RESULT_BUDGET_NOTICE = '工具结果超出本轮上下文预算，内容已省略。';
+const SKILL_SECTION_RESERVE = 64;
 
 /** 一轮对话的硬预算：模型续答次数、工具回合数与工具调用总数；拒绝也计入调用数。 */
 export const AGENT_TOOL_BUDGET = {
@@ -514,11 +520,17 @@ class BuiltInAgentEngine implements AgentHost {
     const hookBudget = tools?.newHookBudget?.() ?? { remainingMs: 2_000 };
     let extensionSnapshot: ExtensionTurnSnapshot | undefined;
     let hookAdditions: ExtensionHookResult['additions'] = [];
-    let contextSkills = effective.skills.available.map((skill) => ({ name: skill.name, instructions: skill.instructions }));
+    let skillCandidates: SkillPromptCandidate[] = effective.skills.available.map((skill) => ({
+      id: skill.id,
+      name: skill.name,
+      source: skill.source ?? 'public',
+      instructions: skill.instructions,
+      tools: [...skill.tools]
+    }));
     if (tools) {
       try {
         extensionSnapshot = await tools.captureTurn(accountId, conversation);
-        contextSkills = extensionSnapshot.skills;
+        skillCandidates = extensionSnapshot.skills;
         context.setExtensionGuard?.(() => tools.isTurnSnapshotCurrent(extensionSnapshot!));
         const hookInput: PluginHookInput = {
           conversation,
@@ -541,7 +553,7 @@ class BuiltInAgentEngine implements AgentHost {
           extensionSnapshot = tools.excludeFailedPlugins(extensionSnapshot, hookResult.failedPluginKeys);
           const failed = new Set(hookResult.failedPluginKeys);
           hookAdditions = hookAdditions.filter((addition) => !failed.has(addition.pluginKey));
-          contextSkills = extensionSnapshot.skills;
+          skillCandidates = extensionSnapshot.skills;
         }
         context.setExtensionGuard?.(() => tools.isTurnSnapshotCurrent(extensionSnapshot!));
         if (!(await isTurnCurrent(context))) return undefined;
@@ -562,7 +574,7 @@ class BuiltInAgentEngine implements AgentHost {
         });
         extensionSnapshot = undefined;
         hookAdditions = [];
-        contextSkills = [];
+        skillCandidates = [];
         context.setExtensionGuard?.(() => true);
       }
     }
@@ -572,7 +584,7 @@ class BuiltInAgentEngine implements AgentHost {
       ...((context.roleBinding?.worldbookSnapshot ? context.roleBinding.worldbookSnapshot.book : context.roleBinding?.card.manifest.worldbook)
         ? { worldbook: context.roleBinding?.worldbookSnapshot ? context.roleBinding.worldbookSnapshot.book : context.roleBinding?.card.manifest.worldbook } : {}),
       ...(context.roleBinding?.worldbook ? { worldbookOptions: context.roleBinding.worldbook } : {}),
-      skills: contextSkills,
+      skills: [],
       ...(context.memory ? { memory: context.memory } : {}),
       history,
       currentText: text,
@@ -590,12 +602,42 @@ class BuiltInAgentEngine implements AgentHost {
         chatTools.push({ name: tool.name, description: tool.description, parameters: tool.inputSchema });
       }
     }
-    const rawBase = buildChatContext(baseContextInput);
-    const mandatoryBase = buildChatContext({ ...baseContextInput, history: [], maxHistoryMessages: 0 });
-    const mandatoryChars = serializedMessagesChars(mandatoryBase.messages);
     const toolDefinitionChars = JSON.stringify({ messages: [], tools: chatTools }).length - JSON.stringify({ messages: [] }).length;
-    const canReserveForTools = Boolean(tools && extensionSnapshot && chatTools.length > 0 && resolution.supportsTools
-      && context.invocationMessageId && mandatoryChars + toolDefinitionChars + 512 <= maxContextChars);
+    const toolsCouldBeOffered = Boolean(tools && extensionSnapshot && chatTools.length > 0 && resolution.supportsTools
+      && context.invocationMessageId);
+    // Skill 注入同时受 16k 总量与当轮上下文约束；工具定义先占位，说明不能把续答协议挤出预算。
+    const toolReserve = toolsCouldBeOffered ? toolDefinitionChars + 512 : 0;
+    const skillProbe = buildChatContext({ ...baseContextInput, history: [], maxHistoryMessages: 0 });
+    const skillBudget = Math.max(0, Math.min(
+      SKILL_PROMPT_LIMITS.maxTotalInstructionsChars,
+      maxContextChars - serializedMessagesChars(skillProbe.messages) - toolReserve - SKILL_SECTION_RESERVE
+    ));
+    const skillSelection = selectSkillsForPrompt(skillCandidates, { maxTotalInstructionsChars: skillBudget });
+    let includedSkills = skillSelection.included;
+    const buildMandatory = (): ReturnType<typeof buildChatContext> => {
+      baseContextInput.skills = includedSkills.map((skill) => ({ name: skill.name, instructions: skill.instructions }));
+      return buildChatContext({ ...baseContextInput, history: [], maxHistoryMessages: 0 });
+    };
+    let mandatoryBase = buildMandatory();
+    const trimmedSkills: string[] = [];
+    // JSON 转义或包装开销可能超出按字符估算的预算；无论是否提供工具都按最终请求回退。
+    const protocolOverhead = toolsCouldBeOffered ? toolDefinitionChars + 512 : 0;
+    while (includedSkills.length > 0
+      && serializedMessagesChars(mandatoryBase.messages) + protocolOverhead > maxContextChars) {
+      trimmedSkills.unshift(includedSkills[includedSkills.length - 1]!.id);
+      includedSkills = includedSkills.slice(0, -1);
+      mandatoryBase = buildMandatory();
+    }
+    const omittedSkills = [
+      ...skillSelection.excluded.map((skill) => `${skill.id}:${skill.reason}`),
+      ...trimmedSkills.map((id) => `${id}:context_budget`)
+    ];
+    if (omittedSkills.length > 0) {
+      this.#options.logger.debug('skills omitted from prompt', { omitted: omittedSkills });
+    }
+    const rawBase = buildChatContext(baseContextInput);
+    const mandatoryChars = serializedMessagesChars(mandatoryBase.messages);
+    const canReserveForTools = toolsCouldBeOffered && mandatoryChars + toolDefinitionChars + 512 <= maxContextChars;
     const protocolReserveChars = canReserveForTools
       ? Math.min(24 * 1024, Math.floor(maxContextChars / 4), maxContextChars - mandatoryChars - toolDefinitionChars)
       : 0;
@@ -611,8 +653,11 @@ class BuiltInAgentEngine implements AgentHost {
       additionsBudget,
       (candidate) => serializedMessagesChars(buildSupplemented(candidate).messages) + reservedChars <= maxContextChars
     );
-    // Preserve the existing oversized original-input path; only extension additions/protocol need new space.
-    const built = supplementalData.length > 0 || canReserveForTools ? buildSupplemented(supplementalData) : rawBase;
+    // Preserve the existing oversized original-input path; only extension additions/protocol/Skill trimming
+    // need the JSON-measured history pass.
+    const built = supplementalData.length > 0 || canReserveForTools || skillSelection.included.length > 0
+      ? buildSupplemented(supplementalData)
+      : rawBase;
     const canOfferTools = canReserveForTools && serializedMessagesChars(built.messages) + toolDefinitionChars <= maxContextChars;
     // 工具协议消息只活在本次续答里：历史最终只保留用户输入与实际发出的回复。
     const messages: ChatInputMessage[] = [...built.messages];

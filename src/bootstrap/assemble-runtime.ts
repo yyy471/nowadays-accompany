@@ -15,7 +15,10 @@ import type { QqInstance } from '../instances/instance.js';
 import { ExtensionRegistry, SkillRuntime } from '../extensions/registry.js';
 import { ExtensionPolicyService } from '../application/extensions/extension-policy-service.js';
 import { ExtensionToolService } from '../application/extensions/extension-tool-service.js';
+import { SkillService } from '../application/extensions/skill-service.js';
 import { PluginRuntimeService } from '../application/extensions/plugin-runtime-service.js';
+import type { CapabilityId } from '../policy/capabilities.js';
+import type { ConversationRef } from '../routing/identity.js';
 import { defaultAccountPolicy } from '../providers/types.js';
 import { registerBuiltInAgentTools } from '../agent/engine.js';
 import { TurnScheduler } from '../agent/scheduler.js';
@@ -102,6 +105,7 @@ export interface RuntimeAssembly {
   readonly extensions: ExtensionRegistry;
   readonly extensionPolicy: ExtensionPolicyService;
   readonly extensionTools: ExtensionToolService;
+  readonly skillService: SkillService;
   readonly pluginRuntimes: PluginRuntimeService;
   readonly policy: PolicyService;
   readonly agentScheduler: TurnScheduler;
@@ -344,16 +348,23 @@ export async function assembleRuntime(input: AssembleRuntimeInput): Promise<Runt
       registry: extensions,
       profiles: (accountId) => profiles.resolve(accountDirOf(accountId), accountId),
       readyPlugins: (accountId) => pluginRuntimes.readyPlugins(accountId),
-      readyTools: (accountId) => pluginRuntimes.readyTools(accountId)
+      readyTools: (accountId) => pluginRuntimes.readyTools(accountId),
+      pluginRuntime: (accountId) => pluginRuntimes.statuses(accountId)
     });
+    const capabilityEnabledFor = (accountId: string, conversation: ConversationRef) => (capability: CapabilityId) =>
+      providers.resolve(accountId, conversation, capability).enabled;
     const extensionTools = new ExtensionToolService({
       policy: extensionPolicy,
       accountDir: accountDirOf,
       logger: logger.child('tools'),
-      capabilityEnabled: (accountId, conversation) => (capability) =>
-        providers.resolve(accountId, conversation, capability).enabled,
+      capabilityEnabled: capabilityEnabledFor,
       runtime: (accountId) => pluginRuntimes.port(accountId),
       ...(options.now ? { now: options.now } : {})
+    });
+    const skillService = new SkillService({
+      config: configV2,
+      policy: extensionPolicy,
+      capabilityEnabled: capabilityEnabledFor
     });
 
     const modelSettings = new ModelSettingsService({
@@ -449,6 +460,7 @@ export async function assembleRuntime(input: AssembleRuntimeInput): Promise<Runt
       extensions,
       extensionPolicy,
       extensionTools,
+      skillService,
       pluginRuntimes,
       policy,
       agentScheduler,

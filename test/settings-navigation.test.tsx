@@ -28,6 +28,7 @@ vi.mock('../desktop/renderer/src/ui', () => ({ Button: 'Button', CancelButton: '
 vi.mock('../desktop/renderer/src/pages/Accounts', () => ({ AccountsPage: 'AccountsPage' }));
 vi.mock('../desktop/renderer/src/pages/Activity', () => ({ ActivityPage: 'ActivityPage' }));
 vi.mock('../desktop/renderer/src/pages/Artifacts', () => ({ ArtifactsPage: 'ArtifactsPage' }));
+vi.mock('../desktop/renderer/src/pages/Extensions', () => ({ ExtensionsPage: 'ExtensionsPage' }));
 vi.mock('../desktop/renderer/src/pages/Overview', () => ({ OverviewPage: 'OverviewPage' }));
 vi.mock('../desktop/renderer/src/pages/Policy', () => ({ PolicyPage: 'PolicyPage' }));
 vi.mock('../desktop/renderer/src/pages/Slots', () => ({ SlotsPage: 'SlotsPage' }));

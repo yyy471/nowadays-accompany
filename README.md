@@ -2,7 +2,7 @@
 
 > **项目状态：开发中（Development）**
 >
-> 当前代码为开发快照，尚未发布稳定版本。本次快照标记为 `v0.2.4-dev.1`；已完成的功能、自动化验证及尚待验收的范围见 [EXT-D 主进程验收记录](devDoc/90-ext-d-independent-review.md)，后续任务见 [开发方案](devDoc/79-agent-extension-execution-plan.md)。
+> 当前代码为开发快照，尚未发布稳定版本。本次快照标记为 `v0.2.4-dev.2`；EXT-E/F/G 已完成本地自动化复核，最新证据见 [EXT-G 独立复验](devDoc/101-ext-g-fixes-independent-recheck.md)（118 文件、1101 项通过、1 项既有跳过）。真实 QQ、模型服务、原生界面和发行包仍待 EXT-H 验收，后续任务见 [开发方案](devDoc/79-agent-extension-execution-plan.md)。
 
 目录与Git约定见[仓库规范](devDoc/23-repository-layout-and-version-control.md)：测试源码保留，测试截图/报告、运行数据、构建输出和`release/`发行包不进入Git。
 
@@ -151,7 +151,7 @@ QQ 进程注入编排与交互核心。目标是把「注入一个 QQ、连上�
 - `allowedProviders`、`media.allowCloudUpload`、`crossProviderFallback` 是账号硬授权，作用域覆盖不能绕过。
 - `bindings` 把四项能力绑定到 provider/model；`fallback` 只在账号允许跨服务回退且目标能力兼容时才有效。
 - `agentEnabled`、`capabilities`、`visionMode` 可在 `byKind`、`byConversation` 中逐层覆盖。
-- `skills.enabled` / `skills.disabled` 按账号选择公用 Skill；`skills.definitions` 可用同 id 覆盖为私有版本。未显式配置时保持公用定义默认继承，私有定义只进入该账号的上下文。
+- Skill 定义存于公用 `skills` 与账号 `skills.definitions`；同 id 私有覆盖公用，插件 Skill 使用独立命名空间。旧的 `skills.enabled` / `skills.disabled` 读取时迁移为扩展作用域开关，群/私聊与具体对象通过 `extensions.defaults`、`byKind`、`byConversation` 启停。
 - 暂停 Agent 只停止自动回复，QQ 连接、人工发送和媒体任务仍可用。
 - 撤销能力开关、服务授权或云端上传许可后，排队任务会被取消；每次提交、重试与 fallback 前都会按当前策略复核，旧授权快照不能继续发起请求。
 
@@ -160,6 +160,7 @@ QQ 进程注入编排与交互核心。目标是把「注入一个 QQ、连上�
 ### 内置 Agent、媒体与任务
 
 - 上下文包含角色卡、启用的世界书与事实记忆、有效Skill、有界历史、当前消息及带来源的观察/插件数据；当前输入只出现一次，跨账号/跨会话历史不混用。
+- Skill 注入按私有→公用→插件、来源内完整 id 升序选择，最多 8 项、累计 16000 字符；单条正文最多 8000 字符并最多引用 8 个工具。超出项在有效预览中列出原因，运行轮次再按上下文剩余预算收紧。引用工具未授权、handler 未就绪或插件停用时 Skill 不注入，启用 Skill 不会自动授权工具。CRUD、复制与影响分析见[92号记录](devDoc/92-ext-f-skill-service-execution.md)。
 - 插件 `beforeContext` 只补充非system数据，`afterTurn` 收到实际发送结果；单钩子500ms、每轮before/after共用2s，模型等待不计入。相关作用域、插件配置或代际失效时，旧结果不能交付；带插件补充数据或工具协议的轮次不作为MEM03事实候选。独立验收见[90号记录](devDoc/90-ext-d-independent-review.md)。
 - 图片默认先交给授权的外部识图服务，再以带来源标记的观察数据进入对话；`visionMode=direct` 时直接交给支持图片输入的对话模型。关闭图片理解时两条路径都不会偷偷执行。
 - 视频走独立媒体任务，成功后回到原会话追加一轮对话；没有视频能力时明确说明，不假装看过视频，也不静默抽帧外发。
@@ -274,6 +275,12 @@ npx tsx src/bin/nowadays.ts start --config nowadays.config.example.json
 | POST | `/providers/:id/test` | `{ capability, modelId?, confirmCost? }`，生图探测必须显式确认费用 |
 | GET/PUT | `/accounts/:accountId/policy` | 读取 / 写入账号策略 |
 | GET | `/accounts/:accountId/effective?kind=&peerId=` | 生效能力、来源、不可用原因与 Skill 状态 |
+| GET/POST | `/skills` | 公用 Skill 定义列表 / 新增或更新（`expectedRevision` 必填） |
+| PUT/DELETE | `/skills/:id` | 编辑 / 删除公用定义；删除返回引用影响 |
+| GET | `/skills/:id/impact` | 只读影响分析：私有覆盖与显式作用域开关 |
+| GET/POST | `/accounts/:accountId/skills/private` | 私有定义列表 / 新增或 `copyFrom` 公用复制 |
+| PUT/DELETE | `/accounts/:accountId/skills/private/:id` | 编辑 / 删除私有定义（CAS） |
+| GET | `/accounts/:accountId/skills/effective?kind=&peerId=` | 只读有效预览：来源、依赖原因、预算选中/排除 |
 | POST | `/accounts/:accountId/agent` | `{ enabled, kind?, peerId? }`，按作用域暂停/恢复自动回复 |
 | POST | `/accounts/:accountId/capabilities/:capability` | `{ enabled, kind?, peerId? }`，切换普通能力开关 |
 | GET | `/injection/runtime` | SnowLuma 管理连接、版本、鉴权、hookAutoLoad 与外部所有权状态 |

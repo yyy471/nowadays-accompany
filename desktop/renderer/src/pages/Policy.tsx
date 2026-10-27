@@ -231,7 +231,7 @@ export function PolicyPage({
   const discardDraft = async (): Promise<void> => {
     await requestPolicyTransition('撤销修改', {
       title: '撤销未保存的模型配置？',
-      description: '撤销后，当前账号未保存的模型、能力和工具授权修改会恢复为上次保存的配置。',
+      description: '撤销后，当前账号未保存的模型、能力和服务授权修改会恢复为上次保存的配置。',
       confirmLabel: '撤销修改'
     });
   };
@@ -392,7 +392,7 @@ export function PolicyPage({
         <Icon name="shield" size={18} />
         <div>
           <strong>模型服务按 QQ 账号统一配置。</strong>
-          <span>五类能力使用账号级服务绑定；群聊、私聊和具体会话不会覆盖模型。工具授权与服务配置分开保存。</span>
+          <span>五类能力使用账号级服务绑定；群聊、私聊和具体会话不会覆盖模型。插件、工具授权和 Skill 请在“插件与Skill”页管理。</span>
         </div>
       </div>
       {legacyCount > 0 ? <div className="notice notice-warn">检测到 {legacyCount} 组旧版会话级模型设置。它们仍保留在配置文件中供迁移检查，但不会再应用；请选择每个账号的服务绑定。保存不会删除这些旧字段。</div> : null}
@@ -449,22 +449,6 @@ export function PolicyPage({
                   </Field>
                 </div>
 
-                <div className="policy-section">
-                  <h4>允许 AI 调用的工具</h4>
-                  <p className="muted">配置服务不会开放工具。勾选后，支持工具调用的对话模型才能在本轮按需请求。</p>
-                  <div className="check-row-wrap">
-                    {([['builtin.image.generate', '生图'], ['builtin.audio.generate', '语音生成']] as const).map(([toolId, label]) => <label className="check-row" key={toolId}>
-                      <Checkbox checked={activeDraft.extensions?.authorizedTools?.includes(toolId) ?? false} disabled={Boolean(busy)} onChange={(event) => {
-                        const extensions = activeDraft.extensions ?? {};
-                        const authorizedTools = new Set(extensions.authorizedTools ?? []);
-                        if (event.target.checked) authorizedTools.add(toolId); else authorizedTools.delete(toolId);
-                        setDraft({ ...activeDraft, extensions: { ...extensions, authorizedTools: [...authorizedTools] } });
-                      }} />
-                      <span>{label}</span>
-                    </label>)}
-                  </div>
-                </div>
-
                 <div className="policy-section wide">
                   <h4>五类模型服务</h4>
                   <p className="muted">每行“测试”会直连当前账号已保存的服务配置；云端服务、生图和语音测试会先确认费用，结果显示在对应能力行，不会向 QQ 发送消息。</p>
@@ -517,31 +501,21 @@ export function PolicyPage({
             </div>
           </div> : null}
 
-          <div className="policy-grid">
-            <Card title="生效结果" subtitle="按账号服务配置解析；会话类型不会覆盖服务绑定" actions={<Button size="sm" icon="refresh" disabled={Boolean(busy)} onClick={() => setEffectiveKey((value) => value + 1)}>刷新</Button>}>
-              {!activeEffective ? (
-                effectiveAccountId === accountId
-                  ? <p className="muted">暂无生效结果。</p>
-                  : effectiveError
-                    ? <ErrorNote message={`无法读取生效结果：${effectiveError}`} onRetry={() => setEffectiveKey((value) => value + 1)} />
-                    : <LoadingNote label="正在读取生效结果…" />
-              ) : <div className="effective-list">
-                <div className="effective-summary"><Tag tone={activeEffective.agentEnabled ? 'ok' : 'warn'}>Agent {activeEffective.agentEnabled ? '开启' : '暂停'}</Tag><Tag tone="idle">视觉 {visionModeLabel(activeEffective.visionMode)}</Tag><Tag tone={activeEffective.allowCloudUpload ? 'warn' : 'ok'}>{activeEffective.allowCloudUpload ? '允许云端媒体' : '禁止云端媒体'}</Tag></div>
-                {activeEffective.capabilities.map((capability) => <div className={`effective-row${capability.enabled ? '' : ' is-off'}`} key={capability.capability}>
-                  <div className="effective-title"><strong>{capability.label}</strong><span className="muted mono">{capability.capability}</span></div>
-                  <div className="effective-detail">{capability.enabled ? <><Tag tone="ok">可用</Tag><span className="mono">{capability.providerId ?? '?'} / {capability.modelId ?? '?'}</span>{capability.cancelMode ? <Tag tone="idle">取消 {cancelModeLabel(capability.cancelMode)}</Tag> : null}</> : <><Tag tone="warn">{REASON_LABELS[capability.reason ?? ''] ?? capability.reason ?? '不可用'}</Tag>{capability.detail ? <span className="muted">{capability.detail}</span> : null}</>}</div>
-                </div>)}
-              </div>}
-            </Card>
-            <Card title="Skill 可用性" subtitle="Skill 只提供提示与工具引用，不能绕过账号授权。">
-              {!activeEffective ? (
-                effectiveError ? <p className="muted">无法读取 Skill 可用性。</p> : <LoadingNote label="正在读取 Skill 可用性…" />
-              ) : activeEffective.skills.available.length === 0 && activeEffective.skills.unavailable.length === 0 ? <p className="muted">当前账号没有可用 Skill。Skill 由账号插件提供，可在“账号插件”页检查启用情况。</p> : <div className="skill-list">
-                {activeEffective.skills.available.map((skill) => <div className="skill-row" key={skill.id}><Tag tone="ok">可用</Tag><div><strong>{skill.name}</strong><span className="muted mono">{skill.id}</span><p className="muted">工具：{skill.tools.join('、') || '无'}</p></div></div>)}
-                {activeEffective.skills.unavailable.map((skill) => <div className="skill-row is-off" key={skill.id}><Tag tone="warn">不可用</Tag><div><strong>{skill.name}</strong><span className="muted mono">{skill.id}</span><p className="muted">{skill.reason ?? '未知原因'}</p></div></div>)}
-              </div>}
-            </Card>
-          </div>
+          <Card title="生效结果" subtitle="按账号服务配置解析；会话类型不会覆盖服务绑定" actions={<Button size="sm" icon="refresh" disabled={Boolean(busy)} onClick={() => setEffectiveKey((value) => value + 1)}>刷新</Button>}>
+            {!activeEffective ? (
+              effectiveAccountId === accountId
+                ? <p className="muted">暂无生效结果。</p>
+                : effectiveError
+                  ? <ErrorNote message={`无法读取生效结果：${effectiveError}`} onRetry={() => setEffectiveKey((value) => value + 1)} />
+                  : <LoadingNote label="正在读取生效结果…" />
+            ) : <div className="effective-list">
+              <div className="effective-summary"><Tag tone={activeEffective.agentEnabled ? 'ok' : 'warn'}>Agent {activeEffective.agentEnabled ? '开启' : '暂停'}</Tag><Tag tone="idle">视觉 {visionModeLabel(activeEffective.visionMode)}</Tag><Tag tone={activeEffective.allowCloudUpload ? 'warn' : 'ok'}>{activeEffective.allowCloudUpload ? '允许云端媒体' : '禁止云端媒体'}</Tag></div>
+              {activeEffective.capabilities.map((capability) => <div className={`effective-row${capability.enabled ? '' : ' is-off'}`} key={capability.capability}>
+                <div className="effective-title"><strong>{capability.label}</strong><span className="muted mono">{capability.capability}</span></div>
+                <div className="effective-detail">{capability.enabled ? <><Tag tone="ok">可用</Tag><span className="mono">{capability.providerId ?? '?'} / {capability.modelId ?? '?'}</span>{capability.cancelMode ? <Tag tone="idle">取消 {cancelModeLabel(capability.cancelMode)}</Tag> : null}</> : <><Tag tone="warn">{REASON_LABELS[capability.reason ?? ''] ?? capability.reason ?? '不可用'}</Tag>{capability.detail ? <span className="muted">{capability.detail}</span> : null}</>}</div>
+              </div>)}
+            </div>}
+          </Card>
         </>
       )}
     </div>

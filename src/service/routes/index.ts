@@ -2,11 +2,13 @@ import { accountRoutes } from './accounts.js';
 import { artifactRoutes } from './artifacts.js';
 import { connectionRoutes } from './connections.js';
 import { conversationRoutes } from './conversations.js';
+import { extensionRoutes } from './extensions.js';
 import { instanceRoutes } from './instances.js';
 import { jobRoutes } from './jobs.js';
 import { mediaRoutes } from './media.js';
 import { memoryRoutes } from './memory.js';
 import { modelRoutes } from './models.js';
+import { skillRoutes } from './skills.js';
 import { systemRoutes } from './system.js';
 import { worldbookRoutes } from './worldbooks.js';
 import type { Route } from './types.js';
@@ -19,6 +21,8 @@ export function createRoutes(): Route[] {
     conversationRoutes(),
     accountRoutes(),
     modelRoutes(),
+    skillRoutes(),
+    extensionRoutes(),
     mediaRoutes(),
     jobRoutes(),
     artifactRoutes(),

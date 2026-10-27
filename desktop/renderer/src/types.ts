@@ -23,6 +23,12 @@ export interface RequiredArtifactRef {
   revision: string;
 }
 
+import type {
+  ExtensionEffectiveDto,
+  ExtensionPolicyDto,
+  ExtensionReloadDto
+} from '../../../src/contracts/extensions.js';
+
 export interface AccountPluginEntry extends ArtifactRef {
   enabled?: boolean;
   config?: Record<string, unknown>;
@@ -129,6 +135,39 @@ export interface AccountSummary {
 export interface AccountsResponse {
   ok: true;
   accounts: AccountSummary[];
+}
+
+export type {
+  ExtensionChatKind,
+  ExtensionEffectiveDto,
+  ExtensionPolicyDto,
+  ExtensionPolicyPatchDto,
+  ExtensionPolicyUpdateDto,
+  ExtensionReloadDto,
+  ExtensionRunPolicy,
+  ExtensionSwitchValue
+} from '../../../src/contracts/extensions.js';
+export type {
+  PrivateSkillList,
+  PublicSkillList,
+  SkillDefinitionView,
+  SkillImpact,
+  SkillPreview
+} from '../../../src/contracts/skills.js';
+
+export interface ExtensionsResponse {
+  ok: true;
+  extensions: ExtensionPolicyDto;
+}
+
+export interface ExtensionEffectiveResponse {
+  ok: true;
+  effective: ExtensionEffectiveDto;
+}
+
+export interface ExtensionReloadResponse {
+  ok: true;
+  reload: ExtensionReloadDto;
 }
 
 export interface ConversationRef {

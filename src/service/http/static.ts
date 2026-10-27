@@ -45,6 +45,7 @@ const API_PREFIXES = new Set([
   'diagnostics',
   'events',
   'providers',
+  'skills',
   'jobs',
   'media',
   'injection'

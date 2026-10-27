@@ -236,7 +236,7 @@ export class ModelSettingsService {
 
   async setAccountPolicy(accountId: string, raw: unknown): Promise<AccountPolicy> {
     const id = assertIdentifier(accountId, 'accountId');
-    const policy = await this.#options.config.setAccountPolicy(id, raw);
+    const policy = await this.#options.config.setAccountPolicy(id, raw, { preserveExtensions: true });
     this.#options.host.policyChanged(id);
     await this.#options.host.reloadAgents(id);
     await this.#options.host.cancelRevokedJobs(id);

@@ -41,7 +41,13 @@ export interface ExtensionTurnSnapshot {
   participatingPluginKeys: string[];
   runtimeGeneration: string;
   toolView: ToolView;
-  skills: Array<{ id: string; name: string; instructions: string }>;
+  skills: Array<{
+    id: string;
+    name: string;
+    source: 'public' | 'private' | 'plugin';
+    instructions: string;
+    tools: string[];
+  }>;
   hookPluginKeys: string[];
   excludedPluginKeys: string[];
   /** Private snapshot inputs retained so failed hook Workers can be excluded without refreshing policy. */
@@ -239,7 +245,9 @@ export class ExtensionToolService {
     const skills = includedSkills.map((status) => ({
       id: status.skill.id,
       name: status.skill.name,
-      instructions: status.skill.instructions
+      source: status.skill.source,
+      instructions: status.skill.instructions,
+      tools: [...status.skill.tools]
     }));
     const hookPluginKeys = [...new Set(includedHooks.map((status) => status.hook.pluginKey))].sort();
     const participatingPluginKeys = [...pluginKeys].sort();

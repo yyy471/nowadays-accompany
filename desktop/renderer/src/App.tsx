@@ -22,6 +22,7 @@ import type {
 import { AccountsPage } from './pages/Accounts';
 import { ActivityPage } from './pages/Activity';
 import { ArtifactsPage } from './pages/Artifacts';
+import { ExtensionsPage } from './pages/Extensions';
 import { OverviewPage } from './pages/Overview';
 import { PolicyPage } from './pages/Policy';
 import { SlotsPage } from './pages/Slots';
@@ -44,10 +45,10 @@ const PAGES: PageDef[] = [
   { id: 'overview', label: '总览', icon: 'overview', title: '总览', subtitle: '查看运行摘要；连接操作在“实例与监听”完成' },
   { id: 'instances', label: '实例与监听', icon: 'slots', title: '实例与监听', subtitle: '检测 QQ 状态；由你明确点击注入与监听' },
   { id: 'roles', label: '资料与角色', icon: 'accounts', title: '资料与角色', subtitle: '按账号维护展示资料，并为私聊或群聊绑定角色卡' },
-  { id: 'plugins', label: '账号插件', icon: 'package', title: '账号插件', subtitle: '维护每个账号启用的插件' },
-  { id: 'model-config', label: '模型配置', icon: 'shield', title: '模型配置', subtitle: '按账号配置五类服务并管理工具授权' },
+  { id: 'plugins', label: '插件与Skill', icon: 'package', title: '插件与Skill', subtitle: '按账号管理插件、工具授权与 Skill 的生效范围' },
+  { id: 'model-config', label: '模型配置', icon: 'shield', title: '模型配置', subtitle: '按账号配置五类模型服务与能力' },
   { id: 'diagnostics', label: '事件诊断', icon: 'activity', title: '事件诊断', subtitle: '检查本次运行的实例与通道事件' },
-  { id: 'artifacts', label: '资源库', icon: 'artifacts', title: '资源库', subtitle: '管理角色卡与插件资源、版本和部署' }
+  { id: 'artifacts', label: '资源库', icon: 'artifacts', title: '资源库', subtitle: '管理角色卡、插件与公用 Skill 资源、版本和部署' }
 ];
 const WORKBENCH_PAGES = PAGES.filter((item) => !['home', 'artifacts'].includes(item.id));
 
@@ -92,7 +93,7 @@ function hashSettingsTab(): SettingsTab {
 function legacyHashNoticeValue(hash: string): string | undefined {
   const id = hash.replace(/^#\/?/, '');
   if (id === 'messages') return '聊天历史与人工发送页面已移除。消息仍按账号与会话隔离保存；请从总览或事件诊断查看当前运行状态。';
-  if (id === 'tasks') return '任务媒体历史页面已移除；当前模型配置页只管理账号服务、能力与工具授权。';
+  if (id === 'tasks') return '任务媒体历史页面已移除；当前模型配置页只管理账号服务与能力，插件、工具授权和 Skill 在“插件与Skill”页管理。';
   return undefined;
 }
 
@@ -109,10 +110,6 @@ function urlForPage(page: string): string {
 function historyState(index: number): Record<string, unknown> {
   const current = window.history.state;
   return { ...(current && typeof current === 'object' ? current : {}), __nowadaysIndex: index };
-}
-
-function sharedAccountView(left: string, right: string): boolean {
-  return (left === 'roles' || left === 'plugins') && (right === 'roles' || right === 'plugins');
 }
 
 export function App() {
@@ -204,7 +201,7 @@ export function App() {
       contentRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
-    const result = await requestTransition({ scope: transitionScope(next), actionLabel: '切换页面' });
+    const result = await requestTransition({ scope: transitionScope(), actionLabel: '切换页面' });
     if (!result.ok) {
       if (result.message) setTransitionNotice(result.message);
       return;
@@ -212,11 +209,8 @@ export function App() {
     applyRoute(next, { push: true, focusAccountId: options.focusAccountId });
   };
 
-  const transitionScope = (next: string): { kind: 'page' } | { kind: 'settings' } | { kind: 'all' } | { kind: 'ids'; ids: string[] } => {
-    const shared = sharedAccountView(pageRef.current, next);
-    if (settingsOpenRef.current) return shared ? { kind: 'settings' } : { kind: 'all' };
-    return shared ? { kind: 'ids', ids: [] } : { kind: 'page' };
-  };
+  const transitionScope = (): { kind: 'page' } | { kind: 'all' } =>
+    settingsOpenRef.current ? { kind: 'all' } : { kind: 'page' };
 
   const applyRoute = (next: string, options: { push?: boolean; index?: number; focusAccountId?: string; notice?: string } = {}): void => {
     const url = urlForPage(next);
@@ -250,7 +244,7 @@ export function App() {
 
   const requestHistoryTransition = async (pending: { targetHash: string; delta?: number; kind: 'compensate' | 'restore' }): Promise<void> => {
     const next = pageFromHashValue(pending.targetHash);
-    const result = await requestTransition({ scope: transitionScope(next), actionLabel: '切换页面' });
+    const result = await requestTransition({ scope: transitionScope(), actionLabel: '切换页面' });
     if (!result.ok) {
       if (result.message) setTransitionNotice(result.message);
       return;
@@ -552,10 +546,9 @@ export function App() {
               onSettings={() => navigate('settings')}
             />
           ) : null}
-          {page === 'roles' || page === 'plugins' ? (
+          {page === 'roles' ? (
             <AccountsPage
               locked={quitPhase !== 'idle'}
-              view={page === 'roles' ? 'roles' : 'plugins'}
               accounts={accounts.data}
               accountsLoading={accounts.loading}
               accountsError={accounts.error}
@@ -570,6 +563,22 @@ export function App() {
               onGoArtifacts={() => navigate('artifacts')}
               focusDisplay={focusDisplay}
               onFocusDisplayHandled={() => setFocusDisplay(undefined)}
+            />
+          ) : null}
+          {page === 'plugins' ? (
+            <ExtensionsPage
+              locked={quitPhase !== 'idle'}
+              accounts={accounts.data}
+              accountsLoading={accounts.loading}
+              accountsError={accounts.error}
+              artifacts={artifacts.data}
+              artifactsLoading={artifacts.loading}
+              artifactsError={artifacts.error}
+              refresh={async () => {
+                await Promise.all([accounts.refresh(), slots.refresh()]);
+              }}
+              onRetryArtifacts={artifacts.refresh}
+              onGoSlots={() => navigate('instances')}
             />
           ) : null}
           {page === 'model-config' ? (
@@ -591,7 +600,7 @@ export function App() {
             />
           ) : null}
           {page === 'artifacts' ? (
-            <ArtifactsPage data={artifacts.data} loading={artifacts.loading} error={artifacts.error} refresh={artifacts.refresh} locked={quitPhase !== 'idle'} />
+            <ArtifactsPage accounts={accounts.data} data={artifacts.data} loading={artifacts.loading} error={artifacts.error} refresh={artifacts.refresh} locked={quitPhase !== 'idle'} />
           ) : null}
           {page === 'diagnostics' ? (
             <ActivityPage events={events} status={streamStatus} onClear={() => setEvents([])} />

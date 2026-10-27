@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import { errorMessage } from '../hooks';
-import type { AccountSummary, ArtifactItem, ArtifactsResponse, AccountsResponse, ArtifactRef } from '../types';
-import { Button, CancelButton, Card, Checkbox, ConfirmButton, Empty, ErrorNote, Field, Icon, Input, LoadingNote, Select, Tag, copyText, useConfirm } from '../ui';
+import type { ArtifactItem, ArtifactsResponse, AccountsResponse, ArtifactRef } from '../types';
+import { Button, CancelButton, Card, ConfirmButton, Empty, ErrorNote, Field, Icon, Input, LoadingNote, Select, Tag, useConfirm } from '../ui';
 import { AccountAvatar } from '../components/AccountAvatar';
-import { mergeAccountPlugins } from '../lib/account-plugins';
 import { useAccountEntryFocus } from '../lib/use-account-entry-focus';
 import { hashRevision } from '../lib/drafts/registry';
 import { useDraftRegistration } from '../lib/use-draft-registration';
@@ -14,7 +13,6 @@ import type { ConversationWorldbookSource, EffectiveWorldbook } from '../../../.
 
 interface AccountsPageProps {
   locked?: boolean;
-  view: 'roles' | 'plugins';
   accounts?: AccountsResponse;
   accountsLoading: boolean;
   accountsError?: string;
@@ -53,23 +51,19 @@ interface RoleCardChoice {
   mode: 'follow' | 'fixed';
 }
 
-function currentArtifacts(items: ArtifactItem[], current: Record<string, string>, kind: 'plugin' | 'role-card'): ArtifactItem[] {
+function currentRoleCardArtifacts(items: ArtifactItem[], current: Record<string, string>): ArtifactItem[] {
   const map = new Map<string, ArtifactItem>();
   for (const item of items) {
-    if (item.manifest.kind !== kind) continue;
+    if (item.manifest.kind !== 'role-card') continue;
     const existing = map.get(`${item.ref.source}:${item.ref.id}`);
     const isCurrent = item.ref.source === 'public'
-      ? current[`${kind}:${item.ref.id}`] === item.ref.revision
+      ? current[`role-card:${item.ref.id}`] === item.ref.revision
       : !existing || item.ref.revision.localeCompare(existing.ref.revision ?? '') > 0;
     if (!existing || isCurrent) map.set(`${item.ref.source}:${item.ref.id}`, item);
   }
   return [...map.values()].sort((left, right) =>
     (left.manifest.name ?? left.ref.id).localeCompare(right.manifest.name ?? right.ref.id)
   );
-}
-
-function accountStateLabel(state: AccountSummary['state']): string {
-  return state === 'ready' ? '资料就绪' : '资料异常';
 }
 
 function bindingKey(binding: Pick<RoleBinding, 'kind' | 'peerId'>): string {
@@ -113,7 +107,7 @@ function roleCardChoices(versions: ArtifactItem[], current: ArtifactItem[]): Rol
   });
 }
 
-export function AccountsPage({ view, accounts, accountsLoading, accountsError, artifacts, artifactsLoading, artifactsError, refresh, onRetryArtifacts, onGoSlots, onGoArtifacts, focusDisplay, onFocusDisplayHandled, locked = false }: AccountsPageProps) {
+export function AccountsPage({ accounts, accountsLoading, accountsError, artifacts, artifactsLoading, artifactsError, refresh, onRetryArtifacts, onGoSlots, onGoArtifacts, focusDisplay, onFocusDisplayHandled, locked = false }: AccountsPageProps) {
   const list = accounts?.accounts ?? [];
   const confirm = useConfirm();
   const { requestTransition, registry } = useDraftProtection();
@@ -131,10 +125,6 @@ export function AccountsPage({ view, accounts, accountsLoading, accountsError, a
   const [bindingKind, setBindingKind] = useState<'private' | 'group'>('private');
   const [peerId, setPeerId] = useState('');
   const [roleCard, setRoleCard] = useState('');
-  const [editing, setEditing] = useState<string>();
-  const editingRef = useRef<string | undefined>(undefined);
-  const [pluginIds, setPluginIds] = useState<string[]>([]);
-  const [pluginBaseline, setPluginBaseline] = useState<string[]>([]);
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
@@ -144,14 +134,12 @@ export function AccountsPage({ view, accounts, accountsLoading, accountsError, a
   const activePrivateItems = loadedAccountId === selectedAccount ? privateItems : [];
   const activeBindings = loadedAccountId === selectedAccount ? bindings.filter((binding) => binding.accountId === selectedAccount) : [];
   const roleCardVersions = useMemo(() => [...publicItems, ...activePrivateItems].filter((item) => item.manifest.kind === 'role-card'), [publicItems, activePrivateItems]);
-  const currentRoleCards = useMemo(() => currentArtifacts(roleCardVersions, artifacts?.current ?? {}, 'role-card'), [roleCardVersions, artifacts?.current]);
+  const currentRoleCards = useMemo(() => currentRoleCardArtifacts(roleCardVersions, artifacts?.current ?? {}), [roleCardVersions, artifacts?.current]);
   const roleChoices = useMemo(() => roleCardChoices(roleCardVersions, currentRoleCards), [roleCardVersions, currentRoleCards]);
-  const plugins = useMemo(() => currentArtifacts(publicItems, artifacts?.current ?? {}, 'plugin'), [publicItems, artifacts?.current]);
   const selected = list.find((account) => account.accountId === selectedAccount);
   const publicResourcesLoaded = artifacts !== undefined;
   const resourcesReady = publicResourcesLoaded && loadedAccountId === selectedAccount && !bindingsLoading;
   const roleDraftDirty = Boolean(peerId.trim() || roleCard);
-  const pluginDraftDirty = Boolean(editing) && [...new Set(pluginIds)].sort().join('|') !== [...new Set(pluginBaseline)].sort().join('|');
 
   useDraftRegistration({
     id: `role-binding:${selectedAccount || 'none'}`,
@@ -162,24 +150,7 @@ export function AccountsPage({ view, accounts, accountsLoading, accountsError, a
     busy: busy === 'binding' || Boolean(busy?.startsWith('remove:')),
     revision: hashRevision({ bindingKind, peerId, roleCard }),
     discard: () => { setPeerId(''); setRoleCard(''); setBindingKind('private'); },
-    // 绑定表单state随AccountsPage常驻；插件视图仅隐藏，草稿继续登记，离开Accounts时统一检查。
     enabled: Boolean(selectedAccount)
-  });
-
-  useDraftRegistration({
-    id: `plugins:${editing ?? 'none'}`,
-    owner: 'page',
-    accountId: editing,
-    label: editing ? `账号 ${editing} 的插件资料` : '插件资料',
-    dirty: pluginDraftDirty,
-    busy: Boolean(editing && busy === `${editing}:save`),
-    revision: hashRevision({ editing: editing ?? '', pluginIds: [...new Set(pluginIds)].sort() }),
-    discard: () => {
-      editingRef.current = undefined;
-      setEditing(undefined);
-      setPluginBaseline([]);
-    },
-    enabled: Boolean(editing)
   });
 
   const selectAccount = (next: string): void => {
@@ -194,10 +165,6 @@ export function AccountsPage({ view, accounts, accountsLoading, accountsError, a
     setPrivateItems([]);
     setRoleCard('');
     setPeerId('');
-    setPluginIds([]);
-    setPluginBaseline([]);
-    setEditing(undefined);
-    editingRef.current = undefined;
     setBusy(undefined);
     setError(undefined);
     setNotice(undefined);
@@ -257,7 +224,6 @@ export function AccountsPage({ view, accounts, accountsLoading, accountsError, a
     if (accountRef.current === next) return;
     const ids = [`role-binding:${accountRef.current}`];
     ids.push(...registry.snapshot({ kind: 'account', accountId: accountRef.current }).filter(entry => entry.id.startsWith('worldbook:')).map(entry => entry.id));
-    if (editingRef.current) ids.push(`plugins:${editingRef.current}`);
     const result = await requestTransition({ scope: { kind: 'ids', ids }, actionLabel: '切换账号' });
     if (!result.ok) {
       if (result.message) setError(result.message);
@@ -265,84 +231,6 @@ export function AccountsPage({ view, accounts, accountsLoading, accountsError, a
     }
     setEntryWarning(undefined);
     selectAccount(next);
-  };
-
-  const closeEditor = (): void => {
-    editingRef.current = undefined;
-    setEditing(undefined);
-    setPluginBaseline([]);
-  };
-
-  const beginEdit = async (account: AccountSummary): Promise<void> => {
-    if (busy) return;
-    if (editingRef.current && editingRef.current !== account.accountId) {
-      const result = await requestTransition({
-        scope: { kind: 'ids', ids: [`plugins:${editingRef.current}`] },
-        actionLabel: '编辑另一个账号的插件'
-      });
-      if (!result.ok) {
-        if (result.message) setError(result.message);
-        return;
-      }
-    }
-    const selectedIds = (account.file?.plugins ?? []).filter((plugin) => plugin.enabled !== false && plugin.source === 'public').map((plugin) => plugin.id);
-    editingRef.current = account.accountId;
-    setEditing(account.accountId);
-    setPluginIds(selectedIds);
-    setPluginBaseline(selectedIds);
-    setError(undefined);
-    setNotice(undefined);
-  };
-
-  const cancelEdit = async (): Promise<void> => {
-    const target = editingRef.current;
-    if (!target) return;
-    const result = await requestTransition({
-      scope: { kind: 'ids', ids: [`plugins:${target}`] },
-      actionLabel: '取消编辑'
-    });
-    if (!result.ok) {
-      if (result.message) setError(result.message);
-      return;
-    }
-    closeEditor();
-  };
-
-  const saveProfile = async (account: AccountSummary): Promise<void> => {
-    const targetAccount = account.accountId;
-    const targetPluginIds = [...pluginIds];
-    const operation = `${targetAccount}:save`;
-    if (editingRef.current !== targetAccount || busy) return;
-    if (!artifacts) {
-      setError('资源库尚未读取完成，请稍后再保存插件资料。');
-      return;
-    }
-    setBusy(operation);
-    setError(undefined);
-    setNotice(undefined);
-    try {
-      const existing = account.file?.plugins ?? [];
-      const nextPlugins = mergeAccountPlugins(existing, plugins.map((plugin) => plugin.ref.id), targetPluginIds);
-      const profile = {
-        version: 1,
-        ...(account.file?.roleCard ? { roleCard: account.file.roleCard } : {}),
-        plugins: nextPlugins
-      };
-      const result = await api<{ reload?: { ok: boolean; error?: string } }>(`/accounts/${encodeURIComponent(targetAccount)}/profile`, {
-        method: 'PUT', body: JSON.stringify({ profile })
-      });
-      if (editingRef.current !== targetAccount) return;
-      if (result.reload && !result.reload.ok) setError(`资料已保存，但热加载失败：${result.reload.error ?? '未知错误'}`);
-      else {
-        setNotice(`账号 ${targetAccount} 的插件资料已保存${result.reload ? '并热加载' : ''}。`);
-        closeEditor();
-      }
-    } catch (saveError) {
-      if (editingRef.current === targetAccount) setError(errorMessage(saveError));
-    } finally {
-      setBusy((current) => current === operation ? undefined : current);
-      await refresh();
-    }
   };
 
   const saveBinding = async (): Promise<void> => {
@@ -401,34 +289,15 @@ export function AccountsPage({ view, accounts, accountsLoading, accountsError, a
     }
   };
 
-  const reload = async (accountId: string): Promise<void> => {
-    const operation = `${accountId}:reload`;
-    if (busy) return;
-    setBusy(operation);
-    setError(undefined);
-    setNotice(undefined);
-    try {
-      const result = await api<{ ok: boolean; results: Array<{ instanceId: string; ok: boolean; error?: string }> }>(`/accounts/${encodeURIComponent(accountId)}/reload`, { method: 'POST' });
-      if (!result.results.length) setNotice(`账号 ${accountId} 当前没有被运行槽位占用，插件资料会在下次启动后生效。`);
-      else if (result.ok) setNotice(`账号 ${accountId} 已重新加载 ${result.results.length} 个实例的插件资料。`);
-      else setError(result.results.map((item) => `${item.instanceId}: ${item.error ?? '失败'}`).join('；'));
-    } catch (reloadError) {
-      setError(errorMessage(reloadError));
-    } finally {
-      setBusy((current) => current === operation ? undefined : current);
-      await refresh();
-    }
-  };
-
   return (
     <div className="page-stack">
-      {view === 'roles' ? <div className="banner">
+      <div className="banner">
         <Icon name="shield" size={18} />
         <div>
           <strong>每个私聊或群聊需要单独绑定角色卡。</strong>
           <span>未绑定或角色卡失效时，不会自动回复，也不会调用模型或工具。</span>
         </div>
-      </div> : null}
+      </div>
       {accountsError && list.length > 0 ? <ErrorNote message={`账号资料刷新失败：${accountsError}，当前显示上次读取的数据。`} onRetry={() => void refresh()} /> : null}
       {artifactsError ? <ErrorNote message={artifacts ? `资源库刷新失败：${artifactsError}，当前显示上次读取的数据。` : `无法读取资源库：${artifactsError}`} onRetry={() => void onRetryArtifacts()} /> : null}
       {error ? <ErrorNote message={error} /> : null}
@@ -439,8 +308,8 @@ export function AccountsPage({ view, accounts, accountsLoading, accountsError, a
             : <Card><Empty icon="accounts" title="还没有可用的 QQ 账号" description="在“实例与监听”中注入并开始监听后，账号会出现在这里。" action={<Button variant="primary" icon="slots" onClick={onGoSlots}>去实例与监听</Button>} /></Card>
       ) : (
         <>
-          {view === 'roles' && entryWarning ? <div className="notice notice-warn" role="status">{entryWarning}</div> : null}
-          {view === 'roles' && list.length ? <div className="policy-toolbar account-context-toolbar">
+          {entryWarning ? <div className="notice notice-warn" role="status">{entryWarning}</div> : null}
+          {list.length ? <div className="policy-toolbar account-context-toolbar">
             <Field label="当前 QQ 账号"><Select value={selectedAccount} disabled={Boolean(busy)} onChange={(event) => void selectAccountWithGuard(event.target.value)}>
               {selected ? null : <option value="">请选择账号…</option>}
               {list.map((account) => <option key={account.accountId} value={account.accountId}>{account.nickname ? `${account.nickname}（${account.accountId}）` : account.accountId}</option>)}
@@ -448,7 +317,7 @@ export function AccountsPage({ view, accounts, accountsLoading, accountsError, a
             <span className="muted">下方展示资料与会话角色绑定均针对该账号。</span>
           </div> : null}
           {selected ? (
-            <div hidden={view !== 'roles'}><Card title="会话角色绑定" actions={<Button size="sm" icon="refresh" busy={bindingsLoading} disabled={Boolean(busy) || bindingsLoading || locked} onClick={() => void reloadBindingsWithGuard()}>重新读取</Button>}>
+            <div><Card title="会话角色绑定" actions={<Button size="sm" icon="refresh" busy={bindingsLoading} disabled={Boolean(busy) || bindingsLoading || locked} onClick={() => void reloadBindingsWithGuard()}>重新读取</Button>}>
               <div className="policy-toolbar">
                 <Field label="会话类型"><Select disabled={Boolean(busy)} value={bindingKind} onChange={(event) => setBindingKind(event.target.value as 'private' | 'group')}><option value="private">私聊</option><option value="group">群聊</option></Select></Field>
                 <Field label={bindingKind === 'private' ? '对方 QQ' : '群号'}><Input disabled={Boolean(busy)} value={peerId} onChange={(event) => setPeerId(event.target.value.replace(/[^0-9A-Za-z_-]/g, ''))} placeholder={bindingKind === 'private' ? '输入私聊 QQ 号' : '输入群号'} /></Field>
@@ -470,7 +339,7 @@ export function AccountsPage({ view, accounts, accountsLoading, accountsError, a
                     <div className="binding-row-info"><strong>{binding.kind === 'private' ? '私聊' : '群聊'} {binding.peerId}</strong><span>{binding.cardName ?? binding.roleCard.id} · {binding.roleCard.source === 'public' ? '公用' : '私有'} · {binding.roleCard.revision ? `固定版本 @${binding.roleCard.revision}` : `跟随当前${binding.resolvedRevision ? `（${binding.resolvedRevision}）` : ''}`}</span></div>
                     <Tag tone={binding.state === 'ready' ? 'ok' : 'bad'}>{binding.state === 'ready' ? '已解析' : '缺少角色卡'}</Tag>
                     <Button size="sm" variant="ghost" busy={busy === `remove:${bindingKey(binding)}`} disabled={Boolean(busy) || bindingsLoading || binding.accountId !== selectedAccount} onClick={() => void removeBinding(binding)}>解除</Button>
-                  </div><WorldbookSettings binding={binding} locked={locked} visible={view === 'roles'} disabled={Boolean(busy) || bindingsLoading || binding.accountId !== selectedAccount}
+                  </div><WorldbookSettings binding={binding} locked={locked} disabled={Boolean(busy) || bindingsLoading || binding.accountId !== selectedAccount}
                     onSaved={updated => { if (accountRef.current === binding.accountId) setBindings(current => current.map(item => bindingKey(item) === bindingKey(binding) && item.accountId === binding.accountId ? { ...item, ...updated } : item)); }}
                     onReload={() => { if (!lockedRef.current && accountRef.current === binding.accountId) setReloadKey(value => value + 1); }}
                   /></div>
@@ -480,44 +349,13 @@ export function AccountsPage({ view, accounts, accountsLoading, accountsError, a
               {!roleChoices.length && resourcesReady ? <div className="notice notice-warn"><span>当前没有可选角色卡，请先在资源库添加角色卡。</span><Button size="sm" variant="ghost" onClick={onGoArtifacts}>去资源库</Button></div> : null}
             </Card></div>
           ) : null}
-          {selected ? <div ref={displayRef} className="display-profile-anchor" hidden={view !== 'roles'}>
+          {selected ? <div ref={displayRef} className="display-profile-anchor">
             <AccountDisplayEditor
               accountId={selectedAccount}
               fallbackAvatarDataUrl={list.find((account) => account.accountId === selectedAccount)?.avatarDataUrl}
               onSaved={refresh}
             />
           </div> : null}
-          {view === 'plugins' ? <Card title="账号插件资料">
-            <div className="account-list">{list.map((account) => {
-              const isEditing = editing === account.accountId;
-              const privatePlugins = (account.file?.plugins ?? []).filter((plugin) => plugin.source !== 'public');
-              return <div key={account.accountId} className="account-card">
-                <div className="account-head">
-                  <div className="account-identity"><AccountAvatar dataUrl={account.avatarDataUrl} label={`${account.accountId} 头像`} className="avatar" iconSize={16} /><div><h3>{account.nickname || account.accountId}</h3><span className="muted mono">QQ {account.accountId}</span></div></div>
-                  <div className="account-head-actions"><Tag tone={account.state === 'ready' ? 'ok' : 'bad'}>{accountStateLabel(account.state)}</Tag></div>
-                </div>
-                <div className="account-body"><div className="account-profile-summary">
-                  {account.file?.roleCard ? <p className="muted">旧默认卡 {account.file.roleCard.source}:{account.file.roleCard.id}（仅迁移信息，不参与自动处理）</p> : null}
-                  <div className="meta-label plugin-label">插件</div><div className="chip-row">{account.file?.plugins?.length ? account.file.plugins.map((plugin) => <span className="chip" key={`${plugin.source}:${plugin.id}`}>{plugin.id}<span className="muted"> · {plugin.source === 'public' ? '公用' : '私有'}</span>{plugin.enabled === false ? <span className="muted"> · 停用</span> : null}</span>) : <span className="muted">未启用插件</span>}</div>
-                  {account.error ? <p className="inline-error">{account.error}</p> : null}
-                </div><div className="account-actions">
-                  {isEditing ? <CancelButton size="sm" icon="close" disabled={Boolean(busy)} onClick={() => void cancelEdit()}>取消编辑</CancelButton> : <Button size="sm" icon="settings" disabled={Boolean(busy)} onClick={() => void beginEdit(account)}>编辑插件</Button>}
-                  <Button size="sm" icon="refresh" busy={busy === `${account.accountId}:reload`} disabled={Boolean(busy)} onClick={() => void reload(account.accountId)}>应用到运行实例</Button>
-                  <Button size="sm" icon="copy" onClick={() => void copyText(account.dir)}>复制目录</Button>
-                </div></div>
-                <details className="inline-details account-details">
-                  <summary>目录与运行实例</summary>
-                  <p className="muted mono">{account.dir}</p>
-                  <p className="muted">{account.slots.length ? `运行实例：${account.slots.join('、')}` : '当前没有运行实例。'}</p>
-                </details>
-                {isEditing ? <form className="profile-editor" onSubmit={(event) => { event.preventDefault(); void saveProfile(account); }}>
-                  <div className="plugin-picker">{artifacts === undefined ? (artifactsError ? <span className="inline-error">资源库读取失败，暂不能保存插件资料。</span> : <span className="muted">正在读取资源库…</span>) : plugins.length ? plugins.map((plugin) => <label className="check-row" key={plugin.ref.id}><Checkbox disabled={Boolean(busy)} checked={pluginIds.includes(plugin.ref.id)} onChange={(event) => setPluginIds((current) => event.target.checked ? [...current, plugin.ref.id] : current.filter((id) => id !== plugin.ref.id))} /><span><strong>{plugin.manifest.name ?? plugin.ref.id}</strong><span className="muted mono"> @{plugin.ref.revision}</span>{plugin.manifest.description ? <span className="check-desc">{plugin.manifest.description}</span> : null}</span></label>) : <span className="muted">资源库中还没有公用插件</span>}</div>
-                  {privatePlugins.length ? <p className="field-hint">私有插件由账号目录维护，保存时会原样保留：{privatePlugins.map((plugin) => plugin.id).join('、')}</p> : null}
-                  <div className="form-submit"><CancelButton type="button" variant="ghost" disabled={Boolean(busy)} onClick={() => void cancelEdit()}>取消</CancelButton><ConfirmButton type="submit" variant="primary" busy={busy === `${account.accountId}:save`} disabled={Boolean(busy) || artifacts === undefined}>保存插件资料</ConfirmButton></div>
-                </form> : null}
-              </div>;
-            })}</div>
-          </Card> : null}
         </>
       )}
     </div>

@@ -495,7 +495,7 @@ function parseExtensionSwitch(raw: unknown, path: string): ExtensionSwitch {
 
 function parseExtensionRunPolicy(raw: unknown, path: string): ExtensionRunPolicy {
   const value = object(raw, path);
-  exactKeys(value, ['plugins', 'tools', 'skills'], path);
+  exactKeys(value, ['plugins', 'tools', 'skills', 'state'], path);
   const policy: ExtensionRunPolicy = {};
   const sections = [
     ['plugins', (key: string) => isPluginKey(key)],
@@ -675,8 +675,8 @@ export function parseAccountPolicy(raw: unknown, path = 'accountPolicy'): Accoun
     if (skillsRaw.definitions !== undefined) {
       if (!Array.isArray(skillsRaw.definitions)) fail(`${path}.skills.definitions`, 'must be an array');
       for (const [index, entry] of skillsRaw.definitions.entries()) {
-        const definition = parseSkill(entry, `${path}.skills.definitions[${index}]`);
-        if (definition.enabled === false) fail(`${path}.skills.definitions[${index}].enabled`, 'use the disabled list instead');
+        const definition = parseSkillDefinition(entry, `${path}.skills.definitions[${index}]`);
+        // A private definition may keep enabled=false as its default; scope switches still override it.
         definitions.push(definition);
       }
       const ids = new Set<string>();
@@ -716,7 +716,7 @@ export function parseAccountPolicy(raw: unknown, path = 'accountPolicy'): Accoun
   };
 }
 
-function parseSkill(raw: unknown, path: string): SkillConfig {
+export function parseSkillDefinition(raw: unknown, path: string): SkillConfig {
   const value = object(raw, path);
   exactKeys(value, ['id', 'name', 'description', 'instructions', 'tools', 'requires', 'kinds', 'peers', 'enabled'], path);
   const id = typeof value.id === 'string' && ID.test(value.id) ? value.id : fail(`${path}.id`, `must match ${ID}`);
@@ -791,7 +791,7 @@ export function parseRuntimeConfig(raw: unknown, source = 'config'): RuntimeConf
   }
   const skillsRaw = value.skills === undefined ? [] : value.skills;
   if (!Array.isArray(skillsRaw)) fail(`${source}.skills`, 'must be an array');
-  const skills = skillsRaw.map((entry, index) => parseSkill(entry, `${source}.skills[${index}]`));
+  const skills = skillsRaw.map((entry, index) => parseSkillDefinition(entry, `${source}.skills[${index}]`));
   const skillIds = new Set<string>();
   for (const skill of skills) {
     if (skillIds.has(skill.id)) fail(`${source}.skills`, `duplicate skill id ${skill.id}`);

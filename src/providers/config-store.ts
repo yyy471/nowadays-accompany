@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Logger } from '../core/logger.js';
 import { writeFileAtomic } from '../storage/atomic-write.js';
+import type { SkillConfig } from '../extensions/types.js';
 import type { AccountPolicy, ProviderConfig, RuntimeConfigV2 } from './types.js';
 import {
   configFingerprint,
@@ -131,11 +132,29 @@ export class ConfigStore {
     return this.#mutate(next => removeProviderFromConfig(next, id));
   }
 
-  async setAccountPolicy(accountId: string, raw: unknown): Promise<AccountPolicy> {
+  async setAccountPolicy(
+    accountId: string,
+    raw: unknown,
+    options: { preserveExtensions?: boolean } = {}
+  ): Promise<AccountPolicy> {
     const policy = parseAccountPolicy(raw, `accountPolicies.${accountId}`);
+    const legacyTools = Boolean(raw && typeof raw === 'object' && !Array.isArray(raw)
+      && Object.prototype.hasOwnProperty.call(raw, 'enabledTools'));
     return this.#mutate((next) => {
-      next.accountPolicies[accountId] = policy;
-      return policy;
+      // Skill definitions have their own revision/CAS path; a legacy full-policy save must not
+      // silently drop what the Skill service wrote in the meantime.
+      const current = next.accountPolicies[accountId];
+      const updated: AccountPolicy = current?.skills
+        ? { ...policy, skills: structuredClone(current.skills) }
+        : policy;
+      // The model page is not an extension-policy owner. Legacy `enabledTools` writes keep their
+      // historical meaning until EXT-H removes that path.
+      if (options.preserveExtensions && !legacyTools) {
+        if (current?.extensions) updated.extensions = structuredClone(current.extensions);
+        else delete updated.extensions;
+      }
+      next.accountPolicies[accountId] = updated;
+      return updated;
     });
   }
 
@@ -173,6 +192,29 @@ export class ConfigStore {
       next.accountPolicies[accountId] = updated;
       await this.#commit(next);
       return updated;
+    });
+  }
+
+  /**
+   * CAS for the public Skill subtree. Only the Skill array is replaced; providers, account policies
+   * and media settings are carried over from the same snapshot.
+   */
+  async updateSkills(
+    expectedVersion: number,
+    apply: (current: SkillConfig[]) => SkillConfig[]
+  ): Promise<SkillConfig[]> {
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) {
+      throw new ConfigError('expected config version must be a non-negative integer');
+    }
+    return this.#runMutation(async () => {
+      if (this.#version !== expectedVersion) {
+        throw new AccompanyError('skill_conflict', 'Skill 定义已被其他窗口修改，请刷新后重试。');
+      }
+      const next = this.snapshot();
+      const updated = apply(next.skills.map((skill) => structuredClone(skill)));
+      next.skills = updated;
+      await this.#commit(next);
+      return structuredClone(next.skills);
     });
   }
 

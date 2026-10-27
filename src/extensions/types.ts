@@ -48,6 +48,9 @@ export interface SkillStatus {
   available: boolean;
   reason?: string;
   source?: 'public' | 'private' | 'plugin';
+  /** Effective scope says yes, but the standard prompt budget did not select it. */
+  selected?: boolean;
+  selectionReason?: string;
 }
 
 export type HookName = 'capability:before' | 'capability:after';

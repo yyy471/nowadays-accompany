@@ -65,7 +65,13 @@ function imageCall(id: string | undefined, prompt: string): { id?: string; name:
 
 async function setup(
   script: ChatResponse[],
-  options: { supportsTools?: boolean; authorizedTools?: string[]; maxHistoryChars?: number } = {}
+  options: {
+    supportsTools?: boolean;
+    authorizedTools?: string[];
+    maxHistoryChars?: number;
+    skills?: Array<Record<string, unknown>>;
+    privateSkills?: Array<Record<string, unknown>>;
+  } = {}
 ): Promise<{
   core: Core;
   channel: FakeChannel;
@@ -97,12 +103,14 @@ async function setup(
         ...(options.authorizedTools || options.supportsTools === false
           ? { enabledTools: options.authorizedTools ?? [] }
           : { enabledTools: ['builtin.image.generate'] }),
+        ...(options.privateSkills ? { skills: { definitions: options.privateSkills } } : {}),
         bindings: {
           chat: bind('scripted-chat', 'chat-model'),
           'image.generate': bind('fake-media', 'image-model')
         }
       })
-    }
+    },
+    ...(options.skills ? { skills: options.skills } : {})
   });
   const bucket = new Map<string, FakeChannel>();
   const channelFactory: ChannelFactory = (context) => {
@@ -443,5 +451,110 @@ describe('agent context budget at the Provider boundary', () => {
     expect(requests[1]!.messages.some(message => message.role === 'tool' && message.toolCallId === 'history-tool')).toBe(true);
     for (const request of requests) expect(JSON.stringify(request).length).toBeLessThanOrEqual(12_000);
     await waitFor(() => sentTexts(channel).includes('HISTORY_TOOL_REPLY'));
+  });
+
+  it('injects at most eight Skills in private → public order and leaves the rest out of the prompt', async () => {
+    const publicSkills = Array.from({ length: 10 }, (_, index) => ({
+      id: `s${String(index + 1).padStart(2, '0')}`,
+      name: `S${index + 1}`,
+      instructions: `SKILL_BODY_${index + 1}`,
+      tools: []
+    }));
+    const { channel, chat } = await setup([{ text: 'SKILLS_OK' }], {
+      skills: publicSkills,
+      privateSkills: [{ id: 'aaa-private', name: 'Private', instructions: 'PRIVATE_SKILL_BODY', tools: [] }]
+    });
+    channel.emitInbound(textInbound('a', '10001', '555', 'skills-budget', 'hi'));
+    await waitFor(() => sentTexts(channel).includes('SKILLS_OK'));
+    const system = chat.requests[0]!.messages[0]!;
+    const text = system.content
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text)
+      .join('\n');
+    const headings = [...text.matchAll(/^### (.+)$/gm)].map((match) => match[1]);
+    expect(headings).toEqual(['Private', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7']);
+    expect(text).toContain('PRIVATE_SKILL_BODY');
+    expect(text).not.toContain('SKILL_BODY_8');
+  });
+
+  it('trims escaping-heavy Skills to the serialized request budget without tool support', async () => {
+    const skills = [{ id: 'quotes', name: 'Quotes', instructions: '"'.repeat(8_000), tools: [] }];
+    const { channel, chat } = await setup([{ text: 'NO_TOOL_OK' }], {
+      supportsTools: false,
+      skills,
+      maxHistoryChars: 12_000
+    });
+    channel.emitInbound(textInbound('a', '10001', '555', 'escape-no-tools', 'hello'));
+    await waitFor(() => sentTexts(channel).includes('NO_TOOL_OK'));
+    const request = chat.requests[0]!;
+    expect(JSON.stringify(request).length).toBeLessThanOrEqual(12_000);
+    const systemText = request.messages[0]!.content
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text)
+      .join('\n');
+    expect(systemText).not.toContain('### Quotes');
+  });
+
+  it('trims escaping-heavy Skills when tools are supported but none are authorized', async () => {
+    const body = '\\"\n\t'.repeat(2_000);
+    const skills = [{ id: 'escaped', name: 'Escaped', instructions: body, tools: [] }];
+    const { channel, chat } = await setup([{ text: 'EMPTY_AUTH_OK' }], {
+      authorizedTools: [],
+      skills,
+      maxHistoryChars: 12_000
+    });
+    channel.emitInbound(textInbound('a', '10001', '555', 'escape-empty-auth', 'hello'));
+    await waitFor(() => sentTexts(channel).includes('EMPTY_AUTH_OK'));
+    const request = chat.requests[0]!;
+    expect(JSON.stringify(request).length).toBeLessThanOrEqual(12_000);
+    expect(request.tools).toBeUndefined();
+    const systemText = request.messages[0]!.content
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text)
+      .join('\n');
+    expect(systemText).not.toContain('### Escaped');
+  });
+
+  it('keeps an oversized original message even when Skill trimming cannot make it fit', async () => {
+    const skills = [{ id: 'big', name: 'Big', instructions: '技'.repeat(4_000), tools: [] }];
+    const { channel, chat } = await setup([{ text: 'LONG_NO_TOOL' }], {
+      supportsTools: false,
+      skills,
+      maxHistoryChars: 12_000
+    });
+    const original = '长'.repeat(13_000);
+    channel.emitInbound(textInbound('a', '10001', '555', 'long-no-tool', original));
+    await waitFor(() => sentTexts(channel).includes('LONG_NO_TOOL'));
+    const request = chat.requests[0]!;
+    expect(request.messages.flatMap((message) => message.content)
+      .some((part) => part.type === 'text' && part.text === original)).toBe(true);
+    const systemText = request.messages[0]!.content
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text)
+      .join('\n');
+    expect(systemText).not.toContain('### Big');
+  });
+
+  it('shrinks the Skill budget to the remaining context while keeping the tool protocol', async () => {
+    const skills = Array.from({ length: 4 }, (_, index) => ({
+      id: `big-${index}`,
+      name: `Big ${index}`,
+      instructions: '技'.repeat(4_000),
+      tools: []
+    }));
+    const { channel, chat } = await setup([{ text: 'TRIMMED_OK' }], { skills, maxHistoryChars: 12_000 });
+    channel.emitInbound(textInbound('a', '10001', '555', 'skills-trim', 'hi'));
+    await waitFor(() => sentTexts(channel).includes('TRIMMED_OK'));
+    const request = chat.requests[0]!;
+    const system = request.messages[0]!;
+    const headings = system.content
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text)
+      .join('\n')
+      .match(/^### (.+)$/gm) ?? [];
+    expect(headings.length).toBeGreaterThan(0);
+    expect(headings.length).toBeLessThan(4);
+    expect(request.tools?.map((tool) => tool.name)).toContain(GENERATE_IMAGE_TOOL_NAME);
+    expect(JSON.stringify(request).length).toBeLessThanOrEqual(12_000);
   });
 });

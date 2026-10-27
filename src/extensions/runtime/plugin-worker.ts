@@ -65,6 +65,11 @@ export type PluginAfterTurnInput = PluginHookInput & {
   errorCode?: string;
 };
 
+/**
+ * Hook failure reasons are diagnostic, not a stable single-code contract. When the host deadline
+ * and the Worker handler deadline share the same cap, `plugin_timeout` and `plugin_handler_timeout`
+ * may race; both terminate the generation, and callers must decide by the observable effects.
+ */
 export type PluginHookOutcome =
   | { status: 'ok'; additions: PluginBeforeContextResult['additions'] }
   | { status: 'unavailable'; reason: string; detail?: string }

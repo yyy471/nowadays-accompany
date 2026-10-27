@@ -28,6 +28,8 @@ export class PluginRuntimeService {
   readonly #accountClosePromises = new Map<string, Promise<void>>();
   readonly #accountGenerations = new Map<string, number>();
   readonly #closeWaiters = new Map<string, Set<() => void>>();
+  readonly #lastStatuses = new Map<string, PluginRuntimeStatus[]>();
+  readonly #syncedAccounts = new Set<string>();
   #closed = false;
 
   constructor(options: PluginRuntimeServiceOptions) {
@@ -45,10 +47,23 @@ export class PluginRuntimeService {
     );
     this.#chains.set(accountId, next);
     try {
-      return await next;
+      const statuses = await next;
+      if (this.#isCurrent(accountId, generation)) {
+        this.#lastStatuses.set(accountId, statuses);
+        this.#syncedAccounts.add(accountId);
+      }
+      return statuses;
     } finally {
       if (this.#chains.get(accountId) === next) this.#chains.delete(accountId);
     }
+  }
+
+  /** Last handshake outcome, including plugins that failed to start. */
+  statuses(accountId: string): { synced: boolean; plugins: PluginRuntimeStatus[] } {
+    return {
+      synced: this.#syncedAccounts.has(accountId),
+      plugins: structuredClone(this.#lastStatuses.get(accountId) ?? [])
+    };
   }
 
   port(accountId: string): PluginToolRuntimePort | undefined {
@@ -83,6 +98,8 @@ export class PluginRuntimeService {
     // Mark the account runtime closed immediately so an in-flight handshake/sync is interrupted.
     const owned = this.#owned.get(accountId);
     if (owned) this.#owned.delete(accountId);
+    this.#lastStatuses.delete(accountId);
+    this.#syncedAccounts.delete(accountId);
     const runtimeClose = owned?.runtime.close() ?? Promise.resolve();
     const close = runtimeClose.finally(() => {
       this.#accountClosePromises.delete(accountId);

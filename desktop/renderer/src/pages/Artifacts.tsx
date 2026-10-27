@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { api } from '../api';
 import { errorMessage, usePoll } from '../hooks';
 import type {
+  AccountsResponse,
   ArtifactItem,
   ArtifactManifest,
   ArtifactsResponse,
@@ -13,9 +14,11 @@ import { AsyncBoundary, Button, Card, ConfirmButton, Empty, ErrorNote, Icon, Loa
 import { deploymentActionLabel } from '../lib/labels';
 import { ArtifactImport } from '../components/ArtifactImport';
 import { WorldbookLibrary } from '../components/WorldbookLibrary';
+import { PublicSkillLibrary } from '../components/PublicSkillLibrary';
 
 interface ArtifactsPageProps {
   locked?: boolean;
+  accounts?: AccountsResponse;
   data?: ArtifactsResponse;
   loading: boolean;
   error?: string;
@@ -72,7 +75,7 @@ function deploymentSummary(record: DeploymentRecord): string {
   return `更新 ${updated} · 跳过 ${skipped} · 失败 ${failed}`;
 }
 
-export function ArtifactsPage({ data, loading, error, refresh, locked = false }: ArtifactsPageProps) {
+export function ArtifactsPage({ accounts, data, loading, error, refresh, locked = false }: ArtifactsPageProps) {
   const groups = useMemo(() => groupArtifacts(data), [data]);
   const deployments = usePoll<DeploymentsResponse>('/deployments', 8000);
   const diagnostics = usePoll<Diagnostics>('/diagnostics', 15000);
@@ -156,6 +159,8 @@ export function ArtifactsPage({ data, loading, error, refresh, locked = false }:
       <ArtifactImport refresh={refresh} disabled={Boolean(busy)} locked={locked} onImported={(kind) => { if (kind === 'worldbook') setWorldbookReload((value) => value + 1); }} />
 
       <WorldbookLibrary reloadKey={worldbookReload} locked={locked} />
+
+      <PublicSkillLibrary accounts={accounts} locked={locked} />
 
       <Card
         title="公用资源目录"

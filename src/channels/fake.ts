@@ -7,6 +7,8 @@ import type { InboundEvent } from './events.js';
 export interface FakeChannelOptions {
   selfId?: string;
   failOnSend?: boolean;
+  /** Defaults to `supported`; other values model channels that cannot confirm voice delivery. */
+  voiceDeliverySupport?: 'supported' | 'unsupported' | 'unknown';
 }
 
 export class FakeChannel implements OutboundChannel {
@@ -49,8 +51,8 @@ export class FakeChannel implements OutboundChannel {
     return this.#selfId;
   }
 
-  voiceDeliverySupport(): 'supported' {
-    return 'supported';
+  voiceDeliverySupport(): 'supported' | 'unsupported' | 'unknown' {
+    return this.#options.voiceDeliverySupport ?? 'supported';
   }
 
   /** 测试入口：模拟从协议侧收到一条事件 */

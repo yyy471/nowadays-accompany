@@ -51,6 +51,8 @@ export function statusForError(error: unknown): number {
     case 'injection_identity_mismatch':
     case 'injection_not_loaded':
     case 'injection_account_in_use':
+    case 'skill_conflict':
+    case 'extension_conflict':
       return 409;
     case 'snowluma_unreachable':
     case 'worldbook_io_error':
@@ -69,6 +71,7 @@ export function statusForError(error: unknown): number {
     case 'injection_slot_not_found':
     case 'injection_process_stale':
     case 'injection_operation_not_found':
+    case 'skill_not_found':
       return 404;
     default:
       return 400;

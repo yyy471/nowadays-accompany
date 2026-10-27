@@ -39,6 +39,12 @@ import { SlotStore } from '../storage/slot-store.js';
 import { createApiServer, type ApiHandle } from '../service/server.js';
 import type { CoreView } from '../application/ports/control-api.js';
 import type { AccountSummary } from '../contracts/accounts.js';
+import type {
+  ExtensionEffectiveDto,
+  ExtensionPolicyDto,
+  ExtensionPolicyUpdateDto,
+  ExtensionReloadDto
+} from '../contracts/extensions.js';
 import type { AgentHost, AgentHostFactoryInput } from '../host/contract.js';
 import { InjectionSettingsStore, type InjectionSettings } from '../injection/settings.js';
 import { SnowLumaRuntimeController } from '../injection/snowluma/runtime.js';
@@ -69,6 +75,11 @@ import {
 import { PolicyService } from '../policy/policy.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import { ExtensionToolService } from '../application/extensions/extension-tool-service.js';
+import type { ExtensionPolicyService } from '../application/extensions/extension-policy-service.js';
+import type { SkillService } from '../application/extensions/skill-service.js';
+import type { PrivateSkillMutation, PublicSkillList, SkillCopyResult, SkillDeleteResult, SkillImpact, SkillPreview, SkillPreviewEntry, PrivateSkillList } from '../contracts/skills.js';
+import type { SkillResolution } from '../extensions/registry.js';
+import { sanitizeErrorText } from '../platform/security/redaction.js';
 import { PluginRuntimeService } from '../application/extensions/plugin-runtime-service.js';
 import { ProviderRouter, type EffectiveCapabilitiesDto } from '../providers/router.js';
 import type { ProviderTestResult } from '../providers/contract.js';
@@ -141,6 +152,7 @@ export class Core implements CoreView {
   readonly jobs: MediaJobService;
   readonly extensions: ExtensionRegistry;
   readonly extensionTools: ExtensionToolService;
+  readonly skills: SkillService;
   readonly agentScheduler: TurnScheduler;
 
   readonly #dataRoot: string;
@@ -151,6 +163,7 @@ export class Core implements CoreView {
   readonly #stores = new Map<string, MessageStore>();
   readonly #pluginStates = new Map<string, PluginStateStore>();
   readonly #pluginRuntimes: PluginRuntimeService;
+  readonly #extensionPolicy: ExtensionPolicyService;
   readonly #runtimeLeases = new Map<string, RuntimeLease>();
   readonly #runtimeRegistry: RuntimeRegistry;
   readonly #accountLeases: AccountLeases;
@@ -218,7 +231,9 @@ export class Core implements CoreView {
     this.#snowLumaRuntime = runtime.snowLumaRuntime;
     this.extensions = runtime.extensions;
     this.extensionTools = runtime.extensionTools;
+    this.skills = runtime.skillService;
     this.#pluginRuntimes = runtime.pluginRuntimes;
+    this.#extensionPolicy = runtime.extensionPolicy;
     this.policy = runtime.policy;
     this.agentScheduler = runtime.agentScheduler;
     this.media = runtime.media;
@@ -787,8 +802,88 @@ export class Core implements CoreView {
     return this.#runPublicWork(() => this.#modelSettings.patchCapabilityEnabled(accountId, capability, enabled, scope));
   }
 
-  effectiveCapabilities(accountId: string, conversation: ConversationRef): Promise<EffectiveCapabilitiesDto> {
-    return this.#modelSettings.effectiveCapabilities(accountId, conversation);
+  async effectiveCapabilities(accountId: string, conversation: ConversationRef): Promise<EffectiveCapabilitiesDto> {
+    const effective = await this.#modelSettings.effectiveCapabilities(accountId, conversation);
+    // Skill availability is owned by the extension resolver; the legacy router view cannot see
+    // plugin Skills or plugin tools, so the page and the runtime must not read two answers.
+    try {
+      const preview = await this.skills.preview(accountId, conversation);
+      return { ...effective, skills: skillResolutionFromPreview(preview) };
+    } catch (error) {
+      // Capability diagnostics must stay available when a profile read fails; the legacy answer is
+      // less complete, not a reason to fail the whole page.
+      this.#logger.warn('skill preview unavailable for capabilities view', {
+        accountId,
+        message: sanitizeErrorText(error instanceof Error ? error.message : String(error))
+      });
+      return effective;
+    }
+  }
+
+  listPublicSkills(): PublicSkillList {
+    return this.skills.listPublic();
+  }
+
+  savePublicSkill(raw: unknown, expectedRevision: string): Promise<PublicSkillList> {
+    return this.#runPublicWork(() => this.skills.savePublic(raw, expectedRevision));
+  }
+
+  deletePublicSkill(id: string, expectedRevision: string): Promise<SkillDeleteResult> {
+    return this.#runPublicWork(() => this.skills.deletePublic(assertSkillId(id), expectedRevision));
+  }
+
+  publicSkillImpact(id: string): SkillImpact {
+    return this.skills.impact(assertSkillId(id));
+  }
+
+  listPrivateSkills(accountId: string): PrivateSkillList {
+    return this.skills.listPrivate(assertIdentifier(accountId, 'accountId'));
+  }
+
+  savePrivateSkill(accountId: string, raw: unknown, expectedRevision: string): Promise<PrivateSkillMutation> {
+    return this.#runPublicWork(() => this.skills.savePrivate(assertIdentifier(accountId, 'accountId'), raw, expectedRevision));
+  }
+
+  deletePrivateSkill(accountId: string, id: string, expectedRevision: string): Promise<PrivateSkillMutation> {
+    return this.#runPublicWork(() => this.skills.deletePrivate(
+      assertIdentifier(accountId, 'accountId'),
+      assertSkillId(id),
+      expectedRevision
+    ));
+  }
+
+  copyPublicSkillToPrivate(accountId: string, publicId: string, expectedRevision: string): Promise<SkillCopyResult> {
+    return this.#runPublicWork(() => this.skills.copyPublicToPrivate(
+      assertIdentifier(accountId, 'accountId'),
+      assertSkillId(publicId),
+      expectedRevision
+    ));
+  }
+
+  previewSkills(accountId: string, conversation: ConversationRef): Promise<SkillPreview> {
+    return this.skills.preview(accountId, conversation);
+  }
+
+  getExtensionPolicy(accountId: string): Promise<ExtensionPolicyDto> {
+    return this.#extensionPolicy.read(assertIdentifier(accountId, 'accountId'));
+  }
+
+  updateExtensionPolicy(accountId: string, input: ExtensionPolicyUpdateDto): Promise<ExtensionPolicyDto> {
+    return this.#runPublicWork(() => this.#extensionPolicy.update(assertIdentifier(accountId, 'accountId'), input));
+  }
+
+  effectiveExtensions(accountId: string, conversation: ConversationRef): Promise<ExtensionEffectiveDto> {
+    return this.#extensionPolicy.effective(accountId, conversation, (capability) =>
+      this.providers.resolve(accountId, conversation, capability).enabled);
+  }
+
+  reloadExtensions(accountId: string): Promise<ExtensionReloadDto> {
+    return this.#runPublicWork(async () => {
+      const id = assertIdentifier(accountId, 'accountId');
+      // Drop the old Workers before syncing so a failed handshake is retried instead of reused.
+      await this.#pluginRuntimes.close(id);
+      return { plugins: await this.#pluginRuntimes.sync(id) };
+    });
   }
 
   listJobs(accountId?: string): Promise<JobDto[]> {
@@ -1340,4 +1435,59 @@ export class Core implements CoreView {
 
 export function createCore(options: CoreOptions): Promise<Core> {
   return Core.create(options);
+}
+
+function assertSkillId(value: string): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value)) {
+    throw new AccompanyError('invalid_skill', `invalid skill id ${value}`);
+  }
+  return value;
+}
+
+function skillResolutionFromPreview(preview: SkillPreview): SkillResolution {
+  const available = preview.skills
+    .filter((skill) => skill.enabled)
+    .map((skill) => ({
+      id: skill.id,
+      name: skill.name,
+      tools: [...skill.tools],
+      ...(skill.requires?.length ? { requires: [...skill.requires] } : {}),
+      available: true,
+      source: skill.source,
+      selected: skill.selected,
+      ...(skill.selectionReason ? { selectionReason: skill.selectionReason } : {}),
+      instructions: skill.instructions
+    }));
+  const unavailable = preview.skills
+    .filter((skill) => !skill.enabled)
+    .map((skill) => ({
+      id: skill.id,
+      name: skill.name,
+      tools: [...skill.tools],
+      ...(skill.requires?.length ? { requires: [...skill.requires] } : {}),
+      available: false,
+      reason: unavailableSkillReason(skill),
+      source: skill.source
+    }));
+  return { available, unavailable };
+}
+
+function unavailableSkillReason(skill: SkillPreviewEntry): string {
+  const issue = skill.issues[0];
+  if (!issue) return 'unavailable';
+  switch (issue.code) {
+    case 'switch_off':
+      return 'skill_disabled';
+    case 'kind_scope':
+    case 'peer_scope':
+      return 'scope_mismatch';
+    case 'unauthorized':
+    case 'skill_tool_unavailable':
+      return issue.detail ? `tool_unavailable:${issue.detail}` : 'tool_unavailable';
+    case 'capability_unavailable':
+    case 'requires_unavailable':
+      return issue.detail ? `capability_unavailable:${issue.detail}` : 'capability_unavailable';
+    default:
+      return issue.detail ? `${issue.code}:${issue.detail}` : issue.code;
+  }
 }

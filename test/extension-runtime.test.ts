@@ -743,8 +743,9 @@ describe('plugin hooks and bounded inputs', () => {
     const results = await runtime.beforeContext(hookInput(conv(), 'epoch-8'));
     const elapsed = Date.now() - started;
 
-    expect(results.map((entry) => entry.result.status)).toEqual(['ok', 'ok']);
-    expect(elapsed).toBeLessThan(700);
+    const statuses = results.map((entry) => entry.result.status);
+    expect(statuses, JSON.stringify({ statuses, results, elapsed })).toEqual(['ok', 'ok']);
+    expect(elapsed, `elapsed=${elapsed}ms; results=${JSON.stringify(results)}`).toBeLessThan(700);
   });
 
   it('does not let an expired queued hook terminate a Worker running a normal long tool', async () => {
@@ -852,7 +853,13 @@ describe('plugin hooks and bounded inputs', () => {
     const hookStarted = Date.now();
     const timeout = await slowRuntime.beforeContext(hookInput(conv(), 'single-timeout-epoch'));
     expect(Date.now() - hookStarted).toBeLessThan(650);
-    expect(timeout[0]?.result).toMatchObject({ status: 'failed', reason: 'plugin_timeout' });
+    // The host deadline and the Worker handler deadline share the same 500ms cap; either may win
+    // the race, and both terminate the generation. Assert the failure and its effects, not the
+    // winning internal code.
+    const outcome = timeout[0]?.result;
+    expect(outcome).toMatchObject({ status: 'failed' });
+    if (outcome?.status !== 'failed') throw new Error('expected a failed hook outcome');
+    expect(['plugin_timeout', 'plugin_handler_timeout']).toContain(outcome.reason);
     expect(slowRuntime.snapshot()).toEqual([]);
     await sleep(750);
     const lateState = await new PluginStateService(slowAccountDir).read(scopeOf(slow, conv(), 'single-timeout-epoch', false), '1');
