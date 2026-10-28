@@ -1,5 +1,7 @@
 # 开发文档导航
 
+后端扩展接入与手动测试方案见[139 实现方案](139-backend-extension-access-and-testing-implementation-plan.md)：仅规划基础文件校验、个人插件/SKILL.md导入、账号JSON配置、工具直接测试及Skill预览/实际对话测试；复用统一执行器、Worker与模型路由，不分析插件业务代码、不在导入时试运行。前端与次级测试页面后置，当前仅文档、尚未实施。
+
 最新独立复验见[138 嵌套动效作用域复验](138-nested-motion-scope-independent-recheck.md)：136-R1关闭，131审计四项共享修复在本地代码/自动化范围内均已收口。主进程全量124文件1155项通过/1项既有跳过，类型、桌面构建、token同步通过；原嵌套与中间UiThemeProvider显式full的真实组件探针通过。126剩余原生交互等证据、业务保存消费者及其他页面设计仍分别待办，未提交、推送或打包。
 
 最新独立复核见[136 共享规范修复复核](136-shared-motion-standard-fixes-independent-review.md)：131-R2/R3/R4可关闭，R1单层已修复但嵌套显式full仍可解除祖先reduced，保留1项P2并附真实公共组件浏览器复现。该P2已由[137 嵌套作用域减少动效下限修复](137-nested-motion-scope-fix.md)处理并完成实现方回归：全量124文件1155项通过/1项既有跳过、开发版30/30、生产dist 27/27、隔离Electron 100%/125%各3/3通过。独立复验待做；其他页面不重设计，未提交或打包。
