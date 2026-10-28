@@ -1,7 +1,6 @@
 # 前端动效规范 v1.1.0：书签与落款
 
-2026-10-27初版，2026-10-28追加用户采用的昼夜Dock交互04。本文为[105总体规范](105-frontend-design-system.md)第8节的正式补充，白昼/晚风共用；颜色与夜间表面遵循[110](110-nightwave-ui-standard.md)，Dock详细契约见[120](120-dock-notebook-standard.md)。
-
+2026-10-27初版，2026-10-28追加用户采用的昼夜Dock交互04。本文为[105总体规范](105-frontend-design-system.md)第8节的正式补充，白昼/晚风共用；颜色与夜间表面遵循[110](110-nightwave-ui-standard.md)，Dock详细契约见[120](120-dock-notebook-standard.md)。2026-10-28的正式接入与验证见[127](127-home-and-global-motion-integration-execution.md)；本文的“已接入”指公共组件与主页消费者，不代表所有业务页完成重设计或真实保存链路已接。
 ## 1. 生效范围与实施状态
 
 已认可的动作语言是「一本会回应的手账」：按下像书脊收短，导航像书签移位，保存像完成落款，浮层有明确来处，内容按阅读顺序进入。相同语义使用相同动作，不按每个按钮随机设计特效。
@@ -9,11 +8,11 @@
 | 内容 | 当前状态 | 依据 |
 | --- | --- | --- |
 | 昼夜天气过渡、快速反向、减少动效 | 已接入正式公共主题层 | [114](114-theme-weather-transition-execution.md)、[115](115-theme-weather-transition-independent-review.md) |
-| 普通按压、开关滑动、局部场景跟随 | 已有基础实现，不能推断所有页面已统一验收 | 公共UI源码及105/110 |
-| 书签端片、逐笔落款、导航书签、分层阅读、来源浮层、中断衔接 | 设计已认可；独立HTML样板验证，正式React组件待接入 | [精致版样板](design/character-studio/motion-notes/motion-library-demo.html)、[初版](design/character-studio/motion-notes/motion-library-demo-v1.html) |
-| 昼夜Dock图标/标签、纸签/布面、跟随/按压/到达 | 用户已采用；HTML交互04验证，正式PageDock待迁移 | [120](120-dock-notebook-standard.md)、[采用样板](design/character-studio/dock-notebook/home-motion-study.html) |
-| `component.motion.*`与`component.dockNotebook.*`精细参数 | 已登记并生成变量，新增参数尚未被正式组件消费 | [token v1.3.0](design/character-studio/tokens.json) |
-| Motion for React等第三方引擎 | 技术建议，尚未安装或确定为强制依赖 | 本文第7节 |
+| 普通按压、开关、局部场景跟随 | 已统一到公共动效策略；旧业务页未重设计 | 公共UI源码、[127](127-home-and-global-motion-integration-execution.md)及105/110 |
+| 书签端片、勾画落款、导航书签、分层阅读、来源浮层、中断衔接 | 公共Button/PageDock/Modal/Menu/Disclosure与主页阅读已接入；勾画的真实业务保存消费者待接 | [127](127-home-and-global-motion-integration-execution.md)、[精致版样板](design/character-studio/motion-notes/motion-library-demo.html) |
+| 昼夜Dock图标/标签、纸签/布面、跟随/按压/到达 | 用户已采用并迁移正式PageDock/MoreMenu，自验通过 | [120](120-dock-notebook-standard.md)、[127](127-home-and-global-motion-integration-execution.md) |
+| `component.motion.*`与`component.dockNotebook.*`精细参数（含Dock材质配方） | 已登记、生成并由正式组件消费 | [token v1.4.0](design/character-studio/tokens.json) |
+| Motion for React等第三方引擎 | 技术建议，尚未安装或确定为强制依赖；当前使用CSS/WAAPI | 本文第7节 |
 | Dock之外的新光影、纸张材质、专属图标、角色/模型新构图 | 仍为候选，尚未作为正式视觉标准采用 | 第9节 |
 
 写入规范表示后续实现遵循此标准，不等于所有效果已进入EXE。HTML中的模拟保存、示例资料和页面标签不能替代真实业务与导航验收。
@@ -80,6 +79,7 @@ JS读取CSS时间时同时支持ms与s，WAAPI需要换算为毫秒；生产压�
 ## 5. 减少动效与性能
 
 - 全部CSS、WAAPI及未来动画引擎共用现有system / reduced / full偏好：system跟随系统，reduced取消非必要运动，full显式覆盖系统减少动效；强制颜色仍关闭天气/材质装饰。
+- `reduced`是不可解除的下限：全局或局部任一显式reduced都生效；局部`UiThemeScope motion="reduced"`约束其后代，嵌套显式full不能解除祖先局部reduced，也不能解除全局或系统reduced，只有全局full覆盖系统reduce。嵌套scope未显式指定时继承调用处；排队确认在发起时捕获已合并的局部结论，全局偏好仍实时更新。详情与证据见[132](132-shared-motion-scope-fix.md)，嵌套补齐见[137](137-nested-motion-scope-fix.md)。
 - 减少动效时立即显示最终状态，取消位移、缩放、回弹、路径描画与装饰旋转动画；保留清晰静态勾选、错误、busy文字及焦点。切换偏好时收束在途动画，释放装饰层，不清空输入。
 - 不默认启用持续呼吸、粒子、闪光、打字机正文或循环角色位移；加载等待有明确文字，并尊重减少动效。
 - 常规反馈优先transform/opacity，禁止transition:all。不在每帧读写全页布局；折叠高度动画限公共组件内单一区域，关闭后保留内容但排除交互。

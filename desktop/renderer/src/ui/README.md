@@ -2,19 +2,19 @@
 
 前端规范入口：[105共用标准](../../../../devDoc/105-frontend-design-system.md)＋[110晚风深色标准](../../../../devDoc/110-nightwave-ui-standard.md)。深色和浅色共用字体、尺寸、行为与本目录组件；色板、状态、浮层和资产按预置映射。修改前同时遵循仓库与渲染层AGENTS。
 
-Dock已采用[120昼夜手账组件与交互规范](../../../../devDoc/120-dock-notebook-standard.md)，正式PageDock仍待迁移：图上文下、纸面/布面索引、项内±1px跟随、悬停/按压与220ms书签移动。参数登记在`component.dockNotebook.*`，旧`component.dock.*`值和当前实现保持兼容。
+Dock已采用[120昼夜手账组件与交互规范](../../../../devDoc/120-dock-notebook-standard.md)，正式PageDock/MoreMenu已迁移：图上文下、纸面/布面索引、项内±1px跟随、悬停/按压与220ms书签移动。参数消费`component.dockNotebook.*`，表面混色、描边与接触阴影已收进token v1.4.0（[134](../../../../devDoc/134-dock-material-tokens-and-workbench-dock-fix.md)）；旧`component.dock.*`值仅保留兼容。接入范围与自验见[127](../../../../devDoc/127-home-and-global-motion-integration-execution.md)，独立复核待做。
 
-公共动效同时遵循[117「书签与落款」规范](../../../../devDoc/117-frontend-motion-standard.md)：书签端片、保存逐笔勾选与落款、导航书签、阅读顺序、来源浮层，以及快速中断/减少动效/焦点契约。新增`component.motion.*`仅登记为正式接入的参数来源；这些精细效果当前在[独立HTML样板](../../../../devDoc/design/character-studio/motion-notes/motion-library-demo.html)验证，尚未作为本目录已有能力或导出API提供。实现时扩展现有公共组件，不复制样板的原生dialog或标签导航到业务页。
+公共动效同时遵循[117「书签与落款」规范](../../../../devDoc/117-frontend-motion-standard.md)：书签端片、勾画落款、导航书签、阅读顺序、来源浮层，以及快速中断/减少动效/焦点契约。`component.motion.*`已由本目录组件消费。公共导出包括`MotionPolicyProvider`/`useMotionPolicy`/`createMotionScope`/`readMotionTime`/`readMotionPx`/`readMotionValue`、`ModalLayerProvider`/`createModalLayerManager`，以及`Modal.source/onExited`、`DropdownMenu`的trigger组合、`Button.feedbackKey/resultLabel`。`useMotionPolicy`会合并全局策略与调用处`UiThemeScope`/`UiThemeProvider`的局部motion：局部reduced是不可解除的下限，嵌套显式full也不能解除祖先局部reduced；局部full不能解除全局/系统reduced。嵌套scope继承未指定值，确认请求在发起时捕获已合并的局部外观。勾画的真实业务保存消费者仍待接；扩展公共组件时不要复制样板的原生dialog或标签导航到业务页。
 
 所有业务页面统一从 `../ui` 导入；应用根目录使用 `./ui`。`src/ui.tsx` 是稳定入口，`ui/index.ts` 为导出目录。基础控件仅允许在此目录内部创建原生DOM。
 
-## 已采用的Dock目标（正式组件待迁移）
+## 已采用的Dock（正式组件已迁移）
 
-PageDock继续组合公共ControlButton/Icon与现有MoreMenu，样板见[交互04](../../../../devDoc/design/character-studio/dock-notebook/home-motion-study.html)。图标的抬起/按压与内部跟随分层；文字、命中框与已提交路由保持稳定；`aria-current`表示真实当前页，不用tablist冒充导航。正式样式统一在ui维护，不在每个页面复制。
+PageDock组合公共ControlButton/Icon与现有MoreMenu，样式集中在`dock-notebook.css`，样板见[交互04](../../../../devDoc/design/character-studio/dock-notebook/home-motion-study.html)。图标的抬起/按压与内部跟随分层；文字、命中框与已提交路由保持稳定；`aria-current`表示真实当前页，不用tablist冒充导航。样式统一在ui维护，不在每个页面复制。
 
 白昼采用奶油纸签、樱粉鱼尾和纸面阴影；晚风采用墨蓝布面、细缝线、琥珀上沿与项内暖光。当前项文字为text、图标为entry，旧commit/onSolid实色选中暂留兼容，不能以旧样式反推新目标。
 
-鼠标按120规范处理进入/项内移动/离开、按压/释放/取消；Enter/Space使用原生激活，触摸不留hover，减少动效直接落到静态状态。更多仍打开现有DropdownMenu，只有实际路由属于非直接入口才对齐其选中签；打开菜单不自动导航。草稿确认、Esc/返回焦点、锁定/退出inert与历史行为沿用原契约。示例DOM类名、slot名称及pointer状态不是新增公共API，正式接入时另留实现与原生验收证据。
+鼠标按120规范处理进入/项内移动/离开、按压/释放/取消；Enter/Space使用原生激活，触摸不留hover，减少动效直接落到静态状态。更多仍打开现有DropdownMenu，只有实际路由属于非直接入口才对齐其选中签；打开菜单不自动导航。草稿确认、Esc/返回焦点、锁定/退出inert与历史行为沿用原契约。样式类名与pointer状态属于组件内部实现，不是新增公共API；浏览器与原生接入证据见[127](../../../../devDoc/127-home-and-global-motion-integration-execution.md)。
 
 | 用途 | 组件 |
 | --- | --- |
@@ -43,7 +43,9 @@ if (!accepted) return;
 
 `theme.css`集中控制尺寸、圆角、边框、颜色、焦点、禁用和确认弹窗外观；页面CSS仅负责排列、宽度和场景布局。避免追加另一套外观覆盖已有控件。
 
-Modal统一处理背景隔离、最上层Escape、Tab约束、嵌套弹窗与焦点恢复。确认初始焦点位于取消按钮，点击遮罩/关闭/Escape均作为取消。确认返回Promise，必须等待结果并保留取消分支；异步等待后应复验账号、进程等操作目标是否仍有效。
+Modal统一处理背景隔离、最上层Escape、Tab约束、嵌套弹窗与焦点恢复。进入从真实来源小幅位移，退出结束前继续隔离并拦截重复关闭，完成后才恢复背景、滚动和焦点；`source`可显式指定触发点，缺省使用打开时的焦点元素。确认初始焦点位于取消按钮，点击遮罩/关闭/Escape均作为取消。确认返回Promise，必须等待结果并保留取消分支；异步等待后应复验账号、进程等操作目标是否仍有效。设置弹窗沿用原类名、尺寸和布局，不再自带 `settings-appear`；其进入、退出、中断和焦点只由公共 Modal 控制。
+
+Disclosure 的 grid 折叠、内部裁切和 `0fr ↔ 1fr` 结构位于不依赖主题的 `theme.css`；`character-theme.css` 只维护边框、排版、颜色和内容留白，未包 `UiThemeScope` 的调用也必须真正收起。DropdownMenu 退出中重开从取消前复制的绘制快照接续，不回到进入起点；业务页入场只在已提交路由变化时触发，reduced 切换只取消当前动画，不重播。
 
 `test/ui-library-contract.test.ts`使用TypeScript语法树检查页面原生控件、系统对话框和手拼样式，阻止新增重复实现。迁移范围包括当前入口和历史页面，历史页面不会因此重新加入导航。
 
@@ -55,7 +57,7 @@ Modal统一处理背景隔离、最上层Escape、Tab约束、嵌套弹窗与焦
 
 昼夜切换共享「晚风翻夜 / 晨光揭晓」：旧页面快照按柔边遮罩退开，新页面保持真实DOM及鼠标命中；叶片/晨光为无焦点、透传输入的独立命名装饰快照。换景400ms、总长550ms取自themeTransition token；减少动效、强制颜色、隐藏窗口或不支持API时直接切换。应用full显式覆盖系统减少动效。连续选择只保留最后目标，不重建编辑器；首屏不播放。见[114实施与验收](../../../../devDoc/114-theme-weather-transition-execution.md)。
 
-总体标准见 [105](../../../../devDoc/105-frontend-design-system.md)，组件阶段复核见 [106](../../../../devDoc/106-ui-foundation-and-workbench-review.md)，正式主页与菜单实施见 [107](../../../../devDoc/107-home-and-shell-implementation-review.md)。开发入口为 `npm run desktop:ui` 启动后打开 `/ui-workbench.html`；不加入正式路由，也不参与默认生产HTML构建。
+总体标准见 [105](../../../../devDoc/105-frontend-design-system.md)，组件阶段复核见 [106](../../../../devDoc/106-ui-foundation-and-workbench-review.md)，正式主页与菜单实施见 [107](../../../../devDoc/107-home-and-shell-implementation-review.md)。开发入口为 `npm run desktop:ui` 启动后打开 `/ui-workbench.html`；不加入正式路由，也不参与默认生产HTML构建。开发样板的导航区直接渲染正式`PageDock`，只切换本地样例状态，不再手拼第二套Dock；见[134](../../../../devDoc/134-dock-material-tokens-and-workbench-dock-fix.md)。
 
 新主题采用显式作用域。按顺序加载 `theme.css`、生成的 `character-tokens.css`、`character-theme.css`；使用 `UiThemeScope theme="xiacheng"` 包住要迁移的界面。未迁移页不要直接放进新主题的DOM范围。`navigation-appearance.css`由新主题导入，统一账号标签、页面Dock和分段选择的外观，页面只管理排列。
 

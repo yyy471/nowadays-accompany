@@ -3,6 +3,7 @@
  * States: default, hover, focus, pressed, disabled, loading, error, success.
  */
 @import './navigation-appearance.css';
+@import './dock-notebook.css';
 @import './studio-appearance.css';
 [data-ui-theme="xiacheng"] {
   --text: var(--nd-semantic-color-text);
@@ -34,6 +35,7 @@
   outline-offset: var(--nd-component-focus-offset);
 }
 [data-ui-theme="xiacheng"] .btn {
+  position: relative;
   display: inline-flex; align-items: center; justify-content: center;
   gap: var(--nd-component-button-gap); min-height: var(--nd-component-button-height);
   padding: 10px 16px; border: 1px solid var(--nd-semantic-color-line-control);
@@ -55,11 +57,41 @@
 [data-ui-theme="xiacheng"] .btn-entry {
   background: var(--nd-component-entry-button-background); color: var(--nd-component-entry-button-foreground);
   border-color: var(--nd-component-entry-button-background); box-shadow: 0 var(--nd-component-button-depth) 0 var(--nd-component-entry-button-depth-color);
-  padding-right: 0; overflow: clip; justify-content: space-between;
+  padding-right: 0; overflow: visible; justify-content: space-between; isolation: isolate;
 }
 [data-ui-theme="xiacheng"] .btn-entry:hover:not([aria-disabled="true"]) { background: var(--nd-component-entry-button-hover-background); border-color: var(--nd-component-entry-button-hover-background); }
-[data-ui-theme="xiacheng"] .ui-button-end { display: grid; place-items: center; align-self: stretch; margin-block: -10px; min-width: 40px; background: var(--nd-component-entry-button-depth-color); }
-[data-ui-theme="xiacheng"] .ui-button-end svg { transform: rotate(-90deg); }
+[data-ui-theme="xiacheng"] .ui-button-end {
+  position: relative; display: grid; place-items: center; align-self: stretch; margin-block: -10px; min-width: 40px;
+  border-radius: 0 var(--nd-component-button-radius) var(--nd-component-button-radius) 0;
+  background: var(--nd-component-entry-button-depth-color);
+  transform: translateX(0);
+  transition: transform var(--nd-component-motion-control) var(--nd-component-motion-surface-ease);
+}
+[data-ui-theme="xiacheng"] .btn-sm .ui-button-end { margin-block: -6px; }
+/* 书签尾部：外扩装饰透传输入，不改变布局与命中框。 */
+[data-ui-theme="xiacheng"] .ui-button-end::after {
+  content: ''; position: absolute; top: calc(100% - 1px); left: 0; width: 100%;
+  height: var(--nd-component-motion-bookmark-tail); pointer-events: none;
+  background: var(--nd-component-entry-button-depth-color);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 60%, 0 100%);
+  transform: scaleY(0); transform-origin: top;
+  transition: transform var(--nd-component-motion-control) var(--nd-component-motion-surface-ease);
+}
+[data-ui-theme="xiacheng"] .ui-button-end svg { transform: rotate(-90deg); transition: transform var(--nd-component-motion-control) var(--nd-semantic-motion-ease); }
+@media (hover: hover) {
+  [data-ui-theme="xiacheng"] .btn-entry:hover:not([aria-disabled="true"]):not([data-preview-state="pressed"]) .ui-button-end { transform: translateX(var(--nd-component-motion-bookmark-reach)); }
+  [data-ui-theme="xiacheng"] .btn-entry:hover:not([aria-disabled="true"]):not([data-preview-state="pressed"]) .ui-button-end::after { transform: scaleY(1); }
+  [data-ui-theme="xiacheng"] .btn-entry:hover:not([aria-disabled="true"]):not([data-preview-state="pressed"]) .ui-button-end svg { transform: translateX(var(--nd-component-motion-arrow-offset)) rotate(-90deg); }
+}
+[data-ui-theme="xiacheng"] .btn-entry:focus-visible .ui-button-end,
+[data-ui-theme="xiacheng"] .btn-entry[data-preview-state="focus"] .ui-button-end { transform: translateX(var(--nd-component-motion-bookmark-reach)); }
+[data-ui-theme="xiacheng"] .btn-entry:focus-visible .ui-button-end::after,
+[data-ui-theme="xiacheng"] .btn-entry[data-preview-state="focus"] .ui-button-end::after { transform: scaleY(1); }
+[data-ui-theme="xiacheng"] .btn-entry:focus-visible .ui-button-end svg,
+[data-ui-theme="xiacheng"] .btn-entry[data-preview-state="focus"] .ui-button-end svg { transform: translateX(var(--nd-component-motion-arrow-offset)) rotate(-90deg); }
+[data-ui-theme="xiacheng"] .btn-entry:is(:active, [data-preview-state="pressed"]):not([aria-disabled="true"]) .ui-button-end { transform: translateX(0); }
+[data-ui-theme="xiacheng"] .btn-entry:is(:active, [data-preview-state="pressed"]):not([aria-disabled="true"]) .ui-button-end::after { transform: scaleY(.45); }
+[data-ui-theme="xiacheng"] .btn-entry:is(:active, [data-preview-state="pressed"]):not([aria-disabled="true"]) .ui-button-end svg { transform: rotate(-90deg); }
 [data-ui-theme="xiacheng"] .ui-button-leading { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: var(--nd-semantic-size-icon-small); height: var(--nd-semantic-size-icon-small); }
 [data-ui-theme="xiacheng"] .btn-danger { color: var(--nd-semantic-color-danger); background: var(--nd-semantic-color-danger-surface); border-color: var(--nd-semantic-color-danger); }
 [data-ui-theme="xiacheng"] .btn-danger:hover:not([aria-disabled="true"]) { color: var(--nd-semantic-color-on-solid); background: var(--nd-semantic-color-danger); border-color: var(--nd-semantic-color-danger); }
@@ -77,6 +109,36 @@
 [data-ui-theme="xiacheng"] [aria-busy="true"] { cursor: progress; }
 [data-ui-theme="xiacheng"] .spinner { width: 16px; height: 16px; flex-shrink: 0; border: 2px solid currentColor; border-right-color: var(--nd-semantic-color-transparent); border-radius: var(--nd-semantic-radius-round); animation: nd-spin 900ms linear infinite; }
 @keyframes nd-spin { to { transform: rotate(360deg); } }
+[data-ui-theme="xiacheng"] .ui-button-check { width: 16px; height: 16px; overflow: visible; }
+[data-ui-theme="xiacheng"] .ui-button-check path { stroke-dasharray: 1; stroke-dashoffset: 0; animation: nd-check-draw var(--nd-component-motion-control) var(--nd-semantic-motion-ease) both; }
+@keyframes nd-check-draw { from { stroke-dashoffset: 1; } }
+/* 落款只做装饰副标；标准动作文字和真实结果仍在按钮与反馈区。 */
+.ui-button-stamp { display: none; }
+[data-ui-theme="xiacheng"] .ui-button-stamp {
+  display: inline-flex; align-items: center; position: absolute; left: calc(100% + 8px); top: 50%; z-index: 1;
+  padding: 2px 7px; border: 1px solid currentColor; border-radius: 3px;
+  color: var(--nd-semantic-color-success); background: var(--nd-semantic-color-surface);
+  box-shadow: inset 0 0 0 2px var(--nd-semantic-color-canvas), inset 0 0 0 3px currentColor;
+  font-size: var(--nd-semantic-type-caption-size); line-height: var(--nd-semantic-type-caption-line);
+  white-space: nowrap; pointer-events: none;
+  transform: translateY(-50%) rotate(var(--nd-component-motion-stamp-tilt));
+  animation: nd-stamp-in var(--nd-component-motion-surface-enter) var(--nd-component-motion-surface-ease) both;
+}
+@keyframes nd-stamp-in {
+  from { opacity: 0; transform: translateY(-50%) rotate(var(--nd-component-motion-stamp-start-tilt)) scale(.96); }
+  to { opacity: 1; transform: translateY(-50%) rotate(var(--nd-component-motion-stamp-tilt)) scale(1); }
+}
+html[data-motion="reduced"] [data-ui-theme="xiacheng"] .ui-button-end,
+[data-ui-theme="xiacheng"][data-motion="reduced"] .ui-button-end { transform: none !important; }
+html[data-motion="reduced"] [data-ui-theme="xiacheng"] .ui-button-end svg,
+[data-ui-theme="xiacheng"][data-motion="reduced"] .ui-button-end svg { transform: rotate(-90deg) !important; }
+html[data-motion="reduced"] [data-ui-theme="xiacheng"] .ui-button-end::after,
+[data-ui-theme="xiacheng"][data-motion="reduced"] .ui-button-end::after { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion="full"]) [data-ui-theme="xiacheng"] .ui-button-end { transform: none !important; }
+  html:not([data-motion="full"]) [data-ui-theme="xiacheng"] .ui-button-end svg { transform: rotate(-90deg) !important; }
+  html:not([data-motion="full"]) [data-ui-theme="xiacheng"] .ui-button-end::after { display: none; }
+}
 
 [data-ui-theme="xiacheng"] .field { display: flex; flex-direction: column; gap: var(--nd-semantic-space-label-field); min-width: 0; }
 [data-ui-theme="xiacheng"] .field-label { font-size: var(--nd-semantic-type-control-size); line-height: var(--nd-semantic-type-control-line); font-weight: var(--nd-semantic-type-emphasis); color: var(--nd-semantic-color-text); letter-spacing: 0; }
@@ -118,6 +180,9 @@
 
 [data-ui-theme="xiacheng"] .ui-menu { position: relative; min-width: 0; }
 [data-ui-theme="xiacheng"] .ui-menu-trigger { display: inline-flex; justify-content: center; align-items: center; gap: var(--nd-semantic-space-icon-label); min-height: var(--nd-semantic-size-control); padding: 8px 12px; border: 1px solid var(--nd-semantic-color-line-control); border-radius: var(--nd-semantic-radius-action); color: var(--nd-semantic-color-text); background: var(--nd-semantic-color-surface); font-size: var(--nd-semantic-type-control-size); cursor: pointer; }
+[data-ui-theme="xiacheng"] .ui-menu-trigger-icon { display: grid; place-items: center; flex-shrink: 0; }
+[data-ui-theme="xiacheng"] .ui-menu-trigger-label { white-space: nowrap; }
+[data-ui-theme="xiacheng"] .ui-menu-panel[data-closing] { pointer-events: none; }
 [data-ui-theme="xiacheng"] .ui-menu-panel { position: absolute; right: 0; top: calc(100% + 8px); z-index: var(--nd-semantic-layer-popover); width: min(256px,calc(100vw - 32px)); max-height: min(420px,60dvh); overflow: auto; padding: 8px; border: 1px solid var(--nd-semantic-color-line-control); border-radius: var(--nd-component-menu-radius); box-shadow: var(--nd-component-menu-shadow); background: var(--nd-component-menu-background); }
 [data-ui-theme="xiacheng"] .ui-menu-item { display: flex; align-items: center; gap: var(--nd-semantic-space-icon-label); width: 100%; min-height: var(--nd-semantic-size-hit); padding: 8px 12px; text-align: left; border: 0; border-radius: var(--nd-semantic-radius-action); color: var(--nd-semantic-color-text); background: var(--nd-semantic-color-transparent); font-size: var(--nd-semantic-type-control-size); cursor: pointer; }
 [data-ui-theme="xiacheng"] .ui-menu-item:is(:hover,:focus-visible) { background: var(--nd-component-menu-selected-background); }
@@ -129,11 +194,10 @@
 [data-ui-theme="xiacheng"] .ui-disclosure-trigger > svg { flex-shrink: 0; transition: transform var(--nd-semantic-motion-disclosure) var(--nd-semantic-motion-ease); }
 [data-ui-theme="xiacheng"] .ui-disclosure-trigger[aria-expanded="true"] > svg { transform: rotate(180deg); }
 [data-ui-theme="xiacheng"] .ui-disclosure-trigger small { display: block; color: var(--nd-semantic-color-text-muted); font-size: var(--nd-semantic-type-caption-size); line-height: var(--nd-semantic-type-caption-line); font-weight: var(--nd-semantic-type-regular); }
-[data-ui-theme="xiacheng"] .ui-disclosure-body { padding: var(--nd-semantic-space-panel-inset); }
-[data-ui-theme="xiacheng"] .ui-disclosure-body[hidden] { display: none; }
+[data-ui-theme="xiacheng"] .ui-disclosure-content { padding: var(--nd-semantic-space-panel-inset); }
 
 [data-ui-theme="xiacheng"].ui-modal-backdrop { padding: 16px; background: var(--nd-semantic-color-backdrop); backdrop-filter: none; }
-[data-ui-theme="xiacheng"] .ui-modal-panel { width: min(640px,100%); max-height: calc(100dvh - 32px); border-color: var(--nd-semantic-color-line-control); border-radius: var(--nd-component-modal-radius); background: var(--nd-component-modal-background); box-shadow: var(--nd-component-modal-shadow); }
+[data-ui-theme="xiacheng"] .ui-modal-panel { width: min(640px,100%); max-height: calc(100dvh - 32px); border-color: var(--nd-semantic-color-line-control); border-radius: var(--nd-component-modal-radius); background: var(--nd-component-modal-background); box-shadow: var(--nd-component-modal-shadow); transform-origin: center; }
 [data-ui-theme="xiacheng"] .ui-confirm-dialog { width: min(480px,100%); }
 [data-ui-theme="xiacheng"] .ui-modal-header { padding: var(--nd-component-modal-padding); align-items: flex-start; }
 [data-ui-theme="xiacheng"] .ui-modal-header h2 { font-size: var(--nd-semantic-type-section-size); line-height: var(--nd-semantic-type-section-line); font-weight: var(--nd-semantic-type-emphasis); }
@@ -156,9 +220,14 @@
 [data-ui-theme="xiacheng"] .muted { color: var(--nd-semantic-color-text-muted); }
 [data-ui-theme="xiacheng"][data-motion="reduced"] *,
 html[data-motion="reduced"] [data-ui-theme="xiacheng"] * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
-@media (prefers-reduced-motion: reduce) { [data-ui-theme="xiacheng"] * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+/* reduced 是不可解除的下限；仅全局 full 覆盖系统减少动效，局部 full 不解除。 */
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion="full"]) [data-ui-theme="xiacheng"] * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
 @media (forced-colors: active) {
   [data-ui-theme="xiacheng"] :is(.btn,.ui-input,.ui-select,.ui-textarea,.ui-icon-button,.ui-menu-trigger,.ui-switch-track,.ui-switch-thumb) { border: 1px solid ButtonText; box-shadow: none; }
+  [data-ui-theme="xiacheng"] .ui-button-end::after,
+  [data-ui-theme="xiacheng"] .ui-button-stamp { display: none; }
   [data-ui-theme="xiacheng"] .ui-switch[aria-checked="true"] .ui-switch-track { background: Highlight; }
   [data-ui-theme="xiacheng"] :is(button,input,select,textarea,a):focus-visible { outline-color: Highlight; }
 }

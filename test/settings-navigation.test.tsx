@@ -25,7 +25,12 @@ vi.mock('../desktop/renderer/src/ui/presets', () => ({ useThemePreset: () => ({ 
 vi.mock('../desktop/renderer/src/components/DraftProtectionProvider', () => ({ useDraftProtection: () => h.protection }));
 vi.mock('../desktop/renderer/src/api', () => ({ api: async () => ({}), apiBaseUrl: 'http://fixture.invalid', appVersion: 'fixture', appPlatform: 'fixture', hasToken: true, subscribeEvents() {} }));
 vi.mock('../desktop/renderer/src/hooks', () => ({ errorMessage: String, usePoll: (path:string|null) => ({ data: path?.startsWith('/accounts?')?h.accountData:undefined, loading: false, refresh: async () => {} }) }));
-vi.mock('../desktop/renderer/src/ui', () => ({ BrandMark:'BrandMark',UiThemeScope:'UiThemeScope',UiThemeProvider:'UiThemeProvider', Button: 'Button', CancelButton: 'CancelButton', ConfirmButton: 'ConfirmButton', ControlButton: 'ControlButton', Icon: 'Icon', Modal: 'Modal', Card: 'Card', Checkbox: 'Checkbox', ErrorNote: 'ErrorNote', Field: 'Field', Input: 'Input', Select: 'Select', Tag: 'Tag', IconButton: 'IconButton', copyText: async () => true, formatDateTime: String, useConfirm: () => async () => true }));
+vi.mock('../desktop/renderer/src/ui', () => ({ BrandMark:'BrandMark',UiThemeScope:'UiThemeScope',UiThemeProvider:'UiThemeProvider', Button: 'Button', CancelButton: 'CancelButton', ConfirmButton: 'ConfirmButton', ControlButton: 'ControlButton', Icon: 'Icon', Modal: 'Modal', Card: 'Card', Checkbox: 'Checkbox', ErrorNote: 'ErrorNote', Field: 'Field', Input: 'Input', Select: 'Select', Tag: 'Tag', IconButton: 'IconButton', copyText: async () => true, formatDateTime: String, useConfirm: () => async () => true,
+  useMotionPolicy: () => ({ preference: 'system', reduced: false, forcedColors: false, select() {} }),
+  createMotionScope: () => ({ run: () => ({ finished: Promise.resolve(), cancel() {} }), cancelAll() {}, size: 0 }),
+  readMotionPx: (_element: unknown, _variable: string, fallback: number) => fallback,
+  readMotionTime: (_element: unknown, _variable: string, fallback: number) => fallback,
+  readMotionValue: (_element: unknown, _variable: string, fallback: string) => fallback }));
 vi.mock('../desktop/renderer/src/pages/Accounts', () => ({ AccountsPage: 'AccountsPage' }));
 vi.mock('../desktop/renderer/src/pages/Activity', () => ({ ActivityPage: 'ActivityPage' }));
 vi.mock('../desktop/renderer/src/pages/Artifacts', () => ({ ArtifactsPage: 'ArtifactsPage' }));

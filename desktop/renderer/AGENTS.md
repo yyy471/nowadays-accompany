@@ -8,7 +8,7 @@
 4. [公共UI文档](src/ui/README.md)：实际入口与组件契约。
 5. [开发状态](../../devDoc/README.md)：当前批次与实际证据。
 6. [117动效规范](../../devDoc/117-frontend-motion-standard.md)：书签、落款、页面/浮层、中断、减少动效与实施状态；不能将独立HTML能力当作公共UI已有API。
-7. [120昼夜手账Dock标准](../../devDoc/120-dock-notebook-standard.md)：已采用的交互04，含图上文下、纸签/布面、微跟随/按压/到达与真实MoreMenu行为；新增参数已登记，正式组件待迁移。
+7. [120昼夜手账Dock标准](../../devDoc/120-dock-notebook-standard.md)：已采用的交互04，含图上文下、纸签/布面、微跟随/按压/到达与真实MoreMenu行为；正式组件已迁移，接入范围见[127](../../devDoc/127-home-and-global-motion-integration-execution.md)。
 
 默认同时支持白昼来信与晚风电台。复用React/TypeScript/Vite和已有UI，页面不自行创建原生基础控件或重写系统弹窗；共享外观维护在`src/ui/`。
 

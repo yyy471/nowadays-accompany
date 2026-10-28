@@ -10,7 +10,7 @@
 - 本文件：尺寸、组件、状态、行为和验收的规范来源。
 - [110 深色标准](110-nightwave-ui-standard.md)：nightwave的完整色板、组件状态、主题传播与插画规则；两主题共用本文件的尺寸/交互，不复制组件实现。
 - [117 动效规范](117-frontend-motion-standard.md)：已认可的「书签与落款」，包含动作目录、时长、精细参数、连续操作、减少动效及实施状态；后续动效实现与本文件一起执行。
-- [120昼夜手账Dock标准](120-dock-notebook-standard.md)：用户采用的交互04，规定Dock图上文下、纸签/布面材质、选中形状、尺寸及鼠标/键盘/触摸反馈；正式组件尚待迁移。
+- [120昼夜手账Dock标准](120-dock-notebook-standard.md)：用户采用的交互04，规定Dock图上文下、纸签/布面材质、选中形状、尺寸及鼠标/键盘/触摸反馈；正式组件已迁移，自验见[127](127-home-and-global-motion-integration-execution.md)。
 - [tokens.json](design/character-studio/tokens.json)：基础数值与引用关系的机器可读来源；使用项目自有格式，不宣称是现有构建器支持的标准。
 - [公共 UI 文档](../desktop/renderer/src/ui/README.md)：组件入口与行为契约；本批已核对公共UI、草稿注册、确认和主题接入源码，不能据此推断所有业务页面已经审计。
 - [103 实施方案](103-home-and-shell-rewrite-plan.md)、[104 验收清单](104-home-and-shell-rewrite-acceptance.md)：第一批实施范围与业务验收。
@@ -175,7 +175,7 @@ focus、invalid、selected、busy可同时存在，不能用单一优先级把�
 
 ## 8. 动效与素材
 
-完整动作标准见[117 前端动效规范](117-frontend-motion-standard.md)。已认可的书签端片、逐笔落款、导航书签、分层阅读和来源浮层已在独立HTML样板验证，正式公共组件待接入；日常基础反馈与昼夜天气过渡的已实现范围分别记录，不能将规范登记视作整应用迁移完成。
+完整动作标准见[117 前端动效规范](117-frontend-motion-standard.md)。书签端片、勾画落款、导航书签、分层阅读和来源浮层已接入公共组件与主页，接入范围见[127](127-home-and-global-motion-integration-execution.md)；勾画的真实业务保存消费者仍待接，日常基础反馈与昼夜天气过渡的已实现范围分别记录，不能将规范登记视作整应用迁移完成。
 
 - 即时反馈120ms，控件变化160ms，抽屉220ms，页面进入280ms；统一缓动cubic-bezier(0.2,0,0,1)。异步等待不能为了凑动效强制延迟。
 - 浮层退出160ms；书签/浮层可采用token登记的surfaceEase。主要正文推荐4px小幅入场，标题/正文/注脚分组延迟24ms、累计不超过72ms；缩短各组时长，整次仍在280ms结束。主入口书签探出、导航末端回弹、保存逐笔勾选与来源浮层的精细位移/比例见117与`component.motion.*`，两主题共用。
@@ -202,7 +202,7 @@ focus、invalid、selected、busy可同时存在，不能用单一优先级把�
 
 ThemePresetProvider管理daylight/nightwave本机外观偏好，不触发业务写入。UiThemeScope和Portal携带data-ui-preset，确认队列保存调用时的预置。夜间覆盖必须经过与基准相同的格式/引用/循环/值安全检查，禁止未知token路径。旧页面仅桥接原有调色变量，保持布局和控件尺寸。
 
-总体规范v1.4.0、动效规范117 v1.1.0、Dock规范120 v1.0与token v1.3.0配套。新增`dockNotebook`命名空间登记已采用Dock参数，既有`component.dock.*`及两主题旧值保持不变；新变量生成不等于正式组件已消费。先前动效登记与夜间便签修正保留为历史。后续变更同时维护105、110、117、120、token和实际组件。
+总体规范v1.4.0、动效规范117 v1.1.0、Dock规范120 v1.0与token v1.4.0配套。`dockNotebook`的尺寸、跟随、按压、表面混色、描边与接触阴影已由正式PageDock和`dock-notebook.css`消费；布局几何、指针百分比、暖光半径和渐变停点仍由CSS维护。既有`component.dock.*`及两主题旧值保持不变。先前动效登记与夜间便签修正保留为历史。后续变更同时维护105、110、117、120、token和实际组件。
 
 页面CSS只管理布局与插画位置，公共控件外观在公共UI维护。对未迁移旧页使用范围隔离；新主题变体不改变旧页默认样式。不得在每页复制token和控件规则。
 

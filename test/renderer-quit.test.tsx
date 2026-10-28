@@ -24,7 +24,12 @@ vi.mock('../desktop/renderer/src/ui/presets', () => ({ useThemePreset: () => ({ 
 vi.mock('../desktop/renderer/src/components/DraftProtectionProvider', () => ({ useDraftProtection: () => ({
   registry: { hasPending: () => true }, requestTransition: async () => h.decision ?? { ok: true }, transitionPending: () => false
 }) }));
-vi.mock('../desktop/renderer/src/ui', () => ({ BrandMark:'BrandMark',UiThemeScope:'UiThemeScope',UiThemeProvider:'UiThemeProvider', CancelButton: 'CancelButton', ControlButton: 'ControlButton', Icon: 'Icon', Modal: 'Modal' }));
+vi.mock('../desktop/renderer/src/ui', () => ({ BrandMark:'BrandMark',UiThemeScope:'UiThemeScope',UiThemeProvider:'UiThemeProvider', CancelButton: 'CancelButton', ControlButton: 'ControlButton', Icon: 'Icon', Modal: 'Modal',
+  useMotionPolicy: () => ({ preference: 'system', reduced: false, forcedColors: false, select() {} }),
+  createMotionScope: () => ({ run: () => ({ finished: Promise.resolve(), cancel() {} }), cancelAll() {}, size: 0 }),
+  readMotionPx: (_element: unknown, _variable: string, fallback: number) => fallback,
+  readMotionTime: (_element: unknown, _variable: string, fallback: number) => fallback,
+  readMotionValue: (_element: unknown, _variable: string, fallback: string) => fallback }));
 vi.mock('../desktop/renderer/src/pages/Accounts', () => ({ AccountsPage: 'AccountsPage' }));
 vi.mock('../desktop/renderer/src/pages/Activity', () => ({ ActivityPage: 'ActivityPage' }));
 vi.mock('../desktop/renderer/src/pages/Artifacts', () => ({ ArtifactsPage: 'ArtifactsPage' }));

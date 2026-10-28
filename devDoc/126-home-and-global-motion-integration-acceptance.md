@@ -1,6 +1,6 @@
 # 主页与全局公共动效接入验收标准
 
-日期：2026-10-28。配套方案：[125 接入计划](125-home-and-global-motion-integration-plan.md)。状态：待执行，不是验收记录。
+日期：2026-10-28。配套方案：[125 接入计划](125-home-and-global-motion-integration-plan.md)。状态：实现方已按本表完成自验，结果见[127 执行记录](127-home-and-global-motion-integration-execution.md)；[128 独立复核](128-home-and-global-motion-independent-review.md)的R1～R3已由[129 修复记录](129-home-and-global-motion-review-fixes.md)处理，独立复验待做。本文件仍是验收口径，不代替复核记录。
 
 ## 1. 验收口径
 

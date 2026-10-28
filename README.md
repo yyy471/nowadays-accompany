@@ -2,7 +2,7 @@
 
 > **项目状态：开发中（Development）**
 >
-> 当前代码为持续开发快照，尚未发布稳定版本；此前归档标签为 `v0.2.4-dev.2`。本轮包括首页与全局菜单重写、白昼/晚风主题、天气过渡和原生窗口主题，以及已登记但尚待完整接入的精细动效规范，实际状态见 [开发文档导航](devDoc/README.md)。EXT-E/F/G 的本地自动化证据见 [EXT-G 独立复验](devDoc/101-ext-g-fixes-independent-recheck.md)；真实 QQ、模型服务和完整发行包验收仍待完成，后续任务见 [开发方案](devDoc/79-agent-extension-execution-plan.md)。
+> 当前代码为持续开发快照，尚未发布稳定版本；此前归档标签为 `v0.2.4-dev.2`。主页与全局公共组件已接入手账 Dock、书签按钮、阅读入场、菜单/弹窗进退和统一动效策略；共享规范审计修复已通过[独立复验](devDoc/138-nested-motion-scope-independent-recheck.md)（124 文件、1155 项通过、1 项既有跳过）。其他业务页面保留旧布局，业务保存落款、部分原生交互、真实 QQ/模型与完整发行包仍待验收，实际状态见[开发文档导航](devDoc/README.md)。EXT-E/F/G 的本地自动化证据见[101 号记录](devDoc/101-ext-g-fixes-independent-recheck.md)，后续任务见[开发方案](devDoc/79-agent-extension-execution-plan.md)。
 
 目录与Git约定见[仓库规范](devDoc/23-repository-layout-and-version-control.md)：测试源码保留，测试截图/报告、运行数据、构建输出和`release/`发行包不进入Git。
 
@@ -10,7 +10,7 @@
 
 动效遵循[117书签与落款规范](devDoc/117-frontend-motion-standard.md)，已认可的[离线HTML样板](devDoc/design/character-studio/motion-notes/motion-library-demo.html)包含按钮、保存反馈、页面、弹窗/抽屉与减少动效。精细动效规范与参数已登记，正式组件接入状态按117区分。
 
-昼夜Dock交互04已采用，详细组件、材质与鼠标/键盘/触摸契约见[120标准](devDoc/120-dock-notebook-standard.md)及[归档样板](devDoc/design/character-studio/dock-notebook/home-motion-study.html)。正式PageDock待迁移，同页其他视觉候选未一并采用。
+昼夜Dock交互04已采用，详细组件、材质与鼠标/键盘/触摸契约见[120标准](devDoc/120-dock-notebook-standard.md)及[归档样板](devDoc/design/character-studio/dock-notebook/home-motion-study.html)。正式PageDock/MoreMenu已迁移，公共动效接入、生产dist与原生自验见[127](devDoc/127-home-and-global-motion-integration-execution.md)，同页其他视觉候选未一并采用。
 
 当前桌面版采用引导式外部 SnowLuma 接入：用户从官方页面自行下载、解压、初始化并启动，nowadays 记住目录和加密管理密码、检测 QQ 并在点击后注入/监听。应用不自动部署或启动 SnowLuma。详见 [首次配置与验收](devDoc/20-guided-external-snowluma.md)。
 

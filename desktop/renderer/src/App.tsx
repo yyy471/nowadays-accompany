@@ -1,4 +1,4 @@
-import { BrandMark, CancelButton, ControlButton, Modal, UiThemeProvider, UiThemeScope } from './ui';
+import { BrandMark, CancelButton, ControlButton, Modal, UiThemeProvider, UiThemeScope, createMotionScope, readMotionPx, readMotionTime, readMotionValue, useMotionPolicy } from './ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   api,
@@ -99,6 +99,11 @@ function historyState(index: number): Record<string, unknown> {
 
 export function App() {
   const { preset } = useThemePreset();
+  const { reduced } = useMotionPolicy();
+  const reducedMotion = useRef(reduced);
+  reducedMotion.current = reduced;
+  const [pageMotion] = useState(createMotionScope);
+  const pageBodyRef = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState(pageFromHash);
   const pageRef = useRef(page);
   const contentRef = useRef<HTMLElement>(null);
@@ -182,6 +187,23 @@ export function App() {
     pageRef.current = page;
     document.title = `${current.title} · Nowadays`;
   }, [current.title]);
+
+  useEffect(() => {
+    const element = pageBodyRef.current;
+    pageMotion.cancelAll();
+    if (!element || page === 'home' || reducedMotion.current) return;
+    const duration = readMotionTime(element, '--nd-component-motion-page', 280);
+    const offset = readMotionPx(element, '--nd-component-motion-page-offset', 4);
+    const ease = readMotionValue(element, '--nd-component-motion-ease', 'cubic-bezier(0.2, 0, 0, 1)');
+    pageMotion.run(element, [
+      { opacity: 0.35, transform: `translateY(${offset}px)` },
+      { opacity: 1, transform: 'translateY(0)' }
+    ], { duration, easing: ease, slot: 'page', fill: 'backwards' });
+  }, [page, pageMotion]);
+  useEffect(() => {
+    if (reduced) pageMotion.cancelAll();
+  }, [reduced, pageMotion]);
+  useEffect(() => () => pageMotion.cancelAll(), [pageMotion]);
 
   useEffect(() => {
     if (page === 'overview' || page === 'instances') void slots.refresh();
@@ -473,7 +495,7 @@ export function App() {
           {transitionNotice ? <div className="notice notice-warn" role="status"><span>{transitionNotice}</span><CancelButton size="sm" onClick={() => setTransitionNotice(undefined)}>关闭</CancelButton></div> : null}
           </UiThemeScope>
           <UiThemeProvider theme={page==='home'?'xiacheng':undefined}>
-          <div className={page==='home'?'studio-home-content':'studio-legacy-page'}>
+          <div ref={pageBodyRef} className={page==='home'?'studio-home-content':'studio-legacy-page'}>
           {page!=='home'?<header className="studio-page-heading"><h1>{current.title}</h1><p>{current.subtitle}</p></header>:null}
           {page === 'home' ? (
             <UiThemeScope theme="xiacheng">

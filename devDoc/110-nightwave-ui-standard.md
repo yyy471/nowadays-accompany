@@ -18,7 +18,7 @@
 | 行为 | 同一页面的操作位置、Tab顺序、草稿保护、取消分支、异步归属不随主题变化 |
 | 动效 | 反馈120ms、控件160ms、面板220ms；尊重系统与应用减少动效偏好 |
 
-完整动效遵循[117书签与落款](117-frontend-motion-standard.md)：浮层退出160ms、页面280ms，书签/勾选/阅读顺序/来源浮层两主题共用参数与命中范围；夜间只换语义色与表面，成功落款使用success。Dock布面、缝线、局部暖光已按120采用，正式组件待迁移；Dock之外的主页光影/便签纸纹等仍属候选。
+完整动效遵循[117书签与落款](117-frontend-motion-standard.md)：浮层退出160ms、页面280ms，书签/勾选/阅读顺序/来源浮层两主题共用参数与命中范围；夜间只换语义色与表面，成功落款使用success。Dock布面、缝线、局部暖光已按120采用并迁移正式PageDock（见[127](127-home-and-global-motion-integration-execution.md)）；Dock之外的主页光影/便签纸纹等仍属候选。
 
 ## 2. 深色色板与用途
 
@@ -62,7 +62,7 @@
 | Input / SearchInput / Select / Textarea | surface＋text，lineControl边界 | focus环/边界；invalid用danger | 标签、帮助与错误关联；保留输入、原生键盘和只读复制 |
 | Checkbox / Radio / Switch | 复用公共原生/受控行为 | checked用commit；状态文字和形状同步 | 深色与浅色同命中尺寸，Space可用；busy阻止重复且保留焦点 |
 | ThemeSwitcher | surface中按钮组 | 当前项commit＋onSolid、aria-pressed | 只切外观；无账号切换、导航或业务写入 |
-| PageDock | 新采用标准：墨蓝布面、细缝线与书脊接触阴影 | 暗色索引＋text文字、当前图标entry、琥珀上沿/局部暖光，aria-current | 见120；正式组件待迁移，旧commit＋onSolid仅保留兼容；底栏不覆盖主操作，更多保留真实菜单 |
+| PageDock | 新采用标准：墨蓝布面、细缝线与书脊接触阴影 | 暗色索引＋text文字、当前图标entry、琥珀上沿/局部暖光，aria-current | 见120与[127](127-home-and-global-motion-integration-execution.md)；正式组件已迁移，旧commit＋onSolid仅保留兼容；底栏不覆盖主操作，更多保留真实菜单 |
 | DropdownMenu | surface＋lineControl＋浮层阴影 | hover/focus用selection；disabled用disabledText | 视口内定位、长列表内滚动、Esc返回触发点；初始焦点不滚动外层视口 |
 | Modal / useConfirm | surface、text、实色正文和backdrop | 危险动作danger；取消初始焦点 | Portal继承调用预置，锁滚动/焦点、嵌套和取消契约不变 |
 | Disclosure / 列表 / 表格 | 以排版和装饰分隔组织 | 展开/行选中用selection并有明确标记 | selected与expanded分开；避免嵌套按钮；对齐和数据可读性保持 |

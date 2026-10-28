@@ -58,7 +58,6 @@ export function SettingsDialog({
     } finally { closing.current = false; }
   };
 
-  if (!open) return null;
   return (
     <Modal open={open} title="应用设置" eyebrow="NOWADAYS" className="settings-dialog" backdropClassName="settings-dialog-backdrop" headerClassName="settings-dialog-head"
       closeDisabled={locked} onClose={() => void requestClose()}>

@@ -19,6 +19,7 @@ export type IconName =
   | 'check'
   | 'close'
   | 'chevron'
+  | 'more'
   | 'radio'
   | 'folder'
   | 'search'
@@ -112,6 +113,13 @@ const ICONS: Record<IconName, ReactNode> = {
   check: <path d="m4.5 12.5 5 5 10-11" />,
   close: <path d="m6 6 12 12M18 6 6 18" />,
   chevron: <path d="m8 10 4 4 4-4" />,
+  more: (
+    <>
+      <circle cx="5.5" cy="12" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="18.5" cy="12" r="1.3" fill="currentColor" stroke="none" />
+    </>
+  ),
   radio: (
     <>
       <circle cx="12" cy="12" r="7.5" />

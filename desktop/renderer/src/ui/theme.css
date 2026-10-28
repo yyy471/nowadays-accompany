@@ -44,6 +44,10 @@ input.ui-input-checkbox:focus-visible,input.ui-input-radio:focus-visible { outli
 .ui-search:has(input:disabled) { opacity: .55; }
 .ui-icon-button { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; flex-shrink: 0; border: 1px solid var(--line); border-radius: var(--control-radius); padding: 0; color: var(--muted); background: transparent; cursor: pointer; }
 .ui-icon-button:hover:not(:disabled) { color: var(--text); background: var(--panel-2); }
+/* 折叠结构必须独立于主题作用域；未迁移页面也需真实隐藏内容。 */
+.ui-disclosure-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--nd-component-motion-surface-enter, 220ms) var(--nd-semantic-motion-ease, ease); }
+.ui-disclosure[data-open="true"] .ui-disclosure-body { grid-template-rows: 1fr; }
+.ui-disclosure-inner { min-height: 0; overflow: hidden; }
 .ui-modal-backdrop { position: fixed; inset: 0; display: grid; place-items: center; padding: 28px; background: rgba(67,59,52,.25); backdrop-filter: blur(7px); }
 .ui-modal-panel { width: min(560px,100%); min-width: 0; max-height: calc(100dvh - 56px); overflow: auto; overscroll-behavior: contain; overflow-wrap: anywhere; border: 1px solid var(--line); border-radius: 22px; background: var(--panel); color: var(--text); box-shadow: 0 30px 100px rgba(67,59,52,.2); outline: none; }
 .ui-modal-header { display: flex; align-items: center; gap: 16px; justify-content: space-between; padding: 24px; }

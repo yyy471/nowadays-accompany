@@ -1,12 +1,22 @@
 # 开发文档导航
 
-下一步按[125 主页与全局公共动效接入计划](125-home-and-global-motion-integration-plan.md)及[126 验收标准](126-home-and-global-motion-integration-acceptance.md)实施：公共能力直接全局统一，页面设计只改主页。分HM-0策略/生命周期、HM-1按钮/结果、HM-2手账Dock、HM-3浮层/折叠、HM-4主页阅读与组合验收；其他页面不重设计，但回归公共控件影响。此为待实施方案，不代表新增效果已进入应用；未采用视觉候选与真实服务/发行包仍单列待办。
+最新独立复验见[138 嵌套动效作用域复验](138-nested-motion-scope-independent-recheck.md)：136-R1关闭，131审计四项共享修复在本地代码/自动化范围内均已收口。主进程全量124文件1155项通过/1项既有跳过，类型、桌面构建、token同步通过；原嵌套与中间UiThemeProvider显式full的真实组件探针通过。126剩余原生交互等证据、业务保存消费者及其他页面设计仍分别待办，未提交、推送或打包。
+
+最新独立复核见[136 共享规范修复复核](136-shared-motion-standard-fixes-independent-review.md)：131-R2/R3/R4可关闭，R1单层已修复但嵌套显式full仍可解除祖先reduced，保留1项P2并附真实公共组件浏览器复现。该P2已由[137 嵌套作用域减少动效下限修复](137-nested-motion-scope-fix.md)处理并完成实现方回归：全量124文件1155项通过/1项既有跳过、开发版30/30、生产dist 27/27、隔离Electron 100%/125%各3/3通过。独立复验待做；其他页面不重设计，未提交或打包。
+
+统一规范审计见[131 当前前端组件与动效审计](131-frontend-component-and-motion-standard-audit.md)：主页及正式壳主要沿用公共体系，其他页面保留旧布局不视作违规。审计R1局部reduced未约束WAAPI已由[132 共享层局部动效修复](132-shared-motion-scope-fix.md)处理；R2设置弹窗双入场已由[133 单一入场修复](133-settings-single-entrance-fix.md)处理，设置窗口只保留公共Modal动画；R3 Dock材质配方已进入token v1.4.0，R4开发样板已复用正式PageDock，见[134 修复记录](134-dock-material-tokens-and-workbench-dock-fix.md)。[136 独立复核](136-shared-motion-standard-fixes-independent-review.md)确认R2～R4可关闭，但发现R1嵌套显式full仍能解除祖先局部reduced；已由[137](137-nested-motion-scope-fix.md)在Appearance继承层补齐。实现方回归见[135 最终回归](135-shared-audit-final-regression.md)及137补证：全量124文件1155项通过/1项既有跳过、开发版30/30、生产dist 27/27、隔离Electron 100%/125%各3/3通过。R1与137仍待独立复验；未提交、未打包。
+
+最新独立复验见[130 主页与全局动效修复复验](130-home-and-global-motion-fixes-independent-recheck.md)：128-R1～R3均关闭，本轮未发现新增阻塞问题。主进程全量124文件1146项通过/1项既有跳过，类型检查、桌面构建及token同步通过；原组件探针与实际App开发版30/30通过。原生草稿取消/安全退出、真实触屏及业务保存消费者等仍待证据，不将修复复验等同126完整收口；未提交、推送或打包。
+
+最新独立复核见[128 主页与全局动效复核](128-home-and-global-motion-independent-review.md)：暂不收口，发现未迁移主题内Disclosure关闭仍显示、菜单退出重开丢失绘制位置、恢复完整动效误重播业务页三项P2；前两项已由隔离浏览器运行实际公共组件复现。主进程全量124文件1145项通过/1项既有跳过，类型检查、桌面构建及token同步通过。127保留实现方自验，修复与原生草稿/退出组合等补证后再独立复验。
+
+主页与全局公共动效已完成[125 计划](125-home-and-global-motion-integration-plan.md)、[126 验收标准](126-home-and-global-motion-integration-acceptance.md)的HM-0～HM-4实现方自验，记录见[127 执行记录](127-home-and-global-motion-integration-execution.md)。[128 独立复核](128-home-and-global-motion-independent-review.md)提出3项P2；[129 修复记录](129-home-and-global-motion-review-fixes.md)已修复Disclosure公共结构可见性、菜单退出中重开的绘制快照和业务页偏好切换误重播，并完成实现方回归：token检查、类型检查、124文件1146项测试（1项既有跳过）、桌面构建、生产dist 27/27、开发版30/30及隔离Electron 100%/125%通过。独立复验待做；真实业务保存落款、业务页Disclosure/Switch、抽屉、真实QQ/模型与发行包仍未验收，未提交、未打包。
 
 用户采用折信N原稿，展示品牌为`Nowadays`；顶部透明符号随昼夜切换，桌面/安装包固定酒红底图标，托盘使用专用小尺寸母版。实现与实际验证见[123](123-fold-logo-adoption-execution.md)，独立复核见[124](124-fold-logo-independent-review.md)。旧发行EXE未重打包。
 
-用户已采用昼夜手账Dock交互04，见[120组件与交互标准](120-dock-notebook-standard.md)：图上文下、白昼纸签、晚风布面、项内微跟随/按压/到达，以及真实MoreMenu与导航准入契约。已同步105 v1.4.0、110/117 v1.1.0、公共UI、协作入口与token v1.3.0；[样板及截图](design/character-studio/dock-notebook/README.md)已归档。新参数待正式PageDock消费，其他主页视觉仍为候选；登记与自验见[121](121-dock-standard-adoption-execution.md)，独立复核见[122](122-dock-standard-independent-review.md)。
+用户已采用昼夜手账Dock交互04，见[120组件与交互标准](120-dock-notebook-standard.md)：图上文下、白昼纸签、晚风布面、项内微跟随/按压/到达，以及真实MoreMenu与导航准入契约。已同步105 v1.4.0、110/117 v1.1.0、公共UI、协作入口与token v1.4.0；Dock表面混色、描边与接触阴影已由[134](134-dock-material-tokens-and-workbench-dock-fix.md)收进component token，[样板及截图](design/character-studio/dock-notebook/README.md)已归档。正式PageDock/MoreMenu已消费新参数并完成自验，其他主页视觉仍为候选；登记与自验见[121](121-dock-standard-adoption-execution.md)，独立复核见[122](122-dock-standard-independent-review.md)，正式接入见[127](127-home-and-global-motion-integration-execution.md)。
 
-「书签与落款」初版登记见[118](118-motion-standard-execution.md)/[119](119-motion-standard-independent-review.md)，当时同步105 v1.3.0与token v1.2.0。当前[117动效规范](117-frontend-motion-standard.md)已补充Dock采用状态，书签端片、逐笔落款、导航书签、分层阅读、来源浮层等正式精细动效仍待接入，既有昼夜天气过渡按114/115。Dock之外的新光影/材质/业务页构图继续为候选。
+「书签与落款」初版登记见[118](118-motion-standard-execution.md)/[119](119-motion-standard-independent-review.md)，当时同步105 v1.3.0与token v1.2.0。当前[117动效规范](117-frontend-motion-standard.md)已补充Dock采用状态；书签端片、导航书签、分层阅读、来源浮层与统一减少动效已由[127](127-home-and-global-motion-integration-execution.md)接入正式公共组件，逐笔落款能力已接入但真实业务保存消费者待接，既有昼夜天气过渡按114/115。Dock之外的新光影/材质/业务页构图继续为候选。
 
 Windows原生标题栏/边框已接入昼夜主题：晚风墨蓝、白昼纸白，保留系统窗口和按钮。类型检查、完整桌面构建、123文件/1135项测试通过（1既有跳过）；原生窗口来回切换、刷新恢复及包含非客户区的Win32截图通过，见 [116 原生窗口主题](116-native-window-theme-execution.md)。需重启开发版main/preload；旧发行EXE未重打包。
 

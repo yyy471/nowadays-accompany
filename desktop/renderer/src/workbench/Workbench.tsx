@@ -1,16 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { AsyncBoundary, BrandMark, Button, CancelButton, Checkbox, ConfirmButton, ConfirmProvider, ControlButton, Disclosure, DropdownMenu, Empty, Field, Icon, IconButton, Input, Modal, SearchInput, Select, Switch, Tag, Textarea, UiThemeScope, useConfirm, type IconName } from '../ui';
+import { AsyncBoundary, BrandMark, Button, CancelButton, Checkbox, ConfirmButton, ConfirmProvider, ControlButton, Disclosure, DropdownMenu, Empty, Field, Icon, IconButton, Input, Modal, ModalLayerProvider, MotionPolicyProvider, SearchInput, Select, Switch, Tag, Textarea, UiThemeScope, useConfirm } from '../ui';
 import { DraftProtectionProvider, useDraftProtection } from '../components/DraftProtectionProvider';
+import { PageDock, dockDestinations } from '../components/shell/PageDock';
+import { PAGES } from '../lib/navigation';
 import { useDraftRegistration } from '../lib/use-draft-registration';
 import { hashRevision } from '../lib/drafts/registry';
 import character from '../../../../devDoc/design/character-studio/xiacheng.png';
 import scene from '../../../../devDoc/design/character-studio/scene-ink.png';
 
 const sections = [['type', '字体'], ['actions', '动作'], ['fields', '输入'], ['behavior', '交互'], ['states', '状态']] as const;
-const navItems: Array<{ id: string; label: string; icon: IconName }> = [
-  { id: 'home', label: '桌面', icon: 'overview' }, { id: 'roles', label: '关系', icon: 'accounts' },
-  { id: 'models', label: '模型', icon: 'bolt' }, { id: 'library', label: '收藏', icon: 'artifacts' }
-];
 const menuLabels = ['主页', '总览', '实例与监听', '资料与角色', '插件与 Skill', '模型配置', '事件诊断', '应用设置', '资源库'];
 const originalNote = '喜欢傍晚的光，也喜欢听你慢慢说。';
 const sampleAccounts = ['白昼来信', '晚风电台', '一个名字很长但仍然应该完整展示的样例账号'];
@@ -57,9 +55,9 @@ function DraftEditor({ open, onClosed }: { open: boolean; onClosed: () => void }
 
 export function WorkbenchRoot() {
   const [reduced, setReduced] = useState(false);
-  return <ConfirmProvider><UiThemeScope theme="xiacheng" motion={reduced ? 'reduced' : undefined} className="wb-root">
+  return <MotionPolicyProvider preference={reduced ? 'reduced' : 'system'}><ModalLayerProvider><ConfirmProvider><UiThemeScope theme="xiacheng" motion={reduced ? 'reduced' : undefined} className="wb-root">
     <DraftProtectionProvider><Workbench reduced={reduced} onReduced={setReduced} /></DraftProtectionProvider>
-  </UiThemeScope></ConfirmProvider>;
+  </UiThemeScope></ConfirmProvider></ModalLayerProvider></MotionPolicyProvider>;
 }
 
 function Workbench({ reduced, onReduced }: { reduced: boolean; onReduced: (value: boolean) => void }) {
@@ -181,8 +179,8 @@ function Workbench({ reduced, onReduced }: { reduced: boolean; onReduced: (value
           <div><Button size="sm" onClick={() => { void checkQueue(); }}>检查确认队列</Button></div>
           {queueMessage ? <p className="wb-caption" role="status">{queueMessage}</p> : null}
           <p className="wb-caption" role="status">{saveState === 'error' ? '样例保存失败，原内容仍保留，可以重试。' : saveState === 'success' ? '样例已保存，仅保留在当前页面。' : saveState === 'saving' ? '正在处理样例，请稍候。' : '加载时保持按钮宽度与焦点，重复触发不会新增操作。'}</p>
-        </div><div className="wb-interaction"><h3>导航与账号各有语义</h3><nav className="ui-page-dock" aria-label="页面导航样例">{navItems.map(item => <ControlButton key={item.id} aria-current={navigation === item.id ? 'page' : undefined} onClick={() => setNavigation(item.id)}><Icon name={item.icon} size={20} /><span>{item.label}</span></ControlButton>)}</nav>
-          <p className="wb-caption" role="status">当前样例：{account} / {navItems.find(item => item.id === navigation)?.label}。这里只演示选中状态。</p>
+        </div><div className="wb-interaction"><h3>导航与账号各有语义</h3><PageDock page={navigation} onNavigate={setNavigation} />
+          <p className="wb-caption" role="status">当前样例：{account} / {dockDestinations.find(item => item.id === navigation)?.label ?? PAGES.find(item => item.id === navigation)?.title}。正式Dock与更多入口均只切换本页样例状态。</p>
           <div className="wb-tags"><Tag tone="ok">已保存</Tag><Tag tone="warn">等待连接</Tag><Tag tone="bad">读取失败</Tag><Tag tone="busy">正在读取</Tag><Tag>未知</Tag></div>
           <p className="wb-caption">标签同时使用文字。展开、选中、配置开启和连接成功互不冒充。</p>
           <Disclosure title="文本能力 · 抽屉样例" description="收起时保留输入，隐藏内容不参与键盘导航。"><Field label="抽屉内模型样例"><Input defaultValue="sample-model" /></Field></Disclosure>

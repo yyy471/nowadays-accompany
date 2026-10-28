@@ -50,7 +50,17 @@ export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   busy?: boolean;
   icon?: IconName;
   feedback?: 'error' | 'success';
+  /** 真实结果代际；相同键不会重复播放勾画与落款。 */
+  feedbackKey?: string | number;
+  /** 成功落款的装饰副标；传 false 可关闭，标准动作文字始终保留。 */
+  resultLabel?: string | false;
 };
+
+function SuccessCheck() {
+  return <svg className="ui-button-check" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+    <path d="m4.5 12.5 5 5 10-11" pathLength={1} />
+  </svg>;
+}
 
 export function Button({
   variant = 'default',
@@ -61,6 +71,8 @@ export function Button({
   className,
   disabled,
   feedback,
+  feedbackKey,
+  resultLabel = '已收好',
   onClick,
   style,
   ...rest
@@ -72,7 +84,11 @@ export function Button({
     if (appearance.theme === 'xiacheng' && !busy && element.current) restingWidth.current = element.current.getBoundingClientRect().width;
   }, [appearance.theme, busy, children, size, variant]);
   const blocked = disabled || busy || rest['aria-disabled'] === true || rest['aria-disabled'] === 'true';
-  const leading = busy ? <span className="spinner" aria-hidden="true" /> : feedback ? <Icon name={feedback === 'error' ? 'warning' : 'check'} size={16} /> : icon ? <Icon name={icon} size={appearance.theme === 'xiacheng' ? 16 : 15} /> : null;
+  const leading = busy ? <span className="spinner" aria-hidden="true" />
+    : feedback === 'error' ? <Icon name="warning" size={16} />
+    : feedback === 'success' ? <SuccessCheck key={`check-${feedbackKey ?? 'default'}`} />
+    : icon ? <Icon name={icon} size={appearance.theme === 'xiacheng' ? 16 : 15} />
+    : null;
   return (
     <ControlButton
       {...rest}
@@ -88,6 +104,9 @@ export function Button({
     >
       {appearance.theme === 'xiacheng' ? <span className="ui-button-leading" aria-hidden="true">{leading}</span> : leading}
       {variant === 'entry' ? <><span className="ui-button-label">{children}</span><span className="ui-button-end" aria-hidden="true"><Icon name="chevron" size={20} /></span></> : children}
+      {feedback === 'success' && resultLabel !== false
+        ? <span key={`stamp-${feedbackKey ?? 'default'}`} className="ui-button-stamp" aria-hidden="true">{resultLabel}</span>
+        : null}
     </ControlButton>
   );
 }

@@ -8,12 +8,12 @@
 | --- | --- |
 | Dock的图上文下、书脊底座、浮起索引、更多分隔 | 用户已采用，成为后续组件标准 |
 | 白昼纸面/樱粉鱼尾、晚风布面/琥珀暖光 | 用户已采用，限定Dock范围 |
-| 跟随、悬停、按压、释放、索引移动与中断 | 用户已采用，HTML实际验证 |
-| `component.dockNotebook.*` | 已登记待迁移参数，新变量尚未由正式PageDock消费 |
-| 正式React PageDock / MoreMenu | 保留既有实现，尚未迁移本版视觉与精细交互 |
+| 跟随、悬停、按压、释放、索引移动与中断 | 用户已采用；正式PageDock已迁移并完成浏览器/隔离Electron自验 |
+| `component.dockNotebook.*` | 已登记并由正式PageDock消费 |
+| 正式React PageDock / MoreMenu | 已迁移本版视觉与精细交互，见[127](127-home-and-global-motion-integration-execution.md)；独立复核待做 |
 | 同一主页样板中的环境光、便签纹理、签名分层、模拟事件与88px首页留白 | 仍为其他候选；不因采用Dock一并转为正式标准 |
 
-参考：[采用样板](design/character-studio/dock-notebook/home-motion-study.html)、[白昼局部图](design/character-studio/dock-notebook/daylight.png)、[晚风局部图](design/character-studio/dock-notebook/nightwave.png)、[归档说明](design/character-studio/dock-notebook/README.md)。本次登记与自验见[121](121-dock-standard-adoption-execution.md)，独立复核见[122](122-dock-standard-independent-review.md)。
+参考：[采用样板](design/character-studio/dock-notebook/home-motion-study.html)、[白昼局部图](design/character-studio/dock-notebook/daylight.png)、[晚风局部图](design/character-studio/dock-notebook/nightwave.png)、[归档说明](design/character-studio/dock-notebook/README.md)。本次登记与自验见[121](121-dock-standard-adoption-execution.md)，独立复核见[122](122-dock-standard-independent-review.md)，正式接入见[127](127-home-and-global-motion-integration-execution.md)。
 
 ## 2. 结构、尺寸与视觉层级
 
@@ -92,7 +92,7 @@ Dock保持「桌面 / 关系 / 模型 / 收藏 / 更多」顺序。图标在上�
 
 ## 8. 参数登记与兼容
 
-token v1.3.0新增`primitive/semantic/component.dockNotebook`，命名空间独立，既有`component.dock.*`和所有旧变量不变。新增参数登记不改变当前应用CSS消费者。
+token v1.4.0的`primitive/semantic/component.dockNotebook`包含尺寸、跟随、按压参数与表面混色、描边、接触阴影配方；`dock-notebook.css`已消费对应component变量，既有`component.dock.*`和所有旧变量不变。布局几何、指针百分比、暖光半径与渐变停点仍由CSS维护，不作为行为参数。材质token收口见[134](134-dock-material-tokens-and-workbench-dock-fix.md)。
 
 `dockNotebook.pressDuration/followDuration`复用120ms、`hoverDuration`复用160ms、`selectionDuration`复用220ms、`ease`复用surfaceEase；图标和文字复用现有尺寸，按压/回弹复用既有1px/1.5px。生成CSS必须由脚本更新；JS处理ms/s，生产压缩单位变化不影响时长。
 
