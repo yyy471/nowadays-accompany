@@ -2,7 +2,7 @@
 
 2026-10-27。用户已选定 [夏澄的日常手账 / CHARACTER STUDIO](devDoc/design/character-studio/DESIGN.md)，用于按页面重写现有桌面前端。后续页面沿用本基准，不再轮换其他风格。
 
-正式实现以 [105 前端总体设计规范 v1.3.0](devDoc/105-frontend-design-system.md)、[110 晚风电台深色标准](devDoc/110-nightwave-ui-standard.md)、[117 动效规范：书签与落款](devDoc/117-frontend-motion-standard.md) 与 [设计 token](devDoc/design/character-studio/tokens.json) 为准。105规定共用字体、尺寸和行为，110规定完整夜间差异，117规定动效节奏与中断/无障碍行为，token提供数值；后续页面同时执行两主题。规范落库见111；夜间坐姿图已正式接入，当前采用与生产包证据见 [112](devDoc/112-night-character-adoption.md)。
+正式实现以 [105 前端总体设计规范 v1.4.0](devDoc/105-frontend-design-system.md)、[110 晚风电台深色标准](devDoc/110-nightwave-ui-standard.md)、[117 动效规范：书签与落款](devDoc/117-frontend-motion-standard.md)、[120 昼夜手账Dock标准](devDoc/120-dock-notebook-standard.md) 与 [设计 token](devDoc/design/character-studio/tokens.json) 为准。105规定共用字体、尺寸和行为，110规定完整夜间差异，117规定动效节奏与中断/无障碍行为，120细化已采用Dock的组件、昼夜材质与鼠标/键盘/触摸行为，token提供数值；后续页面同时执行两主题。规范落库见111；夜间坐姿图已正式接入，当前采用与生产包证据见 [112](devDoc/112-night-character-adoption.md)。
 
 ## 视觉依据
 
@@ -77,6 +77,7 @@
 
 - 顶部昼夜预置使用主题按钮组和选中状态，切换不修改QQ账号、不导航、不丢弃草稿；本机记住外观偏好。
 - Dock 为「桌面 / 关系 / 模型 / 收藏 / 更多」，全部菜单可达九个有效主功能。
+- 用户已采用[昼夜手账Dock交互04](devDoc/120-dock-notebook-standard.md)：图上文下、浮起索引、书脊底座与更多分隔；白昼纸签/樱粉鱼尾，晚风布面/琥珀局部暖光。鼠标跟随限单项，文字与命中框固定，键盘/触摸/减少动效有统一行为。当前为已采用规范和归档HTML，正式PageDock待迁移；同一主页样板中的环境光、便签材质、模拟叙事与首页留白仍分别处于候选状态。
 - 所有页面跳转、业务页账号切换、设置关闭及退出继续进入现有导航与草稿准入机制。
 - 角色、模型、插件、世界书和设置的后续迁移沿用同一色彩、字体、控件和状态语言。
 - 迁移中的旧页面可暂时保留旧外观，但必须隔离样式，不改变新壳的布局或破坏原有操作。
@@ -86,3 +87,7 @@
 本文件锁定设计方向，当前首页与两套主题以109为准；后续业务页继续逐页重写。初始方案103/104保留历史要求，发生冲突时以108用户截图修订和109实际结果为准。
 
 规范入口已写入根`AGENTS.md`和`desktop/renderer/AGENTS.md`。新增前端工作从105/110开始，实际实现与候选素材按开发记录区分；不能用旧原型反推新的业务行为。
+
+## 折信品牌标识
+
+2026-10-28用户采用折信N原稿，不调整颜色或高光。展示品牌为`Nowadays`；顶部采用透明底昼夜SVG，桌面/安装包固定酒红底图标，托盘采用小尺寸母版。标记盒34×36px（可见字形约34px高），来源为token的`component.brand`。实施与验证见[123](devDoc/123-fold-logo-adoption-execution.md)。

@@ -274,7 +274,7 @@ export function SnowLumaSetup() {
     <div className="snowluma-setup page-stack">
       {status?.error ? <ErrorNote message={status.error} /> : null}
       {configured && !editing && !showGuide ? (
-        <Card title="SnowLuma 已配置" subtitle="由你手动启动；点击“注入并监听”后才开始注入和监听。nowadays 不下载或启动 SnowLuma，也不自动注入 QQ。" actions={<Button size="sm" variant="ghost" icon="refresh" busy={busy === 'test'} disabled={isBusy || dirty} onClick={() => void verifyConnection()}>验证连接</Button>}>
+        <Card title="SnowLuma 已配置" subtitle="由你手动启动；点击“注入并监听”后才开始注入和监听。Nowadays 不下载或启动 SnowLuma，也不自动注入 QQ。" actions={<Button size="sm" variant="ghost" icon="refresh" busy={busy === 'test'} disabled={isBusy || dirty} onClick={() => void verifyConnection()}>验证连接</Button>}>
           {statusTags}
           {managementUrl ? <p><a href={managementUrl} target="_blank" rel="noreferrer">打开 SnowLuma 管理页面</a></p> : null}
           {saved ? (

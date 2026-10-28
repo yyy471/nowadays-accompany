@@ -1,6 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <title>nowadays — 日常里的微光</title>
-  <rect x="16" y="16" width="992" height="992" rx="224" fill="#E8E0D3"/>
-  <path d="M292 730V482C292 220 696 220 696 482V730" fill="none" stroke="#62584D" stroke-width="116" stroke-linecap="round"/>
-  <circle cx="785" cy="286" r="70" fill="#C08F4A"/>
+  <title>nowadays — 折信 N</title>
+  <defs>
+    <clipPath id="fl1cL"><polygon points="262.0,250.0 412.0,250.0 412.0,774.0 262.0,774.0"/></clipPath>
+    <clipPath id="fl1cR"><polygon points="612.0,250.0 762.0,250.0 762.0,774.0 612.0,774.0"/></clipPath>
+    <linearGradient id="fl1g1" gradientUnits="userSpaceOnUse" x1="337.0" y1="376.8" x2="242.3" y2="432.8">
+      <stop offset="0" stop-color="#E0BC83" stop-opacity="0.95"/><stop offset="1" stop-color="#E0BC83" stop-opacity="0"/></linearGradient>
+    <linearGradient id="fl1g2" gradientUnits="userSpaceOnUse" x1="687.0" y1="647.2" x2="781.7" y2="591.2">
+      <stop offset="0" stop-color="#E0BC83" stop-opacity="0.95"/><stop offset="1" stop-color="#E0BC83" stop-opacity="0"/></linearGradient>
+    <linearGradient id="fl1gd" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F5EBD9"/><stop offset="1" stop-color="#F5F0E8"/></linearGradient></defs>
+  <rect x="24" y="24" width="976" height="976" rx="224" fill="#914E5A"/>
+  <polygon points="262.0,250.0 412.0,250.0 412.0,774.0 262.0,774.0" fill="#DDCFD0"/>
+  <polygon points="612.0,250.0 762.0,250.0 762.0,774.0 612.0,774.0" fill="#FFFCF7"/>
+  <polygon points="129.6,26.2 544.4,727.3 449.7,783.3 34.9,82.2" fill="url(#fl1g1)" clip-path="url(#fl1cL)"/>
+  <polygon points="479.6,296.7 894.4,997.8 989.1,941.8 574.3,240.7" fill="url(#fl1g2)" clip-path="url(#fl1cR)"/>
+  <polygon points="262.0,250.0 452.0,250.0 762.0,774.0 572.0,774.0" fill="url(#fl1gd)"/>
+  <line x1="262.0" y1="250.0" x2="412.0" y2="503.5" stroke="#E0BC83" stroke-width="30" clip-path="url(#fl1cL)"/>
+  <line x1="612.0" y1="520.5" x2="762.0" y2="774.0" stroke="#E0BC83" stroke-width="30" clip-path="url(#fl1cR)"/>
+  <polyline points="412.0,503.5 262.0,250.0 452.0,250.0 762.0,774.0" fill="none" stroke="#FFFCF7" stroke-width="8" stroke-opacity=".8" stroke-linejoin="round"/>
 </svg>

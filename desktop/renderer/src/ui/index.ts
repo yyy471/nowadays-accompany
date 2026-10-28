@@ -9,3 +9,4 @@ export { UiThemeScope, UiThemeProvider } from './appearance';
 export * from './switch';
 export * from './menu';
 export * from './disclosure';
+export * from './brand-mark';

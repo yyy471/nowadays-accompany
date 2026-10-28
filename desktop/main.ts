@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, nativeTheme, session, shell, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeTheme, session, shell, type IpcMainInvokeEvent } from 'electron';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -11,7 +11,7 @@ import { ArtifactImportController } from './artifact-import-controller.js';
 import { applyWindowTheme } from './window-theme.js';
 import { WINDOW_THEME_TOKENS } from './window-theme-tokens.js';
 
-app.setName('nowadays');
+app.setName('Nowadays');
 app.setPath('userData', desktopUserDataPath(app.getPath('appData'), existsSync));
 if (process.platform === 'win32') app.setAppUserModelId('com.nowadays.desktop');
 
@@ -162,8 +162,8 @@ function createWindow(token: string): void {
     minHeight: 640,
     show: false,
     backgroundColor: WINDOW_THEME_TOKENS.daylight.backgroundColor,
-    title: 'nowadays',
-    icon: assetPath('icon.png'),
+    title: 'Nowadays',
+    icon: assetPath(process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(app.getAppPath(), 'desktop-dist', 'preload.cjs'),
@@ -191,7 +191,7 @@ function createWindow(token: string): void {
     if (!hiddenHintShown && process.platform === 'win32') {
       hiddenHintShown = true;
       tray?.displayBalloon({
-        title: 'nowadays 仍在运行',
+        title: 'Nowadays 仍在运行',
         content: '窗口已最小化到托盘，QQ 注入与插件继续工作。'
       });
     }
@@ -220,9 +220,8 @@ function createWindow(token: string): void {
 }
 
 function createTray(): void {
-  const image = nativeImage.createFromPath(assetPath('icon.png'));
-  tray = new Tray(image.resize({ width: 16, height: 16 }));
-  tray.setToolTip('nowadays');
+  tray = new Tray(assetPath(process.platform === 'win32' ? 'tray.ico' : 'icon.png'));
+  tray.setToolTip('Nowadays');
   const menu = Menu.buildFromTemplate([
     { label: '打开主窗口', click: showWindow },
     {
@@ -265,7 +264,7 @@ function quitCoordinatorInstance(): QuitCoordinator {
         buttons: ['取消', '继续退出'],
         defaultId: 0,
         cancelId: 0,
-        title: 'nowadays 无法确认未保存修改',
+        title: 'Nowadays 无法确认未保存修改',
         message: '界面未能确认是否有未保存的修改。',
         detail: '继续退出可能丢失尚未保存的编辑。'
       };
@@ -369,7 +368,7 @@ async function bootstrap(): Promise<void> {
     const message = error instanceof Error ? error.stack ?? error.message : String(error);
     logger.error('desktop failed to start', { message });
     dialog.showErrorBox(
-      'nowadays 启动失败',
+      'Nowadays 启动失败',
       `${error instanceof Error ? error.message : String(error)}\n\n数据目录：${dataRoot}\n日志：${path.join(app.getPath('userData'), 'logs', 'desktop.log')}`
     );
     await core?.stop().catch(() => {});

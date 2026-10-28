@@ -1,6 +1,6 @@
-# 前端动效规范 v1.0：书签与落款
+# 前端动效规范 v1.1.0：书签与落款
 
-2026-10-27。用户认可「动效手记02」后授权写入前端规范。本文为[105总体规范](105-frontend-design-system.md)第8节的正式补充，白昼/晚风共用；颜色与夜间表面遵循[110](110-nightwave-ui-standard.md)。
+2026-10-27初版，2026-10-28追加用户采用的昼夜Dock交互04。本文为[105总体规范](105-frontend-design-system.md)第8节的正式补充，白昼/晚风共用；颜色与夜间表面遵循[110](110-nightwave-ui-standard.md)，Dock详细契约见[120](120-dock-notebook-standard.md)。
 
 ## 1. 生效范围与实施状态
 
@@ -11,9 +11,10 @@
 | 昼夜天气过渡、快速反向、减少动效 | 已接入正式公共主题层 | [114](114-theme-weather-transition-execution.md)、[115](115-theme-weather-transition-independent-review.md) |
 | 普通按压、开关滑动、局部场景跟随 | 已有基础实现，不能推断所有页面已统一验收 | 公共UI源码及105/110 |
 | 书签端片、逐笔落款、导航书签、分层阅读、来源浮层、中断衔接 | 设计已认可；独立HTML样板验证，正式React组件待接入 | [精致版样板](design/character-studio/motion-notes/motion-library-demo.html)、[初版](design/character-studio/motion-notes/motion-library-demo-v1.html) |
-| `component.motion.*`精细参数 | 已登记并生成变量，新增参数尚未被正式组件消费 | [token v1.2.0](design/character-studio/tokens.json) |
+| 昼夜Dock图标/标签、纸签/布面、跟随/按压/到达 | 用户已采用；HTML交互04验证，正式PageDock待迁移 | [120](120-dock-notebook-standard.md)、[采用样板](design/character-studio/dock-notebook/home-motion-study.html) |
+| `component.motion.*`与`component.dockNotebook.*`精细参数 | 已登记并生成变量，新增参数尚未被正式组件消费 | [token v1.3.0](design/character-studio/tokens.json) |
 | Motion for React等第三方引擎 | 技术建议，尚未安装或确定为强制依赖 | 本文第7节 |
-| 新光影、纸张材质、专属图标、角色/模型新构图 | 待探索，尚未作为正式视觉标准采用 | 第9节 |
+| Dock之外的新光影、纸张材质、专属图标、角色/模型新构图 | 仍为候选，尚未作为正式视觉标准采用 | 第9节 |
 
 写入规范表示后续实现遵循此标准，不等于所有效果已进入EXE。HTML中的模拟保存、示例资料和页面标签不能替代真实业务与导航验收。
 
@@ -62,6 +63,12 @@ JS读取CSS时间时同时支持ms与s，WAAPI需要换算为毫秒；生产压�
 - 折叠220ms内展开/收拢，箭头同步；关闭后内容不进入Tab顺序和辅助技术的可操作范围，DOM与草稿仍保留。内部焦点在收拢前移回触发点。
 - 开关滑动160ms，视觉与`aria-checked`/真实状态同步；保存中的状态归属仍按账号与对象契约处理。
 
+### 3.4 昼夜Dock：靠近、悬停、按下、到达
+
+采用交互04，详见120。图标悬停上移2px；内部跟随X/Y各±1px，120ms衔接，文字与命中框固定；主键/原生键盘按压下沉1px、缩至0.96，120ms反馈；纸面/暖光160ms回应；真实导航提交后共享书签220ms移动、末端回弹≤1.5px。两层图标运动分开合成，按压时收回悬停位移。
+
+白昼纸面阴影与樱粉鱼尾、晚风布面和琥珀局部暖光分别表现同一动作。点击当前页不重播页面，装饰不延迟导航；更多仍保留原菜单语义。触摸只按压/选中，reduced禁用跟随/缩放/抬起/回弹；离开、取消、失焦、隐藏、resize和主题变化均清理临时状态。参数消费`dockNotebook`，不得借实现新增业务成功提示。
+
 ## 4. 中断、连续操作与状态归属
 
 1. 动效不排队；连续切页/反向选择取最新目标，重复选择当前项不重播。
@@ -80,7 +87,7 @@ JS读取CSS时间时同时支持ms与s，WAAPI需要换算为毫秒；生产压�
 
 ## 6. HTML样板的使用范围
 
-仓库归档包含[精致版](design/character-studio/motion-notes/motion-library-demo.html)、[初版](design/character-studio/motion-notes/motion-library-demo-v1.html)与[说明](design/character-studio/motion-notes/README.md)。单文件离线打开，内置两主题、完整/减少动效、半速、重播、模拟状态和输入保留。
+仓库归档包含[精致版](design/character-studio/motion-notes/motion-library-demo.html)、[初版](design/character-studio/motion-notes/motion-library-demo-v1.html)与[说明](design/character-studio/motion-notes/README.md)。两者为单文件离线样板。新增[Dock交互04采用参考](design/character-studio/dock-notebook/home-motion-study.html)复用仓库本地插画/CSS，双击HTML离线查看；其中只有Dock作为本次采用范围，详见目录说明。
 
 HTML是已认可的视觉动作参照，不是第二套生产UI组件库。其独立原生dialog、标签切换和本机JS不能直接替换公共Modal、草稿准入和真实异步流程。正式接入应使用项目公共UI并消费token，检查本规范与样板的已注明数值差异。
 
@@ -99,6 +106,6 @@ HTML是已认可的视觉动作参照，不是第二套生产UI组件库。其�
 
 ## 9. 后续视觉增强的决策顺序
 
-光影、材质、专属图标及不同业务页构图，先在HTML中做白昼/晚风与窄窗口对照，明确认可的方案后再登记视觉规范和token；目前保持候选状态。建议优先以角色页、模型页验证构图与信息密度。
+光影、材质、专属图标及不同业务页构图，先在HTML中做白昼/晚风与窄窗口对照，明确认可后再登记规范与token。Dock局部纸签/布面/暖光现已依120采用，其余主页环境光、便签纹理、模拟叙事、首页留白与角色/模型构图继续保持候选状态。
 
 已认可的动效进入应用时，以公共UI样板和真实业务页面完成第二阶段验证；焦点、草稿、真实异步和窗口缩放必须在应用中验收。HTML适合选择视觉，Electron负责确认实际交互。

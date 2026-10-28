@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { AsyncBoundary, Button, CancelButton, Checkbox, ConfirmButton, ConfirmProvider, ControlButton, Disclosure, DropdownMenu, Empty, Field, Icon, IconButton, Input, Modal, SearchInput, Select, Switch, Tag, Textarea, UiThemeScope, useConfirm, type IconName } from '../ui';
+import { AsyncBoundary, BrandMark, Button, CancelButton, Checkbox, ConfirmButton, ConfirmProvider, ControlButton, Disclosure, DropdownMenu, Empty, Field, Icon, IconButton, Input, Modal, SearchInput, Select, Switch, Tag, Textarea, UiThemeScope, useConfirm, type IconName } from '../ui';
 import { DraftProtectionProvider, useDraftProtection } from '../components/DraftProtectionProvider';
 import { useDraftRegistration } from '../lib/use-draft-registration';
 import { hashRevision } from '../lib/drafts/registry';
@@ -107,7 +107,7 @@ function Workbench({ reduced, onReduced }: { reduced: boolean; onReduced: (value
   };
   return <div className="wb-sheet">
     <header className="wb-header">
-      <a href="#top" className="wb-brand" aria-label="nowadays 组件手账顶部"><span className="wb-mark" aria-hidden="true">n<span>•</span></span><span>nowadays<small>A NOTE FOR YOUR EVERYDAY.</small></span></a>
+      <a href="#top" className="wb-brand" aria-label="Nowadays 组件手账顶部"><BrandMark/><span>Nowadays<small>A NOTE FOR YOUR EVERYDAY.</small></span></a>
       <div className="wb-account-tabs ui-account-tabs" role="group" aria-label="样例账号选择">{(account === sampleAccounts[2] ? [sampleAccounts[0], account] : sampleAccounts.slice(0,2)).map(label => <ControlButton key={label} title={label} aria-pressed={account === label} onClick={() => setAccount(label)}>{label}</ControlButton>)}</div>
       <div className="wb-header-end"><Tag>组件样板 · 本地示例</Tag><DropdownMenu label="全部菜单" items={menuLabels.map((label, index) => ({ id: String(index), label, onSelect: () => setMenuSelection(label) }))} /></div>
     </header>
@@ -196,7 +196,7 @@ function Workbench({ reduced, onReduced }: { reduced: boolean; onReduced: (value
         </AsyncBoundary></div>
       </Section>
     </main>
-    <footer className="wb-footer"><span>nowadays / 组件手账</span><span>字体 · 控件 · 行为 · 边界</span><a href="#top">返回页首 ↑</a></footer>
+    <footer className="wb-footer"><span>Nowadays / 组件手账</span><span>字体 · 控件 · 行为 · 边界</span><a href="#top">返回页首 ↑</a></footer>
     <DraftEditor open={editorOpen} onClosed={() => setEditorOpen(false)} />
     <Modal open={Boolean(menuSelection)} title={`${menuSelection} · 入口样例`} description="菜单的焦点、键盘和关闭行为来自公共组件。正式页面将在后续迁移时接回，本样板不跳转业务。" onClose={() => setMenuSelection('')}>
       <div className="ui-modal-content"><p>你选择了「{menuSelection}」。关闭后焦点回到菜单触发位置。</p></div><footer className="ui-dialog-actions"><ConfirmButton onClick={() => setMenuSelection('')}>关闭样例</ConfirmButton></footer>

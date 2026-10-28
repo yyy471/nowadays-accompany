@@ -2,9 +2,19 @@
 
 前端规范入口：[105共用标准](../../../../devDoc/105-frontend-design-system.md)＋[110晚风深色标准](../../../../devDoc/110-nightwave-ui-standard.md)。深色和浅色共用字体、尺寸、行为与本目录组件；色板、状态、浮层和资产按预置映射。修改前同时遵循仓库与渲染层AGENTS。
 
+Dock已采用[120昼夜手账组件与交互规范](../../../../devDoc/120-dock-notebook-standard.md)，正式PageDock仍待迁移：图上文下、纸面/布面索引、项内±1px跟随、悬停/按压与220ms书签移动。参数登记在`component.dockNotebook.*`，旧`component.dock.*`值和当前实现保持兼容。
+
 公共动效同时遵循[117「书签与落款」规范](../../../../devDoc/117-frontend-motion-standard.md)：书签端片、保存逐笔勾选与落款、导航书签、阅读顺序、来源浮层，以及快速中断/减少动效/焦点契约。新增`component.motion.*`仅登记为正式接入的参数来源；这些精细效果当前在[独立HTML样板](../../../../devDoc/design/character-studio/motion-notes/motion-library-demo.html)验证，尚未作为本目录已有能力或导出API提供。实现时扩展现有公共组件，不复制样板的原生dialog或标签导航到业务页。
 
 所有业务页面统一从 `../ui` 导入；应用根目录使用 `./ui`。`src/ui.tsx` 是稳定入口，`ui/index.ts` 为导出目录。基础控件仅允许在此目录内部创建原生DOM。
+
+## 已采用的Dock目标（正式组件待迁移）
+
+PageDock继续组合公共ControlButton/Icon与现有MoreMenu，样板见[交互04](../../../../devDoc/design/character-studio/dock-notebook/home-motion-study.html)。图标的抬起/按压与内部跟随分层；文字、命中框与已提交路由保持稳定；`aria-current`表示真实当前页，不用tablist冒充导航。正式样式统一在ui维护，不在每个页面复制。
+
+白昼采用奶油纸签、樱粉鱼尾和纸面阴影；晚风采用墨蓝布面、细缝线、琥珀上沿与项内暖光。当前项文字为text、图标为entry，旧commit/onSolid实色选中暂留兼容，不能以旧样式反推新目标。
+
+鼠标按120规范处理进入/项内移动/离开、按压/释放/取消；Enter/Space使用原生激活，触摸不留hover，减少动效直接落到静态状态。更多仍打开现有DropdownMenu，只有实际路由属于非直接入口才对齐其选中签；打开菜单不自动导航。草稿确认、Esc/返回焦点、锁定/退出inert与历史行为沿用原契约。示例DOM类名、slot名称及pointer状态不是新增公共API，正式接入时另留实现与原生验收证据。
 
 | 用途 | 组件 |
 | --- | --- |
@@ -66,3 +76,7 @@ Modal统一处理背景隔离、最上层Escape、Tab约束、嵌套弹窗与焦
 确认的公共调用API不变。`useConfirm`记录其hook所在范围的主题和动效，每个队列请求保留自己的外观；即使ConfirmProvider位于主题范围外，确认框也能使用调用处的主题。每个请求重新建立Modal，初始焦点回到取消。Modal统一管理背景滚动锁定与恢复。
 
 主题范围以React调用位置为准，不能改变外层已经捕获的回调。正式入口采用UiThemeProvider包住ConfirmProvider与DraftProtectionProvider，让App控制器的全局确认使用新主题；壳的data-ui-palette只提供token值，顶部、主页和底部以UiThemeScope提供局部控件外观。未迁移内容与设置使用空UiThemeProvider并保持在新控件DOM作用域外。不能只给Home加CSS就宣称所有导航确认都已完成主题迁移。
+
+## 折信品牌
+
+`BrandMark`由公共入口导出，读取当前UiThemeScope的外观预置，使用透明底SVG原稿；装饰图片为空alt，由外层品牌按钮提供可访问名称。盒尺寸消费`component.brand.markWidth/markHeight`（34×36px），与字号独立；正式壳与组件样板共用。系统图标和托盘见[123](../../../../devDoc/123-fold-logo-adoption-execution.md)。

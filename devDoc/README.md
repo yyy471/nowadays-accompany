@@ -1,6 +1,12 @@
 # 开发文档导航
 
-「书签与落款」已写入[117前端动效规范](117-frontend-motion-standard.md)，并同步105 v1.3.0、110、根DESIGN、两级AGENTS、公共UI与token v1.2.0。书签端片、逐笔保存落款、导航书签、分层阅读、来源浮层及连续中断规范已认可；[HTML样板](design/character-studio/motion-notes/motion-library-demo.html)已归档，正式精细动效待接入，既有昼夜天气过渡仍按114/115。登记与自验见[118](118-motion-standard-execution.md)，独立复核见[119](119-motion-standard-independent-review.md)。新光影/材质/业务页构图仍为候选，建议先HTML对照，再进真实公共UI/Electron。
+下一步按[125 主页与全局公共动效接入计划](125-home-and-global-motion-integration-plan.md)及[126 验收标准](126-home-and-global-motion-integration-acceptance.md)实施：公共能力直接全局统一，页面设计只改主页。分HM-0策略/生命周期、HM-1按钮/结果、HM-2手账Dock、HM-3浮层/折叠、HM-4主页阅读与组合验收；其他页面不重设计，但回归公共控件影响。此为待实施方案，不代表新增效果已进入应用；未采用视觉候选与真实服务/发行包仍单列待办。
+
+用户采用折信N原稿，展示品牌为`Nowadays`；顶部透明符号随昼夜切换，桌面/安装包固定酒红底图标，托盘使用专用小尺寸母版。实现与实际验证见[123](123-fold-logo-adoption-execution.md)，独立复核见[124](124-fold-logo-independent-review.md)。旧发行EXE未重打包。
+
+用户已采用昼夜手账Dock交互04，见[120组件与交互标准](120-dock-notebook-standard.md)：图上文下、白昼纸签、晚风布面、项内微跟随/按压/到达，以及真实MoreMenu与导航准入契约。已同步105 v1.4.0、110/117 v1.1.0、公共UI、协作入口与token v1.3.0；[样板及截图](design/character-studio/dock-notebook/README.md)已归档。新参数待正式PageDock消费，其他主页视觉仍为候选；登记与自验见[121](121-dock-standard-adoption-execution.md)，独立复核见[122](122-dock-standard-independent-review.md)。
+
+「书签与落款」初版登记见[118](118-motion-standard-execution.md)/[119](119-motion-standard-independent-review.md)，当时同步105 v1.3.0与token v1.2.0。当前[117动效规范](117-frontend-motion-standard.md)已补充Dock采用状态，书签端片、逐笔落款、导航书签、分层阅读、来源浮层等正式精细动效仍待接入，既有昼夜天气过渡按114/115。Dock之外的新光影/材质/业务页构图继续为候选。
 
 Windows原生标题栏/边框已接入昼夜主题：晚风墨蓝、白昼纸白，保留系统窗口和按钮。类型检查、完整桌面构建、123文件/1135项测试通过（1既有跳过）；原生窗口来回切换、刷新恢复及包含非客户区的Win32截图通过，见 [116 原生窗口主题](116-native-window-theme-execution.md)。需重启开发版main/preload；旧发行EXE未重打包。
 
@@ -8,7 +14,7 @@ Windows原生标题栏/边框已接入昼夜主题：晚风墨蓝、白昼纸白
 
 夜间坐姿人物v2已正式接入，不再仅用于候选预览；晚风加载独立`character-night.png`，白昼保留原站姿，旧压暗滤镜已移除。类型检查、桌面构建、11组界面/22组布局及生产dist图片切换/刷新核验通过，见 [112 正式接入](112-night-character-adoption.md)。旧发行EXE未重新打包。
 
-前端标准已正式登记：共用规格为 [105 v1.3.0](105-frontend-design-system.md)，完整深色规格为 [110 晚风电台标准](110-nightwave-ui-standard.md)，动效补充见[117](117-frontend-motion-standard.md)。根DESIGN、README、两级AGENTS与公共UI文档均有入口。v1.2.0阶段的规范整理、对比度修正和候选证据见 [111](111-nightwave-standard-and-character-review.md)，人物采用状态以112为准。
+前端标准已正式登记：共用规格为 [105 v1.4.0](105-frontend-design-system.md)，完整深色规格为 [110 晚风电台标准](110-nightwave-ui-standard.md)，动效补充见[117](117-frontend-motion-standard.md)，Dock见[120](120-dock-notebook-standard.md)。根DESIGN、README、两级AGENTS与公共UI文档均有入口。v1.2.0阶段的规范整理、对比度修正和候选证据见 [111](111-nightwave-standard-and-character-review.md)，人物采用状态以112为准。
 
 当前首页已按截图精简，顶部改为「白昼来信 / 晚风电台」外观切换，首页一屏展示；同一夏澄搭配日间与夜间暖灯窗景。方案见 [108](108-home-presets-refinement-plan.md)，实施、实际截图与复核见 [109](109-home-presets-refinement-execution.md)；下方107属于上一批历史结果，其首页账号栏、回复开关和绑定摘要现已移除。
 
@@ -16,7 +22,7 @@ Windows原生标题栏/边框已接入昼夜主题：晚风墨蓝、白昼纸白
 
 前端组件基础与开发样板的阶段实施、复核发现和截图见 [106 组件基础与样板复核](106-ui-foundation-and-workbench-review.md)；其120文件/1111项属于当时结果，后续主页迁移与当前状态以107为准。
 
-前端统一规格见 [105 前端总体设计规范 v1.3.0](105-frontend-design-system.md)、[110完整深色标准](110-nightwave-ui-standard.md)和[117动效规范](117-frontend-motion-standard.md)，涵盖字体、昼夜配色、布局、系统能力边界、公共组件、交互状态与验收；数值来源为 [设计 token](design/character-studio/tokens.json)，已生成限定作用域的主题，供正式主页、壳与组件样板使用。新增精细动效参数的登记与组件消费状态分别见117。
+前端统一规格见 [105 前端总体设计规范 v1.4.0](105-frontend-design-system.md)、[110完整深色标准](110-nightwave-ui-standard.md)、[117动效规范](117-frontend-motion-standard.md)和[120 Dock标准](120-dock-notebook-standard.md)，涵盖字体、昼夜配色、布局、系统能力边界、公共组件、交互状态与验收；数值来源为 [设计 token](design/character-studio/tokens.json)，已生成限定作用域的主题，供正式主页、壳与组件样板使用。新增参数登记与组件消费状态分别记录，不等同于正式迁移完成。
 
 前端逐页重写的第一批方案见 [103 主页与全局菜单重写](103-home-and-shell-rewrite-plan.md)，验收依据见 [104 验收标准](104-home-and-shell-rewrite-acceptance.md)。用户已选定「夏澄的日常手账」，统一视觉基准见根目录 [DESIGN.md](../DESIGN.md)。公共UI、正式主页与新壳已落地，旧主页/旧壳展示及其废弃样式已清理；其他业务页继续保留。
 

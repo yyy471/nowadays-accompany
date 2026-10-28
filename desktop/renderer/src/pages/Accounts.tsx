@@ -528,7 +528,7 @@ function AccountDisplayEditor({ accountId, fallbackAvatarDataUrl, onSaved }: {
   };
 
   return (
-    <Card title={`账号展示资料 · QQ ${accountId}`} subtitle="仅用于 nowadays 主页展示，不读取或修改 QQ 个人资料。昵称、签名和本地头像都按账号保存。">
+    <Card title={`账号展示资料 · QQ ${accountId}`} subtitle="仅用于 Nowadays 主页展示，不读取或修改 QQ 个人资料。昵称、签名和本地头像都按账号保存。">
       {!loaded ? (
         <div className="display-profile-loading">
           {loadError ? <ErrorNote message={`无法读取展示资料：${loadError}`} onRetry={retryLoad} /> : <LoadingNote label="正在读取展示资料…" />}

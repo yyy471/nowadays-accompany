@@ -1,0 +1,93 @@
+{
+  "status": "passed",
+  "results": [
+    {
+      "dst": "desktop/assets/icon.svg",
+      "exactSource": true,
+      "sha256": "b0fd83c342ea51c9d5d7e0e4eb4e609547e3bc16fbd803f09964bd5923afdbdf"
+    },
+    {
+      "dst": "desktop/assets/icon-small.svg",
+      "exactSource": true,
+      "sha256": "39f651c57e71af1035519b44dd719650f2a6af90e71b76f1a811800f79d966c2"
+    },
+    {
+      "theme": "light",
+      "onlyViewBoxChanged": true
+    },
+    {
+      "theme": "dark",
+      "onlyViewBoxChanged": true
+    },
+    {
+      "file": "desktop/assets/icon.ico",
+      "frames": [
+        {
+          "size": 16,
+          "opaque": 256,
+          "colors": 53
+        },
+        {
+          "size": 20,
+          "opaque": 396,
+          "colors": 84
+        },
+        {
+          "size": 24,
+          "opaque": 564,
+          "colors": 80
+        },
+        {
+          "size": 32,
+          "opaque": 960,
+          "colors": 169
+        },
+        {
+          "size": 48,
+          "opaque": 2040,
+          "colors": 276
+        },
+        {
+          "size": 64,
+          "opaque": 3668,
+          "colors": 399
+        },
+        {
+          "size": 128,
+          "opaque": 14276,
+          "colors": 725
+        },
+        {
+          "size": 256,
+          "opaque": 57004,
+          "colors": 1001
+        }
+      ]
+    },
+    {
+      "file": "desktop/assets/tray.ico",
+      "frames": [
+        {
+          "size": 16,
+          "opaque": 256,
+          "colors": 53
+        },
+        {
+          "size": 20,
+          "opaque": 396,
+          "colors": 84
+        },
+        {
+          "size": 24,
+          "opaque": 564,
+          "colors": 80
+        },
+        {
+          "size": 32,
+          "opaque": 960,
+          "colors": 169
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "date": "2026-10-28T02:59:34.263Z",
+  "checks": [
+    "labels, hitboxes and text remain stationary while mouse follow stays within one pixel",
+    "day paper and night woven cover have distinct local surface responses",
+    "pointer down sinks the icon by one pixel; release restores it without moving text",
+    "new destinations navigate immediately; selected destination does not replay page entry",
+    "keyboard Enter and Space press feedback preserves navigation semantics",
+    "rapid reversals keep exactly one correctly aligned bookmark and clean arrival state",
+    "leave and cancelled pointer remove follow, hover and press states",
+    "reduced motion stops in-flight follow and keyboard movement while retaining current state",
+    "both themes render at rest with their final surfaces and screenshots",
+    "touch activation navigates without mouse-follow residue or target-size changes"
+  ],
+  "errors": [],
+  "materials": {
+    "daylight": {
+      "base": "linear-gradient(rgb(255, 252, 247), color(srgb 0.991373 0.977882 0.955686))",
+      "hover": "radial-gradient(at 50% 45%, color(srgb 1 0.988235 0.968627 / 0.92), color(srgb 0.960784 0.913725 0.921569 / 0.26))",
+      "spine": "rgb(255, 252, 247)"
+    },
+    "nightwave": {
+      "base": "repeating-linear-gradient(30deg, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0) 3px, color(srgb 0.933333 0.898039 0.847059 / 0.02) 3px, color(srgb 0.933333 0.898039 0.847059 / 0.02) 4px), linear-gradient(color(srgb 0.174745 0.208 0.264471), rgb(32, 40, 54))",
+      "hover": "radial-gradient(44px 36px at 50% 45%, color(srgb 0.831372 0.666667 0.529412 / 0.16), color(srgb 0.831373 0.666667 0.529412 / 0.03) 75%, rgba(0, 0, 0, 0))",
+      "spine": "rgb(23, 29, 41)"
+    }
+  },
+  "status": "passed"
+}

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" shape-rendering="geometricPrecision">
+  <title>nowadays — 折信 N · 16px master</title>
+  <defs></defs>
+  <rect width="16" height="16" rx="3.5" fill="#914E5A"/>
+  <rect x="3" y="3" width="3" height="10" fill="#D9B2BC"/>
+  <rect x="10" y="3" width="3" height="10" fill="#FFFCF7"/>
+  <polygon points="3,3 3,4.6 6,9.6 6,8" fill="#E0BC83"/>
+  <polygon points="10,3.4 10,5 13,10 13,8.4" fill="#E0BC83"/>
+  <polygon points="3,3 7,3 13,13 9,13" fill="#F5EBD9"/>
+</svg>

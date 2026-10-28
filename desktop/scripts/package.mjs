@@ -78,6 +78,7 @@ async function assemble() {
   await fs.mkdir(assetsDir, { recursive: true });
   await fs.copyFile(iconPng, path.join(assetsDir, 'icon.png'));
   await fs.copyFile(iconIco, path.join(assetsDir, 'icon.ico'));
+  await fs.copyFile(path.join(root, 'desktop', 'assets', 'tray.ico'), path.join(assetsDir, 'tray.ico'));
 
   const sourceExe = path.join(winUnpacked, 'electron.exe');
   const targetExe = path.join(winUnpacked, `${productName}.exe`);
@@ -100,7 +101,7 @@ async function assemble() {
         productName,
         '--set-version-string',
         'CompanyName',
-        'nowadays',
+        'Nowadays',
         '--set-version-string',
         'OriginalFilename',
         `${productName}.exe`,

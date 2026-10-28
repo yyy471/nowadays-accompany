@@ -24,7 +24,7 @@ vi.mock('../desktop/renderer/src/ui/presets', () => ({ useThemePreset: () => ({ 
 vi.mock('../desktop/renderer/src/components/DraftProtectionProvider', () => ({ useDraftProtection: () => ({
   registry: { hasPending: () => true }, requestTransition: async () => h.decision ?? { ok: true }, transitionPending: () => false
 }) }));
-vi.mock('../desktop/renderer/src/ui', () => ({ UiThemeScope:'UiThemeScope',UiThemeProvider:'UiThemeProvider', CancelButton: 'CancelButton', ControlButton: 'ControlButton', Icon: 'Icon', Modal: 'Modal' }));
+vi.mock('../desktop/renderer/src/ui', () => ({ BrandMark:'BrandMark',UiThemeScope:'UiThemeScope',UiThemeProvider:'UiThemeProvider', CancelButton: 'CancelButton', ControlButton: 'ControlButton', Icon: 'Icon', Modal: 'Modal' }));
 vi.mock('../desktop/renderer/src/pages/Accounts', () => ({ AccountsPage: 'AccountsPage' }));
 vi.mock('../desktop/renderer/src/pages/Activity', () => ({ ActivityPage: 'ActivityPage' }));
 vi.mock('../desktop/renderer/src/pages/Artifacts', () => ({ ArtifactsPage: 'ArtifactsPage' }));

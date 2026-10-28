@@ -10,6 +10,8 @@
 
 动效遵循[117书签与落款规范](devDoc/117-frontend-motion-standard.md)，已认可的[离线HTML样板](devDoc/design/character-studio/motion-notes/motion-library-demo.html)包含按钮、保存反馈、页面、弹窗/抽屉与减少动效。精细动效规范与参数已登记，正式组件接入状态按117区分。
 
+昼夜Dock交互04已采用，详细组件、材质与鼠标/键盘/触摸契约见[120标准](devDoc/120-dock-notebook-standard.md)及[归档样板](devDoc/design/character-studio/dock-notebook/home-motion-study.html)。正式PageDock待迁移，同页其他视觉候选未一并采用。
+
 当前桌面版采用引导式外部 SnowLuma 接入：用户从官方页面自行下载、解压、初始化并启动，nowadays 记住目录和加密管理密码、检测 QQ 并在点击后注入/监听。应用不自动部署或启动 SnowLuma。详见 [首次配置与验收](devDoc/20-guided-external-snowluma.md)。
 
 QQ 进程注入编排与交互核心。目标是把「注入一个 QQ、连上它、收发消息」做成**可多实例、彼此隔离、无单例**的底座；私聊/群聊策略、插件、角色卡、Skill 都属于功能层，通过 `AgentHost` 契约接入。

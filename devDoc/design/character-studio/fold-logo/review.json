@@ -1,0 +1,202 @@
+{
+  "checks": [
+    "production dist: both presets / five sizes, no overflow or header collision; decoded SVG 34x36",
+    "theme reload restoration, brand return-home action and keyboard focus",
+    "favicon multi-frame ICO and unauthenticated screen use new assets",
+    "theme and navigation checks issued no business writes against memory fixture"
+  ],
+  "layouts": [
+    {
+      "preset": "daylight",
+      "width": 1440,
+      "height": 900,
+      "src": "data:image/svg+xml,%3csvg%20xmlns='",
+      "loaded": true,
+      "mark": [
+        34,
+        36
+      ],
+      "brandLabel": "Nowadays，返回主页",
+      "brandText": "NowadaysA NOTE FOR YOUR EVERYDAY.",
+      "brandRight": 585.6875,
+      "settingsLeft": 1356.8125,
+      "scrollWidth": 1440,
+      "clientWidth": 1440,
+      "scrollHeight": 900,
+      "clientHeight": 900
+    },
+    {
+      "preset": "daylight",
+      "width": 1280,
+      "height": 800,
+      "src": "data:image/svg+xml,%3csvg%20xmlns='",
+      "loaded": true,
+      "mark": [
+        34,
+        36
+      ],
+      "brandLabel": "Nowadays，返回主页",
+      "brandText": "NowadaysA NOTE FOR YOUR EVERYDAY.",
+      "brandRight": 505.6875,
+      "settingsLeft": 1201.609375,
+      "scrollWidth": 1280,
+      "clientWidth": 1280,
+      "scrollHeight": 800,
+      "clientHeight": 800
+    },
+    {
+      "preset": "daylight",
+      "width": 1024,
+      "height": 720,
+      "src": "data:image/svg+xml,%3csvg%20xmlns='",
+      "loaded": true,
+      "mark": [
+        34,
+        36
+      ],
+      "brandLabel": "Nowadays，返回主页",
+      "brandText": "NowadaysA NOTE FOR YOUR EVERYDAY.",
+      "brandRight": 385.6875,
+      "settingsLeft": 953.28125,
+      "scrollWidth": 1024,
+      "clientWidth": 1024,
+      "scrollHeight": 720,
+      "clientHeight": 720
+    },
+    {
+      "preset": "daylight",
+      "width": 800,
+      "height": 600,
+      "src": "data:image/svg+xml,%3csvg%20xmlns='",
+      "loaded": true,
+      "mark": [
+        34,
+        36
+      ],
+      "brandLabel": "Nowadays，返回主页",
+      "brandText": "NowadaysA NOTE FOR YOUR EVERYDAY.",
+      "brandRight": 724,
+      "settingsLeft": 736,
+      "scrollWidth": 800,
+      "clientWidth": 800,
+      "scrollHeight": 600,
+      "clientHeight": 600
+    },
+    {
+      "preset": "daylight",
+      "width": 390,
+      "height": 740,
+      "src": "data:image/svg+xml,%3csvg%20xmlns='",
+      "loaded": true,
+      "mark": [
+        34,
+        36
+      ],
+      "brandLabel": "Nowadays，返回主页",
+      "brandText": "NowadaysA NOTE FOR YOUR EVERYDAY.",
+      "brandRight": 322,
+      "settingsLeft": 334,
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "scrollHeight": 740,
+      "clientHeight": 740
+    },
+    {
+      "preset": "nightwave",
+      "width": 1440,
+      "height": 900,
+      "src": "data:image/svg+xml,%3csvg%20xmlns='",
+      "loaded": true,
+      "mark": [
+        34,
+        36
+      ],
+      "brandLabel": "Nowadays，返回主页",
+      "brandText": "NowadaysA NOTE FOR YOUR EVERYDAY.",
+      "brandRight": 585.6875,
+      "settingsLeft": 1356.8125,
+      "scrollWidth": 1440,
+      "clientWidth": 1440,
+      "scrollHeight": 900,
+      "clientHeight": 900
+    },
+    {
+      "preset": "nightwave",
+      "width": 1280,
+      "height": 800,
+      "src": "data:image/svg+xml,%3csvg%20xmlns='",
+      "loaded": true,
+      "mark": [
+        34,
+        36
+      ],
+      "brandLabel": "Nowadays，返回主页",
+      "brandText": "NowadaysA NOTE FOR YOUR EVERYDAY.",
+      "brandRight": 505.6875,
+      "settingsLeft": 1201.609375,
+      "scrollWidth": 1280,
+      "clientWidth": 1280,
+      "scrollHeight": 800,
+      "clientHeight": 800
+    },
+    {
+      "preset": "nightwave",
+      "width": 1024,
+      "height": 720,
+      "src": "data:image/svg+xml,%3csvg%20xmlns='",
+      "loaded": true,
+      "mark": [
+        34,
+        36
+      ],
+      "brandLabel": "Nowadays，返回主页",
+      "brandText": "NowadaysA NOTE FOR YOUR EVERYDAY.",
+      "brandRight": 385.6875,
+      "settingsLeft": 953.28125,
+      "scrollWidth": 1024,
+      "clientWidth": 1024,
+      "scrollHeight": 720,
+      "clientHeight": 720
+    },
+    {
+      "preset": "nightwave",
+      "width": 800,
+      "height": 600,
+      "src": "data:image/svg+xml,%3csvg%20xmlns='",
+      "loaded": true,
+      "mark": [
+        34,
+        36
+      ],
+      "brandLabel": "Nowadays，返回主页",
+      "brandText": "NowadaysA NOTE FOR YOUR EVERYDAY.",
+      "brandRight": 724,
+      "settingsLeft": 736,
+      "scrollWidth": 800,
+      "clientWidth": 800,
+      "scrollHeight": 600,
+      "clientHeight": 600
+    },
+    {
+      "preset": "nightwave",
+      "width": 390,
+      "height": 740,
+      "src": "data:image/svg+xml,%3csvg%20xmlns='",
+      "loaded": true,
+      "mark": [
+        34,
+        36
+      ],
+      "brandLabel": "Nowadays，返回主页",
+      "brandText": "NowadaysA NOTE FOR YOUR EVERYDAY.",
+      "brandRight": 322,
+      "settingsLeft": 334,
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "scrollHeight": 740,
+      "clientHeight": 740
+    }
+  ],
+  "errors": [],
+  "status": "passed"
+}

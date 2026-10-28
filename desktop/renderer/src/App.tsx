@@ -1,4 +1,4 @@
-import { CancelButton, ControlButton, Modal, UiThemeProvider, UiThemeScope } from './ui';
+import { BrandMark, CancelButton, ControlButton, Modal, UiThemeProvider, UiThemeScope } from './ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   api,
@@ -180,7 +180,7 @@ export function App() {
 
   useEffect(() => {
     pageRef.current = page;
-    document.title = `${current.title} · nowadays`;
+    document.title = `${current.title} · Nowadays`;
   }, [current.title]);
 
   useEffect(() => {
@@ -396,7 +396,7 @@ export function App() {
           const result = await requestTransition({
             scope: { kind: 'all' },
             actionLabel: '退出应用',
-            title: '退出 nowadays？',
+            title: '退出 Nowadays？',
             confirmLabel: '放弃修改并退出',
             discardOnAccept: false,
             signal: confirmation.signal
@@ -462,7 +462,7 @@ export function App() {
       <UiThemeScope theme="xiacheng" className="studio-header-scope">
       <ControlButton className="ui-skip-content" onClick={() => contentRef.current?.focus()}>跳到主内容</ControlButton>
       <header className="studio-header">
-        <ControlButton className="ui-studio-brand" aria-label="nowadays，返回主页" onClick={()=>goPage('home')}><span className="ui-brand-mark" aria-hidden="true">n<span>•</span></span><span>nowadays<small>{isPreview?'隔离界面预览 / 样例数据':'A NOTE FOR YOUR EVERYDAY.'}</small></span></ControlButton>
+        <ControlButton className="ui-studio-brand" aria-label="Nowadays，返回主页" onClick={()=>goPage('home')}><BrandMark/><span>Nowadays<small>{isPreview?'隔离界面预览 / 样例数据':'A NOTE FOR YOUR EVERYDAY.'}</small></span></ControlButton>
         <ThemeSwitcher disabled={quitPhase!=='idle'}/>
         <div className="studio-header-actions"><ControlButton className="ui-settings-launcher" aria-label="应用设置" aria-haspopup="dialog" aria-expanded={settingsOpen} onClick={()=>openSettings()}><Icon name="settings" size={20}/></ControlButton></div>
       </header>

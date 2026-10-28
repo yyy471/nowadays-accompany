@@ -1,6 +1,6 @@
-# 晚风电台深色界面标准 v1.0
+# 晚风电台深色界面标准 v1.1.0
 
-2026-10-27。适用于`nightwave`预置。与 [105 总体规范](105-frontend-design-system.md)、[117 动效规范](117-frontend-motion-standard.md)、[DESIGN.md](../DESIGN.md) 和 [tokens.json](design/character-studio/tokens.json) 共同构成前端规范。当前token版本1.2.0，新版本登记共用动效参数，既有机器色值不变；本标准不复制第二套字体、尺寸或业务组件。
+2026-10-27初版，2026-10-28补充用户采用的Dock交互04。适用于`nightwave`预置。与 [105 总体规范](105-frontend-design-system.md)、[117 动效规范](117-frontend-motion-standard.md)、[120 Dock标准](120-dock-notebook-standard.md)、[DESIGN.md](../DESIGN.md) 和 [tokens.json](design/character-studio/tokens.json) 共同构成前端规范。当前token版本1.3.0，新增Dock登记参数，既有机器色值不变；本标准不复制第二套字体、尺寸或业务组件。
 
 **实施状态：** 首页、壳、主题选择与公共主题基础已接入；夜间坐姿人物v2已正式采用并移除旧压暗滤镜，见 [112](112-night-character-adoption.md)。未迁移业务页目前只桥接原有调色变量，不能据此宣称所有旧页面的深色组件和状态已逐项验收。规范整理见 [111](111-nightwave-standard-and-character-review.md)。
 
@@ -13,12 +13,12 @@
 | 字体 | 系统中文UI字体；展示与等宽回退沿用105，不增加网络字体 |
 | 排版 | hero44/54、page32/40、section20/28、body14/22、control13/20、caption12/18；窄屏标题档位同105 |
 | 间距 | 4px基础；字段组16、面内24、分区32；不因深色额外缩字号 |
-| 控件 | 常规44高、紧凑36、图标命中≥40；按钮圆角9、字段/弹窗12、Dock24 |
-| 骨架 | 顶部基准80、Dock72/紧凑64；首页一屏，无上下滚动；业务页及长菜单/弹窗按原契约滚动 |
+| 控件 | 常规44高、紧凑36、图标命中≥40；按钮圆角9、字段/弹窗12；新Dock常规圆角24、紧凑/短窄适配见120，导航项命中≥44×44 |
+| 骨架 | 顶部基准80；旧实现Dock72/紧凑64为兼容基线，新采用Dock实际68/64/58见120，footer预留另行核对；首页一屏，业务页及长菜单/弹窗按原契约滚动 |
 | 行为 | 同一页面的操作位置、Tab顺序、草稿保护、取消分支、异步归属不随主题变化 |
 | 动效 | 反馈120ms、控件160ms、面板220ms；尊重系统与应用减少动效偏好 |
 
-完整动效遵循[117书签与落款](117-frontend-motion-standard.md)：浮层退出160ms、页面280ms，书签/勾选/阅读顺序/来源浮层两主题共用参数与命中范围；夜间只换语义色与表面，成功落款使用success。精细动效当前为已认可HTML参照、正式组件待接入；光影/纸纹等新视觉增强仍属候选，不借此自动扩展本深色标准。
+完整动效遵循[117书签与落款](117-frontend-motion-standard.md)：浮层退出160ms、页面280ms，书签/勾选/阅读顺序/来源浮层两主题共用参数与命中范围；夜间只换语义色与表面，成功落款使用success。Dock布面、缝线、局部暖光已按120采用，正式组件待迁移；Dock之外的主页光影/便签纸纹等仍属候选。
 
 ## 2. 深色色板与用途
 
@@ -62,7 +62,7 @@
 | Input / SearchInput / Select / Textarea | surface＋text，lineControl边界 | focus环/边界；invalid用danger | 标签、帮助与错误关联；保留输入、原生键盘和只读复制 |
 | Checkbox / Radio / Switch | 复用公共原生/受控行为 | checked用commit；状态文字和形状同步 | 深色与浅色同命中尺寸，Space可用；busy阻止重复且保留焦点 |
 | ThemeSwitcher | surface中按钮组 | 当前项commit＋onSolid、aria-pressed | 只切外观；无账号切换、导航或业务写入 |
-| PageDock | surface、轻量边界 | 当前页commit＋onSolid、aria-current | 底栏不覆盖主操作；更多可达全部入口 |
+| PageDock | 新采用标准：墨蓝布面、细缝线与书脊接触阴影 | 暗色索引＋text文字、当前图标entry、琥珀上沿/局部暖光，aria-current | 见120；正式组件待迁移，旧commit＋onSolid仅保留兼容；底栏不覆盖主操作，更多保留真实菜单 |
 | DropdownMenu | surface＋lineControl＋浮层阴影 | hover/focus用selection；disabled用disabledText | 视口内定位、长列表内滚动、Esc返回触发点；初始焦点不滚动外层视口 |
 | Modal / useConfirm | surface、text、实色正文和backdrop | 危险动作danger；取消初始焦点 | Portal继承调用预置，锁滚动/焦点、嵌套和取消契约不变 |
 | Disclosure / 列表 / 表格 | 以排版和装饰分隔组织 | 展开/行选中用selection并有明确标记 | selected与expanded分开；避免嵌套按钮；对齐和数据可读性保持 |
@@ -128,3 +128,7 @@
 105维护共用的字体、尺寸、行为；110维护nightwave的完整配色和美术/组件映射；token JSON维护数值。根DESIGN只提供入口与方向，AGENTS负责让协作者读到这些要求。冲突先同步这几处，再实施。
 
 本标准已写入项目，不要求另建一套深色组件库。后续每页同时验收两套预置，执行记录明确列出已验证和仍待验证的范围。
+
+## 9. 夜间品牌标识（2026-10-28采用）
+
+顶部使用折信透明符号dark原稿，保留冷蓝纸面和折痕高光，品牌文字为`Nowadays`。与白昼共用34×36px盒和现有品牌文字规格；桌面与托盘不随应用预置换色。token补丁版本1.3.1新增品牌尺寸，不修改既有色板。实施见[123](123-fold-logo-adoption-execution.md)。

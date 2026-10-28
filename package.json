@@ -2,7 +2,7 @@
   "name": "nowadays",
   "version": "0.2.4",
   "private": true,
-  "description": "nowadays — a warm desktop AI companion and QQ orchestration core",
+  "description": "Nowadays — a warm desktop AI companion and QQ orchestration core",
   "type": "module",
   "main": "desktop-dist/main.mjs",
   "engines": {
@@ -59,7 +59,7 @@
   },
   "build": {
     "appId": "com.nowadays.desktop",
-    "productName": "nowadays",
+    "productName": "Nowadays",
     "asar": true,
     "npmRebuild": false,
     "directories": {
@@ -78,7 +78,7 @@
       }
     ],
     "win": {
-      "icon": "desktop/assets/icon.png",
+      "icon": "desktop/assets/icon.ico",
       "target": [
         {
           "target": "nsis",
@@ -99,7 +99,7 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "nowadays",
+      "shortcutName": "Nowadays",
       "artifactName": "nowadays-${version}-setup.${ext}"
     },
     "portable": {

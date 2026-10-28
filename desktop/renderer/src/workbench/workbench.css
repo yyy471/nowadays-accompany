@@ -10,8 +10,6 @@ html { scroll-behavior: smooth; scrollbar-gutter: stable; }
 .wb-header { min-height: var(--nd-semantic-size-header); display: flex; align-items: center; justify-content: space-between; gap: 24px; border-bottom: 1px solid var(--nd-semantic-color-line-decorative); }
 .wb-brand { display: flex; align-items: center; gap: 12px; font-family: var(--nd-semantic-font-display); font-size: 24px; line-height: 28px; font-weight: var(--nd-semantic-type-heading); letter-spacing: -1px; white-space: nowrap; }
 .wb-brand small { display: block; font-family: var(--nd-semantic-font-code); font-size: var(--nd-semantic-type-caption-size); line-height: var(--nd-semantic-type-caption-line); letter-spacing: 0; font-weight: var(--nd-semantic-type-regular); }
-.wb-mark { position: relative; font-size: 52px; line-height: 54px; }
-.wb-mark > span { position: absolute; right: -9px; top: -11px; font-size: 28px; color: var(--nd-semantic-color-entry); }
 .wb-header-end { display: flex; align-items: center; gap: 16px; }
 .wb-intro { display: grid; grid-template-columns: minmax(0,1.1fr) minmax(0,1fr); min-height: 440px; align-items: center; gap: 32px; padding-block: 32px; }
 .wb-intro-copy { padding-left: 32px; }
