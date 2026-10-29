@@ -2,6 +2,7 @@ import { accountRoutes } from './accounts.js';
 import { artifactRoutes } from './artifacts.js';
 import { connectionRoutes } from './connections.js';
 import { conversationRoutes } from './conversations.js';
+import { extensionAccessRoutes } from './extension-access.js';
 import { extensionRoutes } from './extensions.js';
 import { instanceRoutes } from './instances.js';
 import { jobRoutes } from './jobs.js';
@@ -22,6 +23,7 @@ export function createRoutes(): Route[] {
     accountRoutes(),
     modelRoutes(),
     skillRoutes(),
+    extensionAccessRoutes(),
     extensionRoutes(),
     mediaRoutes(),
     jobRoutes(),

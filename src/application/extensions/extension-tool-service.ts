@@ -23,6 +23,7 @@ import {
 import { ToolConcurrencyLimiter } from '../../extensions/execution/limiter.js';
 import { stableStringify } from '../../providers/types.js';
 import { truncateTextToFit } from '../../platform/text/truncate.js';
+import { skillInstructionsWithConfig } from '../../extensions/skill-render.js';
 import type { ExtensionPolicyService } from './extension-policy-service.js';
 
 /** The part of a plugin runtime the tool service needs; ready tools are read from the runtime service. */
@@ -66,6 +67,8 @@ export interface ExtensionToolServiceOptions {
   logger: Logger;
   capabilityEnabled: (accountId: string, conversation: ConversationRef) => (capability: CapabilityId) => boolean;
   runtime?: (accountId: string) => PluginToolRuntimePort | undefined;
+  /** Shared admission budget. An injected limiter is used, but never closed, by this service. */
+  limiter?: ToolConcurrencyLimiter;
   limits?: ToolExecutionLimits;
   now?: () => number;
 }
@@ -82,6 +85,7 @@ export class ExtensionToolService {
   readonly #capabilityEnabled: ExtensionToolServiceOptions['capabilityEnabled'];
   readonly #runtime?: (accountId: string) => PluginToolRuntimePort | undefined;
   readonly #limiter: ToolConcurrencyLimiter;
+  readonly #ownsLimiter: boolean;
   readonly #limits?: ToolExecutionLimits;
   readonly #now?: () => number;
   readonly #executors = new Map<string, ToolExecutor>();
@@ -95,7 +99,17 @@ export class ExtensionToolService {
     if (options.runtime) this.#runtime = options.runtime;
     this.#limits = options.limits;
     if (options.now) this.#now = options.now;
-    this.#limiter = new ToolConcurrencyLimiter(options.limits ?? {});
+    if (options.limiter) {
+      this.#limiter = options.limiter;
+      this.#ownsLimiter = false;
+    } else {
+      this.#limiter = new ToolConcurrencyLimiter(options.limits ?? {});
+      this.#ownsLimiter = true;
+    }
+  }
+
+  get concurrencyLimiter(): ToolConcurrencyLimiter {
+    return this.#limiter;
   }
 
   async view(accountId: string, conversation: ConversationRef): Promise<ToolView> {
@@ -246,7 +260,7 @@ export class ExtensionToolService {
       id: status.skill.id,
       name: status.skill.name,
       source: status.skill.source,
-      instructions: status.skill.instructions,
+      instructions: skillInstructionsWithConfig(status.skill.instructions, status.config),
       tools: [...status.skill.tools]
     }));
     const hookPluginKeys = [...new Set(includedHooks.map((status) => status.hook.pluginKey))].sort();
@@ -304,7 +318,7 @@ export class ExtensionToolService {
     const executors = [...this.#executors.values()];
     this.#executors.clear();
     await Promise.allSettled(executors.map((executor) => executor.close()));
-    this.#limiter.close();
+    if (this.#ownsLimiter) this.#limiter.close();
   }
 
   #executorFor(accountId: string): ToolExecutor {

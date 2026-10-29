@@ -30,6 +30,7 @@
     "ui:tokens:check": "node desktop/scripts/generate-character-theme.mjs --check",
     "desktop:ui": "npm run ui:tokens && vite --config desktop/renderer/vite.config.ts --host 127.0.0.1",
     "desktop:home-preview": "npm run ui:tokens && node desktop/scripts/home-preview.mjs",
+    "desktop:relationship-preview": "npm run ui:tokens && node --import tsx desktop/scripts/relationship-preview.mjs",
     "desktop:renderer": "npm run ui:tokens && vite build --config desktop/renderer/vite.config.ts",
     "desktop:main": "node desktop/scripts/build.mjs",
     "desktop:build": "npm run build && npm run desktop:renderer && npm run desktop:main",

@@ -35,6 +35,14 @@ export interface AgentHistoryOptions {
   beforeSeq?: number;
 }
 
+export interface AgentRequestObservation {
+  /** Skills that survived the final prompt budget for the first model request. */
+  skillIds: string[];
+  /** Tool identities actually included in the first model request. */
+  toolIds: string[];
+  toolsOffered: boolean;
+}
+
 /** 每个插件只能读写自己的命名空间；实现由宿主注入。 */
 export interface AgentPluginState {
   read<T = Record<string, unknown>>(): Promise<T>;
@@ -73,6 +81,8 @@ export interface AgentMessageContext extends AgentSessionContext {
   setExtensionGuard?(guard: () => boolean | Promise<boolean>): void;
   /** Installed by the Agent; invoked only after the Instance learns the real final send outcome. */
   setAfterTurnHandler?(handler: (outcome: AgentTurnOutcome) => void | Promise<void>): void;
+  /** Records the first request after final context/tool-budget decisions; production hosts may omit it. */
+  observeAgentRequest?(observation: AgentRequestObservation): void;
   /**
    * Marks this turn as a pure-text completion candidate. The instance notifies MEM03 only after the
    * final reply is sent and persisted; calling it does not itself trigger extraction or a model call.

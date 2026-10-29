@@ -1,32 +1,59 @@
 import type { ThemePreset } from './presets';
 
+export interface ThemeTransitionInvocation {
+  readonly from: ThemePreset;
+  readonly to: ThemePreset;
+  readonly commit: (preset: ThemePreset) => void;
+  readonly startViewTransition?: (update: () => void) => ViewTransition;
+  readonly finish: () => void;
+  readonly isCurrent: () => boolean;
+}
+
+/** 页面可以临时接管主题过渡的表现；预置状态仍由 ThemePresetProvider 唯一持有。 */
+export type ThemeTransitionStrategy = (invocation: ThemeTransitionInvocation) => (() => void) | undefined;
+
 /** 每个主题宿主持有自己的过渡；快照只负责绘制，真实编辑器保持挂载。 */
-export function createThemeTransition(initial: ThemePreset, commit: (preset: ThemePreset, weather?: ThemePreset) => void) {
+export function createThemeTransition(
+  initial: ThemePreset,
+  commit: (preset: ThemePreset, weather?: ThemePreset) => void,
+  initialStrategy?: ThemeTransitionStrategy
+) {
   const root = document.documentElement;
   const media = window.matchMedia('(prefers-reduced-motion: reduce)');
   const colors = window.matchMedia('(forced-colors: active)');
   let desired = initial;
+  let current = initial;
   let generation = 0;
   let active: ViewTransition | undefined;
+  let activeStrategyCleanup: (() => void) | undefined;
+  let strategy = initialStrategy;
   let animations: Animation[] = [];
   let disposed = false;
   const reduced = () => root.dataset.motion === 'reduced'
     || (root.dataset.motion !== 'full' && media.matches) || colors.matches;
-  const stop = () => {
-    active?.skipTransition();
+  const stop = (skipTransition = true) => {
+    const transition = active;
     active = undefined;
+    if (transition && skipTransition) transition.skipTransition();
+    activeStrategyCleanup?.();
+    activeStrategyCleanup = undefined;
     for (const animation of animations) animation.cancel();
     animations = [];
     delete root.dataset.themeTransition;
     delete root.dataset.themeTransitionLive;
   };
+  const commitPreset = (preset: ThemePreset, weather?: ThemePreset) => {
+    current = preset;
+    commit(preset, weather);
+  };
   const settle = () => {
     ++generation;
     stop();
-    if (!disposed) commit(desired);
+    if (!disposed) commitPreset(desired);
   };
-  const preferenceChanged = () => { if (active && reduced()) settle(); };
-  const visibilityChanged = () => { if (document.hidden && active) settle(); };
+  const hasActiveTransition = () => !!active || !!activeStrategyCleanup;
+  const preferenceChanged = () => { if (hasActiveTransition() && reduced()) settle(); };
+  const visibilityChanged = () => { if (document.hidden && hasActiveTransition()) settle(); };
   const observer = new MutationObserver(preferenceChanged);
   observer.observe(root, { attributes: true, attributeFilter: ['data-motion'] });
   media.addEventListener('change', preferenceChanged);
@@ -34,14 +61,70 @@ export function createThemeTransition(initial: ThemePreset, commit: (preset: The
   document.addEventListener('visibilitychange', visibilityChanged);
 
   return {
+    setStrategy(next: ThemeTransitionStrategy | undefined) {
+      if (strategy === next) return;
+      strategy = next;
+      // 路由切换到/离开专属页面时收束旧快照，禁止两套表现并行。
+      if (hasActiveTransition()) {
+        ++generation;
+        stop();
+        const id = generation;
+        // 策略卸载发生在 React layout 清理期间，延后提交以免在生命周期内 flushSync。
+        queueMicrotask(() => { if (!disposed && id === generation) commitPreset(desired); });
+      }
+    },
     select(next: ThemePreset) {
       if (disposed || next === desired) return;
       desired = next;
       const id = ++generation;
       stop();
       try { window.localStorage.setItem('nowadays.theme-preset.v1', next); } catch { /* 当次切换仍生效。 */ }
-      if (reduced() || document.hidden || typeof document.startViewTransition !== 'function') {
-        commit(next);
+      if (reduced() || document.hidden) {
+        commitPreset(next);
+        return;
+      }
+      // 快速反向选择回到当前已绘制预置时，只取消在途表现并保留当前 DOM。
+      if (next === current) {
+        commitPreset(next);
+        return;
+      }
+      const finish = () => {
+        if (disposed || id !== generation) return;
+        ++generation;
+        stop(false);
+        commitPreset(desired);
+      };
+      if (strategy) {
+        try {
+          const cleanup = strategy({
+            from: current,
+            to: next,
+            commit: (preset) => { if (!disposed && id === generation) commitPreset(preset); },
+            startViewTransition: typeof document.startViewTransition === 'function' ? (update) => {
+              const transition = document.startViewTransition(update);
+              active = transition;
+              return transition;
+            } : undefined,
+            finish,
+            isCurrent: () => !disposed && id === generation
+          });
+          if (cleanup) {
+            if (id === generation) activeStrategyCleanup = cleanup;
+            else cleanup();
+            return;
+          }
+          // 注册页面的策略不适用时直接切换，不能退回全局天气动画。
+          if (active) { settle(); return; }
+          commitPreset(next);
+          return;
+        } catch {
+          if (hasActiveTransition()) settle();
+          else commitPreset(next);
+          return;
+        }
+      }
+      if (typeof document.startViewTransition !== 'function') {
+        commitPreset(next);
         return;
       }
       root.dataset.themeTransition = next;
@@ -49,7 +132,7 @@ export function createThemeTransition(initial: ThemePreset, commit: (preset: The
         if (!disposed && id === generation) {
           // 只保留旧页快照；新页留在真实DOM，避免整页捕获屏蔽鼠标命中。
           root.dataset.themeTransitionLive = '';
-          commit(next, next);
+          commitPreset(next, next);
         }
       };
       try {
@@ -97,8 +180,9 @@ export function createThemeTransition(initial: ThemePreset, commit: (preset: The
         }).catch(() => { /* 不支持快照或被后续选择打断时，走finished收尾。 */ });
         void transition.finished.catch(() => {}).then(() => {
           if (!disposed && id === generation) {
-            stop();
-            commit(desired);
+            ++generation;
+            stop(false);
+            commitPreset(desired);
           }
         });
       } catch {

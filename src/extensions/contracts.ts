@@ -99,9 +99,7 @@ export interface ToolInvocationResult {
   media?: { mediaId: string; kind: 'image' | 'audio' | 'video' | 'file'; mimeType?: string };
 }
 
-export function pluginKey(source: PluginSource, pluginId: string): string {
-  return `${source}/plugin/${pluginId}`;
-}
+export { pluginKey } from './keys.js';
 
 export function pluginToolId(source: PluginSource, pluginId: string, toolId: string): string {
   return `${source}/plugin/${pluginId}/${toolId}`;

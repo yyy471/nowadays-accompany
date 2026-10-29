@@ -1,0 +1,6 @@
+{
+  "id": "travel-planning",
+  "name": "旅行规划",
+  "description": "结合示例天气整理旅行建议",
+  "tools": ["public/plugin/weather/query"]
+}

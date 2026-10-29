@@ -18,7 +18,7 @@ import type {
   SlotsResponse,
   StreamEvent
 } from './types';
-import { AccountsPage } from './pages/Accounts';
+import { RelationsPage } from './pages/Relations';
 import { ActivityPage } from './pages/Activity';
 import { ArtifactsPage } from './pages/Artifacts';
 import { ExtensionsPage } from './pages/Extensions';
@@ -494,9 +494,9 @@ export function App() {
           {legacyNotice ? <div className="notice legacy-route-notice" role="status"><span>{legacyNotice}</span><CancelButton size="sm" onClick={() => setLegacyNotice(undefined)}>关闭</CancelButton></div> : null}
           {transitionNotice ? <div className="notice notice-warn" role="status"><span>{transitionNotice}</span><CancelButton size="sm" onClick={() => setTransitionNotice(undefined)}>关闭</CancelButton></div> : null}
           </UiThemeScope>
-          <UiThemeProvider theme={page==='home'?'xiacheng':undefined}>
-          <div ref={pageBodyRef} className={page==='home'?'studio-home-content':'studio-legacy-page'}>
-          {page!=='home'?<header className="studio-page-heading"><h1>{current.title}</h1><p>{current.subtitle}</p></header>:null}
+          <UiThemeProvider theme={page==='home'||page==='roles'?'xiacheng':undefined}>
+          <div ref={pageBodyRef} className={page==='home'?'studio-home-content':page==='roles'?'studio-relations-content':'studio-legacy-page'}>
+          {page!=='home'&&page!=='roles'?<header className="studio-page-heading"><h1>{current.title}</h1><p>{current.subtitle}</p></header>:null}
           {page === 'home' ? (
             <UiThemeScope theme="xiacheng">
             <HomePage
@@ -528,7 +528,9 @@ export function App() {
             />
           ) : null}
           {page === 'roles' ? (
-            <AccountsPage
+            <RelationsPage
+              slots={slots.data}
+              slotsError={slots.error}
               locked={quitPhase !== 'idle'}
               accounts={accounts.data}
               accountsLoading={accounts.loading}

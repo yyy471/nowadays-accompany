@@ -28,6 +28,11 @@ export function conversationKey(ref: ConversationRef): string {
   return `${ref.accountId}/${ref.kind}/${ref.peerId}`;
 }
 
+/** 同账号内的配置作用域键，保留既有标识符校验。 */
+export function conversationScopeKey(kind: ChatKind, peerId: string): string {
+  return `${kind}/${assertIdentifier(peerId, 'peerId')}`;
+}
+
 export function parseConversationKey(key: string): ConversationRef {
   const parts = key.split('/');
   if (parts.length !== 3) throw new InvalidSpecError(`invalid conversation key: ${key}`);

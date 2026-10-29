@@ -1,10 +1,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { LocalArtifactStore } from '../../artifacts/local.js';
-import { summarizeProfile, type AccountProfileFile, type ArtifactRef, type ResolvedArtifact } from '../../artifacts/types.js';
+import { summarizeProfile, type AccountPluginEntry, type AccountProfileFile, type ArtifactRef, type ResolvedArtifact } from '../../artifacts/types.js';
 import type { AccountSummary } from '../../contracts/accounts.js';
 import { AccompanyError, InvalidSpecError, IsolationError } from '../../core/errors.js';
 import type { Logger } from '../../core/logger.js';
+import { contentRevision, parseExtensionConfigValue } from '../../extensions/config-value.js';
+import { isPluginKey } from '../../extensions/contracts.js';
 import type { ConversationRoleBinding, ConversationRoleBindingStore, ResolvedConversationRoleBinding } from '../../profiles/role-bindings.js';
 import type { AccountDirectory } from '../../profiles/account-directory.js';
 import type { AccountDisplayProfile, AccountDisplayStore } from '../../profiles/display.js';
@@ -38,10 +40,20 @@ interface RoleBindingView extends ConversationRoleBinding {
   effectiveWorldbook?: EffectiveWorldbook;
 }
 
+export interface PluginConfigView {
+  config: Record<string, unknown>;
+  revision: string;
+}
+
+export interface PluginConfigSaveResult extends PluginConfigView {
+  reload?: { ok: boolean; error?: string; instances: string[] };
+}
+
 /** 账号列表、展示资料、插件资料、角色绑定与重载用例。 */
 export class AccountService {
   readonly #options: AccountServiceOptions;
   readonly #now: () => number;
+  readonly #profileWrites = new Map<string, Promise<unknown>>();
 
   constructor(options: AccountServiceOptions) {
     this.#options = options;
@@ -156,7 +168,7 @@ export class AccountService {
     raw: unknown
   ): Promise<{ profile: AccountProfileFile; reload?: { ok: boolean; error?: string } }> {
     const { dir, instanceId } = this.locate(accountId);
-    const profile = await this.#options.profiles.save(dir, raw);
+    const profile = await this.#serializeProfileWrite(accountId, () => this.#options.profiles.save(dir, raw));
     if (!instanceId) return { profile };
     const snapshot = this.#options.runtime.snapshots().find((item) => item.instanceId === instanceId);
     if (!snapshot || !['online', 'degraded', 'awaiting_profile'].includes(snapshot.state)) return { profile };
@@ -169,6 +181,66 @@ export class AccountService {
         reload: { ok: false, error: error instanceof Error ? error.message : String(error) }
       };
     }
+  }
+
+  async readPluginConfig(accountId: string, pluginKey: string): Promise<PluginConfigView> {
+    const { source, id } = parsePluginKey(pluginKey);
+    const profile = await this.#options.profiles.load(this.locate(accountId).dir);
+    const entry = findPluginEntry(profile, source, id);
+    if (!entry) throw new AccompanyError('plugin_not_installed', `插件 ${pluginKey} 未安装到该账号。`);
+    return { config: structuredClone(entry.entry.config ?? {}), revision: pluginEntryRevision(entry.entry) };
+  }
+
+  /**
+   * Read-modify-write one plugin entry. It shares the account profile chain with full profile saves,
+   * so an unrelated concurrent save is serialized rather than merged from a stale file.
+   */
+  async savePluginConfig(
+    accountId: string,
+    pluginKey: string,
+    raw: unknown,
+    expectedRevision: string
+  ): Promise<PluginConfigSaveResult> {
+    const { source, id } = parsePluginKey(pluginKey);
+    const config = parseExtensionConfigValue(raw, '插件配置');
+    const saved = await this.#serializeProfileWrite(accountId, async () => {
+      const dir = this.locate(accountId).dir;
+      const profile = await this.#options.profiles.load(dir);
+      if (!profile) throw new AccompanyError('plugin_not_installed', `账号 ${accountId} 没有可写的 profile.json。`);
+      const found = findPluginEntry(profile, source, id);
+      if (!found) throw new AccompanyError('plugin_not_installed', `插件 ${pluginKey} 未安装到该账号。`);
+      const currentRevision = pluginEntryRevision(found.entry);
+      if (typeof expectedRevision !== 'string' || !expectedRevision || currentRevision !== expectedRevision) {
+        throw new AccompanyError('extension_config_conflict', '插件配置已被修改，请刷新后重试。');
+      }
+      const nextEntry: AccountPluginEntry = { ...found.entry };
+      if (Object.keys(config).length > 0) nextEntry.config = config;
+      else delete nextEntry.config;
+      const plugins = [...(profile.plugins ?? [])];
+      plugins[found.index] = nextEntry;
+      await this.#options.profiles.save(dir, { ...profile, plugins });
+      return { config, revision: pluginEntryRevision(nextEntry) };
+    });
+    const results = await this.reload(accountId);
+    if (results.length === 0) return saved;
+    const failure = results.find((result) => !result.ok);
+    return {
+      ...saved,
+      reload: {
+        ok: !failure,
+        ...(failure?.error ? { error: failure.error } : {}),
+        instances: results.map((result) => result.instanceId)
+      }
+    };
+  }
+
+  #serializeProfileWrite<T>(accountId: string, task: () => Promise<T>): Promise<T> {
+    const previous = this.#profileWrites.get(accountId) ?? Promise.resolve();
+    const run = previous.catch(() => undefined).then(task);
+    this.#profileWrites.set(accountId, run);
+    return run.finally(() => {
+      if (this.#profileWrites.get(accountId) === run) this.#profileWrites.delete(accountId);
+    });
   }
 
   async reload(accountId: string): Promise<Array<{ instanceId: string; ok: boolean; error?: string }>> {
@@ -318,6 +390,35 @@ export class AccountService {
 
 function contextEpochFor(binding: ConversationRoleBinding, artifact: ResolvedArtifact, catalogEpoch: number): string {
   return `${binding.contextRevision ?? binding.revision}:${artifact.ref.source}:${artifact.ref.id}:${artifact.ref.revision}:${catalogEpoch}`;
+}
+
+function parsePluginKey(key: string): { source: 'public' | 'private'; id: string } {
+  if (typeof key !== 'string' || !isPluginKey(key)) {
+    throw new InvalidSpecError('插件配置 id 必须使用 public/plugin/<id> 或 private/plugin/<id>。');
+  }
+  const [source, , id] = key.split('/');
+  return { source: source as 'public' | 'private', id: id as string };
+}
+
+function findPluginEntry(
+  profile: AccountProfileFile | undefined,
+  source: 'public' | 'private',
+  id: string
+): { entry: AccountPluginEntry; index: number } | undefined {
+  const plugins = profile?.plugins ?? [];
+  const index = plugins.findIndex((entry) => entry.source === source && entry.id === id);
+  if (index < 0) return undefined;
+  return { entry: plugins[index]!, index };
+}
+
+function pluginEntryRevision(entry: AccountPluginEntry): string {
+  return contentRevision({
+    source: entry.source,
+    id: entry.id,
+    revision: entry.revision ?? null,
+    enabled: entry.enabled ?? null,
+    config: entry.config ?? {}
+  });
 }
 
 async function safeReaddir(dir: string): Promise<string[]> {

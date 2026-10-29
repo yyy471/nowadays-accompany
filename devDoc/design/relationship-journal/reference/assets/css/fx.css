@@ -1,0 +1,108 @@
+/* 动效：同一个类名，昼夜各演各的。时长都乘 --m，减少动效时归零。 */
+.seal{position:fixed;right:15%;bottom:150px;z-index:55;display:flex;flex-direction:column;align-items:center;justify-content:center;width:124px;height:84px;opacity:0;pointer-events:none;transform:rotate(-10deg) scale(1.6)}
+.seal b{font-size:24px;line-height:30px}.seal small{font-size:12px;line-height:16px}
+.seal.show{animation:sealIn calc(1700ms*var(--m)) var(--ease) both}
+@keyframes sealIn{0%{opacity:0;transform:rotate(-16deg) scale(1.8)}14%{opacity:1;transform:rotate(-9deg) scale(.94)}20%{transform:rotate(-10deg) scale(1)}80%{opacity:1}100%{opacity:0;transform:rotate(-10deg) scale(1)}}
+
+/* 换账号（v3）：和总览同一套空间语言——当前页缩回它在书架（机架）上的那本（那台），另一本里的页从书脊里放大出来。
+ * 主路径是 View Transition（见下方 data-vt="acc"）；浏览器不支持时退成同方向的 2D 缩放；减少动效时直接切换。 */
+.book.closing .spread{transform-origin:var(--acc-ox,8%) -60px;animation:accOut calc(300ms*var(--m)) cubic-bezier(.5,0,.75,0) both}
+.book.opening .spread{transform-origin:var(--acc-ox,8%) -60px;animation:accIn calc(460ms*var(--m)) cubic-bezier(.2,.8,.2,1) both}
+@keyframes accOut{to{transform:scale(.18);opacity:0}}
+@keyframes accIn{from{transform:scale(.18);opacity:0}60%{opacity:1}}
+html[data-vt="acc"]::view-transition-group(wj-acc-out){animation-duration:calc(420ms*var(--m));animation-timing-function:cubic-bezier(.5,0,.2,1);z-index:6}
+html[data-vt="acc"]::view-transition-group(wj-acc-in){animation-duration:calc(520ms*var(--m));animation-delay:calc(130ms*var(--m));animation-timing-function:cubic-bezier(.2,.8,.2,1);z-index:7}
+html[data-vt="acc"]::view-transition-old(wj-acc-out),html[data-vt="acc"]::view-transition-new(wj-acc-out),html[data-vt="acc"]::view-transition-old(wj-acc-in),html[data-vt="acc"]::view-transition-new(wj-acc-in){height:100%;object-fit:fill}
+html[data-vt="acc"]::view-transition-old(wj-acc-out){animation:vtOutLate calc(420ms*var(--m)) both}
+html[data-vt="acc"]::view-transition-new(wj-acc-out){animation:vtInLate calc(420ms*var(--m)) both}
+html[data-vt="acc"]::view-transition-old(wj-acc-in){animation:vtOutEarly calc(520ms*var(--m)) calc(130ms*var(--m)) both}
+html[data-vt="acc"]::view-transition-new(wj-acc-in){animation:vtInEarly calc(520ms*var(--m)) calc(130ms*var(--m)) both}
+html[data-vt="acc"]::view-transition-old(root){animation:vtRootOut calc(240ms*var(--m)) ease both}
+html[data-vt="acc"]::view-transition-new(root){animation:vtRootIn calc(300ms*var(--m)) calc(80ms*var(--m)) ease both}
+
+/* 翻页 / 调台 */
+[data-ui-preset="daylight"] .book.turning .leaf.right{transform-origin:0 50%;animation:turnIn calc(540ms*var(--m)) cubic-bezier(.2,.7,.2,1) both}
+[data-ui-preset="daylight"] .book.turning .leaf.right::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(90deg,color-mix(in srgb,var(--text) 18%,transparent),transparent 40%);animation:turnShade calc(540ms*var(--m)) ease-out both}
+[data-ui-preset="daylight"] .book.turning .leaf.left>*{animation:fadeUp calc(420ms*var(--m)) var(--ease) both}
+@keyframes turnIn{0%{transform:rotateY(-38deg);opacity:.2}100%{transform:none;opacity:1}}
+@keyframes turnShade{0%{opacity:1}100%{opacity:0}}
+@keyframes fadeUp{0%{opacity:0;transform:translateY(6px)}100%{opacity:1;transform:none}}
+[data-ui-preset="nightwave"] .book.turning .spread::after{content:"";position:absolute;inset:0;z-index:9;pointer-events:none;mix-blend-mode:screen;
+  background:repeating-linear-gradient(0deg,color-mix(in srgb,var(--text) 10%,transparent) 0 1px,transparent 1px 3px),repeating-linear-gradient(90deg,transparent 0 7px,color-mix(in srgb,var(--text) 5%,transparent) 7px 8px);animation:staticBurst calc(460ms*var(--m)) steps(6) both}
+[data-ui-preset="nightwave"] .book.turning .leaf>*{animation:tuneIn calc(480ms*var(--m)) ease-out both}
+@keyframes staticBurst{0%{opacity:.9;background-position:0 0,0 0}50%{opacity:.6;background-position:0 7px,13px 0}100%{opacity:0;background-position:0 -5px,-9px 0}}
+@keyframes tuneIn{0%{opacity:0;filter:blur(3px)}40%{opacity:.6;filter:blur(1.5px)}100%{opacity:1;filter:none}}
+
+/* 贴上 / 插上 */
+[data-ui-preset="daylight"] .fx-paste .face{animation:stickOn calc(560ms*var(--m)) cubic-bezier(.2,.9,.3,1.2) both}
+@keyframes stickOn{0%{transform:translateY(-22px) scale(1.12) rotate(-7deg);box-shadow:0 0 0 4px var(--white),0 34px 30px -16px color-mix(in srgb,var(--text) 50%,transparent)}
+  55%{transform:translateY(2px) scale(.97) rotate(calc(var(--rot,0deg) + 1deg))}75%{transform:scale(1.01) rotate(var(--rot,0deg))}100%{transform:rotate(var(--rot,0deg))}}
+[data-ui-preset="daylight"] .fx-paste .face::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:linear-gradient(105deg,transparent 30%,color-mix(in srgb,#fff 80%,transparent) 48%,transparent 66%) -120% 0/250% 100% no-repeat;animation:sheen calc(700ms*var(--m)) calc(260ms*var(--m)) ease-out both}
+@keyframes sheen{to{background-position:120% 0}}
+[data-ui-preset="nightwave"] .fx-paste .face{animation:plugIn calc(520ms*var(--m)) cubic-bezier(.3,1.4,.5,1) both}
+[data-ui-preset="nightwave"] .fx-paste .knob{animation:knobUp calc(600ms*var(--m)) calc(200ms*var(--m)) cubic-bezier(.3,1.3,.5,1) both}
+[data-ui-preset="nightwave"] .fx-paste .led{animation:ledFlash calc(500ms*var(--m)) calc(180ms*var(--m)) steps(4) both}
+@keyframes plugIn{0%{transform:translateY(-26px);opacity:.3}55%{transform:translateY(2px);opacity:1}70%{transform:translateY(-2px)}100%{transform:none}}
+@keyframes knobUp{from{top:calc(100% - 12px)}to{top:0}}
+@keyframes ledFlash{0%,50%{opacity:0}25%,75%,100%{opacity:1}}
+/* 揭下 / 拔掉 */
+[data-ui-preset="daylight"] .fx-peel .face{animation:residue calc(500ms*var(--m)) ease-out both}
+@keyframes residue{0%{opacity:0;transform:scale(1.03)}100%{opacity:1;transform:none}}
+[data-ui-preset="nightwave"] .fx-peel .knob{animation:knobDown calc(420ms*var(--m)) var(--ease) both}
+[data-ui-preset="nightwave"] .fx-peel .face{animation:unplug calc(360ms*var(--m)) ease-out both}
+@keyframes knobDown{from{top:0}to{top:calc(100% - 12px)}}
+@keyframes unplug{0%{filter:brightness(1.4)}100%{filter:none}}
+.dragghost.fly{transition:transform calc(420ms*var(--m)) cubic-bezier(.4,0,.7,.2),opacity calc(420ms*var(--m))!important;opacity:0}
+.dragghost.land{transition:opacity calc(200ms*var(--m));opacity:0}
+.peel-fly{position:fixed;z-index:60;pointer-events:none;animation:peelFly calc(560ms*var(--m)) cubic-bezier(.5,0,.8,.4) both}
+@keyframes peelFly{0%{transform:none;opacity:1}30%{transform:translate(6px,-10px) rotate(6deg) skewX(-4deg);opacity:1}100%{transform:translate(120px,-90px) rotate(24deg) scale(.7);opacity:0}}
+[data-ui-preset="nightwave"] .peel-fly{animation-name:unplugFly}
+@keyframes unplugFly{0%{transform:none;opacity:1}100%{transform:translateY(-46px);opacity:0}}
+/* 橡皮擦 / 切回转播 */
+[data-ui-preset="daylight"] .fx-erase .face>*{animation:carbonIn calc(900ms*var(--m)) ease-out both}
+[data-ui-preset="daylight"] .fx-erase::after{content:"";position:absolute;z-index:5;top:18px;left:10%;width:64px;height:30px;border-radius:7px;pointer-events:none;
+  background:linear-gradient(90deg,var(--accent) 0 38%,var(--white) 38% 42%,var(--sel) 42%);box-shadow:0 6px 10px -4px color-mix(in srgb,var(--text) 40%,transparent),inset 0 -3px 0 color-mix(in srgb,var(--entry) 25%,transparent);
+  animation:rub calc(900ms*var(--m)) ease-in-out both}
+[data-ui-preset="daylight"] .fx-erase::before{content:"";position:absolute;z-index:4;left:20%;right:20%;top:56px;height:16px;pointer-events:none;
+  background:radial-gradient(circle,color-mix(in srgb,var(--accent) 90%,#000 5%) 1.4px,transparent 1.8px) 0 0/11px 9px,radial-gradient(circle,color-mix(in srgb,var(--line-c) 90%,transparent) 1.2px,transparent 1.6px) 5px 4px/13px 8px;
+  animation:crumbs calc(1000ms*var(--m)) ease-in both}
+@keyframes rub{0%{opacity:0;transform:translate(-10px,-6px) rotate(-14deg)}10%{opacity:1}25%{transform:translate(110px,4px) rotate(-10deg)}42%{transform:translate(10px,-2px) rotate(-16deg)}60%{transform:translate(120px,6px) rotate(-10deg)}78%{transform:translate(40px,0) rotate(-14deg);opacity:1}100%{opacity:0;transform:translate(170px,-30px) rotate(-6deg)}}
+@keyframes crumbs{0%,30%{opacity:0;transform:none}50%{opacity:1}100%{opacity:0;transform:translateY(22px)}}
+@keyframes carbonIn{0%,45%{opacity:0;filter:blur(1.5px)}100%{opacity:1;filter:none}}
+[data-ui-preset="nightwave"] .fx-erase .face{animation:relayIn calc(700ms*var(--m)) ease-out both}
+[data-ui-preset="nightwave"] .fx-erase .relay{animation:ledFlash calc(600ms*var(--m)) steps(6) both}
+@keyframes relayIn{0%{filter:brightness(1.6) blur(1px)}30%{filter:brightness(.6)}100%{filter:none}}
+/* 定位闪烁 */
+.fx-flash{animation:flash calc(1500ms*var(--m)) ease-out both}
+@keyframes flash{0%,30%,60%{box-shadow:0 0 0 0 transparent}15%,45%{box-shadow:0 0 0 6px color-mix(in srgb,var(--entry) 55%,transparent)}100%{box-shadow:0 0 0 0 transparent}}
+/* 红笔圈出来 */
+[data-ui-preset="daylight"] .book.turning .cell.bad .loop path,[data-ui-preset="daylight"] .book.opening .cell.bad .loop path{animation:draw calc(700ms*var(--m)) calc(200ms*var(--m)) ease-out both}
+@keyframes draw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
+.fx-fixed .face{animation:fixedPulse calc(900ms*var(--m)) ease-out both}
+@keyframes fixedPulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ok) 60%,transparent)}40%{box-shadow:0 0 0 8px color-mix(in srgb,var(--ok) 0%,transparent)}}
+.fx-hint{animation:flash calc(1500ms*var(--m)) ease-out both}
+/* 请人 / 上麦 */
+[data-ui-preset="daylight"] .fx-role{animation:portraitIn calc(620ms*var(--m)) cubic-bezier(.2,.9,.3,1.2) both}
+@keyframes portraitIn{0%{transform:translateY(-30px) rotate(-9deg);opacity:0}60%{transform:translateY(2px) rotate(-1.8deg);opacity:1}100%{transform:rotate(-2.4deg)}}
+[data-ui-preset="nightwave"] .fx-role .rim{animation:rimOn calc(800ms*var(--m)) steps(5) both}
+@keyframes rimOn{0%{opacity:0}40%{opacity:1}55%{opacity:.3}100%{opacity:1}}
+.fx-v .stamp{animation:stampIn calc(520ms*var(--m)) calc(280ms*var(--m)) cubic-bezier(.2,.9,.3,1.3) both}
+@keyframes stampIn{0%{opacity:0;scale:1.5}100%{opacity:1;scale:1}}
+/* 封底 / 设备架 出现 */
+[data-ui-preset="daylight"] .sheet{animation:sheetIn calc(380ms*var(--m)) cubic-bezier(.2,.8,.2,1) both}
+@keyframes sheetIn{from{transform:translateX(-36px) rotate(-2deg);opacity:0}to{transform:none;opacity:1}}
+[data-ui-preset="nightwave"] .sheet{animation:rackIn calc(380ms*var(--m)) cubic-bezier(.2,.8,.2,1) both}
+@keyframes rackIn{from{transform:translateX(-100%)}to{transform:none}}
+.spine.fx-ping{animation:flash calc(1500ms*var(--m)) ease-out both}
+/* 减少动效：保留状态变化，去掉位移和闪烁 */
+:root[data-motion="reduced"] *,:root[data-motion="reduced"] *::before,:root[data-motion="reduced"] *::after{animation-duration:1ms!important;animation-iteration-count:1!important;transition-duration:1ms!important}
+@media (prefers-reduced-motion:reduce){:root[data-motion="system"] *,:root[data-motion="system"] *::before,:root[data-motion="system"] *::after{animation-duration:1ms!important;animation-iteration-count:1!important;transition-duration:1ms!important}}
+.seal{bottom:210px}
+[data-ui-preset="nightwave"] .seal{width:156px;transform:none}
+[data-ui-preset="nightwave"] .seal.show{animation:ackIn calc(1800ms*var(--m)) var(--ease) both}
+[data-ui-preset="nightwave"] .seal.show.k-fail,[data-ui-preset="nightwave"] .seal.show.k-unknown{animation-duration:calc(2400ms*var(--m))}
+@keyframes ackIn{0%{opacity:0;transform:scale(.92);filter:blur(4px)}12%{opacity:1;transform:scale(1.02);filter:blur(0)}18%{transform:scale(1)}82%{opacity:1}100%{opacity:0;transform:scale(1)}}
+[data-ui-preset="daylight"] .seal.show.k-fail,[data-ui-preset="daylight"] .seal.show.k-unknown{animation-duration:calc(2400ms*var(--m))}
+html[data-motion="reduced"] .seal.show{animation:none;opacity:1;transform:rotate(-10deg)}
+@media (prefers-reduced-motion:reduce){html[data-motion="system"] .seal.show{animation:none;opacity:1;transform:rotate(-10deg)}}
+html[data-motion="reduced"] [data-ui-preset="nightwave"] .seal.show,html[data-ui-preset="nightwave"][data-motion="reduced"] .seal.show{transform:none}

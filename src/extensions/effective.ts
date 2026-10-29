@@ -2,7 +2,8 @@ import type { CapabilityId } from '../policy/capabilities.js';
 import type { AccountExtensionPolicy } from '../providers/types.js';
 import type { ConversationRef } from '../routing/identity.js';
 import type { CatalogHook, CatalogPlugin, CatalogSkill, CatalogTool, ExtensionCatalog } from './catalog.js';
-import { pluginKey, type ToolOwner } from './contracts.js';
+import type { ToolOwner } from './contracts.js';
+import { pluginKey } from './keys.js';
 import { resolveExtensionSwitch, resolvePluginSwitch, type ExtensionSwitchSource } from './policy.js';
 
 export type EffectiveIssueCode =
@@ -43,6 +44,8 @@ export interface EffectiveSkillStatus {
   switchSource: ExtensionSwitchSource;
   issues: EffectiveIssue[];
   unavailableTools: string[];
+  /** Account JSON parameters keyed by this effective Skill id. */
+  config?: Record<string, unknown>;
 }
 
 export interface EffectiveStateStatus {
@@ -68,6 +71,8 @@ export interface ResolveEffectiveExtensionsInput {
   catalog: ExtensionCatalog;
   authorizedTools: readonly string[];
   extensions?: AccountExtensionPolicy;
+  /** Plain JSON parameters to render next to the effective Skill instructions. */
+  skillConfigs?: Record<string, Record<string, unknown>>;
   /** Actual capability resolution; omitted means "unknown, do not block on capability". */
   capabilityEnabled?: (capability: CapabilityId) => boolean;
 }
@@ -191,7 +196,17 @@ export function resolveEffectiveExtensions(input: ResolveEffectiveExtensionsInpu
     for (const toolId of unavailableTools) {
       issues.push({ code: 'skill_tool_unavailable', detail: toolId });
     }
-    return { skill, enabled: issues.length === 0, switchSource: run.source, issues, unavailableTools };
+    const config = input.skillConfigs && Object.hasOwn(input.skillConfigs, skill.id)
+      ? input.skillConfigs[skill.id]
+      : undefined;
+    return {
+      skill,
+      enabled: issues.length === 0,
+      switchSource: run.source,
+      issues,
+      unavailableTools,
+      ...(config ? { config: structuredClone(config) } : {})
+    };
   });
 
   const states: EffectiveStateStatus[] = input.catalog.plugins.map((plugin) => {

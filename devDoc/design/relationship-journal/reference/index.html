@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN" data-ui-theme="xiacheng" data-ui-palette="xiacheng" data-ui-preset="daylight" data-motion="system">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>关系 · 接线 —— 手账与电台（概念原型）· Nowadays</title>
+<meta name="description" content="Nowadays「接线」大胆概念：白昼来信＝手账本加复写纸，晚风电台＝电台调频。全部为虚构示例数据。">
+<link rel="stylesheet" href="assets/tokens/character-tokens.css">
+<link rel="stylesheet" href="assets/css/base.css">
+<link rel="stylesheet" href="assets/css/stage.css">
+<link rel="stylesheet" href="assets/css/day.css">
+<link rel="stylesheet" href="assets/css/night.css">
+<link rel="stylesheet" href="assets/css/ov.css">
+<link rel="stylesheet" href="assets/css/spec.css">
+<link rel="stylesheet" href="assets/css/cf.css">
+<link rel="stylesheet" href="assets/css/fx.css">
+<script>
+  try { var t = localStorage.getItem('nowadays.wiringJournal.theme'); if (t === 'nightwave' || t === 'daylight') document.documentElement.dataset.uiPreset = t; } catch (e) {}
+  (function () { var h = location.hash.slice(1).split('&').reduce(function (o, kv) { var p = kv.split('='); if (p[0]) o[p[0]] = p[1]; return o; }, {});
+    if (h.theme === 'nightwave' || h.theme === 'daylight') document.documentElement.dataset.uiPreset = h.theme;
+    if (h.motion === 'reduced' || h.motion === 'full') document.documentElement.dataset.motion = h.motion; })();
+</script>
+<script>/* v3 · 发丝线对齐物理像素（Windows 125% / 150% 缩放不糊） */(function(){var R=document.documentElement;function s(){var d=window.devicePixelRatio||1;R.style.setProperty('--px',(1/d)+'px');R.style.setProperty('--hp',(Math.max(1,Math.round(d))/d)+'px');R.dataset.dpr=String(Math.round(d*100));try{matchMedia('(resolution: '+d+'dppx)').addEventListener('change',s,{once:true})}catch(e){}}s();})();</script>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><filter id="wj-duo" color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values=".33 .33 .33 0 0 .33 .33 .33 0 0 .33 .33 .33 0 0 0 0 0 1 0"/><feComponentTransfer><feFuncR type="table" tableValues=".11 .55 .98"/><feFuncG type="table" tableValues=".12 .38 .84"/><feFuncB type="table" tableValues=".22 .42 .66"/></feComponentTransfer></filter></svg>
+<div class="shell">
+  <header class="top">
+    <button type="button" class="brand" data-act="toast" data-msg="原型只包含「关系」页。" aria-label="Nowadays">
+      <img class="brand-day" src="assets/brand/fold-light.svg" alt="" width="34" height="36">
+      <img class="brand-night" src="assets/brand/fold-dark.svg" alt="" width="34" height="36">
+      <span><b>Nowadays</b><small>CHARACTER STUDIO</small></span>
+    </button>
+    <div class="theme-sw" role="group" aria-label="外观主题">
+      <button type="button" data-act="theme" data-v="daylight" data-k="th-day"><svg class="ico s" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.6"/><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M5.6 18.4l1.6-1.6M16.8 7.2l1.6-1.6"/></svg>白昼来信</button>
+      <button type="button" data-act="theme" data-v="nightwave" data-k="th-night"><svg class="ico s" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 14.6A7.6 7.6 0 1 1 9.4 5a6 6 0 0 0 9.6 9.6z"/></svg>晚风电台</button>
+    </div>
+    <div class="top-right">
+      <span class="chip" id="data-chip" title="账号、会话、角色卡、插件与 Skill 全部虚构；改动只在本页内存">示例数据</span>
+      <button type="button" class="icon-btn" data-act="demo" aria-haspopup="dialog" aria-expanded="false" aria-controls="demo" aria-label="演示开关与快捷键（Ctrl+Shift+D）" title="演示开关 · Ctrl+Shift+D"><svg class="ico" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h7M15 18h5"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="13" cy="18" r="2"/></svg></button>
+    </div>
+  </header>
+  <main class="main">
+    <div class="stage">
+      <section id="shelf" class="shelf" aria-label="账号"></section>
+      <nav id="strip" class="strip" aria-label="页签 / 频率">
+        <div class="glass" aria-hidden="true"></div>
+        <span class="band band-g" aria-hidden="true"><i>群聊波段</i></span><span class="band band-p" aria-hidden="true"><i>私聊波段</i></span>
+        <div class="ticks" aria-hidden="true"></div>
+        <div class="stations"></div>
+        <i class="needle" aria-hidden="true"></i>
+        <span class="edge" aria-hidden="true"></span>
+      </nav>
+      <div class="tools" role="toolbar" aria-label="查看">
+        <button type="button" class="tool ov-tool" data-act="ov" data-k="tool-ov" aria-pressed="false" aria-keyshortcuts="O"><span class="ov-ico" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span><span><span class="tl"><span class="d">摊开全本</span><span class="n">全频扫描</span></span><small>总览全部会话 · <kbd>O</kbd></small></span></button>
+        <button type="button" class="tool" data-act="xray" data-k="tool-xray" aria-pressed="false"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V8.5L12 4l7 4.5V19"/><path d="M5 13.5 12 9l7 4.5"/><path d="M5 19l7-4.5 7 4.5"/></svg><span><span class="tl"><span class="d">掀开透光</span><span class="n">信号来路</span></span><small>按住 <kbd>空格</kbd></small></span></button>
+      </div>
+      <section id="book" class="book" aria-label="当前页"></section>
+    </div>
+  </main>
+  <footer class="foot">
+    <p class="runtime">示例数据 · 改动只在本页内存 · 主题记在本机</p>
+    <nav class="dock" aria-label="主导航">
+      <span class="dock-marker" aria-hidden="true"></span>
+      <button type="button" data-act="toast" data-msg="原型只包含「关系」页。"><svg class="ico" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 11.5 12 5l8 6.5V20H4z"/><path d="M10 20v-5h4v5"/></svg>桌面</button>
+      <button type="button" aria-current="page" data-dock-current><svg class="ico" aria-hidden="true" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20c.5-3.5 2.7-5.4 5.5-5.4s5 1.9 5.5 5.4"/><path d="M16 5.5a3 3 0 0 1 0 5.8"/><path d="M17.5 14.8c1.8.5 2.9 2.2 3 5.2"/></svg>关系</button>
+      <button type="button" data-act="toast" data-msg="原型只包含「关系」页。"><svg class="ico" aria-hidden="true" viewBox="0 0 24 24"><path d="M13 3 5 13.5h6L10 21l8-10.5h-6z"/></svg>模型</button>
+      <button type="button" data-act="toast" data-msg="原型只包含「关系」页。"><svg class="ico" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 3.5 7.5v9L12 21l8.5-4.5v-9z"/><path d="m3.8 7.6 8.2 4.3 8.2-4.3"/><path d="M12 12v9"/></svg>收藏</button>
+      <button type="button" class="more" data-act="toast" data-msg="原型只包含「关系」页。"><svg class="ico" aria-hidden="true" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg>更多</button>
+    </nav>
+    <p class="edition">接线概念 · 手账 / 电台 · 基于 6e6f015</p>
+  </footer>
+</div>
+<div id="demo" class="demo" role="dialog" aria-label="演示开关" hidden></div>
+<div id="toast" class="toast" role="status"></div>
+<div id="seal" class="seal" aria-hidden="true"></div>
+<div id="live" class="sr" aria-live="polite"></div>
+<script src="assets/js/data.js"></script>
+<script src="assets/js/art.js"></script>
+<script src="assets/js/app.js"></script>
+<script src="assets/js/app-2.js"></script>
+<script src="assets/js/overview.js"></script>
+<script src="assets/js/theme.js"></script>
+  <script>(function place() { var b = document.querySelector('[data-dock-current]'), m = document.querySelector('.dock-marker'); if (!b || !m) return; var f = function () { m.style.left = b.offsetLeft + 'px'; }; f(); window.addEventListener('resize', f); document.fonts && document.fonts.ready.then(f); })();</script>
+</body>
+</html>

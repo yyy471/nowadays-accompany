@@ -82,3 +82,9 @@ Disclosure 的 grid 折叠、内部裁切和 `0fr ↔ 1fr` 结构位于不依赖
 ## 折信品牌
 
 `BrandMark`由公共入口导出，读取当前UiThemeScope的外观预置，使用透明底SVG原稿；装饰图片为空alt，由外层品牌按钮提供可访问名称。盒尺寸消费`component.brand.markWidth/markHeight`（34×36px），与字号独立；正式壳与组件样板共用。系统图标和托盘见[123](../../../../devDoc/123-fold-logo-adoption-execution.md)。
+
+## 关系页限定外观
+
+`relationship-journal.css`由`desktop/scripts/import-relationship-design.mjs`从冻结参考生成，`relationship-journal-integration.css`维护公共控件在`.wj-journal`内的适配。原型JS不进入renderer。按钮仍使用Button/ControlButton，输入选择使用Field/Input/Select，浮层用Modal；禁止原型内存保存或自行建立Portal。关系页装饰字体及日夜不同总览的采用范围见[143](../../../../devDoc/143-relationship-journal-migration-plan.md)，实际证据见144。导入脚本仅开发时运行，更新token后必须重新执行ui:tokens与同步检查。
+
+关系页在`roles`路由通过`useThemeTransitionStrategy`注册专属昼夜表现；该注册只决定如何播放，不存第二份主题。主题预置立即由ThemePresetProvider提交，关系页用真实DOM明暗收束与实测纸线/刻度形变，总览只切材质。局部`data-motion=reduced`、窗口缩放、测量节点替换、页面卸载、快速反向和异常时清理当前WAAPI与装饰线并断开监听。其它路由没有此注册时继续使用全局天气换场，详细策略及证据见[146](../../../../devDoc/146-relationship-journal-theme-transition-execution.md)。

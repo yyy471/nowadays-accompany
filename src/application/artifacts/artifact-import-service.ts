@@ -31,10 +31,10 @@ export class ArtifactImportService {
     this.#limits = { ...DEFAULT_LIMITS, ...options.limits };
     if (Object.values(this.#limits).some(value => !Number.isSafeInteger(value) || value < 1)) throw new InvalidSpecError('制品导入限制必须为正整数。');
   }
-  async preview(sourceDirectory: string): Promise<ArtifactImportPreview> {
+  async preview(sourceDirectory: string, options: { checkDestination?: boolean } = {}): Promise<ArtifactImportPreview> {
     const scan = await this.#scan(path.resolve(sourceDirectory));
     const preview = this.#preview(scan);
-    await this.#checkDestination(preview.targetPath);
+    if (options.checkDestination !== false) await this.#checkDestination(preview.targetPath);
     return preview;
   }
   async import(sourceDirectory: string, options: { expectedFingerprint?: string } = {}): Promise<ArtifactImportPreview> {

@@ -215,24 +215,24 @@ export function buildPolicyPatch(
 ): ExtensionPolicyPatchDto {
   const byKind: NonNullable<ExtensionPolicyPatchDto['byKind']> = {};
   for (const kind of new Set<ExtensionChatKind>([...Object.keys(current.byKind) as ExtensionChatKind[], ...Object.keys(draft.byKind) as ExtensionChatKind[]])) {
-    byKind[kind] = exactScope(draft.byKind[kind] ?? {}, keys);
+    byKind[kind] = exactScope(draft.byKind[kind] ?? {}, keys, current.byKind[kind]);
   }
   const byConversation: Record<string, ExtensionRunPolicy> = {};
   for (const key of new Set([...Object.keys(current.byConversation), ...Object.keys(draft.byConversation)])) {
-    byConversation[key] = exactScope(draft.byConversation[key] ?? {}, keys);
+    byConversation[key] = exactScope(draft.byConversation[key] ?? {}, keys, current.byConversation[key]);
   }
   return {
     authorizedTools: [...new Set(draft.authorizedTools)].sort(),
-    defaults: exactScope(draft.defaults, keys),
+    defaults: exactScope(draft.defaults, keys, current.defaults),
     byKind,
     byConversation
   };
 }
 
-function exactScope(policy: ExtensionRunPolicy, keys: ExtensionCatalogKeys): ExtensionRunPolicy {
+function exactScope(policy: ExtensionRunPolicy, keys: ExtensionCatalogKeys, previous?: ExtensionRunPolicy): ExtensionRunPolicy {
   const result: ExtensionRunPolicy = {};
   for (const section of SECTIONS) {
-    const all = new Set([...keys[section], ...Object.keys(policy[section] ?? {})]);
+    const all = new Set([...keys[section], ...Object.keys(policy[section] ?? {}), ...Object.keys(previous?.[section] ?? {})]);
     if (all.size === 0) continue;
     const values: Record<string, ExtensionSwitchValue> = {};
     for (const key of all) values[key] = policy[section]?.[key] ?? 'inherit';

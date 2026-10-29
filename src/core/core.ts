@@ -76,6 +76,24 @@ import { PolicyService } from '../policy/policy.js';
 import { ExtensionRegistry } from '../extensions/registry.js';
 import { ExtensionToolService } from '../application/extensions/extension-tool-service.js';
 import type { ExtensionPolicyService } from '../application/extensions/extension-policy-service.js';
+import { ExtensionImportService } from '../application/extensions/extension-import-service.js';
+import { ExtensionConfigService } from '../application/extensions/extension-config-service.js';
+import { ExtensionTestService } from '../application/extensions/extension-test-service.js';
+import type {
+  ExtensionConfigKind,
+  ExtensionConfigUpdateInput,
+  ExtensionConfigUpdateResult,
+  ExtensionConfigView,
+  ExtensionImportInput,
+  ExtensionImportPreview,
+  ExtensionImportPreviewInput,
+  ExtensionImportResult,
+  ExtensionImportScanResult,
+  ExtensionSkillTestInput,
+  ExtensionSkillTestPreview,
+  ExtensionTestResult,
+  ExtensionToolTestInput
+} from '../contracts/extension-access.js';
 import type { SkillService } from '../application/extensions/skill-service.js';
 import type { PrivateSkillMutation, PublicSkillList, SkillCopyResult, SkillDeleteResult, SkillImpact, SkillPreview, SkillPreviewEntry, PrivateSkillList } from '../contracts/skills.js';
 import type { SkillResolution } from '../extensions/registry.js';
@@ -164,6 +182,9 @@ export class Core implements CoreView {
   readonly #pluginStates = new Map<string, PluginStateStore>();
   readonly #pluginRuntimes: PluginRuntimeService;
   readonly #extensionPolicy: ExtensionPolicyService;
+  readonly #extensionImports: ExtensionImportService;
+  readonly #extensionConfigs: ExtensionConfigService;
+  readonly #extensionTests: ExtensionTestService;
   readonly #runtimeLeases = new Map<string, RuntimeLease>();
   readonly #runtimeRegistry: RuntimeRegistry;
   readonly #accountLeases: AccountLeases;
@@ -234,6 +255,40 @@ export class Core implements CoreView {
     this.skills = runtime.skillService;
     this.#pluginRuntimes = runtime.pluginRuntimes;
     this.#extensionPolicy = runtime.extensionPolicy;
+    this.policy = runtime.policy;
+    this.agentScheduler = runtime.agentScheduler;
+    this.media = runtime.media;
+    this.jobs = runtime.jobs;
+    this.providers = runtime.providers;
+    this.#extensionImports = new ExtensionImportService({
+      dataRoot: this.#dataRoot,
+      publicRoot: this.#artifacts.publicRoot,
+      skills: runtime.skillService,
+      accountDir: (accountId) => this.#accountService.locate(accountId).dir,
+      accountExists: async (accountId) => Boolean(await this.#accountDirectory.resolveExisting(accountId))
+    });
+    this.#extensionConfigs = new ExtensionConfigService({
+      config: this.configV2,
+      accounts: this.#accountService
+    });
+    const configuredHistory = this.#options.agent?.maxHistoryMessages ?? 40;
+    this.#extensionTests = new ExtensionTestService({
+      config: this.configV2,
+      registry: this.extensions,
+      providers: this.providers,
+      media: this.media,
+      jobs: this.jobs,
+      scheduler: this.agentScheduler,
+      toolLimiter: this.extensionTools.concurrencyLimiter,
+      accountDir: (accountId) => this.#accountService.locate(accountId).dir,
+      profile: (accountId) => this.#profiles.resolve(this.#accountService.locate(accountId).dir, accountId),
+      logger: this.#logger.child('extension-tests'),
+      testRoot: path.join(this.#dataRoot, 'test-runs'),
+      maxHistoryMessages: Math.max(1, Math.min(configuredHistory, this.#limits.maxHostHistory)),
+      maxHistoryChars: this.#options.agent?.maxHistoryChars ?? 12_000,
+      maxObservedMedia: this.#options.agent?.maxObservedMedia ?? 4,
+      ...(this.#options.now ? { now: this.#options.now } : {})
+    });
     this.policy = runtime.policy;
     this.agentScheduler = runtime.agentScheduler;
     this.media = runtime.media;
@@ -373,6 +428,7 @@ export class Core implements CoreView {
         this.#logger.warn('host dispose failed', { message: error instanceof Error ? error.message : String(error) });
       }
     });
+    lifecycle.add('dispose', 'extension-tests', () => this.#extensionTests.close());
     lifecycle.add('dispose', 'extension-tools', () => this.extensionTools.close());
     lifecycle.add('dispose', 'plugin-runtimes', () => this.#pluginRuntimes.close());
     lifecycle.add('dispose', 'jobs', async () => {
@@ -884,6 +940,50 @@ export class Core implements CoreView {
       await this.#pluginRuntimes.close(id);
       return { plugins: await this.#pluginRuntimes.sync(id) };
     });
+  }
+
+  scanExtensionImports(): Promise<ExtensionImportScanResult> {
+    this.#assertNotStopped();
+    return this.#extensionImports.scan();
+  }
+
+  previewExtensionImport(input: ExtensionImportPreviewInput): Promise<ExtensionImportPreview> {
+    this.#assertNotStopped();
+    return this.#extensionImports.preview(input);
+  }
+
+  importExtension(input: ExtensionImportInput): Promise<ExtensionImportResult> {
+    return this.#runPublicWork(() => this.#extensionImports.import(input));
+  }
+
+  getExtensionConfig(accountId: string, kind: ExtensionConfigKind, id: string): Promise<ExtensionConfigView> {
+    this.#assertNotStopped();
+    return this.#extensionConfigs.read(assertIdentifier(accountId, 'accountId'), kind, id);
+  }
+
+  saveExtensionConfig(
+    accountId: string,
+    kind: ExtensionConfigKind,
+    id: string,
+    input: ExtensionConfigUpdateInput
+  ): Promise<ExtensionConfigUpdateResult> {
+    return this.#runPublicWork(() =>
+      this.#extensionConfigs.update(assertIdentifier(accountId, 'accountId'), kind, id, input));
+  }
+
+  testExtensionTool(accountId: string, input: ExtensionToolTestInput): Promise<ExtensionTestResult> {
+    this.#assertNotStopped();
+    return this.#extensionTests.testTool(assertIdentifier(accountId, 'accountId'), input);
+  }
+
+  previewExtensionSkillTest(accountId: string, input: ExtensionSkillTestInput): Promise<ExtensionSkillTestPreview> {
+    this.#assertNotStopped();
+    return this.#extensionTests.previewSkill(assertIdentifier(accountId, 'accountId'), input);
+  }
+
+  testExtensionSkill(accountId: string, input: ExtensionSkillTestInput): Promise<ExtensionTestResult> {
+    this.#assertNotStopped();
+    return this.#extensionTests.testSkill(assertIdentifier(accountId, 'accountId'), input);
   }
 
   listJobs(accountId?: string): Promise<JobDto[]> {

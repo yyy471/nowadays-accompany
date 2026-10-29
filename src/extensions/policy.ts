@@ -1,6 +1,6 @@
 import type { AccountExtensionPolicy, ExtensionRunPolicy, ExtensionSwitch } from '../providers/types.js';
 import type { ConversationRef } from '../routing/identity.js';
-import { conversationScopeKey } from '../providers/types.js';
+import { conversationScopeKey } from '../routing/identity.js';
 
 export type ExtensionSwitchSection = 'plugins' | 'tools' | 'skills' | 'state';
 export type ExtensionSwitchSource = 'account' | 'kind' | 'conversation' | 'default';

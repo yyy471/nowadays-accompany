@@ -1,0 +1,130 @@
+/* v3 · 晚风「全频扫描」：真正的频谱 / 瀑布。
+ * 每个台一根光柱。柱高＝接入的设备数（一格一路）；格子的亮度＝来源（亮＝本台直播，暗＝转播，空框＝本台关，红＝故障）；
+ * 整根柱亮＝ON AIR，灰＝停播；顶灯＝故障；柱脚三格瀑布＝信号来自 总台 / 分台 / 本台 的比例；扫描线从左到右扫过。 */
+.ov-wall.spec{display:grid;grid-template-columns:minmax(0,1fr) 272px;column-gap:18px;overflow:hidden;padding:2px 20px 16px 14px;height:100%}
+.spx-stack{min-height:0;height:100%;overflow:auto;scrollbar-width:thin;padding:16px 4px 8px 2px;scroll-padding:16px}
+.spx{--cv:var(--commit);--sh:236px;position:relative;margin:0 0 14px;padding:10px 14px 8px 16px;border-radius:12px;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 70%,var(--deep)),var(--deep));box-shadow:inset 0 0 0 1px var(--line),inset 3px 0 0 var(--cv),0 10px 24px -16px #000}
+.spx.c-rose{--cv:var(--entry)}.spx.c-sage{--cv:var(--ok)}
+.spx-h{display:flex;align-items:center;gap:12px;min-height:36px}
+.spx-h .ob-spine{width:30px;height:34px;flex:none}.spx-h .ob-spine b{font-size:16px}
+.spx-h h3{margin:0;font-family:var(--f-mono);font-size:15px;line-height:20px;white-space:nowrap}
+.spx-h .cap{margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.spx-st{margin-left:auto;display:flex;gap:14px;font-size:12px;line-height:16px;color:var(--muted);white-space:nowrap}
+.spx-st b{margin-right:3px;font-family:var(--f-mono);font-size:16px;color:var(--text)}.spx-st .bad-t b{color:var(--bad)}
+.spx-scope{position:relative;height:var(--sh);margin-top:6px;padding-top:18px;
+  background:repeating-linear-gradient(180deg,color-mix(in srgb,var(--line) 70%,transparent) 0 var(--hp,1px),transparent var(--hp,1px) round(nearest,12px,var(--px,1px))) 0 32px/100% calc(var(--sh) - 32px - 118px) no-repeat}
+.spx-row{position:relative;display:flex;align-items:stretch;height:100%}
+.spx-row>.gap{flex:0 0 14px;margin:14px 0 118px;border-left:1px dashed color-mix(in srgb,var(--line-c) 60%,transparent);transform:translateX(7px)}
+.spx-bd{flex:0 0 0;width:0;height:0;position:relative;top:-17px;white-space:nowrap;font-family:var(--f-mono);font-size:12px;line-height:14px;color:var(--muted);pointer-events:none;z-index:1}
+/* 光柱 */
+.col{--bw:clamp(5px,62%,16px);position:relative;flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;padding:0;border:0;border-radius:6px;background:none;color:var(--text);
+  transition:background-color calc(180ms*var(--m))}
+button.col{cursor:pointer}
+.col:hover,.col.rd{background:linear-gradient(180deg,transparent,color-mix(in srgb,var(--entry) 9%,transparent) 30%,color-mix(in srgb,var(--entry) 9%,transparent) 62%,transparent)}
+.col:focus-visible{outline:2px solid var(--focus);outline-offset:-1px;z-index:3}
+.c-led{flex:none;width:7px;height:7px;margin:3px 0 4px;border-radius:50%;background:color-mix(in srgb,var(--line-c) 45%,transparent)}
+.c-led.on{background:var(--bad);box-shadow:0 0 8px 1px color-mix(in srgb,var(--bad) 80%,transparent);animation:ledBlink calc(1400ms*var(--m)) steps(2) infinite}
+.c-led.on.sev-2{background:var(--warn);box-shadow:0 0 8px 1px color-mix(in srgb,var(--warn) 70%,transparent);animation:none}
+@keyframes ledBlink{50%{opacity:.4}}
+.c-bar{position:relative;flex:1;min-height:0;width:100%;display:flex;flex-direction:column-reverse;align-items:center;gap:3px;padding-bottom:3px;transform-origin:50% 100%}
+.sg{display:block;flex:none;width:var(--bw);height:9px;border-radius:2px;background:color-mix(in srgb,var(--commit) 46%,transparent)}
+.sg.m-ink{background:linear-gradient(180deg,color-mix(in srgb,var(--entry) 70%,#fff),var(--entry));box-shadow:0 0 8px -1px var(--glow)}
+.sg.m-carbon{background:color-mix(in srgb,var(--commit) 46%,transparent)}
+.sg.m-peeled{background:none;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--muted) 80%,transparent)}
+.sg.bad{background:var(--bad);box-shadow:0 0 9px 0 color-mix(in srgb,var(--bad) 75%,transparent)}
+.sg.m-floor{height:2px;background:color-mix(in srgb,var(--muted) 55%,transparent);box-shadow:none}
+.sg.hl{outline:1.5px solid #FFD37A;outline-offset:1px}
+.col.live .c-bar::before{content:"";position:absolute;left:50%;bottom:0;width:calc(var(--bw) * 2.6);height:70%;transform:translateX(-50%);border-radius:50% 50% 0 0;
+  background:radial-gradient(ellipse at 50% 100%,color-mix(in srgb,var(--entry) 22%,transparent),transparent 70%);pointer-events:none}
+.col.mute .sg{filter:saturate(.15) brightness(.8)}.col.mute .sg.m-ink{box-shadow:none}
+.col.mute .c-bar{background:repeating-linear-gradient(180deg,transparent 0 4px,color-mix(in srgb,var(--muted) 10%,transparent) 4px 5px) 50% 100%/var(--bw) 34% no-repeat}
+/* 刻度 / 频率读数 */
+.c-axis{position:relative;flex:none;width:100%;height:16px;border-top:1px solid color-mix(in srgb,var(--line-c) 80%,transparent)}
+.c-axis::before{content:"";position:absolute;left:50%;top:0;width:1px;height:5px;background:var(--line-c)}
+.c-axis b{position:absolute;left:50%;top:3px;transform:translateX(-50%);padding:0 4px;border-radius:3px;background:var(--deep);font-family:var(--f-mono);font-size:12px;line-height:14px;font-weight:700;color:var(--entry);white-space:nowrap;opacity:0;pointer-events:none;z-index:4}
+.col:hover .c-axis b,.col:focus-visible .c-axis b,.col.rd .c-axis b,.col.cur .c-axis b,.spx.sparse .col .c-axis b{opacity:1}
+/* 柱脚瀑布：总台 / 分台 / 本台 */
+.c-fall{flex:none;display:grid;grid-auto-rows:5px;row-gap:2px;width:var(--bw);margin:3px 0 4px}
+.c-fall i{display:block;border-radius:1px;background:color-mix(in srgb,var(--c) calc(10% + var(--v,0) * 90%),transparent)}
+.c-fall i:nth-child(1){--c:var(--commit)}.c-fall i:nth-child(2){--c:var(--ok)}.c-fall i:nth-child(3){--c:var(--entry)}
+.col.car .c-fall i{--c:var(--entry)}
+.c-nm{flex:none;max-height:76px;writing-mode:vertical-rl;text-orientation:mixed;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:14px;letter-spacing:1px;color:var(--text)}
+.col.mute .c-nm{color:var(--muted)}
+.col.car .c-nm{font-family:var(--f-mono);color:var(--entry);font-weight:700}
+.col.car .sg{width:calc(var(--bw) + 6px)}
+.col.car .c-bar{background:linear-gradient(90deg,transparent calc(50% - 0.5px),color-mix(in srgb,var(--entry) 30%,transparent) calc(50% - 0.5px) calc(50% + 0.5px),transparent calc(50% + 0.5px))}
+/* 正在收听：一根指针贯穿光柱 */
+.col.cur::after{content:"";position:absolute;left:50%;top:0;height:calc(100% - 118px);width:2px;margin-left:-1px;background:linear-gradient(180deg,transparent,var(--onair) 18%,var(--onair));box-shadow:0 0 10px 1px color-mix(in srgb,var(--onair) 55%,transparent);pointer-events:none;opacity:.85}
+.c-here{position:absolute;left:50%;top:-18px;transform:translateX(-50%);padding:0 6px;border-radius:8px;background:var(--onair);color:var(--on-solid);font-family:var(--f-mono);font-size:12px;line-height:16px;font-weight:700;white-space:nowrap;z-index:4}
+/* 追踪：亮起 / 本台关 / 压暗 */
+.col.hit .sg:not(.m-peeled){box-shadow:0 0 10px 1px color-mix(in srgb,#FFD37A 60%,transparent)}
+.col.hit .c-nm{color:#FFD37A;font-weight:700}
+.col.hit .c-led:not(.on){background:#FFD37A;box-shadow:0 0 8px #FFD37A}
+.col.hit{animation:colUp calc(520ms*var(--m)) calc(var(--i)*12ms*var(--m)) ease both}
+@keyframes colUp{0%{filter:brightness(.6)}45%{filter:brightness(1.6)}}
+.col.hit-off .c-bar{box-shadow:inset 0 0 0 1px color-mix(in srgb,#FFD37A 70%,transparent);border-radius:4px}
+.col.hit-off .c-nm{color:#FFD37A}
+.col.dim .c-bar,.col.dim .c-fall,.col.dim .c-led{opacity:.22;filter:grayscale(1)}
+.col.dim .c-nm{color:var(--muted)}
+.col.ghost{pointer-events:none}.col.ghost .c-bar,.col.ghost .c-fall{opacity:.12;filter:grayscale(1)}.col.ghost .c-axis{opacity:.5}
+/* 扫描线 */
+.spx-scan{position:absolute;top:18px;bottom:118px;left:0;width:72px;z-index:2;pointer-events:none;
+  background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--entry) 10%,transparent) 85%,color-mix(in srgb,var(--entry) 55%,transparent) 99%,transparent);animation:scanX calc(7s*var(--m)) linear infinite}
+@keyframes scanX{from{left:-72px}to{left:100%}}
+html[data-motion="reduced"] .spx-scan{display:none}@media (prefers-reduced-motion:reduce){html[data-motion="system"] .spx-scan{display:none}html[data-motion="system"] .c-led.on{animation:none}}
+html[data-motion="reduced"] .c-led.on{animation:none}
+.spx-end{margin:2px 0 0;font-size:12px;line-height:16px;color:var(--muted);text-align:center;font-family:var(--f-mono)}
+.spx-stack>.ov-empty{position:sticky;bottom:0}
+/* 调谐读数（LCD） */
+.spx-read{align-self:start;max-height:calc(100% - 16px);overflow:auto;margin-top:16px;padding:14px 16px 14px;border-radius:12px;background:linear-gradient(180deg,color-mix(in srgb,#000 22%,var(--deep)),var(--deep));
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--entry) 40%,var(--line)),inset 0 0 30px -12px var(--glow),0 12px 26px -16px #000;scrollbar-width:thin}
+.spx-read .r-k{margin:0;font-family:var(--f-mono);font-size:12px;line-height:16px;color:var(--muted);letter-spacing:.04em}
+.spx-read .r-f{display:flex;align-items:baseline;gap:6px;margin:2px 0 0}
+.spx-read .r-f b{font-family:var(--f-mono);font-size:36px;line-height:42px;font-weight:700;color:var(--entry);text-shadow:0 0 14px var(--glow);letter-spacing:.02em}
+.spx-read .r-f small{font-family:var(--f-mono);font-size:12px;color:var(--muted)}
+.spx-read .r-n{margin:2px 0 8px;font-size:18px;line-height:24px;font-weight:700}
+.r-host{display:flex;align-items:center;gap:10px;margin:0 0 8px}.r-host b{display:block;font-size:14px;line-height:20px}.r-host small{display:block;font-size:12px;line-height:16px;color:var(--muted)}
+.r-pp{flex:none;width:40px;height:40px;border-radius:50%;overflow:hidden;box-shadow:0 0 0 2px var(--deep),0 0 0 3px var(--line-c)}.r-pp svg{width:100%;height:100%;display:block;filter:url(#wj-duo)}
+.r-pp.none{display:grid;place-items:center;background:repeating-linear-gradient(45deg,transparent 0 3px,color-mix(in srgb,var(--text) 8%,transparent) 3px 4px)}.r-pp.none i{width:8px;height:14px;border-radius:4px;border:1.5px solid var(--muted)}
+.r-air{display:flex;align-items:center;gap:8px;margin:0 0 8px;font-family:var(--f-mono);font-size:13px;line-height:18px;font-weight:700}
+.r-air i{width:9px;height:9px;border-radius:50%;background:var(--muted)}.r-air.on{color:var(--onair)}.r-air.on i{background:var(--onair);box-shadow:0 0 10px 1px color-mix(in srgb,var(--onair) 60%,transparent)}
+.r-air.off{color:var(--muted)}.r-air span{margin-left:auto;font-weight:500;color:var(--text)}
+.r-why{list-style:none;margin:0 0 8px;padding:6px 8px;border-radius:8px;background:color-mix(in srgb,var(--bad) 10%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--bad) 40%,transparent);font-size:12px;line-height:18px;color:var(--bad);font-weight:600}
+.r-items{list-style:none;margin:0 0 10px;padding:0;display:grid;gap:3px}
+.r-items li{display:grid;grid-template-columns:14px minmax(0,1fr);column-gap:6px;align-items:center;font-size:13px;line-height:18px}
+.r-items li .sg{width:10px;height:8px}.r-items li.m-ink .sg{background:linear-gradient(180deg,color-mix(in srgb,var(--entry) 70%,#fff),var(--entry))}.r-items li.m-peeled .sg{background:none;box-shadow:inset 0 0 0 1px var(--muted)}.r-items li.bad .sg{background:var(--bad)}
+.r-items li small{grid-column:2;font-size:12px;line-height:16px;color:var(--muted);font-family:var(--f-mono)}
+.r-go{width:100%;justify-content:center}
+/* 图例 */
+.ov-legend .sg{display:inline-block;width:12px;height:8px;margin-right:4px;vertical-align:0}
+.ov-legend .lg-col{display:inline-block;width:6px;height:14px;margin-right:4px;border-radius:2px;background:linear-gradient(180deg,var(--entry),color-mix(in srgb,var(--entry) 30%,transparent));box-shadow:0 0 6px var(--glow);vertical-align:-3px}
+.ov-legend .lg-fall{display:inline-grid;grid-auto-rows:3px;row-gap:1px;width:10px;margin-right:4px;vertical-align:-1px;background:linear-gradient(var(--commit) 0 3px,transparent 3px 4px,var(--ok) 4px 7px,transparent 7px 8px,var(--entry) 8px 11px);height:11px}
+/* 进场：光柱从基线升起，按离读数的距离一圈圈亮 */
+.ov.entering .col .c-bar{animation:barUp calc(520ms*var(--m)) cubic-bezier(.2,.8,.2,1) both;animation-delay:calc((140ms + var(--d,0)*460ms)*var(--m))}
+.ov.entering .col .c-nm,.ov.entering .col .c-fall{animation:vtRootIn calc(380ms*var(--m)) ease both;animation-delay:calc((200ms + var(--d,0)*460ms)*var(--m))}
+.ov.entering .spx-h{animation:vtRootIn calc(320ms*var(--m)) ease both}
+@keyframes barUp{from{transform:scaleY(0);opacity:.2}}
+/* 矮屏：更紧凑 */
+@media (max-height:820px){.spx{--sh:206px;padding:8px 12px 6px 14px}.c-nm{max-height:60px}.spx-row>.gap{margin-bottom:102px}.spx-scan{bottom:102px}.col.cur::after{height:calc(100% - 102px)}.spx-scope{background-size:100% calc(var(--sh) - 32px - 102px)}
+  .spx-read{padding:10px 12px}.spx-read .r-f b{font-size:30px;line-height:34px}.spx-read .r-n{font-size:16px;line-height:22px;margin-bottom:6px}.ov-wall.spec{grid-template-columns:minmax(0,1fr) 248px}}
+@media (max-width:1150px){.ov-wall.spec{grid-template-columns:minmax(0,1fr) 220px;column-gap:12px}.spx-st span:nth-child(4){display:none}}
+.spx-stack{position:relative}
+/* 分段标签放到刻度下沿（不和「收听中」抢位置） */
+.spx-scope{padding-bottom:18px}
+.spx-bd{align-self:flex-end;top:auto;bottom:-16px;height:auto;position:relative}
+.spx-bd::before{content:"";position:absolute;left:0;top:-4px;width:1px;height:4px;background:var(--line-c)}
+/* 只扫一台时，频谱撑满可用高度，格子随之变高 */
+.spx-stack{container-type:size}
+.spx:only-of-type{--sh:max(206px,calc(100cqh - 84px))}
+.sg{height:clamp(8px,calc((var(--sh) - 168px) / 8 - 3px),20px)}
+.col.mute .sg{filter:saturate(.25) brightness(.95)}
+/* 密：台名不再排成一排（读不清），只给 当前 / 读数 / 悬停 / 聚焦 的那根浮出一块名牌 */
+.spx.dense .c-nm{color:transparent;width:2px;overflow:hidden;background:linear-gradient(180deg,color-mix(in srgb,var(--line-c) 55%,transparent),transparent);max-height:28px}
+.spx.dense .col.cur .c-nm,.spx.dense .col.rd .c-nm,.spx.dense .col:hover .c-nm,.spx.dense .col:focus-visible .c-nm{position:absolute;top:calc(100% - 78px);left:50%;transform:translateX(-50%);width:auto;max-height:76px;padding:4px 2px;border-radius:4px;background:var(--deep);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--entry) 55%,transparent);color:var(--text);z-index:5}
+.spx.dense .col.car .c-nm{color:var(--entry);width:auto;background:none;max-height:76px}
+/* v3 · 读数面板：设备清单在里面滚，「调到这台」永远钉在底部可见 */
+.spx-read{display:flex;flex-direction:column;overflow:hidden}
+.spx-read>*{flex:none}
+.spx-read .r-items{flex:0 1 auto;min-height:48px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--muted) 45%,transparent) transparent;margin-bottom:10px;-webkit-mask-image:linear-gradient(180deg,#000 calc(100% - 14px),transparent);mask-image:linear-gradient(180deg,#000 calc(100% - 14px),transparent);padding-bottom:10px}
+.spx-read .r-go{margin-top:auto;align-self:flex-start}

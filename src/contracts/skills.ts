@@ -90,10 +90,14 @@ export interface SkillPreviewEntry {
   issues: EffectiveIssue[];
   unavailableTools: string[];
   instructions: string;
+  /** Exact text injected into the prompt, including the account JSON config when present. */
+  renderedInstructions: string;
+  config?: Record<string, unknown>;
   tools: string[];
   requires?: CapabilityId[];
   /** Where the effective switch value came from (account/kind/conversation/default). */
   switchSource: 'account' | 'kind' | 'conversation' | 'default';
+  /** Rendered instruction length; the prompt budget counts the body plus config. */
   instructionsChars: number;
   toolCount: number;
   selected: boolean;

@@ -108,12 +108,14 @@ export class ExtensionPolicyService {
   ): Promise<EffectiveExtensions> {
     const view = await this.read(accountId);
     const extensions = extensionTree(view);
+    const skillConfigs = this.#options.config.snapshot().accountPolicies[accountId]?.skills?.configs;
     return resolveEffectiveExtensions({
       accountId,
       conversation,
       catalog: view.catalog,
       authorizedTools: view.authorizedTools,
       ...(extensions ? { extensions } : {}),
+      ...(skillConfigs ? { skillConfigs } : {}),
       ...(capabilityEnabled ? { capabilityEnabled } : {})
     });
   }

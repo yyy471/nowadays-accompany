@@ -15,6 +15,7 @@ import type {
 } from '../../contracts/skills.js';
 import { AccompanyError, InvalidSpecError, IsolationError } from '../../core/errors.js';
 import { SKILL_PROMPT_LIMITS, selectSkillsForPrompt } from '../../extensions/skill-selection.js';
+import { skillInstructionsWithConfig } from '../../extensions/skill-render.js';
 import type { SkillConfig } from '../../extensions/types.js';
 import type { CapabilityId } from '../../policy/capabilities.js';
 import type { ConfigStore } from '../../providers/config-store.js';
@@ -143,7 +144,7 @@ export class SkillService {
           id: status.skill.id,
           name: status.skill.name,
           source: status.skill.source,
-          instructions: status.skill.instructions,
+          instructions: skillInstructionsWithConfig(status.skill.instructions, status.config),
           tools: status.skill.tools
         }))
     );
@@ -151,6 +152,7 @@ export class SkillService {
     const exclusionReasons = new Map(selection.excluded.map((skill) => [skill.id, skill.reason]));
     const skills: SkillPreviewEntry[] = effective.skills.map((status) => {
       const reason = exclusionReasons.get(status.skill.id);
+      const renderedInstructions = skillInstructionsWithConfig(status.skill.instructions, status.config);
       return {
         id: status.skill.id,
         name: status.skill.name,
@@ -160,10 +162,12 @@ export class SkillService {
         issues: status.issues.map((issue) => ({ ...issue })),
         unavailableTools: [...status.unavailableTools],
         instructions: status.skill.instructions,
+        renderedInstructions,
+        ...(status.config ? { config: structuredClone(status.config) } : {}),
         tools: [...status.skill.tools],
         ...(status.skill.requires?.length ? { requires: [...status.skill.requires] } : {}),
         switchSource: status.switchSource,
-        instructionsChars: status.skill.instructions.length,
+        instructionsChars: renderedInstructions.length,
         toolCount: status.skill.tools.length,
         selected: selected.has(status.skill.id),
         ...(reason ? { selectionReason: reason } : {})

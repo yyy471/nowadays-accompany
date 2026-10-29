@@ -1,8 +1,10 @@
 import crypto from 'node:crypto';
 import { assertIdentifier, type ChatKind } from '../routing/identity.js';
+export { conversationScopeKey } from '../routing/identity.js';
 import { CAPABILITY_IDS, isCapabilityId, type CapabilityId } from '../policy/capabilities.js';
 import type { SkillConfig } from '../extensions/types.js';
 import { isPluginKey, isPluginSkillId, isToolId } from '../extensions/contracts.js';
+import { EXTENSION_CONFIG_LIMITS } from '../extensions/config-limits.js';
 import { ConfigError } from './errors.js';
 
 export const CONFIG_SCHEMA_VERSION = 2;
@@ -84,6 +86,8 @@ export interface AccountSkillPolicy {
   /** Legacy input only; parsed policies migrate these to extension run switches. */
   disabled?: string[];
   definitions?: SkillConfig[];
+  /** Plain JSON parameters keyed by the effective Skill id (plugin Skills keep their full namespace). */
+  configs?: Record<string, Record<string, unknown>>;
 }
 
 export type ExtensionSwitch = 'inherit' | 'on' | 'off';
@@ -657,7 +661,7 @@ export function parseAccountPolicy(raw: unknown, path = 'accountPolicy'): Accoun
   const legacySkillDisabled: string[] = [];
   if (value.skills !== undefined) {
     const skillsRaw = object(value.skills, `${path}.skills`);
-    exactKeys(skillsRaw, ['enabled', 'disabled', 'definitions'], `${path}.skills`);
+    exactKeys(skillsRaw, ['enabled', 'disabled', 'definitions', 'configs'], `${path}.skills`);
     for (const [key, target] of [['enabled', legacySkillEnabled], ['disabled', legacySkillDisabled]] as const) {
       const rawList = skillsRaw[key];
       if (rawList === undefined) continue;
@@ -685,7 +689,15 @@ export function parseAccountPolicy(raw: unknown, path = 'accountPolicy'): Accoun
         ids.add(definition.id);
       }
     }
-    skills = definitions.length > 0 ? { definitions } : undefined;
+    const configs = skillsRaw.configs === undefined
+      ? undefined
+      : parseSkillConfigs(skillsRaw.configs, `${path}.skills.configs`);
+    skills = definitions.length > 0 || configs
+      ? {
+          ...(definitions.length > 0 ? { definitions } : {}),
+          ...(configs ? { configs } : {})
+        }
+      : undefined;
   }
   const extensions = migrateLegacySkillSwitches(parsedExtensions, legacySkillEnabled, legacySkillDisabled);
   const byKindRaw = value.byKind === undefined ? {} : object(value.byKind, `${path}.byKind`);
@@ -716,8 +728,31 @@ export function parseAccountPolicy(raw: unknown, path = 'accountPolicy'): Accoun
   };
 }
 
-export function parseSkillDefinition(raw: unknown, path: string): SkillConfig {
+function parseSkillConfigs(raw: unknown, path: string): Record<string, Record<string, unknown>> | undefined {
   const value = object(raw, path);
+  const entries = Object.entries(value);
+  if (entries.length > EXTENSION_CONFIG_LIMITS.maxSkillConfigs) {
+    fail(path, `must contain at most ${EXTENSION_CONFIG_LIMITS.maxSkillConfigs} entries`);
+  }
+  const configs: Record<string, Record<string, unknown>> = Object.create(null);
+  for (const [id, candidate] of entries) {
+    if (!ID.test(id) && !isPluginSkillId(id)) fail(path, `invalid skill id ${id}`);
+    const config = object(candidate, `${path}.${id}`);
+    let encoded: string;
+    try {
+      encoded = JSON.stringify(config);
+    } catch {
+      fail(`${path}.${id}`, 'must be JSON serializable');
+    }
+    if (Buffer.byteLength(encoded, 'utf8') > EXTENSION_CONFIG_LIMITS.maxConfigBytes) {
+      fail(`${path}.${id}`, `must not exceed ${EXTENSION_CONFIG_LIMITS.maxConfigBytes} bytes`);
+    }
+    configs[id] = config;
+  }
+  return Object.keys(configs).length > 0 ? configs : undefined;
+}
+
+export function parseSkillDefinition(raw: unknown, path: string): SkillConfig {  const value = object(raw, path);
   exactKeys(value, ['id', 'name', 'description', 'instructions', 'tools', 'requires', 'kinds', 'peers', 'enabled'], path);
   const id = typeof value.id === 'string' && ID.test(value.id) ? value.id : fail(`${path}.id`, `must match ${ID}`);
   if (typeof value.name !== 'string' || !value.name.trim()) fail(`${path}.name`, 'is required');
@@ -895,10 +930,6 @@ export function stableStringify(value: unknown): string {
 
 export function configFingerprint(config: RuntimeConfigV2): string {
   return crypto.createHash('sha256').update(stableStringify(config)).digest('hex').slice(0, 16);
-}
-
-export function conversationScopeKey(kind: ChatKind, peerId: string): string {
-  return `${kind}/${assertIdentifier(peerId, 'peerId')}`;
 }
 
 export function isProviderId(value: string): boolean {

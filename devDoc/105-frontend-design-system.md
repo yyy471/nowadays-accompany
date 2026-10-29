@@ -226,3 +226,9 @@ ThemePresetProvider管理daylight/nightwave本机外观偏好，不触发业务�
 ## 11. 品牌标识（2026-10-28采用）
 
 用户采用折信N原稿；品牌字标为`Nowadays`，字体与副标沿用既有规格。顶部透明符号使用34×36px盒（`component.brand.markWidth/markHeight`），仅裁去SVG画布留白，不改字形、渐变和配色。标记随预置选择原稿light/dark版本；系统应用图标固定酒红底版，16/20/24px使用专用小母版。实施与证据见[123](123-fold-logo-adoption-execution.md)。
+
+## 12. 关系页原貌扩展（2026-10-28）
+
+用户指定保留v3 HTML。采用范围见[143](143-relationship-journal-migration-plan.md)：账号书脊/机架、会话页签/刻度、角色人像框、能力贴纸/推子、继承透视、日间缩略页与夜间频谱。新增装饰字体、材质色和局部时长归入`relationshipJournal`三层token；正文、控件、焦点与状态仍用现有语义变量。仅作用于`.wj-journal`，不可将此例外扩散到其他页面。角色插画为标注的装饰示意，刻度为索引，不代表真实电台或业务运行事实。
+
+原型模拟数据与脚本不加载到产品。按钮、输入、选择和浮层使用公共UI；角色与能力分别提交，实际回复条件从控制面读取。页面与长名册允许滚动，主操作不得裁切。当前实施与未验收项见[144](144-relationship-journal-migration-execution.md)。

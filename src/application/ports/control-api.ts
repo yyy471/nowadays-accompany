@@ -32,6 +32,21 @@ import type {
   ExtensionPolicyUpdateDto,
   ExtensionReloadDto
 } from '../../contracts/extensions.js';
+import type {
+  ExtensionConfigKind,
+  ExtensionConfigUpdateInput,
+  ExtensionConfigUpdateResult,
+  ExtensionConfigView,
+  ExtensionImportInput,
+  ExtensionImportPreview,
+  ExtensionImportPreviewInput,
+  ExtensionImportResult,
+  ExtensionImportScanResult,
+  ExtensionSkillTestInput,
+  ExtensionSkillTestPreview,
+  ExtensionTestResult,
+  ExtensionToolTestInput
+} from '../../contracts/extension-access.js';
 
 /** HTTP/CLI 使用的应用端口；实现由 Core 提供。 */
 export interface CoreView {
@@ -76,6 +91,19 @@ export interface CoreView {
   updateExtensionPolicy(accountId: string, input: ExtensionPolicyUpdateDto): Promise<ExtensionPolicyDto>;
   effectiveExtensions(accountId: string, conversation: ConversationRef): Promise<ExtensionEffectiveDto>;
   reloadExtensions(accountId: string): Promise<ExtensionReloadDto>;
+  scanExtensionImports(): Promise<ExtensionImportScanResult>;
+  previewExtensionImport(input: ExtensionImportPreviewInput): Promise<ExtensionImportPreview>;
+  importExtension(input: ExtensionImportInput): Promise<ExtensionImportResult>;
+  getExtensionConfig(accountId: string, kind: ExtensionConfigKind, id: string): Promise<ExtensionConfigView>;
+  saveExtensionConfig(
+    accountId: string,
+    kind: ExtensionConfigKind,
+    id: string,
+    input: ExtensionConfigUpdateInput
+  ): Promise<ExtensionConfigUpdateResult>;
+  testExtensionTool(accountId: string, input: ExtensionToolTestInput): Promise<ExtensionTestResult>;
+  previewExtensionSkillTest(accountId: string, input: ExtensionSkillTestInput): Promise<ExtensionSkillTestPreview>;
+  testExtensionSkill(accountId: string, input: ExtensionSkillTestInput): Promise<ExtensionTestResult>;
   listAccountArtifacts(accountId: string): Promise<ResolvedArtifact[]>;
   artifactCatalog(): Promise<Record<string, string>>;
   listAccounts(options?: { avatars?: boolean }): Promise<AccountSummary[]>;

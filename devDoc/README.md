@@ -1,6 +1,14 @@
 # 开发文档导航
 
-后端扩展接入与手动测试方案见[139 实现方案](139-backend-extension-access-and-testing-implementation-plan.md)：仅规划基础文件校验、个人插件/SKILL.md导入、账号JSON配置、工具直接测试及Skill预览/实际对话测试；复用统一执行器、Worker与模型路由，不分析插件业务代码、不在导入时试运行。前端与次级测试页面后置，当前仅文档、尚未实施。
+关系页原貌迁移与专属昼夜切换已完成本轮代码和本地自动化收口，见[143方案](143-relationship-journal-migration-plan.md)、[144总执行](144-relationship-journal-migration-execution.md)、[145业务独立复核](145-relationship-journal-independent-review.md)、[146专属过渡实施](146-relationship-journal-theme-transition-execution.md)与[147主进程复核](147-relationship-journal-theme-independent-review.md)。用户指定GPT-6 Luna max子代理实现追加过渡，主进程复核；关系页纸线↔刻度与自身明暗效果取代天气层，其他页保持默认天气。最终130文件1212项通过/1项既有跳过，类型、桌面构建及token同步通过；[双主题稳定图](design/relationship-journal/verification/README.md)已归档，逐帧观感、真实QQ/模型、原生组合与发行EXE仍未验收。未提交、推送或重打包EXE。
+
+后端扩展141复核修复见[142 修复记录](142-backend-extension-access-review-fixes.md)：R1 测试前先按策略门禁并只启动所需插件，R2 工具执行复用正式共享限流器且 Worker 打开有界准入，R3 Skill 结果改消费第一次真实模型请求的入选 Skill/tools，R4 合法原型同名 Skill id 按自有键读取。定向27项、全量126文件1182项通过/1项既有跳过，类型、桌面构建和141独立探针均通过；141原结论保留，待独立复验。未改业务外前端、未提交或打包。
+
+后端扩展独立复核见[141 复核记录](141-backend-extension-access-and-testing-independent-review.md)：暂不通过，离线探针复现关闭插件仍先加载、测试请求各自限流导致同账号5工具并发、Skill/工具实际注入误报及合法Skill ID配置读取500四项问题（2项P1、2项P2）。独立全量126文件1177项通过/1项既有跳过，类型与桌面构建通过；140保留为实现方自验，上述发现以[142](142-backend-extension-access-review-fixes.md)的修复与最新回归为准。本轮未改业务实现、未提交或打包。
+
+后端扩展接入与手动测试已完成 BE-1～BE-6 实现方自验，见[140 执行记录](140-backend-extension-access-and-testing-execution.md)：本地 imports 扫描/预览/导入、SKILL.md 转换、账号 JSON 配置、Skill 正文+配置共用渲染、工具/Skill 手动测试与媒体无 QQ 投递闭环均已落地；[141](141-backend-extension-access-and-testing-independent-review.md) 的 R1～R4 已由 [142](142-backend-extension-access-review-fixes.md) 收口。当前自动化126文件1182项通过/1项既有跳过，类型检查与桌面构建通过；真实第三方插件、真实模型/QQ与前端测试页面仍未验收，待独立复验，未提交、打包或替换 EXE。
+
+后端扩展接入与手动测试方案见[139 实现方案](139-backend-extension-access-and-testing-implementation-plan.md)：仅规划基础文件校验、个人插件/SKILL.md导入、账号JSON配置、工具直接测试及Skill预览/实际对话测试；复用统一执行器、Worker与模型路由，不分析插件业务代码、不在导入时试运行。前端与次级测试页面后置；实施结果以[140](140-backend-extension-access-and-testing-execution.md)为准。
 
 最新独立复验见[138 嵌套动效作用域复验](138-nested-motion-scope-independent-recheck.md)：136-R1关闭，131审计四项共享修复在本地代码/自动化范围内均已收口。主进程全量124文件1155项通过/1项既有跳过，类型、桌面构建、token同步通过；原嵌套与中间UiThemeProvider显式full的真实组件探针通过。126剩余原生交互等证据、业务保存消费者及其他页面设计仍分别待办，未提交、推送或打包。
 

@@ -1,0 +1,33 @@
+{
+  "id": "weather",
+  "kind": "plugin",
+  "revision": "r1",
+  "name": "离线天气示例",
+  "description": "不访问网络，按账号配置或调用参数返回一个示例天气结果。",
+  "entry": "index.mjs",
+  "apiVersion": 1,
+  "tools": [
+    {
+      "id": "query",
+      "description": "查询指定城市的天气",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "city": { "type": "string", "maxLength": 64 }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "effect": "read"
+    }
+  ],
+  "skills": [
+    {
+      "id": "forecast",
+      "name": "天气速报",
+      "description": "查询天气并给出简短出行建议。",
+      "instructions": "先调用 query 查询用户提到的城市，再用一句话给出出行建议。",
+      "tools": ["query"]
+    }
+  ]
+}

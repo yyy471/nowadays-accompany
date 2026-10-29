@@ -1,6 +1,7 @@
 import type { ChatKind } from '../../routing/identity.js';
 import type { PluginHookName } from '../contracts.js';
 import type { ToolHandlerOutcome } from '../execution/executor.js';
+import { EXTENSION_CONFIG_LIMITS } from '../config-limits.js';
 
 export const PLUGIN_PROTOCOL_VERSION = 1 as const;
 
@@ -8,7 +9,7 @@ export const PLUGIN_PROTOCOL_VERSION = 1 as const;
 export const PLUGIN_RUNTIME_LIMITS = {
   maxRequestBytes: 64 * 1024,
   maxStateBytes: 16 * 1024,
-  maxConfigBytes: 8 * 1024,
+  maxConfigBytes: EXTENSION_CONFIG_LIMITS.maxConfigBytes,
   maxMessageBytes: 8 * 1024,
   maxHistoryItems: 20,
   maxHistoryBytes: 16 * 1024,

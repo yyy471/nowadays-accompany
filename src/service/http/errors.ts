@@ -53,6 +53,7 @@ export function statusForError(error: unknown): number {
     case 'injection_account_in_use':
     case 'skill_conflict':
     case 'extension_conflict':
+    case 'extension_config_conflict':
       return 409;
     case 'snowluma_unreachable':
     case 'worldbook_io_error':
@@ -72,6 +73,9 @@ export function statusForError(error: unknown): number {
     case 'injection_process_stale':
     case 'injection_operation_not_found':
     case 'skill_not_found':
+    case 'plugin_not_installed':
+    case 'extension_account_not_found':
+    case 'tool_not_found':
       return 404;
     default:
       return 400;
