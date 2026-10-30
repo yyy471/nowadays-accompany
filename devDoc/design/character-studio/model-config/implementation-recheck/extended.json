@@ -1,0 +1,57 @@
+{
+  "date": "2026-10-29",
+  "checks": [
+    {
+      "name": "delete-in-flight-versus-simple-write",
+      "editedModel": "chat-during-delete",
+      "simpleEnabled": true,
+      "successBeforeDelete": true,
+      "deleted": true,
+      "requests": [
+        {
+          "method": "DELETE",
+          "path": "/providers/review-service"
+        },
+        {
+          "method": "POST",
+          "path": "/providers/simple",
+          "body": {
+            "providerId": "review-service",
+            "capability": "chat",
+            "baseUrl": "https://api.example.com/v1",
+            "modelId": "chat-during-delete",
+            "adapterId": "openai-compatible-v1",
+            "supportsTools": true,
+            "parameters": {}
+          }
+        }
+      ],
+      "pageErrors": []
+    },
+    {
+      "name": "stale-models",
+      "visibleUrl": "https://api.example.com/v2",
+      "stale": true,
+      "oldErrorVisible": false,
+      "oldOptionCount": 0,
+      "busyCleared": true
+    },
+    {
+      "name": "stale-test-error",
+      "visibleUrl": "https://api.example.com/v2",
+      "stale": true,
+      "oldErrorVisible": false,
+      "oldOptionCount": 0,
+      "busyCleared": true
+    },
+    {
+      "name": "dirty-last-provider-removed",
+      "draftModel": "chat-unsaved",
+      "sourceSelectCount": 0,
+      "adoptLatestCount": 0,
+      "saveDisabled": true,
+      "text": "01\n文本模型\n\n负责普通对话回复，也承接工具调用后的续答。\n\n待保存\nchat\n01\n连接到模型服务\n服务地址\n填写服务提供的 API 基础地址；保留真实地址，不强制补 /v1。\nAPI Key\n显示\n密钥由本地凭据库加密保存，界面不会回显。\n接入协议\nOpenAI 兼容协议\n本地测试适配器\n02\n选择一个合适的模型\n模型名\n获取模型\n支持手动输入；也可尝试从服务获取候选列表。\n该文本模型支持工具调用\n连通性测试\n\n验证会实际调用服务，可能产生少量费用；不会保存，也不会发送 QQ。\n\n此服务已不存在；当前草稿保留，请重新选择来源或新建服务。\n\n测试与保存彼此独立；测试不会保存配置。\n测试连接\n保存模型服务"
+    }
+  ],
+  "errors": []
+}

@@ -1,0 +1,139 @@
+/* 模型配置工作区：能力索引 + 纸页 + 账号使用；仅布局、纸面与响应式，控件外观由公共UI负责。 */
+.studio-model-content { width: 100%; max-width: 1340px; margin-inline: auto; padding-bottom: 28px; }
+.model-config-workspace { min-width: 0; color: var(--nd-semantic-color-text); }
+.model-config-views { display: flex; align-items: center; gap: 24px; margin: 0 0 24px; padding: 0 2px; border-bottom: 1px solid var(--nd-semantic-color-line-decorative); }
+.model-config-views > .ui-control, .model-config-views > button { position: relative; min-height: 44px; padding: 0 0 11px; border: 0; border-radius: 0; background: transparent; color: var(--nd-semantic-color-text-muted); font-size: var(--nd-semantic-type-body-size); font-weight: 600; }
+.model-config-views > :is(.ui-control, button):hover { color: var(--nd-semantic-color-text); background: transparent; }
+.model-config-views > :is(.ui-control, button)[aria-current="page"] { color: var(--nd-semantic-color-text); }
+.model-config-views > :is(.ui-control, button)[aria-current="page"]::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 3px; border-radius: 2px; background: var(--nd-semantic-color-accent-decorative); }
+.model-config-view-hint { margin-left: auto; color: var(--nd-semantic-color-text-muted); font-size: var(--nd-semantic-type-caption-size); }
+
+.model-workspace-grid { display: grid; grid-template-columns: 224px minmax(0, 1fr); gap: 40px; align-items: start; }
+.model-capability-index { min-width: 0; padding: 4px 0; }
+.model-index-label { display: flex; justify-content: space-between; gap: 12px; padding: 0 12px 12px; color: var(--nd-semantic-color-text-muted); font-family: var(--nd-semantic-font-code); font-size: var(--nd-semantic-type-caption-size); }
+.model-capability-list { display: grid; gap: 6px; }
+.model-capability-button { display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; min-height: 66px; padding: 10px 12px; border: 1px solid transparent; border-radius: var(--nd-semantic-radius-surface); background: transparent; color: var(--nd-semantic-color-text-muted); text-align: left; }
+.model-capability-button:hover:not(:disabled) { background: var(--nd-semantic-color-selection); color: var(--nd-semantic-color-text); }
+.model-capability-button[aria-pressed="true"] { position: relative; border-color: var(--nd-semantic-color-line-decorative); background: var(--nd-semantic-color-surface); color: var(--nd-semantic-color-text); box-shadow: var(--nd-semantic-shadow-surface); }
+.model-capability-button[aria-pressed="true"]::before { content: ""; position: absolute; top: -1px; left: 16px; width: 16px; height: 7px; background: var(--nd-semantic-color-accent-decorative); clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 65%, 0 100%); }
+.model-capability-button[aria-pressed="true"] .model-capability-icon { color: var(--nd-semantic-color-entry); }
+.model-capability-button:disabled { cursor: wait; }
+.model-capability-icon { display: grid; flex: none; place-items: center; width: 20px; color: var(--nd-semantic-color-text-muted); }
+.model-capability-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: 2px; }
+.model-capability-copy strong { font-size: var(--nd-semantic-type-body-size); font-weight: 600; }
+.model-capability-copy small { overflow: hidden; color: var(--nd-semantic-color-text-muted); font-size: var(--nd-semantic-type-caption-size); line-height: var(--nd-semantic-type-caption-line); text-overflow: ellipsis; white-space: nowrap; }
+.model-capability-button .tag { flex: none; }
+.model-index-divider { margin: 20px 12px 14px; padding-top: 15px; border-top: 1px solid var(--nd-semantic-color-line-decorative); color: var(--nd-semantic-color-text-muted); font-family: var(--nd-semantic-font-code); font-size: var(--nd-semantic-type-caption-size); }
+.model-index-note { margin: 28px 12px 0; padding-top: 20px; border-top: 1px solid var(--nd-semantic-color-line-decorative); }
+.model-index-note > svg { color: var(--nd-semantic-color-entry); }
+.model-index-note h3 { margin: 8px 0; font-size: var(--nd-semantic-type-body-size); line-height: var(--nd-semantic-type-body-line); }
+.model-index-note p { margin: 0; color: var(--nd-semantic-color-text-muted); font-size: var(--nd-semantic-type-caption-size); line-height: 20px; }
+.model-index-note span { display: block; margin-top: 18px; color: var(--nd-semantic-color-text-muted); font-family: var(--nd-semantic-font-code); font-size: var(--nd-semantic-type-caption-size); }
+
+.model-paper-area { min-width: 0; }
+.model-service-page { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.model-paper { position: relative; min-width: 0; overflow: hidden; border: 1px solid var(--nd-semantic-color-line-decorative); border-radius: var(--nd-semantic-radius-surface); background: var(--nd-semantic-color-surface); box-shadow: var(--nd-semantic-shadow-surface); }
+.model-paper::before { content: ""; position: absolute; top: 0; left: 24px; right: 24px; height: 2px; background: var(--nd-semantic-color-accent-decorative); pointer-events: none; }
+.model-paper-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: 22px 32px 18px; border-bottom: 1px solid var(--nd-semantic-color-line-decorative); }
+.model-paper-heading { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+.model-paper-serial { color: var(--nd-semantic-color-text-muted); font-family: var(--nd-semantic-font-code); font-size: var(--nd-semantic-type-caption-size); }
+.model-paper-head h2 { margin: 0; font-size: var(--nd-semantic-type-section-size); line-height: var(--nd-semantic-type-section-line); font-weight: 600; overflow-wrap: anywhere; }
+.model-paper-head p { margin: 6px 0 0; color: var(--nd-semantic-color-text-muted); font-size: var(--nd-semantic-type-body-size); line-height: var(--nd-semantic-type-body-line); }
+.model-paper-meta { display: flex; flex: none; align-items: center; gap: 8px; padding-top: 4px; color: var(--nd-semantic-color-text-muted); font-size: var(--nd-semantic-type-caption-size); }
+.model-paper-meta .mono { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-paper-body { padding: 22px 32px 20px; }
+.model-paper-empty { padding: 32px; }
+.model-paper-columns { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 28px; }
+.model-paper-block { min-width: 0; }
+.model-paper-block + .model-paper-block { padding-left: 28px; border-left: 1px solid var(--nd-semantic-color-line-decorative); }
+.model-paper-label { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; font-size: var(--nd-semantic-type-body-size); font-weight: 600; }
+.model-paper-label span { color: var(--nd-semantic-color-text-muted); font-family: var(--nd-semantic-font-code); font-size: var(--nd-semantic-type-caption-size); }
+.model-paper-fields { display: grid; gap: 16px; min-width: 0; }
+.model-paper-fields .field { min-width: 0; }
+.model-paper-fields input, .model-paper-fields select { min-height: 44px; }
+.model-secret-field { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.model-secret-field .ui-input { flex: 1; min-width: 0; }
+.model-secret-field .btn { flex: none; min-width: 56px; min-height: 44px; }
+.model-id-control { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.model-id-control .ui-input { flex: 1; min-width: 0; }
+.model-id-control .btn { flex: none; min-height: 44px; }
+.model-checkbox { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: var(--nd-semantic-type-body-size); }
+.model-test-block { margin-top: 20px; padding-top: 18px; border-top: 1px dashed var(--nd-semantic-color-line-decorative); }
+.model-test-block h4 { margin: 0 0 6px; font-size: var(--nd-semantic-type-body-size); font-weight: 600; }
+.model-test-block p { margin: 0; color: var(--nd-semantic-color-text-muted); font-size: var(--nd-semantic-type-caption-size); line-height: 20px; }
+.provider-test-image { display: block; max-width: min(100%, 360px); max-height: 240px; margin-top: 14px; border: 1px solid var(--nd-semantic-color-line-decorative); border-radius: var(--nd-semantic-radius-surface); object-fit: contain; }
+.provider-test-audio { display: block; width: min(100%, 360px); margin-top: 14px; }
+.model-paper-body > .error-note, .model-paper-body > .notice { margin-top: 18px; }
+.model-paper-footer { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 16px 32px 20px; border-top: 1px solid var(--nd-semantic-color-line-decorative); }
+.model-test-cost-note { display: flex; flex: 0 1 auto; align-items: center; gap: 7px; margin-bottom: 0; color: var(--nd-semantic-color-text-muted); font-size: var(--nd-semantic-type-caption-size); line-height: 18px; }
+.model-paper-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.model-paper-actions .btn { min-height: 44px; }
+.model-advanced { min-width: 0; }
+.model-advanced .card { margin: 0; border: 1px solid var(--nd-semantic-color-line-decorative); border-radius: var(--nd-semantic-radius-surface); background: var(--nd-semantic-color-surface); box-shadow: var(--nd-semantic-shadow-surface); }
+.model-service-note { display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 0 2px; color: var(--nd-semantic-color-text-muted); font-size: var(--nd-semantic-type-caption-size); line-height: 18px; }
+.model-source-stale { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px; }
+.model-source-stale p { margin: 0; }
+.model-service-note svg { flex: none; margin-top: 1px; }
+
+/* 账号使用：沿用PolicyPage业务结构，只把卡片统一为纸页外观。 */
+.model-config-account .page-stack { min-width: 0; animation: none; }
+.model-config-account .card { border: 1px solid var(--nd-semantic-color-line-decorative); border-radius: var(--nd-semantic-radius-surface); background: var(--nd-semantic-color-surface); box-shadow: var(--nd-semantic-shadow-surface); }
+.model-config-account .policy-editor { grid-template-columns: minmax(0, 1fr); }
+.model-config-account .check-row { flex: 1 1 100%; }
+.model-config-account .banner { border-color: var(--nd-semantic-color-line-decorative); background: var(--nd-semantic-color-selection); color: var(--nd-semantic-color-text); }
+.model-config-account .policy-savebar { border-color: var(--nd-semantic-color-line-control); background: color-mix(in srgb, var(--nd-semantic-color-surface) 94%, transparent); box-shadow: var(--nd-semantic-shadow-floating); }
+.model-config-account .capability-row { border-color: var(--nd-semantic-color-line-decorative); }
+.model-config-account .policy-section h4 { color: var(--nd-semantic-color-text); }
+
+/* 设置中的只读摘要；设置沿用旧控件作用域，因此使用旧调色变量。 */
+.settings-model-summary { display: flex; flex-direction: column; gap: 16px; min-width: 0; padding: 4px 2px 8px; color: var(--text); }
+.settings-model-summary-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.settings-model-summary-head h3 { margin: 0; font-size: 20px; line-height: 28px; }
+.settings-model-summary-head p { margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 20px; }
+.settings-model-summary-list { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.settings-model-summary-list li { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.settings-model-summary-icon { display: grid; flex: none; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: var(--panel-2); color: var(--accent); }
+.settings-model-summary-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; gap: 2px; }
+.settings-model-summary-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-model-summary-copy small { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.settings-model-summary-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.settings-model-summary > .muted { color: var(--muted); font-size: 12px; line-height: 18px; }
+
+@media (max-width: 1100px) {
+  .model-workspace-grid { grid-template-columns: 200px minmax(0, 1fr); gap: 24px; }
+  .model-paper-head, .model-paper-body, .model-paper-footer { padding-left: 24px; padding-right: 24px; }
+  .model-paper-columns { gap: 22px; }
+  .model-paper-block + .model-paper-block { padding-left: 22px; }
+  .model-config-view-hint { display: none; }
+}
+@media (max-width: 900px) {
+  .model-workspace-grid { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .model-index-label, .model-index-note, .model-index-divider { display: none; }
+  .model-capability-index { padding: 0; }
+  .model-capability-list { display: flex; gap: 8px; overflow-x: auto; padding: 4px 2px 10px; scrollbar-gutter: stable; }
+  .model-capability-button { flex: 0 0 auto; width: auto; min-width: 152px; min-height: 62px; }
+  .model-capability-copy small { max-width: 160px; }
+  .model-paper-columns { grid-template-columns: minmax(0, 1fr); }
+  .model-paper-block + .model-paper-block { padding-top: 20px; padding-left: 0; border-top: 1px solid var(--nd-semantic-color-line-decorative); border-left: 0; }
+}
+@media (max-width: 640px) {
+  .model-config-views { gap: 20px; margin-bottom: 18px; }
+  .model-capability-button { min-width: 138px; }
+  .model-capability-button .tag { display: none; }
+  .model-paper-head { display: block; padding: 18px 16px 16px; }
+  .model-paper-meta { margin-top: 10px; padding-top: 0; }
+  .model-paper-body { padding: 18px 16px 16px; }
+  .model-paper-footer { align-items: stretch; flex-direction: column; padding: 16px; }
+  .model-paper-actions { justify-content: flex-end; }
+  .model-paper-actions .btn { flex: 1 1 auto; }
+  .model-paper-fields input, .model-paper-fields select, .model-id-control .btn, .model-secret-field .btn { min-height: 44px; }
+  .settings-model-summary-head { display: block; }
+  .settings-model-summary-list li { align-items: flex-start; flex-wrap: wrap; }
+  .settings-model-summary-list li .tag { margin-left: 42px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion="full"]) .model-config-workspace * { transition: none !important; }
+}
+html[data-motion="reduced"] .model-config-workspace *,
+.ui-theme-scope[data-motion="reduced"] .model-config-workspace * { transition: none !important; }

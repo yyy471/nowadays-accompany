@@ -1,0 +1,180 @@
+{
+  "date": "2026-10-29",
+  "checks": [
+    {
+      "name": "loading-loop",
+      "consoleErrorCount": 22,
+      "consoleErrors": [
+        "Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.",
+        "Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.",
+        "Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.",
+        "Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.",
+        "Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render."
+      ],
+      "pageErrors": []
+    },
+    {
+      "name": "failure-loop",
+      "consoleErrorCount": 10,
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 503 (Service Unavailable)",
+        "Failed to load resource: the server responded with a status of 503 (Service Unavailable)",
+        "Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.",
+        "Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.",
+        "Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render."
+      ],
+      "pageErrors": []
+    },
+    {
+      "name": "shared-provider-lost-update",
+      "simpleEnabledDuringAdvancedSave": true,
+      "beforeAdvancedResponse": [
+        "chat-old",
+        "vision-old",
+        "video-old",
+        "image-old",
+        "voice-old",
+        "chat-added"
+      ],
+      "afterAdvancedResponse": [
+        "chat-old",
+        "vision-old",
+        "video-old",
+        "image-old",
+        "voice-old"
+      ],
+      "requests": [
+        {
+          "method": "PUT",
+          "path": "/providers/review-service",
+          "body": {
+            "inferLocationFromUrl": true,
+            "provider": {
+              "id": "review-service",
+              "baseUrl": "https://api.example.com/advanced",
+              "adapterId": "openai-compatible-v1",
+              "location": "cloud",
+              "credentialRef": "provider/review-service",
+              "models": [
+                {
+                  "id": "chat-old",
+                  "capabilities": [
+                    "chat"
+                  ],
+                  "input": [
+                    "text"
+                  ],
+                  "supportsTools": true,
+                  "parameters": {}
+                },
+                {
+                  "id": "vision-old",
+                  "capabilities": [
+                    "image.understand"
+                  ],
+                  "input": [
+                    "text"
+                  ],
+                  "supportsTools": false,
+                  "parameters": {}
+                },
+                {
+                  "id": "video-old",
+                  "capabilities": [
+                    "video.understand"
+                  ],
+                  "input": [
+                    "text"
+                  ],
+                  "supportsTools": false,
+                  "parameters": {}
+                },
+                {
+                  "id": "image-old",
+                  "capabilities": [
+                    "image.generate"
+                  ],
+                  "input": [
+                    "text"
+                  ],
+                  "supportsTools": false,
+                  "parameters": {}
+                },
+                {
+                  "id": "voice-old",
+                  "capabilities": [
+                    "audio.generate"
+                  ],
+                  "input": [
+                    "text"
+                  ],
+                  "supportsTools": false,
+                  "parameters": {}
+                }
+              ],
+              "mediaTransports": [
+                "inline"
+              ],
+              "limits": {
+                "maxConcurrent": 1,
+                "maxQueue": 8
+              },
+              "timeouts": {
+                "requestMs": 30000,
+                "pollIntervalMs": 100,
+                "pollTimeoutMs": 10000
+              },
+              "retry": {
+                "maxAttempts": 1,
+                "baseDelayMs": 100,
+                "maxDelayMs": 1000
+              },
+              "options": {
+                "settingsModels": {
+                  "chat": "chat-old"
+                }
+              }
+            }
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/providers/simple",
+          "body": {
+            "providerId": "review-service",
+            "capability": "chat",
+            "baseUrl": "https://api.example.com/v1",
+            "modelId": "chat-added",
+            "adapterId": "openai-compatible-v1",
+            "supportsTools": true,
+            "parameters": {}
+          }
+        }
+      ],
+      "consoleErrors": []
+    },
+    {
+      "name": "stale-test-notice",
+      "visibleUrl": "https://api.example.com/v2",
+      "oldTestUrl": "https://api.example.com/v1",
+      "noticeSaysSuccess": true,
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/providers/validate",
+          "body": {
+            "providerId": "review-service",
+            "capability": "chat",
+            "baseUrl": "https://api.example.com/v1",
+            "modelId": "chat-old",
+            "adapterId": "openai-compatible-v1",
+            "supportsTools": true,
+            "parameters": {},
+            "confirmCost": true
+          }
+        }
+      ]
+    }
+  ],
+  "errors": []
+}

@@ -1,0 +1,21 @@
+{
+  "date": "2026-10-29",
+  "files": [
+    {
+      "path": "desktop/renderer/src/pages/Models.tsx",
+      "sha256": "2279171176ea35fea76a4eed5deb001a2fe8f32cbf0ccc15f81f4a3340a3ec63"
+    },
+    {
+      "path": "desktop/renderer/src/pages/ModelConfig.tsx",
+      "sha256": "e98a0fd476889da34708a973f8791bf998e11400cf62be856516359e72c45d10"
+    },
+    {
+      "path": "desktop/renderer/src/components/ProviderManager.tsx",
+      "sha256": "7b1cee017bc55282b0e7754e953e362c1f2c606e52a2edd350f79721359250bc"
+    },
+    {
+      "path": "desktop/renderer/src/App.tsx",
+      "sha256": "418273efdac3c45e41ca7f0216103b3e979de184422ed926c714cfd65ecca7fc"
+    }
+  ]
+}

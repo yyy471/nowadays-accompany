@@ -24,6 +24,7 @@ vi.mock('../desktop/renderer/src/components/DraftProtectionProvider', () => ({ u
 vi.mock('../desktop/renderer/src/lib/use-draft-registration', () => ({ useDraftRegistration: (value: any) => { h.registration = value; } }));
 vi.mock('../desktop/renderer/src/ui', () => ({ Button: 'Button', Card: 'Card', ControlButton: 'ControlButton', ErrorNote: 'ErrorNote', Field: 'Field', Input: 'Input', Tag: 'Tag', useConfirm: () => h.confirm }));
 import { ProviderManager } from '../desktop/renderer/src/components/ProviderManager';
+import { createServiceWriteCoordinator, type ServiceWriteGuard } from '../desktop/renderer/src/lib/service-write-coordinator';
 const provider: ProviderDto = {
   id: 'same-origin-a', baseUrl: 'https://one.example/v1', adapterId: 'openai-compatible-v1', location: 'cloud',
   models: [{ id: 'chat', capabilities: ['chat'], input: ['text'], supportsTools: false, parameters: { custom: { x: 1 } } }],
@@ -38,6 +39,14 @@ function find(node: any, predicate: (node: any) => boolean): any {
   for (const child of Array.isArray(children) ? children : [children]) { const match = find(child, predicate); if (match) return match; }
 }
 let props: Parameters<typeof ProviderManager>[0];
+let coordinator: ReturnType<typeof createServiceWriteCoordinator>;
+const guard = (): ServiceWriteGuard => ({
+  get locks() { return coordinator.getSnapshot().locks; },
+  get writes() { return coordinator.getSnapshot().writes; },
+  setIntents: coordinator.setIntents,
+  begin: coordinator.begin,
+  end: coordinator.end
+});
 function render() {
   h.index = 0; h.effects = [];
   const tree = ProviderManager(props);
@@ -48,7 +57,8 @@ const button = (tree: any, label: string) => find(tree, node => node.type === 'B
 const input = (tree: any, label: string) => find(find(tree, node => node.type === 'Field' && node.props.label === label), node => node.type === 'Input');
 beforeEach(() => {
   h.cells = []; h.cleanups = []; h.api.mockReset(); h.confirm.mockReset(); h.transition.mockReset().mockResolvedValue({ ok: true });
-  props = { providers: [structuredClone(provider)], refresh: vi.fn().mockResolvedValue(undefined) };
+  coordinator = createServiceWriteCoordinator();
+  props = { providers: [structuredClone(provider)], refresh: vi.fn().mockResolvedValue(undefined), writeGuard: guard() };
 });
 async function edit() { await button(render(), '编辑服务').props.onClick(); return render(); }
 async function settle() { for (let index = 0; index < 8; index++) await Promise.resolve(); }
@@ -56,7 +66,7 @@ async function settle() { for (let index = 0; index < 8; index++) await Promise.
 it('registers dirty, freezes edits throughout save, and retains failed drafts and baseline during polling', async () => {
   let tree = await edit();
   input(tree, 'Base URL').props.onChange({ target: { value: 'https://one.example/v2' } }); tree = render();
-  expect(h.registration).toMatchObject({ dirty: true, busy: false });
+  expect(h.registration).toMatchObject({ id: 'models:provider-manager', owner: 'page', dirty: true, busy: false });
   let reject!: (error: Error) => void;
   h.api.mockImplementation(() => new Promise((_resolve, fail) => { reject = fail; }));
   button(tree, '保存服务修改').props.onClick(); tree = render();
@@ -71,11 +81,21 @@ it('registers dirty, freezes edits throughout save, and retains failed drafts an
   h.registration.discard(); tree = render();
   expect(input(tree, 'Base URL').props.value).toBe(provider.baseUrl);
 });
+it('blocks advanced save while the simple editor holds the same provider', async () => {
+  coordinator.setIntents('models', [provider.id]);
+  let tree = await edit();
+  input(tree, 'Base URL').props.onChange({ target: { value: 'https://one.example/v2' } }); tree = render();
+  expect(button(tree, '保存服务修改').props.disabled).toBe(true);
+  button(tree, '保存服务修改').props.onClick(); await settle(); tree = render();
+  expect(h.api).not.toHaveBeenCalled();
+  expect(find(tree, node => node.type === 'ErrorNote').props.message).toContain('未保存修改');
+});
+
 it('asks the shared transition controller before switching edit targets and preserves a cancelled draft', async () => {
   let tree = await edit(); input(tree, 'Base URL').props.onChange({ target: { value: 'https://one.example/v2' } }); tree = render();
   h.transition.mockResolvedValue({ ok: false, reason: 'cancelled' });
   await button(tree, '编辑服务').props.onClick(); tree = render();
-  expect(h.transition).toHaveBeenLastCalledWith({ scope: { kind: 'ids', ids: ['settings:provider-manager'] }, actionLabel: '切换服务' });
+  expect(h.transition).toHaveBeenLastCalledWith({ scope: { kind: 'ids', ids: ['models:provider-manager', 'models:services'] }, actionLabel: '切换服务' });
   expect(input(tree, 'Base URL').props.value).toBe('https://one.example/v2'); expect(h.registration.dirty).toBe(true);
 });
 it('blocks stale saves after another editor updates a service and guards reloading its baseline', async () => {
@@ -111,4 +131,70 @@ it('clear-key cancellation has no write; accepted clear keeps an unrelated unsav
   button(tree, '清除密钥').props.onClick(); await settle(); tree = render();
   expect(h.api.mock.calls).toEqual([[`/providers/${provider.id}/credential`, { method: 'DELETE' }]]);
   expect(input(tree, 'API Key').props.value).toBe('unsaved-new-key'); expect(h.registration.dirty).toBe(true);
+});
+it('holds a shared service write through delete confirmation and releases it on cancel', async () => {
+  h.api.mockResolvedValue({ ok: true, providerId: provider.id, exists: true, affectedAccounts: ['10001'] });
+  let accept!: (value: boolean) => void;
+  h.confirm.mockImplementation(() => new Promise(resolve => { accept = resolve; }));
+  button(render(), '删除服务').props.onClick(); await settle(); render();
+  expect(coordinator.getSnapshot().writes[provider.id]).toBe('advanced');
+  expect(coordinator.begin(provider.id, 'models')).toBe(false);
+  accept(false); await settle(); render();
+  expect(coordinator.getSnapshot().writes[provider.id]).toBeUndefined();
+  expect(coordinator.begin(provider.id, 'models')).toBe(true);
+  coordinator.end(provider.id, 'models');
+});
+it('holds a shared service write through clear-key confirmation and releases it on cancel', async () => {
+  let accept!: (value: boolean) => void;
+  h.confirm.mockImplementation(() => new Promise(resolve => { accept = resolve; }));
+  button(render(), '清除密钥').props.onClick(); await settle(); render();
+  expect(coordinator.getSnapshot().writes[provider.id]).toBe('advanced');
+  expect(coordinator.begin(provider.id, 'models')).toBe(false);
+  accept(false); await settle(); render();
+  expect(coordinator.getSnapshot().writes[provider.id]).toBeUndefined();
+});
+it('does not begin delete while a simple writer holds the service', async () => {
+  expect(coordinator.begin(provider.id, 'models')).toBe(true);
+  const tree = render();
+  button(tree, '删除服务').props.onClick(); await settle();
+  const after = render();
+  expect(h.api).not.toHaveBeenCalled();
+  expect(find(after, node => node.type === 'ErrorNote').props.message).toContain('未保存修改');
+  coordinator.end(provider.id, 'models');
+});
+it('releases the shared service write when the impact request fails', async () => {
+  h.api.mockRejectedValue(new Error('impact unavailable'));
+  button(render(), '删除服务').props.onClick(); await settle();
+  const after = render();
+  expect(coordinator.getSnapshot().writes[provider.id]).toBeUndefined();
+  expect(find(after, node => node.type === 'ErrorNote').props.message).toContain('impact unavailable');
+});
+it('releases the shared service write when the post-delete refresh fails', async () => {
+  h.api.mockResolvedValueOnce({ ok: true, providerId: provider.id, exists: true, affectedAccounts: [] })
+    .mockResolvedValueOnce({ ok: true, removed: true, affectedAccounts: [] });
+  h.confirm.mockResolvedValue(true);
+  props = { ...props, refresh: vi.fn().mockRejectedValue(new Error('refresh failed')) };
+  button(render(), '删除服务').props.onClick(); await settle(); render();
+  expect(coordinator.getSnapshot().writes[provider.id]).toBeUndefined();
+});
+it('treats prototype-named service ids as free for advanced buttons and submission', async () => {
+  const prototypeProvider = { ...structuredClone(provider), id: 'toString', credential: { configured: true, ref: 'provider/toString' } };
+  props = { ...props, providers: [prototypeProvider] };
+  let tree = render();
+  expect(button(tree, '删除服务').props.disabled).toBe(false);
+  expect(button(tree, '清除密钥').props.disabled).toBe(false);
+  h.api.mockResolvedValue({ ok: true, providerId: 'toString', exists: true, affectedAccounts: [] });
+  h.confirm.mockResolvedValue(false);
+  button(tree, '删除服务').props.onClick(); await settle(); tree = render();
+  expect(h.api.mock.calls[0]![0]).toBe('/providers/toString/impact');
+  expect(find(tree, node => node.type === 'ErrorNote')).toBeUndefined();
+  coordinator.setIntents('models', ['toString']); tree = render();
+  expect(button(tree, '删除服务').props.disabled).toBe(true);
+  expect(button(tree, '清除密钥').props.disabled).toBe(true);
+  coordinator.setIntents('models', []); tree = render();
+  expect(button(tree, '删除服务').props.disabled).toBe(false);
+  expect(coordinator.begin('toString', 'models')).toBe(true); tree = render();
+  expect(button(tree, '删除服务').props.disabled).toBe(true);
+  coordinator.end('toString', 'models'); tree = render();
+  expect(button(tree, '删除服务').props.disabled).toBe(false);
 });

@@ -1,0 +1,56 @@
+<!doctype html>
+<!-- 候选设计样例；生成后的index.html可独立离线打开。 -->
+<html lang="zh-CN" data-ui-theme="xiacheng" data-ui-preset="daylight">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark"><title>模型配置 · Nowadays · 设计样例</title>
+<style>__TOKENS__</style><style>__DOCK_CSS__</style><style>__CSS__</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute;pointer-events:none" aria-hidden="true">__ICONS__</svg>
+<a class="skip" href="#main">跳到主内容</a>
+<div class="app">
+<header class="app-header">
+<a class="brand" href="#main" aria-label="Nowadays，模型配置样例"><span class="brand-mark logo-day">__LOGO_LIGHT__</span><span class="brand-mark logo-night">__LOGO_DARK__</span><span class="wordmark">Nowadays<small>A NOTE FOR YOUR EVERYDAY.</small></span></a>
+<div class="theme-switch" role="group" aria-label="昼夜主题"><button type="button" data-theme="daylight" aria-pressed="true"><span aria-hidden="true">☀</span>白昼来信</button><button type="button" data-theme="nightwave" aria-pressed="false"><span aria-hidden="true">☾</span>晚风电台</button></div>
+<div class="header-tools"><span class="sample-label">候选设计 / 交互样例</span><button class="icon-button" type="button" id="settings" aria-label="样例外观设置" aria-haspopup="dialog"><svg class="icon"><use href="#i-settings"/></svg></button></div>
+</header>
+<main class="workspace" id="main" tabindex="-1">
+<div class="page-heading"><div><div class="eyebrow">MODEL NOTEBOOK / 03</div><h1>模型配置</h1><p class="page-description">为对话、看见与表达，选好各自合适的模型。</p></div><span class="state-badge"><svg class="icon"><use href="#i-folder"/></svg>仅在本页演示 · 不发送请求</span></div>
+<div class="section-tabs" role="tablist" aria-label="配置范围"><button type="button" id="service-tab" role="tab" aria-selected="true" aria-controls="service-view" tabindex="0" data-tab="service">服务与模型</button><button type="button" id="account-tab" role="tab" aria-selected="false" aria-controls="account-view" tabindex="-1" data-tab="account">账号使用</button><span class="tab-aside">先准备模型，再分配给需要它的账号。</span></div>
+<section id="service-view" role="tabpanel" aria-labelledby="service-tab">
+<div class="desk-layout">
+<aside class="index" aria-label="模型能力索引"><div class="index-label"><span>日常所需</span><span>01—03</span></div><div class="cap-list" id="primary-capabilities"></div><div class="index-divider">按需添一点能力</div><div class="cap-list" id="extra-capabilities"></div><div class="index-note"><svg class="icon"><use href="#i-messages"/></svg><h3>让回应，有自己的声音。</h3><p>文本模型负责日常对话。看图、读视频与生成内容，可以各选一位擅长的搭档。</p><div class="note-signature">一页配置，一点默契。<br>— Nowadays</div></div></aside>
+<div class="editor-area"><form class="sheet" id="model-form" novalidate>
+<header class="sheet-header"><div><div class="sheet-heading"><span class="serial" id="cap-number">01</span><h2 id="cap-title">文本模型</h2></div><p id="cap-description">负责日常对话，也承接工具调用后的续答。</p></div><span class="sheet-meta" id="cap-status"><span class="status-dot"></span>已配置 · 示例</span></header>
+<div class="sheet-body">
+<div class="form-error" id="form-error" role="alert" hidden></div>
+<div class="configuration-columns"><section class="connection-block" aria-label="服务接入">
+<div class="section-label"><span>01</span>连接到模型服务</div>
+<div class="form-grid">
+<div class="field"><label for="provider">配置来源</label><select id="provider"><option value="everyday">日常对话服务 · 示例</option><option value="local">本机模型服务 · 示例</option><option value="new">新建服务</option></select></div>
+<div class="field"><label for="adapter">接入协议</label><select id="adapter"><option value="openai-compatible-v1">OpenAI 兼容协议</option><option value="video-polling-v1" hidden>视频轮询协议</option></select></div>
+<div class="field full"><label for="base-url">服务地址 <span class="optional">必填</span></label><input class="mono" type="url" id="base-url" value="https://api.example.com/v1" spellcheck="false" autocomplete="off" aria-describedby="url-hint" aria-required="true"><p class="hint" id="url-hint">填写服务提供的 API 基础地址，通常以 /v1 结尾。</p></div>
+<div class="field full"><label for="api-key">API Key <span class="optional" id="key-state">凭据已配置 · 示例</span></label><div class="input-with-button"><input class="mono" type="password" id="api-key" placeholder="留空，继续使用已配置的密钥" autocomplete="off" spellcheck="false" aria-describedby="key-hint"><button type="button" class="reveal" id="reveal-key" aria-label="显示 API Key" aria-pressed="false">显示</button></div><p class="hint" id="key-hint">此样例不保存或发送密钥，请只填写演示内容。</p></div>
+</div>
+</section><section class="model-block" aria-label="模型选择与测试">
+<div class="section-label"><span>02</span>选择一个合适的模型</div>
+<div class="field"><label for="model-name">模型名称 <span class="optional">必填</span></label><div class="model-picker"><input class="mono" id="model-name" value="everyday-chat" autocomplete="off" spellcheck="false" aria-describedby="model-hint" aria-required="true"><button type="button" class="btn" id="fetch-models"><svg class="icon"><use href="#i-refresh"/></svg><span>获取模型</span></button></div><p class="hint" id="model-hint">可直接输入完整模型 ID，也可以从服务返回的列表中选择。</p></div>
+<div class="support-row" id="tools-row"><div><h3 id="tools-label">支持工具调用</h3><p>模型可按需调用已授权的插件和 Skill 工具。</p></div><button type="button" class="switch" id="tools-switch" role="switch" aria-checked="true" aria-labelledby="tools-label"></button></div>
+<div class="field" id="voice-row" hidden style="margin-top:20px"><label for="voice-name">音色</label><input id="voice-name" placeholder="填写服务支持的音色 ID" value="gentle" autocomplete="off"><p class="hint">音色名称由所连接的语音服务决定。</p></div>
+<section class="test-area" aria-labelledby="test-title"><div class="test-heading"><h3 id="test-title">连通性测试</h3><label class="scenario" for="scenario">结果演示<select id="scenario"><option value="success">连接成功</option><option value="error">鉴权失败</option><option value="unknown">请求超时</option><option value="empty">空模型列表</option></select></label></div><div class="test-output" id="test-output" role="status" aria-live="polite"><svg class="icon"><use href="#i-radio"/></svg><div><strong>等一次小小的回应</strong><p>点击“测试连接”，查看此处的结果反馈。测试与保存是两个独立操作。</p></div></div></section>
+</section></div></div>
+<footer class="sheet-footer"><span class="save-note" id="save-note" role="status"><svg class="icon"><use href="#i-shield"/></svg><span>当前配置为样例数据</span></span><div class="footer-actions"><button type="button" class="btn test" id="test-connection"><svg class="icon"><use href="#i-play"/></svg><span>测试连接</span></button><button type="submit" class="btn primary" id="save-model"><svg class="icon"><use href="#i-check"/></svg><span>保存配置</span></button></div></footer>
+</form><div class="below-sheet"><span>保存模型服务后，还需在「账号使用」中单独授权与分配。</span><button type="button" class="text-link" id="go-account">去分配给账号 →</button></div></div>
+</div></section>
+<section id="account-view" role="tabpanel" aria-labelledby="account-tab" hidden>
+<div class="desk-layout"><aside class="index"><div class="index-label">使用这份配置的账号</div><label class="caption" for="account-select">选择账号</label><select class="account-select" id="account-select"><option value="day">白昼来信 · 示例账号</option><option value="night">晚风电台 · 示例账号</option></select><div class="index-note"><svg class="icon"><use href="#i-shield"/></svg><h3>每个账号，各自决定。</h3><p>服务配置可以共用，使用权限和能力分配按账号单独保存。</p></div></aside><div><form class="sheet" id="account-form"><header class="sheet-header"><div><div class="sheet-heading"><span class="serial">QQ</span><h2 id="account-title">白昼来信</h2></div><p>选择这个账号可以使用的模型与能力。</p></div><span class="sheet-meta">示例账号</span></header><div class="sheet-body"><div class="section-label"><span>01</span>允许使用的服务</div><label class="dialog-setting"><input type="checkbox" id="authorize-provider" checked>日常对话服务 · 示例</label><p class="scope-note">只有授权的服务，才会出现在下方模型选项中。</p><hr class="paper-rule"><div class="section-label"><span>02</span>能力与模型分配</div><div id="binding-rows"></div><p class="scope-note">设为“不启用”时，该账号不会调用对应能力。角色卡仍需在会话中单独绑定。</p></div><footer class="sheet-footer"><span class="save-note" id="account-save-note" role="status">本页使用独立的示例账号数据</span><button class="btn primary" type="submit">保存账号配置</button></footer></form><div class="below-sheet"><span>分配只作用于当前示例账号，不会连到 QQ。</span><button class="text-link" type="button" id="go-service">返回服务与模型 →</button></div></div></div>
+</section>
+</main>
+<footer class="app-footer"><span class="footer-caption">候选设计 · MODEL CONFIGURATION</span><nav class="ui-page-dock" aria-label="页面导航样例"><span class="ui-dock-marker" aria-hidden="true"></span>__DOCK_ITEMS__</nav><span class="footer-caption">CHARACTER STUDIO / 2026</span></footer>
+</div>
+<dialog id="settings-dialog" aria-labelledby="settings-title"><div class="dialog-body"><h2 id="settings-title">样例外观</h2><p>沿用白昼来信与晚风电台。切换外观会保留当前填写内容。</p><label class="dialog-setting"><input type="checkbox" id="reduce-motion">减少动态效果</label><p class="caption" style="margin-top:16px">这是独立 HTML 候选设计。模型获取、测试和保存均在本页模拟，不连接真实服务。</p></div><div class="dialog-footer"><button class="btn primary" data-close-dialog type="button">完成</button></div></dialog>
+<dialog id="models-dialog" aria-labelledby="models-title"><div class="dialog-body"><h2 id="models-title">选择模型</h2><p>以下为演示列表，也可以关闭后手动填写。</p><div class="model-options" id="model-options"></div></div><div class="dialog-footer"><button type="button" class="btn" data-close-dialog>取消</button></div></dialog>
+<div class="toast" id="toast" role="status" hidden></div>
+<script>__JS__</script>
+</body></html>

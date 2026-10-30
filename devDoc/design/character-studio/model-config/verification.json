@@ -1,0 +1,135 @@
+{
+  "date": "2026-10-29",
+  "status": "passed",
+  "checks": [
+    "two themes / seven viewport sizes: no root overflow, essential controls stay within viewport",
+    "theme, capability and scope switches preserve independent drafts",
+    "test loading / success does not save draft",
+    "authentication error and unknown timeout preserve inputs without retry",
+    "changed draft rejects stale simulated result",
+    "model picker selection, modal close and return focus",
+    "empty and failed model list retain manual input fallback",
+    "invalid field shows associated error and receives focus",
+    "custom provider save clears key; stored origin reusable; changed origin requires new key",
+    "voice and video-specific fields shown only for corresponding capability",
+    "account authorization gates options; account drafts isolated and save feedback local",
+    "appearance modal Escape / focus restore / reduced motion",
+    "self-contained file loads without runtime errors or HTTP requests"
+  ],
+  "layouts": [
+    {
+      "theme": "daylight",
+      "width": 1440,
+      "height": 1160,
+      "w": 1440,
+      "scroll": 1440,
+      "badControls": []
+    },
+    {
+      "theme": "daylight",
+      "width": 1280,
+      "height": 900,
+      "w": 1280,
+      "scroll": 1280,
+      "badControls": []
+    },
+    {
+      "theme": "daylight",
+      "width": 1024,
+      "height": 720,
+      "w": 1024,
+      "scroll": 1024,
+      "badControls": []
+    },
+    {
+      "theme": "daylight",
+      "width": 768,
+      "height": 900,
+      "w": 768,
+      "scroll": 768,
+      "badControls": []
+    },
+    {
+      "theme": "daylight",
+      "width": 414,
+      "height": 896,
+      "w": 414,
+      "scroll": 414,
+      "badControls": []
+    },
+    {
+      "theme": "daylight",
+      "width": 375,
+      "height": 812,
+      "w": 375,
+      "scroll": 375,
+      "badControls": []
+    },
+    {
+      "theme": "daylight",
+      "width": 320,
+      "height": 740,
+      "w": 320,
+      "scroll": 320,
+      "badControls": []
+    },
+    {
+      "theme": "nightwave",
+      "width": 1440,
+      "height": 1160,
+      "w": 1440,
+      "scroll": 1440,
+      "badControls": []
+    },
+    {
+      "theme": "nightwave",
+      "width": 1280,
+      "height": 900,
+      "w": 1280,
+      "scroll": 1280,
+      "badControls": []
+    },
+    {
+      "theme": "nightwave",
+      "width": 1024,
+      "height": 720,
+      "w": 1024,
+      "scroll": 1024,
+      "badControls": []
+    },
+    {
+      "theme": "nightwave",
+      "width": 768,
+      "height": 900,
+      "w": 768,
+      "scroll": 768,
+      "badControls": []
+    },
+    {
+      "theme": "nightwave",
+      "width": 414,
+      "height": 896,
+      "w": 414,
+      "scroll": 414,
+      "badControls": []
+    },
+    {
+      "theme": "nightwave",
+      "width": 375,
+      "height": 812,
+      "w": 375,
+      "scroll": 375,
+      "badControls": []
+    },
+    {
+      "theme": "nightwave",
+      "width": 320,
+      "height": 740,
+      "w": 320,
+      "scroll": 320,
+      "badControls": []
+    }
+  ],
+  "errors": [],
+  "remoteRequests": []
+}

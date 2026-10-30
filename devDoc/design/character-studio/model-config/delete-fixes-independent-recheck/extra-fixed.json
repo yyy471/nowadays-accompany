@@ -1,0 +1,56 @@
+{
+  "date": "2026-10-30",
+  "checks": [
+    {
+      "name": "impact-confirm-cancel-daylight",
+      "duringImpact": true,
+      "duringConfirm": true,
+      "afterCancel": false,
+      "model": "keep-through-confirm",
+      "deleteCalls": 0
+    },
+    {
+      "name": "impact-confirm-cancel-nightwave",
+      "duringImpact": true,
+      "duringConfirm": true,
+      "afterCancel": false,
+      "model": "keep-through-confirm",
+      "deleteCalls": 0
+    },
+    {
+      "name": "impact-failure",
+      "duringRefresh": null,
+      "after": false,
+      "deleteCalls": 0,
+      "pageErrors": []
+    },
+    {
+      "name": "clear-cancel",
+      "duringRefresh": null,
+      "after": false,
+      "deleteCalls": 0,
+      "pageErrors": []
+    },
+    {
+      "name": "clear-failure",
+      "duringRefresh": null,
+      "after": false,
+      "deleteCalls": 1,
+      "pageErrors": []
+    },
+    {
+      "name": "refresh-wait-failure",
+      "duringRefresh": true,
+      "after": false,
+      "deleteCalls": 1,
+      "pageErrors": []
+    },
+    {
+      "name": "different-provider-not-locked",
+      "samePageOtherResourceEnabled": true,
+      "saved": true,
+      "clearTarget": "other-service"
+    }
+  ],
+  "errors": []
+}

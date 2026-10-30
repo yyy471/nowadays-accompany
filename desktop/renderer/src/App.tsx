@@ -23,7 +23,7 @@ import { ActivityPage } from './pages/Activity';
 import { ArtifactsPage } from './pages/Artifacts';
 import { ExtensionsPage } from './pages/Extensions';
 import { OverviewPage } from './pages/Overview';
-import { PolicyPage } from './pages/Policy';
+import { ModelConfigPage, type ModelConfigView } from './pages/ModelConfig';
 import { SlotsPage } from './pages/Slots';
 import { HomePage } from './pages/Home';
 import { Icon } from './ui';
@@ -78,7 +78,7 @@ function hashSettingsTab(): SettingsTab {
 function legacyHashNoticeValue(hash: string): string | undefined {
   const id = hash.replace(/^#\/?/, '');
   if (id === 'messages') return '聊天历史与人工发送页面已移除。消息仍按账号与会话隔离保存；请从总览或事件诊断查看当前运行状态。';
-  if (id === 'tasks') return '任务媒体历史页面已移除；当前模型配置页只管理账号服务与能力，插件、工具授权和 Skill 在“插件与Skill”页管理。';
+  if (id === 'tasks') return '任务媒体历史页面已移除；模型服务与账号使用统一在“模型配置”工作区管理，插件、工具授权和 Skill 在“插件与Skill”页管理。';
   return undefined;
 }
 
@@ -109,6 +109,7 @@ export function App() {
   const contentRef = useRef<HTMLElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(isSettingsHash);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>(hashSettingsTab);
+  const [modelView, setModelView] = useState<ModelConfigView>('account');
   const [legacyNotice, setLegacyNotice] = useState(legacyHashNotice);
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [streamStatus, setStreamStatus] = useState<StreamStatus>('connecting');
@@ -237,7 +238,7 @@ export function App() {
   const transitionScope = (): { kind: 'page' } | { kind: 'all' } =>
     settingsOpenRef.current ? { kind: 'all' } : { kind: 'page' };
 
-  const applyRoute = (next: string, options: { push?: boolean; index?: number; focusAccountId?: string; focusBinding?: BindingTarget; notice?: string } = {}): void => {
+  const applyRoute = (next: string, options: { push?: boolean; index?: number; focusAccountId?: string; focusBinding?: BindingTarget; notice?: string; modelView?: ModelConfigView } = {}): void => {
     const url = urlForPage(next);
     let index = options.index;
     if (index === undefined) {
@@ -261,6 +262,7 @@ export function App() {
     }
     pageRef.current = next;
     setPage(next);
+    if (next === 'model-config') setModelView(options.modelView ?? 'account');
     setSettingsOpen(false);
     setLegacyNotice(options.notice);
     setTransitionNotice(undefined);
@@ -443,6 +445,12 @@ export function App() {
     return () => { stopHeartbeat(); confirmation?.abort(); offCheck(); offState?.(); };
   }, [requestTransition]);
 
+  const changeModelView = (next: ModelConfigView): void => {
+    if (next === modelView) return;
+    setModelView(next);
+    contentRef.current?.scrollTo({ top: 0 });
+  };
+
   const openSettings = (tab: SettingsTab = settingsTab): void => {
     if (quitPhaseRef.current !== 'idle') return;
     setSettingsTab(tab);
@@ -452,13 +460,44 @@ export function App() {
 
   const goAccountModels = async (): Promise<void> => {
     if (quitPhaseRef.current !== 'idle') return;
-    const result = await requestTransition({ scope: { kind: 'all' }, actionLabel: '前往账号模型配置' });
+    const staying = pageRef.current === 'model-config';
+    const result = await requestTransition({
+      scope: staying ? { kind: 'settings' } : { kind: 'all' },
+      actionLabel: '前往账号使用'
+    });
     if (quitPhaseRef.current !== 'idle') return;
     if (!result.ok) {
       if (result.message) setTransitionNotice(result.message);
       return;
     }
-    applyRoute('model-config', { push: pageRef.current !== 'model-config' });
+    if (staying) {
+      settingsOpenRef.current = false;
+      setSettingsOpen(false);
+      setModelView('account');
+      contentRef.current?.scrollTo({ top: 0 });
+      return;
+    }
+    applyRoute('model-config', { push: true, modelView: 'account' });
+  };
+
+  const openModelServices = async (): Promise<{ ok: boolean; message?: string }> => {
+    if (quitPhaseRef.current !== 'idle') return { ok: false };
+    const staying = pageRef.current === 'model-config';
+    const result = await requestTransition({
+      scope: staying ? { kind: 'settings' } : { kind: 'all' },
+      actionLabel: '打开服务与模型'
+    });
+    if (quitPhaseRef.current !== 'idle') return { ok: false };
+    if (!result.ok) return { ok: false, message: result.message };
+    if (staying) {
+      settingsOpenRef.current = false;
+      setSettingsOpen(false);
+      setModelView('services');
+      contentRef.current?.scrollTo({ top: 0 });
+    } else {
+      applyRoute('model-config', { push: true, modelView: 'services' });
+    }
+    return { ok: true };
   };
 
   const goPage = (next:string):void => { void navigate(next,next==='roles'&&accounts.data?.accounts.some(account=>account.accountId===selectedHomeAccount)?{focusAccountId:selectedHomeAccount}:{}); };
@@ -494,8 +533,8 @@ export function App() {
           {legacyNotice ? <div className="notice legacy-route-notice" role="status"><span>{legacyNotice}</span><CancelButton size="sm" onClick={() => setLegacyNotice(undefined)}>关闭</CancelButton></div> : null}
           {transitionNotice ? <div className="notice notice-warn" role="status"><span>{transitionNotice}</span><CancelButton size="sm" onClick={() => setTransitionNotice(undefined)}>关闭</CancelButton></div> : null}
           </UiThemeScope>
-          <UiThemeProvider theme={page==='home'||page==='roles'?'xiacheng':undefined}>
-          <div ref={pageBodyRef} className={page==='home'?'studio-home-content':page==='roles'?'studio-relations-content':'studio-legacy-page'}>
+          <UiThemeProvider theme={page==='home'||page==='roles'||page==='model-config'?'xiacheng':undefined}>
+          <div ref={pageBodyRef} className={page==='home'?'studio-home-content':page==='roles'?'studio-relations-content':page==='model-config'?'studio-model-content':'studio-legacy-page'}>
           {page!=='home'&&page!=='roles'?<header className="studio-page-heading"><h1>{current.title}</h1><p>{current.subtitle}</p></header>:null}
           {page === 'home' ? (
             <UiThemeScope theme="xiacheng">
@@ -567,23 +606,26 @@ export function App() {
             />
           ) : null}
           {page === 'model-config' ? (
-            <PolicyPage
+            <UiThemeScope theme="xiacheng">
+            <ModelConfigPage
+              view={modelView}
+              onViewChange={changeModelView}
               initialAccountId={activeHomeAccount}
               providers={providers.data}
               providersLoading={providers.loading}
               providersError={providers.error}
+              refreshProviders={providers.refresh}
               accounts={accounts.data}
               accountsLoading={accounts.loading}
               accountsError={accounts.error}
               slots={slots.data}
               slotsLoading={slots.loading}
               slotsError={slots.error}
-              onGoModels={() => openSettings('models')}
               onGoConnections={() => navigate('instances')}
               onRetryAccounts={accounts.refresh}
               onRetrySlots={slots.refresh}
-              onRetryProviders={providers.refresh}
             />
+            </UiThemeScope>
           ) : null}
           {page === 'artifacts' ? (
             <ArtifactsPage accounts={accounts.data} data={artifacts.data} loading={artifacts.loading} error={artifacts.error} refresh={artifacts.refresh} locked={quitPhase !== 'idle'} />
@@ -606,6 +648,7 @@ export function App() {
         initialTab={settingsTab}
         onTabChange={setSettingsTab}
         onGoAccountModels={() => void goAccountModels()}
+        onOpenModelServices={openModelServices}
         onRequestClose={() => { if (quitPhaseRef.current !== 'idle') return; settingsOpenRef.current = false; setSettingsOpen(false); }}
         providers={providers.data}
         providersError={providers.error}

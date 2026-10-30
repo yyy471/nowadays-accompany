@@ -1,0 +1,20 @@
+{
+  "scope": "actual Core + ConfigStore + MemoryVault, isolated temp dataRoot; no QQ/models/network",
+  "deliveryOrder": [
+    "simple save acknowledged",
+    "earlier UI delete delivered afterward"
+  ],
+  "savedModels": [
+    "chat-old",
+    "vision-old",
+    "video-old",
+    "image-old",
+    "voice-old",
+    "chat-during-delete"
+  ],
+  "removed": {
+    "removed": true,
+    "affectedAccounts": []
+  },
+  "nextSaveError": "该服务已被删除，请重新选择"
+}

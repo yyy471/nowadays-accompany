@@ -43,6 +43,7 @@ vi.mock('../desktop/renderer/src/pages/Models', () => ({ ModelsPage: 'ModelsPage
 vi.mock('../desktop/renderer/src/pages/Settings', () => ({ SettingsPage: 'SettingsPage' }));
 import { App } from '../desktop/renderer/src/App';
 import { SettingsDialog, type SettingsTab } from '../desktop/renderer/src/components/SettingsDialog';
+import { ModelConfigPage } from '../desktop/renderer/src/pages/ModelConfig';
 import { SnowLumaSetup } from '../desktop/renderer/src/components/SnowLumaSetup';
 import { ThemeSwitcher } from '../desktop/renderer/src/components/shell/ThemeSwitcher';
 
@@ -73,22 +74,44 @@ beforeEach(() => {
   vi.stubGlobal('window', { location, history: { state: null, replaceState: vi.fn(), pushState: vi.fn() }, addEventListener: (name: string, callback: any) => h.listeners.set(name, callback), removeEventListener() {} });
 });
 
-it('remembers the session tab while connection and model entry points override it', async () => {
+it('keeps both workspace views mounted and routes each view callback', () => {
+  const changes: string[] = [];
+  let tree = render(() => ModelConfigPage({
+    view: 'account', onViewChange: value => changes.push(value),
+    providers: undefined, providersLoading: false, refreshProviders: async () => {},
+    accounts: undefined, accountsLoading: false, slots: undefined, slotsLoading: false,
+    onGoConnections: () => {}, onRetryAccounts: async () => {}, onRetrySlots: async () => {}
+  }));
+  const serviceView = find(tree, n => n.props?.['aria-label'] === '服务与模型');
+  const accountView = find(tree, n => n.props?.['aria-label'] === '账号使用');
+  expect(serviceView.props).toMatchObject({ hidden: true, inert: true });
+  expect(accountView.props).toMatchObject({ hidden: false });
+  const models = find(tree, n => n.type === 'ModelsPage');
+  const policy = find(tree, n => n.type === 'PolicyPage');
+  expect(models).toBeDefined(); expect(policy).toBeDefined();
+  expect(models.props).toMatchObject({ capability: 'chat' });
+  models.props.onGoAccountModels(); policy.props.onGoModels();
+  expect(changes).toEqual(['account', 'services']);
+});
+
+it('retains the session tab and moves the model entry into the workspace view', async () => {
   let tree = render(App);
   const dialog = () => find(tree, n => n.type === SettingsDialog).props;
+  const workspace = () => find(tree, n => n.type === ModelConfigPage).props;
   dialog().onTabChange('diagnostics'); tree = render(App);
   find(tree, n => n.props?.className === 'ui-settings-launcher').props.onClick(); tree = render(App);
   expect(dialog()).toMatchObject({ open: true, initialTab: 'diagnostics' });
-  dialog().onRequestClose(); tree = render(App);
-  find(tree, n => n.type === 'PolicyPage').props.onGoModels(); tree = render(App);
-  expect(dialog().initialTab).toBe('models');
-  dialog().onRequestClose(); tree = render(App);
-  await find(tree, n => n.type === 'PolicyPage').props.onGoConnections(); tree = render(App);
+  dialog().onRequestClose(); await settle(); tree = render(App);
+  expect(workspace().view).toBe('account');
+  workspace().onViewChange('services'); tree = render(App);
+  expect(workspace().view).toBe('services');
+  expect(dialog().open).toBe(false);
+  await workspace().onGoConnections(); await settle(); tree = render(App);
   find(tree, n => n.type === 'SlotsPage').props.onSettings(); tree = render(App);
-  expect(dialog().initialTab).toBe('snowluma');
-  dialog().onRequestClose(); tree = render(App);
+  expect(dialog()).toMatchObject({ open: true, initialTab: 'snowluma' });
+  dialog().onRequestClose(); await settle(); tree = render(App);
   find(tree, n => n.props?.className === 'ui-settings-launcher').props.onClick(); tree = render(App);
-  expect(dialog().initialTab).toBe('snowluma');
+  expect(dialog()).toMatchObject({ open: true, initialTab: 'snowluma' });
 });
 
 it.each(['#/settings', '#/models'])('keeps the legacy %s model service entry', hash => {
@@ -97,19 +120,55 @@ it.each(['#/settings', '#/models'])('keeps the legacy %s model service entry', h
   expect(find(tree, n => n.type === SettingsDialog).props).toMatchObject({ open: true, initialTab: 'models' });
 });
 
-it('checks all drafts before returning to account models even when already on that page', async () => {
+it.each(['#/settings', '#/models'])('opens the service view from the legacy %s summary entry', async hash => {
+  window.location.hash = hash; window.location.href = `http://fixture.invalid/${hash}`;
+  let tree = render(App);
+  await find(tree, n => n.type === SettingsDialog).props.onOpenModelServices(); await settle();
+  tree = render(App);
+  expect(h.protection.requestTransition).toHaveBeenLastCalledWith(expect.objectContaining({ scope: { kind: 'all' }, actionLabel: '打开服务与模型' }));
+  expect(find(tree, n => n.type === SettingsDialog).props.open).toBe(false);
+  expect(find(tree, n => n.type === ModelConfigPage).props.view).toBe('services');
+});
+
+it('opens the service view from settings without unloading the workspace page', async () => {
+  let tree = render(App);
+  find(tree, n => n.props?.className === 'ui-settings-launcher').props.onClick(); tree = render(App);
+  await find(tree, n => n.type === SettingsDialog).props.onOpenModelServices(); await settle();
+  const after = render(App);
+  expect(h.protection.requestTransition).toHaveBeenLastCalledWith(expect.objectContaining({ scope: { kind: 'settings' }, actionLabel: '打开服务与模型' }));
+  expect(find(after, n => n.type === SettingsDialog).props.open).toBe(false);
+  expect(find(after, n => n.type === ModelConfigPage).props.view).toBe('services');
+});
+
+it('returns to account use without discarding workspace drafts when already on model config', async () => {
   let draft = 'unsaved account policy';
   registry.register({ id: 'policy', owner: 'page', getSnapshot: () => ({ label: '账号模型', dirty: Boolean(draft), busy: false, revision: 1, discard: () => { draft = ''; } }) });
-  let tree = render(App);
-  find(tree, n => n.type === 'PolicyPage').props.onGoModels(); tree = render(App);
-  find(tree, n => n.type === SettingsDialog).props.onGoAccountModels(); await settle(); tree = render(App);
-  expect(h.protection.requestTransition).toHaveBeenLastCalledWith(expect.objectContaining({ scope: { kind: 'all' } }));
+  const tree = render(App);
+  find(tree, n => n.props?.className === 'ui-settings-launcher').props.onClick(); render(App);
+  find(render(App), n => n.type === SettingsDialog).props.onGoAccountModels(); await settle();
+  const after = render(App);
+  expect(h.protection.requestTransition).toHaveBeenLastCalledWith(expect.objectContaining({ scope: { kind: 'settings' } }));
   expect(draft).toBe('unsaved account policy');
-  expect(find(tree, n => n.type === SettingsDialog).props.open).toBe(true);
+  expect(find(after, n => n.type === SettingsDialog).props.open).toBe(false);
+  expect(find(after, n => n.type === ModelConfigPage).props.view).toBe('account');
+});
+
+it('checks other page drafts before moving into account use', async () => {
+  (window as any).location.hash = '#/overview';
+  let draft = 'unsaved overview task';
+  registry.register({ id: 'overview', owner: 'page', getSnapshot: () => ({ label: '总览编辑', dirty: Boolean(draft), busy: false, revision: 1, discard: () => { draft = ''; } }) });
+  let tree = render(App);
+  find(tree, n => n.props?.className === 'ui-settings-launcher').props.onClick(); tree = render(App);
+  find(tree, n => n.type === SettingsDialog).props.onGoAccountModels(); await settle();
+  expect(h.protection.requestTransition).toHaveBeenLastCalledWith(expect.objectContaining({ scope: { kind: 'all' } }));
+  expect(draft).toBe('unsaved overview task');
+  expect(find(render(App), n => n.type === SettingsDialog).props.open).toBe(true);
   confirm.mockResolvedValue(true);
-  find(tree, n => n.type === SettingsDialog).props.onGoAccountModels(); await settle(); tree = render(App);
-  expect(draft).toBe(''); expect(find(tree, n => n.type === SettingsDialog).props.open).toBe(false);
-  expect(find(tree, n => n.type === 'PolicyPage')).toBeDefined();
+  find(render(App), n => n.type === SettingsDialog).props.onGoAccountModels(); await settle();
+  tree = render(App);
+  expect(draft).toBe('');
+  expect(find(tree, n => n.type === SettingsDialog).props.open).toBe(false);
+  expect(find(tree, n => n.type === ModelConfigPage).props.view).toBe('account');
 });
 
 it('retains a real connection editor draft across hidden tabs and a cancelled close', async () => {

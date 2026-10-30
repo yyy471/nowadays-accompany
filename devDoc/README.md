@@ -1,5 +1,23 @@
 # 开发文档导航
 
+模型配置原型同名ID修复已完成独立复验，见[160复验记录](160-model-config-prototype-id-independent-recheck.md)：158-R1关闭，本轮未发现新增阻塞；普通id及constructor/toString/hasOwnProperty/valueOf实际页面的保存、高级写入、清密钥和删除均正常，七种id的协调器空闲/占用/释放检查通过。原六组故障与八组删除恢复也通过，154/156/158发现链在本地代码与自动化范围内收口。独立全量132文件1248项通过/1项既有跳过，类型、桌面构建、token及空白检查通过；151未执行项、真实服务、原生组合与发行EXE仍待验收，未改正式实现、未提交或打包。
+
+模型配置工作区158复验的P2已完成实现方修复，见[159修复记录](159-model-config-prototype-id-fixes.md)：协调器快照、锁构建与写入导出改用无原型字典，`begin()`及两个编辑面的占用读取使用自有键判断；同页来源跟踪改为`Map`，合法id为`constructor`/`toString`时不再误锁，简易保存、高级保存、清密钥、删除及来源变化均可正常处理。定向36项、全量132文件1248项通过/1项既有跳过，类型、桌面构建、token同步及`git diff --check`通过；原型同名ID真实React专项4组、154专项6组、157专项8组、开发版与生产dist各13/13、隔离Electron 100%/125%各3/3。158原结论保留，待独立复验；未提交、推送或打包。
+
+模型配置删除与来源恢复已完成独立复验，见[158复验记录](158-model-config-delete-fixes-independent-recheck.md)：156-F1/F2可关闭，原154故障场景与157八组场景均通过；整体仍留1项新发现P2——合法服务id为constructor/toString时，共享协调器把Object继承属性误判为锁，真实React及Core/空协调器已确认。最终独立全量132文件1244项通过/1项既有跳过，类型、桌面构建、token及空白检查通过；首轮插件组合等待超时、单文件与全量复跑记录均保留。未修改正式实现、未提交或打包。
+
+模型配置工作区156复验的F1／F2已完成实现方修复，见[157修复记录](157-model-config-delete-and-recovery-fixes.md)：删除与清除密钥从影响读取、确认等待到写入、刷新全程纳入同provider共享写入准入，取消／失败／刷新异常均释放；最后一个来源删除后提供“转为新建服务”，保留地址、模型名和已填密钥，清除旧providerId与失效标记后再保存。定向46项、全量132文件1244项通过/1项既有跳过，类型、桌面构建、token同步及`git diff --check`通过；F1/F2真实React专项8组、154原专项6组、开发版与生产dist各13/13、隔离Electron 100%/125%各3/3。156原结论保留，待独立复验；未提交、推送或打包。
+
+模型配置修复独立复验**暂不收口**，见[156复验记录](156-model-config-fixes-independent-recheck.md)：154-R1、R3可关闭，原高级PUT覆盖场景通过；R2仍有遗漏——删除未进入共享写入准入，真实React与Core均确认简易保存成功后可被迟到删除移除（P1）。另发现最后一个来源被删除时脏草稿缺少当前页新建恢复入口（P2）。本次独立全量132文件1235项通过/1项既有跳过，类型、桌面构建、token与空白检查通过；155保留为实现方记录，未修改正式实现、未提交或打包。
+
+模型配置工作区154复核的R1～R3已完成实现方修复，见[155修复记录](155-model-config-review-fixes.md)：无provider数据时稳定状态提交；简易／高级编辑共享页面级写入准入，高级保存前核对源快照，简易草稿来源变化需显式采用最新信息；测试／获取模型／保存的迟到响应绑定请求序号与目标指纹，不再为当前配置写旧成功提示。定向37项、全量132文件1235项通过/1项既有跳过，类型、桌面构建、token同步及`git diff --check`通过；开发版与生产dist各13/13、隔离Electron 100%/125%各3/3、154专项真实React探针6组通过。154原结论保留，待独立复验；未提交、推送或打包。
+
+模型配置工作区独立复核**暂不通过**，见[154复核与修复要求](154-model-config-workspace-independent-review.md)：实际React复现无provider数据时更新循环（P1）、同provider简易/高级并发保存导致已保存模型丢失（P1，真实Core重放确认）、源配置刷新后旧测试成功提示迟到（P2）。独立全量131文件1228项通过/1项既有跳过，类型、桌面构建、token同步通过；24个昼夜/尺寸/视图状态无根横向溢出。153仍为实现方自验，先修复R1～R3并复验后再收口；未改实现、未提交或打包。
+
+模型配置工作区已按[150开发方案](150-model-config-development-plan.md)/[151验收标准](151-model-config-acceptance.md)完成MC-0～MC-4与MC-5实现方自验，见[153执行记录](153-model-config-workspace-execution.md)：统一服务/账号双视图、设置只读摘要与旧入口转接、页面级服务草稿、五类能力纸页、完整账号策略、两主题/599px/原生100%与125%均已检查；全量131文件1228项通过/1项既有跳过，类型、桌面构建、token同步及`git diff --check`通过。状态为**实现方自验**，151清单仍有部分未执行项，独立复核、真实服务与发行EXE未验；未提交、推送或打包。[152](152-model-config-development-docs-independent-review.md)保留文档阶段复核结论。
+
+模型配置双主题HTML候选样例已归档，见[148设计与自验](148-model-config-html-execution.md)、[149独立复核](149-model-config-html-independent-review.md)与[可离线打开的HTML](design/character-studio/model-config/index.html)。包含服务/模型、账号授权、五类能力及模拟获取/测试/保存；两主题实际截图与交互证据在样例目录。本批未迁移正式React页面或重打包EXE。
+
 关系页原貌迁移与专属昼夜切换已完成本轮代码和本地自动化收口，见[143方案](143-relationship-journal-migration-plan.md)、[144总执行](144-relationship-journal-migration-execution.md)、[145业务独立复核](145-relationship-journal-independent-review.md)、[146专属过渡实施](146-relationship-journal-theme-transition-execution.md)与[147主进程复核](147-relationship-journal-theme-independent-review.md)。用户指定GPT-6 Luna max子代理实现追加过渡，主进程复核；关系页纸线↔刻度与自身明暗效果取代天气层，其他页保持默认天气。最终130文件1212项通过/1项既有跳过，类型、桌面构建及token同步通过；[双主题稳定图](design/relationship-journal/verification/README.md)已归档，逐帧观感、真实QQ/模型、原生组合与发行EXE仍未验收。未提交、推送或重打包EXE。
 
 后端扩展141复核修复见[142 修复记录](142-backend-extension-access-review-fixes.md)：R1 测试前先按策略门禁并只启动所需插件，R2 工具执行复用正式共享限流器且 Worker 打开有界准入，R3 Skill 结果改消费第一次真实模型请求的入选 Skill/tools，R4 合法原型同名 Skill id 按自有键读取。定向27项、全量126文件1182项通过/1项既有跳过，类型、桌面构建和141独立探针均通过；141原结论保留，待独立复验。未改业务外前端、未提交或打包。

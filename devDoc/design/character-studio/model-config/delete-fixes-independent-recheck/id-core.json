@@ -1,0 +1,33 @@
+{
+  "date": "2026-10-30",
+  "scope": "actual Core config + MemoryVault, no HTTP/QQ/models; fresh coordinator with no locks/writes",
+  "checks": [
+    {
+      "id": "ordinary-service",
+      "acceptedByCore": true,
+      "ownLock": false,
+      "inheritedLockType": "undefined",
+      "ownWrite": false,
+      "inheritedWriteType": "undefined",
+      "canBegin": true
+    },
+    {
+      "id": "constructor",
+      "acceptedByCore": true,
+      "ownLock": false,
+      "inheritedLockType": "function",
+      "ownWrite": false,
+      "inheritedWriteType": "function",
+      "canBegin": false
+    },
+    {
+      "id": "toString",
+      "acceptedByCore": true,
+      "ownLock": false,
+      "inheritedLockType": "function",
+      "ownWrite": false,
+      "inheritedWriteType": "function",
+      "canBegin": false
+    }
+  ]
+}

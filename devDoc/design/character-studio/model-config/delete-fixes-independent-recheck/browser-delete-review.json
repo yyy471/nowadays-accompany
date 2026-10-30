@@ -1,0 +1,91 @@
+{
+  "date": "2026-10-30",
+  "checks": [
+    {
+      "name": "delete-pending-blocks-simple-then-convert",
+      "saveDisabledDuringDelete": true,
+      "lockNotice": 1,
+      "simpleRequestsDuringDelete": 0,
+      "staleModel": "chat-during-delete",
+      "saveDisabledWhileStale": true,
+      "keptUrl": "https://api.example.com/v1",
+      "keptSecret": "sk-kept",
+      "saveEnabledAfterConvert": true,
+      "createdId": "custom-1",
+      "createdModels": [
+        "chat-during-delete"
+      ],
+      "postedProviderId": null,
+      "postedSecret": "sk-kept",
+      "deleteBeforeSave": true,
+      "pageErrors": []
+    },
+    {
+      "name": "delete-cancel-releases-write",
+      "saveEnabled": true,
+      "deleteRequests": 0,
+      "saved": true
+    },
+    {
+      "name": "delete-failure-releases-write",
+      "saveEnabled": true,
+      "providerRemains": true,
+      "saved": true
+    },
+    {
+      "name": "clear-key-pending-blocks-simple",
+      "saveDisabledDuringClear": true,
+      "simpleRequestsDuringClear": 0,
+      "sourceStaleAfterClear": 1,
+      "saveDisabledWhileStale": true,
+      "saveEnabledAfterAdopt": true,
+      "saved": true
+    },
+    {
+      "name": "simple-write-blocks-delete-and-clear-key",
+      "deleteDisabledDuringSave": true,
+      "clearDisabledDuringSave": true,
+      "deleteEnabledAfterSave": true,
+      "deleteRequests": 0
+    },
+    {
+      "name": "deleted-source-convert-with-1-remaining",
+      "sourceSelectBefore": "",
+      "sourceSelectAfter": "",
+      "saveEnabled": true,
+      "createdId": "custom-1",
+      "createdModels": [
+        "chat-recovered-1"
+      ],
+      "postedProviderId": null,
+      "otherIds": [
+        "other-1"
+      ],
+      "keptModel": "chat-recovered-1"
+    },
+    {
+      "name": "deleted-source-convert-with-2-remaining",
+      "sourceSelectBefore": "",
+      "sourceSelectAfter": "",
+      "saveEnabled": true,
+      "createdId": "custom-1",
+      "createdModels": [
+        "chat-recovered-2"
+      ],
+      "postedProviderId": null,
+      "otherIds": [
+        "other-1",
+        "other-2"
+      ],
+      "keptModel": "chat-recovered-2"
+    },
+    {
+      "name": "deleted-source-directory-recovers",
+      "saveEnabled": true,
+      "postedProviderId": "review-service",
+      "saved": true,
+      "providerCount": 1
+    }
+  ],
+  "errors": []
+}

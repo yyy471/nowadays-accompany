@@ -11,6 +11,7 @@ import './ui/character-tokens.css';
 import './ui/character-theme.css';
 import './styles/shell.css';
 import './styles/home.css';
+import './styles/model-config.css';
 import './ui/preset-appearance.css';
 
 const root = document.getElementById('root');

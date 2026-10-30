@@ -1,0 +1,107 @@
+{
+  "date": "2026-10-29",
+  "checks": [
+    {
+      "name": "loading-loop",
+      "loopErrors": [],
+      "consoleErrorCount": 0,
+      "tags": [
+        "已配置",
+        "已配置",
+        "已配置",
+        "已配置",
+        "已配置"
+      ]
+    },
+    {
+      "name": "failure-loop",
+      "loopErrors": [],
+      "consoleErrorCount": 2,
+      "tags": [
+        "读取失败",
+        "读取失败",
+        "读取失败",
+        "读取失败",
+        "读取失败"
+      ]
+    },
+    {
+      "name": "empty-providers",
+      "loopErrors": [],
+      "consoleErrorCount": 0,
+      "tags": [
+        "未配置",
+        "未配置",
+        "未配置",
+        "未配置",
+        "未配置"
+      ]
+    },
+    {
+      "name": "failure-retry-recovery",
+      "loopErrors": [],
+      "failedTags": [
+        "读取失败",
+        "读取失败",
+        "读取失败",
+        "读取失败",
+        "读取失败"
+      ],
+      "recoveredTags": [
+        "已配置",
+        "已配置",
+        "已配置",
+        "已配置",
+        "已配置"
+      ]
+    },
+    {
+      "name": "shared-provider-coordination",
+      "simpleDisabledWhenAdvancedDirty": true,
+      "lockNotice": 1,
+      "simpleDisabledDuringAdvancedWrite": true,
+      "afterAdvanced": [
+        "chat-old",
+        "vision-old",
+        "video-old",
+        "image-old",
+        "voice-old"
+      ],
+      "sourceStaleVisible": 1,
+      "simpleEnabledAfterResync": true,
+      "afterSimple": [
+        "chat-old",
+        "vision-old",
+        "video-old",
+        "image-old",
+        "voice-old",
+        "chat-added"
+      ],
+      "noLostModel": true
+    },
+    {
+      "name": "stale-test-result",
+      "visibleUrl": "https://api.example.com/v2",
+      "oldTestUrl": "https://api.example.com/v1",
+      "noticeSaysSuccess": false,
+      "noticeSaysStale": true,
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/providers/validate",
+          "body": {
+            "providerId": "review-service",
+            "capability": "chat",
+            "baseUrl": "https://api.example.com/v1",
+            "modelId": "chat-old",
+            "adapterId": "openai-compatible-v1",
+            "supportsTools": true,
+            "parameters": {},
+            "confirmCost": true
+          }
+        }
+      ]
+    }
+  ],
+  "errors": []
+}

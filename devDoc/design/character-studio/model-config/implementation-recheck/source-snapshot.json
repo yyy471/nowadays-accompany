@@ -1,0 +1,34 @@
+{
+  "date": "2026-10-29",
+  "files": [
+    {
+      "path": "desktop/renderer/src/pages/Models.tsx",
+      "sha256": "567230e169025c1c903a53b2d75f594ffb9de84af601e8341344cf0014d90c4b"
+    },
+    {
+      "path": "desktop/renderer/src/pages/ModelConfig.tsx",
+      "sha256": "8e0cbe82576ee0eeba7e28a047f81dba6de22574b992fec771aadcf76644ca81"
+    },
+    {
+      "path": "desktop/renderer/src/components/ProviderManager.tsx",
+      "sha256": "032dd27d730084768979d907813cc9bebdf3e94e8f5c4ecca518070796aaa836"
+    },
+    {
+      "path": "desktop/renderer/src/lib/service-write-coordinator.ts",
+      "sha256": "b175adb0e185527d4751981ce5e3b1472c9bdc8531efdddec69f1a8f738ef8c5"
+    },
+    {
+      "path": "test/models-page.test.tsx",
+      "sha256": "6437a1231c3cfcffac53c5abe5c3468cd93ef84ccfda119fcacac8163468f11d"
+    },
+    {
+      "path": "test/provider-manager.test.tsx",
+      "sha256": "c5b7de9c2cc1ce738c9b35b6d9d53316529e14bd204740da78e9da2364e7f29e"
+    },
+    {
+      "path": "test/service-write-coordinator.test.ts",
+      "sha256": "9c34da7e7c5bf0d873b89e9adbf984b531f068c20a0ef76be286c14eefbf4b16"
+    }
+  ],
+  "scope": "155修复后的独立复验"
+}

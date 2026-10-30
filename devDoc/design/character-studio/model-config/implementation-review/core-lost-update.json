@@ -1,0 +1,20 @@
+{
+  "scope": "actual Core + ConfigStore, no QQ/models/network calls",
+  "simpleSaveAcknowledged": true,
+  "before": [
+    "chat-old",
+    "vision-old",
+    "video-old",
+    "image-old",
+    "voice-old",
+    "chat-added"
+  ],
+  "after": [
+    "chat-old",
+    "vision-old",
+    "video-old",
+    "image-old",
+    "voice-old"
+  ],
+  "lostModel": "chat-added"
+}

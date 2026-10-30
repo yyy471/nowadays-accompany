@@ -7,7 +7,7 @@ export const PAGES: PageDef[] = [
   { id: 'instances', label: '实例与监听', icon: 'slots', title: '实例与监听', subtitle: '检测 QQ 状态；由你明确点击注入与监听' },
   { id: 'roles', label: '资料与角色', icon: 'accounts', title: '资料与角色', subtitle: '按账号维护展示资料，并为私聊或群聊绑定角色卡' },
   { id: 'plugins', label: '插件与Skill', icon: 'package', title: '插件与Skill', subtitle: '按账号管理插件、工具授权与 Skill 的生效范围' },
-  { id: 'model-config', label: '模型配置', icon: 'shield', title: '模型配置', subtitle: '按账号配置五类模型服务与能力' },
+  { id: 'model-config', label: '模型配置', icon: 'shield', title: '模型配置', subtitle: '准备模型服务，并按账号授权能力与绑定' },
   { id: 'diagnostics', label: '事件诊断', icon: 'activity', title: '事件诊断', subtitle: '检查本次运行的实例与通道事件' },
   { id: 'artifacts', label: '资源库', icon: 'artifacts', title: '资源库', subtitle: '管理角色卡、插件与公用 Skill 资源、版本和部署' }
 ];

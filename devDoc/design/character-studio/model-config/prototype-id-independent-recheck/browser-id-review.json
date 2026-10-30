@@ -1,0 +1,124 @@
+{
+  "date": "2026-10-30",
+  "checks": [
+    {
+      "name": "legal-id-ordinary-service",
+      "idle": {
+        "saveEnabled": true,
+        "deleteEnabled": true,
+        "clearEnabled": true,
+        "lockNotice": 0
+      },
+      "simpleSaved": true,
+      "simpleDisabledWhenAdvancedDirty": true,
+      "simpleDisabledDuringAdvancedWrite": true,
+      "advancedSaved": true,
+      "cleared": true,
+      "deleted": true,
+      "requests": [
+        "POST /providers/simple",
+        "PUT /providers/ordinary-service",
+        "DELETE /providers/ordinary-service/credential",
+        "DELETE /providers/ordinary-service"
+      ],
+      "pageErrors": []
+    },
+    {
+      "name": "legal-id-constructor",
+      "idle": {
+        "saveEnabled": true,
+        "deleteEnabled": true,
+        "clearEnabled": true,
+        "lockNotice": 0
+      },
+      "simpleSaved": true,
+      "simpleDisabledWhenAdvancedDirty": true,
+      "simpleDisabledDuringAdvancedWrite": true,
+      "advancedSaved": true,
+      "cleared": true,
+      "deleted": true,
+      "requests": [
+        "POST /providers/simple",
+        "PUT /providers/constructor",
+        "DELETE /providers/constructor/credential",
+        "DELETE /providers/constructor"
+      ],
+      "pageErrors": []
+    },
+    {
+      "name": "legal-id-toString",
+      "idle": {
+        "saveEnabled": true,
+        "deleteEnabled": true,
+        "clearEnabled": true,
+        "lockNotice": 0
+      },
+      "simpleSaved": true,
+      "simpleDisabledWhenAdvancedDirty": true,
+      "simpleDisabledDuringAdvancedWrite": true,
+      "advancedSaved": true,
+      "cleared": true,
+      "deleted": true,
+      "requests": [
+        "POST /providers/simple",
+        "PUT /providers/toString",
+        "DELETE /providers/toString/credential",
+        "DELETE /providers/toString"
+      ],
+      "pageErrors": []
+    },
+    {
+      "name": "legal-id-hasOwnProperty",
+      "idle": {
+        "saveEnabled": true,
+        "deleteEnabled": true,
+        "clearEnabled": true,
+        "lockNotice": 0
+      },
+      "simpleSaved": true,
+      "simpleDisabledWhenAdvancedDirty": true,
+      "simpleDisabledDuringAdvancedWrite": true,
+      "advancedSaved": true,
+      "cleared": true,
+      "deleted": true,
+      "requests": [
+        "POST /providers/simple",
+        "PUT /providers/hasOwnProperty",
+        "DELETE /providers/hasOwnProperty/credential",
+        "DELETE /providers/hasOwnProperty"
+      ],
+      "pageErrors": []
+    },
+    {
+      "name": "legal-id-valueOf",
+      "idle": {
+        "saveEnabled": true,
+        "deleteEnabled": true,
+        "clearEnabled": true,
+        "lockNotice": 0
+      },
+      "simpleSaved": true,
+      "simpleDisabledWhenAdvancedDirty": true,
+      "simpleDisabledDuringAdvancedWrite": true,
+      "advancedSaved": true,
+      "cleared": true,
+      "deleted": true,
+      "requests": [
+        "POST /providers/simple",
+        "PUT /providers/valueOf",
+        "DELETE /providers/valueOf/credential",
+        "DELETE /providers/valueOf"
+      ],
+      "pageErrors": []
+    },
+    {
+      "name": "prototype-id-source-change",
+      "saveDisabledWhileStale": true,
+      "refreshedUrl": "https://constructor.example/v2",
+      "postedProviderId": "constructor",
+      "saved": true,
+      "pageErrors": []
+    }
+  ],
+  "errors": []
+}

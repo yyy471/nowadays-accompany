@@ -1,0 +1,33 @@
+{
+  "date": "2026-10-30",
+  "checks": [
+    {
+      "name": "legal-id-ordinary-service",
+      "id": "ordinary-service",
+      "saveDisabled": false,
+      "deleteDisabled": false,
+      "clearDisabled": false,
+      "lockNotice": false,
+      "pageErrors": []
+    },
+    {
+      "name": "legal-id-constructor",
+      "id": "constructor",
+      "saveDisabled": true,
+      "deleteDisabled": true,
+      "clearDisabled": true,
+      "lockNotice": true,
+      "pageErrors": []
+    },
+    {
+      "name": "legal-id-toString",
+      "id": "toString",
+      "saveDisabled": true,
+      "deleteDisabled": true,
+      "clearDisabled": true,
+      "lockNotice": true,
+      "pageErrors": []
+    }
+  ],
+  "errors": []
+}

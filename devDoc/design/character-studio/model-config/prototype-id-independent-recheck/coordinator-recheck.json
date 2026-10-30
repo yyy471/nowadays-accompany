@@ -1,0 +1,69 @@
+{
+  "date": "2026-10-30",
+  "scope": "actual coordinator source; no UI/network/Core",
+  "checks": [
+    {
+      "id": "ordinary-service",
+      "initialFree": true,
+      "writeExclusive": true,
+      "wrongOwnerCannotRelease": true,
+      "intentHandoff": true,
+      "differentProviderIndependent": true,
+      "fullyReleased": true
+    },
+    {
+      "id": "constructor",
+      "initialFree": true,
+      "writeExclusive": true,
+      "wrongOwnerCannotRelease": true,
+      "intentHandoff": true,
+      "differentProviderIndependent": true,
+      "fullyReleased": true
+    },
+    {
+      "id": "toString",
+      "initialFree": true,
+      "writeExclusive": true,
+      "wrongOwnerCannotRelease": true,
+      "intentHandoff": true,
+      "differentProviderIndependent": true,
+      "fullyReleased": true
+    },
+    {
+      "id": "hasOwnProperty",
+      "initialFree": true,
+      "writeExclusive": true,
+      "wrongOwnerCannotRelease": true,
+      "intentHandoff": true,
+      "differentProviderIndependent": true,
+      "fullyReleased": true
+    },
+    {
+      "id": "valueOf",
+      "initialFree": true,
+      "writeExclusive": true,
+      "wrongOwnerCannotRelease": true,
+      "intentHandoff": true,
+      "differentProviderIndependent": true,
+      "fullyReleased": true
+    },
+    {
+      "id": "isPrototypeOf",
+      "initialFree": true,
+      "writeExclusive": true,
+      "wrongOwnerCannotRelease": true,
+      "intentHandoff": true,
+      "differentProviderIndependent": true,
+      "fullyReleased": true
+    },
+    {
+      "id": "toLocaleString",
+      "initialFree": true,
+      "writeExclusive": true,
+      "wrongOwnerCannotRelease": true,
+      "intentHandoff": true,
+      "differentProviderIndependent": true,
+      "fullyReleased": true
+    }
+  ]
+}

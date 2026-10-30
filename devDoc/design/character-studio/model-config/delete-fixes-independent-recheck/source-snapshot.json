@@ -1,0 +1,34 @@
+{
+  "scope": "157修复后的独立复核",
+  "files": [
+    {
+      "path": "desktop/renderer/src/pages/Models.tsx",
+      "sha256": "aba99151868863ce0bd9ae810ea97455931d4444f9f2f20b2cafbd74a63f920c"
+    },
+    {
+      "path": "desktop/renderer/src/pages/ModelConfig.tsx",
+      "sha256": "8e0cbe82576ee0eeba7e28a047f81dba6de22574b992fec771aadcf76644ca81"
+    },
+    {
+      "path": "desktop/renderer/src/components/ProviderManager.tsx",
+      "sha256": "ec973e3590a24c62ea0c7dac5e31a4c6ab82a0897f23d5232c0774d1d21cdee9"
+    },
+    {
+      "path": "desktop/renderer/src/lib/service-write-coordinator.ts",
+      "sha256": "b175adb0e185527d4751981ce5e3b1472c9bdc8531efdddec69f1a8f738ef8c5"
+    },
+    {
+      "path": "test/models-page.test.tsx",
+      "sha256": "fc18e494c2bdfbc90febd75387df3097168f50eed78405693f028ee20fe77ffd"
+    },
+    {
+      "path": "test/provider-manager.test.tsx",
+      "sha256": "f949edddb13817968de7f2eb1d8f8e654b2fb8d9aae769d5e9d80d7425a68cf4"
+    },
+    {
+      "path": "test/service-write-coordinator.test.ts",
+      "sha256": "9c34da7e7c5bf0d873b89e9adbf984b531f068c20a0ef76be286c14eefbf4b16"
+    }
+  ],
+  "date": "2026-10-30"
+}

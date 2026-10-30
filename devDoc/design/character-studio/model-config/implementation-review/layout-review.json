@@ -1,0 +1,680 @@
+{
+  "date": "2026-10-29",
+  "checks": [
+    {
+      "theme": "daylight",
+      "width": 1440,
+      "height": 900,
+      "view": "服务与模型",
+      "rootOverflow": false,
+      "windowScrollY": 0,
+      "content": {
+        "x": 0,
+        "y": 80,
+        "w": 1440,
+        "h": 716
+      },
+      "dock": {
+        "x": 541,
+        "y": 808,
+        "w": 358,
+        "h": 68
+      },
+      "paper": {
+        "x": 309.5,
+        "y": 267,
+        "w": 1076,
+        "h": 663
+      },
+      "activeScroll": 1340,
+      "activeWidth": 1340
+    },
+    {
+      "theme": "daylight",
+      "width": 1440,
+      "height": 900,
+      "view": "账号使用",
+      "rootOverflow": false,
+      "windowScrollY": 0,
+      "content": {
+        "x": 0,
+        "y": 80,
+        "w": 1440,
+        "h": 716
+      },
+      "dock": {
+        "x": 541,
+        "y": 808,
+        "w": 358,
+        "h": 68
+      },
+      "paper": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      "activeScroll": 1340,
+      "activeWidth": 1340
+    },
+    {
+      "theme": "daylight",
+      "width": 1280,
+      "height": 800,
+      "view": "服务与模型",
+      "rootOverflow": false,
+      "windowScrollY": 0,
+      "content": {
+        "x": 0,
+        "y": 80,
+        "w": 1280,
+        "h": 616
+      },
+      "dock": {
+        "x": 461,
+        "y": 708,
+        "w": 358,
+        "h": 68
+      },
+      "paper": {
+        "x": 302.390625,
+        "y": 267,
+        "w": 930.21875,
+        "h": 663
+      },
+      "activeScroll": 1194,
+      "activeWidth": 1194
+    },
+    {
+      "theme": "daylight",
+      "width": 1280,
+      "height": 800,
+      "view": "账号使用",
+      "rootOverflow": false,
+      "windowScrollY": 0,
+      "content": {
+        "x": 0,
+        "y": 80,
+        "w": 1280,
+        "h": 616
+      },
+      "dock": {
+        "x": 461,
+        "y": 708,
+        "w": 358,
+        "h": 68
+      },
+      "paper": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      "activeScroll": 1194,
+      "activeWidth": 1194
+    },
+    {
+      "theme": "daylight",
+      "width": 1024,
+      "height": 720,
+      "view": "服务与模型",
+      "rootOverflow": false,
+      "windowScrollY": 0,
+      "content": {
+        "x": 0,
+        "y": 80,
+        "w": 1024,
+        "h": 536
+      },
+      "dock": {
+        "x": 635.28125,
+        "y": 628,
+        "w": 358,
+        "h": 68
+      },
+      "paper": {
+        "x": 254.71875,
+        "y": 267,
+        "w": 729.5625,
+        "h": 681
+      },
+      "activeScroll": 954,
+      "activeWidth": 954
+    },
+    {
+      "theme": "daylight",
+      "width": 1024,
+      "height": 720,
+      "view": "账号使用",
+      "rootOverflow": false,
+      "windowScrollY": 0,
+      "content": {
+        "x": 0,
+        "y": 80,
+        "w": 1024,
+        "h": 536
+      },
+      "dock": {
+        "x": 635.28125,
+        "y": 628,
+        "w": 358,
+        "h": 68
+      },
+      "paper": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      "activeScroll": 954,
+      "activeWidth": 954
+    },
+    {
+      "theme": "daylight",
+      "width": 768,
+      "height": 900,
+      "view": "服务与模型",
+      "rootOverflow": false,
+      "windowScrollY": 0,
+      "content": {
+        "x": 0,
+        "y": 137,
+        "w": 768,
+        "h": 675
+      },
+      "dock": {
+        "x": 205,
+        "y": 820,
+        "w": 358,
+        "h": 68
+      },
+      "paper": {
+        "x": 23.03125,
+        "y": 420,
+        "w": 712.9375,
+        "h": 985
+      },
+      "activeScroll": 713,
+      "activeWidth": 713
+    },
+    {
+      "theme": "daylight",
+      "width": 768,
+      "height": 900,
+      "view": "账号使用",
+      "rootOverflow": false,
+      "windowScrollY": 0,
+      "content": {
+        "x": 0,
+        "y": 137,
+        "w": 768,
+        "h": 675
+      },
+      "dock": {
+        "x": 205,
+        "y": 820,
+        "w": 358,
+        "h": 68
+      },
+      "paper": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      "activeScroll": 713,
+      "activeWidth": 713
+    },
+    {
+      "theme": "daylight",
+      "width": 375,
+      "height": 812,
+      "view": "服务与模型",
+      "rootOverflow": false,
+      "windowScrollY": 0,
+      "content": {
+        "x": 0,
+        "y": 117,
+        "w": 375,
+        "h": 615
+      },
+      "dock": {
+        "x": 39.5,
+        "y": 740,
+        "w": 296,
+        "h": 64
+      },
+      "paper": {
+        "x": 16,
+        "y": 382,
+        "w": 334,
+        "h": 1093
+      },
+      "activeScroll": 334,
+      "activeWidth": 334
+    },
+    {
+      "theme": "daylight",
+      "width": 375,
+      "height": 812,
+      "view": "账号使用",
+      "rootOverflow": false,
+      "windowScrollY": 0,
+      "content": {
+        "x": 0,
+        "y": 117,
+        "w": 375,
+        "h": 615
+      },
+      "dock": {
+        "x": 39.5,
+        "y": 740,
+        "w": 296,
+        "h": 64
+      },
+      "paper": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      "activeScroll": 334,
+      "activeWidth": 334
+    },
+    {
+      "theme": "daylight",
+      "width": 320,
+      "height": 740,
+      "view": "服务与模型",
+      "rootOverflow": false,
+      "windowScrollY": 0,
+      "content": {
+        "x": 0,
+        "y": 117,
+        "w": 320,
+        "h": 543
+      },
+      "dock": {
+        "x": 23,
+        "y": 668,
+        "w": 274,
+        "h": 64
+      },
+      "paper": {
+        "x": 16,
+        "y": 382,
+        "w": 279,
+        "h": 1221
+      },
+      "activeScroll": 279,
+      "activeWidth": 279
+    },
+    {
+      "theme": "daylight",
+      "width": 320,
+      "height": 740,
+      "view": "账号使用",
+      "rootOverflow": false,
+      "windowScrollY": 0,
+      "content": {
+        "x": 0,
+        "y": 117,
+        "w": 320,
+        "h": 543
+      },
+      "dock": {
+        "x": 23,
+        "y": 668,
+        "w": 274,
+        "h": 64
+      },
+      "paper": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      "activeScroll": 279,
+      "activeWidth": 279
+    },
+    {
+      "theme": "nightwave",
+      "width": 1440,
+      "height": 900,
+      "view": "服务与模型",
+      "rootOverflow": false,
+      "windowScrollY": 0,
+      "content": {
+        "x": 0,
+        "y": 80,
+        "w": 1440,
+        "h": 716
+      },
+      "dock": {
+        "x": 541,
+        "y": 808,
+        "w": 358,
+        "h": 68
+      },
+      "paper": {
+        "x": 309.5,
+        "y": 267,
+        "w": 1076,
+        "h": 663
+      },
+      "activeScroll": 1340,
+      "activeWidth": 1340
+    },
+    {
+      "theme": "nightwave",
+      "width": 1440,
+      "height": 900,
+      "view": "账号使用",
+      "rootOverflow": false,
+      "windowScrollY": 0,
+      "content": {
+        "x": 0,
+        "y": 80,
+        "w": 1440,
+        "h": 716
+      },
+      "dock": {
+        "x": 541,
+        "y": 808,
+        "w": 358,
+        "h": 68
+      },
+      "paper": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      "activeScroll": 1340,
+      "activeWidth": 1340
+    },
+    {
+      "theme": "nightwave",
+      "width": 1280,
+      "height": 800,
+      "view": "服务与模型",
+      "rootOverflow": false,
+      "windowScrollY": 0,
+      "content": {
+        "x": 0,
+        "y": 80,
+        "w": 1280,
+        "h": 616
+      },
+      "dock": {
+        "x": 461,
+        "y": 708,
+        "w": 358,
+        "h": 68
+      },
+      "paper": {
+        "x": 302.390625,
+        "y": 267,
+        "w": 930.21875,
+        "h": 663
+      },
+      "activeScroll": 1194,
+      "activeWidth": 1194
+    },
+    {
+      "theme": "nightwave",
+      "width": 1280,
+      "height": 800,
+      "view": "账号使用",
+      "rootOverflow": false,
+      "windowScrollY": 0,
+      "content": {
+        "x": 0,
+        "y": 80,
+        "w": 1280,
+        "h": 616
+      },
+      "dock": {
+        "x": 461,
+        "y": 708,
+        "w": 358,
+        "h": 68
+      },
+      "paper": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      "activeScroll": 1194,
+      "activeWidth": 1194
+    },
+    {
+      "theme": "nightwave",
+      "width": 1024,
+      "height": 720,
+      "view": "服务与模型",
+      "rootOverflow": false,
+      "windowScrollY": 0,
+      "content": {
+        "x": 0,
+        "y": 80,
+        "w": 1024,
+        "h": 536
+      },
+      "dock": {
+        "x": 635.28125,
+        "y": 628,
+        "w": 358,
+        "h": 68
+      },
+      "paper": {
+        "x": 254.71875,
+        "y": 267,
+        "w": 729.5625,
+        "h": 681
+      },
+      "activeScroll": 954,
+      "activeWidth": 954
+    },
+    {
+      "theme": "nightwave",
+      "width": 1024,
+      "height": 720,
+      "view": "账号使用",
+      "rootOverflow": false,
+      "windowScrollY": 0,
+      "content": {
+        "x": 0,
+        "y": 80,
+        "w": 1024,
+        "h": 536
+      },
+      "dock": {
+        "x": 635.28125,
+        "y": 628,
+        "w": 358,
+        "h": 68
+      },
+      "paper": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      "activeScroll": 954,
+      "activeWidth": 954
+    },
+    {
+      "theme": "nightwave",
+      "width": 768,
+      "height": 900,
+      "view": "服务与模型",
+      "rootOverflow": false,
+      "windowScrollY": 0,
+      "content": {
+        "x": 0,
+        "y": 137,
+        "w": 768,
+        "h": 675
+      },
+      "dock": {
+        "x": 205,
+        "y": 820,
+        "w": 358,
+        "h": 68
+      },
+      "paper": {
+        "x": 23.03125,
+        "y": 420,
+        "w": 712.9375,
+        "h": 985
+      },
+      "activeScroll": 713,
+      "activeWidth": 713
+    },
+    {
+      "theme": "nightwave",
+      "width": 768,
+      "height": 900,
+      "view": "账号使用",
+      "rootOverflow": false,
+      "windowScrollY": 0,
+      "content": {
+        "x": 0,
+        "y": 137,
+        "w": 768,
+        "h": 675
+      },
+      "dock": {
+        "x": 205,
+        "y": 820,
+        "w": 358,
+        "h": 68
+      },
+      "paper": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      "activeScroll": 713,
+      "activeWidth": 713
+    },
+    {
+      "theme": "nightwave",
+      "width": 375,
+      "height": 812,
+      "view": "服务与模型",
+      "rootOverflow": false,
+      "windowScrollY": 0,
+      "content": {
+        "x": 0,
+        "y": 117,
+        "w": 375,
+        "h": 615
+      },
+      "dock": {
+        "x": 39.5,
+        "y": 740,
+        "w": 296,
+        "h": 64
+      },
+      "paper": {
+        "x": 16,
+        "y": 382,
+        "w": 334,
+        "h": 1093
+      },
+      "activeScroll": 334,
+      "activeWidth": 334
+    },
+    {
+      "theme": "nightwave",
+      "width": 375,
+      "height": 812,
+      "view": "账号使用",
+      "rootOverflow": false,
+      "windowScrollY": 0,
+      "content": {
+        "x": 0,
+        "y": 117,
+        "w": 375,
+        "h": 615
+      },
+      "dock": {
+        "x": 39.5,
+        "y": 740,
+        "w": 296,
+        "h": 64
+      },
+      "paper": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      "activeScroll": 334,
+      "activeWidth": 334
+    },
+    {
+      "theme": "nightwave",
+      "width": 320,
+      "height": 740,
+      "view": "服务与模型",
+      "rootOverflow": false,
+      "windowScrollY": 0,
+      "content": {
+        "x": 0,
+        "y": 117,
+        "w": 320,
+        "h": 543
+      },
+      "dock": {
+        "x": 23,
+        "y": 668,
+        "w": 274,
+        "h": 64
+      },
+      "paper": {
+        "x": 16,
+        "y": 382,
+        "w": 279,
+        "h": 1221
+      },
+      "activeScroll": 279,
+      "activeWidth": 279
+    },
+    {
+      "theme": "nightwave",
+      "width": 320,
+      "height": 740,
+      "view": "账号使用",
+      "rootOverflow": false,
+      "windowScrollY": 0,
+      "content": {
+        "x": 0,
+        "y": 117,
+        "w": 320,
+        "h": 543
+      },
+      "dock": {
+        "x": 23,
+        "y": 668,
+        "w": 274,
+        "h": 64
+      },
+      "paper": {
+        "x": 0,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      },
+      "activeScroll": 279,
+      "activeWidth": 279
+    }
+  ],
+  "errors": [],
+  "consoleErrors": [],
+  "pageErrors": []
+}
