@@ -25,7 +25,7 @@ import type { MessageStore, StoredMessage } from '../storage/contract.js';
 import { summarizeProfile, type ResolvedProfile } from '../artifacts/types.js';
 import type { ResolvedConversationRoleBinding } from '../profiles/role-bindings.js';
 import type { MemorySnapshot } from '../memory/types.js';
-import type { AgentHost, AgentMessageContext, AgentPluginState, AgentSessionContext, AgentTurnOutcome } from '../host/contract.js';
+import type { AgentHost, AgentHistorySearchOptions, AgentMessageContext, AgentPluginState, AgentSessionContext, AgentTurnOutcome } from '../host/contract.js';
 import type { PluginStateStore } from '../host/state.js';
 import { LoopbackGuard } from '../routing/loopback.js';
 import { conversationKey, type ConversationRef } from '../routing/identity.js';
@@ -125,6 +125,9 @@ interface HostEntry {
 
 const IDEMPOTENCY_TTL_MS = 5 * 60_000;
 const IDEMPOTENCY_MAX = 1_000;
+const HISTORY_SEARCH_PAGE = 100;
+const HISTORY_SEARCH_MAX_SCAN = 400;
+const HISTORY_SEARCH_MAX_MATCHES = 20;
 
 /**
  * 一个 AccountSession = 一个 QQ 号 × 一条通道 × 一份存储命名空间。
@@ -748,6 +751,8 @@ export class QqInstance {
       enqueueConversation: (task) => this.#enqueueConversation(conversation, task, generation, sessionEpoch, scope.signal),
       resolveConfig: () => this.#resolveConfig(conversation),
       history: (options) => this.#readHistory(conversation, options, roleBinding?.contextEpoch ?? roleBinding?.revision),
+      searchHistory: (options) =>
+        this.#searchHistory(conversation, options, roleBinding?.contextEpoch ?? roleBinding?.revision, seq),
       state: (pluginId) =>
         this.#stateAccessor(pluginId, {
           revision: entry.profile?.revision,
@@ -922,6 +927,44 @@ export class QqInstance {
       ...(contextEpoch ? { contextEpoch } : {}),
       ...(options?.beforeSeq !== undefined ? { beforeSeq: options.beforeSeq } : {})
     });
+  }
+
+  /** 向后分页扫描，命中数、扫描量、单页大小都有上限；只读本会话。 */
+  async #searchHistory(
+    conversation: ConversationRef,
+    options: AgentHistorySearchOptions | undefined,
+    contextEpoch: string | undefined,
+    currentSeq: number | undefined
+  ): Promise<StoredMessage[]> {
+    const store = this.#store;
+    if (!store) return [];
+    const query = typeof options?.query === 'string' ? options.query.trim().toLowerCase() : '';
+    const requested = typeof options?.limit === 'number' && Number.isFinite(options.limit)
+      ? Math.trunc(options.limit)
+      : 10;
+    const limit = Math.max(1, Math.min(requested, HISTORY_SEARCH_MAX_MATCHES));
+    let cursor = options?.beforeSeq ?? currentSeq;
+    let scanned = 0;
+    const matches: StoredMessage[] = [];
+    while (scanned < HISTORY_SEARCH_MAX_SCAN && matches.length < limit) {
+      const pageSize = Math.min(HISTORY_SEARCH_PAGE, HISTORY_SEARCH_MAX_SCAN - scanned);
+      const page = await store.read(conversation, {
+        limit: pageSize,
+        ...(cursor !== undefined ? { beforeSeq: cursor } : {}),
+        ...(contextEpoch ? { contextEpoch } : {})
+      });
+      if (page.length === 0) break;
+      scanned += page.length;
+      for (let index = page.length - 1; index >= 0 && matches.length < limit; index -= 1) {
+        const record = page[index]!;
+        if (query && !messageText(record.segments).toLowerCase().includes(query)) continue;
+        matches.push(record);
+      }
+      const oldest = page[0]!.seq;
+      if (oldest === undefined || page.length < pageSize) break;
+      cursor = oldest;
+    }
+    return matches;
   }
 
   #stateAccessor(

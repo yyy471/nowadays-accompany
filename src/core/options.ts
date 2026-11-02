@@ -69,6 +69,8 @@ export interface CoreOptions {
     maxHistoryMessages?: number;
     maxHistoryChars?: number;
     maxObservedMedia?: number;
+    /** IANA time zone injected into the system prompt; defaults to the host zone. */
+    timeZone?: string;
   };
   now?: () => number;
   recordId?: () => string;

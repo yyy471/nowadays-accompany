@@ -7,6 +7,7 @@ import { parseWorldbookOptions } from '../worldbook/schema.js';
 import { evaluateWorldbook } from '../worldbook/matcher.js';
 import { selectMemory } from '../memory/selector.js';
 import type { MemoryEvaluation, MemorySnapshot } from '../memory/types.js';
+import { formatCurrentTime } from './clock.js';
 
 export interface MediaObservationInput {
   capability: 'image.understand' | 'video.understand';
@@ -38,6 +39,8 @@ export interface ContextBuildInput {
   worldbookOptions?: WorldbookOptions;
   /** Captured read-only memory; unavailable snapshots inject nothing. */
   memory?: MemorySnapshot;
+  /** Injected only when provided so direct/unit callers stay deterministic. */
+  currentTime?: { at: number; timeZone: string };
 }
 
 export interface BuiltContext {
@@ -68,6 +71,11 @@ export function buildChatContext(input: ContextBuildInput): BuiltContext {
     );
   }
   sections.push(`## 媒体观察规则\n${OBSERVATION_RULES}`);
+  if (input.currentTime) {
+    sections.push(
+      `## 当前时间\n${formatCurrentTime(input.currentTime.at, input.currentTime.timeZone)}\n涉及日期、时段或“今天/明天/现在”的表达以此为准。`
+    );
+  }
   const system: ChatInputMessage = { role: 'system', content: [{ type: 'text', text: sections.join('\n\n') }] };
 
   const currentParts: ChatContentPart[] = [];

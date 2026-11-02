@@ -45,6 +45,8 @@ import type { MediaRef } from '../media/types.js';
 import type { TurnScheduler } from './scheduler.js';
 import { buildChatContext, formatSupplementalData, type ContextBuildInput, type MediaObservationInput } from './context.js';
 import { capabilityNotice } from './capability-notice.js';
+import { resolveTimeZone } from './clock.js';
+import { BuiltinToolHost, registerBuiltinHostTools } from './builtin-tool-host.js';
 import {
   GENERATE_AUDIO_TOOL_ID,
   GENERATE_AUDIO_TOOL_NAME,
@@ -59,6 +61,12 @@ export {
   GENERATE_IMAGE_TOOL_ID,
   GENERATE_IMAGE_TOOL_NAME
 } from './media-tool-host.js';
+export {
+  RECALL_HISTORY_TOOL_ID,
+  RECALL_HISTORY_TOOL_NAME,
+  SEND_MEDIA_TOOL_ID,
+  SEND_MEDIA_TOOL_NAME
+} from './builtin-tool-host.js';
 
 const TOOL_RESULT_BUDGET_NOTICE = '工具结果超出本轮上下文预算，内容已省略。';
 const SKILL_SECTION_RESERVE = 64;
@@ -118,6 +126,8 @@ export interface AgentEngineOptions {
    * pause is ignored, command shortcuts are disabled and media jobs mark delivery as skipped.
    */
   testMode?: boolean;
+  /** IANA time zone used for the injected current-time section; defaults to the host zone. */
+  timeZone?: string;
   onTurn?: (event: AgentTurnEvent) => void;
   now?: () => number;
 }
@@ -167,6 +177,7 @@ export function registerBuiltInAgentTools(extensions: ExtensionRegistry): void {
       }
     });
   }
+  registerBuiltinHostTools(extensions);
 }
 
 /**
@@ -181,10 +192,13 @@ class BuiltInAgentEngine implements AgentHost {
   readonly #options: AgentEngineOptions;
   readonly #now: () => number;
   readonly #mediaTools: MediaToolHost;
+  readonly #builtinTools: BuiltinToolHost;
+  readonly #timeZone: string;
 
   constructor(options: AgentEngineOptions) {
     this.#options = options;
     this.#now = options.now ?? Date.now;
+    this.#timeZone = resolveTimeZone(options.timeZone);
     this.#mediaTools = new MediaToolHost({
       accountId: options.accountId,
       providers: options.providers,
@@ -192,6 +206,13 @@ class BuiltInAgentEngine implements AgentHost {
       jobs: options.jobs,
       logger: options.logger,
       deliveryMode: options.testMode ? 'skip' : 'channel'
+    });
+    this.#builtinTools = new BuiltinToolHost({
+      accountId: options.accountId,
+      media: options.media,
+      timeZone: this.#timeZone,
+      deliveryMode: options.testMode ? 'skip' : 'channel',
+      now: this.#now
     });
   }
 
@@ -519,6 +540,9 @@ class BuiltInAgentEngine implements AgentHost {
     const maxContextChars = Math.max(0, this.#options.maxHistoryChars - parameterOverhead);
     const history = await this.#history(context);
     const tools = this.#options.tools;
+    const mediaHandlers = this.#mediaTools.handlers(context);
+    const builtinHandlers = this.#builtinTools.handlers(context);
+    const hostHandlers = (toolId: string) => mediaHandlers(toolId) ?? builtinHandlers(toolId);
     const toolIdsByModelName = new Map<string, string>();
     const chatTools: ChatToolDefinition[] = [];
     const hookBudget = tools?.newHookBudget?.() ?? { remainingMs: 2_000 };
@@ -597,6 +621,7 @@ class BuiltInAgentEngine implements AgentHost {
       kind: conversation.kind,
       observations,
       directImages,
+      currentTime: { at: this.#now(), timeZone: this.#timeZone },
       maxHistoryMessages: this.#options.maxHistoryMessages,
       maxHistoryChars: maxContextChars
     };
@@ -753,7 +778,7 @@ class BuiltInAgentEngine implements AgentHost {
           remainingResultBytes,
           ...(context.roleBinding?.contextEpoch ? { contextEpoch: context.roleBinding.contextEpoch } : {}),
           ...(extensionSnapshot ? { runtimeGeneration: extensionSnapshot.runtimeGeneration } : {}),
-          extraHandlers: this.#mediaTools.handlers(context)
+          extraHandlers: hostHandlers
         }
       );
       usedToolCalls += calls.length;

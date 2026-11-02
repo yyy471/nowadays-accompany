@@ -1395,6 +1395,7 @@ export class Core implements CoreView {
       maxHistoryMessages,
       maxHistoryChars: this.#options.agent?.maxHistoryChars ?? 12_000,
       maxObservedMedia: this.#options.agent?.maxObservedMedia ?? 4,
+      ...(this.#options.agent?.timeZone ? { timeZone: this.#options.agent.timeZone } : {}),
       onTurn: (event) => {
         this.bus.emit('agent:turn', { ...event, at: this.#now() });
       },

@@ -35,6 +35,15 @@ export interface AgentHistoryOptions {
   beforeSeq?: number;
 }
 
+export interface AgentHistorySearchOptions {
+  /** Case-insensitive substring match over message text; omit to page recent messages. */
+  query?: string;
+  /** Maximum matches returned; the host clamps this to its own bound. */
+  limit?: number;
+  /** Exclusive upper seq bound; the host defaults to the current inbound message. */
+  beforeSeq?: number;
+}
+
 export interface AgentRequestObservation {
   /** Skills that survived the final prompt budget for the first model request. */
   skillIds: string[];
@@ -95,6 +104,8 @@ export interface AgentMessageContext extends AgentSessionContext {
   enqueueConversation(task: () => Promise<void>): Promise<void>;
   resolveConfig(): ConfigLayer;
   history(options?: AgentHistoryOptions): Promise<StoredMessage[]>;
+  /** Read-only search inside this conversation's persisted history; bounded and role-epoch scoped. */
+  searchHistory?(options?: AgentHistorySearchOptions): Promise<StoredMessage[]>;
   state(pluginId: string): AgentPluginState;
 }
 
