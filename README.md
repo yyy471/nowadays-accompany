@@ -364,3 +364,11 @@ npx tsx src/bin/nowadays.ts start --config nowadays.config.example.json
 - 持久化 outbox、消息撤回与群管理动作的完整封装；当前媒体任务有持久化队列，但普通聊天仍是 best-effort。
 - 桌面端代码签名、自动更新、多平台安装包；当前产物是 Windows x64 的未签名 NSIS/portable。
 - 第一阶段验收中的真实 QQ/真实模型服务 M 项；没有实际环境证据前不宣称完成。
+
+## Star History
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=yyy471/nowadays-accompany&type=Date&logscale&theme=dark" />
+  <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=yyy471/nowadays-accompany&type=Date&logscale" />
+  <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=yyy471/nowadays-accompany&type=Date&logscale" />
+</picture>
