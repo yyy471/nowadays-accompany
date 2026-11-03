@@ -1,0 +1,30 @@
+{
+  "name": "p0-runtime-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Nowadays P0 technical spike: LangGraph + SQLite checkpoints + stdio MCP",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "p0-01": "tsx src/smoke/p0-01.ts",
+    "p0:all": "tsx src/cases/run-all.ts",
+    "mcp-server": "tsx src/mcp/server.ts"
+  },
+  "dependencies": {
+    "@langchain/core": "1.3.4",
+    "@langchain/langgraph": "1.6.0",
+    "@langchain/langgraph-checkpoint-sqlite": "1.1.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "better-sqlite3": "12.10.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "20.19.43",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  }
+}
