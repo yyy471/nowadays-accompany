@@ -1,11 +1,15 @@
 # 新主线文档导航
 
-当前阶段：本地分支已整理为 `dev` 旧代码与 `master` 新主线；新主线只保存文档及 Git 忽略配置，后端尚未开始实现。
+当前阶段：首轮实施基线已按 DL-129 确认，按约定同步 `dev` 旧代码与 `master` 新主线。新主线只有文档及 Git 忽略配置，后端尚未开始实现。
 
 | 文档 | 定位与状态 |
 | --- | --- |
-| [161 数字生命方向与持续决策](161-digital-life-direction-decisions.md) | 用户逐项确认的需求与修订，当前记录至 DL-61 |
-| [162 首轮后端原型实施方案](162-backend-prototype-implementation-plan.md) | 草案；目标依据 DL-60，模块与实施细节待逐项细化 |
+| [161 数字生命方向与持续决策](161-digital-life-direction-decisions.md) | 用户逐项确认的需求与修订，当前记录至 DL-129；首轮方案收口已确认 |
+| [162 首轮后端原型实施方案](162-backend-prototype-implementation-plan.md) | R1～R64 已确认，首轮实施基线已定；具体工程契约与验证按阶段落实，未定用户行为仍逐项讨论 |
+| [163 设计与方案一致性核对](163-design-consistency-review.md) | 本轮文档核对，记录已修正遗漏、需求覆盖、未采用底稿条款和剩余待讨论问题；非运行验收或独立复核 |
+| [164 首轮后端原型执行清单](164-backend-prototype-execution-checklist.md) | R64／DL-129 确认的实施入口，汇总阶段、P0 起步证据及尚需细化／讨论事项；编码启动另行安排 |
 | [用户参考底稿](design/digital-life/langgraph-roleplay-engine-v2.reference.md) | 原样保存的参考材料，未整体采纳 |
 
 旧项目的完整设计时间线、代码和验收记录保留在 `dev` 分支。它们可以作为参考，不直接构成新主线的兼容要求或验收证据。
+
+方案已确认，按 DL-61、DL-62、DL-129 同步设计文档与新旧分支，保留 `dev` 的旧代码和完整历史；实际同步结果以 Git 核验为准。
