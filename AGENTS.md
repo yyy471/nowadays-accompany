@@ -4,21 +4,23 @@
 
 当前 `master` 是数字生命方向的全新主线，首轮后端实施基线已按 DL-129 确认；`master` 本身仍只保存设计、方案及协作文档。旧代码与完整历史保留在 `dev` 分支。
 
-P0 技术小样位于本地分支 `codex/p0-runtime-spike` 的 `prototypes/p0/`，P0-01～P0-05 已完成。R01～R04 及后续 L01／L03／L06 修正均通过独立复核；最新重跑类型检查、38 项检查及恢复、强杀、报告归属和版本专项全部通过。其余意见按 168 第 7 节不修改实现或由 P1／P4 承接。P1 开发准备稿已建立，尚未编码。自验、历史独立复核及最新证据分别见[166](devDoc/166-p0-implementation-record.md)、[167](devDoc/167-p0-independent-review.md)、[168 第 9 节](devDoc/168-p0-followup-fix-list.md)。
+P0 技术小样位于本地分支 `codex/p0-runtime-spike` 的 `prototypes/p0/`，P0-01～P0-05 已完成。R01～R04 及后续 L01／L03／L06 修正均通过独立复核；最新重跑类型检查、38 项检查及恢复、强杀、报告归属和版本专项全部通过。其余意见按 168 第 7 节不修改实现或由 P1／P4 承接。自验、历史独立复核及最新证据分别见[166](devDoc/166-p0-implementation-record.md)、[167](devDoc/167-p0-independent-review.md)、[168 第 9 节](devDoc/168-p0-followup-fix-list.md)。
 
-已有的根目录 `node_modules`、构建产物和日志属于旧工作区保留内容，不是新主线已安装或验证的依赖与实现。`prototypes/p0/node_modules` 是 P0 按 Node 22/24 安装的独立依赖，不能与旧工作区缓存混用；不要沿用旧项目的测试计数宣称新实现完成。
+P1 已在 `codex/p1-role-storage` 的独立 `backend/` 完成 P1-01～P1-06，R01～R04 全部通过最终独立复验。类型检查、13 个测试及三组共 13 个复核场景通过，证据见[172 第 12 节](devDoc/172-p1-independent-review.md)，实现方记录见[171](devDoc/171-p1-implementation-record.md)。下一阶段为[173 P2 开发文档](devDoc/173-p2-memory-agent-development-guide.md)，尚未开始 P2 编码。本轮按用户要求做一次本地提交，不推送。
+
+已有的根目录 `node_modules`、构建产物和日志属于旧工作区保留内容，不是新主线已安装或验证的依赖与实现。`prototypes/p0/node_modules` 是 P0 按 Node 22/24 安装的独立依赖，`backend/node_modules` 是 P1 按 Node 24 安装的独立依赖；两者不能与旧工作区缓存混用，也不要沿用旧项目的测试计数宣称新实现完成。
 
 ## 开始前阅读
 
-下一阶段入口为[P1 开发文档：角色、存储与资源配置](devDoc/169-p1-role-storage-development-guide.md)。先落实 P1-01 的工程契约；文档内表名、路径、路由为未实现设计稿，不是新增用户决定。P1 尚未编码。
+P1 已完成，历史契约与实施入口见 169～172。下一步从[173 P2 开发文档](devDoc/173-p2-memory-agent-development-guide.md)的 P2-01 落实记忆与对话执行契约；文档内未固定的字段、路由和内部参数仍为工程设计稿，不是新增用户决定。
 
 1. [持续决策记录](devDoc/161-digital-life-direction-decisions.md)：已确认需求与最新修订的唯一记录，后续变更从这里开始。
 2. [首轮后端原型实施方案](devDoc/162-backend-prototype-implementation-plan.md)：范围及阶段推进已确认，具体工程契约按阶段落实验证。
 3. 按需阅读[用户参考底稿](devDoc/design/digital-life/langgraph-roleplay-engine-v2.reference.md)。原稿中的“确定采用”、参数和实验描述不自动构成项目决定。
 
-实施入口见[首轮后端原型执行清单](devDoc/164-backend-prototype-execution-checklist.md)，已按 R64／DL-129 确认为首轮基线；P0 已按该基线启动并完成实现方自验，后续阶段按同一清单推进。
+实施入口见[首轮执行清单](devDoc/164-backend-prototype-execution-checklist.md)，基线仍为 R64／DL-129；P0、P1 已通过，最新证据见 172 第 12 节。下一步先落实 173 的 P2-01，尚未开始 P2 编码。
 
-进入开发时阅读[后端开发文档：P0 技术小样](devDoc/165-backend-development-guide.md)。P0 的工程建立、依赖选型、运行命令和自验证据已记录在[P0 实施记录](devDoc/166-p0-implementation-record.md)；修正后的独立复验结论和适用范围见[独立复核记录](devDoc/167-p0-independent-review.md)；复验遗留项的处理见[文档 168](devDoc/168-p0-followup-fix-list.md)，其中 L04～L06 相关正式契约在 P1 落实。P0 通过不代表后续完整后端、真实模型或桌面打包已验证。
+进入开发时阅读[后端开发文档：P0 技术小样](devDoc/165-backend-development-guide.md)。P0 的工程建立、依赖选型、运行命令和自验证据已记录在[P0 实施记录](devDoc/166-p0-implementation-record.md)；修正后的独立复验结论和适用范围见[独立复核记录](devDoc/167-p0-independent-review.md)；复验遗留项的处理见[文档 168](devDoc/168-p0-followup-fix-list.md)，其中 L04／L05 相关正式契约已在[P1-01 契约](devDoc/170-p1-01-contract.md)落实。P0 通过不代表后续完整后端、真实模型或桌面打包已验证。
 
 ## 与用户协作
 
@@ -26,7 +28,7 @@ P0 技术小样位于本地分支 `codex/p0-runtime-spike` 的 `prototypes/p0/`�
 - 确认项追加到持续决策记录，使用稳定的 `DL-xx` 编号；修改既有决定先讨论确认，再修订正文并追加变更记录。
 - 明确区分已确认需求、候选方案、已有实现和待验证事项，不将建议写成用户已经同意的要求。
 - 用户已要求新空分支重写，不迁移旧聊天历史和记忆。旧代码可以按需要通过 `git show dev:<path>` 阅读参考，不批量复制旧项目结构或兼容层。
-- P0-01～P0-05 已通过，首轮复核问题修正及独立复验证据分别保留；P1 开始前按文档 164、165 补齐当期数据与 API 契约。本轮复验不代表 P1 已启动。
+- P0 与 P1 已分别完成实现方自验和独立复验；P2 尚未编码，按 173 的依赖顺序推进，不把 P1 测试计数或预置事件当作 P2 完成证据。
 - 用户已按 DL-129 确认首轮实施基线，现按 DL-61、DL-62 同步文档和 `dev`／新 `master` 布局；保留旧主线历史后再定向更新新主线。后续方案修改仍按确认项维护，不将文档同步视为实现或验证完成。
 
 ## 已确认的核心边界
