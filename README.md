@@ -17,7 +17,7 @@ Nowadays 是一个面向单用户桌面的数字生命项目。每个角色拥�
 需要 Git、Node.js 24 或更高版本，以及 npm。以下命令使用 PowerShell。首轮验收环境为 Windows x64 和 Node.js 24.22.2。
 
 ```powershell
-git clone --branch codex/p1-role-storage https://github.com/yyy471/nowadays-accompany.git
+git clone --branch master https://github.com/yyy471/nowadays-accompany.git
 Set-Location nowadays-accompany/backend
 npm ci
 npm run dev -- --app-root ./.nowadays --port 3210
@@ -65,7 +65,7 @@ npm run accept:offline
 - **下一阶段**。接入远程 Streamable HTTP MCP，并复核连接、调用及恢复行为。
 - **后续阶段**。单用户桌面界面和打包，以及网页浏览、视频、电脑控制和 QQ 等平台接入。
 
-当前可运行源码位于 `codex/p1-role-storage` 分支，`master` 保存数字生命主线的设计与实施基线，`dev` 保留旧版项目历史。
+`master` 是当前主开发分支，包含可运行的后端原型、项目设计和验收记录。`dev` 用于归档旧版项目代码与历史。
 
 ## 文档
 
