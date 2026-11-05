@@ -1,4 +1,14 @@
 import { z } from "zod";
+import {
+  diaryCreateSchema,
+  eventCorrectionSchema,
+  memorySearchRequestSchema,
+  summaryCorrectionSchema,
+} from "../domain/memory.js";
+import {
+  modelServiceConfigSchema,
+  modelServiceTestSchema,
+} from "../domain/model.js";
 import { resourceKindSchema } from "../domain/resource.js";
 
 const recordSchema = z.record(z.string(), z.unknown());
@@ -91,6 +101,41 @@ export const putBindingsSchema = z
   })
   .strict();
 
+export const inputStateBodySchema = z
+  .object({
+    clientId: z.string().trim().min(1).max(128).optional(),
+    typing: z.boolean(),
+  })
+  .strict();
+
+export const taskFinishBodySchema = z
+  .object({
+    status: z.enum(["completed", "failed"]),
+    endReason: z.string().trim().min(1).max(2000),
+  })
+  .strict();
+
+export const autonomyBudgetBodySchema = z
+  .object({
+    dailyLimit: z.number().int().min(1).max(1_000_000).optional(),
+    unlimited: z.boolean(),
+  })
+  .strict();
+
+export const autonomyWakeBodySchema = z
+  .object({
+    wakeAt: z.string().trim().min(1).max(64),
+    intent: z.string().trim().min(1).max(2000),
+  })
+  .strict();
+
+export const memorySearchBodySchema = memorySearchRequestSchema;
+export const eventCorrectionBodySchema = eventCorrectionSchema;
+export const summaryCorrectionBodySchema = summaryCorrectionSchema;
+export const diaryCreateBodySchema = diaryCreateSchema;
+export const modelServiceConfigBodySchema = modelServiceConfigSchema;
+export const modelServiceTestBodySchema = modelServiceTestSchema;
+
 export type CreateRoleBody = z.infer<typeof createRoleSchema>;
 export type UpdateDefinitionBody = z.infer<typeof updateDefinitionSchema>;
 export type PutStateBody = z.infer<typeof putStateSchema>;
@@ -99,3 +144,13 @@ export type SubmitMessageBody = z.infer<typeof submitMessageSchema>;
 export type CreateResourceBody = z.infer<typeof createResourceSchema>;
 export type UpdateResourceBody = z.infer<typeof updateResourceSchema>;
 export type PutBindingsBody = z.infer<typeof putBindingsSchema>;
+export type MemorySearchBody = z.infer<typeof memorySearchBodySchema>;
+export type EventCorrectionBody = z.infer<typeof eventCorrectionBodySchema>;
+export type SummaryCorrectionBody = z.infer<typeof summaryCorrectionBodySchema>;
+export type DiaryCreateBody = z.infer<typeof diaryCreateBodySchema>;
+export type ModelServiceConfigBody = z.infer<typeof modelServiceConfigBodySchema>;
+export type ModelServiceTestBody = z.infer<typeof modelServiceTestBodySchema>;
+export type InputStateBody = z.infer<typeof inputStateBodySchema>;
+export type TaskFinishBody = z.infer<typeof taskFinishBodySchema>;
+export type AutonomyBudgetBody = z.infer<typeof autonomyBudgetBodySchema>;
+export type AutonomyWakeBody = z.infer<typeof autonomyWakeBodySchema>;

@@ -1,0 +1,9 @@
+{
+  "name": "Nowadays 本地工具",
+  "enabled": true,
+  "config": {
+    "command": "__NODE_ABSOLUTE_PATH__",
+    "args": ["--import", "__TSX_LOADER_FILE_URL__", "__LOCAL_SERVER_ABSOLUTE_PATH__"],
+    "env": { "NOWADAYS_WORKSPACE": "__ROLE_WORKSPACE_ABSOLUTE_PATH__" }
+  }
+}

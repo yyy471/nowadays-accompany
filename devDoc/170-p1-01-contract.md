@@ -35,7 +35,7 @@ backend/
   package.json
   package-lock.json
   tsconfig.json
-  .gitignore                 # node_modules、.nowadays、test-results、dist
+  .gitignore                 # node_modules、data、test-results、dist
   src/
     main.ts                  # 后端入口：解析参数、启动服务、等待关闭
     cli.ts                   # CLI 入口：只调用 HTTP，不直接写数据库
@@ -76,14 +76,14 @@ backend/
 
 - 后端参数：`--app-root <path>` 必填；也接受环境变量 `NOWADAYS_APP_ROOT`。两者同时存在时以参数为准。缺失时返回 `APP_ROOT_REQUIRED`，不从当前工作目录猜测。
 - `appRoot` 在启动时解析为绝对路径并固定；运行中不随工作目录改变。
-- 数据根为 `<appRoot>/.nowadays/`；首次启动创建目录。
+- 数据根为 `<appRoot>/data/`；首次启动创建目录。2026-11-03 用户要求运行数据目录以 `data/` 开头，原 `.nowadays` 名称据此修订；当前工作区没有既有运行数据，不自动迁移旧目录。
 - `--port` 默认 `3210`；测试和集成测试可用 `--port 0` 获取临时端口。监听地址固定 `127.0.0.1`，不提供对外监听参数。
 - 启动成功后向 stdout 输出一行 JSON：`{"event":"listening","host":"127.0.0.1","port":<实际端口>,"appRoot":"<路径>"}`。错误写 stderr，不把凭据写入日志。
 - SIGINT／SIGTERM 关闭 HTTP 连接和已打开数据库；重复关闭幂等。
 - CLI 参数：`--base-url` 默认 `http://127.0.0.1:3210`；每次命令新建 HTTP 客户端，不自动启动后端。
 
 ```text
-<appRoot>/.nowadays/
+<appRoot>/data/
   app.sqlite
   roles/<roleId>/
     business.sqlite

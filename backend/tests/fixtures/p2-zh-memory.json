@@ -1,0 +1,172 @@
+{
+  "timeZone": "Asia/Shanghai",
+  "now": "2026-10-31T02:00:00.000Z",
+  "roles": [
+    {
+      "key": "linxia",
+      "displayName": "林夏",
+      "definition": {
+        "text": "林夏喜欢逛旧书店，会留意城市里的小店和旧物。"
+      },
+      "state": {
+        "focus": ["旧书店", "杭州行程"]
+      },
+      "windows": [
+        {
+          "key": "main",
+          "kind": "main",
+          "source": "nowadays"
+        },
+        {
+          "key": "travel",
+          "kind": "custom",
+          "source": "nowadays"
+        }
+      ],
+      "messages": [
+        {
+          "window": "main",
+          "at": "2026-10-28T01:10:00.000Z",
+          "sender": "user",
+          "content": "上周六我和小林去了杭州，在西湖边一家旧书店待了一下午。"
+        },
+        {
+          "window": "main",
+          "at": "2026-10-28T01:11:00.000Z",
+          "sender": "assistant",
+          "content": "你后来有没有买那本讲植物的书？"
+        },
+        {
+          "window": "main",
+          "at": "2026-10-28T01:12:00.000Z",
+          "sender": "user",
+          "content": "买了，店主还说下个月会进一批旧地图。"
+        },
+        {
+          "window": "main",
+          "at": "2026-10-28T01:13:00.000Z",
+          "sender": "assistant",
+          "content": "听起来你很喜欢那家店。"
+        },
+        {
+          "window": "travel",
+          "at": "2026-10-29T12:05:00.000Z",
+          "sender": "user",
+          "content": "补充一下杭州行程：那家旧书店隔壁还有一家卖旧地图的小店。"
+        },
+        {
+          "window": "travel",
+          "at": "2026-10-29T12:06:00.000Z",
+          "sender": "assistant",
+          "content": "我把这个补充记在这次行程里。"
+        },
+        {
+          "window": "main",
+          "at": "2026-10-30T12:05:00.000Z",
+          "sender": "user",
+          "content": "昨天那家面馆叫什么来着？就是下雨那天去的。"
+        },
+        {
+          "window": "main",
+          "at": "2026-10-30T12:06:00.000Z",
+          "sender": "assistant",
+          "content": "叫“巷口面馆”，你说它的葱油拌面比汤面好吃。"
+        },
+        {
+          "window": "main",
+          "at": "2026-10-30T12:07:00.000Z",
+          "sender": "user",
+          "content": "对，我不太喜欢雨天出门，但为了那碗面可以例外。"
+        },
+        {
+          "window": "main",
+          "at": "2026-10-30T12:08:00.000Z",
+          "sender": "assistant",
+          "content": "那我记住这家面馆了。"
+        }
+      ],
+      "diaries": [
+        {
+          "occurredAt": "2026-10-29T13:00:00.000Z",
+          "content": "今天想起杭州的旧书店和旧地图，也想起雨天那碗面。"
+        }
+      ]
+    },
+    {
+      "key": "other",
+      "displayName": "周岚",
+      "definition": {
+        "text": "周岚也在杭州生活，喜欢记录小店。"
+      },
+      "state": {},
+      "windows": [
+        {
+          "key": "main",
+          "kind": "main",
+          "source": "nowadays"
+        }
+      ],
+      "messages": [
+        {
+          "window": "main",
+          "at": "2026-10-28T02:00:00.000Z",
+          "sender": "user",
+          "content": "我也去过杭州的旧书店，还买过一张旧地图。"
+        },
+        {
+          "window": "main",
+          "at": "2026-10-28T02:01:00.000Z",
+          "sender": "assistant",
+          "content": "那家店确实很容易让人停留。"
+        }
+      ],
+      "diaries": []
+    }
+  ],
+  "queries": [
+    {
+      "name": "hangzhou-bookstore",
+      "role": "linxia",
+      "query": "杭州 旧书店",
+      "expectedTerms": ["杭州", "旧书店"]
+    },
+    {
+      "name": "person-short",
+      "role": "linxia",
+      "query": "小林",
+      "expectedTerms": ["小林"]
+    },
+    {
+      "name": "rain-short",
+      "role": "linxia",
+      "query": "雨",
+      "expectedTerms": ["雨"]
+    },
+    {
+      "name": "noodle-short",
+      "role": "linxia",
+      "query": "面馆",
+      "expectedTerms": ["面馆"]
+    },
+    {
+      "name": "old-map",
+      "role": "linxia",
+      "query": "旧地图",
+      "expectedTerms": ["旧地图"]
+    },
+    {
+      "name": "yesterday",
+      "role": "linxia",
+      "query": "昨天",
+      "relativeDate": "2026-10-30",
+      "expectedTerms": ["面馆"]
+    },
+    {
+      "name": "cross-role-isolation",
+      "role": "other",
+      "query": "小林",
+      "expectedTerms": [],
+      "expectedCrossRoleOnly": true
+    }
+  ]
+}

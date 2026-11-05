@@ -191,7 +191,7 @@ function cliError(result: CliResult): string {
 }
 
 function countRoleDirs(root: string): number {
-  const rolesDir = path.join(root, ".nowadays", "roles");
+  const rolesDir = path.join(root, "data", "roles");
   return fs.existsSync(rolesDir)
     ? fs.readdirSync(rolesDir, { withFileTypes: true }).filter((entry) =>
         entry.isDirectory(),

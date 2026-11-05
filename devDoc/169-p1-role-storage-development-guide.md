@@ -2,7 +2,7 @@
 
 日期：2026-11-03。
 
-状态：**P1-01～P1-06 已完成，R01～R04 修正后全部通过最终独立复验。** 契约见[170](170-p1-01-contract.md)，实现方记录见[171](171-p1-implementation-record.md)，最新独立证据见[172 第 12 节](172-p1-independent-review.md)。下一阶段准备稿为[173 P2](173-p2-memory-agent-development-guide.md)，尚未开始 P2 编码。
+状态：**P1-01～P1-06 已完成，R01～R04 修正后全部通过最终独立复验。** 契约见[170](170-p1-01-contract.md)，实现方记录见[171](171-p1-implementation-record.md)，最新独立证据见[172 第 12 节](172-p1-independent-review.md)。P2 范围见[173](173-p2-memory-agent-development-guide.md)，P2-01 契约见[174](174-p2-01-memory-agent-contract.md)，P2-02～P2-04 自验见[175](175-p2-02-memory-formation-record.md)、[176](176-p2-03-memory-query-record.md)、[177](177-p2-04-model-extension-record.md)，等待独立复核。
 
 需求以[持续决策记录 161](161-digital-life-direction-decisions.md)为准，阶段范围见[执行清单 164](164-backend-prototype-execution-checklist.md)。下文的目录、表名、字段、路由和工作包是 **P1 工程设计稿**；P1-01 已把当期实施所需部分固定为[170 工程契约](170-p1-01-contract.md)，其余不代表已有实现或已验证选型。涉及尚未确认的产品行为，继续一次讨论一项。
 
@@ -34,7 +34,7 @@ Node.js 24.22.2 是 P0 实测起点，SQLite 候选版本见 166。P1 应声明�
 建议新的默认运行目录如下，`appRoot` 来自启动入口或显式配置，不根据当前工作目录漂移，也不默认为系统用户数据目录：
 
 ```text
-appRoot/.nowadays/
+appRoot/data/
   app.sqlite
   roles/<roleId>/
     business.sqlite
@@ -151,4 +151,4 @@ P1 实施记录建议另建文档并登记导航，分别记录实现方自验�
 
 资源／角色卡导入格式，资源删除与运行中改绑，以及额度运行中切换的用户行为继续按 164 单列；不为完成 P1 基础存取而默认加入这些操作。若工作包实际需要触及其中一项，先只讨论该项。
 
-P1 的契约、实现及独立复验已完成，历史证据见 170～172。下一步从[173 P2](173-p2-memory-agent-development-guide.md)的 P2-01 落实记忆与对话执行契约；P1 通过不代表 P2 Agent、完整记忆或全部后端已实现。
+P1 的契约、实现及独立复验已完成，历史证据见 170～172。P2 从[173](173-p2-memory-agent-development-guide.md)启动，[174 P2-01 契约](174-p2-01-memory-agent-contract.md)已固定，P2-02～P2-04 自验见[175](175-p2-02-memory-formation-record.md)、[176](176-p2-03-memory-query-record.md)、[177](177-p2-04-model-extension-record.md)，下一步实施 P2-05；P1 通过不代表 P2 Agent、完整记忆或全部后端已实现。

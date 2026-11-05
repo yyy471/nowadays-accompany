@@ -23,10 +23,26 @@ export async function runCli(
       return runWindow(rest, client);
     case "message":
       return runMessage(rest, client);
+    case "input":
+      return runInput(rest, client);
+    case "events":
+      return runEvents(rest, client);
+    case "execution":
+      return runExecution(rest, client);
+    case "task":
+      return runTask(rest, client);
     case "resource":
       return runResource(rest, client);
     case "binding":
       return runBinding(rest, client);
+    case "memory":
+      return runMemory(rest, client);
+    case "diary":
+      return runDiary(rest, client);
+    case "model":
+      return runModel(rest, client);
+    case "autonomy":
+      return runAutonomy(rest, client);
     default:
       throw new CliError("UNKNOWN_COMMAND", `未知命令 ${group}`);
   }
@@ -267,6 +283,122 @@ async function runMessage(
   }
 }
 
+async function runInput(
+  args: readonly string[],
+  client: HttpClient,
+): Promise<unknown> {
+  const [action, ...rest] = args;
+  switch (action) {
+    case "set": {
+      const options = parseArgs(rest, ["role", "window", "client", "typing"]);
+      const roleId = required(options, "role");
+      const windowId = required(options, "window");
+      const typing = required(options, "typing");
+      if (typing !== "true" && typing !== "false") {
+        throw new CliError("INVALID_OPTION", "--typing 必须是 true 或 false");
+      }
+      return client.request(
+        "POST",
+        `/v1/roles/${encodeURIComponent(roleId)}/windows/${encodeURIComponent(windowId)}/input-state`,
+        {
+          clientId: required(options, "client"),
+          typing: typing === "true",
+        },
+      );
+    }
+    case "clear": {
+      const options = parseArgs(rest, ["role", "window", "client"]);
+      const roleId = required(options, "role");
+      const windowId = required(options, "window");
+      const clientId = required(options, "client");
+      return client.request(
+        "DELETE",
+        `/v1/roles/${encodeURIComponent(roleId)}/windows/${encodeURIComponent(windowId)}/input-state?clientId=${encodeURIComponent(clientId)}`,
+      );
+    }
+    default:
+      throw new CliError("UNKNOWN_COMMAND", `未知输入状态命令 ${action ?? ""}`);
+  }
+}
+
+async function runEvents(
+  args: readonly string[],
+  client: HttpClient,
+): Promise<unknown> {
+  const options = parseArgs(args, ["role", "window", "after"]);
+  const roleId = required(options, "role");
+  const windowId = required(options, "window");
+  const after = integerOption(options, "after", "--after");
+  const suffix = after === undefined ? "" : `?after=${after}`;
+  for await (const data of client.stream(
+    `/v1/roles/${encodeURIComponent(roleId)}/windows/${encodeURIComponent(windowId)}/events${suffix}`,
+  )) {
+    process.stdout.write(`${data}\n`);
+  }
+  return { streamed: true };
+}
+
+async function runExecution(
+  args: readonly string[],
+  client: HttpClient,
+): Promise<unknown> {
+  const [action, ...rest] = args;
+  switch (action) {
+    case "get": {
+      const options = parseArgs(rest, ["role", "id"]);
+      return client.request(
+        "GET",
+        `/v1/roles/${encodeURIComponent(required(options, "role"))}/executions/${encodeURIComponent(required(options, "id"))}`,
+      );
+    }
+    default:
+      throw new CliError("UNKNOWN_COMMAND", `未知执行命令 ${action ?? ""}`);
+  }
+}
+
+async function runTask(
+  args: readonly string[],
+  client: HttpClient,
+): Promise<unknown> {
+  const [action, ...rest] = args;
+  switch (action) {
+    case "list": {
+      const options = parseArgs(rest, ["role"]);
+      return client.request(
+        "GET",
+        `/v1/roles/${encodeURIComponent(required(options, "role"))}/tasks`,
+      );
+    }
+    case "get": {
+      const options = parseArgs(rest, ["role", "id"]);
+      return client.request(
+        "GET",
+        `/v1/roles/${encodeURIComponent(required(options, "role"))}/tasks/${encodeURIComponent(required(options, "id"))}`,
+      );
+    }
+    case "finish": {
+      const options = parseArgs(rest, ["role", "id", "status", "reason"]);
+      const status = required(options, "status");
+      if (status !== "completed" && status !== "failed") {
+        throw new CliError(
+          "INVALID_OPTION",
+          "--status 必须是 completed 或 failed",
+        );
+      }
+      return client.request(
+        "POST",
+        `/v1/roles/${encodeURIComponent(required(options, "role"))}/tasks/${encodeURIComponent(required(options, "id"))}/finish`,
+        {
+          status,
+          endReason: required(options, "reason"),
+        },
+      );
+    }
+    default:
+      throw new CliError("UNKNOWN_COMMAND", `未知任务命令 ${action ?? ""}`);
+  }
+}
+
 async function runResource(
   args: readonly string[],
   client: HttpClient,
@@ -332,6 +464,225 @@ async function runBinding(
     }
     default:
       throw new CliError("UNKNOWN_COMMAND", `未知绑定命令 ${action ?? ""}`);
+  }
+}
+
+async function runMemory(
+  args: readonly string[],
+  client: HttpClient,
+): Promise<unknown> {
+  const [action, ...rest] = args;
+  switch (action) {
+    case "search": {
+      const options = parseArgs(rest, ["role", "json"]);
+      return client.request(
+        "POST",
+        `/v1/roles/${encodeURIComponent(required(options, "role"))}/memory/search`,
+        parseJsonObject(required(options, "json"), "--json"),
+      );
+    }
+    case "event": {
+      const options = parseArgs(rest, ["role", "id"]);
+      return client.request(
+        "GET",
+        `/v1/roles/${encodeURIComponent(required(options, "role"))}/memory/events/${encodeURIComponent(required(options, "id"))}`,
+      );
+    }
+    case "evidence": {
+      const options = parseArgs(rest, ["role", "id"]);
+      return client.request(
+        "GET",
+        `/v1/roles/${encodeURIComponent(required(options, "role"))}/memory/evidence/${encodeURIComponent(required(options, "id"))}`,
+      );
+    }
+    case "summary": {
+      const options = parseArgs(rest, ["role", "id"]);
+      return client.request(
+        "GET",
+        `/v1/roles/${encodeURIComponent(required(options, "role"))}/memory/summaries/${encodeURIComponent(required(options, "id"))}`,
+      );
+    }
+    case "status": {
+      const options = parseArgs(rest, ["role"]);
+      return client.request(
+        "GET",
+        `/v1/roles/${encodeURIComponent(required(options, "role"))}/memory/status`,
+      );
+    }
+    case "batches": {
+      const options = parseArgs(rest, ["role", "limit"]);
+      const limit = integerOption(options, "limit", "--limit");
+      const suffix = limit === undefined ? "" : `?limit=${limit}`;
+      return client.request(
+        "GET",
+        `/v1/roles/${encodeURIComponent(required(options, "role"))}/memory/batches${suffix}`,
+      );
+    }
+    case "trigger": {
+      const options = parseArgs(rest, ["role"]);
+      return client.request(
+        "POST",
+        `/v1/roles/${encodeURIComponent(required(options, "role"))}/memory/batches`,
+      );
+    }
+    default:
+      throw new CliError("UNKNOWN_COMMAND", `未知记忆命令 ${action ?? ""}`);
+  }
+}
+
+async function runDiary(
+  args: readonly string[],
+  client: HttpClient,
+): Promise<unknown> {
+  const [action, ...rest] = args;
+  switch (action) {
+    case "list": {
+      const options = parseArgs(rest, ["role"]);
+      return client.request(
+        "GET",
+        `/v1/roles/${encodeURIComponent(required(options, "role"))}/diaries`,
+      );
+    }
+    case "create": {
+      const options = parseArgs(rest, [
+        "role",
+        "content",
+        "events",
+        "occurred-at",
+      ]);
+      const events = options.get("events");
+      const occurredAt = options.get("occurred-at");
+      return client.request(
+        "POST",
+        `/v1/roles/${encodeURIComponent(required(options, "role"))}/diaries`,
+        {
+          content: readText(required(options, "content")),
+          ...(events === undefined
+            ? {}
+            : {
+                eventIds: events
+                  .split(",")
+                  .map((item) => item.trim())
+                  .filter((item) => item.length > 0),
+              }),
+          ...(occurredAt === undefined ? {} : { occurredAt }),
+        },
+      );
+    }
+    default:
+      throw new CliError("UNKNOWN_COMMAND", `未知日记命令 ${action ?? ""}`);
+  }
+}
+
+async function runAutonomy(
+  args: readonly string[],
+  client: HttpClient,
+): Promise<unknown> {
+  const [action, ...rest] = args;
+  switch (action) {
+    case "status": {
+      const options = parseArgs(rest, ["role"]);
+      return client.request(
+        "GET",
+        `/v1/roles/${encodeURIComponent(required(options, "role"))}/autonomy`,
+      );
+    }
+    case "budget": {
+      const [sub, ...budgetArgs] = rest;
+      if (sub === "get") {
+        const options = parseArgs(budgetArgs, ["role"]);
+        return client.request(
+          "GET",
+          `/v1/roles/${encodeURIComponent(required(options, "role"))}/autonomy/budget`,
+        );
+      }
+      if (sub === "set") {
+        const options = parseArgs(budgetArgs, [
+          "role",
+          "limit",
+          "unlimited",
+        ]);
+        return client.request(
+          "PUT",
+          `/v1/roles/${encodeURIComponent(required(options, "role"))}/autonomy/budget`,
+          {
+            dailyLimit: integerOption(options, "limit", "--limit") ?? 200,
+            unlimited: booleanOption(options, "unlimited", false),
+          },
+        );
+      }
+      throw new CliError("UNKNOWN_COMMAND", `未知额度命令 ${sub ?? ""}`);
+    }
+    case "wake": {
+      const [sub, ...wakeArgs] = rest;
+      if (sub === "list") {
+        const options = parseArgs(wakeArgs, ["role"]);
+        return client.request(
+          "GET",
+          `/v1/roles/${encodeURIComponent(required(options, "role"))}/autonomy/wakes`,
+        );
+      }
+      if (sub === "add") {
+        const options = parseArgs(wakeArgs, ["role", "at", "intent"]);
+        return client.request(
+          "POST",
+          `/v1/roles/${encodeURIComponent(required(options, "role"))}/autonomy/wakes`,
+          {
+            wakeAt: required(options, "at"),
+            intent: required(options, "intent"),
+          },
+        );
+      }
+      if (sub === "cancel") {
+        const options = parseArgs(wakeArgs, ["role", "wake"]);
+        const roleId = required(options, "role");
+        return client.request(
+          "DELETE",
+          `/v1/roles/${encodeURIComponent(roleId)}/autonomy/wakes/${encodeURIComponent(required(options, "wake"))}`,
+        );
+      }
+      throw new CliError("UNKNOWN_COMMAND", `未知安排命令 ${sub ?? ""}`);
+    }
+    case "activity": {
+      const [sub, ...activityArgs] = rest;
+      if (sub === "list") {
+        const options = parseArgs(activityArgs, ["role"]);
+        return client.request(
+          "GET",
+          `/v1/roles/${encodeURIComponent(required(options, "role"))}/autonomy/activities`,
+        );
+      }
+      throw new CliError("UNKNOWN_COMMAND", `未知活动命令 ${sub ?? ""}`);
+    }
+    default:
+      throw new CliError("UNKNOWN_COMMAND", `未知自主命令 ${action ?? ""}`);
+  }
+}
+
+async function runModel(
+  args: readonly string[],
+  client: HttpClient,
+): Promise<unknown> {
+  const [action, ...rest] = args;
+  switch (action) {
+    case "models": {
+      const options = parseArgs(rest, ["json"]);
+      return client.request(
+        "POST",
+        "/v1/model-services/models",
+        parseJsonObject(required(options, "json"), "--json"),
+      );
+    }
+    case "test": {
+      const options = parseArgs(rest, ["json", "model"]);
+      const config = parseJsonObject(required(options, "json"), "--json");
+      return client.request("POST", "/v1/model-services/test", {
+        ...config,
+        model: required(options, "model"),
+      });
+    }
+    default:
+      throw new CliError("UNKNOWN_COMMAND", `未知模型命令 ${action ?? ""}`);
   }
 }
 
@@ -407,4 +758,22 @@ function integerOption(
     throw new CliError("INVALID_INTEGER", `${label} 超出可表示范围`);
   }
   return value;
+}
+
+function booleanOption(
+  options: Options,
+  name: string,
+  defaultValue: boolean,
+): boolean {
+  const raw = options.get(name);
+  if (raw === undefined) {
+    return defaultValue;
+  }
+  if (raw === "true") {
+    return true;
+  }
+  if (raw === "false") {
+    return false;
+  }
+  throw new CliError("INVALID_BOOLEAN", `--${name} 必须是 true 或 false`);
 }

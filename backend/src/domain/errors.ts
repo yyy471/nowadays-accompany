@@ -80,6 +80,67 @@ export class StorageError extends AppError {
   }
 }
 
+export class SchemaMigrationError extends AppError {
+  constructor(cause: unknown) {
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    super(500, "SCHEMA_MIGRATION_FAILED", `SCHEMA_MIGRATION_FAILED:${reason}`, {
+      reason,
+    });
+  }
+}
+
+export class FtsUnavailableError extends AppError {
+  constructor() {
+    super(500, "FTS5_UNAVAILABLE", "当前运行环境缺少 FTS5 trigram 支持");
+  }
+}
+
+export class ModelCredentialUnavailableError extends AppError {
+  constructor(reference: string) {
+    super(500, "MODEL_CREDENTIAL_UNAVAILABLE", "模型凭据引用无法读取", {
+      reference,
+    });
+  }
+}
+
+export class ModelRequestFailedError extends AppError {
+  constructor(message: string, details?: unknown) {
+    super(502, "MODEL_REQUEST_FAILED", message, details);
+  }
+}
+
+export class ModelToolArgumentsError extends AppError {
+  constructor(toolName: string) {
+    super(502, "MODEL_TOOL_ARGUMENTS_INVALID", "模型工具参数无法解析", {
+      toolName,
+    });
+  }
+}
+
+export class SkillNotFoundError extends AppError {
+  constructor(name: string) {
+    super(404, "SKILL_NOT_FOUND", "Skill 不存在", { name });
+  }
+}
+
+export class SkillFileInvalidError extends AppError {
+  constructor(name: string, relativePath: string) {
+    super(400, "SKILL_FILE_INVALID", "Skill 文件路径不合法或不可读", {
+      name,
+      relativePath,
+    });
+  }
+}
+
+export class ModelBindingMissingError extends AppError {
+  constructor(roleId: string, capability: string) {
+    super(500, "MODEL_BINDING_MISSING", "角色没有可用的模型绑定", {
+      roleId,
+      capability,
+    });
+  }
+}
+
 export class ResourceNotFoundError extends AppError {
   constructor(resourceId: string) {
     super(404, "RESOURCE_NOT_FOUND", "资源不存在", { resourceId });
@@ -213,6 +274,66 @@ export class ToolResultEvidenceRequiredError extends AppError {
   }
 }
 
+export class MemoryBatchConflictError extends AppError {
+  constructor(roleId: string) {
+    super(409, "MEMORY_BATCH_CONFLICT", "该角色已有运行中的记忆整理批次", {
+      roleId,
+    });
+  }
+}
+
+export class MemoryEventNotFoundError extends AppError {
+  constructor(eventId: string) {
+    super(404, "MEMORY_EVENT_NOT_FOUND", "记忆事件不存在", { eventId });
+  }
+}
+
+export class MemoryVersionConflictError extends AppError {
+  constructor(eventId: string, expected: number, actual: number) {
+    super(409, "MEMORY_VERSION_CONFLICT", "记忆版本已变化", {
+      eventId,
+      expected,
+      actual,
+    });
+  }
+}
+
+export class MemoryOperationInvalidError extends AppError {
+  constructor(message: string, details?: unknown) {
+    super(500, "MEMORY_OPERATION_INVALID", message, details);
+  }
+}
+
+export class InvalidMemoryCorrectionError extends AppError {
+  constructor(message: string, details?: unknown) {
+    super(400, "INVALID_MEMORY_CORRECTION", message, details);
+  }
+}
+
+export class MemorySummaryNotFoundError extends AppError {
+  constructor(summaryId: string) {
+    super(404, "MEMORY_SUMMARY_NOT_FOUND", "日常摘要不存在", { summaryId });
+  }
+}
+
+export class MemoryQueryFailedError extends AppError {
+  constructor(details?: unknown) {
+    super(500, "MEMORY_QUERY_FAILED", "记忆检索执行失败", details);
+  }
+}
+
+export class DiaryNotFoundError extends AppError {
+  constructor(diaryId: string) {
+    super(404, "DIARY_NOT_FOUND", "日记不存在", { diaryId });
+  }
+}
+
+export class DiaryFileMissingError extends AppError {
+  constructor(diaryId: string) {
+    super(500, "DIARY_FILE_MISSING", "日记文件不存在或不可读", { diaryId });
+  }
+}
+
 export class ToolResultConflictError extends AppError {
   constructor(toolCallId: string, status: string, requested: string) {
     super(409, "TOOL_RESULT_CONFLICT", "工具结果已按不同状态保存", {
@@ -220,5 +341,56 @@ export class ToolResultConflictError extends AppError {
       status,
       requested,
     });
+  }
+}
+
+export class ExecutionNotRunningError extends AppError {
+  constructor(executionId: string, status: string) {
+    super(409, "EXECUTION_NOT_RUNNING", "执行已不能接受新的决策结果", {
+      executionId,
+      status,
+    });
+  }
+}
+
+export class TaskEndedError extends AppError {
+  constructor(taskId: string, status: string) {
+    super(409, "TASK_ENDED", "任务已结束，不能发起新的模型或工具调用", {
+      taskId,
+      status,
+    });
+  }
+}
+
+export class ExecutionSupersededError extends AppError {
+  constructor(executionId: string) {
+    super(409, "EXECUTION_SUPERSEDED", "执行已被同一窗口的新消息替代", {
+      executionId,
+    });
+  }
+}
+
+export class SseCursorInvalidError extends AppError {
+  constructor(after: unknown) {
+    super(400, "SSE_CURSOR_INVALID", "补读游标不是本窗口的有效事件编号", {
+      after,
+    });
+  }
+}
+
+export class AutonomyBudgetExhaustedError extends AppError {
+  constructor(roleId: string, dailyLimit: number, usedPoints: number) {
+    super(
+      409,
+      "AUTONOMY_BUDGET_EXHAUSTED",
+      "自主活动额度已用尽",
+      { roleId, dailyLimit, usedPoints },
+    );
+  }
+}
+
+export class InputStateInvalidError extends AppError {
+  constructor(message: string, details?: unknown) {
+    super(400, "INPUT_STATE_INVALID", message, details);
   }
 }

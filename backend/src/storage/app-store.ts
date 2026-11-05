@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
 import {
   ResourceNotFoundError,
   RoleNotFoundError,
 } from "../domain/errors.js";
+import type { ModelProtocol } from "../domain/model.js";
 import type { ResourceKind } from "../domain/resource.js";
 import type Database from "better-sqlite3";
 import { openAppDatabase } from "./schema.js";
@@ -69,6 +71,38 @@ export class AppStore {
     this.schemaVersion = opened.schemaVersion;
   }
 
+  saveModelTestCall(input: {
+    resourceId: string | null;
+    modelName: string;
+    protocol: ModelProtocol;
+    status: "succeeded" | "failed";
+    errorCode: string | null;
+    startedAt: string;
+    finishedAt: string;
+    usageJson: string | null;
+  }): string {
+    const testCallId = randomUUID();
+    this.db
+      .prepare(
+        `INSERT INTO model_test_calls
+         (test_call_id, resource_id, model_name, protocol, status, error_code,
+          started_at, finished_at, usage_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        testCallId,
+        input.resourceId,
+        input.modelName,
+        input.protocol,
+        input.status,
+        input.errorCode,
+        input.startedAt,
+        input.finishedAt,
+        input.usageJson,
+      );
+    return testCallId;
+  }
+
   createRoleIndex(input: {
     roleId: string;
     relativeDir: string;
@@ -106,6 +140,15 @@ export class AppStore {
       )
       .get(roleId) as RoleIndexRow | undefined;
     return row ? mapRoleIndex(row) : null;
+  }
+
+  listRoleIndexes(): RoleIndexRecord[] {
+    const rows = this.db
+      .prepare(
+        "SELECT role_id, relative_dir, init_status, init_error, init_payload_json, created_at, updated_at FROM roles ORDER BY created_at ASC, role_id ASC",
+      )
+      .all() as RoleIndexRow[];
+    return rows.map(mapRoleIndex);
   }
 
   markRoleReady(roleId: string): void {

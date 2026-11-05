@@ -21,6 +21,7 @@ import {
   ToolResultNotFoundError,
   WindowNotFoundError,
 } from "../domain/errors.js";
+import { registerToolResultEvidence } from "./evidence.js";
 import { openBusinessDatabase } from "./schema.js";
 
 export interface RoleDefinition {
@@ -98,12 +99,16 @@ export interface RoleBindingInput {
 
 export type TaskStatus = "active" | "paused" | "completed" | "failed";
 
+export type TaskOrigin = "user" | "autonomous" | "memory";
+
 export interface TaskRecord {
   taskId: string;
   roleId: string;
   goal: string;
   status: TaskStatus;
   endReason: string | null;
+  origin: TaskOrigin;
+  initiatorExecutionId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -130,6 +135,7 @@ export interface ExecutionRecord {
   status: ExecutionStatus;
   stateVersionLoaded: number | null;
   stateVersionCommitted: number | null;
+  decisionRound: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -199,6 +205,7 @@ export interface ToolResultInput {
   adaptedResult?: unknown;
   diagnosticCode?: string | null;
   error?: unknown;
+  now?: string;
 }
 
 export interface TaskResourceContinuationRecord {
@@ -259,6 +266,8 @@ interface TaskRow {
   goal: string;
   status: TaskStatus;
   end_reason: string | null;
+  origin: TaskOrigin;
+  initiator_execution_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -272,6 +281,7 @@ interface ExecutionRow {
   status: ExecutionStatus;
   state_version_loaded: number | null;
   state_version_committed: number | null;
+  decision_round: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -331,8 +341,13 @@ export class RoleStore {
   readonly db: Database.Database;
   readonly path: string;
   readonly schemaVersion: number;
+  private readonly timeZone: string | undefined;
 
-  constructor(dbPath: string, options: { create?: boolean } = {}) {
+  constructor(
+    dbPath: string,
+    options: { create?: boolean; timeZone?: string } = {},
+  ) {
+    this.timeZone = options.timeZone;
     const opened = openBusinessDatabase(dbPath, options);
     this.db = opened.db;
     this.path = opened.path;
@@ -507,6 +522,30 @@ export class RoleStore {
     })();
   }
 
+  getOrCreateWindow(input: {
+    roleId: string;
+    kind: "main" | "custom";
+    source: string;
+  }): WindowRecord {
+    return this.db.transaction(() => {
+      if (!this.hasRole(input.roleId)) {
+        throw new RoleNotFoundError(input.roleId);
+      }
+      const row = this.db
+        .prepare(
+          `SELECT window_id, role_id, kind, source, created_at, updated_at
+             FROM windows
+            WHERE role_id = ? AND kind = ? AND source = ?
+            ORDER BY rowid ASC LIMIT 1`,
+        )
+        .get(input.roleId, input.kind, input.source) as WindowRow | undefined;
+      if (row) {
+        return mapWindow(row);
+      }
+      return this.createWindow(input);
+    })();
+  }
+
   listWindows(roleId: string): WindowRecord[] {
     const rows = this.db
       .prepare(
@@ -665,16 +704,34 @@ export class RoleStore {
     })();
   }
 
-  createTask(input: { roleId: string; goal: string }): TaskRecord {
+  createTask(input: {
+    roleId: string;
+    goal: string;
+    origin?: TaskOrigin;
+    initiatorExecutionId?: string | null;
+  }): TaskRecord {
     return this.db.transaction(() => {
       this.assertRole(input.roleId);
       const taskId = randomUUID();
       const now = new Date().toISOString();
       this.db
         .prepare(
-          "INSERT INTO tasks (task_id, role_id, goal, status, end_reason, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          `INSERT INTO tasks
+             (task_id, role_id, goal, status, end_reason, origin,
+              initiator_execution_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(taskId, input.roleId, input.goal, "active", null, now, now);
+        .run(
+          taskId,
+          input.roleId,
+          input.goal,
+          "active",
+          null,
+          input.origin ?? "user",
+          input.initiatorExecutionId ?? null,
+          now,
+          now,
+        );
       return this.getTask(input.roleId, taskId);
     })();
   }
@@ -682,7 +739,7 @@ export class RoleStore {
   getTask(roleId: string, taskId: string): TaskRecord {
     const row = this.db
       .prepare(
-        "SELECT task_id, role_id, goal, status, end_reason, created_at, updated_at FROM tasks WHERE task_id = ? AND role_id = ?",
+        "SELECT task_id, role_id, goal, status, end_reason, origin, initiator_execution_id, created_at, updated_at FROM tasks WHERE task_id = ? AND role_id = ?",
       )
       .get(taskId, roleId) as TaskRow | undefined;
     if (!row) {
@@ -695,7 +752,7 @@ export class RoleStore {
     this.assertRole(roleId);
     const rows = this.db
       .prepare(
-        "SELECT task_id, role_id, goal, status, end_reason, created_at, updated_at FROM tasks WHERE role_id = ? ORDER BY created_at ASC, task_id ASC",
+        "SELECT task_id, role_id, goal, status, end_reason, origin, initiator_execution_id, created_at, updated_at FROM tasks WHERE role_id = ? ORDER BY created_at ASC, task_id ASC",
       )
       .all(roleId) as TaskRow[];
     return rows.map(mapTask);
@@ -732,6 +789,54 @@ export class RoleStore {
           new Date().toISOString(),
           input.taskId,
         );
+      return this.getTask(input.roleId, input.taskId);
+    })();
+  }
+
+  pauseTask(input: {
+    roleId: string;
+    taskId: string;
+    endReason: string;
+  }): TaskRecord {
+    return this.db.transaction(() => {
+      const current = this.getTask(input.roleId, input.taskId);
+      if (current.status === "paused") {
+        return current;
+      }
+      if (current.status !== "active") {
+        throw new TaskStateConflictError(
+          current.taskId,
+          current.status,
+          "paused",
+        );
+      }
+      this.db
+        .prepare(
+          "UPDATE tasks SET status = 'paused', end_reason = ?, updated_at = ? WHERE task_id = ?",
+        )
+        .run(input.endReason, new Date().toISOString(), input.taskId);
+      return this.getTask(input.roleId, input.taskId);
+    })();
+  }
+
+  resumeTask(input: { roleId: string; taskId: string }): TaskRecord {
+    return this.db.transaction(() => {
+      const current = this.getTask(input.roleId, input.taskId);
+      if (current.status === "active") {
+        return current;
+      }
+      if (current.status !== "paused") {
+        throw new TaskStateConflictError(
+          current.taskId,
+          current.status,
+          "active",
+        );
+      }
+      this.db
+        .prepare(
+          "UPDATE tasks SET status = 'active', end_reason = NULL, updated_at = ? WHERE task_id = ?",
+        )
+        .run(new Date().toISOString(), input.taskId);
       return this.getTask(input.roleId, input.taskId);
     })();
   }
@@ -988,6 +1093,18 @@ export class RoleStore {
     return rows.map(mapToolCall);
   }
 
+  listTaskToolCalls(roleId: string, taskId: string): ToolCallRecord[] {
+    this.getTask(roleId, taskId);
+    const rows = this.db
+      .prepare(
+        `SELECT t.tool_call_id, t.task_id, t.execution_id, t.step_key, t.tool_name, t.args_json, t.status, t.created_at, t.started_at, t.finished_at,
+                COALESCE((SELECT e.mode FROM tool_call_mode_events e WHERE e.tool_call_id = t.tool_call_id ORDER BY e.rowid DESC LIMIT 1), 'foreground') AS mode
+           FROM tool_calls t WHERE t.task_id = ? ORDER BY t.created_at ASC, t.rowid ASC`,
+      )
+      .all(taskId) as ToolCallRow[];
+    return rows.map(mapToolCall);
+  }
+
   markToolCallRunning(roleId: string, toolCallId: string): ToolCallRecord {
     return this.db.transaction(() => {
       const current = this.getToolCall(roleId, toolCallId);
@@ -1040,6 +1157,57 @@ export class RoleStore {
         .run(status, now, now, toolCallId);
       return this.getToolCall(roleId, toolCallId);
     })();
+  }
+
+  recoverInterruptedToolCalls(
+    roleId: string,
+    now = new Date().toISOString(),
+    includedExecutionIds: readonly string[] = [],
+  ): number {
+    const included = includedExecutionIds.filter(
+      (executionId) => executionId.length > 0,
+    );
+    const placeholders = included.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare(
+        `SELECT tc.tool_call_id, tc.status
+           FROM tool_calls tc JOIN executions e ON e.execution_id = tc.execution_id
+          WHERE e.role_id = ? AND tc.status IN ('pending', 'running')
+            AND (
+              e.status NOT IN ('running', 'paused')
+              ${included.length === 0 ? "" : `OR e.execution_id IN (${placeholders})`}
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM tool_results tr WHERE tr.tool_call_id = tc.tool_call_id
+            )
+          ORDER BY tc.created_at ASC, tc.rowid ASC`,
+      )
+      .all(roleId, ...included) as Array<{
+      tool_call_id: string;
+      status: "pending" | "running";
+    }>;
+    let recovered = 0;
+    for (const row of rows) {
+      const dispatched = row.status === "running";
+      const message = dispatched
+        ? "进程中断，无法确认该调用是否已经执行及其结果"
+        : "进程中断时该调用尚未派发";
+      try {
+        this.saveToolResult({
+          roleId,
+          toolCallId: row.tool_call_id,
+          status: dispatched ? "unknown" : "failed",
+          adaptedResult: { error: { code: "PROCESS_INTERRUPTED", message } },
+          diagnosticCode: "PROCESS_INTERRUPTED",
+          error: { code: "PROCESS_INTERRUPTED", message },
+          now,
+        });
+        recovered += 1;
+      } catch {
+        // 单个调用的历史状态异常不应阻塞其他调用的恢复与任务续行。
+      }
+    }
+    return recovered;
   }
 
   switchToolCallMode(input: {
@@ -1105,7 +1273,7 @@ export class RoleStore {
           "SELECT tool_call_id, status, raw_response_json, adapted_result_json, diagnostic_code, error_json, saved_at, previous_status, previous_diagnostic_code, previous_raw_response_json, previous_adapted_result_json, previous_error_json, reconciled_at FROM tool_results WHERE tool_call_id = ?",
         )
         .get(input.toolCallId) as ToolResultRow | undefined;
-      const now = new Date().toISOString();
+      const now = input.now ?? new Date().toISOString();
       if (existing) {
         if (existing.status === input.status) {
           return { result: mapToolResult(existing), duplicate: true };
@@ -1143,6 +1311,12 @@ export class RoleStore {
               "UPDATE tool_calls SET status = ?, started_at = COALESCE(started_at, ?), finished_at = COALESCE(finished_at, ?) WHERE tool_call_id = ?",
             )
             .run(input.status, now, now, input.toolCallId);
+          registerToolResultEvidence(this.db, {
+            roleId: input.roleId,
+            toolCallId: input.toolCallId,
+            ...(this.timeZone ? { timeZone: this.timeZone } : {}),
+            now,
+          });
           return {
             result: this.getToolResult(input.roleId, input.toolCallId),
             duplicate: false,
@@ -1189,6 +1363,12 @@ export class RoleStore {
           "UPDATE tool_calls SET status = ?, started_at = COALESCE(started_at, ?), finished_at = COALESCE(finished_at, ?) WHERE tool_call_id = ?",
         )
         .run(input.status, now, now, input.toolCallId);
+      registerToolResultEvidence(this.db, {
+        roleId: input.roleId,
+        toolCallId: input.toolCallId,
+        ...(this.timeZone ? { timeZone: this.timeZone } : {}),
+        now,
+      });
       return {
         result: this.getToolResult(input.roleId, input.toolCallId),
         duplicate: false,
@@ -1267,6 +1447,28 @@ export class RoleStore {
         )
         .run(new Date().toISOString(), input.taskId, input.resourceId);
       return result.changes > 0;
+    })();
+  }
+
+  endOpenResourceContinuationsForTerminalTasks(
+    roleId: string,
+    now = new Date().toISOString(),
+  ): number {
+    return this.db.transaction(() => {
+      const result = this.db
+        .prepare(
+          `UPDATE task_resource_continuations
+              SET ended_at = ?
+            WHERE ended_at IS NULL
+              AND EXISTS (
+                SELECT 1 FROM tasks t
+                 WHERE t.task_id = task_resource_continuations.task_id
+                   AND t.role_id = ? AND t.status IN ('completed', 'failed')
+                   AND task_resource_continuations.granted_at < t.updated_at
+              )`,
+        )
+        .run(now, roleId);
+      return result.changes;
     })();
   }
 
@@ -1358,6 +1560,8 @@ function mapTask(row: TaskRow): TaskRecord {
     goal: row.goal,
     status: row.status,
     endReason: row.end_reason,
+    origin: row.origin,
+    initiatorExecutionId: row.initiator_execution_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1373,6 +1577,7 @@ function mapExecution(row: ExecutionRow): ExecutionRecord {
     status: row.status,
     stateVersionLoaded: row.state_version_loaded,
     stateVersionCommitted: row.state_version_committed,
+    decisionRound: row.decision_round,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

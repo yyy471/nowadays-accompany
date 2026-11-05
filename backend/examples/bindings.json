@@ -1,0 +1,8 @@
+{
+  "bindings": [
+    { "capability": "chat_model", "resourceId": "__MODEL_RESOURCE_ID__", "modelName": "__MODEL_ID__", "enabled": true },
+    { "capability": "memory_model", "resourceId": "__MODEL_RESOURCE_ID__", "modelName": "__MODEL_ID__", "enabled": true },
+    { "capability": "mcp", "resourceId": "__MCP_RESOURCE_ID__", "enabled": true },
+    { "capability": "skill", "resourceId": "__SKILL_RESOURCE_ID__", "enabled": true }
+  ]
+}

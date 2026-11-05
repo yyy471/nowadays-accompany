@@ -15,7 +15,7 @@ export interface RouteContext {
 
 export type RouteHandler = (
   context: RouteContext,
-) => JsonResponse | Promise<JsonResponse>;
+) => JsonResponse | undefined | Promise<JsonResponse | undefined>;
 
 interface Route {
   method: string;
@@ -76,8 +76,14 @@ export class Router {
           params[key] = decodeURIComponent(match[index + 1] ?? "");
         });
         const result = await route.handler({ request, response, url, params });
-        writeJson(response, result);
+        if (result !== undefined) {
+          writeJson(response, result);
+        }
       } catch (error) {
+        if (response.headersSent) {
+          response.end();
+          return;
+        }
         writeError(response, error);
       }
       return;

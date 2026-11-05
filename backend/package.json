@@ -10,10 +10,18 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
-    "dev": "node --import tsx src/main.ts"
+    "dev": "node --import tsx src/main.ts",
+    "mcp:local": "node --import tsx src/mcp/local-server.ts",
+    "cli": "node --import tsx src/cli.ts",
+    "accept:offline": "node scripts/accept-offline.mjs"
   },
   "dependencies": {
+    "@langchain/core": "1.3.4",
+    "@langchain/langgraph": "1.6.0",
+    "@langchain/langgraph-checkpoint-sqlite": "1.1.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "better-sqlite3": "12.10.0",
+    "yaml": "2.9.1",
     "zod": "4.6.7"
   },
   "devDependencies": {

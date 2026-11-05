@@ -1,12 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
+import {
+  AppError,
+  FtsUnavailableError,
+  SchemaMigrationError,
+} from "../domain/errors.js";
+import { backfillEvidence } from "./evidence.js";
 
-export const APP_SCHEMA_VERSION = 1;
-export const BUSINESS_SCHEMA_VERSION = 1;
+export const APP_SCHEMA_VERSION = 2;
+export const BUSINESS_SCHEMA_VERSION = 4;
 export const EXECUTION_SCHEMA_VERSION = 1;
 
-export const APP_TABLES = ["roles", "resources"] as const;
+export const APP_TABLES = ["roles", "resources", "model_test_calls"] as const;
 export const BUSINESS_TABLES = [
   "roles",
   "windows",
@@ -19,7 +25,48 @@ export const BUSINESS_TABLES = [
   "tool_results",
   "role_bindings",
   "task_resource_continuations",
+  "memory_batches",
+  "memory_triggers",
+  "evidence_records",
+  "evidence_processing",
+  "memory_evidence_segments",
+  "daily_summaries",
+  "daily_summary_sources",
+  "memory_events",
+  "memory_event_tags",
+  "memory_event_sources",
+  "diaries",
+  "diary_events",
+  "memory_revisions",
+  "retrieval_queries",
+  "retrieval_results",
+  "memory_recalls",
+  "execution_stream_events",
+  "model_calls",
+  "call_metering",
+  "memory_search_documents",
+  "memory_search_fts",
+  "autonomy_budget",
+  "autonomy_wakes",
+  "autonomy_activities",
+  "autonomy_tool_reservations",
 ] as const;
+
+const APP_V2_SQL = `
+CREATE TABLE IF NOT EXISTS model_test_calls (
+  test_call_id TEXT PRIMARY KEY,
+  resource_id TEXT,
+  model_name TEXT NOT NULL,
+  protocol TEXT NOT NULL CHECK (protocol IN (
+    'openai-chat', 'openai-responses', 'anthropic-messages'
+  )),
+  status TEXT NOT NULL CHECK (status IN ('succeeded', 'failed')),
+  error_code TEXT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT NOT NULL,
+  usage_json TEXT
+);
+`;
 
 const APP_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS roles (
@@ -180,6 +227,362 @@ CREATE TABLE IF NOT EXISTS task_resource_continuations (
 );
 `;
 
+export const BUSINESS_SCHEMA_V1_SQL = BUSINESS_SCHEMA_SQL;
+
+const BUSINESS_V2_SQL = `
+ALTER TABLE messages ADD COLUMN execution_id TEXT REFERENCES executions(execution_id);
+ALTER TABLE messages ADD COLUMN claimed_by_execution_id TEXT REFERENCES executions(execution_id);
+ALTER TABLE messages ADD COLUMN processed_by_execution_id TEXT REFERENCES executions(execution_id);
+
+ALTER TABLE executions ADD COLUMN decision_round INTEGER;
+ALTER TABLE executions ADD COLUMN superseded_by_execution_id TEXT REFERENCES executions(execution_id);
+
+ALTER TABLE tasks ADD COLUMN origin TEXT NOT NULL DEFAULT 'user'
+  CHECK (origin IN ('user', 'autonomous', 'memory'));
+ALTER TABLE tasks ADD COLUMN initiator_execution_id TEXT REFERENCES executions(execution_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_executions_role_round
+  ON executions (role_id, decision_round)
+  WHERE decision_round IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_messages_pending_decision
+  ON messages (window_id, sequence)
+  WHERE sender = 'user'
+    AND processed_by_execution_id IS NULL
+    AND claimed_by_execution_id IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_messages_execution
+  ON messages (execution_id)
+  WHERE execution_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS memory_batches (
+  batch_id TEXT PRIMARY KEY,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'partial')),
+  input_from_sequence INTEGER NOT NULL,
+  input_to_sequence INTEGER NOT NULL,
+  context_budget_chars INTEGER NOT NULL,
+  output_reserve_chars INTEGER NOT NULL,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  last_error_code TEXT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_batch_single_running
+  ON memory_batches (role_id)
+  WHERE status = 'running';
+
+CREATE TABLE IF NOT EXISTS memory_triggers (
+  trigger_id TEXT PRIMARY KEY,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  kind TEXT NOT NULL CHECK (kind IN ('message_threshold', 'idle', 'task_end', 'manual', 'retry')),
+  window_id TEXT REFERENCES windows(window_id),
+  task_id TEXT REFERENCES tasks(task_id),
+  consumed_at TEXT,
+  batch_id TEXT REFERENCES memory_batches(batch_id),
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_triggers_pending
+  ON memory_triggers (role_id, created_at)
+  WHERE consumed_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS evidence_records (
+  evidence_id TEXT PRIMARY KEY,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  source_kind TEXT NOT NULL CHECK (source_kind IN ('message', 'tool_result')),
+  source_id TEXT NOT NULL,
+  window_id TEXT REFERENCES windows(window_id),
+  task_id TEXT REFERENCES tasks(task_id),
+  execution_id TEXT REFERENCES executions(execution_id),
+  source_status TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  local_date TEXT NOT NULL,
+  role_sequence INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_evidence_role_sequence
+  ON evidence_records (role_id, role_sequence);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_evidence_source
+  ON evidence_records (role_id, source_kind, source_id);
+
+CREATE INDEX IF NOT EXISTS idx_evidence_window_occurred
+  ON evidence_records (window_id, occurred_at);
+
+CREATE TABLE IF NOT EXISTS evidence_processing (
+  evidence_id TEXT PRIMARY KEY REFERENCES evidence_records(evidence_id),
+  status TEXT NOT NULL CHECK (status IN ('pending', 'processing', 'processed', 'deferred', 'failed')),
+  last_batch_id TEXT REFERENCES memory_batches(batch_id),
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  next_retry_at TEXT,
+  deferred_after_sequence INTEGER,
+  last_error_code TEXT,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_evidence_processing_ready
+  ON evidence_processing (status, next_retry_at);
+
+CREATE TABLE IF NOT EXISTS memory_evidence_segments (
+  evidence_id TEXT NOT NULL REFERENCES evidence_records(evidence_id),
+  segment_index INTEGER NOT NULL,
+  from_char INTEGER NOT NULL,
+  to_char INTEGER NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'processed', 'failed')),
+  batch_id TEXT REFERENCES memory_batches(batch_id),
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (evidence_id, segment_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_segments_batch
+  ON memory_evidence_segments (batch_id, status);
+
+CREATE TABLE IF NOT EXISTS daily_summaries (
+  summary_id TEXT PRIMARY KEY,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  experience_date TEXT NOT NULL,
+  topic TEXT NOT NULL DEFAULT '',
+  summary TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_summaries_role_date
+  ON daily_summaries (role_id, experience_date);
+
+CREATE TABLE IF NOT EXISTS daily_summary_sources (
+  summary_source_id TEXT PRIMARY KEY,
+  summary_id TEXT NOT NULL REFERENCES daily_summaries(summary_id),
+  window_id TEXT REFERENCES windows(window_id),
+  from_sequence INTEGER,
+  to_sequence INTEGER,
+  occurred_from TEXT NOT NULL,
+  occurred_to TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_summary_sources_summary
+  ON daily_summary_sources (summary_id);
+
+CREATE TABLE IF NOT EXISTS memory_events (
+  event_id TEXT PRIMARY KEY,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  subjective_experience TEXT NOT NULL DEFAULT '',
+  occurred_at_start TEXT NOT NULL,
+  occurred_at_end TEXT,
+  experience_date TEXT NOT NULL,
+  lifecycle_status TEXT NOT NULL CHECK (lifecycle_status IN ('active', 'refined')),
+  refined_summary_id TEXT REFERENCES daily_summaries(summary_id),
+  version INTEGER NOT NULL,
+  last_supplemented_round INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_events_role_date
+  ON memory_events (role_id, experience_date);
+
+CREATE INDEX IF NOT EXISTS idx_memory_events_refine_candidates
+  ON memory_events (role_id, lifecycle_status, last_supplemented_round);
+
+CREATE TABLE IF NOT EXISTS memory_event_tags (
+  event_id TEXT NOT NULL REFERENCES memory_events(event_id),
+  dimension TEXT NOT NULL CHECK (dimension IN ('person', 'topic', 'place', 'emotion', 'source')),
+  value TEXT NOT NULL,
+  normalized_value TEXT NOT NULL,
+  PRIMARY KEY (event_id, dimension, normalized_value)
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_event_tags_lookup
+  ON memory_event_tags (dimension, normalized_value);
+
+CREATE TABLE IF NOT EXISTS memory_event_sources (
+  event_id TEXT NOT NULL REFERENCES memory_events(event_id),
+  evidence_id TEXT NOT NULL REFERENCES evidence_records(evidence_id),
+  linked_at TEXT NOT NULL,
+  PRIMARY KEY (event_id, evidence_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_event_sources_evidence
+  ON memory_event_sources (evidence_id);
+
+CREATE TABLE IF NOT EXISTS diaries (
+  diary_id TEXT PRIMARY KEY,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  relative_path TEXT NOT NULL UNIQUE,
+  content TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  experience_date TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_diaries_role_date
+  ON diaries (role_id, experience_date);
+
+CREATE TABLE IF NOT EXISTS diary_events (
+  diary_id TEXT NOT NULL REFERENCES diaries(diary_id),
+  event_id TEXT NOT NULL REFERENCES memory_events(event_id),
+  linked_at TEXT NOT NULL,
+  PRIMARY KEY (diary_id, event_id)
+);
+
+CREATE TABLE IF NOT EXISTS memory_revisions (
+  revision_id TEXT PRIMARY KEY,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  target_type TEXT NOT NULL CHECK (target_type IN ('event', 'daily_summary')),
+  target_id TEXT NOT NULL,
+  revision_number INTEGER NOT NULL,
+  base_revision INTEGER NOT NULL,
+  change_source TEXT NOT NULL CHECK (change_source IN ('memory_batch', 'agent_correction')),
+  content_json TEXT NOT NULL,
+  evidence_ids_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (target_type, target_id, revision_number)
+);
+
+CREATE TABLE IF NOT EXISTS retrieval_queries (
+  retrieval_id TEXT PRIMARY KEY,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  execution_id TEXT REFERENCES executions(execution_id),
+  mode TEXT NOT NULL CHECK (mode IN ('auto', 'agent', 'manual')),
+  query_json TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('succeeded', 'failed')),
+  error_code TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_retrieval_queries_role_time
+  ON retrieval_queries (role_id, created_at);
+
+CREATE TABLE IF NOT EXISTS retrieval_results (
+  retrieval_id TEXT NOT NULL REFERENCES retrieval_queries(retrieval_id),
+  rank INTEGER NOT NULL,
+  record_type TEXT NOT NULL CHECK (record_type IN ('event', 'daily_summary', 'diary')),
+  record_id TEXT NOT NULL,
+  delivered INTEGER NOT NULL CHECK (delivered IN (0, 1)),
+  PRIMARY KEY (retrieval_id, record_type, record_id)
+);
+
+CREATE TABLE IF NOT EXISTS memory_recalls (
+  recall_id TEXT PRIMARY KEY,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  execution_id TEXT NOT NULL REFERENCES executions(execution_id),
+  record_type TEXT NOT NULL CHECK (record_type IN ('event', 'daily_summary', 'diary')),
+  record_id TEXT NOT NULL,
+  recalled_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_recalls_execution_record
+  ON memory_recalls (execution_id, record_type, record_id);
+
+CREATE INDEX IF NOT EXISTS idx_memory_recalls_record
+  ON memory_recalls (record_type, record_id);
+
+CREATE TABLE IF NOT EXISTS execution_stream_events (
+  stream_event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  window_id TEXT REFERENCES windows(window_id),
+  execution_id TEXT NOT NULL REFERENCES executions(execution_id),
+  event_type TEXT NOT NULL CHECK (event_type IN (
+    'execution_started', 'message_delta', 'tool_started', 'tool_result_saved',
+    'message_completed', 'message_interrupted', 'execution_superseded',
+    'execution_paused', 'execution_failed'
+  )),
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_stream_window
+  ON execution_stream_events (window_id, stream_event_id);
+
+CREATE INDEX IF NOT EXISTS idx_execution_stream_execution
+  ON execution_stream_events (execution_id, stream_event_id);
+
+CREATE TABLE IF NOT EXISTS model_calls (
+  model_call_id TEXT PRIMARY KEY,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  execution_id TEXT REFERENCES executions(execution_id),
+  batch_id TEXT REFERENCES memory_batches(batch_id),
+  purpose TEXT NOT NULL CHECK (purpose IN (
+    'user_chat', 'user_task', 'memory_maintenance', 'autonomous', 'connection_test'
+  )),
+  resource_id TEXT,
+  model_name TEXT NOT NULL,
+  protocol TEXT NOT NULL CHECK (protocol IN (
+    'openai-chat', 'openai-responses', 'anthropic-messages'
+  )),
+  status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed', 'unknown')),
+  error_code TEXT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  usage_json TEXT,
+  raw_response_json TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_model_calls_role_time
+  ON model_calls (role_id, started_at);
+
+CREATE TABLE IF NOT EXISTS call_metering (
+  metering_id TEXT PRIMARY KEY,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  execution_id TEXT REFERENCES executions(execution_id),
+  task_id TEXT REFERENCES tasks(task_id),
+  batch_id TEXT REFERENCES memory_batches(batch_id),
+  call_kind TEXT NOT NULL CHECK (call_kind IN ('model', 'tool')),
+  call_id TEXT NOT NULL,
+  purpose TEXT NOT NULL CHECK (purpose IN (
+    'user_chat', 'user_task', 'memory_maintenance', 'autonomous', 'connection_test'
+  )),
+  counted INTEGER NOT NULL CHECK (counted IN (0, 1)),
+  created_at TEXT NOT NULL,
+  UNIQUE (call_kind, call_id)
+);
+
+CREATE TABLE IF NOT EXISTS memory_search_documents (
+  document_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  record_type TEXT NOT NULL CHECK (record_type IN ('event', 'daily_summary', 'diary')),
+  record_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (role_id, record_type, record_id)
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_search_fts USING fts5(
+  title,
+  body,
+  content='memory_search_documents',
+  content_rowid='document_id',
+  tokenize='trigram'
+);
+
+CREATE TRIGGER IF NOT EXISTS memory_search_documents_ai AFTER INSERT ON memory_search_documents BEGIN
+  INSERT INTO memory_search_fts(rowid, title, body)
+  VALUES (new.document_id, new.title, new.body);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memory_search_documents_ad AFTER DELETE ON memory_search_documents BEGIN
+  INSERT INTO memory_search_fts(memory_search_fts, rowid, title, body)
+  VALUES ('delete', old.document_id, old.title, old.body);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memory_search_documents_au AFTER UPDATE ON memory_search_documents BEGIN
+  INSERT INTO memory_search_fts(memory_search_fts, rowid, title, body)
+  VALUES ('delete', old.document_id, old.title, old.body);
+  INSERT INTO memory_search_fts(rowid, title, body)
+  VALUES (new.document_id, new.title, new.body);
+END;
+`;
+
 export interface OpenedDatabase {
   db: Database.Database;
   path: string;
@@ -188,6 +591,7 @@ export interface OpenedDatabase {
 
 export interface DatabaseOpenOptions {
   create?: boolean;
+  timeZone?: string;
 }
 
 interface RequiredIndex {
@@ -196,7 +600,7 @@ interface RequiredIndex {
   columns: readonly string[];
   unique: boolean;
   partial: boolean;
-  predicate: string;
+  predicate?: string;
 }
 
 interface RequiredColumns {
@@ -205,6 +609,69 @@ interface RequiredColumns {
 }
 
 const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
+  {
+    table: "messages",
+    columns: [
+      "execution_id",
+      "claimed_by_execution_id",
+      "processed_by_execution_id",
+    ],
+  },
+  {
+    table: "executions",
+    columns: ["decision_round", "superseded_by_execution_id"],
+  },
+  {
+    table: "tasks",
+    columns: ["origin", "initiator_execution_id"],
+  },
+  {
+    table: "evidence_records",
+    columns: [
+      "evidence_id",
+      "role_id",
+      "source_kind",
+      "source_id",
+      "source_status",
+      "occurred_at",
+      "local_date",
+      "role_sequence",
+    ],
+  },
+  {
+    table: "memory_batches",
+    columns: [
+      "batch_id",
+      "role_id",
+      "status",
+      "input_from_sequence",
+      "input_to_sequence",
+      "context_budget_chars",
+      "output_reserve_chars",
+    ],
+  },
+  {
+    table: "memory_events",
+    columns: [
+      "event_id",
+      "role_id",
+      "title",
+      "summary",
+      "subjective_experience",
+      "experience_date",
+      "lifecycle_status",
+      "version",
+      "last_supplemented_round",
+    ],
+  },
+  {
+    table: "diaries",
+    columns: ["diary_id", "role_id", "relative_path", "content", "content_hash"],
+  },
+  {
+    table: "memory_recalls",
+    columns: ["execution_id", "record_type", "record_id"],
+  },
   {
     table: "tool_results",
     columns: [
@@ -221,6 +688,16 @@ const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
       "previous_adapted_result_json",
       "previous_error_json",
       "reconciled_at",
+    ],
+  },
+  {
+    table: "autonomy_tool_reservations",
+    columns: [
+      "tool_call_id",
+      "role_id",
+      "local_date",
+      "counted",
+      "status",
     ],
   },
 ];
@@ -250,13 +727,208 @@ const BUSINESS_INDEXES: readonly RequiredIndex[] = [
     partial: true,
     predicate: "capability = 'memory_model'",
   },
+  {
+    name: "idx_executions_role_round",
+    table: "executions",
+    columns: ["role_id", "decision_round"],
+    unique: true,
+    partial: true,
+    predicate: "decision_round IS NOT NULL",
+  },
+  {
+    name: "idx_messages_pending_decision",
+    table: "messages",
+    columns: ["window_id", "sequence"],
+    unique: false,
+    partial: true,
+    predicate:
+      "sender = 'user' AND processed_by_execution_id IS NULL AND claimed_by_execution_id IS NULL",
+  },
+  {
+    name: "idx_memory_batch_single_running",
+    table: "memory_batches",
+    columns: ["role_id"],
+    unique: true,
+    partial: true,
+    predicate: "status = 'running'",
+  },
+  {
+    name: "idx_memory_triggers_pending",
+    table: "memory_triggers",
+    columns: ["role_id", "created_at"],
+    unique: false,
+    partial: true,
+    predicate: "consumed_at IS NULL",
+  },
+  {
+    name: "idx_memory_recalls_execution_record",
+    table: "memory_recalls",
+    columns: ["execution_id", "record_type", "record_id"],
+    unique: true,
+    partial: false,
+  },
+  {
+    name: "idx_execution_stream_window",
+    table: "execution_stream_events",
+    columns: ["window_id", "stream_event_id"],
+    unique: false,
+    partial: false,
+  },
+  {
+    name: "idx_autonomy_wakes_due",
+    table: "autonomy_wakes",
+    columns: ["role_id", "status", "scheduled_at"],
+    unique: false,
+    partial: false,
+  },
+  {
+    name: "idx_autonomy_wakes_task",
+    table: "autonomy_wakes",
+    columns: ["task_id"],
+    unique: false,
+    partial: true,
+    predicate: "task_id IS NOT NULL",
+  },
+  {
+    name: "idx_autonomy_activity_wake",
+    table: "autonomy_activities",
+    columns: ["wake_id"],
+    unique: true,
+    partial: false,
+  },
+  {
+    name: "idx_autonomy_activity_role_time",
+    table: "autonomy_activities",
+    columns: ["role_id", "created_at"],
+    unique: false,
+    partial: false,
+  },
+  {
+    name: "idx_autonomy_activity_task",
+    table: "autonomy_activities",
+    columns: ["task_id"],
+    unique: false,
+    partial: false,
+  },
+  {
+    name: "idx_autonomy_tool_reservations_status",
+    table: "autonomy_tool_reservations",
+    columns: ["role_id", "status"],
+    unique: false,
+    partial: false,
+  },
 ];
+
+const BUSINESS_V3_SQL = `
+CREATE TABLE IF NOT EXISTS autonomy_budget (
+  role_id TEXT PRIMARY KEY REFERENCES roles(role_id),
+  local_date TEXT NOT NULL,
+  used_points INTEGER NOT NULL CHECK (used_points >= 0),
+  daily_limit INTEGER NOT NULL CHECK (daily_limit > 0),
+  unlimited INTEGER NOT NULL CHECK (unlimited IN (0, 1)),
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS autonomy_wakes (
+  wake_id TEXT PRIMARY KEY,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  kind TEXT NOT NULL CHECK (kind IN ('scheduled', 'budget_resume')),
+  scheduled_at TEXT NOT NULL,
+  intent TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'claimed', 'completed', 'cancelled')),
+  source_execution_id TEXT REFERENCES executions(execution_id),
+  task_id TEXT REFERENCES tasks(task_id),
+  activity_id TEXT,
+  claimed_at TEXT,
+  completed_at TEXT,
+  last_error_code TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_autonomy_wakes_due
+  ON autonomy_wakes (role_id, status, scheduled_at);
+
+CREATE INDEX IF NOT EXISTS idx_autonomy_wakes_task
+  ON autonomy_wakes (task_id)
+  WHERE task_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS autonomy_activities (
+  activity_id TEXT PRIMARY KEY,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  wake_id TEXT NOT NULL REFERENCES autonomy_wakes(wake_id),
+  task_id TEXT NOT NULL REFERENCES tasks(task_id),
+  execution_id TEXT NOT NULL REFERENCES executions(execution_id),
+  window_id TEXT NOT NULL REFERENCES windows(window_id),
+  status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'paused')),
+  summary TEXT,
+  shared_message_id TEXT REFERENCES messages(message_id),
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_autonomy_activity_wake
+  ON autonomy_activities (wake_id);
+
+CREATE INDEX IF NOT EXISTS idx_autonomy_activity_role_time
+  ON autonomy_activities (role_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_autonomy_activity_task
+  ON autonomy_activities (task_id);
+
+ALTER TABLE execution_stream_events RENAME TO execution_stream_events_v2_old;
+DROP INDEX IF EXISTS idx_execution_stream_window;
+DROP INDEX IF EXISTS idx_execution_stream_execution;
+
+CREATE TABLE execution_stream_events (
+  stream_event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  window_id TEXT REFERENCES windows(window_id),
+  execution_id TEXT NOT NULL REFERENCES executions(execution_id),
+  event_type TEXT NOT NULL CHECK (event_type IN (
+    'execution_started', 'message_delta', 'tool_started', 'tool_result_saved',
+    'message_completed', 'message_interrupted', 'execution_superseded',
+    'execution_paused', 'execution_failed'
+  )),
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+INSERT INTO execution_stream_events
+  (stream_event_id, role_id, window_id, execution_id, event_type, payload_json, created_at)
+SELECT stream_event_id, role_id, window_id, execution_id, event_type, payload_json, created_at
+  FROM execution_stream_events_v2_old;
+
+DROP TABLE execution_stream_events_v2_old;
+CREATE INDEX idx_execution_stream_window
+  ON execution_stream_events (window_id, stream_event_id);
+CREATE INDEX idx_execution_stream_execution
+  ON execution_stream_events (execution_id, stream_event_id);
+`;
+
+const BUSINESS_V4_SQL = `
+CREATE TABLE IF NOT EXISTS autonomy_tool_reservations (
+  tool_call_id TEXT PRIMARY KEY REFERENCES tool_calls(tool_call_id),
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  local_date TEXT NOT NULL,
+  counted INTEGER NOT NULL CHECK (counted IN (0, 1)),
+  status TEXT NOT NULL CHECK (status IN ('reserved', 'committed', 'released')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_autonomy_tool_reservations_status
+  ON autonomy_tool_reservations (role_id, status);
+`;
 
 export function openAppDatabase(dbPath: string): OpenedDatabase {
   return openVersionedDatabase(
     dbPath,
     APP_SCHEMA_VERSION,
-    APP_SCHEMA_SQL,
+    APP_SCHEMA_SQL + APP_V2_SQL,
+    { 1: (db) => db.exec(APP_V2_SQL) },
     APP_TABLES,
     [],
     [],
@@ -271,7 +943,15 @@ export function openBusinessDatabase(
   return openVersionedDatabase(
     dbPath,
     BUSINESS_SCHEMA_VERSION,
-    BUSINESS_SCHEMA_SQL,
+    BUSINESS_SCHEMA_SQL + BUSINESS_V2_SQL + BUSINESS_V3_SQL + BUSINESS_V4_SQL,
+    {
+      1: (db) => {
+        db.exec(BUSINESS_V2_SQL);
+        backfillEvidence(db, options.timeZone);
+      },
+      2: (db) => db.exec(BUSINESS_V3_SQL),
+      3: (db) => db.exec(BUSINESS_V4_SQL),
+    },
     BUSINESS_TABLES,
     BUSINESS_INDEXES,
     BUSINESS_COLUMNS,
@@ -298,6 +978,7 @@ function openVersionedDatabase(
   dbPath: string,
   version: number,
   schemaSql: string,
+  migrations: Record<number, (db: Database.Database) => void>,
   requiredTables: readonly string[],
   requiredIndexes: readonly RequiredIndex[],
   requiredColumns: readonly RequiredColumns[],
@@ -305,16 +986,40 @@ function openVersionedDatabase(
 ): OpenedDatabase {
   const create = options.create !== false;
   const db = openRawDatabase(dbPath, create);
+  const currentVersion = readUserVersion(db);
   try {
-    ensureSchema(db, version, schemaSql, create);
-    assertTables(db, requiredTables);
-    assertIndexes(db, requiredIndexes);
-    assertColumns(db, requiredColumns);
+    db.transaction(() => {
+      ensureSchema(db, version, schemaSql, migrations, create);
+      assertTables(db, requiredTables);
+      assertIndexes(db, requiredIndexes);
+      assertColumns(db, requiredColumns);
+      if (requiredTables.includes("memory_search_fts")) {
+        assertFtsIndex(db);
+      }
+    })();
     return { db, path: dbPath, schemaVersion: version };
   } catch (error) {
     db.close();
+    if (error instanceof AppError) {
+      throw error;
+    }
+    if (isFtsUnavailable(error)) {
+      throw new FtsUnavailableError();
+    }
+    if (currentVersion > 0 && currentVersion < version) {
+      throw new SchemaMigrationError(error);
+    }
     throw error;
   }
+}
+
+function isFtsUnavailable(error: unknown): boolean {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  return (
+    message.includes("no such module: fts5") ||
+    message.includes("no such tokenizer: trigram") ||
+    message.includes("unknown tokenizer: trigram")
+  );
 }
 
 function openRawDatabase(dbPath: string, create: boolean): Database.Database {
@@ -337,22 +1042,32 @@ function ensureSchema(
   db: Database.Database,
   version: number,
   schemaSql: string,
+  migrations: Record<number, (db: Database.Database) => void>,
   create: boolean,
 ): void {
   const current = readUserVersion(db);
   if (current === version) {
     return;
   }
-  if (current !== 0) {
-    throw new Error(`SCHEMA_VERSION_UNSUPPORTED:${version}:${current}`);
-  }
-  if (!create) {
-    throw new Error(`SCHEMA_INITIALIZATION_REQUIRED:${version}`);
-  }
-  db.transaction(() => {
+  if (current === 0) {
+    if (!create) {
+      throw new Error(`SCHEMA_INITIALIZATION_REQUIRED:${version}`);
+    }
     db.exec(schemaSql);
     db.pragma(`user_version = ${version}`);
-  })();
+    return;
+  }
+  if (current > version) {
+    throw new Error(`SCHEMA_VERSION_UNSUPPORTED:${version}:${current}`);
+  }
+  for (let next = current; next < version; next += 1) {
+    const migrate = migrations[next];
+    if (!migrate) {
+      throw new Error(`SCHEMA_MIGRATION_REQUIRED:${version}:${next}`);
+    }
+    migrate(db);
+  }
+  db.pragma(`user_version = ${version}`);
 }
 
 function ensureVersionOnly(
@@ -422,6 +1137,9 @@ function assertIndexes(
     if (columns.join(",") !== spec.columns.join(",")) {
       throw new Error(`SCHEMA_INDEX_INVALID:${spec.name}`);
     }
+    if (!spec.partial) {
+      continue;
+    }
     const row = db
       .prepare(
         "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
@@ -430,10 +1148,27 @@ function assertIndexes(
     const predicate = row?.sql ? extractWhereClause(row.sql) : null;
     if (
       predicate === null ||
-      normalizeSql(predicate) !== normalizeSql(spec.predicate)
+      normalizeSql(predicate) !== normalizeSql(spec.predicate ?? "")
     ) {
       throw new Error(`SCHEMA_INDEX_INVALID:${spec.name}`);
     }
+  }
+}
+
+function assertFtsIndex(db: Database.Database): void {
+  const row = db
+    .prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'memory_search_fts'",
+    )
+    .get() as { sql: string | null } | undefined;
+  if (!row?.sql) {
+    throw new Error("SCHEMA_TABLE_MISSING:memory_search_fts");
+  }
+  if (
+    !/using\s+fts5/i.test(row.sql) ||
+    !/tokenize\s*=\s*'trigram'/i.test(row.sql)
+  ) {
+    throw new Error("SCHEMA_TABLE_INVALID:memory_search_fts");
   }
 }
 

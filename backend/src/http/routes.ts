@@ -2,26 +2,51 @@ import type {
   CreateResourceBody,
   CreateWindowBody,
   CreateRoleBody,
+  DiaryCreateBody,
+  EventCorrectionBody,
+  InputStateBody,
+  MemorySearchBody,
+  ModelServiceConfigBody,
+  ModelServiceTestBody,
   PutBindingsBody,
   PutStateBody,
   SubmitMessageBody,
+  SummaryCorrectionBody,
+  TaskFinishBody,
+  AutonomyBudgetBody,
+  AutonomyWakeBody,
   UpdateDefinitionBody,
   UpdateResourceBody,
 } from "./schemas.js";
 import { readJsonBody } from "./body.js";
 import { HttpError, type JsonResponse } from "./errors.js";
 import type { Router } from "./router.js";
+import type { ConversationService } from "../application/conversation-service.js";
+import type { AutonomyService } from "../application/autonomy-service.js";
+import type { MemoryQueryService } from "../application/memory-query-service.js";
 import type { MessageService } from "../application/message-service.js";
+import type { ModelService } from "../application/model-service.js";
 import type { ResourceService } from "../application/resource-service.js";
 import type { RoleService } from "../application/role-service.js";
+import { InputStateInvalidError, SseCursorInvalidError } from "../domain/errors.js";
 import { resourceKindSchema } from "../domain/resource.js";
 import {
   createResourceSchema,
   createRoleSchema,
   createWindowSchema,
+  diaryCreateBodySchema,
+  eventCorrectionBodySchema,
+  inputStateBodySchema,
+  memorySearchBodySchema,
+  modelServiceConfigBodySchema,
+  modelServiceTestBodySchema,
   putBindingsSchema,
   putStateSchema,
   submitMessageSchema,
+  summaryCorrectionBodySchema,
+  taskFinishBodySchema,
+  autonomyBudgetBodySchema,
+  autonomyWakeBodySchema,
   updateDefinitionSchema,
   updateResourceSchema,
 } from "./schemas.js";
@@ -31,6 +56,10 @@ export interface ApiServices {
   roles: RoleService;
   messages: MessageService;
   resources: ResourceService;
+  memory: MemoryQueryService;
+  modelServices: ModelService;
+  conversation: ConversationService;
+  autonomy: AutonomyService;
 }
 
 export function registerApiRoutes(
@@ -149,7 +178,7 @@ export function registerApiRoutes(
         submitMessageSchema,
         await readJsonBody(request),
       );
-      const result = services.messages.submit(
+      const result = services.conversation.submitMessage(
         params.roleId ?? "",
         params.windowId ?? "",
         {
@@ -187,6 +216,217 @@ export function registerApiRoutes(
           after,
           limit,
         ),
+      };
+    },
+  );
+
+  router.add(
+    "POST",
+    "/v1/roles/:roleId/windows/:windowId/input-state",
+    async ({ request, params }): Promise<JsonResponse> => {
+      const body = parseBody<InputStateBody>(
+        inputStateBodySchema,
+        await readJsonBody(request),
+      );
+      return {
+        status: 200,
+        body: services.conversation.updateInputState({
+          roleId: params.roleId ?? "",
+          windowId: params.windowId ?? "",
+          clientId: body.clientId ?? "",
+          typing: body.typing,
+        }),
+      };
+    },
+  );
+
+  router.add(
+    "DELETE",
+    "/v1/roles/:roleId/windows/:windowId/input-state",
+    ({ params, url }): JsonResponse => {
+      const clientId = url.searchParams.get("clientId");
+      if (clientId === null || clientId.length === 0) {
+        throw new InputStateInvalidError("缺少 clientId");
+      }
+      return {
+        status: 200,
+        body: services.conversation.clearInputState({
+          roleId: params.roleId ?? "",
+          windowId: params.windowId ?? "",
+          clientId,
+        }),
+      };
+    },
+  );
+
+  router.add(
+    "GET",
+    "/v1/roles/:roleId/windows/:windowId/events",
+    async ({ request, response, params, url }): Promise<undefined> => {
+      const after = parseSseCursor(request, url);
+      const clientId = url.searchParams.get("clientId");
+      await services.conversation.streamEvents({
+        roleId: params.roleId ?? "",
+        windowId: params.windowId ?? "",
+        after,
+        clientId,
+        request,
+        response,
+      });
+      return undefined;
+    },
+  );
+
+  router.add(
+    "GET",
+    "/v1/roles/:roleId/executions/:executionId",
+    ({ params }): JsonResponse => ({
+      status: 200,
+      body: services.conversation.getExecution(
+        params.roleId ?? "",
+        params.executionId ?? "",
+      ),
+    }),
+  );
+
+  router.add(
+    "GET",
+    "/v1/roles/:roleId/tasks",
+    ({ params }): JsonResponse => ({
+      status: 200,
+      body: { items: services.conversation.listTasks(params.roleId ?? "") },
+    }),
+  );
+
+  router.add(
+    "GET",
+    "/v1/roles/:roleId/tasks/:taskId",
+    ({ params }): JsonResponse => ({
+      status: 200,
+      body: services.conversation.getTask(
+        params.roleId ?? "",
+        params.taskId ?? "",
+      ),
+    }),
+  );
+
+  router.add(
+    "POST",
+    "/v1/roles/:roleId/tasks/:taskId/finish",
+    async ({ request, params }): Promise<JsonResponse> => {
+      const body = parseBody<TaskFinishBody>(
+        taskFinishBodySchema,
+        await readJsonBody(request),
+      );
+      return {
+        status: 200,
+        body: services.conversation.finishTask({
+          roleId: params.roleId ?? "",
+          taskId: params.taskId ?? "",
+          status: body.status,
+          endReason: body.endReason,
+        }),
+      };
+    },
+  );
+
+  router.add(
+    "GET",
+    "/v1/roles/:roleId/autonomy",
+    ({ params }): JsonResponse => ({
+      status: 200,
+      body: services.autonomy.getStatus(params.roleId ?? ""),
+    }),
+  );
+
+  router.add(
+    "GET",
+    "/v1/roles/:roleId/autonomy/budget",
+    ({ params }): JsonResponse => ({
+      status: 200,
+      body: services.autonomy.getBudget(params.roleId ?? ""),
+    }),
+  );
+
+  router.add(
+    "PUT",
+    "/v1/roles/:roleId/autonomy/budget",
+    async ({ request, params }): Promise<JsonResponse> => {
+      const body = parseBody<AutonomyBudgetBody>(
+        autonomyBudgetBodySchema,
+        await readJsonBody(request),
+      );
+      return {
+        status: 200,
+        body: services.autonomy.setBudget(params.roleId ?? "", {
+          unlimited: body.unlimited,
+          ...(body.dailyLimit === undefined
+            ? {}
+            : { dailyLimit: body.dailyLimit }),
+        }),
+      };
+    },
+  );
+
+  router.add(
+    "GET",
+    "/v1/roles/:roleId/autonomy/wakes",
+    ({ params, url }): JsonResponse => {
+      const limit = queryInt(url, "limit", {
+        min: 1,
+        max: 500,
+        defaultValue: 100,
+      });
+      return {
+        status: 200,
+        body: {
+          items: services.autonomy.listWakes(params.roleId ?? "", limit),
+        },
+      };
+    },
+  );
+
+  router.add(
+    "POST",
+    "/v1/roles/:roleId/autonomy/wakes",
+    async ({ request, params }): Promise<JsonResponse> => {
+      const body = parseBody<AutonomyWakeBody>(
+        autonomyWakeBodySchema,
+        await readJsonBody(request),
+      );
+      return {
+        status: 201,
+        body: services.autonomy.scheduleWake(params.roleId ?? "", body),
+      };
+    },
+  );
+
+  router.add(
+    "DELETE",
+    "/v1/roles/:roleId/autonomy/wakes/:wakeId",
+    ({ params }): JsonResponse => ({
+      status: 200,
+      body: services.autonomy.cancelWake(
+        params.roleId ?? "",
+        params.wakeId ?? "",
+      ),
+    }),
+  );
+
+  router.add(
+    "GET",
+    "/v1/roles/:roleId/autonomy/activities",
+    ({ params, url }): JsonResponse => {
+      const limit = queryInt(url, "limit", {
+        min: 1,
+        max: 500,
+        defaultValue: 100,
+      });
+      return {
+        status: 200,
+        body: {
+          items: services.autonomy.listActivities(params.roleId ?? "", limit),
+        },
       };
     },
   );
@@ -276,5 +516,217 @@ export function registerApiRoutes(
     },
   );
 
+  router.add(
+    "POST",
+    "/v1/roles/:roleId/memory/search",
+    async ({ request, params }): Promise<JsonResponse> => {
+      const body = parseBody<MemorySearchBody>(
+        memorySearchBodySchema,
+        await readJsonBody(request),
+      );
+      return {
+        status: 200,
+        body: services.memory.search(params.roleId ?? "", body, {
+          mode: "manual",
+        }),
+      };
+    },
+  );
+
+  router.add(
+    "GET",
+    "/v1/roles/:roleId/memory/events/:eventId",
+    ({ params }): JsonResponse => ({
+      status: 200,
+      body: services.memory.getEvent(
+        params.roleId ?? "",
+        params.eventId ?? "",
+      ),
+    }),
+  );
+
+  router.add(
+    "PATCH",
+    "/v1/roles/:roleId/memory/events/:eventId",
+    async ({ request, params }): Promise<JsonResponse> => {
+      const body = parseBody<EventCorrectionBody>(
+        eventCorrectionBodySchema,
+        await readJsonBody(request),
+      );
+      return {
+        status: 200,
+        body: services.memory.correctEvent(
+          params.roleId ?? "",
+          params.eventId ?? "",
+          body,
+        ),
+      };
+    },
+  );
+
+  router.add(
+    "GET",
+    "/v1/roles/:roleId/memory/evidence/:evidenceId",
+    ({ params }): JsonResponse => ({
+      status: 200,
+      body: services.memory.getEvidence(
+        params.roleId ?? "",
+        params.evidenceId ?? "",
+      ),
+    }),
+  );
+
+  router.add(
+    "GET",
+    "/v1/roles/:roleId/memory/summaries/:summaryId",
+    ({ params }): JsonResponse => ({
+      status: 200,
+      body: services.memory.getSummary(
+        params.roleId ?? "",
+        params.summaryId ?? "",
+      ),
+    }),
+  );
+
+  router.add(
+    "PATCH",
+    "/v1/roles/:roleId/memory/summaries/:summaryId",
+    async ({ request, params }): Promise<JsonResponse> => {
+      const body = parseBody<SummaryCorrectionBody>(
+        summaryCorrectionBodySchema,
+        await readJsonBody(request),
+      );
+      return {
+        status: 200,
+        body: services.memory.correctSummary(
+          params.roleId ?? "",
+          params.summaryId ?? "",
+          body,
+        ),
+      };
+    },
+  );
+
+  router.add("GET", "/v1/roles/:roleId/diaries", ({ params }): JsonResponse => ({
+    status: 200,
+    body: { items: services.memory.listDiaries(params.roleId ?? "") },
+  }));
+
+  router.add(
+    "POST",
+    "/v1/roles/:roleId/diaries",
+    async ({ request, params }): Promise<JsonResponse> => {
+      const body = parseBody<DiaryCreateBody>(
+        diaryCreateBodySchema,
+        await readJsonBody(request),
+      );
+      return {
+        status: 201,
+        body: services.memory.createDiary(params.roleId ?? "", body),
+      };
+    },
+  );
+
+  router.add(
+    "GET",
+    "/v1/roles/:roleId/diaries/:diaryId",
+    ({ params }): JsonResponse => ({
+      status: 200,
+      body: services.memory.getDiary(
+        params.roleId ?? "",
+        params.diaryId ?? "",
+      ),
+    }),
+  );
+
+  router.add(
+    "GET",
+    "/v1/roles/:roleId/memory/status",
+    ({ params }): JsonResponse => ({
+      status: 200,
+      body: services.memory.getStatus(params.roleId ?? ""),
+    }),
+  );
+
+  router.add(
+    "GET",
+    "/v1/roles/:roleId/memory/batches",
+    ({ params, url }): JsonResponse => {
+      const limit = queryInt(url, "limit", {
+        min: 1,
+        max: 200,
+        defaultValue: 50,
+      });
+      return {
+        status: 200,
+        body: {
+          items: services.memory.listBatches(params.roleId ?? "", limit),
+        },
+      };
+    },
+  );
+
+  router.add(
+    "POST",
+    "/v1/roles/:roleId/memory/batches",
+    ({ params }): JsonResponse => {
+      const roleId = params.roleId ?? "";
+      const result = services.memory.trigger(roleId);
+      void services.conversation.runMemoryPending(roleId);
+      return { status: 202, body: result };
+    },
+  );
+
+  router.add(
+    "POST",
+    "/v1/model-services/models",
+    async ({ request }): Promise<JsonResponse> => {
+      const body = parseBody<ModelServiceConfigBody>(
+        modelServiceConfigBodySchema,
+        await readJsonBody(request),
+      );
+      return {
+        status: 200,
+        body: await services.modelServices.listModels(body),
+      };
+    },
+  );
+
+  router.add(
+    "POST",
+    "/v1/model-services/test",
+    async ({ request }): Promise<JsonResponse> => {
+      const body = parseBody<ModelServiceTestBody>(
+        modelServiceTestBodySchema,
+        await readJsonBody(request),
+      );
+      return {
+        status: 200,
+        body: await services.modelServices.test(body),
+      };
+    },
+  );
+
   return router;
+}
+
+function parseSseCursor(
+  request: import("node:http").IncomingMessage,
+  url: URL,
+): number | null {
+  const header = request.headers["last-event-id"];
+  const raw =
+    url.searchParams.get("after") ??
+    (typeof header === "string" ? header : null);
+  if (raw === null) {
+    return null;
+  }
+  if (!/^\d+$/.test(raw)) {
+    throw new SseCursorInvalidError(raw);
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new SseCursorInvalidError(raw);
+  }
+  return value;
 }

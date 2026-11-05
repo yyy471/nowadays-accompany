@@ -1,0 +1,5 @@
+{
+  "name": "示例笔记 Skill",
+  "enabled": true,
+  "config": { "sourcePath": "__SKILLS_DIRECTORY_ABSOLUTE_PATH__" }
+}

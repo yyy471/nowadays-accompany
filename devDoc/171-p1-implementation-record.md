@@ -36,7 +36,7 @@ PATH="$PWD/../prototypes/p0/.runtime/node-v24.22.2-win-x64:$PATH" \
 
 | 部分 | 文件 | 说明 |
 | --- | --- | --- |
-| 配置入口 | `src/bootstrap/config.ts` | `--app-root`／`NOWADAYS_APP_ROOT`、默认端口 3210、回环地址、数据根 `<appRoot>/.nowadays`、roleId 路径校验 |
+| 配置入口 | `src/bootstrap/config.ts` | `--app-root`／`NOWADAYS_APP_ROOT`、默认端口 3210、回环地址、数据根 `<appRoot>/data`、roleId 路径校验 |
 | 应用组装 | `src/bootstrap/app.ts` | 创建数据根、打开 `app.sqlite`、组装 HTTP 服务、幂等关闭 |
 | 后端入口 | `src/main.ts` | 解析参数、监听并输出 listening JSON、SIGINT／SIGTERM 关闭 |
 | 存储 schema | `src/storage/schema.ts` | app／business／execution 独立 user_version=1；WAL、外键、busy_timeout；必需表校验；版本不符拒绝 |
@@ -162,3 +162,7 @@ P1-02 只建立存储与 HTTP 基础，没有资源绑定或 CLI 业务命令；
 第三轮修正与实现方复验：按 172 第 10.2 节把 SQL 规范化改为引号内文本及边界原样保留，仅规范化引号外语法；新增字符串常量回归测试。类型检查退出码 0，13 个测试全部通过（运行编号 `p1-r04-literal-round3-20261103T182447`），字符串常量探针 4/4、原 6 场景 6/6、第二轮 3 场景 3/3 均 `contractPassed`（报告 runId `p1-literal-review-1793701478091-7de11acd`、`p1-independent-1793701497017-684be66a`、`p1-recheck-1793701497459-89009a51`）。该结果仍为实现方自验，待独立复验；未提交、推送或推进 P2，详见[172 第 11 节](172-p1-independent-review.md)。
 
 最终独立复验：本轮重新执行类型检查、13 个测试和三组共 13 个场景，全部通过；R04 的引号内字符串值及边界保持不变，正常控制场景与无效常量拒绝均验证通过，R01～R04 全部关闭。具体命令、执行者、时间、报告文件和源码摘要见[172 第 12 节](172-p1-independent-review.md)。P1 完成；本轮按用户要求本地提交并交付[173 P2 开发文档](173-p2-memory-agent-development-guide.md)，P2 尚未编码。
+
+## 数据目录调整（2026-11-03）
+
+用户要求运行数据目录以 `data/` 开头。`src/bootstrap/config.ts` 的 `dataRoot` 由 `<appRoot>/.nowadays` 改为 `<appRoot>/data`，三处测试路径同步；[170 契约](170-p1-01-contract.md)和[174 P2-01 契约](174-p2-01-memory-agent-contract.md)已更新。当前工作区没有既有 `.nowadays` 运行数据，不做自动迁移。类型检查退出码 0，13 个测试通过（运行编号 `p1-data-root-20261103T191443`），原复核探针 6/6 `contractPassed`（runId `p1-independent-1793704493214-b5ed2b2e`）。该调整发生在 P1 最终独立复验之后，属于用户明确要求的路径变更，不改变 P1 数据模型；独立复核尚未覆盖这一路径变更。

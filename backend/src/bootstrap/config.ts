@@ -58,7 +58,7 @@ export function parseBackendConfig(
   }
 
   const absoluteAppRoot = path.resolve(resolvedAppRoot);
-  const dataRoot = path.join(absoluteAppRoot, ".nowadays");
+  const dataRoot = path.join(absoluteAppRoot, "data");
   return {
     appRoot: absoluteAppRoot,
     dataRoot,

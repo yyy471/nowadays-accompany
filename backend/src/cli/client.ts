@@ -84,4 +84,66 @@ export class HttpClient {
     }
     return payload;
   }
+
+  async *stream(path: string): AsyncGenerator<string> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        headers: { accept: "text/event-stream" },
+      });
+    } catch {
+      throw new CliError(
+        "BACKEND_UNREACHABLE",
+        `无法连接后端 ${this.baseUrl}`,
+      );
+    }
+    if (!response.ok) {
+      const text = await response.text();
+      let body: BackendErrorBody | null = null;
+      try {
+        body = JSON.parse(text) as BackendErrorBody;
+      } catch {
+        body = null;
+      }
+      throw new CliError(
+        typeof body?.error?.code === "string" ? body.error.code : "HTTP_ERROR",
+        typeof body?.error?.message === "string"
+          ? body.error.message
+          : `后端返回状态 ${response.status}`,
+        response.status,
+      );
+    }
+    if (!response.body) {
+      throw new CliError("INVALID_BACKEND_RESPONSE", "后端未返回事件流");
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        let newline = buffer.indexOf("\n");
+        while (newline >= 0) {
+          let line = buffer.slice(0, newline);
+          buffer = buffer.slice(newline + 1);
+          if (line.endsWith("\r")) {
+            line = line.slice(0, -1);
+          }
+          if (line.startsWith("data:")) {
+            const data = line.slice(5).trim();
+            if (data.length > 0) {
+              yield data;
+            }
+          }
+          newline = buffer.indexOf("\n");
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
 }

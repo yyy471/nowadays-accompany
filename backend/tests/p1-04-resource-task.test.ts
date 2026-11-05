@@ -42,7 +42,7 @@ function errorCode(body: Record<string, unknown>): string {
 }
 
 function businessPath(appRoot: string, roleId: string): string {
-  return path.join(appRoot, ".nowadays", "roles", roleId, "business.sqlite");
+  return path.join(appRoot, "data", "roles", roleId, "business.sqlite");
 }
 
 function expectCode(code: string) {

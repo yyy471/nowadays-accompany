@@ -1,0 +1,9 @@
+{
+  "name": "OpenAI Chat 协议示例",
+  "enabled": true,
+  "config": {
+    "protocol": "openai-chat",
+    "baseUrl": "https://provider.example.invalid/v1",
+    "credentialRef": "env:NOWADAYS_MODEL_API_KEY"
+  }
+}

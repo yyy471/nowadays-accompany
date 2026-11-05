@@ -1,0 +1,9 @@
+{
+  "name": "Anthropic 协议示例",
+  "enabled": true,
+  "config": {
+    "protocol": "anthropic-messages",
+    "baseUrl": "https://provider.example.invalid/anthropic",
+    "credentialRef": "env:NOWADAYS_MODEL_API_KEY"
+  }
+}
