@@ -71,11 +71,19 @@ export interface BeginExecutionResult {
   taskId: string | null;
 }
 
+export interface CommitConversationTaskDecision {
+  taskId: string;
+  action:
+    | { kind: "pause"; reason: string }
+    | { kind: "finish"; status: "completed" | "failed"; endReason: string };
+}
+
 export interface CommitConversationInput {
   executionId: string;
   content: string;
   statePatch: Record<string, unknown>;
   countsAsConversationRound?: boolean;
+  taskDecision?: CommitConversationTaskDecision | null;
   now?: string;
 }
 
@@ -94,6 +102,11 @@ export interface InterruptExecutionInput {
   reason: string;
   errorCode?: string | null;
   supersededByExecutionId?: string | null;
+  /**
+   * 为 true 时不释放本执行领取的用户消息（慢工具转后台场景），
+   * 消息由原任务的续行接手，避免立即重新决策。
+   */
+  keepClaimedMessages?: boolean;
   now?: string;
 }
 
@@ -130,6 +143,7 @@ export interface CommittedExecutionGap {
   taskId: string;
   windowId: string | null;
   replyContent: string;
+  taskDecision: CommitConversationTaskDecision | null;
 }
 
 interface InternalToolReceiptRow {
@@ -354,6 +368,20 @@ export class ConversationStore {
            VALUES (?, ?, 'continues', ?)`,
         )
         .run(executionId, input.taskId, now);
+      // 慢工具转后台等场景：原任务链的终态执行仍领取着未处理消息，
+      // 续行接手这些消息并在提交时完成处理与证据登记。
+      this.db
+        .prepare(
+          `UPDATE messages
+              SET claimed_by_execution_id = ?, updated_at = ?
+            WHERE processed_by_execution_id IS NULL
+              AND claimed_by_execution_id IN (
+                SELECT e.execution_id FROM executions e
+                JOIN execution_tasks et ON et.execution_id = e.execution_id
+                WHERE et.task_id = ? AND e.status IN ('superseded', 'failed')
+              )`,
+        )
+        .run(executionId, now, input.taskId);
       return this.getExecution(executionId);
     })();
   }
@@ -385,7 +413,8 @@ export class ConversationStore {
       .all(executionId, executionId, executionId) as MessageRow[];
     const calls = this.db
       .prepare(
-        "SELECT * FROM tool_calls WHERE execution_id = ? ORDER BY created_at ASC, rowid ASC",
+        `SELECT t.*, COALESCE((SELECT e.mode FROM tool_call_mode_events e WHERE e.tool_call_id = t.tool_call_id ORDER BY e.rowid DESC LIMIT 1), 'foreground') AS mode
+           FROM tool_calls t WHERE t.execution_id = ? ORDER BY t.created_at ASC, t.rowid ASC`,
       )
       .all(executionId) as Array<{
       tool_call_id: string;
@@ -395,6 +424,7 @@ export class ConversationStore {
       tool_name: string;
       args_json: string;
       status: ToolCallRecord["status"];
+      mode: ToolCallRecord["mode"];
       created_at: string;
       started_at: string | null;
       finished_at: string | null;
@@ -417,6 +447,7 @@ export class ConversationStore {
       previous_adapted_result_json: string | null;
       previous_error_json: string | null;
       reconciled_at: string | null;
+      reconciled_by_call_id: string | null;
     }>;
     return {
       execution,
@@ -431,7 +462,7 @@ export class ConversationStore {
         toolName: row.tool_name,
         args: parseJsonObject(row.args_json),
         status: row.status,
-        mode: "foreground",
+        mode: row.mode,
         createdAt: row.created_at,
         startedAt: row.started_at,
         finishedAt: row.finished_at,
@@ -450,6 +481,7 @@ export class ConversationStore {
         previousAdaptedResult: parseJsonValue(row.previous_adapted_result_json),
         previousError: parseJsonValue(row.previous_error_json),
         reconciledAt: row.reconciled_at,
+        reconciledByCallId: row.reconciled_by_call_id,
       })),
       latestEvents: this.listLatestEvents(executionId, eventLimit),
     };
@@ -730,10 +762,18 @@ export class ConversationStore {
         .prepare(
           `UPDATE executions
               SET status = 'completed', state_version_committed = ?,
-                  decision_round = ?, updated_at = ?
+                  decision_round = ?, task_decision_json = ?, updated_at = ?
             WHERE execution_id = ?`,
         )
-        .run(nextVersion, round, now, input.executionId);
+        .run(
+          nextVersion,
+          round,
+          input.taskDecision === undefined || input.taskDecision === null
+            ? null
+            : JSON.stringify(input.taskDecision),
+          now,
+          input.executionId,
+        );
       this.db
         .prepare(
           `UPDATE messages
@@ -859,11 +899,13 @@ export class ConversationStore {
           now,
           input.executionId,
         );
-      this.db
-        .prepare(
-          "UPDATE messages SET claimed_by_execution_id = NULL, updated_at = ? WHERE claimed_by_execution_id = ? AND processed_by_execution_id IS NULL",
-        )
-        .run(now, input.executionId);
+      if (input.keepClaimedMessages !== true) {
+        this.db
+          .prepare(
+            "UPDATE messages SET claimed_by_execution_id = NULL, updated_at = ? WHERE claimed_by_execution_id = ? AND processed_by_execution_id IS NULL",
+          )
+          .run(now, input.executionId);
+      }
       events.push(
         this.appendStreamEventInternal({
           windowId: execution.windowId,
@@ -1466,7 +1508,7 @@ export class ConversationStore {
   listCommittedExecutionGaps(): CommittedExecutionGap[] {
     const rows = this.db
       .prepare(
-        `SELECT e.execution_id, et.task_id, e.window_id,
+        `SELECT e.execution_id, et.task_id, e.window_id, e.task_decision_json,
                 (SELECT m.content FROM messages m
                   WHERE m.execution_id = e.execution_id
                     AND m.sender = 'assistant' AND m.status = 'completed'
@@ -1488,12 +1530,21 @@ export class ConversationStore {
                WHERE et2.task_id = et.task_id
                  AND e2.status IN ('running', 'paused')
             )
-          ORDER BY e.created_at ASC, e.rowid ASC`,
+            AND NOT EXISTS (
+              SELECT 1 FROM execution_tasks et_later
+                JOIN executions e_later ON e_later.execution_id = et_later.execution_id
+               WHERE et_later.task_id = et.task_id
+                 AND et_later.relation IN ('initiates', 'continues')
+                 AND e_later.role_id = e.role_id
+                 AND e_later.rowid > e.rowid
+            )
+          ORDER BY e.updated_at ASC, e.rowid ASC`,
       )
       .all(this.roleId) as Array<{
       execution_id: string;
       task_id: string;
       window_id: string | null;
+      task_decision_json: string | null;
       reply_content: string;
     }>;
     return rows.map((row) => ({
@@ -1501,6 +1552,7 @@ export class ConversationStore {
       taskId: row.task_id,
       windowId: row.window_id,
       replyContent: row.reply_content,
+      taskDecision: parseTaskDecision(row.task_decision_json),
     }));
   }
 
@@ -1656,6 +1708,44 @@ function mapMessage(row: MessageRow): MessageRecord {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function parseTaskDecision(
+  value: string | null,
+): CommitConversationTaskDecision | null {
+  if (value === null) {
+    return null;
+  }
+  const parsed = parseJsonObject(value);
+  const taskId = parsed.taskId;
+  const action = parsed.action;
+  if (
+    typeof taskId !== "string" ||
+    action === null ||
+    typeof action !== "object" ||
+    Array.isArray(action)
+  ) {
+    return null;
+  }
+  const record = action as Record<string, unknown>;
+  if (record.kind === "pause" && typeof record.reason === "string") {
+    return { taskId, action: { kind: "pause", reason: record.reason } };
+  }
+  if (
+    record.kind === "finish" &&
+    (record.status === "completed" || record.status === "failed") &&
+    typeof record.endReason === "string"
+  ) {
+    return {
+      taskId,
+      action: {
+        kind: "finish",
+        status: record.status,
+        endReason: record.endReason,
+      },
+    };
+  }
+  return null;
 }
 
 function parseJsonObject(value: string): Record<string, unknown> {

@@ -10,6 +10,7 @@ export type ConversationStreamType =
   | "execution_started"
   | "message_delta"
   | "tool_started"
+  | "tool_backgrounded"
   | "tool_result_saved"
   | "message_completed"
   | "message_interrupted"
@@ -96,7 +97,8 @@ export type ConversationToolSource =
   | "skill"
   | "mcp"
   | "state"
-  | "autonomy";
+  | "autonomy"
+  | "task";
 
 export interface ConversationToolContext {
   roleId: string;
@@ -121,6 +123,11 @@ export interface ConversationToolOutcome {
 
 export interface ConversationTool extends ModelToolSpec {
   source: ConversationToolSource;
+  /**
+   * 为 true 时按外部工具记录管道落库（tool_calls／tool_results／计量），
+   * 但执行体仍由运行时提供，例如 skill_run。
+   */
+  recorded?: boolean;
   execute(
     args: Record<string, unknown>,
     context: ConversationToolContext,
@@ -141,11 +148,35 @@ export interface AgentRound {
   toolCalls: AgentToolCallRecord[];
 }
 
+/** 角色通过 task_pause／task_finish 表达的任务决策，提交回复后生效。 */
+export type AgentTaskAction =
+  | { kind: "pause"; reason: string; note?: string }
+  | {
+      kind: "finish";
+      status: "completed" | "failed";
+      endReason: string;
+      note?: string;
+    };
+
+export interface BackgroundToolSettlement {
+  roleId: string;
+  taskId: string | null;
+  windowId: string | null;
+  executionId: string;
+  toolCallId: string;
+  toolName: string;
+  purpose: "user_chat" | "autonomous";
+  outcome: ConversationToolOutcome;
+  counted: boolean;
+  committed: boolean;
+}
+
 export interface AgentRunResult {
   text: string;
   statePatch: Record<string, unknown>;
   rounds: AgentRound[];
   taskId: string | null;
+  taskAction: AgentTaskAction | null;
 }
 
 export interface AgentGraphState {

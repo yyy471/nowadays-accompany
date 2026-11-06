@@ -97,6 +97,43 @@ export class SkillLibrary {
     return directory;
   }
 
+  /**
+   * 定位 Skill 包内脚本（GAP-05）：复用 safeChild 防路径逃逸，
+   * 只允许已存在的 .mjs／.js 文件，由运行时用 node 解释执行。
+   */
+  resolveScript(
+    name: string,
+    relativePath: string,
+  ): { absolutePath: string; directory: string } {
+    const skillDir = this.skillDirectory(name);
+    let target: string;
+    try {
+      target = safeChild(skillDir, relativePath);
+    } catch {
+      throw new SkillFileInvalidError(name, relativePath);
+    }
+    if (target === path.resolve(skillDir)) {
+      throw new SkillFileInvalidError(name, relativePath);
+    }
+    const extension = path.extname(target).toLowerCase();
+    if (extension !== ".js" && extension !== ".mjs") {
+      throw new SkillFileInvalidError(name, relativePath);
+    }
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(target);
+    } catch {
+      throw new SkillFileInvalidError(name, relativePath);
+    }
+    if (!stat.isFile()) {
+      throw new SkillFileInvalidError(name, relativePath);
+    }
+    return {
+      absolutePath: target,
+      directory: skillDir,
+    };
+  }
+
   private skillFile(name: string): string {
     return path.join(this.skillDirectory(name), "SKILL.md");
   }

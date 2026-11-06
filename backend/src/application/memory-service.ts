@@ -5,14 +5,19 @@ import {
   DEFAULT_MEMORY_RETRY_DELAYS_MS,
   DEFAULT_OUTPUT_RESERVE_CHARS,
   memoryFormationResponseSchema,
+  type DailySummaryBrief,
   type MemoryBatchRecord,
   type MemoryFormationInput,
   type MemoryFormationResponse,
+  type MemoryModelCapacity,
   type MemoryModelInfo,
   type MemoryModelPort,
   type MemoryOperation,
+  type RefineCandidateBrief,
+  type RelatedEventBrief,
 } from "../domain/memory.js";
 import {
+  AppError,
   MemoryOperationInvalidError,
   MemoryVersionConflictError,
 } from "../domain/errors.js";
@@ -26,10 +31,22 @@ export interface MemoryServiceOptions {
   modelInfo?: MemoryModelInfo;
   budgetChars?: number;
   outputReserveChars?: number;
+  /** 按绑定模型声明容量时启用完整预算核算（GAP-04）；缺省保持既有保守行为。 */
+  capacity?: MemoryModelCapacity;
+  /** 请求组装的固定开销估算（系统提示与 JSON 骨架）。 */
+  requestOverheadChars?: number;
   retryDelaysMs?: readonly number[];
   idleMs?: number;
   timeZone?: string;
   now?: () => Date;
+}
+
+/** 整理请求中除证据片段以外的固定与上下文内容。 */
+interface BatchContext {
+  currentRound: number;
+  refineCandidates: RefineCandidateBrief[];
+  summaryCandidates: DailySummaryBrief[];
+  relatedEvents: RelatedEventBrief[];
 }
 
 export interface MemoryBatchRunResult {
@@ -54,6 +71,8 @@ export class MemoryService {
   private readonly modelInfo: MemoryModelInfo;
   private readonly budgetChars: number;
   private readonly outputReserveChars: number;
+  private readonly capacity: MemoryModelCapacity | null;
+  private readonly requestOverheadChars: number;
   private readonly retryDelaysMs: readonly number[];
   private readonly idleMs: number;
   private readonly timeZone: string | undefined;
@@ -70,14 +89,91 @@ export class MemoryService {
       modelName: "offline-memory",
       protocol: "openai-chat",
     };
+    this.capacity = options.capacity ?? null;
     this.budgetChars = options.budgetChars ?? DEFAULT_MEMORY_BUDGET_CHARS;
     this.outputReserveChars =
-      options.outputReserveChars ?? DEFAULT_OUTPUT_RESERVE_CHARS;
+      options.capacity?.maxOutputChars ??
+      options.outputReserveChars ??
+      DEFAULT_OUTPUT_RESERVE_CHARS;
+    this.requestOverheadChars = Math.max(0, options.requestOverheadChars ?? 2_000);
     this.retryDelaysMs =
       options.retryDelaysMs ?? DEFAULT_MEMORY_RETRY_DELAYS_MS;
     this.idleMs = options.idleMs ?? 60_000;
     this.timeZone = options.timeZone;
     this.now = options.now ?? (() => new Date());
+  }
+
+  /**
+   * 证据片段可用的字符预算：声明容量时按
+   * maxInputChars − 输出预留 − 固定开销 − 请求骨架核算；
+   * 请求骨架按序列化后的实际长度计算（含转义与证据元数据），
+   * 未声明容量时保持既有保守预算（仅约束证据装载）。
+   */
+  private effectiveEvidenceBudget(baseChars: number): number {
+    if (this.capacity === null) {
+      return this.budgetChars;
+    }
+    const budget =
+      this.capacity.maxInputChars -
+      this.outputReserveChars -
+      this.requestOverheadChars -
+      baseChars;
+    if (budget <= 0) {
+      throw new AppError(
+        502,
+        "MEMORY_CAPACITY_EXCEEDED",
+        "整理请求的上下文与输出预留超出模型可用容量",
+        {
+          maxInputChars: this.capacity.maxInputChars,
+          outputReserveChars: this.outputReserveChars,
+          baseChars,
+          requestOverheadChars: this.requestOverheadChars,
+        },
+      );
+    }
+    return budget;
+  }
+
+  /** 不含证据片段的整理请求序列化长度；证据条目按逗号分隔追加。 */
+  private requestBaseChars(
+    roleId: string,
+    batchId: string,
+    context: BatchContext,
+  ): number {
+    return Array.from(
+      JSON.stringify({
+        roleId,
+        batchId,
+        currentRound: context.currentRound,
+        evidence: [],
+        relatedEvents: context.relatedEvents,
+        refineCandidates: context.refineCandidates,
+        summaryCandidates: context.summaryCandidates,
+      }),
+    ).length;
+  }
+
+  private assertRequestCapacity(input: MemoryFormationInput): void {
+    if (this.capacity === null) {
+      return;
+    }
+    const serializedChars = Array.from(JSON.stringify(input)).length;
+    const totalChars =
+      serializedChars + this.requestOverheadChars + this.outputReserveChars;
+    if (totalChars > this.capacity.maxInputChars) {
+      throw new AppError(
+        502,
+        "MEMORY_CAPACITY_EXCEEDED",
+        "整理请求超过模型声明容量",
+        {
+          maxInputChars: this.capacity.maxInputChars,
+          serializedChars,
+          requestOverheadChars: this.requestOverheadChars,
+          outputReserveChars: this.outputReserveChars,
+          totalChars,
+        },
+      );
+    }
   }
 
   onEvidenceRegistered(roleId: string): void {
@@ -137,11 +233,30 @@ export class MemoryService {
     } = {},
   ): Promise<MemoryBatchRunResult> {
     const startedAt = this.now().toISOString();
+    let initialBudget: number;
+    try {
+      const initialContext = this.prepareBatchContext(roleId);
+      initialBudget = this.effectiveEvidenceBudget(
+        this.requestBaseChars(roleId, "0".repeat(36), initialContext),
+      );
+    } catch (error) {
+      if (isCapacityExceeded(error)) {
+        return {
+          batchId: null,
+          status: "failed",
+          operations: 0,
+          evidenceProcessed: 0,
+          errorCode: error.code,
+          maintenance: false,
+        };
+      }
+      throw error;
+    }
     let batch: StartedBatch | null;
     try {
       batch = this.store.startBatch({
         roleId,
-        budgetChars: this.budgetChars,
+        budgetChars: initialBudget,
         outputReserveChars: this.outputReserveChars,
         ...(options.includeDeferred !== undefined
           ? { includeDeferred: options.includeDeferred }
@@ -165,6 +280,16 @@ export class MemoryService {
           maintenance: false,
         };
       }
+      if (isCapacityExceeded(error)) {
+        return {
+          batchId: null,
+          status: "failed",
+          operations: 0,
+          evidenceProcessed: 0,
+          errorCode: error.code,
+          maintenance: false,
+        };
+      }
       throw error;
     }
     if (!batch) {
@@ -181,13 +306,20 @@ export class MemoryService {
     let maintenanceCall = batch.maintenance;
     try {
       while (true) {
-        const next = maintenanceCall
-          ? []
-          : this.store.getNextSegments(
-              roleId,
-              batch.batch.batchId,
-              this.budgetChars,
-            );
+        // 候选与关联事件会随操作变化，逐轮按最新内容重测预算。
+        const context = this.prepareBatchContext(roleId);
+        let next: NextSegment[] = [];
+        if (!batch.maintenance) {
+          const budget = this.effectiveEvidenceBudget(
+            this.requestBaseChars(roleId, batch.batch.batchId, context),
+          );
+          next = this.store.getNextSegments(
+            roleId,
+            batch.batch.batchId,
+            budget,
+            { serialized: this.capacity !== null },
+          );
+        }
         maintenanceCall = false;
         if (next.length === 0 && !batch.maintenance) {
           break;
@@ -203,7 +335,9 @@ export class MemoryService {
             roleId,
             batch.batch,
             next,
+            context,
           );
+          this.assertRequestCapacity(modelInput);
           const refineCandidates = modelInput.refineCandidates;
           const summaryCandidates = modelInput.summaryCandidates;
           const raw = await this.model.form(modelInput);
@@ -234,7 +368,8 @@ export class MemoryService {
         } catch (error) {
           const code =
             error instanceof MemoryOperationInvalidError ||
-            error instanceof MemoryVersionConflictError
+            error instanceof MemoryVersionConflictError ||
+            isCapacityExceeded(error)
               ? error.code
               : "MEMORY_MODEL_FAILED";
           this.finishModelCall(callId, "failed", code);
@@ -285,7 +420,8 @@ export class MemoryService {
     } catch (error) {
       const code =
         error instanceof MemoryOperationInvalidError ||
-        error instanceof MemoryVersionConflictError
+        error instanceof MemoryVersionConflictError ||
+        isCapacityExceeded(error)
           ? error.code
           : "MEMORY_BATCH_FAILED";
       this.store.finishBatch({
@@ -363,11 +499,7 @@ export class MemoryService {
     return delays[index] ?? 3_600_000;
   }
 
-  private buildModelInput(
-    roleId: string,
-    batch: MemoryBatchRecord,
-    next: NextSegment[],
-  ): MemoryFormationInput {
+  private prepareBatchContext(roleId: string): BatchContext {
     const currentRound = this.store.getCurrentRound(roleId);
     const refineCandidates = this.store.listRefineCandidates(
       roleId,
@@ -378,9 +510,23 @@ export class MemoryService {
       refineCandidates.map((candidate) => candidate.experienceDate),
     );
     return {
+      currentRound,
+      refineCandidates,
+      summaryCandidates,
+      relatedEvents: this.store.listRecentEvents(roleId),
+    };
+  }
+
+  private buildModelInput(
+    roleId: string,
+    batch: MemoryBatchRecord,
+    next: NextSegment[],
+    context: BatchContext,
+  ): MemoryFormationInput {
+    return {
       roleId,
       batchId: batch.batchId,
-      currentRound,
+      currentRound: context.currentRound,
       evidence: next.map((item) => {
         const chars = Array.from(item.content);
         return {
@@ -397,9 +543,9 @@ export class MemoryService {
           segmentCount: item.segmentCount,
         };
       }),
-      relatedEvents: this.store.listRecentEvents(roleId),
-      refineCandidates,
-      summaryCandidates,
+      relatedEvents: context.relatedEvents,
+      refineCandidates: context.refineCandidates,
+      summaryCandidates: context.summaryCandidates,
     };
   }
 
@@ -665,5 +811,11 @@ function isBatchConflict(error: unknown): boolean {
   return (
     error instanceof Error &&
     (error as { code?: string }).code === "MEMORY_BATCH_CONFLICT"
+  );
+}
+
+function isCapacityExceeded(error: unknown): error is AppError {
+  return (
+    error instanceof AppError && error.code === "MEMORY_CAPACITY_EXCEEDED"
   );
 }

@@ -9,7 +9,7 @@ import {
 import { backfillEvidence } from "./evidence.js";
 
 export const APP_SCHEMA_VERSION = 2;
-export const BUSINESS_SCHEMA_VERSION = 4;
+export const BUSINESS_SCHEMA_VERSION = 6;
 export const EXECUTION_SCHEMA_VERSION = 1;
 
 export const APP_TABLES = ["roles", "resources", "model_test_calls"] as const;
@@ -50,6 +50,7 @@ export const BUSINESS_TABLES = [
   "autonomy_wakes",
   "autonomy_activities",
   "autonomy_tool_reservations",
+  "task_notes",
 ] as const;
 
 const APP_V2_SQL = `
@@ -619,7 +620,7 @@ const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
   },
   {
     table: "executions",
-    columns: ["decision_round", "superseded_by_execution_id"],
+    columns: ["decision_round", "superseded_by_execution_id", "task_decision_json"],
   },
   {
     table: "tasks",
@@ -923,6 +924,56 @@ CREATE INDEX IF NOT EXISTS idx_autonomy_tool_reservations_status
   ON autonomy_tool_reservations (role_id, status);
 `;
 
+const BUSINESS_V5_SQL = `
+-- V5：流事件增加 tool_backgrounded（慢工具转后台）、任务进度笔记、补录证据关联。
+ALTER TABLE execution_stream_events RENAME TO execution_stream_events_v5_old;
+DROP INDEX IF EXISTS idx_execution_stream_window;
+DROP INDEX IF EXISTS idx_execution_stream_execution;
+
+CREATE TABLE execution_stream_events (
+  stream_event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  window_id TEXT REFERENCES windows(window_id),
+  execution_id TEXT NOT NULL REFERENCES executions(execution_id),
+  event_type TEXT NOT NULL CHECK (event_type IN (
+    'execution_started', 'message_delta', 'tool_started', 'tool_result_saved',
+    'tool_backgrounded', 'message_completed', 'message_interrupted',
+    'execution_superseded', 'execution_paused', 'execution_failed'
+  )),
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+INSERT INTO execution_stream_events
+  (stream_event_id, role_id, window_id, execution_id, event_type, payload_json, created_at)
+SELECT stream_event_id, role_id, window_id, execution_id, event_type, payload_json, created_at
+  FROM execution_stream_events_v5_old;
+
+DROP TABLE execution_stream_events_v5_old;
+CREATE INDEX idx_execution_stream_window
+  ON execution_stream_events (window_id, stream_event_id);
+CREATE INDEX idx_execution_stream_execution
+  ON execution_stream_events (execution_id, stream_event_id);
+
+CREATE TABLE IF NOT EXISTS task_notes (
+  note_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(task_id),
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  note TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_notes_task
+  ON task_notes (task_id, created_at);
+
+ALTER TABLE tool_results ADD COLUMN reconciled_by_call_id TEXT REFERENCES tool_calls(tool_call_id);
+`;
+
+const BUSINESS_V6_SQL = `
+-- V6：任务决定与回复在同一事务提交，供启动收尾按原决定恢复。
+ALTER TABLE executions ADD COLUMN task_decision_json TEXT;
+`;
+
 export function openAppDatabase(dbPath: string): OpenedDatabase {
   return openVersionedDatabase(
     dbPath,
@@ -943,7 +994,12 @@ export function openBusinessDatabase(
   return openVersionedDatabase(
     dbPath,
     BUSINESS_SCHEMA_VERSION,
-    BUSINESS_SCHEMA_SQL + BUSINESS_V2_SQL + BUSINESS_V3_SQL + BUSINESS_V4_SQL,
+    BUSINESS_SCHEMA_SQL +
+      BUSINESS_V2_SQL +
+      BUSINESS_V3_SQL +
+      BUSINESS_V4_SQL +
+      BUSINESS_V5_SQL +
+      BUSINESS_V6_SQL,
     {
       1: (db) => {
         db.exec(BUSINESS_V2_SQL);
@@ -951,6 +1007,8 @@ export function openBusinessDatabase(
       },
       2: (db) => db.exec(BUSINESS_V3_SQL),
       3: (db) => db.exec(BUSINESS_V4_SQL),
+      4: (db) => db.exec(BUSINESS_V5_SQL),
+      5: (db) => db.exec(BUSINESS_V6_SQL),
     },
     BUSINESS_TABLES,
     BUSINESS_INDEXES,

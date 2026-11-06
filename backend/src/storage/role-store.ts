@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import {
+  AppError,
   BindingConflictError,
   ExecutionAlreadyCommittedError,
   ExecutionNotFoundError,
@@ -195,6 +196,8 @@ export interface ToolResultRecord {
   previousAdaptedResult: unknown;
   previousError: unknown;
   reconciledAt: string | null;
+  /** 核查补录时提供证据关联的原调用编号。 */
+  reconciledByCallId: string | null;
 }
 
 export interface ToolResultInput {
@@ -205,6 +208,10 @@ export interface ToolResultInput {
   adaptedResult?: unknown;
   diagnosticCode?: string | null;
   error?: unknown;
+  /** 核查补录时提供证据关联的原调用编号（GAP-03）。 */
+  reconciledByCallId?: string | null;
+  /** 仅允许把结果未知的原调用补录为明确结果，在保存事务内核对。 */
+  requireReconciledFromUnknown?: boolean;
   now?: string;
 }
 
@@ -213,6 +220,14 @@ export interface TaskResourceContinuationRecord {
   resourceId: string;
   grantedAt: string;
   endedAt: string | null;
+}
+
+export interface TaskNoteRecord {
+  noteId: string;
+  taskId: string;
+  roleId: string;
+  note: string;
+  createdAt: string;
 }
 
 interface RoleRow {
@@ -328,6 +343,7 @@ interface ToolResultRow {
   previous_adapted_result_json: string | null;
   previous_error_json: string | null;
   reconciled_at: string | null;
+  reconciled_by_call_id: string | null;
 }
 
 interface TaskResourceContinuationRow {
@@ -841,6 +857,57 @@ export class RoleStore {
     })();
   }
 
+  appendTaskNote(input: {
+    roleId: string;
+    taskId: string;
+    note: string;
+    now?: string;
+  }): TaskNoteRecord {
+    const trimmed = input.note.trim();
+    if (trimmed.length === 0) {
+      throw new AppError(400, "TASK_NOTE_EMPTY", "任务进度笔记不能为空");
+    }
+    return this.db.transaction(() => {
+      this.getTask(input.roleId, input.taskId);
+      const noteId = randomUUID();
+      const now = input.now ?? new Date().toISOString();
+      this.db
+        .prepare(
+          "INSERT INTO task_notes (note_id, task_id, role_id, note, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(noteId, input.taskId, input.roleId, trimmed, now);
+      return {
+        noteId,
+        taskId: input.taskId,
+        roleId: input.roleId,
+        note: trimmed,
+        createdAt: now,
+      };
+    })();
+  }
+
+  listTaskNotes(roleId: string, taskId: string): TaskNoteRecord[] {
+    this.getTask(roleId, taskId);
+    const rows = this.db
+      .prepare(
+        "SELECT note_id, task_id, role_id, note, created_at FROM task_notes WHERE task_id = ? AND role_id = ? ORDER BY created_at ASC, rowid ASC",
+      )
+      .all(taskId, roleId) as Array<{
+      note_id: string;
+      task_id: string;
+      role_id: string;
+      note: string;
+      created_at: string;
+    }>;
+    return rows.map((row) => ({
+      noteId: row.note_id,
+      taskId: row.task_id,
+      roleId: row.role_id,
+      note: row.note,
+      createdAt: row.created_at,
+    }));
+  }
+
   createExecution(input: {
     roleId: string;
     windowId?: string | null;
@@ -1081,8 +1148,67 @@ export class RoleStore {
     return mapToolCall(row);
   }
 
-  listToolCalls(roleId: string, executionId: string): ToolCallRecord[] {
-    this.getExecution(roleId, executionId);
+  /**
+   * 将模型侧调用编号解析为业务工具调用编号。
+   * 模型看到的外部工具编号是提供方返回的 wire id，核查工具需要业务编号；
+   * 同一执行内的映射随模型调用保存，未知引用返回 null。
+   */
+  resolveToolCallReference(input: {
+    roleId: string;
+    executionId: string;
+    reference: string;
+  }): string | null {
+    const direct = this.db
+      .prepare(
+        `SELECT 1 FROM tool_calls t JOIN executions e ON e.execution_id = t.execution_id
+          WHERE t.tool_call_id = ? AND e.role_id = ?`,
+      )
+      .get(input.reference, input.roleId);
+    if (direct !== undefined) {
+      return input.reference;
+    }
+    const rows = this.db
+      .prepare(
+        "SELECT raw_response_json FROM model_calls WHERE role_id = ? AND execution_id = ?",
+      )
+      .all(input.roleId, input.executionId) as Array<{
+      raw_response_json: string | null;
+    }>;
+    for (const row of rows) {
+      if (row.raw_response_json === null) {
+        continue;
+      }
+      let payload: unknown;
+      try {
+        payload = JSON.parse(row.raw_response_json);
+      } catch {
+        continue;
+      }
+      if (payload === null || typeof payload !== "object") {
+        continue;
+      }
+      const mapping = (payload as { wireCallIds?: unknown }).wireCallIds;
+      if (mapping === null || typeof mapping !== "object" || Array.isArray(mapping)) {
+        continue;
+      }
+      const mapped = (mapping as Record<string, unknown>)[input.reference];
+      if (typeof mapped !== "string") {
+        continue;
+      }
+      const exists = this.db
+        .prepare(
+          `SELECT 1 FROM tool_calls t JOIN executions e ON e.execution_id = t.execution_id
+            WHERE t.tool_call_id = ? AND e.role_id = ?`,
+        )
+        .get(mapped, input.roleId);
+      if (exists !== undefined) {
+        return mapped;
+      }
+    }
+    return null;
+  }
+
+  listToolCalls(roleId: string, executionId: string): ToolCallRecord[] {    this.getExecution(roleId, executionId);
     const rows = this.db
       .prepare(
         `SELECT t.tool_call_id, t.task_id, t.execution_id, t.step_key, t.tool_name, t.args_json, t.status, t.created_at, t.started_at, t.finished_at,
@@ -1262,6 +1388,7 @@ export class RoleStore {
   } {
     return this.db.transaction(() => {
       const call = this.getToolCall(input.roleId, input.toolCallId);
+      const reconcileOnly = input.requireReconciledFromUnknown === true;
       if (
         (input.status === "success" || input.status === "failed") &&
         !hasResultEvidence(input)
@@ -1270,9 +1397,36 @@ export class RoleStore {
       }
       const existing = this.db
         .prepare(
-          "SELECT tool_call_id, status, raw_response_json, adapted_result_json, diagnostic_code, error_json, saved_at, previous_status, previous_diagnostic_code, previous_raw_response_json, previous_adapted_result_json, previous_error_json, reconciled_at FROM tool_results WHERE tool_call_id = ?",
+          "SELECT tool_call_id, status, raw_response_json, adapted_result_json, diagnostic_code, error_json, saved_at, previous_status, previous_diagnostic_code, previous_raw_response_json, previous_adapted_result_json, previous_error_json, reconciled_at, reconciled_by_call_id FROM tool_results WHERE tool_call_id = ?",
         )
         .get(input.toolCallId) as ToolResultRow | undefined;
+      if (reconcileOnly) {
+        if (existing !== undefined && existing.status === input.status) {
+          // 同一补录结论重复提交时保持幂等，不重写原记录。
+          return { result: mapToolResult(existing), duplicate: true };
+        }
+        if (call.status !== "unknown") {
+          if (existing !== undefined && existing.status !== "unknown") {
+            throw new ToolResultConflictError(
+              input.toolCallId,
+              existing.status,
+              input.status,
+            );
+          }
+          throw new ToolCallStatusConflictError(
+            input.toolCallId,
+            call.status,
+            input.status,
+          );
+        }
+        if (existing !== undefined && existing.status !== "unknown") {
+          throw new ToolResultConflictError(
+            input.toolCallId,
+            existing.status,
+            input.status,
+          );
+        }
+      }
       const now = input.now ?? new Date().toISOString();
       if (existing) {
         if (existing.status === input.status) {
@@ -1291,7 +1445,7 @@ export class RoleStore {
           }
           this.db
             .prepare(
-              "UPDATE tool_results SET status = ?, raw_response_json = ?, adapted_result_json = ?, diagnostic_code = ?, error_json = ?, previous_status = 'unknown', previous_diagnostic_code = ?, previous_raw_response_json = ?, previous_adapted_result_json = ?, previous_error_json = ?, reconciled_at = ? WHERE tool_call_id = ?",
+              "UPDATE tool_results SET status = ?, raw_response_json = ?, adapted_result_json = ?, diagnostic_code = ?, error_json = ?, previous_status = 'unknown', previous_diagnostic_code = ?, previous_raw_response_json = ?, previous_adapted_result_json = ?, previous_error_json = ?, reconciled_at = ?, reconciled_by_call_id = ? WHERE tool_call_id = ?",
             )
             .run(
               input.status,
@@ -1304,6 +1458,7 @@ export class RoleStore {
               existing.adapted_result_json,
               existing.error_json,
               now,
+              input.reconciledByCallId ?? null,
               input.toolCallId,
             );
           this.db
@@ -1345,7 +1500,7 @@ export class RoleStore {
       }
       this.db
         .prepare(
-          "INSERT INTO tool_results (tool_call_id, status, raw_response_json, adapted_result_json, diagnostic_code, error_json, saved_at, previous_status, reconciled_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO tool_results (tool_call_id, status, raw_response_json, adapted_result_json, diagnostic_code, error_json, saved_at, previous_status, reconciled_at, reconciled_by_call_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .run(
           input.toolCallId,
@@ -1357,6 +1512,7 @@ export class RoleStore {
           now,
           reconciledFromCall ? "unknown" : null,
           reconciledFromCall ? now : null,
+          reconciledFromCall ? (input.reconciledByCallId ?? null) : null,
         );
       this.db
         .prepare(
@@ -1380,7 +1536,7 @@ export class RoleStore {
     this.getToolCall(roleId, toolCallId);
     const row = this.db
       .prepare(
-        "SELECT tool_call_id, status, raw_response_json, adapted_result_json, diagnostic_code, error_json, saved_at, previous_status, previous_diagnostic_code, previous_raw_response_json, previous_adapted_result_json, previous_error_json, reconciled_at FROM tool_results WHERE tool_call_id = ?",
+        "SELECT tool_call_id, status, raw_response_json, adapted_result_json, diagnostic_code, error_json, saved_at, previous_status, previous_diagnostic_code, previous_raw_response_json, previous_adapted_result_json, previous_error_json, reconciled_at, reconciled_by_call_id FROM tool_results WHERE tool_call_id = ?",
       )
       .get(toolCallId) as ToolResultRow | undefined;
     if (!row) {
@@ -1650,6 +1806,7 @@ function mapToolResult(row: ToolResultRow): ToolResultRecord {
         ? null
         : (JSON.parse(row.previous_error_json) as unknown),
     reconciledAt: row.reconciled_at,
+    reconciledByCallId: row.reconciled_by_call_id,
   };
 }
 

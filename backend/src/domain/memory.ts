@@ -271,6 +271,29 @@ export interface DiaryDetail extends DiaryRecord {
   eventIds: string[];
 }
 
+export interface DiarySegmentView {
+  diaryId: string;
+  relativePath: string;
+  occurredAt: string;
+  experienceDate: string;
+  content: string;
+  totalChars: number;
+  fromChar: number;
+  toChar: number;
+  hasMore: boolean;
+  eventIds: string[];
+}
+
+export const DEFAULT_DIARY_SEGMENT_CHARS = 4_000;
+export const MAX_DIARY_SEGMENT_CHARS = 20_000;
+
+/** 记忆整理所绑定模型的可用容量声明；资料不全时按保守默认估算。 */
+export interface MemoryModelCapacity {
+  maxInputChars: number;
+  maxOutputChars: number;
+  source: "declared" | "conservative_default";
+}
+
 export interface MemoryModelPort {
   form(input: MemoryFormationInput): Promise<unknown>;
 }

@@ -1,10 +1,15 @@
 import path from "node:path";
+import { spawn } from "node:child_process";
 import {
   eventCorrectionSchema,
   memorySearchRequestSchema,
   summaryCorrectionSchema,
 } from "../domain/memory.js";
-import { AppError, AutonomyBudgetExhaustedError, SkillNotFoundError } from "../domain/errors.js";
+import {
+  AppError,
+  AutonomyBudgetExhaustedError,
+  SkillNotFoundError,
+} from "../domain/errors.js";
 import type {
   ConversationTool,
   ConversationToolContext,
@@ -53,7 +58,12 @@ export async function loadAgentTools(
     memoryCorrectSummaryTool(input.roleId, input.memory),
     memorySummaryEvidenceTool(input.roleId, input.memory),
     diaryWriteTool(input.roleId, input.memory),
+    memoryDiaryTool(input.roleId, input.memory),
     stateUpdateTool(),
+    taskProgressTool(input.roleId, input.roleAccess),
+    taskPauseTool(input.roleId, input.roleAccess),
+    taskFinishTool(input.roleId, input.roleAccess),
+    toolReconcileTool(input.roleId, input.roleAccess),
   ];
   if (input.autonomy !== null && input.autonomy !== undefined) {
     tools.push(autonomyScheduleTool(input.roleId, input.autonomy));
@@ -174,6 +184,12 @@ export async function loadAgentTools(
   if (skillResourceIds.length > 0) {
     tools.push(
       skillReadTool(input.appStore, input.appRoot, skillResourceIds),
+      skillRunTool(
+        input.appStore,
+        input.appRoot,
+        skillResourceIds,
+        input.workspaceDir,
+      ),
     );
   }
   return {
@@ -699,12 +715,16 @@ function autonomyScheduleTool(
     name: "autonomy_schedule",
     source: "autonomy",
     description:
-      "安排自己在未来某个时间自主做一件事。安排会持久保存，到点且没有用户消息或任务续行时执行；只能安排未来时间。",
+      "安排自己在未来某个时间自主做一件事。安排会持久保存，到点且没有用户消息或任务续行时执行；只能安排未来时间。携带 taskId 时唤醒会接回同一任务继续（用于暂停后的延后处理）。",
     inputSchema: {
       type: "object",
       properties: {
         wakeAt: { type: "string" },
         intent: { type: "string" },
+        taskId: {
+          type: "string",
+          description: "可选：接回的任务编号，只能省略或等于当前任务编号",
+        },
       },
       required: ["wakeAt", "intent"],
     },
@@ -724,11 +744,21 @@ function autonomyScheduleTool(
             "自主安排目标不能超过 2000 字",
           );
         }
+        const requestedTaskId = stringArg(args, "taskId");
+        if (requestedTaskId !== null) {
+          if (context.taskId === null || requestedTaskId !== context.taskId) {
+            return failedOutcome(
+              "TASK_REFERENCE_MISMATCH",
+              "autonomy_schedule 只能携带当前任务的编号",
+            );
+          }
+        }
         try {
           const wake = autonomy.scheduleWake(roleId, {
             wakeAt,
             intent,
             sourceExecutionId: context.executionId,
+            taskId: requestedTaskId ?? context.taskId,
           });
           return {
             status: "success",
@@ -885,6 +915,490 @@ function skillReadTool(
           errorCode(lastError),
           safeMessage(lastError, "Skill 文件不可读"),
         );
+      });
+    },
+  };
+}
+
+function skillRunTool(
+  appStore: AppStore,
+  appRoot: string,
+  resourceIds: readonly string[],
+  workspaceDir: string,
+): ConversationTool {
+  return {
+    name: "skill_run",
+    source: "skill",
+    recorded: true,
+    description:
+      "运行已启用 Skill 包内的脚本。脚本以 Skill 目录为工作目录（可用相对路径访问随包资源），NOWADAYS_WORKSPACE 指向角色工作空间；实际输出与失败状态会进入工具调用记录。读取脚本正文请用 skill_read。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        skill: { type: "string" },
+        script: { type: "string", description: "Skill 包内相对路径（.js/.mjs）" },
+        args: { type: "array", items: { type: "string" } },
+        timeoutMs: { type: "integer", minimum: 1000, maximum: 120000 },
+      },
+      required: ["skill", "script"],
+    },
+    async execute(args, context) {
+      const skill = stringArg(args, "skill");
+      const script = stringArg(args, "script");
+      if (skill === null || script === null) {
+        return failedOutcome(
+          "INVALID_TOOL_ARGUMENTS",
+          "skill_run 需要 skill 和 script",
+        );
+      }
+      const scriptArgs = Array.isArray(args.args)
+        ? args.args.filter((value): value is string => typeof value === "string")
+        : [];
+      if (scriptArgs.length > 50) {
+        return failedOutcome(
+          "INVALID_TOOL_ARGUMENTS",
+          "脚本参数不能超过 50 个",
+        );
+      }
+      const timeoutMs = integerArg(args, "timeoutMs") ?? 30_000;
+      if (timeoutMs < 1000 || timeoutMs > 120_000) {
+        return failedOutcome(
+          "INVALID_TOOL_ARGUMENTS",
+          "timeoutMs 需在 1000 到 120000 毫秒之间",
+        );
+      }
+      let resolved: { absolutePath: string; directory: string } | null = null;
+      let lastError: unknown = null;
+      for (const resourceId of resourceIds) {
+        const library = skillLibraryFor(appStore, appRoot, resourceId);
+        if (library === null) {
+          lastError = new SkillNotFoundError(skill);
+          continue;
+        }
+        try {
+          resolved = library.resolveScript(skill, script);
+          break;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      if (resolved === null) {
+        return failedOutcome(
+          errorCode(lastError),
+          safeMessage(lastError, "Skill 脚本不可定位"),
+        );
+      }
+      context.checkDispatch?.();
+      context.onDispatch?.();
+      return runSkillScriptProcess(
+        resolved.absolutePath,
+        resolved.directory,
+        workspaceDir,
+        scriptArgs,
+        timeoutMs,
+      );
+    },
+  };
+}
+
+function runSkillScriptProcess(
+  scriptPath: string,
+  cwd: string,
+  workspaceDir: string,
+  scriptArgs: readonly string[],
+  timeoutMs: number,
+): Promise<ConversationToolOutcome> {
+  return new Promise<ConversationToolOutcome>((resolve) => {
+    let stdout = "";
+    let stderr = "";
+    let truncated = false;
+    const append = (target: "out" | "err", chunk: Buffer): void => {
+      const current = target === "out" ? stdout : stderr;
+      const next = current + chunk.toString("utf8");
+      if (Array.from(next).length > 1_000_000) {
+        truncated = true;
+        if (target === "out") {
+          stdout = truncateText(next, 1_000_000);
+        } else {
+          stderr = truncateText(next, 1_000_000);
+        }
+        return;
+      }
+      if (target === "out") {
+        stdout = next;
+      } else {
+        stderr = next;
+      }
+    };
+    let timedOut = false;
+    let settled = false;
+    const child = spawn(process.execPath, [scriptPath, ...scriptArgs], {
+      cwd,
+      env: {
+        ...process.env,
+        NOWADAYS_WORKSPACE: workspaceDir,
+        NOWADAYS_SKILL_DIR: cwd,
+      },
+      shell: false,
+      windowsHide: true,
+    });
+    child.stdout?.on("data", (chunk: Buffer) => append("out", chunk));
+    child.stderr?.on("data", (chunk: Buffer) => append("err", chunk));
+    // 已派发脚本的副作用已经发生，插话只替代回复，不终止脚本本身；
+    // 脚本按实际退出或自身超时结算，结果仍归原调用。
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, timeoutMs);
+    timer.unref?.();
+    const finish = (outcome: ConversationToolOutcome): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      resolve(outcome);
+    };
+    child.on("error", (error) => {
+      finish(
+        failedOutcome(
+          "SKILL_SCRIPT_SPAWN_FAILED",
+          safeMessage(error, "Skill 脚本启动失败"),
+        ),
+      );
+    });
+    child.on("close", (code, signalName) => {
+      const output = {
+        exitCode: code,
+        signal: signalName,
+        timedOut,
+        stdout,
+        stderr,
+        truncated,
+      };
+      if (timedOut) {
+        finish({
+          status: "failed",
+          rawResponse: output,
+          adaptedResult: truncateValue(output, TOOL_RESULT_LIMIT),
+          diagnosticCode: "SKILL_SCRIPT_TIMEOUT",
+          error: { message: "Skill 脚本执行超时" },
+        });
+        return;
+      }
+      if (code === 0) {
+        finish({
+          status: "success",
+          rawResponse: output,
+          adaptedResult: truncateValue(output, TOOL_RESULT_LIMIT),
+        });
+        return;
+      }
+      finish({
+        status: "failed",
+        rawResponse: output,
+        adaptedResult: truncateValue(output, TOOL_RESULT_LIMIT),
+        diagnosticCode: "SKILL_SCRIPT_EXIT",
+        error: { message: `Skill 脚本以退出码 ${code} 结束`, exitCode: code },
+      });
+    });
+  });
+}
+
+function memoryDiaryTool(
+  roleId: string,
+  memory: MemoryQueryService,
+): ConversationTool {
+  return {
+    name: "memory_diary",
+    source: "memory",
+    description:
+      "按日记编号读取正文及关联事件。长日记分段读取：返回 fromChar 到 toChar 的内容与 hasMore；hasMore 为 true 时用更大的 fromChar 继续读取。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        diaryId: { type: "string" },
+        fromChar: { type: "integer", minimum: 0 },
+        maxChars: { type: "integer", minimum: 1, maximum: 20000 },
+      },
+      required: ["diaryId"],
+    },
+    async execute(args, context) {
+      return runTool(async () => {
+        const diaryId = stringArg(args, "diaryId");
+        if (diaryId === null) {
+          return failedOutcome(
+            "INVALID_TOOL_ARGUMENTS",
+            "memory_diary 需要 diaryId",
+          );
+        }
+        const fromChar = integerArg(args, "fromChar") ?? 0;
+        const maxChars = integerArg(args, "maxChars") ?? 4000;
+        if (fromChar < 0 || maxChars < 1 || maxChars > 20000) {
+          return failedOutcome(
+            "INVALID_TOOL_ARGUMENTS",
+            "fromChar 需不小于 0，maxChars 需在 1 到 20000 之间",
+          );
+        }
+        const segment = memory.getDiarySegment(roleId, diaryId, {
+          fromChar,
+          maxChars,
+        });
+        try {
+          memory.recordRecall(roleId, {
+            executionId: context.executionId,
+            type: "diary",
+            id: diaryId,
+          });
+        } catch {
+          // 召回登记失败不影响读取结果。
+        }
+        return {
+          status: "success",
+          rawResponse: segment,
+          adaptedResult: truncateValue(segment, TOOL_RESULT_LIMIT),
+        };
+      });
+    },
+  };
+}
+
+function taskProgressTool(
+  roleId: string,
+  roleAccess: RoleAccess,
+): ConversationTool {
+  return {
+    name: "task_progress",
+    source: "task",
+    description:
+      "为当前任务保存一条进度笔记。笔记跨轮次保留，暂停后接续时随任务上下文一起出现；用于记录阶段成果和已读位置。",
+    inputSchema: {
+      type: "object",
+      properties: { note: { type: "string" } },
+      required: ["note"],
+    },
+    async execute(args, context) {
+      return runTool(async () => {
+        const note = stringArg(args, "note");
+        if (note === null) {
+          return failedOutcome(
+            "INVALID_TOOL_ARGUMENTS",
+            "task_progress 需要 note",
+          );
+        }
+        if (note.length > 2000) {
+          return failedOutcome(
+            "INVALID_TOOL_ARGUMENTS",
+            "进度笔记不能超过 2000 字",
+          );
+        }
+        if (context.taskId === null) {
+          return failedOutcome("TASK_REQUIRED", "当前没有活动任务，无法保存进度");
+        }
+        const taskId = context.taskId;
+        const saved = roleAccess.withStore(roleId, (storage) =>
+          storage.business.appendTaskNote({ roleId, taskId, note }),
+        );
+        return {
+          status: "success",
+          rawResponse: saved,
+          adaptedResult: { noteId: saved.noteId, taskId: saved.taskId },
+        };
+      });
+    },
+  };
+}
+
+function taskPauseTool(
+  roleId: string,
+  roleAccess: RoleAccess,
+): ConversationTool {
+  return {
+    name: "task_pause",
+    source: "task",
+    description:
+      "声明本轮先暂停当前任务：目标尚未完成，保留任务编号、进度笔记与资源延续，稍后由携带任务编号的唤醒或新消息接回。回复本身仍会正常保存。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        reason: { type: "string", description: "暂停原因" },
+        note: { type: "string", description: "可选：同时保存一条进度笔记" },
+      },
+      required: ["reason"],
+    },
+    async execute(args, context) {
+      return runTool(async () => {
+        const reason = stringArg(args, "reason");
+        if (reason === null) {
+          return failedOutcome("INVALID_TOOL_ARGUMENTS", "task_pause 需要 reason");
+        }
+        if (context.taskId === null) {
+          return failedOutcome("TASK_REQUIRED", "当前没有活动任务，无法暂停");
+        }
+        const taskId = context.taskId;
+        const note = stringArg(args, "note");
+        if (note !== null && note.length <= 2000) {
+          try {
+            roleAccess.withStore(roleId, (storage) =>
+              storage.business.appendTaskNote({ roleId, taskId, note }),
+            );
+          } catch {
+            // 笔记保存失败不改变暂停意图。
+          }
+        }
+        return {
+          status: "success",
+          rawResponse: { taskId, kind: "pause", reason },
+          adaptedResult: { taskId, kind: "pause", reason },
+        };
+      });
+    },
+  };
+}
+
+function taskFinishTool(
+  roleId: string,
+  roleAccess: RoleAccess,
+): ConversationTool {
+  return {
+    name: "task_finish",
+    source: "task",
+    description:
+      "声明当前任务按真实结果结束：completed 或 failed 及结束原因。结束会触发经历整理并释放任务资源延续。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["completed", "failed"] },
+        endReason: { type: "string" },
+        note: { type: "string", description: "可选：同时保存一条进度笔记" },
+      },
+      required: ["status", "endReason"],
+    },
+    async execute(args, context) {
+      return runTool(async () => {
+        const status =
+          args.status === "completed" || args.status === "failed"
+            ? args.status
+            : null;
+        const endReason = stringArg(args, "endReason");
+        if (status === null || endReason === null) {
+          return failedOutcome(
+            "INVALID_TOOL_ARGUMENTS",
+            "task_finish 需要 status（completed 或 failed）和 endReason",
+          );
+        }
+        if (context.taskId === null) {
+          return failedOutcome("TASK_REQUIRED", "当前没有活动任务，无法结束");
+        }
+        const taskId = context.taskId;
+        const note = stringArg(args, "note");
+        if (note !== null && note.length <= 2000) {
+          try {
+            roleAccess.withStore(roleId, (storage) =>
+              storage.business.appendTaskNote({ roleId, taskId, note }),
+            );
+          } catch {
+            // 笔记保存失败不改变结束意图。
+          }
+        }
+        return {
+          status: "success",
+          rawResponse: { taskId, kind: "finish", status, endReason },
+          adaptedResult: { taskId, kind: "finish", status, endReason },
+        };
+      });
+    },
+  };
+}
+
+function toolReconcileTool(
+  roleId: string,
+  roleAccess: RoleAccess,
+): ConversationTool {
+  return {
+    name: "tool_reconcile",
+    source: "memory",
+    description:
+      "对结果未知的工具调用补录核查结论：按原 toolCallId 保存明确结果与证据关联，保留之前的未知记录。只在取得明确证据后调用；证据仍不足时保持未知，不要调用。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        toolCallId: { type: "string", description: "要补录的原调用编号" },
+        status: { type: "string", enum: ["success", "failed"] },
+        observation: { type: "string", description: "核查结论说明" },
+        verifiedByToolCallId: {
+          type: "string",
+          description: "可选：用于核查的那次调用编号",
+        },
+        result: { description: "可选：核查得到的结构化结果" },
+      },
+      required: ["toolCallId", "status", "observation"],
+    },
+    async execute(args, context) {
+      return runTool(async () => {
+        const toolCallId = stringArg(args, "toolCallId");
+        const status =
+          args.status === "success" || args.status === "failed"
+            ? args.status
+            : null;
+        const observation = stringArg(args, "observation");
+        if (toolCallId === null || status === null || observation === null) {
+          return failedOutcome(
+            "INVALID_TOOL_ARGUMENTS",
+            "tool_reconcile 需要 toolCallId、status 和 observation",
+          );
+        }
+        if (observation.length > 2000) {
+          return failedOutcome(
+            "INVALID_TOOL_ARGUMENTS",
+            "核查说明不能超过 2000 字",
+          );
+        }
+        const verifiedBy = stringArg(args, "verifiedByToolCallId");
+        let resolvedVerifiedBy: string | null = null;
+        if (verifiedBy !== null) {
+          // 模型看到的是提供方 wire id，核查关联需要同一执行内的业务调用编号。
+          resolvedVerifiedBy = roleAccess.withStore(roleId, (storage) =>
+            storage.business.resolveToolCallReference({
+              roleId,
+              executionId: context.executionId,
+              reference: verifiedBy,
+            }),
+          );
+          if (resolvedVerifiedBy === null) {
+            return failedOutcome(
+              "VERIFIED_BY_CALL_NOT_FOUND",
+              `用于核查的调用 ${verifiedBy} 不存在`,
+            );
+          }
+        }
+        const adaptedResult = {
+          observation,
+          ...(resolvedVerifiedBy === null
+            ? {}
+            : { verifiedByToolCallId: resolvedVerifiedBy }),
+          ...(args.result === undefined ? {} : { result: args.result }),
+        };
+        const saved = roleAccess.withStore(roleId, (storage) =>
+          storage.business.saveToolResult({
+            roleId,
+            toolCallId,
+            status,
+            adaptedResult,
+            reconciledByCallId: resolvedVerifiedBy,
+            requireReconciledFromUnknown: true,
+          }),
+        );
+        return {
+          status: "success",
+          rawResponse: saved,
+          adaptedResult: {
+            toolCallId,
+            status: saved.result.status,
+            reconciled: !saved.duplicate,
+            reconciledAt: saved.result.reconciledAt,
+          },
+        };
       });
     },
   };

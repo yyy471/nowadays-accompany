@@ -20,6 +20,9 @@ export const modelConfigSchema = z
     ]),
     baseUrl: z.string().min(1).max(2000),
     credentialRef: credentialRefSchema.optional(),
+    /** 可核实的模型容量声明（字符口径），供记忆整理按容量分批。 */
+    maxInputChars: z.number().int().positive().max(10_000_000).optional(),
+    maxOutputChars: z.number().int().positive().max(10_000_000).optional(),
   })
   .strict();
 

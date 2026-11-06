@@ -1001,6 +1001,41 @@ export class AutonomyStore {
           )
           .run(now, taskId);
         relation = "continues";
+      } else if (wake.taskId !== null) {
+        // scheduled 唤醒携带任务编号：接回原任务链（GAP-02），
+        // 任务已终态则取消唤醒，不降级新建链。
+        const task = this.db
+          .prepare(
+            "SELECT status FROM tasks WHERE task_id = ? AND role_id = ?",
+          )
+          .get(wake.taskId, this.roleId) as { status: string } | undefined;
+        if (!task) {
+          this.cancelPendingWake(
+            wake.wakeId,
+            "AUTONOMY_RESUME_TASK_MISSING",
+            now,
+          );
+          return null;
+        }
+        if (task.status === "completed" || task.status === "failed") {
+          this.cancelPendingWake(
+            wake.wakeId,
+            "AUTONOMY_RESUME_TASK_ENDED",
+            now,
+          );
+          return null;
+        }
+        taskId = wake.taskId;
+        if (task.status === "paused") {
+          this.db
+            .prepare(
+              `UPDATE tasks
+                  SET status = 'active', end_reason = NULL, updated_at = ?
+                WHERE task_id = ?`,
+            )
+            .run(now, taskId);
+        }
+        relation = "continues";
       }
 
       const executionId = randomUUID();

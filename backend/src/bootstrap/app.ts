@@ -27,6 +27,7 @@ export interface BackendAppOptions {
   typingMs?: number;
   autoRecallLimit?: number;
   maxToolRounds?: number;
+  toolForegroundWaitMs?: number;
   modelPortFactory?: ChatModelPortFactory;
   memoryModelFactory?: MemoryModelFactory;
   memoryIdleMs?: number;
@@ -101,6 +102,9 @@ export function createBackendApp(
       ...(options.maxToolRounds === undefined
         ? {}
         : { maxToolRounds: options.maxToolRounds }),
+      ...(options.toolForegroundWaitMs === undefined
+        ? {}
+        : { toolForegroundWaitMs: options.toolForegroundWaitMs }),
       ...(options.modelPortFactory === undefined
         ? {}
         : { modelPortFactory: options.modelPortFactory }),

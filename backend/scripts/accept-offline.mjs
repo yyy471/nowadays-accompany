@@ -36,6 +36,12 @@ const matrices = [
   ["p4-original", "20261104-p4-acceptance.ts", "p4-report.json", 8, "contractPassed"],
   ["p4-continuation", "20261104-p4-recovery-recheck.ts", "p4-recovery-recheck-report.json", 6, "contractPassed"],
   ["p4-boundaries", "20261105-p4-remaining-acceptance.ts", "p4-remaining-report.json", 14, "contractPassed"],
+  ["p5-background", "20261106-p5-background-tools.ts", "p5-background-report.json", 5, "contractPassed"],
+  ["p5-tasks", "20261106-p5-task-decisions.ts", "p5-tasks-report.json", 4, "contractPassed"],
+  ["p5-reconcile", "20261106-p5-reconcile-unknown.ts", "p5-reconcile-report.json", 3, "contractPassed"],
+  ["p5-capacity", "20261106-p5-memory-capacity.ts", "p5-capacity-report.json", 3, "contractPassed"],
+  ["p5-skill-run", "20261106-p5-skill-run.ts", "p5-skill-run-report.json", 3, "contractPassed"],
+  ["p5-diary", "20261106-p5-diary-read.ts", "p5-diary-report.json", 3, "contractPassed"],
 ];
 function manifest() {
   const files = [];

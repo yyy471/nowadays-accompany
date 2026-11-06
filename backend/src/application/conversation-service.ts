@@ -1,7 +1,10 @@
 import type http from "node:http";
+import { AsyncLocalStorageProviderSingleton } from "@langchain/core/singletons";
 import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
 import { rolePaths } from "../bootstrap/config.js";
 import type {
+  AgentTaskAction,
+  BackgroundToolSettlement,
   ClaimedMessage,
   ConversationExecutionDetail,
   ConversationMessageView,
@@ -15,6 +18,7 @@ import {
   ExecutionSupersededError,
   ModelRequestFailedError,
   SseCursorInvalidError,
+  TaskEndedError,
 } from "../domain/errors.js";
 import type { ModelPort } from "../domain/model.js";
 import { localDateFromIso } from "../storage/evidence.js";
@@ -23,6 +27,7 @@ import { HttpModelAdapter } from "../model/protocols.js";
 import type { AppStore } from "../storage/app-store.js";
 import {
   ConversationStore,
+  type CommitConversationTaskDecision,
   type PrimaryExecutionTask,
   type RecoverableTaskContinuation,
   type RecoveredExecution,
@@ -57,12 +62,16 @@ import type { RoleAccess } from "./role-access.js";
 
 export type ChatModelPortFactory = (binding: ResolvedModelBinding) => ModelPort;
 
+/** 外部工具前台等待窗口原型默认值；越过后自动转后台，等待时长仍待真实工具联调校准。 */
+export const DEFAULT_TOOL_FOREGROUND_WAIT_MS = 2_000;
+
 export interface ConversationServiceOptions {
   now?: () => Date;
   timeZone?: string;
   typingMs?: number;
   autoRecallLimit?: number;
   maxToolRounds?: number;
+  toolForegroundWaitMs?: number;
   modelPortFactory?: ChatModelPortFactory;
   memoryRuntime?: MemoryRuntime | null;
   autonomy?: AutonomyService | null;
@@ -109,11 +118,14 @@ export class ConversationService {
   private readonly timeZone: string | undefined;
   private readonly autoRecallLimit: number;
   private readonly maxToolRounds: number;
+  private readonly toolForegroundWaitMs: number;
   private readonly modelFactory: ChatModelPortFactory;
   private readonly memoryRuntime: MemoryRuntime | null;
   private readonly autonomy: AutonomyService | null;
   private readonly running = new Map<string, RunningExecution>();
   private readonly detached = new Set<RunningExecution>();
+  private readonly backgroundToolSettles = new Set<Promise<void>>();
+  private readonly backgroundToolsByRole = new Map<string, number>();
   private readonly wakeTimers = new Map<string, NodeJS.Timeout>();
   private readonly dueWakeChecks = new Map<string, string>();
   private readonly pendingContinuations = new Map<
@@ -145,6 +157,8 @@ export class ConversationService {
     this.timeZone = options.timeZone;
     this.autoRecallLimit = options.autoRecallLimit ?? 8;
     this.maxToolRounds = options.maxToolRounds ?? 8;
+    this.toolForegroundWaitMs =
+      options.toolForegroundWaitMs ?? DEFAULT_TOOL_FOREGROUND_WAIT_MS;
     this.modelFactory =
       options.modelPortFactory ??
       ((binding) =>
@@ -591,22 +605,45 @@ export class ConversationService {
     now: string,
   ): void {
     const gaps = store.listCommittedExecutionGaps();
-    const finishedTasks = new Set<string>();
+    // 同一任务可能有多条已完成执行：旧暂停在续行后已不是当前决定，
+    // 只落实最后一条尚未执行的终态决定。查询按提交顺序返回，
+    // 后面的记录覆盖前面的同任务记录。
+    const latestByTask = new Map<string, (typeof gaps)[number]>();
     for (const gap of gaps) {
-      if (finishedTasks.has(gap.taskId)) {
-        continue;
-      }
-      finishedTasks.add(gap.taskId);
+      latestByTask.set(gap.taskId, gap);
+    }
+    for (const gap of latestByTask.values()) {
       try {
         const task = storage.business.getTask(roleId, gap.taskId);
         if (task.status !== "active") {
           continue;
         }
+        const decision =
+          gap.taskDecision !== null && gap.taskDecision.taskId === gap.taskId
+            ? gap.taskDecision
+            : null;
+        if (decision?.action.kind === "pause") {
+          // 回复已提交但暂停写入中断：按原决定暂停，保留资源续行与唤醒。
+          storage.business.pauseTask({
+            roleId,
+            taskId: gap.taskId,
+            endReason: decision.action.reason,
+          });
+          continue;
+        }
+        const status =
+          decision?.action.kind === "finish"
+            ? decision.action.status
+            : "completed";
+        const endReason =
+          decision?.action.kind === "finish"
+            ? decision.action.endReason
+            : "回复完成";
         storage.business.finishTask({
           roleId,
           taskId: gap.taskId,
-          status: "completed",
-          endReason: "回复完成",
+          status,
+          endReason,
         });
         autonomyStore.cancelPendingBudgetResumes(gap.taskId, "TASK_ENDED", now);
         this.memoryRuntime?.notifyTaskFinished(roleId, gap.taskId);
@@ -784,6 +821,10 @@ export class ConversationService {
       running.controller.abort();
     }
     await Promise.allSettled(active.map((running) => running.promise));
+    const backgroundSettles = [...this.backgroundToolSettles];
+    if (backgroundSettles.length > 0) {
+      await Promise.allSettled(backgroundSettles);
+    }
     const catalogs = [...this.taskCatalogs.values()];
     this.taskCatalogs.clear();
     await Promise.allSettled(catalogs.map((entry) => entry.catalog.close()));
@@ -896,7 +937,7 @@ export class ConversationService {
     if (this.bindings.hasChatBinding(roleId)) {
       return true;
     }
-    if (wake.kind === "budget_resume" && wake.taskId !== null) {
+    if (wake.taskId !== null) {
       return this.bindings.hasChatForTask(roleId, wake.taskId);
     }
     return false;
@@ -1017,7 +1058,10 @@ export class ConversationService {
           activityId: begun.activity.activityId,
           wakeId: begun.wake.wakeId,
           intent: begun.wake.intent,
-          resumed: begun.wake.kind === "budget_resume",
+          // budget_resume 或携带任务编号的 scheduled 唤醒都接回原任务链，
+          // 需要把已保存的工具结果重放进上下文。
+          resumed:
+            begun.wake.kind === "budget_resume" || begun.wake.taskId !== null,
         },
       })
         .catch(() => {
@@ -1255,10 +1299,22 @@ export class ConversationService {
     const roleId = execution.roleId;
     const windowId = execution.windowId ?? running.windowId;
     const autonomy = input.autonomy ?? null;
+    // 续行计量按原任务来源（DL-110）：唤醒接回的用户任务仍是用户任务，
+    // 不消耗自主点数；只有自主任务继续受自主额度控制。
+    const taskOrigin =
+      input.taskId === null || input.taskId === undefined
+        ? null
+        : storage.business.getTask(roleId, input.taskId).origin;
     const purpose: "user_chat" | "autonomous" =
-      autonomy === null ? "user_chat" : "autonomous";
+      taskOrigin === "user"
+        ? "user_chat"
+        : taskOrigin === "autonomous"
+          ? "autonomous"
+          : autonomy === null
+            ? "user_chat"
+            : "autonomous";
     const meter =
-      autonomy === null || this.autonomy === null
+      purpose !== "autonomous" || this.autonomy === null
         ? null
         : {
             consume: (): boolean => {
@@ -1310,6 +1366,8 @@ export class ConversationService {
     let catalog: AgentToolCatalog | null = null;
     let saver: SqliteSaver | null = null;
     let pausedForBudget = false;
+    let pausedByDecision = false;
+    let backgroundedTool = false;
     let taskId: string | null = input.taskId ?? null;
     const checkRunning = (): void => {
       if (running.superseded || running.controller.signal.aborted) {
@@ -1319,6 +1377,45 @@ export class ConversationService {
       if (current.status !== "running") {
         throw new ExecutionSupersededError(execution.executionId);
       }
+    };
+    const checkDispatch = (): void => {
+      if (
+        !backgroundedTool ||
+        running.superseded ||
+        running.controller.signal.aborted
+      ) {
+        checkRunning();
+        const currentTaskId = taskId;
+        if (currentTaskId !== null) {
+          let status: string;
+          try {
+            status = storage.business.getTask(roleId, currentTaskId).status;
+          } catch {
+            status = "missing";
+          }
+          if (status !== "active") {
+            throw new TaskEndedError(currentTaskId, status);
+          }
+        }
+        return;
+      }
+      const backgroundTaskId = taskId;
+      if (backgroundTaskId === null) {
+        throw new ExecutionSupersededError(execution.executionId);
+      }
+      // 工具已转后台时原存储句柄随执行收尾关闭；派发前用新句柄核对
+      // 任务是否仍活跃，避免在已释放的连接上判定而丢弃可执行的调用。
+      this.roleAccess.withStore(roleId, (fresh) => {
+        let status: string;
+        try {
+          status = fresh.business.getTask(roleId, backgroundTaskId).status;
+        } catch {
+          status = "missing";
+        }
+        if (status !== "active") {
+          throw new TaskEndedError(backgroundTaskId, status);
+        }
+      });
     };
     const emitDelta = (text: string): void => {
       checkRunning();
@@ -1406,6 +1503,7 @@ export class ConversationService {
           warnings: catalog?.warnings ?? [],
           tools: catalog?.tools ?? [],
           pendingMessages,
+          taskBrief: this.buildTaskBrief(storage, roleId, taskId),
           continuation:
             continuationTask === null
               ? null
@@ -1473,12 +1571,35 @@ export class ConversationService {
           systemPrompt,
           signal: running.controller.signal,
           checkRunning,
+          checkDispatch,
           emitDelta,
           ensureTask,
           now: this.now,
           maxToolRounds: this.maxToolRounds,
           purpose,
           meter,
+          toolForegroundWaitMs: this.toolForegroundWaitMs,
+          onBackgroundToolSettled: (settlement) =>
+            this.handleBackgroundToolSettled(settlement),
+          onToolBackgrounded: () => {
+            backgroundedTool = true;
+          },
+          registerBackgroundTool: (settlement, roleId) => {
+            this.backgroundToolSettles.add(settlement);
+            this.backgroundToolsByRole.set(
+              roleId,
+              (this.backgroundToolsByRole.get(roleId) ?? 0) + 1,
+            );
+            void settlement.then(() => {
+              this.backgroundToolSettles.delete(settlement);
+              const remaining = (this.backgroundToolsByRole.get(roleId) ?? 1) - 1;
+              if (remaining <= 0) {
+                this.backgroundToolsByRole.delete(roleId);
+              } else {
+                this.backgroundToolsByRole.set(roleId, remaining);
+              }
+            });
+          },
         },
         saver,
       );
@@ -1496,22 +1617,23 @@ export class ConversationService {
           reason: "EMPTY_RESPONSE",
         });
       }
+      const taskDecision =
+        result.taskId === null
+          ? null
+          : toCommittedTaskDecision(result.taskId, result.taskAction);
       store.commitConversation({
         executionId: execution.executionId,
         content: result.text,
         statePatch: result.statePatch,
         countsAsConversationRound: autonomy === null,
+        taskDecision,
         now: this.now().toISOString(),
       });
-      if (result.taskId !== null) {
+      if (result.taskId !== null && taskDecision !== null) {
         taskId = result.taskId;
-        this.finishTaskAfterExecution(
-          storage,
-          roleId,
-          result.taskId,
-          "completed",
-          "回复完成",
-        );
+        this.applyCommittedTaskDecision(storage, roleId, taskDecision, () => {
+          pausedByDecision = true;
+        });
       }
       if (autonomy !== null) {
         try {
@@ -1530,7 +1652,7 @@ export class ConversationService {
         }
       }
       this.memoryRuntime?.notifyEvidence(roleId);
-      if (taskId !== null) {
+      if (taskId !== null && taskDecision?.action.kind !== "pause") {
         this.memoryRuntime?.notifyTaskFinished(roleId, taskId);
       }
     } catch (error) {
@@ -1542,7 +1664,25 @@ export class ConversationService {
       }
       if (status === "running" && !running.superseded) {
         const code = errorCodeOf(error);
-        if (code === "AUTONOMY_BUDGET_EXHAUSTED" && autonomy !== null) {
+        if (code === "TOOL_BACKGROUNDED") {
+          // 慢工具转后台：释放决策位置，工具继续在后台执行；
+          // 不结束任务、不拉黑窗口、不动活动与唤醒；
+          // 用户消息保持领取状态，由原任务续行接手。
+          try {
+            store.interruptExecution({
+              executionId: execution.executionId,
+              partialText: running.partialText,
+              status: "superseded",
+              reason: code,
+              errorCode: code,
+              keepClaimedMessages: true,
+              now: this.now().toISOString(),
+            });
+          } catch {
+            // 状态已由其他路径改变，保留已有事件。
+          }
+          backgroundedTool = true;
+        } else if (code === "AUTONOMY_BUDGET_EXHAUSTED" && autonomy !== null) {
           pausedForBudget = true;
           try {
             store.interruptExecution({
@@ -1633,6 +1773,23 @@ export class ConversationService {
           keepCatalog = false;
         }
       }
+      if (!keepCatalog && pausedByDecision && taskId !== null) {
+        try {
+          keepCatalog =
+            storage.business.getTask(roleId, taskId).status === "paused";
+        } catch {
+          keepCatalog = false;
+        }
+      }
+      if (!keepCatalog && backgroundedTool && taskId !== null) {
+        // 转后台后任务仍活跃时保住任务目录，供结果结算后的续行复用。
+        try {
+          keepCatalog =
+            storage.business.getTask(roleId, taskId).status === "active";
+        } catch {
+          keepCatalog = false;
+        }
+      }
       if (!keepCatalog) {
         await catalog?.close();
         if (taskId !== null) {
@@ -1644,14 +1801,129 @@ export class ConversationService {
     }
   }
 
+  /**
+   * 转后台的工具在后台结算（真实结果产生）后的入口：
+   * 用独立存储句柄保存结果、结算计量并追加流事件，
+   * 任务仍活跃时把真实结果交回原任务续行。
+   */
+  private handleBackgroundToolSettled(settlement: BackgroundToolSettlement): void {
+    try {
+      this.roleAccess.withStore(settlement.roleId, (storage) => {
+        const business = storage.business;
+        business.saveToolResult({
+          roleId: settlement.roleId,
+          toolCallId: settlement.toolCallId,
+          status: settlement.outcome.status,
+          ...(settlement.outcome.rawResponse === undefined
+            ? {}
+            : { rawResponse: settlement.outcome.rawResponse }),
+          ...(settlement.outcome.adaptedResult === undefined
+            ? {}
+            : { adaptedResult: settlement.outcome.adaptedResult }),
+          ...(settlement.outcome.diagnosticCode === undefined
+            ? {}
+            : { diagnosticCode: settlement.outcome.diagnosticCode }),
+          ...(settlement.outcome.error === undefined
+            ? {}
+            : { error: settlement.outcome.error }),
+        });
+        const shouldRecordMetering =
+          settlement.purpose !== "autonomous" || settlement.committed;
+        if (shouldRecordMetering) {
+          new ConversationStore(storage.business.db, settlement.roleId, this.timeZone).recordToolMetering({
+            executionId: settlement.executionId,
+            taskId: settlement.taskId,
+            toolCallId: settlement.toolCallId,
+            purpose: settlement.purpose,
+            counted: settlement.counted,
+            now: this.now().toISOString(),
+          });
+        }
+        if (settlement.windowId !== null) {
+          new ConversationStore(storage.business.db, settlement.roleId, this.timeZone).appendStreamEvent({
+            windowId: settlement.windowId,
+            executionId: settlement.executionId,
+            type: "tool_result_saved",
+            payload: {
+              executionId: settlement.executionId,
+              toolCallId: settlement.toolCallId,
+              status: settlement.outcome.status,
+              background: true,
+            },
+            now: this.now().toISOString(),
+          });
+        }
+      });
+    } catch {
+      // 后台结算失败时保留执行侧的恢复路径：重启后按中断调用补录 unknown。
+      return;
+    }
+    if (this.closed || settlement.taskId === null || settlement.windowId === null) {
+      return;
+    }
+    try {
+      const task = this.roleAccess.withStore(settlement.roleId, (storage) =>
+        storage.business.getTask(settlement.roleId, settlement.taskId!),
+      );
+      if (task.status !== "active") {
+        return;
+      }
+    } catch {
+      return;
+    }
+    this.queueTaskContinuation(settlement.roleId, {
+      taskId: settlement.taskId,
+      windowId: settlement.windowId,
+    });
+    // 结算回调由工具 promise 的延续触发，仍处在原图执行的异步上下文中；
+    // LangChain 的隐式配置会沿异步上下文继承，直接调度会让新执行读到旧执行
+    // 的检查点配置（旧 saver 已关闭）。延迟到独立宏任务并在干净上下文中调度。
+    const deferredRoleId = settlement.roleId;
+    AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () => {
+      const deferred = setTimeout(() => {
+        void this.schedule(deferredRoleId);
+      }, 0);
+      deferred.unref?.();
+    });
+  }
+
+  private applyCommittedTaskDecision(
+    storage: RoleStorage,
+    roleId: string,
+    decision: CommitConversationTaskDecision,
+    onPause?: () => void,
+  ): void {
+    if (decision.action.kind === "pause") {
+      onPause?.();
+      try {
+        // 暂停保留原任务编号与资源延续，等待唤醒或后续轮次接回。
+        storage.business.pauseTask({
+          roleId,
+          taskId: decision.taskId,
+          endReason: decision.action.reason,
+        });
+      } catch {
+        // 决定已随回复提交；写入失败时任务保持原状，重启按原决定恢复。
+      }
+      return;
+    }
+    // 角色按真实结果结束任务；经历整理由调用方 notifyTaskFinished 触发。
+    this.finishTaskAfterExecution(
+      storage,
+      roleId,
+      decision.taskId,
+      decision.action.status,
+      decision.action.endReason,
+    );
+  }
+
   private finishTaskAfterExecution(
     storage: RoleStorage,
     roleId: string,
     taskId: string,
     status: "completed" | "failed",
     endReason: string,
-  ): void {
-    try {
+  ): void {    try {
       storage.business.finishTask({ roleId, taskId, status, endReason });
       for (const continuation of storage.business.listResourceContinuations(
         roleId,
@@ -1802,6 +2074,45 @@ export class ConversationService {
     return messages;
   }
 
+  /** 汇总当前任务的目标、状态、已保存调用与进度笔记，供角色决策任务收尾。 */
+  private buildTaskBrief(
+    storage: RoleStorage,
+    roleId: string,
+    taskId: string | null,
+  ): {
+    taskId: string;
+    goal: string;
+    status: string;
+    origin: string;
+    toolCalls: Array<{ name: string; status: string }>;
+    notes: string[];
+  } | null {
+    if (taskId === null) {
+      return null;
+    }
+    try {
+      const task = storage.business.getTask(roleId, taskId);
+      const calls = storage.business
+        .listTaskToolCalls(roleId, taskId)
+        .slice(-10)
+        .map((call) => ({ name: call.toolName, status: call.status }));
+      const notes = storage.business
+        .listTaskNotes(roleId, taskId)
+        .slice(-5)
+        .map((note) => note.note);
+      return {
+        taskId: task.taskId,
+        goal: task.goal,
+        status: task.status,
+        origin: task.origin,
+        toolCalls: calls,
+        notes,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   private buildSystemPrompt(input: {
     roleContext: ReturnType<ConversationStore["getRoleContext"]>;
     recallBriefs: readonly RecallBrief[];
@@ -1810,6 +2121,14 @@ export class ConversationService {
     warnings: readonly string[];
     tools: readonly ConversationTool[];
     pendingMessages: readonly ClaimedMessage[];
+    taskBrief: {
+      taskId: string;
+      goal: string;
+      status: string;
+      origin: string;
+      toolCalls: Array<{ name: string; status: string }>;
+      notes: string[];
+    } | null;
     continuation: { taskId: string; goal: string } | null;
     autonomy: { intent: string; resumed: boolean } | null;
   }): string {
@@ -1844,6 +2163,29 @@ export class ConversationService {
           1000,
         )}。`,
         "原任务已完成的工具调用和真实结果已附在对话历史中；不要重做已成功步骤，不要续写被中断的回复，按最新上下文继续推进原目标。",
+      );
+    }
+    if (input.taskBrief !== null && input.taskBrief.status === "active") {
+      lines.push(
+        `当前任务（taskId=${input.taskBrief.taskId}）：目标「${truncate(
+          input.taskBrief.goal,
+          500,
+        )}」，状态 ${input.taskBrief.status}，来源 ${input.taskBrief.origin}。`,
+      );
+      if (input.taskBrief.toolCalls.length > 0) {
+        const callSummary = input.taskBrief.toolCalls
+          .map((call) => `${call.name}(${call.status})`)
+          .join("、");
+        lines.push(`本任务已保存的工具调用（最近）：${callSummary}。`);
+      }
+      if (input.taskBrief.notes.length > 0) {
+        lines.push("任务进度笔记：");
+        for (const note of input.taskBrief.notes) {
+          lines.push(`- ${truncate(note, 300)}`);
+        }
+      }
+      lines.push(
+        "任务决策：默认情况下回复完成后任务按「回复完成」结束；如果目标尚未完成、本轮只想先回复或需要延后处理，调用 task_pause 暂停任务（可用 autonomy_schedule 携带本任务编号安排唤醒，唤醒会接回同一任务继续）；如果任务已达成或确认失败，调用 task_finish 声明 completed 或 failed 及结束原因。",
       );
     }
     if (input.autonomy !== null) {
@@ -1904,6 +2246,10 @@ export class ConversationService {
 
   private isIdle(roleId: string): boolean {
     if (this.running.has(roleId)) {
+      return false;
+    }
+    if ((this.backgroundToolsByRole.get(roleId) ?? 0) > 0) {
+      // 仍有转后台的工具在途：结算后可能续行，不算空闲。
       return false;
     }
     if ([...this.detached].some((running) => running.roleId === roleId)) {
@@ -1972,6 +2318,30 @@ export class ConversationService {
 
 function windowKey(roleId: string, windowId: string): string {
   return `${roleId}\u0000${windowId}`;
+}
+
+function toCommittedTaskDecision(
+  taskId: string,
+  action: AgentTaskAction | null,
+): CommitConversationTaskDecision {
+  if (action === null) {
+    // 无显式任务决策时保持既有默认：回复完成即结束任务。
+    return {
+      taskId,
+      action: { kind: "finish", status: "completed", endReason: "回复完成" },
+    };
+  }
+  if (action.kind === "pause") {
+    return { taskId, action: { kind: "pause", reason: action.reason } };
+  }
+  return {
+    taskId,
+    action: {
+      kind: "finish",
+      status: action.status,
+      endReason: action.endReason,
+    },
+  };
 }
 
 function errorCodeOf(error: unknown): string {

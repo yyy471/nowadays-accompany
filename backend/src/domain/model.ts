@@ -17,6 +17,9 @@ export const modelServiceConfigSchema = z
       .regex(/^(env|file):[^\s]+$/, "凭据只允许 env: 或 file: 引用")
       .max(500)
       .optional(),
+    /** 可核实的模型容量声明（字符口径），供记忆整理按容量分批。 */
+    maxInputChars: z.number().int().positive().max(10_000_000).optional(),
+    maxOutputChars: z.number().int().positive().max(10_000_000).optional(),
   })
   .strict();
 export type ModelServiceConfig = z.infer<typeof modelServiceConfigSchema>;

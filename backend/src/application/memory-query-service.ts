@@ -14,6 +14,7 @@ import type {
   DiaryCreateInput,
   DiaryDetail,
   DiaryRecord,
+  DiarySegmentView,
   EventCorrection,
   MemoryBatchRecord,
   MemoryEventRecord,
@@ -26,6 +27,10 @@ import type {
   MemoryTagValues,
   SummaryCorrection,
   SummaryEvidenceItem,
+} from "../domain/memory.js";
+import {
+  DEFAULT_DIARY_SEGMENT_CHARS,
+  MAX_DIARY_SEGMENT_CHARS,
 } from "../domain/memory.js";
 import { localDateFromIso, sha256 } from "../storage/evidence.js";
 import { MemoryStore, type MemoryStatus } from "../storage/memory-store.js";
@@ -332,6 +337,68 @@ export class MemoryQueryService {
         }
       })();
       return { ...diary, content };
+    });
+  }
+
+  /**
+   * 按日记编号分段读取正文（GAP-06）：复用 getDiary 的管道
+   * （角色隔离、路径防逃逸、文件缺失错误、快照哈希回写），
+   * 按码点切片，保留 Markdown 正文与工作空间文件的对应关系。
+   */
+  getDiarySegment(
+    roleId: string,
+    diaryId: string,
+    options: { fromChar?: number; maxChars?: number } = {},
+  ): DiarySegmentView {
+    const fromChar = Math.max(
+      0,
+      Math.floor(options.fromChar ?? 0),
+    );
+    const maxChars = Math.min(
+      MAX_DIARY_SEGMENT_CHARS,
+      Math.max(1, Math.floor(options.maxChars ?? DEFAULT_DIARY_SEGMENT_CHARS)),
+    );
+    return this.access.withStore(roleId, (storage) => {
+      const store = new MemoryStore(storage.business.db);
+      const diary = store.getDiary(roleId, diaryId);
+      const filePath = safeWorkspacePath(
+        storage.paths.workspaceDir,
+        diary.relativePath,
+      );
+      let content: string;
+      try {
+        content = fs.readFileSync(filePath, "utf8");
+      } catch {
+        throw new DiaryFileMissingError(diaryId);
+      }
+      const contentHash = sha256(content);
+      storage.business.db.transaction(() => {
+        if (contentHash !== sha256(diary.content)) {
+          store.updateDiarySnapshot({
+            roleId,
+            diaryId,
+            content,
+            contentHash,
+            now: this.now().toISOString(),
+          });
+        }
+      })();
+      const chars = Array.from(content);
+      const totalChars = chars.length;
+      const start = Math.min(fromChar, totalChars);
+      const end = Math.min(start + maxChars, totalChars);
+      return {
+        diaryId: diary.diaryId,
+        relativePath: diary.relativePath,
+        occurredAt: diary.occurredAt,
+        experienceDate: diary.experienceDate,
+        content: chars.slice(start, end).join(""),
+        totalChars,
+        fromChar: start,
+        toChar: end,
+        hasMore: end < totalChars,
+        eventIds: diary.eventIds,
+      };
     });
   }
 

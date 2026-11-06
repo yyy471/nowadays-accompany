@@ -1,7 +1,10 @@
 import { ModelBindingMissingError } from "../domain/errors.js";
 import {
+  DEFAULT_MEMORY_BUDGET_CHARS,
   DEFAULT_MEMORY_RETRY_DELAYS_MS,
+  DEFAULT_OUTPUT_RESERVE_CHARS,
   type MemoryFormationInput,
+  type MemoryModelCapacity,
   type MemoryModelPort,
 } from "../domain/memory.js";
 import { isIncompleteCompletion, type ModelPort } from "../domain/model.js";
@@ -340,11 +343,14 @@ export class MemoryRuntime {
             () => this.bindings.refresh(binding, roleId),
             (current) => this.createHttpMemoryModel(current),
           );
+      const capacity = memoryCapacityOf(binding);
       const service = new MemoryService(store, model, {
         modelInfo: {
           modelName: binding.modelName,
           protocol: binding.config.protocol,
         },
+        ...(capacity === null ? {} : { capacity }),
+        requestOverheadChars: Array.from(MEMORY_SYSTEM_PROMPT).length + 1_000,
         idleMs: this.idleWakeMs,
         ...(this.timeZone === undefined ? {} : { timeZone: this.timeZone }),
         now: this.now,
@@ -387,6 +393,25 @@ class RefreshingMemoryModel implements MemoryModelPort {
   form(input: MemoryFormationInput): Promise<unknown> {
     return this.create(this.resolveBinding()).form(input);
   }
+}
+
+/** 从模型资源配置读取可核实容量声明；缺省时返回 null 走保守默认。 */
+function memoryCapacityOf(
+  binding: ResolvedModelBinding,
+): MemoryModelCapacity | null {
+  const config = binding.config;
+  const maxInputChars =
+    typeof config.maxInputChars === "number" ? config.maxInputChars : null;
+  const maxOutputChars =
+    typeof config.maxOutputChars === "number" ? config.maxOutputChars : null;
+  if (maxInputChars === null && maxOutputChars === null) {
+    return null;
+  }
+  return {
+    maxInputChars: maxInputChars ?? DEFAULT_MEMORY_BUDGET_CHARS,
+    maxOutputChars: maxOutputChars ?? DEFAULT_OUTPUT_RESERVE_CHARS,
+    source: "declared",
+  };
 }
 
 export class HttpMemoryModel implements MemoryModelPort {

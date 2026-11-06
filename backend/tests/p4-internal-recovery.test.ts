@@ -58,7 +58,7 @@ for (const mode of ["saved", "unfinished", "threw"] as const) {
       const state = {
         executionId: f.execution.executionId, roleId: f.fixture.roleId, windowId: f.fixture.windowId,
         round: 1, messages: [], text: "", pendingCalls: [{ wireCallId: "diary", name: tool.name, arguments: {} }],
-        statePatch: {}, rounds: [], taskId: f.task.taskId, modelCallId: null, wireMapping: {},
+        statePatch: {}, rounds: [], taskAction: null, taskId: f.task.taskId, modelCallId: null, wireMapping: {},
       };
       if (mode === "threw") await assert.rejects(runner.toolsNode(state), /AFTER_DIARY_EFFECT/);
       const first = await runner.toolsNode(state);

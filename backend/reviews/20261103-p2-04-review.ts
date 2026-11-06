@@ -154,7 +154,7 @@ try {
     registerMessageEvidence(store.db, { roleId, messageIds: [message.message.messageId], executionId: null });
     const evidence = memory.listEvidence(roleId).find((item) => item.sourceId === message.message.messageId)!;
     const event = memory.createEvent({ roleId, title: `日常 ${index}`, summary: "较长的日常事件描述。".repeat(100), subjectiveExperience: "", occurredAtStart: "2026-11-03T01:00:00.000Z", occurredAtEnd: null, experienceDate: "2026-11-03", tags: { topic: ["午餐"] }, evidenceIds: [evidence.evidenceId], currentRound: 0, now: "2026-11-03T02:00:00.000Z" });
-    const refined = store.db.transaction(() => memory.refineEvent({ roleId, eventId: event.eventId, expectedVersion: event.version, now: "2026-11-03T03:00:00.000Z" }))();
+    const refined = store.db.transaction(() => memory.refineEvent({ roleId, events: [{ eventId: event.eventId, expectedVersion: event.version }], summary: "聚合后的日常摘要。", topic: "午餐", now: "2026-11-03T03:00:00.000Z" }))();
     summaryIds.push(refined.summary.summaryId);
   }
   const summaries = store.db.prepare("SELECT summary_id, length(summary) AS length FROM daily_summaries").all();

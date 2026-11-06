@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import {
+  AppError,
   DiaryNotFoundError,
   MemoryBatchConflictError,
   MemoryEventNotFoundError,
@@ -537,7 +538,12 @@ export class MemoryStore {
     roleId: string,
     batchId: string,
     budgetChars: number,
+    options: { serialized?: boolean } = {},
   ): NextSegment[] {
+    const serialized = options.serialized === true;
+    if (serialized) {
+      this.splitOversizedSegments(roleId, batchId, budgetChars);
+    }
     const rows = this.db
       .prepare(
         `SELECT s.evidence_id, s.segment_index, s.from_char, s.to_char, s.status, s.batch_id,
@@ -564,41 +570,63 @@ export class MemoryStore {
         role_sequence: number;
       }
     >;
-    const selected: typeof rows = [];
+    const selected: NextSegment[] = [];
     let usedChars = 0;
-    for (const row of rows) {
-      const length = Math.max(0, row.to_char - row.from_char);
-      if (selected.length > 0 && usedChars + length > budgetChars) {
-        break;
-      }
-      selected.push(row);
-      usedChars += length;
-      if (usedChars >= budgetChars) {
-        break;
-      }
-    }
-    if (selected.length === 0) {
-      return [];
-    }
     const contentCache = new Map<string, string>();
     const segmentCounts = new Map<string, number>();
-    return selected.map((row) => {
-      let content = contentCache.get(row.evidence_id);
+    const contentOf = (evidenceId: string, load: () => string): string => {
+      let content = contentCache.get(evidenceId);
       if (content === undefined) {
-        content = this.loadEvidenceContent(row);
-        contentCache.set(row.evidence_id, content);
+        content = load();
+        contentCache.set(evidenceId, content);
         segmentCounts.set(
-          row.evidence_id,
+          evidenceId,
           (
             this.db
               .prepare(
                 "SELECT COUNT(*) AS count FROM memory_evidence_segments WHERE evidence_id = ?",
               )
-              .get(row.evidence_id) as { count: number }
+              .get(evidenceId) as { count: number }
           ).count,
         );
       }
-      return {
+      return content;
+    };
+    for (const row of rows) {
+      const content = contentOf(row.evidence_id, () =>
+        this.loadEvidenceContent(row),
+      );
+      const itemChars = serialized
+        ? // 按完整请求中的序列化长度核算，转义字符与证据元数据均计入。
+          this.serializedEvidenceItem(
+            row,
+            Array.from(content)
+              .slice(row.from_char, row.to_char)
+              .join(""),
+            segmentCounts.get(row.evidence_id) ?? 1,
+          ) + 1
+        : Math.max(0, row.to_char - row.from_char);
+      if (serialized) {
+        if (usedChars + itemChars > budgetChars) {
+          if (selected.length === 0) {
+            throw new AppError(
+              502,
+              "MEMORY_CAPACITY_EXCEEDED",
+              "单条证据片段超过模型可用容量",
+              {
+                evidenceId: row.evidence_id,
+                segmentIndex: row.segment_index,
+                itemChars,
+                budgetChars,
+              },
+            );
+          }
+          break;
+        }
+      } else if (selected.length > 0 && usedChars + itemChars > budgetChars) {
+        break;
+      }
+      selected.push({
         evidence: mapEvidence({
           evidence_id: row.evidence_id,
           role_id: row.role_id,
@@ -618,8 +646,197 @@ export class MemoryStore {
         content,
         segment: mapSegment(row),
         segmentCount: segmentCounts.get(row.evidence_id) ?? 1,
-      };
-    });
+      });
+      usedChars += itemChars;
+      if (usedChars >= budgetChars) {
+        break;
+      }
+    }
+    return selected;
+  }
+
+  /** 证据条目在整理请求中的序列化长度（内容按 JSON 转义后计算）。 */
+  private serializedEvidenceItem(
+    row: SegmentRow & {
+      evidence_id: string;
+      source_kind: MemorySourceKind;
+      source_status: string;
+      window_id: string | null;
+      occurred_at: string;
+      local_date: string;
+    },
+    content: string,
+    segmentCount: number,
+  ): number {
+    return Array.from(
+      JSON.stringify({
+        evidenceId: row.evidence_id,
+        sourceKind: row.source_kind,
+        sourceStatus: row.source_status,
+        windowId: row.window_id,
+        occurredAt: row.occurred_at,
+        localDate: row.local_date,
+        content,
+        segmentIndex: row.segment_index,
+        segmentCount,
+      }),
+    ).length;
+  }
+
+  /**
+   * 旧批次或大段证据可能按原始字符切分，序列化后（含转义）
+   * 会超过当前容量。发送前把仍待处理的超长片段继续拆小，
+   * 已处理片段保持不变，避免重试时重复推进或送出超限请求。
+   */
+  private splitOversizedSegments(
+    roleId: string,
+    batchId: string,
+    budgetChars: number,
+  ): void {
+    this.db.transaction(() => {
+      for (let guard = 0; guard < 200; guard += 1) {
+        const rows = this.db
+          .prepare(
+            `SELECT s.evidence_id, s.segment_index, s.from_char, s.to_char, s.status, s.batch_id,
+                    er.role_id, er.source_kind, er.source_id, er.window_id, er.task_id,
+                    er.execution_id, er.source_status, er.occurred_at, er.local_date, er.role_sequence
+             FROM memory_evidence_segments s
+             JOIN evidence_records er ON er.evidence_id = s.evidence_id
+             JOIN evidence_processing ep ON ep.evidence_id = er.evidence_id
+             WHERE s.batch_id = ? AND er.role_id = ? AND ep.status = 'processing'
+               AND s.status IN ('pending', 'failed')
+             ORDER BY er.role_sequence ASC, s.segment_index ASC`,
+          )
+          .all(batchId, roleId) as Array<
+          SegmentRow & {
+            role_id: string;
+            source_kind: MemorySourceKind;
+            source_id: string;
+            window_id: string | null;
+            task_id: string | null;
+            execution_id: string | null;
+            source_status: string;
+            occurred_at: string;
+            local_date: string;
+            role_sequence: number;
+          }
+        >;
+        let target: (typeof rows)[number] | null = null;
+        let targetContent = "";
+        let targetCount = 1;
+        for (const row of rows) {
+          const content = this.loadEvidenceContent(row);
+          const chars = Array.from(content);
+          const count = (
+            this.db
+              .prepare(
+                "SELECT COUNT(*) AS count FROM memory_evidence_segments WHERE evidence_id = ?",
+              )
+              .get(row.evidence_id) as { count: number }
+          ).count;
+          const itemChars =
+            this.serializedEvidenceItem(
+              row,
+              chars.slice(row.from_char, row.to_char).join(""),
+              count,
+            ) + 1;
+          if (itemChars > budgetChars) {
+            target = row;
+            targetContent = content;
+            targetCount = count;
+            break;
+          }
+        }
+        if (target === null) {
+          return;
+        }
+        const segmentChars = Array.from(targetContent).slice(
+          target.from_char,
+          target.to_char,
+        );
+        const baseChars = this.serializedEvidenceItem(target, "", targetCount);
+        const maxContentChars = budgetChars - baseChars - 1;
+        if (maxContentChars < 1 || segmentChars.length <= 1) {
+          throw new AppError(
+            502,
+            "MEMORY_CAPACITY_EXCEEDED",
+            "证据片段元数据已超过模型可用容量",
+            {
+              evidenceId: target.evidence_id,
+              segmentIndex: target.segment_index,
+              budgetChars,
+            },
+          );
+        }
+        let escapedChars = 0;
+        let cut = 0;
+        for (const char of segmentChars) {
+          const charChars = Array.from(JSON.stringify(char)).length - 2;
+          if (cut > 0 && escapedChars + charChars > maxContentChars) {
+            break;
+          }
+          escapedChars += charChars;
+          cut += 1;
+        }
+        if (cut <= 0 || cut >= segmentChars.length) {
+          throw new AppError(
+            502,
+            "MEMORY_CAPACITY_EXCEEDED",
+            "证据片段无法拆分到模型可用容量",
+            {
+              evidenceId: target.evidence_id,
+              segmentIndex: target.segment_index,
+              budgetChars,
+            },
+          );
+        }
+        const splitAt = target.from_char + cut;
+        const now = new Date().toISOString();
+        const later = this.db
+          .prepare(
+            `SELECT segment_index FROM memory_evidence_segments
+              WHERE evidence_id = ? AND segment_index > ?
+              ORDER BY segment_index DESC`,
+          )
+          .all(target.evidence_id, target.segment_index) as Array<{
+          segment_index: number;
+        }>;
+        for (const row of later) {
+          this.db
+            .prepare(
+              "UPDATE memory_evidence_segments SET segment_index = ? WHERE evidence_id = ? AND segment_index = ?",
+            )
+            .run(row.segment_index + 1, target.evidence_id, row.segment_index);
+        }
+        this.db
+          .prepare(
+            `UPDATE memory_evidence_segments
+                SET to_char = ?, status = 'pending', updated_at = ?
+              WHERE evidence_id = ? AND segment_index = ?`,
+          )
+          .run(splitAt, now, target.evidence_id, target.segment_index);
+        this.db
+          .prepare(
+            `INSERT INTO memory_evidence_segments
+               (evidence_id, segment_index, from_char, to_char, status, batch_id, updated_at)
+             VALUES (?, ?, ?, ?, 'pending', ?, ?)`,
+          )
+          .run(
+            target.evidence_id,
+            target.segment_index + 1,
+            splitAt,
+            target.to_char,
+            batchId,
+            now,
+          );
+      }
+      throw new AppError(
+        502,
+        "MEMORY_CAPACITY_EXCEEDED",
+        "证据片段拆分次数超过上限",
+        { batchId, budgetChars },
+      );
+    })();
   }
 
   markSegmentProcessed(

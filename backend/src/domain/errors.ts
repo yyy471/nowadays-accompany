@@ -370,6 +370,21 @@ export class ExecutionSupersededError extends AppError {
   }
 }
 
+export class ToolBackgroundedError extends AppError {
+  constructor(
+    readonly toolCallId: string,
+    readonly taskId: string | null,
+    readonly windowId: string | null,
+  ) {
+    super(
+      202,
+      "TOOL_BACKGROUNDED",
+      "工具调用超过前台等待窗口，已转入后台继续执行",
+      { toolCallId, taskId, windowId },
+    );
+  }
+}
+
 export class SseCursorInvalidError extends AppError {
   constructor(after: unknown) {
     super(400, "SSE_CURSOR_INVALID", "补读游标不是本窗口的有效事件编号", {
