@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <title>Nowadays</title>
+  <link rel="icon" href="assets/fold-light.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+  <script defer src="assets/anchors.js"></script>
+  <script defer src="environment.js"></script>
+  <script defer src="window-effects.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <main class="home" id="home">
+    <h1 class="sr-only" id="desk-title">夏澄的书桌</h1>
+    <div class="room" id="room" aria-labelledby="desk-title">
+      <div class="desk-art" aria-hidden="true">
+        <div class="light-layer is-visible" id="light-layer-a">
+          <img class="plate-base" src="assets/day-off.webp" alt="" fetchpriority="high">
+          <img class="plate-next" alt="">
+          <div class="seated-figure"><img class="figure-base" src="assets/plush-day-off.webp" alt=""><img class="figure-next" alt=""></div>
+        </div>
+        <div class="light-layer" id="light-layer-b">
+          <img class="plate-base" alt="">
+          <img class="plate-next" alt="">
+          <div class="seated-figure"><img class="figure-base" alt=""><img class="figure-next" alt=""></div>
+        </div>
+      </div>
+      <canvas class="window-effects" id="window-effects" aria-hidden="true"></canvas>
+      <div class="leaf-shadow" aria-hidden="true">
+        <svg viewBox="0 0 300 110" preserveAspectRatio="none" focusable="false">
+          <path d="M0 76C53 74 92 55 153 51S241 46 300 15M54 70C71 61 87 39 104 26M133 54C156 68 188 79 216 78M191 48C206 36 225 28 246 26" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <path d="M59 68Q46 52 26 58Q41 76 59 68ZM91 45Q80 23 54 27Q68 47 91 45ZM102 28Q111 6 138 10Q132 31 102 28ZM119 57Q96 73 103 87Q124 76 119 57ZM152 61Q155 82 181 93Q184 73 152 61ZM184 73Q209 66 223 79Q203 87 184 73ZM207 37Q190 20 169 23Q180 42 207 37ZM227 30Q232 10 256 5Q252 24 227 30ZM254 34Q270 47 293 36Q280 27 254 34Z" fill="currentColor"/>
+        </svg>
+      </div>
+      <div class="steam" id="steam" aria-hidden="true"><i></i><i></i><i></i></div>
+      <button class="hotspot" id="photo" aria-label="和夏澄聊天"></button>
+      <div class="print" id="print" aria-hidden="true"><img id="portrait" src="assets/photo-day.webp" alt=""></div>
+      <span class="photo-caption" id="photo-caption" aria-hidden="true">夏澄</span>
+      <div class="plush-shadow" id="plush-shadow" aria-hidden="true"></div>
+      <button class="hotspot" id="plush-trigger" aria-label="轻拍玩偶"></button>
+      <time class="clock" id="clock" aria-label="本地时间"></time>
+      <time class="calendar" id="calendar" aria-label="今天的日期"><small id="calendar-month"></small><span id="calendar-day"></span><small id="calendar-weekday"></small></time>
+      <button class="hotspot" id="calendar-trigger" aria-label="日历与季节"></button>
+      <button class="hotspot" id="role-trigger" aria-label="切换角色"></button>
+      <button class="hotspot" id="lamp" aria-label="台灯" aria-pressed="false"></button>
+      <div id="book-spines"></div>
+      <section class="memo" id="memo" aria-label="角色便笺">
+        <p>此刻</p>
+        <span id="activity"></span>
+        <button id="note" class="note">她想对你说 <span aria-hidden="true">↗</span></button>
+      </section>
+    </div>
+  </main>
+
+  <main class="chat" id="chat" hidden aria-labelledby="chat-name">
+    <div class="chat-art">
+      <div class="chat-print" id="chat-print"><img id="chat-portrait" src="assets/photo-day.webp" alt=""></div>
+      <p id="chat-art-caption"></p>
+    </div>
+    <section class="conversation">
+      <header class="chat-header">
+        <button id="back" class="quiet"><span aria-hidden="true">←</span> 书桌</button>
+        <div><h1 id="chat-name"></h1><span class="sample-label">离线样例</span></div>
+      </header>
+      <ol class="messages" id="messages" aria-label="聊天记录" aria-live="polite"></ol>
+      <form class="composer" id="composer">
+        <label for="draft" class="sr-only">消息</label>
+        <textarea id="draft" rows="2" placeholder="说点什么……"></textarea>
+        <button type="submit" class="accent" id="send">发送 <span aria-hidden="true">↑</span></button>
+      </form>
+    </section>
+  </main>
+
+  <dialog id="role-dialog" aria-labelledby="role-heading">
+    <div class="dialog-heading"><h2 id="role-heading">换一位</h2><form method="dialog"><button class="quiet" aria-label="关闭角色选择">关闭</button></form></div>
+    <div class="role-list" id="role-list"></div>
+  </dialog>
+  <dialog id="appearance-dialog" aria-labelledby="appearance-heading">
+    <div class="dialog-heading"><h2 id="appearance-heading">房间环境</h2><form method="dialog"><button class="quiet" aria-label="关闭房间环境">关闭</button></form></div>
+    <div class="environment-fields">
+      <label>时间<select id="time-setting"><option value="auto">跟随本地时间</option><option value="dawn">清晨</option><option value="day">白昼</option><option value="dusk">黄昏</option><option value="night">夜间</option></select></label>
+      <label>天气<select id="weather-setting"><option value="auto">随场景变化</option><option value="clear">晴</option><option value="cloud">阴</option><option value="rain">雨</option><option value="snow">雪</option></select></label>
+      <label>季节<select id="season-setting"><option value="auto">跟随本地日期</option><option value="spring">春</option><option value="summer">夏</option><option value="autumn">秋</option><option value="winter">冬</option></select></label>
+      <label>台灯<select id="lamp-setting"><option value="auto">随时段开关</option><option value="on">开</option><option value="off">关</option></select></label>
+    </div>
+    <p class="environment-caption"><span id="ambient"></span>。时钟使用本地时间，天气由房间场景模拟。</p>
+  </dialog>
+  <dialog id="book-dialog" class="book-dialog" aria-labelledby="book-title">
+    <div class="dialog-heading"><h2 id="book-title">书架</h2><form method="dialog"><button class="quiet">合上</button></form></div>
+    <div class="book-pages" id="book-pages">
+      <div class="book-cover"><small id="book-number"></small><p id="book-summary"></p></div>
+      <div class="book-sheet" id="book-sheet"></div>
+    </div>
+  </dialog>
+</body>
+</html>

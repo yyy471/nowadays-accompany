@@ -1,0 +1,28 @@
+{
+  "name": "nowadays-desk",
+  "productName": "Nowadays Desk",
+  "version": "0.1.2",
+  "description": "Nowadays 桌面书桌",
+  "author": "Nowadays",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "package:win": "electron-builder --win portable --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "39.8.10",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "app.nowadays.desk",
+    "files": ["index.html", "style.css", "app.js", "environment.js", "window-effects.js", "main.cjs", "assets/**"],
+    "win": {
+      "icon": "assets/window.ico",
+      "signExecutable": false
+    },
+    "portable": {
+      "artifactName": "Nowadays-Desk-${version}-win-x64.exe"
+    }
+  }
+}

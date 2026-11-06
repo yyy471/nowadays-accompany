@@ -6,6 +6,10 @@
 
 | 文档 | 定位与状态 |
 | --- | --- |
+| [204 书桌 v0.1.2 原生窗口与天气细化](204-desktop-desk-window-weather-refinement.md) | 原生窗口、独立受光玩偶、画室拍立得、分层雨雪和室内外风动 |
+| [203 书桌 v0.1.1 窗口与场景细化](203-desktop-desk-window-and-art-refinement.md) | dev 品牌图标、满幅窗口、书脊和场景重渲染及本机验证 |
+| [202 书桌 Windows 前端初版](202-desktop-desk-windows-v1.md) | Windows x64 便携 EXE、物件交互、本地时间和四季天气，含本机实现方验证 |
+| [201 桌面书桌首版样机实施记录](201-desktop-desk-preview-record.md) | FE-01、FE-02 的可运行离线样机、光照资产与实现方自验，待画面评审和独立复核 |
 | [200 桌面前端开发与视觉优化计划](200-desktop-frontend-development-plan.md) | DL-131 的实施计划草案，覆盖书桌美术基准、环境分层、对话与角色切换、本地 API 联调和桌面交付 |
 | [199 首轮后端功能缺口复核修复记录](199-p5-gaps-review-fix-record.md) | R01～R06 实现方修复、自验及 R01 两轮补修。后续独立结论见 198 |
 | [198 首轮后端功能缺口独立复核](198-p5-capability-gaps-independent-review.md) | 统一离线验收 21 步通过，R01 提交前与提交后恢复均通过，R01～R06 在本机离线范围关闭 |
