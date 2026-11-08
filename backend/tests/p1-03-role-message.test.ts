@@ -313,3 +313,35 @@ test("failed initialization can be retried with the same roleId", async () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("GET /v1/roles lists empty, ready and failed roles (UI-PREP-01)", async () => {
+  const root = tempRoot();
+  let app: ReturnType<typeof createBackendApp> | undefined;
+  try {
+    const started = await start(root);
+    app = started.app;
+    const { baseUrl } = started;
+
+    const emptyList = await request(baseUrl, "GET", "/v1/roles");
+    assert.equal(emptyList.status, 200);
+    assert.deepEqual(emptyList.body.items, []);
+
+    const created = await request(baseUrl, "POST", "/v1/roles", {
+      displayName: "樱",
+      definition: { text: "温柔安静的伴读女孩" },
+    });
+    assert.equal(created.status, 201);
+
+    const readyList = await request(baseUrl, "GET", "/v1/roles");
+    assert.equal(readyList.status, 200);
+    const items = readyList.body.items as Array<Record<string, unknown>>;
+    assert.equal(items.length, 1);
+    assert.equal(items[0]?.roleId, created.body.roleId);
+    assert.equal(items[0]?.displayName, "樱");
+    assert.equal(items[0]?.status, "ready");
+    assert.equal(items[0]?.defaultWindowId, created.body.defaultWindowId);
+  } finally {
+    await app?.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

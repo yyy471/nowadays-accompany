@@ -72,6 +72,11 @@ export function registerApiRoutes(
     body: { status: "ok", version },
   }));
 
+  router.add("GET", "/v1/roles", (): JsonResponse => ({
+    status: 200,
+    body: { items: services.roles.listRoles() },
+  }));
+
   router.add("POST", "/v1/roles", async ({ request }): Promise<JsonResponse> => {
     const body = parseBody<CreateRoleBody>(
       createRoleSchema,

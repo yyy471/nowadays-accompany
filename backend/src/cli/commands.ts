@@ -54,6 +54,10 @@ async function runRole(
 ): Promise<unknown> {
   const [action, ...rest] = args;
   switch (action) {
+    case "list": {
+      parseArgs(rest, []);
+      return client.request("GET", "/v1/roles");
+    }
     case "create": {
       const options = parseArgs(rest, [
         "name",

@@ -62,6 +62,15 @@ export class Router {
       );
       return;
     }
+    if (request.method === "OPTIONS") {
+      response.writeHead(204, {
+        "access-control-allow-origin": "*",
+        "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+        "access-control-allow-headers": "content-type, last-event-id",
+      });
+      response.end();
+      return;
+    }
     for (const route of this.routes) {
       if (route.method !== request.method) {
         continue;

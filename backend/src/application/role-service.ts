@@ -23,6 +23,18 @@ export interface RoleView {
   updatedAt: string;
 }
 
+export interface RoleListItemView {
+  roleId: string;
+  displayName: string;
+  status: "initializing" | "ready" | "failed";
+  initError: string | null;
+  defaultWindowId: string | null;
+  definitionRevision: number | null;
+  stateVersion: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CreateRoleInput {
   displayName: string;
   definition: {
@@ -127,6 +139,53 @@ export class RoleService {
       this.markFailed(roleId, error);
       throw new RoleInitializationError(roleId, "failed");
     }
+  }
+
+  listRoles(): RoleListItemView[] {
+    return this.appStore.listRoleIndexes().map((index) => {
+      if (index.initStatus !== "ready") {
+        return {
+          roleId: index.roleId,
+          displayName: index.initPayload?.displayName ?? index.roleId,
+          status: index.initStatus,
+          initError: index.initError,
+          defaultWindowId: null,
+          definitionRevision: null,
+          stateVersion: null,
+          createdAt: index.createdAt,
+          updatedAt: index.updatedAt,
+        };
+      }
+      try {
+        return this.access.withStore(index.roleId, (storage) => {
+          const role = storage.business.getRole(index.roleId);
+          const window = storage.business.getDefaultWindow(index.roleId);
+          return {
+            roleId: role.roleId,
+            displayName: role.displayName,
+            status: "ready" as const,
+            initError: null,
+            defaultWindowId: window.windowId,
+            definitionRevision: role.definitionRevision,
+            stateVersion: role.stateVersion,
+            createdAt: role.createdAt,
+            updatedAt: role.updatedAt,
+          };
+        });
+      } catch (error) {
+        return {
+          roleId: index.roleId,
+          displayName: index.initPayload?.displayName ?? index.roleId,
+          status: "failed" as const,
+          initError: error instanceof Error ? error.message : String(error),
+          defaultWindowId: null,
+          definitionRevision: null,
+          stateVersion: null,
+          createdAt: index.createdAt,
+          updatedAt: index.updatedAt,
+        };
+      }
+    });
   }
 
   getRole(roleId: string): RoleView {

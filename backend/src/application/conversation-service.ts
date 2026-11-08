@@ -374,6 +374,7 @@ export class ConversationService {
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache, no-store",
       connection: "keep-alive",
+      "access-control-allow-origin": "*",
     });
     input.response.flushHeaders?.();
     let lastHeartbeat = Date.now();
