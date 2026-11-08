@@ -1,0 +1,6 @@
+﻿hand.woff  鈥?Ma Shan Zheng锛堥┈鍠勬斂姣涚瑪妤蜂功锛夊瓙闆?  Copyright 2018 The MaShanZheng Project Authors (https://github.com/googlefonts/mashanzheng)
+title.woff 鈥?ZCOOL XiaoWei锛堢珯閰峰皬钖囷級瀛愰泦锛堝凡鍓旈櫎瀛楀舰鏈夌己闄风殑銆屽洖銆嶏級
+  Copyright 2018 The ZCOOL XiaoWei Project Authors (https://www.github.com/googlefonts/xiaowei)
+
+涓よ€呭潎浠?SIL Open Font License 1.1 鎺堟潈锛歨ttps://openfontlicense.org
+鏈洰褰曚腑鐨勬枃浠朵负鎸夊師鍨嬬敤瀛楃敓鎴愮殑瀛愰泦锛屼粎鐢ㄤ簬鏈蹇靛師鍨嬨€?

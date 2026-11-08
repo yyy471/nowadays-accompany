@@ -39,3 +39,7 @@ dist/
 Thumbs.db
 Desktop.ini
 *.stackdump
+
+# Python caches
+__pycache__/
+*.pyc

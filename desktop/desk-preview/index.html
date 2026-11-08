@@ -4,97 +4,680 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'">
-  <title>Nowadays</title>
-  <link rel="icon" href="assets/fold-light.svg" type="image/svg+xml">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; script-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; object-src 'none'; base-uri 'none'">
+  <title>Nowadays · 光影书房与器物剧场</title>
+  <link rel="icon" id="app-favicon" href="assets/fold-light.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
-  <script defer src="assets/anchors.js"></script>
   <script defer src="environment.js"></script>
   <script defer src="window-effects.js"></script>
   <script defer src="app.js"></script>
 </head>
 <body>
-  <main class="home" id="home">
-    <h1 class="sr-only" id="desk-title">夏澄的书桌</h1>
-    <div class="room" id="room" aria-labelledby="desk-title">
-      <div class="desk-art" aria-hidden="true">
-        <div class="light-layer is-visible" id="light-layer-a">
-          <img class="plate-base" src="assets/day-off.webp" alt="" fetchpriority="high">
-          <img class="plate-next" alt="">
-          <div class="seated-figure"><img class="figure-base" src="assets/plush-day-off.webp" alt=""><img class="figure-next" alt=""></div>
-        </div>
-        <div class="light-layer" id="light-layer-b">
-          <img class="plate-base" alt="">
-          <img class="plate-next" alt="">
-          <div class="seated-figure"><img class="figure-base" alt=""><img class="figure-next" alt=""></div>
-        </div>
-      </div>
-      <canvas class="window-effects" id="window-effects" aria-hidden="true"></canvas>
-      <div class="leaf-shadow" aria-hidden="true">
-        <svg viewBox="0 0 300 110" preserveAspectRatio="none" focusable="false">
-          <path d="M0 76C53 74 92 55 153 51S241 46 300 15M54 70C71 61 87 39 104 26M133 54C156 68 188 79 216 78M191 48C206 36 225 28 246 26" fill="none" stroke="currentColor" stroke-width="1.6"/>
-          <path d="M59 68Q46 52 26 58Q41 76 59 68ZM91 45Q80 23 54 27Q68 47 91 45ZM102 28Q111 6 138 10Q132 31 102 28ZM119 57Q96 73 103 87Q124 76 119 57ZM152 61Q155 82 181 93Q184 73 152 61ZM184 73Q209 66 223 79Q203 87 184 73ZM207 37Q190 20 169 23Q180 42 207 37ZM227 30Q232 10 256 5Q252 24 227 30ZM254 34Q270 47 293 36Q280 27 254 34Z" fill="currentColor"/>
-        </svg>
-      </div>
-      <div class="steam" id="steam" aria-hidden="true"><i></i><i></i><i></i></div>
-      <button class="hotspot" id="photo" aria-label="和夏澄聊天"></button>
-      <div class="print" id="print" aria-hidden="true"><img id="portrait" src="assets/photo-day.webp" alt=""></div>
-      <span class="photo-caption" id="photo-caption" aria-hidden="true">夏澄</span>
-      <div class="plush-shadow" id="plush-shadow" aria-hidden="true"></div>
-      <button class="hotspot" id="plush-trigger" aria-label="轻拍玩偶"></button>
-      <time class="clock" id="clock" aria-label="本地时间"></time>
-      <time class="calendar" id="calendar" aria-label="今天的日期"><small id="calendar-month"></small><span id="calendar-day"></span><small id="calendar-weekday"></small></time>
-      <button class="hotspot" id="calendar-trigger" aria-label="日历与季节"></button>
-      <button class="hotspot" id="role-trigger" aria-label="切换角色"></button>
-      <button class="hotspot" id="lamp" aria-label="台灯" aria-pressed="false"></button>
-      <div id="book-spines"></div>
-      <section class="memo" id="memo" aria-label="角色便笺">
-        <p>此刻</p>
-        <span id="activity"></span>
-        <button id="note" class="note">她想对你说 <span aria-hidden="true">↗</span></button>
-      </section>
-    </div>
-  </main>
+  <!-- Procedural SVG Filters for Tactile Paper Grain & Ink Dispersion -->
+  <svg class="sr-only" aria-hidden="true">
+    <defs>
+      <filter id="cotton-paper" x="0%" y="0%" width="100%" height="100%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.045" numOctaves="4" seed="7" result="noise"/>
+        <feColorMatrix type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.035 0" in="noise" result="grain"/>
+        <feBlend mode="multiply" in="SourceGraphic" in2="grain"/>
+      </filter>
+      <filter id="seal-rough" x="-10%" y="-10%" width="120%" height="120%">
+        <feTurbulence type="turbulence" baseFrequency="0.06" numOctaves="2" result="turb"/>
+        <feDisplacementMap in2="turb" in="SourceGraphic" scale="1.4" xChannelSelector="R" yChannelSelector="G"/>
+      </filter>
+    </defs>
+  </svg>
 
-  <main class="chat" id="chat" hidden aria-labelledby="chat-name">
-    <div class="chat-art">
-      <div class="chat-print" id="chat-print"><img id="chat-portrait" src="assets/photo-day.webp" alt=""></div>
-      <p id="chat-art-caption"></p>
+  <div class="luminary-app" id="app"
+       data-focus="stage"
+       data-medium="letter"
+       data-role="xiacheng"
+       data-season="autumn"
+       data-weather="clear"
+       data-phase="day"
+       data-night="false"
+       data-lamp="false"
+       data-activity="reading">
+
+    <!-- LAYER 1: Full-Bleed Multi-Plane Studio & Seasonal Backdrop -->
+    <div class="stage-backdrop" id="stage-backdrop" aria-hidden="true">
+      <div class="ambient-bleed"></div>
+      <div class="studio-scene" id="studio-scene">
+        <img class="snow-window-plate" src="assets/courtyard-snow.webp" alt="">
+        <img class="studio-plate studio-plate-day" src="assets/scene-day.webp" alt="" fetchpriority="high">
+        <img class="studio-plate studio-plate-night" src="assets/scene-night.webp" alt="">
+        <div class="studio-color-grade"></div>
+        <div class="studio-lamp-glow"></div>
+      </div>
     </div>
-    <section class="conversation">
-      <header class="chat-header">
-        <button id="back" class="quiet"><span aria-hidden="true">←</span> 书桌</button>
-        <div><h1 id="chat-name"></h1><span class="sample-label">离线样例</span></div>
-      </header>
-      <ol class="messages" id="messages" aria-label="聊天记录" aria-live="polite"></ol>
-      <form class="composer" id="composer">
-        <label for="draft" class="sr-only">消息</label>
-        <textarea id="draft" rows="2" placeholder="说点什么……"></textarea>
-        <button type="submit" class="accent" id="send">发送 <span aria-hidden="true">↑</span></button>
-      </form>
+
+    <!-- LAYER 2: Atmospheric & Weather Canvas (God Rays, Rain Drops, Seasonal Particles, Steam) -->
+    <canvas class="stage-canvas atmosphere-canvas" id="atmosphere-canvas" aria-hidden="true"></canvas>
+
+    <!-- LAYER 3: Living Character & Foreground Presence Stage -->
+    <section class="character-stage" id="character-stage" aria-label="窗畔角色在场舞台">
+      <div class="character-anchor" id="character-anchor">
+        <!-- Ambient rim-light aura behind character -->
+        <div class="character-aura" aria-hidden="true"></div>
+
+        <!-- Xiacheng Living Illustrations (Day standing with book / Evening seated reading) -->
+        <div class="character-figure" id="character-figure" role="button" tabindex="0" aria-label="轻触角色互动">
+          <img class="char-sprite char-sprite-day" id="char-day-img" src="assets/xiacheng-day.webp" alt="夏澄窗畔白昼立绘">
+          <img class="char-sprite char-sprite-night" id="char-night-img" src="assets/xiacheng-night.webp" alt="夏澄夜读立绘">
+          <!-- Ayou Layered Studio Portrait Frame (when switched to Ayou) -->
+          <div class="char-ayou-stage" id="char-ayou-stage">
+            <div class="ayou-polaroid-frame">
+              <span class="brass-clip" aria-hidden="true"></span>
+              <img src="assets/photo-ayou.webp" alt="阿柚立绘">
+              <div class="ayou-frame-caption">
+                <strong>阿柚 · Ayou</strong>
+                <span>陪伴角色</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Poetic Listening / Thinking Feedback Pill (Shown in Theater Mode above Pulse Card) -->
+        <div class="char-whisper-bubble" id="char-bubble" role="status" aria-live="polite">
+          <span class="whisper-dot" aria-hidden="true"></span>
+          <p id="char-bubble-text">等待与你开启对话…</p>
+        </div>
+
+        <!-- Theater Mode Left 35% Zone: ✨ 实时行动脉搏卡 + ☕ 前景茶杯热气与台灯暖光池 -->
+        <div class="companion-focus-card" id="companion-focus-card">
+          <div class="pulse-card-badge">✨ 实时行动脉搏卡</div>
+          <div class="companion-focus-top">
+            <span class="live-pulse-ring" aria-hidden="true"></span>
+            <div class="companion-focus-info">
+              <strong id="companion-role-title">夏澄 · 在场待命</strong>
+              <span id="companion-activity-detail">暂无进行中的自主活动</span>
+            </div>
+          </div>
+          <div class="companion-state-pills" role="group" aria-label="预览角色在场行动状态">
+            <span class="pills-label">姿态切换：</span>
+            <button type="button" class="state-pill is-active" data-state="reading">📖 共读</button>
+            <button type="button" class="state-pill" data-state="writing">✒️ 执笔</button>
+            <button type="button" class="state-pill" data-state="thinking">🎧 静思</button>
+            <button type="button" class="state-pill" data-state="sharing">✉️ 折信</button>
+            <button type="button" class="state-pill" data-state="resting">🌙 听风</button>
+          </div>
+          <div class="companion-foreground-foot" aria-hidden="true">
+            <span>☕ 前景茶杯热气 + 四季折枝</span>
+            <span>·</span>
+            <span id="companion-lamp-hint">💡 台灯暖光池随行</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stage Mode Lower-Left Foreground: [左下前景：窗台与热饮] ☕ 袅袅升腾的茶杯水汽 + 四季折枝花瓶 -->
+      <div class="stage-foreground-corner" id="stage-foreground-corner" aria-hidden="true">
+        <div class="steam-wisps">
+          <i></i><i></i><i></i>
+        </div>
+        <div class="foreground-corner-text">
+          <strong>☕ 窗台与热饮 · 四季折枝花瓶</strong>
+          <span id="foreground-season-note">袅袅升腾的茶杯水汽 · 窗外光影随风微动</span>
+        </div>
+      </div>
+
+      <!-- Stage Mode Lower-Right: ✉️ 主动分享折信笺（有未读时浮现，空状态隐藏） -->
+      <button type="button" class="proactive-origami-letter" id="proactive-letter" hidden aria-label="展开她的主动分享折信">
+        <span class="origami-wax-seal" aria-hidden="true">封</span>
+        <span class="origami-crease" aria-hidden="true"></span>
+        <div class="origami-meta">
+          <small id="proactive-badge"></small>
+          <strong id="proactive-preview"></strong>
+          <span class="origami-cta">点击展开信笺 <i aria-hidden="true">↗</i></span>
+        </div>
+      </button>
     </section>
-  </main>
 
-  <dialog id="role-dialog" aria-labelledby="role-heading">
-    <div class="dialog-heading"><h2 id="role-heading">换一位</h2><form method="dialog"><button class="quiet" aria-label="关闭角色选择">关闭</button></form></div>
-    <div class="role-list" id="role-list"></div>
-  </dialog>
-  <dialog id="appearance-dialog" aria-labelledby="appearance-heading">
-    <div class="dialog-heading"><h2 id="appearance-heading">房间环境</h2><form method="dialog"><button class="quiet" aria-label="关闭房间环境">关闭</button></form></div>
-    <div class="environment-fields">
-      <label>时间<select id="time-setting"><option value="auto">跟随本地时间</option><option value="dawn">清晨</option><option value="day">白昼</option><option value="dusk">黄昏</option><option value="night">夜间</option></select></label>
-      <label>天气<select id="weather-setting"><option value="auto">随场景变化</option><option value="clear">晴</option><option value="cloud">阴</option><option value="rain">雨</option><option value="snow">雪</option></select></label>
-      <label>季节<select id="season-setting"><option value="auto">跟随本地日期</option><option value="spring">春</option><option value="summer">夏</option><option value="autumn">秋</option><option value="winter">冬</option></select></label>
-      <label>台灯<select id="lamp-setting"><option value="auto">随时段开关</option><option value="on">开</option><option value="off">关</option></select></label>
-    </div>
-    <p class="environment-caption"><span id="ambient"></span>。时钟使用本地时间，天气由房间场景模拟。</p>
-  </dialog>
-  <dialog id="book-dialog" class="book-dialog" aria-labelledby="book-title">
-    <div class="dialog-heading"><h2 id="book-title">书架</h2><form method="dialog"><button class="quiet">合上</button></form></div>
-    <div class="book-pages" id="book-pages">
-      <div class="book-cover"><small id="book-number"></small><p id="book-summary"></p></div>
-      <div class="book-sheet" id="book-sheet"></div>
-    </div>
-  </dialog>
+    <!-- LAYER 4: Tactile Medium Theater (Right 64% Unfolding Stage in Theater Mode) -->
+    <main class="medium-theater" id="medium-theater" aria-label="器物剧场工作台">
+      <!-- Top Staggered Material Index Bookmarks -->
+      <nav class="theater-bookmarks" aria-label="器物介质切换">
+        <button type="button" class="bookmark-tab is-active" data-medium-tab="letter">
+          <span class="tab-icon" aria-hidden="true">✒️</span>
+          <span class="tab-label">书信 · 交谈</span>
+          <small class="tab-sub">唯一主信笺</small>
+        </button>
+        <button type="button" class="bookmark-tab" data-medium-tab="journal">
+          <span class="tab-icon" aria-hidden="true">📖</span>
+          <span class="tab-label">手账 · 心境</span>
+          <small class="tab-sub">双页日记</small>
+        </button>
+        <button type="button" class="bookmark-tab" data-medium-tab="filmstrip">
+          <span class="tab-icon" aria-hidden="true">🎞️</span>
+          <span class="tab-label">胶片 · 记忆</span>
+          <small class="tab-sub">证据回溯</small>
+        </button>
+        <button type="button" class="bookmark-tab" data-medium-tab="spread">
+          <span class="tab-icon" aria-hidden="true">🧭</span>
+          <span class="tab-label">推演 · 她的一天</span>
+          <small class="tab-sub">怀表与日志</small>
+        </button>
+        <button type="button" class="bookmark-close" id="theater-close-btn" aria-label="合上器物回到主舞台 (Esc)">
+          合上 <span aria-hidden="true">✕</span>
+        </button>
+      </nav>
+
+      <div class="theater-stage-box">
+        <!-- MEDIUM 1: 3D Unfolding Correspondence Letter (Scheme A: Single Pure Main Conversation Window DL-04) -->
+        <article class="medium-panel medium-letter is-active" id="panel-letter" aria-labelledby="letter-heading">
+          <div class="origami-fold-line fold-line-1" aria-hidden="true"></div>
+          <div class="origami-fold-line fold-line-2" aria-hidden="true"></div>
+
+          <header class="letter-header">
+            <div class="letter-title-group">
+              <span class="letter-seal" id="letter-seal" aria-hidden="true">澄</span>
+              <div>
+                <h1 id="letter-heading">与夏澄的窗畔书信</h1>
+                <p id="letter-subtitle">唯一直接对话主窗口 (DL-04)</p>
+              </div>
+            </div>
+            <!-- Scheme A: Pure single main window indicator + live backend connection & external channel log jump -->
+            <div class="letter-channel-meta" id="letter-channel-meta">
+              <span class="main-window-badge" id="main-window-badge" title="DL-04：主聊天界面只展示你与角色的唯一直接对话，不混入其他渠道消息">
+                📌 唯一主对话窗
+              </span>
+              <span class="backend-conn-pill" id="backend-conn-pill" data-online="false">
+                <i class="conn-dot" aria-hidden="true"></i>
+                <span id="backend-conn-text">正在连接后端…</span>
+              </span>
+              <button type="button" class="ext-log-jump-btn" id="ext-log-jump-btn" title="前往「她的一天」查看其他渠道会话与活动日志 (DL-04)">
+                🧭 外部窗口日志 ↗
+              </button>
+            </div>
+          </header>
+
+          <!-- Pinned Proactive Share Fold-out Card (Hidden when empty) -->
+          <div class="pinned-share-card" id="pinned-share-card" hidden>
+            <div class="share-wax" aria-hidden="true">主动分享</div>
+            <div class="share-body">
+              <strong id="share-card-title"></strong>
+              <p id="share-card-text"></p>
+            </div>
+            <button type="button" class="share-reply-btn" id="share-reply-btn">顺着聊下去 ↵</button>
+          </div>
+
+          <!-- Messages Stream -->
+          <ol class="letter-messages" id="letter-messages" aria-label="书信往来记录" aria-live="polite"></ol>
+
+          <!-- Typing / Listening Feedback Bar (DL-80 ~ DL-82) -->
+          <div class="typing-status-bar" id="typing-status-bar" hidden>
+            <span class="ink-ripple" aria-hidden="true"></span>
+            <span id="typing-status-text">正在落笔输入 · 停笔 1 秒后触发回应…</span>
+          </div>
+
+          <!-- Paperweight Composer -->
+          <form class="letter-composer" id="letter-composer">
+            <div class="composer-row">
+              <label for="draft-input" class="sr-only">书信内容</label>
+              <textarea id="draft-input" rows="2" placeholder="在棉浆信笺上给夏澄写点什么……（Enter 寄出，Shift+Enter 换行）"></textarea>
+              <div class="composer-actions">
+                <button type="button" class="interrupt-btn" id="interrupt-btn" hidden title="发送新消息中断当前回复并重新决策 (DL-82)">中断重发</button>
+                <button type="submit" class="send-seal-btn" id="send-btn">
+                  <span>落笔寄出</span>
+                  <i aria-hidden="true">↗</i>
+                </button>
+              </div>
+            </div>
+          </form>
+        </article>
+
+        <!-- MEDIUM 2: 3D Tactile Leather Open Two-Page Journal (Diary & Inner State) -->
+        <article class="medium-panel medium-journal" id="panel-journal" aria-labelledby="journal-heading" hidden>
+          <div class="leather-book-frame">
+            <span class="brass-corner corner-tl" aria-hidden="true"></span>
+            <span class="brass-corner corner-tr" aria-hidden="true"></span>
+            <span class="brass-corner corner-bl" aria-hidden="true"></span>
+            <span class="brass-corner corner-br" aria-hidden="true"></span>
+            <span class="silk-bookmark" aria-hidden="true"></span>
+
+            <!-- Left Page: Current Inner State & Growth (DL-25 / DL-48) -->
+            <section class="journal-page journal-page-left" aria-label="角色当前心境与成长">
+              <div class="page-header-meta">
+                <span>INNER STATE · 心境档案</span>
+                <span id="state-updated-at">尚未记录</span>
+              </div>
+              <div class="mood-stamp-box">
+                <div class="vermilion-seal" id="mood-seal" aria-hidden="true">—</div>
+                <div>
+                  <h2 id="journal-heading">暂无心境记录</h2>
+                  <p class="mood-poetic" id="mood-summary">当前为空数据状态，角色心境将随对话与自主活动自动生成。</p>
+                </div>
+              </div>
+
+              <div class="state-meters" id="state-meters">
+                <div class="meter-row">
+                  <span>阅读专注度</span>
+                  <div class="meter-track"><i id="meter-bar-focus" style="width: 0%"></i></div>
+                  <strong id="meter-val-focus">0%</strong>
+                </div>
+                <div class="meter-row">
+                  <span>倾诉与分享欲</span>
+                  <div class="meter-track"><i id="meter-bar-sharing" style="width: 0%"></i></div>
+                  <strong id="meter-val-sharing">0%</strong>
+                </div>
+                <div class="meter-row">
+                  <span>内心安定感</span>
+                  <div class="meter-track"><i id="meter-bar-serenity" style="width: 0%"></i></div>
+                  <strong id="meter-val-serenity">0%</strong>
+                </div>
+              </div>
+
+              <div class="growth-notes-box">
+                <div class="growth-header-row">
+                  <h3>性格底色与近期成长变化（DL-24 / DL-48）</h3>
+                  <button type="button" class="page-curl-btn" id="sync-state-btn" title="调用 PUT /v1/roles/:roleId/state 更新心境档案">✒️ 记一条心境</button>
+                </div>
+                <ul class="growth-list" id="growth-list"></ul>
+              </div>
+            </section>
+
+            <!-- Center Spine Gutter -->
+            <div class="book-spine-gutter" aria-hidden="true"></div>
+
+            <!-- Right Page: Handwritten Markdown Diary with 3D Page Flip (DL-26~28 / GAP-06) -->
+            <section class="journal-page journal-page-right" aria-label="角色亲笔日记">
+              <div class="journal-flip-stage" id="journal-flip-stage">
+                <div class="page-header-meta">
+                  <span id="diary-id-label">DIARY · 暂无记录</span>
+                  <span id="diary-weather-tag">—</span>
+                </div>
+                <h2 class="diary-hand-title" id="diary-title">暂无亲笔日记</h2>
+                <div class="diary-markdown-body" id="diary-body"></div>
+                <div class="diary-source-events" id="diary-sources"></div>
+              </div>
+
+              <footer class="diary-page-footer">
+                <button type="button" class="page-curl-btn" id="diary-prev-btn">‹ 上一篇</button>
+                <span class="page-counter" id="diary-page-counter">00 / 00</span>
+                <button type="button" class="page-curl-btn" id="diary-create-btn" title="调用 POST /v1/roles/:roleId/diaries 新增亲笔日记">+ 写新日记</button>
+                <button type="button" class="page-curl-btn" id="diary-next-btn">下一篇 ›</button>
+              </footer>
+            </section>
+
+            <!-- Right Edge Fabric Date Index Tabs -->
+            <div class="journal-index-tabs" id="journal-index-tabs" role="tablist" aria-label="日记日期索引"></div>
+          </div>
+        </article>
+
+        <!-- MEDIUM 3: Darkroom Filmstrip & Polaroid Box with Slide-Out Evidence (DL-16~19 / DL-55 / DL-92) -->
+        <article class="medium-panel medium-filmstrip" id="panel-filmstrip" aria-labelledby="filmstrip-heading" hidden>
+          <div class="filmstrip-perforation" aria-hidden="true">
+            <span>◆ KODAK PORTRA 400</span><span>MEMORY CHRONICLE · 经历与证据回溯</span><span>EMPTY ARCHIVE ◆</span>
+          </div>
+
+          <header class="filmstrip-toolbar">
+            <div>
+              <h2 id="filmstrip-heading">时光标本与事件记忆库</h2>
+              <p>点击任意拍立得卡片，从侧面夹层抽出该记忆对应的「原始对话与活动证据单」</p>
+            </div>
+            <div class="filmstrip-controls">
+              <div class="filter-pills" role="group" aria-label="记忆类型筛选">
+                <button type="button" class="mem-filter is-active" data-filter="all">全部记录</button>
+                <button type="button" class="mem-filter" data-filter="event">独立事件 (Event)</button>
+                <button type="button" class="mem-filter" data-filter="summary">日常摘要 (Summary)</button>
+              </div>
+              <input type="search" id="memory-search" class="memory-search-input" placeholder="实时检索后端记忆 (POST /memory/search)…">
+              <button type="button" class="mem-filter" id="memory-batch-btn" title="调用 POST /v1/roles/:roleId/memory/batches 立即触发后台记忆整理">🔄 整理记忆</button>
+            </div>
+          </header>
+
+          <div class="filmstrip-workspace">
+            <!-- Polaroid Memory Cards List -->
+            <div class="polaroid-gallery" id="polaroid-gallery" role="list" aria-label="记忆拍立得列表"></div>
+
+            <!-- Slide-Out Perforated Raw Evidence Slip (DL-16 / DL-55 / DL-92) -->
+            <aside class="evidence-slip-drawer" id="evidence-drawer" aria-label="原始对话与活动证据单">
+              <div class="slip-perforated-edge" aria-hidden="true"></div>
+              <div class="slip-content">
+                <div class="slip-header">
+                  <span class="slip-stamp">RAW EVIDENCE · 原始证据单</span>
+                  <small id="evidence-id-code">—</small>
+                </div>
+                <h3 id="evidence-title">暂无记忆卡片</h3>
+                <div class="slip-meta-grid" id="evidence-meta"></div>
+                <div class="slip-quotes-title">追溯原始对话与活动记录片段（DL-92）：</div>
+                <div class="slip-quotes-list" id="evidence-quotes"></div>
+                <div class="slip-actions">
+                  <button type="button" class="slip-action-btn" id="evidence-correct-btn" title="DL-55：通过 PATCH /memory/events 或 summaries 人工修正整理后的记忆">
+                    ✏️ 修正此记忆 (DL-55)
+                  </button>
+                  <button type="button" class="slip-action-btn" id="evidence-discuss-btn">
+                    ✒️ 带着这段记忆回到书信继续聊 ↗
+                  </button>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </article>
+
+        <!-- MEDIUM 4: Co-Working Desk Spread (Brass Pocket-Watch Schedule, Workspace Manuscript & DL-04 External Channel Logs) -->
+        <article class="medium-panel medium-spread" id="panel-spread" aria-labelledby="spread-heading" hidden>
+          <div class="spread-grid">
+            <!-- Left Column: Brushed-Brass Pocket-Watch Dial & Autonomy Quota (DL-104~112) -->
+            <section class="spread-watch-card" aria-labelledby="spread-heading">
+              <div class="watch-card-header">
+                <h2 id="spread-heading">自主日程怀表与额度盘</h2>
+                <span class="quota-mode-badge" id="quota-mode-badge">每日预算 · 200 点</span>
+              </div>
+
+              <!-- SVG Brass Astronomical & Quota Dial -->
+              <div class="brass-dial-wrap">
+                <svg class="brass-dial-svg" viewBox="0 0 220 220" aria-hidden="true">
+                  <defs>
+                    <linearGradient id="brass-rim" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stop-color="#f3dfb6"/>
+                      <stop offset="45%" stop-color="#b88c4a"/>
+                      <stop offset="75%" stop-color="#7c5826"/>
+                      <stop offset="100%" stop-color="#e5c88f"/>
+                    </linearGradient>
+                  </defs>
+                  <circle cx="110" cy="110" r="102" fill="none" stroke="url(#brass-rim)" stroke-width="5"/>
+                  <circle cx="110" cy="110" r="92" fill="none" stroke="rgba(184,140,74,0.28)" stroke-width="1" stroke-dasharray="3 5"/>
+                  <!-- Quota background track -->
+                  <circle cx="110" cy="110" r="80" fill="none" stroke="rgba(184,140,74,0.18)" stroke-width="8"/>
+                  <!-- Quota active arc -->
+                  <circle id="quota-ring-arc" cx="110" cy="110" r="80" fill="none" stroke="url(#brass-rim)" stroke-width="8"
+                          stroke-linecap="round" stroke-dasharray="502.6" stroke-dashoffset="35"
+                          transform="rotate(-90 110 110)"/>
+                </svg>
+                <div class="dial-center-readout">
+                  <small>今日剩余自主点数</small>
+                  <strong id="dial-quota-value">200<span>/200</span></strong>
+                  <em id="dial-next-wake">暂无唤醒计划</em>
+                </div>
+              </div>
+
+              <div class="autonomy-sim-bar">
+                <button type="button" class="sim-action-btn" id="sim-activity-btn">✨ 推进一次自主阅读与笔记</button>
+                <button type="button" class="sim-action-btn" id="add-wake-btn" title="调用 POST /v1/roles/:roleId/autonomy/wakes 新增唤醒安排">⏰ + 唤醒日程</button>
+              </div>
+
+              <div class="task-timeline-header">
+                <h3>今日自主唤醒、活动与任务链（GAP-01 / GAP-02）</h3>
+                <small>实时同步后端调度与工具轨迹</small>
+              </div>
+              <ol class="task-chain-list" id="task-chain-list"></ol>
+            </section>
+
+            <!-- Right Column: Workspace Markdown Manuscript Sheet (DL-14 / DL-44) + DL-04 External Channel Windows Log -->
+            <section class="spread-manuscript-card" aria-label="角色工作空间笔记与外部窗口日志">
+              <header class="manuscript-header">
+                <div>
+                  <span class="workspace-path" id="workspace-path">data/roles/xiacheng/workspace/notes/</span>
+                  <h3 id="manuscript-title">工作空间暂无笔记文件</h3>
+                </div>
+                <div class="manuscript-file-tabs" id="manuscript-file-tabs" role="tablist"></div>
+              </header>
+
+              <div class="manuscript-paper-sheet" id="manuscript-sheet">
+                <span class="paperclip-top" aria-hidden="true"></span>
+                <div class="manuscript-content" id="manuscript-content"></div>
+              </div>
+
+              <!-- DL-04 Scheme A: External / Other Independent Windows Log (Not mixed into Main Chat) -->
+              <div class="external-windows-log" id="external-windows-box">
+                <div class="ext-log-header">
+                  <strong>💬 其他独立窗口与外部渠道会话日志（DL-04）</strong>
+                  <small id="ext-windows-count">暂无其他独立窗口或外部渠道会话</small>
+                </div>
+                <div class="ext-windows-list" id="external-windows-list"></div>
+              </div>
+
+              <footer class="manuscript-footer">
+                <span id="manuscript-updated">尚未创建工作空间笔记</span>
+                <button type="button" class="manuscript-chat-btn" id="manuscript-chat-btn">✒️ 回到书信与她交流 ↗</button>
+              </footer>
+            </section>
+          </div>
+        </article>
+      </div>
+    </main>
+
+    <!-- LAYER 5: Global Light, Swaying Foliage Gobo Shadow & Foreground Bokeh Cast (Over UI & Paper!) -->
+    <canvas class="stage-canvas lightcast-canvas" id="lightcast-canvas" aria-hidden="true"></canvas>
+
+    <!-- LAYER 6: Top Floating Capsules, Bottom Presence Dock & Right Atelier Blueprint Drawer -->
+    <header class="top-whisper-hud" aria-label="环境与全局控制">
+      <!-- Top-Left: [← 收起回主舞台 (Esc)] (in Theater Mode) + 时节与环境怀表胶囊 -->
+      <div class="chrono-capsule-wrap">
+        <button type="button" class="hud-pill-btn stage-return-btn" id="stage-return-btn" title="收起器物回到主舞台 (Esc)">
+          <span aria-hidden="true">←</span> 收起回主舞台 (Esc)
+        </button>
+
+        <button type="button" class="chrono-capsule" id="chrono-btn" aria-expanded="false" aria-controls="env-popover">
+          <span class="chrono-dot" aria-hidden="true"></span>
+          <span class="chrono-env" id="hud-env-summary">🍂 秋 · 黄昏 · 晴</span>
+          <span class="chrono-divider" aria-hidden="true">·</span>
+          <time class="chrono-time" id="hud-clock">17:42</time>
+          <span class="chrono-divider" aria-hidden="true">·</span>
+          <span class="chrono-date" id="hud-date">11月6日 周五</span>
+          <i class="chrono-chevron" aria-hidden="true">▾</i>
+        </button>
+
+        <!-- Glass Environment Tuner Popover -->
+        <div class="env-tuner-popover" id="env-popover" hidden role="region" aria-label="时节与光影调音台">
+          <div class="tuner-head">
+            <strong>时节与房间光影流转</strong>
+            <span id="tuner-poetic-label">秋枫 · 暮色琥珀</span>
+          </div>
+          <div class="tuner-row">
+            <span class="tuner-label">时段</span>
+            <div class="tuner-pills" data-env-group="time">
+              <button type="button" data-val="auto" class="is-active">随系统</button>
+              <button type="button" data-val="dawn">清晨</button>
+              <button type="button" data-val="day">白昼</button>
+              <button type="button" data-val="dusk">黄昏</button>
+              <button type="button" data-val="night">夜阑</button>
+            </div>
+          </div>
+          <div class="tuner-row">
+            <span class="tuner-label">四季</span>
+            <div class="tuner-pills" data-env-group="season">
+              <button type="button" data-val="auto" class="is-active">随节气</button>
+              <button type="button" data-val="spring">🌸 春樱</button>
+              <button type="button" data-val="summer">🌿 夏木</button>
+              <button type="button" data-val="autumn">🍁 秋枫</button>
+              <button type="button" data-val="winter">❄️ 冬雪</button>
+            </div>
+          </div>
+          <div class="tuner-row">
+            <span class="tuner-label">天气</span>
+            <div class="tuner-pills" data-env-group="weather">
+              <button type="button" data-val="auto" class="is-active">随场景</button>
+              <button type="button" data-val="clear">☀️ 晴光</button>
+              <button type="button" data-val="cloud">☁️ 薄阴</button>
+              <button type="button" data-val="rain">🌧️ 听雨</button>
+              <button type="button" data-val="snow">🌨️ 落雪</button>
+            </div>
+          </div>
+          <div class="tuner-row">
+            <span class="tuner-label">台灯</span>
+            <div class="tuner-pills" data-env-group="lamp">
+              <button type="button" data-val="auto" class="is-active">自动感应</button>
+              <button type="button" data-val="on">💡 点亮暖灯</button>
+              <button type="button" data-val="off">🌙 熄灭</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Top-Right: Role Mini-Polaroids, Lamp Switch & Origami Atelier Drawer Trigger -->
+      <div class="top-right-controls">
+        <!-- Overlapping Mini-Polaroid Role Switcher (Synced with GET /v1/roles) -->
+        <div class="role-polaroid-deck" id="role-polaroid-deck" role="group" aria-label="切换陪伴角色">
+          <button type="button" class="mini-polaroid is-active" data-role-btn="xiacheng" title="切换至 夏澄">
+            <img src="assets/xiacheng-day.webp" alt="">
+            <span>夏澄</span>
+          </button>
+          <button type="button" class="mini-polaroid" data-role-btn="ayou" title="切换至 阿柚">
+            <img src="assets/photo-ayou.webp" alt="">
+            <span>阿柚</span>
+          </button>
+        </div>
+
+        <!-- Brass Desk Lamp Pull-Switch -->
+        <button type="button" class="hud-pill-btn lamp-switch-btn" id="lamp-btn" aria-pressed="false" title="开关书桌暖光台灯 (快捷键 N)">
+          <span class="lamp-bulb-dot" aria-hidden="true"></span>
+          <span id="lamp-btn-label">💡 台灯</span>
+        </button>
+
+        <!-- Origami Brand Atelier Trigger -->
+        <button type="button" class="hud-pill-btn atelier-trigger-btn" id="atelier-btn" aria-expanded="false" aria-controls="atelier-drawer">
+          <img id="brand-fold-icon" src="assets/fold-light.svg" alt="" width="18" height="18">
+          <span>✉️ 折信工坊</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Bottom Presence & Tactile Medium Dock (Two-Row Capsule in Full-Screen Stage Mode) -->
+    <footer class="presence-dock" id="presence-dock" aria-label="在场状态与器物入口">
+      <div class="dock-presence-status">
+        <div class="presence-indicator">
+          <span class="presence-pulse" aria-hidden="true"></span>
+          <div class="presence-line-1">
+            <span class="presence-prefix">● 此刻：</span>
+            <strong id="dock-role-name">夏澄</strong>
+            <span id="dock-status-desc">暂无进行中的活动</span>
+            <span class="chrono-divider" aria-hidden="true">·</span>
+            <span class="presence-tag" id="dock-activity-badge">📖 待命</span>
+            <span class="chrono-divider" aria-hidden="true">·</span>
+            <span class="presence-quota" id="dock-quota-text">自主额度 200/200</span>
+          </div>
+        </div>
+        <div class="dock-state-Row" role="group" aria-label="切换角色在场行动">
+          <button type="button" class="dock-state-chip is-active" data-state="reading">共读</button>
+          <button type="button" class="dock-state-chip" data-state="writing">执笔</button>
+          <button type="button" class="dock-state-chip" data-state="thinking">静思</button>
+          <button type="button" class="dock-state-chip" data-state="sharing">折信</button>
+          <button type="button" class="dock-state-chip" data-state="resting">听风</button>
+        </div>
+      </div>
+
+      <div class="dock-medium-cards" role="navigation" aria-label="展开桌面器物">
+        <button type="button" class="dock-medium-card" data-open-medium="letter">
+          <span class="medium-card-icon" aria-hidden="true">✒️</span>
+          <div class="medium-card-text">
+            <strong>展开信笺 (对话)</strong>
+            <small>唯一主信笺 · 直接对话</small>
+          </div>
+        </button>
+        <button type="button" class="dock-medium-card" data-open-medium="journal">
+          <span class="medium-card-icon" aria-hidden="true">📖</span>
+          <div class="medium-card-text">
+            <strong>翻开手账 (日记)</strong>
+            <small>亲笔日记 · 心境印章</small>
+          </div>
+        </button>
+        <button type="button" class="dock-medium-card" data-open-medium="filmstrip">
+          <span class="medium-card-icon" aria-hidden="true">🎞️</span>
+          <div class="medium-card-text">
+            <strong>记忆胶片</strong>
+            <small>拍立得墙 · 原始证据</small>
+          </div>
+        </button>
+        <button type="button" class="dock-medium-card" data-open-medium="spread">
+          <span class="medium-card-icon" aria-hidden="true">🧭</span>
+          <div class="medium-card-text">
+            <strong>她的一天</strong>
+            <small>唤醒怀表 · 外部窗口日志</small>
+          </div>
+        </button>
+      </div>
+    </footer>
+
+    <!-- Right Slide-Out Atelier Blueprint Drawer (Models, Skills, MCP & Quota Management) -->
+    <aside class="atelier-drawer" id="atelier-drawer" hidden aria-labelledby="atelier-title">
+      <div class="atelier-backdrop" id="atelier-backdrop"></div>
+      <div class="atelier-sheet">
+        <header class="atelier-header">
+          <div class="atelier-brand">
+            <img src="assets/fold-dark.svg" alt="" width="22" height="22">
+            <div>
+              <h2 id="atelier-title">折信工坊 · 能力与模型配置</h2>
+              <small>全局服务管理 · 角色独立按能力绑定 (DL-15 / DL-59)</small>
+            </div>
+          </div>
+          <button type="button" class="atelier-close-btn" id="atelier-close-btn">收起 ✕</button>
+        </header>
+
+        <div class="atelier-body">
+          <!-- Section 1: Model Service & Connection Test (DL-118 ~ DL-120) -->
+          <section class="atelier-section">
+            <div class="section-head">
+              <h3>模型服务与协议适配（DL-118～120）</h3>
+              <span class="blueprint-tag">统一适配层</span>
+            </div>
+            <div class="form-grid">
+              <label>
+                <span>接口协议</span>
+                <select id="cfg-protocol">
+                  <option value="openai-chat">OpenAI Chat Completions 兼容</option>
+                  <option value="anthropic">Anthropic Messages (DeepSeek / Claude)</option>
+                  <option value="openai-responses">OpenAI Responses API</option>
+                </select>
+              </label>
+              <label>
+                <span>服务地址 (Base URL)</span>
+                <input type="text" id="cfg-baseurl" value="http://127.0.0.1:3210/v1">
+              </label>
+              <label>
+                <span>对话绑定模型（支持手填或拉取列表）</span>
+                <div class="input-with-btn">
+                  <input type="text" id="cfg-model-id" value="nowadays-companion-v1">
+                  <button type="button" class="brass-outline-btn" id="fetch-models-btn">获取模型列表</button>
+                </div>
+              </label>
+              <label>
+                <span>后台记忆整理模型（DL-124）</span>
+                <select id="cfg-memory-model">
+                  <option value="inherit">默认继承当前角色对话模型</option>
+                  <option value="nowadays-companion-v1">单独绑定：nowadays-companion-v1</option>
+                  <option value="deepseek-chat">单独绑定：deepseek-chat</option>
+                  <option value="claude-3-7-sonnet">单独绑定：claude-3-7-sonnet</option>
+                </select>
+              </label>
+            </div>
+            <div class="test-conn-row">
+              <button type="button" class="brass-solid-btn" id="test-conn-btn">⚡ 测试连接（POST /v1/model-services/test）</button>
+              <button type="button" class="brass-outline-btn" id="save-model-btn">💾 保存并绑定至当前角色</button>
+              <span class="conn-result-text" id="conn-result-text">就绪 · 已连接本地后端资源</span>
+            </div>
+          </section>
+
+          <!-- Section 2: MCP & Agent Skills Switches (DL-35 / DL-36 / DL-71) -->
+          <section class="atelier-section">
+            <div class="section-head">
+              <h3>工具与通用 Skill 开关（DL-71 延续规则）</h3>
+              <span class="blueprint-tag">仅提供启停开关 · 无逐次审批</span>
+            </div>
+            <p class="section-note">关闭开关立即阻止新任务使用（实时调用 PATCH /v1/resources 与 PUT /bindings）；关闭时已在执行的原任务链仍可继续使用相关资源直至整条链结束。</p>
+            <div class="resource-switch-list" id="resource-switch-list"></div>
+          </section>
+
+          <!-- Section 3: Daily Autonomy Quota (DL-104 ~ DL-108) -->
+          <section class="atelier-section">
+            <div class="section-head">
+              <h3>自主活动统一额度（DL-104～108）</h3>
+              <span class="blueprint-tag">本地零点恢复</span>
+            </div>
+            <div class="quota-config-row">
+              <label class="quota-input-label">
+                <span>每日总额度（修改后自动同步 PUT /autonomy/budget）</span>
+                <input type="number" id="cfg-quota-limit" min="10" max="2000" step="10" value="200">
+              </label>
+              <label class="unlimited-toggle">
+                <input type="checkbox" id="cfg-quota-unlimited">
+                <span>设为无限制（Unlimited）</span>
+              </label>
+            </div>
+          </section>
+        </div>
+      </div>
+    </aside>
+  </div>
 </body>
 </html>

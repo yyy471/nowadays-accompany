@@ -6,6 +6,7 @@
 
 | 文档 | 定位与状态 |
 | --- | --- |
+| [205 光影书房与器物剧场前端重构计划](205-luminary-study-theater-frontend-plan.md) | `dev-front` 分支重构方案：单舞台双焦距、全屏五层光影流转与信笺／手账／胶片／推演四大器物转场 |
 | [204 书桌 v0.1.2 原生窗口与天气细化](204-desktop-desk-window-weather-refinement.md) | 原生窗口、独立受光玩偶、画室拍立得、分层雨雪和室内外风动 |
 | [203 书桌 v0.1.1 窗口与场景细化](203-desktop-desk-window-and-art-refinement.md) | dev 品牌图标、满幅窗口、书脊和场景重渲染及本机验证 |
 | [202 书桌 Windows 前端初版](202-desktop-desk-windows-v1.md) | Windows x64 便携 EXE、物件交互、本地时间和四季天气，含本机实现方验证 |
