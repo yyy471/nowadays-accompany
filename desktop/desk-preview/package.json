@@ -8,6 +8,7 @@
   "main": "main.cjs",
   "scripts": {
     "start": "electron .",
+    "test": "node --test tests/",
     "package:win": "electron-builder --win portable --x64 --publish never"
   },
   "devDependencies": {
@@ -16,7 +17,7 @@
   },
   "build": {
     "appId": "app.nowadays.desk",
-    "files": ["index.html", "style.css", "app.js", "environment.js", "window-effects.js", "main.cjs", "assets/**"],
+    "files": ["index.html", "style.css", "app.js", "environment.js", "weather-provider.js", "role-visual.js", "home.css", "window-effects.js", "main.cjs", "assets/**"],
     "win": {
       "icon": "assets/window.ico",
       "signExecutable": false

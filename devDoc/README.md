@@ -6,6 +6,7 @@
 
 | 文档 | 定位与状态 |
 | --- | --- |
+| [206 桌面主页精简、环境流转与角色外观入口](206-desktop-home-scene-and-role-visual-plan.md) | DL-132～DL-134 的前端方案与实现方自验：主页只做角色展示、连续的季节与天气流转、天气来源开关、角色外观适配器与动作图入口、删除预置的阿柚 |
 | [205 光影书房与器物剧场前端重构计划](205-luminary-study-theater-frontend-plan.md) | `dev-front` 分支重构方案：单舞台双焦距、全屏五层光影流转与信笺／手账／胶片／推演四大器物转场 |
 | [204 书桌 v0.1.2 原生窗口与天气细化](204-desktop-desk-window-weather-refinement.md) | 原生窗口、独立受光玩偶、画室拍立得、分层雨雪和室内外风动 |
 | [203 书桌 v0.1.1 窗口与场景细化](203-desktop-desk-window-and-art-refinement.md) | dev 品牌图标、满幅窗口、书脊和场景重渲染及本机验证 |

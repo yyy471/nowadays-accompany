@@ -10,7 +10,7 @@ const { pathToFileURL } = require("node:url");
 
 const home = "desk://bundle/index.html";
 const icon = join(__dirname, "assets", "window.png");
-const assets = /^\/(?:index\.html|(?:app|environment|window-effects)\.js|style\.css|assets\/(?:FONTS-LICENSE\.txt|[a-z0-9-_]+\.(?:webp|svg|woff|png|ico)))$/i;
+const assets = /^\/(?:index\.html|[a-z0-9-_]+\.(?:js|css)|assets\/(?:FONTS-LICENSE\.txt|[a-z0-9-_]+\.(?:webp|svg|woff|png|ico)))$/i;
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -156,14 +156,8 @@ function startOfflineLlmServer() {
             return;
           }
 
-          // 生成符合「夏澄」或「阿柚」人设的流式回复
-          const isAyou = systemText.includes("阿柚") || systemText.includes("烘焙");
-          let replyText = "";
-          if (isAyou) {
-            replyText = `刚从烤箱边回过神来就看到你的信啦！你刚才提到的「${userContent.slice(0, 24) || "这件事"}」，我已经拿小便签夹在食谱手账第一页了，等茶泡好我们慢慢聊～`;
-          } else {
-            replyText = `嗯，我正坐在书桌前认真读你的信呢。关于「${userContent.slice(0, 28) || "刚才聊到的话题"}」，我已经记在心上了，我们随时接着往下聊。`;
-          }
+          // 离线模型的固定回复（仅用于本地验证，不调用真实模型）
+          const replyText = `嗯，我正坐在书桌前认真读你的信呢。关于「${userContent.slice(0, 28) || "刚才聊到的话题"}」，我已经记在心上了，我们随时接着往下聊。`;
 
           if (parsed.stream === false) {
             res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
@@ -251,7 +245,8 @@ async function apiRequest(method, path, body) {
 }
 
 /**
- * 首次启动或新目录时，仅初始化「夏澄」与「阿柚」两个空状态角色实例及基础资源绑定，不注入任何演示数据
+ * 首次启动或新目录时，仅初始化「夏澄」一个空状态角色实例及基础资源绑定，不注入任何演示数据。
+ * 之后的角色由用户配置，不在这里预置（DL-134）。
  */
 async function seedInitialBackendDataIfNeeded(backendRoot, appRoot) {
   const rolesList = await apiRequest("GET", "/v1/roles");
@@ -350,29 +345,6 @@ async function seedInitialBackendDataIfNeeded(backendRoot, appRoot) {
   }
   await apiRequest("PUT", `/v1/roles/${xiacheng.roleId}/bindings`, { bindings: xiachengBindings });
   await apiRequest("PUT", `/v1/roles/${xiacheng.roleId}/autonomy/budget`, { dailyLimit: 200, unlimited: false });
-
-  // 3. 创建第二角色：「阿柚」（同样保持空状态）
-  const ayou = await apiRequest("POST", "/v1/roles", {
-    displayName: "阿柚",
-    definition: {
-      text: "阿柚是一名元气温暖的生活料理与手账达人，喜欢研究季节甜点、热饮配方与房间收纳。说话轻快活泼，总能用一杯热茶或刚出炉的司康治愈你的疲惫。",
-      payload: {
-        slug: "ayou",
-        enName: "Ayou",
-        subtitle: "暖阁茶歇 · 烘焙与生活手账",
-        avatar: "assets/photo-ayou.webp"
-      }
-    },
-    state: {}
-  });
-
-  await apiRequest("PUT", `/v1/roles/${ayou.roleId}/bindings`, {
-    bindings: [
-      { capability: "chat_model", resourceId: modelRes.resourceId, modelName: "nowadays-companion-v1", enabled: true },
-      { capability: "memory_model", resourceId: modelRes.resourceId, modelName: "nowadays-companion-v1", enabled: true }
-    ]
-  });
-  await apiRequest("PUT", `/v1/roles/${ayou.roleId}/autonomy/budget`, { dailyLimit: 200, unlimited: false });
 }
 
 async function ensureBackendRunning() {

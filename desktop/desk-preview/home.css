@@ -1,0 +1,276 @@
+/* ==========================================================================
+   主页（DL-132）：只留角色名、时间天气、一行状态、对话入口和一个次级菜单。
+   本文件在 style.css 之后加载，只补充主页新增元素的样式。
+   ========================================================================== */
+
+/* 动作图叠在基础立绘之上，有图时淡入，没有图时保持透明 */
+.char-sprite-action {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.char-sprite-action.is-visible {
+  opacity: 1;
+}
+
+/* 角色没有立绘时的占位：印章字加名字 */
+.char-placeholder {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 6%;
+  margin: 0 auto;
+  width: min(60%, 260px);
+  aspect-ratio: 0.78;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  border-radius: 48% 48% 14px 14px / 40% 40% 14px 14px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  backdrop-filter: blur(14px);
+  box-shadow: var(--shadow-soft), 0 0 28px var(--rim-light);
+}
+
+.char-placeholder[hidden] {
+  display: none;
+}
+
+.char-placeholder-seal {
+  font-family: var(--font-title);
+  font-size: clamp(3rem, 9vh, 5rem);
+  line-height: 1;
+  color: var(--brass);
+}
+
+.char-placeholder-name {
+  font-family: var(--font-hand);
+  font-size: 1.3rem;
+  color: var(--ink-primary);
+}
+
+/* 顶栏：角色名与时间天气 */
+.home-role-tag,
+.env-readout {
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  box-shadow: var(--shadow-soft);
+}
+
+.home-role-tag {
+  padding: 0 18px;
+  font-family: var(--font-title);
+  font-size: 1.05rem;
+  color: var(--ink-primary);
+}
+
+.luminary-app[data-focus="theater"] .home-role-tag {
+  display: none;
+}
+
+.env-readout {
+  padding: 0 14px;
+  font-size: 0.82rem;
+  color: var(--ink-secondary);
+}
+
+.env-readout time {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--ink-primary);
+}
+
+/* 角落菜单：日记、记忆、她的一天、设置，以及多角色时的切换 */
+.home-menu-wrap {
+  position: relative;
+}
+
+.home-menu-btn {
+  width: 38px;
+  padding: 0;
+  justify-content: center;
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.home-menu {
+  position: absolute;
+  right: 0;
+  top: 46px;
+  min-width: 172px;
+  display: grid;
+  gap: 2px;
+  padding: 6px;
+  border-radius: 14px;
+  border: 1px solid var(--glass-border);
+  background: var(--paper-bg);
+  backdrop-filter: blur(22px);
+  box-shadow: var(--shadow-soft);
+  animation: ink-appear 0.18s ease-out;
+}
+
+.home-menu[hidden] {
+  display: none;
+}
+
+.home-menu button {
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  text-align: left;
+  font-size: 0.86rem;
+  color: var(--ink-primary);
+}
+
+.home-menu button:hover,
+.home-menu button:focus-visible {
+  background: var(--paper-elevated);
+}
+
+.home-menu-roles {
+  display: grid;
+  gap: 2px;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--paper-border);
+}
+
+.home-menu-roles[hidden] {
+  display: none;
+}
+
+.home-menu-roles button.is-active {
+  font-weight: 600;
+  color: var(--brass);
+}
+
+/* 底部：一行状态和进入对话的入口 */
+.home-foot {
+  position: absolute;
+  left: 50%;
+  bottom: 28px;
+  z-index: 35;
+  width: min(560px, 90vw);
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  transform: translateX(-50%);
+  transition:
+    opacity 0.45s ease,
+    transform 0.52s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.luminary-app[data-focus="theater"] .home-foot {
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 24px);
+}
+
+.home-status {
+  margin: 0;
+  max-width: 100%;
+  padding: 8px 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  box-shadow: var(--shadow-soft);
+  font-size: 0.9rem;
+  color: var(--ink-primary);
+  text-align: center;
+}
+
+.home-status-source {
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--paper-border);
+  font-size: 0.7rem;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+
+.home-status-source[hidden] {
+  display: none;
+}
+
+.home-chat-btn {
+  height: 46px;
+  padding: 0 30px;
+  border-radius: 999px;
+  border: 1px solid var(--brass);
+  background: var(--brass);
+  color: #fffaf0;
+  font-size: 1rem;
+  font-weight: 600;
+  box-shadow: var(--shadow-soft);
+  transition: transform 0.18s ease, filter 0.2s ease;
+}
+
+.home-chat-btn:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.06);
+}
+
+.home-chat-btn[hidden] {
+  display: none;
+}
+
+/* 主页用底部状态条，不再显示聊天时的“倾听”气泡 */
+.luminary-app[data-focus="stage"] .char-whisper-bubble {
+  display: none;
+}
+
+/* 设置抽屉里的环境与天气区 */
+.atelier-section .tuner-row {
+  grid-template-columns: 5em 1fr;
+  margin-bottom: 8px;
+}
+
+.atelier-section .tuner-pills button {
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-foot,
+  .home-chat-btn,
+  .char-sprite-action {
+    transition: none;
+  }
+}
+
+/* ����ͼ�����ǰ�ť��û�е������ */
+.character-figure {
+  cursor: default;
+}
+
+/* ���ó�������ɫ�ף����ڰ�ť��Ҫͬ������ɫ���ſ����� */
+.atelier-sheet .tuner-label {
+  color: rgba(255, 244, 226, 0.7);
+}
+
+.atelier-sheet .tuner-pills button {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 244, 226, 0.92);
+}
+
+.atelier-sheet .tuner-pills button:hover {
+  border-color: var(--brass);
+}
+
+.atelier-sheet .tuner-pills button.is-active {
+  background: var(--brass);
+  border-color: var(--brass);
+  color: #fffaf0;
+}

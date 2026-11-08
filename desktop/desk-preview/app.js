@@ -5,16 +5,62 @@
   const app = $("app");
 
   /* ==========================================================================
-     1. ROLE PROFILES ("夏澄" & "阿柚") — CLEAN EMPTY INITIAL STATE
+     1. 角色档案：由后端角色清单驱动（DL-134）
+     离线演示时只有夏澄一份档案；连上后端后，以后端 GET /v1/roles 返回的角色为准。
      ========================================================================== */
-  const ROLES = {
-    xiacheng: {
-      id: "xiacheng",
-      backendRoleId: null,
-      defaultWindowId: null,
+  const DEFAULT_STATES = {
+    reading: {
+      badge: "📖 窗畔阅读",
+      pose: "day",
+      desc: "静立在窗边翻阅书页，等待与你交谈。",
+      bubble: "“窗边的光线正好，有空随时找我聊聊。”"
+    },
+    writing: {
+      badge: "✒️ 执笔记录",
+      pose: "evening",
+      desc: "坐在书桌前整理手账与笔记。",
+      bubble: "“手账本已经摊开在桌上了。”"
+    },
+    thinking: {
+      badge: "🎧 静思检索",
+      pose: "evening",
+      desc: "安静梳理思绪与过往记忆。",
+      bubble: "“正在安静思考中……”"
+    },
+    tea: {
+      badge: "🍵 煮茶",
+      pose: "day",
+      desc: "在窗边泡一杯热茶。",
+      bubble: "“刚泡好一杯茶，要不要坐下聊聊？”"
+    },
+    window: {
+      badge: "🪟 看窗",
+      pose: "day",
+      desc: "靠在窗边，看着外面的天气。",
+      bubble: "“窗外的天气真好看。”"
+    },
+    sharing: {
+      badge: "✉️ 待语分享",
+      pose: "day",
+      desc: "站在书桌旁，准备与你分享新想法。",
+      bubble: "“有什么想聊的话题吗？”"
+    },
+    resting: {
+      badge: "🌙 夜阑小憩",
+      pose: "evening",
+      desc: "在窗畔暖灯下安静歇息。",
+      bubble: "“忙了一天的话，先坐下来歇会儿吧。”"
+    }
+  };
+
+  function createRoleProfile({ key, name, backendRoleId = null, defaultWindowId = null }) {
+    return {
+      id: key,
+      backendRoleId,
+      defaultWindowId,
       stateVersion: 1,
-      name: "夏澄",
-      seal: "澄",
+      name,
+      seal: Array.from(String(name || "·"))[0],
       moodSeal: "—",
       moodTitle: "暂无心境记录",
       moodSummary: "尚未产生心境与情绪变化记录，开始对话或自主活动后将在此更新。",
@@ -24,38 +70,11 @@
       proactiveBadge: "",
       proactiveShort: "",
       proactiveFull: "",
-      states: {
-        reading: {
-          badge: "📖 窗畔阅读",
-          pose: "day",
-          desc: "静立在窗边翻阅书页，等待与你交谈。",
-          bubble: "“窗边的光线正好，有空随时找我聊聊。”"
-        },
-        writing: {
-          badge: "✒️ 执笔记录",
-          pose: "evening",
-          desc: "坐在书桌前整理手账与笔记。",
-          bubble: "“手账本已经摊开在桌上了。”"
-        },
-        thinking: {
-          badge: "🎧 静思检索",
-          pose: "evening",
-          desc: "安静梳理思绪与过往记忆。",
-          bubble: "“正在安静思考中……”"
-        },
-        sharing: {
-          badge: "✉️ 待语分享",
-          pose: "day",
-          desc: "站在书桌旁，准备与你分享新想法。",
-          bubble: "“有什么想聊的话题吗？”"
-        },
-        resting: {
-          badge: "🌙 夜阑小憩",
-          pose: "evening",
-          desc: "在窗畔暖灯下安静歇息。",
-          bubble: "“忙了一天的话，先坐下来歇会儿吧。”"
-        }
-      },
+      // 后端状态里的真实活动；没有时为 null，主页再按本地日程显示。
+      backendActivity: null,
+      // 角色外观清单，由 resolveRoleVisuals 填入。
+      visual: null,
+      states: DEFAULT_STATES,
       growth: [],
       mainWindow: {
         title: "窗畔唯一主信笺",
@@ -72,72 +91,11 @@
       memories: [],
       tasks: [],
       manuscripts: []
-    },
+    };
+  }
 
-    ayou: {
-      id: "ayou",
-      backendRoleId: null,
-      defaultWindowId: null,
-      stateVersion: 1,
-      name: "阿柚",
-      seal: "柚",
-      moodSeal: "—",
-      moodTitle: "暂无心境记录",
-      moodSummary: "尚未产生心境与情绪变化记录，开始对话或自主活动后将在此更新。",
-      meters: [0, 0, 0],
-      quotaUsed: 0,
-      nextWake: "暂无唤醒计划",
-      proactiveBadge: "",
-      proactiveShort: "",
-      proactiveFull: "",
-      states: {
-        reading: {
-          badge: "📖 翻阅食谱",
-          pose: "day",
-          desc: "正在暖阁翻看日常食谱与手账。",
-          bubble: "“有空的话一起聊聊今天的日常吧！”"
-        },
-        writing: {
-          badge: "✒️ 记录手账",
-          pose: "evening",
-          desc: "正在书桌前记录生活备忘。",
-          bubble: "“正在整理新的手账页～”"
-        },
-        thinking: {
-          badge: "🎧 构思茶点",
-          pose: "evening",
-          desc: "安静构思新的茶歇与日常安排。",
-          bubble: "“在想今天适合泡什么茶呢……”"
-        },
-        sharing: {
-          badge: "✉️ 待语分享",
-          pose: "day",
-          desc: "在书桌前等待与你分享。",
-          bubble: "“随时都可以找我说话哦～”"
-        },
-        resting: {
-          badge: "🌙 暖阁茶歇",
-          pose: "evening",
-          desc: "在窗边安静休息。",
-          bubble: "“今天辛苦啦，喝口热茶歇一歇吧。”"
-        }
-      },
-      growth: [],
-      mainWindow: {
-        title: "窗畔唯一主信笺",
-        draft: "",
-        messages: []
-      },
-      externalWindows: [],
-      replies: [
-        "收到你的来信啦！我已经记在心上了，我们慢慢聊～",
-        "好呀好呀，需要我帮你把这条备忘写进工作空间吗？"
-      ],
-      diaries: [],
-      memories: [],
-      tasks: [],
-      manuscripts: []
-    }
+  const ROLES = {
+    xiacheng: createRoleProfile({ key: "xiacheng", name: "夏澄" })
   };
 
   /* ==========================================================================
@@ -149,15 +107,37 @@
   if (params.get("season")) envSettings.season = params.get("season");
   if (params.get("weather")) envSettings.weather = params.get("weather");
   if (params.get("lamp")) envSettings.lamp = params.get("lamp");
+  if (params.get("weatherSource")) envSettings.weatherSource = params.get("weatherSource");
 
-  let currentRoleId = params.get("role") === "ayou" ? "ayou" : "xiacheng";
+  // 开发用：?at=2026-12-24T18:30 把时钟固定在某一刻并继续走时，便于检查四季与昼夜。
+  const fixedStart = (() => {
+    const raw = params.get("at");
+    const parsed = raw ? new Date(raw) : null;
+    return parsed && !Number.isNaN(parsed.getTime()) ? parsed : null;
+  })();
+  const bootedAt = Date.now();
+  function currentNow() {
+    return fixedStart ? new Date(fixedStart.getTime() + (Date.now() - bootedAt)) : new Date();
+  }
+
+  const weatherProviders = window.deskWeather.defaultProviders();
+  // 角色外观来源。以后用户配置好的位置接入时，在这里加一个来源函数即可（见 role-visual.js）。
+  const roleVisualResolver = window.deskRoleVisual.createRoleVisualResolver([]);
+  const EMPTY_VISUAL = { seal: "·", sprites: null, actions: {} };
+
+  let currentRoleId = "xiacheng";
   let currentFocus = params.get("focus") === "theater" ? "theater" : "stage";
   let currentMedium = ["letter", "journal", "filmstrip", "spread"].includes(params.get("medium"))
     ? params.get("medium")
     : "letter";
-  let currentActivity = ["reading", "writing", "thinking", "sharing", "resting"].includes(params.get("activity"))
+  // 当前动作由 updateEnvironment 按“后端真实活动 → 天气反应 → 本地日程”算出。
+  // activityOverride 只用于开发（?activity=）或离线演示里手动触发的模拟活动。
+  let activityOverride = window.deskRoleVisual.ACTION_IDS.includes(params.get("activity"))
     ? params.get("activity")
-    : "reading";
+    : null;
+  let currentActivity = "reading";
+  let currentActivitySource = "schedule";
+  let lastEnv = null;
   let currentDiaryIdx = 0;
   let currentMemoryFilter = "all";
   let currentMemoryId = "";
@@ -188,7 +168,7 @@
   ];
 
   function loadEnvSettings() {
-    const defaults = { time: "auto", season: "auto", weather: "auto", lamp: "auto" };
+    const defaults = { time: "auto", season: "auto", weather: "auto", lamp: "auto", weatherSource: "simulated" };
     try {
       const saved = JSON.parse(localStorage.getItem("nowadays.luminary.env.v2"));
       if (saved && typeof saved === "object") return { ...defaults, ...saved };
@@ -263,25 +243,19 @@
         setBackendConnBadge(true, `● 本地后端已连接 · SQLite + SSE (${health.version || "v1"})`);
       }
 
-      // 1. Discover roles via UI-PREP-01 GET /v1/roles
+      // 1. 发现角色：以后端 GET /v1/roles 返回的为准（DL-134）
       const rolesResp = await apiFetch("/v1/roles");
       const roleItems = Array.isArray(rolesResp?.items) ? rolesResp.items : [];
-      for (const item of roleItems) {
-        if (item.displayName === "樱" || item.displayName === "夏澄") {
-          ROLES.xiacheng.backendRoleId = item.roleId;
-          ROLES.xiacheng.defaultWindowId = item.defaultWindowId;
-        } else if (item.displayName === "阿柚") {
-          ROLES.ayou.backendRoleId = item.roleId;
-          ROLES.ayou.defaultWindowId = item.defaultWindowId;
-        }
-      }
+      if (roleItems.length > 0) adoptBackendRoles(roleItems);
+      await resolveRoleVisuals();
 
       // 2. Sync Global Resources (/v1/resources)
       await syncGlobalResourcesFromBackend();
 
-      // 3. Hydrate both roles from SQLite backend
-      await syncRoleFromBackend("xiacheng");
-      await syncRoleFromBackend("ayou");
+      // 3. 逐个角色从后端同步状态、消息、日记与记忆
+      for (const key of Object.keys(ROLES)) {
+        await syncRoleFromBackend(key);
+      }
 
       // 4. Connect live SSE stream for active role's defaultWindowId
       connectRoleSseStream(currentRoleId);
@@ -289,6 +263,46 @@
     } catch (err) {
       setBackendConnBadge(false, "○ 离线演示模式（未检测到本地后端）");
       console.warn("[nowadays-desk] Backend offline fallback:", err?.message || err);
+    }
+  }
+
+  /**
+   * 用后端角色清单替换离线演示档案。已存在的同 roleId 档案会保留，
+   * 以免重复拉取时丢失已加载的消息与草稿。
+   */
+  function adoptBackendRoles(items) {
+    const previous = Object.values(ROLES);
+    const next = {};
+    for (const item of items) {
+      if (!item?.roleId) continue;
+      const existing = previous.find(r => r.backendRoleId === item.roleId);
+      const profile = existing || createRoleProfile({
+        key: item.roleId,
+        name: item.displayName || "角色",
+        backendRoleId: item.roleId
+      });
+      profile.name = item.displayName || profile.name;
+      profile.seal = Array.from(String(profile.name))[0];
+      profile.defaultWindowId = item.defaultWindowId || profile.defaultWindowId;
+      next[profile.id] = profile;
+    }
+    if (Object.keys(next).length === 0) return;
+    for (const key of Object.keys(ROLES)) delete ROLES[key];
+    Object.assign(ROLES, next);
+    if (!ROLES[currentRoleId]) currentRoleId = Object.keys(ROLES)[0];
+  }
+
+  /** 为每个角色解析外观清单（来源见 role-visual.js）。问题只记录日志，不影响主页。 */
+  async function resolveRoleVisuals() {
+    for (const role of Object.values(ROLES)) {
+      const { visual, issues } = await roleVisualResolver.resolve({
+        roleId: role.backendRoleId,
+        displayName: role.name
+      });
+      role.visual = visual;
+      for (const issue of issues) {
+        console.warn(`[nowadays-desk] 角色外观「${role.name}」：${issue}`);
+      }
     }
   }
 
@@ -529,6 +543,8 @@
   function applyBackendStateToRole(role, data, version, updatedAt) {
     if (!data || typeof data !== "object") return;
     if (version) role.stateVersion = version;
+    // 后端状态里的活动才算真实活动；无法识别的值按“没有”处理。
+    role.backendActivity = window.deskRoleVisual.ACTION_IDS.includes(data.activity) ? data.activity : null;
     if (typeof data.moodSeal === "string") role.moodSeal = data.moodSeal;
     if (typeof data.mood === "string") role.moodTitle = `此刻心境 · ${data.mood}`;
     if (typeof data.note === "string") role.moodSummary = data.note;
@@ -651,15 +667,24 @@
     minute: "2-digit",
     hourCycle: "h23"
   });
-  const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
-    month: "long",
-    day: "numeric",
-    weekday: "short"
-  });
 
+  function setText(id, text) {
+    const el = $(id);
+    if (el) el.textContent = text;
+  }
+
+  function setImageSrc(img, url) {
+    if (img && url && img.getAttribute("src") !== url) img.setAttribute("src", url);
+  }
+
+  /**
+   * 重新计算环境与当前动作，并刷新依赖它们的界面。
+   * 每 30 秒与每次设置变化时调用；环境由 environment.js 的纯函数唯一决定。
+   */
   function updateEnvironment() {
-    const now = new Date();
-    const env = window.deskEnvironment.resolveEnvironment(now, envSettings);
+    const now = currentNow();
+    const env = window.deskEnvironment.resolveEnvironment(now, envSettings, { providers: weatherProviders });
+    lastEnv = env;
 
     app.dataset.season = env.season;
     app.dataset.weather = env.weather;
@@ -672,32 +697,39 @@
     app.style.setProperty("--dawn-mix", String(env.dawnMix));
     app.style.setProperty("--god-ray-alpha", String(env.godRayAlpha));
     app.style.setProperty("--gobo-alpha", String(env.goboAlpha));
+    app.style.setProperty("--weather-intensity", String(env.weatherIntensity));
+    app.style.setProperty("--wind", String(env.wind));
 
+    // 当前动作：后端真实活动优先，其次天气反应，最后是本地日程。
     const role = ROLES[currentRoleId];
+    const pick = window.deskRoleVisual.chooseAction({
+      backendActivity: activityOverride || role.backendActivity,
+      env,
+      now
+    });
+    currentActivity = pick.action;
+    currentActivitySource = pick.source;
     const actInfo = role.states[currentActivity] || role.states.reading;
     const useEveningPose = env.night || env.phase === "dusk" || actInfo.pose === "evening";
     app.dataset.pose = useEveningPose ? "evening" : "day";
+    app.dataset.activity = currentActivity;
 
     const seasonIcons = { spring: "🌸", summer: "🌿", autumn: "🍂", winter: "❄️" };
-    $("hud-clock").textContent = clockFormatter.format(now);
-    $("hud-date").textContent = dateFormatter.format(now);
-    $("hud-env-summary").textContent = `${seasonIcons[env.season] || "🍂"} ${env.summary}`;
-    $("tuner-poetic-label").textContent = env.poeticSummary;
-    $("letter-subtitle").textContent = `${env.poeticSummary} · 唯一直接对话主窗口 (DL-04)`;
-
-    const fgSeasonNote = $("foreground-season-note");
-    if (fgSeasonNote) fgSeasonNote.textContent = `袅袅升腾的茶杯水汽 · ${env.poeticSummary}`;
-    const lampHint = $("companion-lamp-hint");
-    if (lampHint) lampHint.textContent = env.lamp ? "💡 台灯暖光池随行" : "☀️ 晴窗天光随行";
-
-    const lampBtn = $("lamp-btn");
-    lampBtn.setAttribute("aria-pressed", String(env.lamp));
-    $("lamp-btn-label").textContent = env.lamp ? "💡 暖灯已亮" : "💡 台灯";
+    setText("hud-clock", clockFormatter.format(now));
+    setText("hud-env-summary", `${seasonIcons[env.season] || "🍂"} ${env.summary}`);
+    setText("tuner-poetic-label", env.poeticSummary);
+    setText("letter-subtitle", `${env.poeticSummary} · 唯一直接对话主窗口 (DL-04)`);
+    setText(
+      "weather-source-note",
+      env.weatherFallback
+        ? "真实天气尚未接入，当前仍使用离线模拟天气。"
+        : envSettings.weather !== "auto"
+          ? "已手动指定天气，来源设置暂不生效。"
+          : "当前使用离线模拟天气，不需要网络。"
+    );
 
     const favicon = $("app-favicon");
     if (favicon) favicon.href = env.night ? "assets/fold-dark.svg" : "assets/fold-light.svg";
-    const brandIcon = $("brand-fold-icon");
-    if (brandIcon) brandIcon.src = env.night ? "assets/fold-dark.svg" : "assets/fold-light.svg";
 
     for (const group of document.querySelectorAll(".tuner-pills")) {
       const key = group.dataset.envGroup;
@@ -707,7 +739,57 @@
       }
     }
 
+    renderPresence();
     atmoEngine.redraw();
+  }
+
+  /** 主页的角色名、一行状态、人物图和对话入口。 */
+  function renderPresence() {
+    const role = ROLES[currentRoleId];
+    const act = role.states[currentActivity] || role.states.reading;
+
+    setText("home-role-name", role.name);
+    setText("home-status-text", act.desc);
+    const source = $("home-status-source");
+    if (source) source.hidden = currentActivitySource === "backend";
+
+    setText("companion-role-title", `${role.name} · ${act.badge.replace(/^[^\s]+\s/, "")}`);
+    setText("companion-activity-detail", act.desc);
+
+    renderCharacter(role);
+  }
+
+  /**
+   * 显示人物：有基础立绘时叠加动作图（有图才显示，没有则回退到基础立绘），
+   * 没有立绘的角色显示印章占位。
+   */
+  function renderCharacter(role) {
+    const visual = role.visual || EMPTY_VISUAL;
+    const hasSprites = Boolean(visual.sprites);
+    const dayImg = $("char-day-img");
+    const nightImg = $("char-night-img");
+    const actionImg = $("char-action-img");
+    const placeholder = $("char-placeholder");
+
+    dayImg.hidden = nightImg.hidden = !hasSprites;
+    if (hasSprites) {
+      setImageSrc(dayImg, visual.sprites.day);
+      setImageSrc(nightImg, visual.sprites.evening);
+      dayImg.alt = `${role.name}白昼立绘`;
+      nightImg.alt = `${role.name}夜间立绘`;
+    }
+    placeholder.hidden = hasSprites;
+    setText("char-placeholder-seal", visual.seal || role.seal);
+    setText("char-placeholder-name", role.name);
+
+    const light = app.dataset.pose === "evening" ? "evening" : "day";
+    const actionUrl = window.deskRoleVisual.resolveActionSprite(visual, currentActivity, light);
+    if (actionUrl) {
+      setImageSrc(actionImg, actionUrl);
+      actionImg.alt = `${role.name}${(role.states[currentActivity] || {}).badge || ""}`;
+      actionImg.hidden = false;
+    }
+    actionImg.classList.toggle("is-visible", Boolean(actionUrl));
   }
 
   /* ==========================================================================
@@ -715,43 +797,56 @@
      ========================================================================== */
   function renderRoleAndPresence() {
     const role = ROLES[currentRoleId];
-    const act = role.states[currentActivity] || role.states.reading;
-
     app.dataset.role = role.id;
-    app.dataset.activity = currentActivity;
 
-    for (const btn of document.querySelectorAll("[data-role-btn]")) {
-      btn.classList.toggle("is-active", btn.dataset.roleBtn === role.id);
-    }
+    updateEnvironment();
+    const act = role.states[currentActivity] || role.states.reading;
+    setText("char-bubble-text", act.bubble);
 
-    $("char-bubble-text").textContent = act.bubble;
     const proactiveBtn = $("proactive-letter");
     const hasProactive = Boolean(role.proactiveBadge && role.proactiveShort);
-    if (proactiveBtn) {
-      proactiveBtn.hidden = !hasProactive;
-    }
+    if (proactiveBtn) proactiveBtn.hidden = !hasProactive;
+    // 有主动分享的折信时，折信替代“去找她”按钮成为进入对话的入口。
+    $("home-chat-btn").hidden = hasProactive;
     $("proactive-badge").textContent = role.proactiveBadge || "";
     $("proactive-preview").textContent = role.proactiveShort || "";
 
-    const quotaRemaining = Math.max(0, quotaLimit - role.quotaUsed);
-    const quotaStr = quotaUnlimited ? "自主额度 · 无限制" : `自主额度 ${quotaRemaining}/${quotaLimit}`;
-    $("dock-role-name").textContent = role.name;
-    $("dock-activity-badge").textContent = act.badge;
-    $("dock-quota-text").textContent = quotaStr;
-    $("dock-status-desc").textContent = act.desc;
-
-    $("companion-role-title").textContent = `${role.name} · ${act.badge.replace(/^[^\s]+\s/, "")}`;
-    $("companion-activity-detail").textContent = act.desc;
-
-    for (const btn of document.querySelectorAll("[data-state]")) {
-      btn.classList.toggle("is-active", btn.dataset.state === currentActivity);
-    }
-
+    renderRoleMenu();
     renderLetterPanel();
     renderJournalPanel();
     renderFilmstripPanel();
     renderSpreadPanel();
-    updateEnvironment();
+  }
+
+  /** 角落菜单里的角色切换：只有多个角色时才显示。 */
+  function renderRoleMenu() {
+    const wrap = $("home-menu-roles");
+    const roles = Object.values(ROLES);
+    wrap.replaceChildren();
+    wrap.hidden = roles.length < 2;
+    if (roles.length < 2) return;
+    for (const role of roles) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.setAttribute("role", "menuitemradio");
+      btn.setAttribute("aria-checked", String(role.id === currentRoleId));
+      btn.classList.toggle("is-active", role.id === currentRoleId);
+      btn.textContent = role.name;
+      btn.addEventListener("click", () => {
+        switchRole(role.id);
+        setHomeMenuOpen(false);
+      });
+      wrap.append(btn);
+    }
+  }
+
+  function switchRole(roleId) {
+    if (!ROLES[roleId] || roleId === currentRoleId) return;
+    currentRoleId = roleId;
+    currentDiaryIdx = 0;
+    currentManuscriptIdx = 0;
+    connectRoleSseStream(currentRoleId);
+    renderRoleAndPresence();
   }
 
   function setFocusMode(focus, medium = currentMedium) {
@@ -1294,18 +1389,21 @@
     app.style.setProperty("--my", ny.toFixed(3));
   });
 
-  $("chrono-btn").addEventListener("click", () => {
-    const pop = $("env-popover");
-    const open = pop.hidden;
-    pop.hidden = !open;
-    $("chrono-btn").setAttribute("aria-expanded", String(open));
-  });
+  // 角落菜单：主页唯一的次级入口
+  function setHomeMenuOpen(open) {
+    $("home-menu").hidden = !open;
+    $("home-menu-btn").setAttribute("aria-expanded", String(open));
+  }
+  $("home-menu-btn").addEventListener("click", () => setHomeMenuOpen($("home-menu").hidden));
 
+  // 设置里的环境调节：时段、四季、天气、台灯与天气来源
+  const WEATHER_SOURCES = ["simulated", "real"];
   for (const group of document.querySelectorAll(".tuner-pills")) {
     const key = group.dataset.envGroup;
     for (const btn of group.querySelectorAll("button")) {
       btn.addEventListener("click", () => {
         const val = btn.dataset.val;
+        if (key === "weatherSource" && !WEATHER_SOURCES.includes(val)) return;
         envSettings[key] = val === "on" ? true : val === "off" ? false : val;
         saveEnvSettings();
         updateEnvironment();
@@ -1319,38 +1417,16 @@
     saveEnvSettings();
     updateEnvironment();
   }
-  $("lamp-btn").addEventListener("click", toggleLamp);
-
-  // Role Switcher Mini-Polaroids
-  for (const btn of document.querySelectorAll("[data-role-btn]")) {
-    btn.addEventListener("click", () => {
-      currentRoleId = btn.dataset.roleBtn;
-      currentDiaryIdx = 0;
-      currentManuscriptIdx = 0;
-      connectRoleSseStream(currentRoleId);
-      renderRoleAndPresence();
-    });
-  }
-
-  $("character-figure").addEventListener("click", () => {
-    const states = ["reading", "writing", "thinking", "sharing", "resting"];
-    const nextIdx = (states.indexOf(currentActivity) + 1) % states.length;
-    currentActivity = states[nextIdx];
-    renderRoleAndPresence();
-  });
-
-  for (const btn of document.querySelectorAll("[data-state]")) {
-    btn.addEventListener("click", () => {
-      currentActivity = btn.dataset.state;
-      renderRoleAndPresence();
-    });
-  }
 
   for (const card of document.querySelectorAll("[data-open-medium]")) {
     card.addEventListener("click", () => {
+      setHomeMenuOpen(false);
       setFocusMode("theater", card.dataset.openMedium);
     });
   }
+
+  // 主页进入对话
+  $("home-chat-btn").addEventListener("click", () => setFocusMode("theater", "letter"));
 
   $("proactive-letter").addEventListener("click", () => {
     setFocusMode("theater", "letter");
@@ -1494,7 +1570,8 @@
             state: {
               mood: "温润而专注",
               moodSeal: role.moodSeal,
-              activity: currentActivity,
+              // 只写入后端真实活动；按本地日程算出的动作不是真实状态，不写回。
+              activity: currentActivitySource === "backend" ? currentActivity : undefined,
               focus: role.meters[0],
               sharing: role.meters[1],
               serenity: role.meters[2],
@@ -1671,7 +1748,8 @@
         detail: "调用模型思考 (-1点) + local_fs.write_file (-1点) · 笔记与记忆索引已同步"
       });
     }
-    currentActivity = "writing";
+    // 离线演示里由用户点击触发的模拟活动，明确作为活动覆盖使用。
+    activityOverride = "writing";
     renderRoleAndPresence();
   });
 
@@ -1723,7 +1801,10 @@
     drawer.hidden = !isOpen;
     $("atelier-btn").setAttribute("aria-expanded", String(isOpen));
   }
-  $("atelier-btn").addEventListener("click", () => toggleAtelier());
+  $("atelier-btn").addEventListener("click", () => {
+    setHomeMenuOpen(false);
+    toggleAtelier();
+  });
   $("atelier-close-btn").addEventListener("click", () => toggleAtelier(false));
   $("atelier-backdrop").addEventListener("click", () => toggleAtelier(false));
 
@@ -1884,8 +1965,9 @@
         toggleAtelier(false);
         return;
       }
-      if (!$("env-popover").hidden) {
-        $("env-popover").hidden = true;
+      if (!$("home-menu").hidden) {
+        setHomeMenuOpen(false);
+        $("home-menu-btn").focus();
         return;
       }
       if (currentFocus === "theater") {
@@ -1903,10 +1985,8 @@
   });
 
   document.addEventListener("pointerdown", event => {
-    const pop = $("env-popover");
-    if (!pop.hidden && !event.target.closest(".chrono-capsule-wrap")) {
-      pop.hidden = true;
-      $("chrono-btn").setAttribute("aria-expanded", "false");
+    if (!$("home-menu").hidden && !event.target.closest(".home-menu-wrap")) {
+      setHomeMenuOpen(false);
     }
   });
 
@@ -1921,6 +2001,9 @@
   void app.offsetHeight;
   app.classList.remove("is-booting");
   atmoEngine.refresh();
+
+  // 先用离线演示角色的外观渲染一次，连上后端后会按真实角色重新解析
+  resolveRoleVisuals().then(renderRoleAndPresence);
 
   // Connect to live managed SQLite + SSE backend
   initBackendIntegration();

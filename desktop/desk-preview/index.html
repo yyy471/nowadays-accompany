@@ -8,7 +8,10 @@
   <title>Nowadays · 光影书房与器物剧场</title>
   <link rel="icon" id="app-favicon" href="assets/fold-light.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="home.css">
+  <script defer src="weather-provider.js"></script>
   <script defer src="environment.js"></script>
+  <script defer src="role-visual.js"></script>
   <script defer src="window-effects.js"></script>
   <script defer src="app.js"></script>
 </head>
@@ -60,20 +63,16 @@
         <!-- Ambient rim-light aura behind character -->
         <div class="character-aura" aria-hidden="true"></div>
 
-        <!-- Xiacheng Living Illustrations (Day standing with book / Evening seated reading) -->
-        <div class="character-figure" id="character-figure" role="button" tabindex="0" aria-label="轻触角色互动">
-          <img class="char-sprite char-sprite-day" id="char-day-img" src="assets/xiacheng-day.webp" alt="夏澄窗畔白昼立绘">
-          <img class="char-sprite char-sprite-night" id="char-night-img" src="assets/xiacheng-night.webp" alt="夏澄夜读立绘">
-          <!-- Ayou Layered Studio Portrait Frame (when switched to Ayou) -->
-          <div class="char-ayou-stage" id="char-ayou-stage">
-            <div class="ayou-polaroid-frame">
-              <span class="brass-clip" aria-hidden="true"></span>
-              <img src="assets/photo-ayou.webp" alt="阿柚立绘">
-              <div class="ayou-frame-caption">
-                <strong>阿柚 · Ayou</strong>
-                <span>陪伴角色</span>
-              </div>
-            </div>
+        <!-- 夏澄 Living Illustrations：基础立绘（白昼站姿／夜间坐姿），动作图与占位见下 -->
+        <div class="character-figure" id="character-figure">
+          <img class="char-sprite char-sprite-day" id="char-day-img" src="assets/xiacheng-day.webp" alt="">
+          <img class="char-sprite char-sprite-night" id="char-night-img" src="assets/xiacheng-night.webp" alt="">
+          <!-- 动作图入口：角色外观清单里有对应动作图时显示，没有则隐藏并回退到上面的基础立绘 -->
+          <img class="char-sprite char-sprite-action" id="char-action-img" alt="" hidden>
+          <!-- 角色没有立绘时的占位：显示印章字与名字 -->
+          <div class="char-placeholder" id="char-placeholder" hidden>
+            <span class="char-placeholder-seal" id="char-placeholder-seal" aria-hidden="true">·</span>
+            <span class="char-placeholder-name" id="char-placeholder-name"></span>
           </div>
         </div>
 
@@ -93,30 +92,6 @@
               <span id="companion-activity-detail">暂无进行中的自主活动</span>
             </div>
           </div>
-          <div class="companion-state-pills" role="group" aria-label="预览角色在场行动状态">
-            <span class="pills-label">姿态切换：</span>
-            <button type="button" class="state-pill is-active" data-state="reading">📖 共读</button>
-            <button type="button" class="state-pill" data-state="writing">✒️ 执笔</button>
-            <button type="button" class="state-pill" data-state="thinking">🎧 静思</button>
-            <button type="button" class="state-pill" data-state="sharing">✉️ 折信</button>
-            <button type="button" class="state-pill" data-state="resting">🌙 听风</button>
-          </div>
-          <div class="companion-foreground-foot" aria-hidden="true">
-            <span>☕ 前景茶杯热气 + 四季折枝</span>
-            <span>·</span>
-            <span id="companion-lamp-hint">💡 台灯暖光池随行</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Stage Mode Lower-Left Foreground: [左下前景：窗台与热饮] ☕ 袅袅升腾的茶杯水汽 + 四季折枝花瓶 -->
-      <div class="stage-foreground-corner" id="stage-foreground-corner" aria-hidden="true">
-        <div class="steam-wisps">
-          <i></i><i></i><i></i>
-        </div>
-        <div class="foreground-corner-text">
-          <strong>☕ 窗台与热饮 · 四季折枝花瓶</strong>
-          <span id="foreground-season-note">袅袅升腾的茶杯水汽 · 窗外光影随风微动</span>
         </div>
       </div>
 
@@ -441,152 +416,46 @@
     <canvas class="stage-canvas lightcast-canvas" id="lightcast-canvas" aria-hidden="true"></canvas>
 
     <!-- LAYER 6: Top Floating Capsules, Bottom Presence Dock & Right Atelier Blueprint Drawer -->
+    <!-- 顶栏：主页只显示角色名、时间天气和一个次级菜单 -->
     <header class="top-whisper-hud" aria-label="环境与全局控制">
-      <!-- Top-Left: [← 收起回主舞台 (Esc)] (in Theater Mode) + 时节与环境怀表胶囊 -->
       <div class="chrono-capsule-wrap">
-        <button type="button" class="hud-pill-btn stage-return-btn" id="stage-return-btn" title="收起器物回到主舞台 (Esc)">
-          <span aria-hidden="true">←</span> 收起回主舞台 (Esc)
+        <button type="button" class="hud-pill-btn stage-return-btn" id="stage-return-btn" title="回到主页 (Esc)">
+          <span aria-hidden="true">←</span> 回到主页
         </button>
-
-        <button type="button" class="chrono-capsule" id="chrono-btn" aria-expanded="false" aria-controls="env-popover">
-          <span class="chrono-dot" aria-hidden="true"></span>
-          <span class="chrono-env" id="hud-env-summary">🍂 秋 · 黄昏 · 晴</span>
-          <span class="chrono-divider" aria-hidden="true">·</span>
-          <time class="chrono-time" id="hud-clock">17:42</time>
-          <span class="chrono-divider" aria-hidden="true">·</span>
-          <span class="chrono-date" id="hud-date">11月6日 周五</span>
-          <i class="chrono-chevron" aria-hidden="true">▾</i>
-        </button>
-
-        <!-- Glass Environment Tuner Popover -->
-        <div class="env-tuner-popover" id="env-popover" hidden role="region" aria-label="时节与光影调音台">
-          <div class="tuner-head">
-            <strong>时节与房间光影流转</strong>
-            <span id="tuner-poetic-label">秋枫 · 暮色琥珀</span>
-          </div>
-          <div class="tuner-row">
-            <span class="tuner-label">时段</span>
-            <div class="tuner-pills" data-env-group="time">
-              <button type="button" data-val="auto" class="is-active">随系统</button>
-              <button type="button" data-val="dawn">清晨</button>
-              <button type="button" data-val="day">白昼</button>
-              <button type="button" data-val="dusk">黄昏</button>
-              <button type="button" data-val="night">夜阑</button>
-            </div>
-          </div>
-          <div class="tuner-row">
-            <span class="tuner-label">四季</span>
-            <div class="tuner-pills" data-env-group="season">
-              <button type="button" data-val="auto" class="is-active">随节气</button>
-              <button type="button" data-val="spring">🌸 春樱</button>
-              <button type="button" data-val="summer">🌿 夏木</button>
-              <button type="button" data-val="autumn">🍁 秋枫</button>
-              <button type="button" data-val="winter">❄️ 冬雪</button>
-            </div>
-          </div>
-          <div class="tuner-row">
-            <span class="tuner-label">天气</span>
-            <div class="tuner-pills" data-env-group="weather">
-              <button type="button" data-val="auto" class="is-active">随场景</button>
-              <button type="button" data-val="clear">☀️ 晴光</button>
-              <button type="button" data-val="cloud">☁️ 薄阴</button>
-              <button type="button" data-val="rain">🌧️ 听雨</button>
-              <button type="button" data-val="snow">🌨️ 落雪</button>
-            </div>
-          </div>
-          <div class="tuner-row">
-            <span class="tuner-label">台灯</span>
-            <div class="tuner-pills" data-env-group="lamp">
-              <button type="button" data-val="auto" class="is-active">自动感应</button>
-              <button type="button" data-val="on">💡 点亮暖灯</button>
-              <button type="button" data-val="off">🌙 熄灭</button>
-            </div>
-          </div>
+        <div class="home-role-tag" id="home-role-tag">
+          <strong id="home-role-name">夏澄</strong>
         </div>
       </div>
 
-      <!-- Top-Right: Role Mini-Polaroids, Lamp Switch & Origami Atelier Drawer Trigger -->
       <div class="top-right-controls">
-        <!-- Overlapping Mini-Polaroid Role Switcher (Synced with GET /v1/roles) -->
-        <div class="role-polaroid-deck" id="role-polaroid-deck" role="group" aria-label="切换陪伴角色">
-          <button type="button" class="mini-polaroid is-active" data-role-btn="xiacheng" title="切换至 夏澄">
-            <img src="assets/xiacheng-day.webp" alt="">
-            <span>夏澄</span>
-          </button>
-          <button type="button" class="mini-polaroid" data-role-btn="ayou" title="切换至 阿柚">
-            <img src="assets/photo-ayou.webp" alt="">
-            <span>阿柚</span>
-          </button>
+        <div class="env-readout" id="env-readout" role="status" aria-label="当前时间与天气">
+          <span id="hud-env-summary">秋 · 黄昏 · 晴</span>
+          <span class="chrono-divider" aria-hidden="true">·</span>
+          <time id="hud-clock">17:42</time>
         </div>
 
-        <!-- Brass Desk Lamp Pull-Switch -->
-        <button type="button" class="hud-pill-btn lamp-switch-btn" id="lamp-btn" aria-pressed="false" title="开关书桌暖光台灯 (快捷键 N)">
-          <span class="lamp-bulb-dot" aria-hidden="true"></span>
-          <span id="lamp-btn-label">💡 台灯</span>
-        </button>
-
-        <!-- Origami Brand Atelier Trigger -->
-        <button type="button" class="hud-pill-btn atelier-trigger-btn" id="atelier-btn" aria-expanded="false" aria-controls="atelier-drawer">
-          <img id="brand-fold-icon" src="assets/fold-light.svg" alt="" width="18" height="18">
-          <span>✉️ 折信工坊</span>
-        </button>
+        <div class="home-menu-wrap">
+          <button type="button" class="hud-pill-btn home-menu-btn" id="home-menu-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="home-menu" aria-label="更多">⋯</button>
+          <div class="home-menu" id="home-menu" role="menu" hidden>
+            <button type="button" role="menuitem" data-open-medium="journal">📖 日记</button>
+            <button type="button" role="menuitem" data-open-medium="filmstrip">🎞️ 记忆</button>
+            <button type="button" role="menuitem" data-open-medium="spread">🧭 她的一天</button>
+            <button type="button" role="menuitem" id="atelier-btn" aria-expanded="false" aria-controls="atelier-drawer">⚙️ 设置</button>
+            <div class="home-menu-roles" id="home-menu-roles" role="group" aria-label="切换角色" hidden></div>
+          </div>
+        </div>
       </div>
     </header>
 
-    <!-- Bottom Presence & Tactile Medium Dock (Two-Row Capsule in Full-Screen Stage Mode) -->
-    <footer class="presence-dock" id="presence-dock" aria-label="在场状态与器物入口">
-      <div class="dock-presence-status">
-        <div class="presence-indicator">
-          <span class="presence-pulse" aria-hidden="true"></span>
-          <div class="presence-line-1">
-            <span class="presence-prefix">● 此刻：</span>
-            <strong id="dock-role-name">夏澄</strong>
-            <span id="dock-status-desc">暂无进行中的活动</span>
-            <span class="chrono-divider" aria-hidden="true">·</span>
-            <span class="presence-tag" id="dock-activity-badge">📖 待命</span>
-            <span class="chrono-divider" aria-hidden="true">·</span>
-            <span class="presence-quota" id="dock-quota-text">自主额度 200/200</span>
-          </div>
-        </div>
-        <div class="dock-state-Row" role="group" aria-label="切换角色在场行动">
-          <button type="button" class="dock-state-chip is-active" data-state="reading">共读</button>
-          <button type="button" class="dock-state-chip" data-state="writing">执笔</button>
-          <button type="button" class="dock-state-chip" data-state="thinking">静思</button>
-          <button type="button" class="dock-state-chip" data-state="sharing">折信</button>
-          <button type="button" class="dock-state-chip" data-state="resting">听风</button>
-        </div>
-      </div>
-
-      <div class="dock-medium-cards" role="navigation" aria-label="展开桌面器物">
-        <button type="button" class="dock-medium-card" data-open-medium="letter">
-          <span class="medium-card-icon" aria-hidden="true">✒️</span>
-          <div class="medium-card-text">
-            <strong>展开信笺 (对话)</strong>
-            <small>唯一主信笺 · 直接对话</small>
-          </div>
-        </button>
-        <button type="button" class="dock-medium-card" data-open-medium="journal">
-          <span class="medium-card-icon" aria-hidden="true">📖</span>
-          <div class="medium-card-text">
-            <strong>翻开手账 (日记)</strong>
-            <small>亲笔日记 · 心境印章</small>
-          </div>
-        </button>
-        <button type="button" class="dock-medium-card" data-open-medium="filmstrip">
-          <span class="medium-card-icon" aria-hidden="true">🎞️</span>
-          <div class="medium-card-text">
-            <strong>记忆胶片</strong>
-            <small>拍立得墙 · 原始证据</small>
-          </div>
-        </button>
-        <button type="button" class="dock-medium-card" data-open-medium="spread">
-          <span class="medium-card-icon" aria-hidden="true">🧭</span>
-          <div class="medium-card-text">
-            <strong>她的一天</strong>
-            <small>唤醒怀表 · 外部窗口日志</small>
-          </div>
-        </button>
-      </div>
+    <!-- 主页底部：一行当前状态和进入对话的入口 -->
+    <footer class="home-foot" id="home-foot" aria-label="当前状态与对话入口">
+      <p class="home-status" id="home-status" role="status" aria-live="polite">
+        <span id="home-status-text">等待与你开启对话</span>
+        <small class="home-status-source" id="home-status-source" hidden title="按本地日常安排显示，并非后端实时状态">日常</small>
+      </p>
+      <button type="button" class="home-chat-btn" id="home-chat-btn">
+        去找她
+      </button>
     </footer>
 
     <!-- Right Slide-Out Atelier Blueprint Drawer (Models, Skills, MCP & Quota Management) -->
@@ -605,6 +474,60 @@
         </header>
 
         <div class="atelier-body">
+          <!-- 环境与天气：原先放在主页怀表胶囊里的调节台，现归入设置 -->
+          <section class="atelier-section" id="env-settings">
+            <div class="section-head">
+              <h3>环境与天气</h3>
+              <span class="blueprint-tag" id="tuner-poetic-label">秋枫 · 暮色琥珀</span>
+            </div>
+            <div class="tuner-row">
+              <span class="tuner-label">天气来源</span>
+              <div class="tuner-pills" data-env-group="weatherSource">
+                <button type="button" data-val="simulated" class="is-active">模拟（离线）</button>
+                <button type="button" data-val="real">真实天气</button>
+              </div>
+            </div>
+            <p class="section-note" id="weather-source-note">当前使用离线模拟天气，不需要网络。</p>
+            <div class="tuner-row">
+              <span class="tuner-label">时段</span>
+              <div class="tuner-pills" data-env-group="time">
+                <button type="button" data-val="auto" class="is-active">随系统</button>
+                <button type="button" data-val="dawn">清晨</button>
+                <button type="button" data-val="day">白昼</button>
+                <button type="button" data-val="dusk">黄昏</button>
+                <button type="button" data-val="night">夜阑</button>
+              </div>
+            </div>
+            <div class="tuner-row">
+              <span class="tuner-label">四季</span>
+              <div class="tuner-pills" data-env-group="season">
+                <button type="button" data-val="auto" class="is-active">随节气</button>
+                <button type="button" data-val="spring">🌸 春樱</button>
+                <button type="button" data-val="summer">🌿 夏木</button>
+                <button type="button" data-val="autumn">🍁 秋枫</button>
+                <button type="button" data-val="winter">❄️ 冬雪</button>
+              </div>
+            </div>
+            <div class="tuner-row">
+              <span class="tuner-label">天气</span>
+              <div class="tuner-pills" data-env-group="weather">
+                <button type="button" data-val="auto" class="is-active">随来源</button>
+                <button type="button" data-val="clear">☀️ 晴光</button>
+                <button type="button" data-val="cloud">☁️ 薄阴</button>
+                <button type="button" data-val="rain">🌧️ 听雨</button>
+                <button type="button" data-val="snow">🌨️ 落雪</button>
+              </div>
+            </div>
+            <div class="tuner-row">
+              <span class="tuner-label">台灯</span>
+              <div class="tuner-pills" data-env-group="lamp">
+                <button type="button" data-val="auto" class="is-active">自动感应</button>
+                <button type="button" data-val="on">💡 点亮暖灯</button>
+                <button type="button" data-val="off">🌙 熄灭</button>
+              </div>
+            </div>
+          </section>
+
           <!-- Section 1: Model Service & Connection Test (DL-118 ~ DL-120) -->
           <section class="atelier-section">
             <div class="section-head">

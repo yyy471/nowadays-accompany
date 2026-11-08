@@ -37,10 +37,13 @@
       phase: i * 0.85
     }));
 
+    // 风力倍率，由环境状态的 --wind（0～1）换算，0.4 左右与原有的摆动幅度相当。
+    let windScale = 1;
+
     function windGust(t) {
       const slow = Math.sin(t * 0.42) * 0.6 + Math.sin(t * 0.19 + 1.2) * 0.4;
       const flutter = Math.sin(t * 1.65) * 0.18;
-      return slow + flutter;
+      return (slow + flutter) * windScale;
     }
 
     function drawPetalPath(ctx, rx, ry) {
@@ -119,7 +122,9 @@
       ctx.save();
       // Distant slanted rain streaks across window & room air
       ctx.lineWidth = 1.1 * unit;
-      for (let i = 0; i < 38; i++) {
+      // 雨势越大，远处的雨丝越密。
+      const streakCount = Math.max(4, Math.round(38 * state.intensity));
+      for (let i = 0; i < streakCount; i++) {
         const speed = 0.85 + (i % 5) * 0.14;
         const progress = (t * speed + i * 0.29) % 1;
         const rx = (((i * 61 + 13) % 94) / 100) * width - progress * width * 0.09;
@@ -139,7 +144,10 @@
       }
 
       // Refractive glass water droplets sliding down
-      for (const drop of raindrops) {
+      for (let di = 0; di < raindrops.length; di++) {
+        // 雨势小时只保留一部分玻璃水珠。
+        if (di / raindrops.length >= 0.25 + 0.75 * state.intensity) continue;
+        const drop = raindrops[di];
         const cycle = (t * drop.cycleSpeed + drop.seed) % 1;
         const slide = Math.max(0, (cycle - 0.35) / 0.65);
         const easeSlide = slide * slide * (3 - 2 * slide);
@@ -192,7 +200,11 @@
       const isSnow = weather === "snow" || season === "winter";
       const mode = isSnow ? "snow" : season === "spring" ? "petal" : season === "autumn" ? "leaf" : "firefly";
 
-      for (const p of particles) {
+      // 冬天没下雪时只有稀疏的雪花，下雪时按强度增加。
+      const density = isSnow ? (weather === "snow" ? Math.max(0.25, state.intensity) : 0.4) : 1;
+      for (let pi = 0; pi < particles.length; pi++) {
+        if (pi / particles.length >= density) continue;
+        const p = particles[pi];
         const targetCtx = p.near ? cast : atmo;
         const speedMul = p.near ? 1.35 : 1.0;
         const phase = (t * p.speed * speedMul + p.seed) % 1;
@@ -382,6 +394,12 @@
       }
     }
 
+    function readUnit(name, fallback) {
+      const raw = stageElement.style.getPropertyValue(name);
+      const value = raw === "" ? NaN : Number(raw);
+      return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : fallback;
+    }
+
     function readStageState() {
       const ds = stageElement.dataset;
       return {
@@ -391,7 +409,9 @@
         night: ds.night === "true",
         lamp: ds.lamp === "true",
         godRayAlpha: Number(stageElement.style.getPropertyValue("--god-ray-alpha")) || 0.5,
-        goboAlpha: Number(stageElement.style.getPropertyValue("--gobo-alpha")) || 0.35
+        goboAlpha: Number(stageElement.style.getPropertyValue("--gobo-alpha")) || 0.35,
+        intensity: readUnit("--weather-intensity", 1),
+        wind: readUnit("--wind", 0.4)
       };
     }
 
@@ -401,6 +421,7 @@
       castCtx.clearRect(0, 0, width, height);
 
       const state = readStageState();
+      windScale = 0.55 + state.wind * 0.9;
       paintGodRays(atmoCtx, t, state);
       paintRainOnWindow(atmoCtx, t, state);
       paintCupSteam(atmoCtx, t);
