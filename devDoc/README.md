@@ -6,6 +6,7 @@
 
 | 文档 | 定位与状态 |
 | --- | --- |
+| [213 关系藏页接入记录](213-relationship-exlibris-page.md) | 关系页改为人物藏书票与经历、日记、介绍；资料维护留在设置 |
 | [212 211 外观复核 R01～R03 修复记录](212-appearance-review-fixes.md) | 图片全帧解码、状态版本门和图片与服饰名同步的实现方证据；独立结论见 211 |
 | [211 角色外观与每日穿搭独立复核](211-appearance-independent-review.md) | 统一离线验收、真实原图与 Agent 链路通过。R01～R03 在已复验范围关闭 |
 | [210 角色外观导入与每日穿搭首轮实施记录](210-appearance-implementation-record.md) | 衣柜存储、图片导入读图、Agent 穿搭状态、桌面入口与主页立绘的实现方自验；对话演出待实施 |
