@@ -6,6 +6,7 @@
 
 | 文档 | 定位与状态 |
 | --- | --- |
+| [214 关系藏页接入记录](214-relationship-exlibris-page.md) | 关系页改为人物藏书票与经历、日记、介绍；资料维护留在设置 |
 | [213 对话演出后端方案](213-conversation-performance-backend-plan.md) | DL-137／DL-138 的回复消息设计、三条演出链路、句段契约和后端接口提案 |
 | [212 211 外观复核 R01～R03 修复记录](212-appearance-review-fixes.md) | 图片全帧解码、状态版本门和图片与服饰名同步的实现方证据；独立结论见 211 |
 | [211 角色外观与每日穿搭独立复核](211-appearance-independent-review.md) | 统一离线验收、真实原图与 Agent 链路通过。R01～R03 在已复验范围关闭 |

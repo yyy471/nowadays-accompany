@@ -8,6 +8,7 @@ import { ThemeSwitcher } from './components/shell/ThemeSwitcher';
 import { PageDock } from './components/shell/PageDock';
 import { HomePage } from './pages/Home';
 import { Relations } from './Relations';
+import { SettingsPage } from './pages/Settings';
 import { createStateVersionGate } from './state-version.js';
 
 export function App() {
@@ -16,6 +17,7 @@ export function App() {
   const [scope] = useState(createMotionScope);
   const pageBody = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState('home');
+  const [rolesVisit, setRolesVisit] = useState(0);
   const [roles, setRoles] = useState<RoleListItem[]>();
   const [currentId, setCurrentId] = useState('');
   const [detail, setDetail] = useState<RoleDetail>();
@@ -112,14 +114,14 @@ export function App() {
     <main className="studio-content" tabIndex={-1} aria-label="当前页面内容"><UiThemeProvider theme="xiacheng">
       <div ref={pageBody} className={page === 'home' ? 'studio-home-content' : page === 'roles' ? 'studio-relations-content' : 'studio-legacy-page'}>
         {page === 'home' && <UiThemeScope theme="xiacheng"><HomePage accounts={accounts} selectedAccountId={currentId} outfitHomeUrl={outfitHomeUrl} outfitName={currentOutfit?.name ?? null} loading={!roles && !error} error={error} onRetry={() => refresh()} onGoWorkbench={() => setPage('roles')}/></UiThemeScope>}
-        {page === 'roles' && <Relations roles={roles || []} detail={detail} status={status} error={error} currentId={currentId} currentOutfitId={typeof state.outfitId === 'string' ? state.outfitId : ''} outfitHomeUrl={outfitHomeUrl} onSelect={setCurrentId} onRefresh={refresh}/>}
+        {page === 'roles' && <Relations roles={roles || []} error={error} currentId={currentId} visit={rolesVisit} onSelect={setCurrentId} onOpenSettings={() => setPage('settings')}/>}
         {page === 'conversation' && <header className="studio-page-heading"><h1>对话</h1><p>这里会收留你们的对话。</p></header>}
-        {page === 'settings' && <header className="studio-page-heading"><h1>设置</h1><p>这里会收纳应用设置。</p></header>}
+        {page === 'settings' && <SettingsPage roles={roles || []} detail={detail} currentId={currentId} currentOutfitId={typeof state.outfitId === 'string' ? state.outfitId : ''} onSelect={setCurrentId} onRefresh={refresh}/>}
       </div>
     </UiThemeProvider></main>
     <UiThemeScope theme="xiacheng" className="studio-footer-scope"><footer className="studio-footer">
       <span className="studio-runtime">{error ? '连接状态待更新' : roles ? `${roles.length} 位角色 · 本地生活空间` : '正在连接'}</span>
-      <PageDock page={page} onNavigate={setPage}/><span className="studio-edition">CHARACTER STUDIO / 开发版</span>
+      <PageDock page={page} onNavigate={next => { setPage(next); if (next === 'roles') setRolesVisit(value => value + 1); }}/><span className="studio-edition">CHARACTER STUDIO / 开发版</span>
     </footer></UiThemeScope>
   </div>;
 }
