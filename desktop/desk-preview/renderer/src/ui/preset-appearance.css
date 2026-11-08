@@ -1,0 +1,27 @@
+/* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 · matched daytime and night-window editions */
+[data-ui-theme="xiacheng"] .ui-theme-switcher { display:flex; align-items:center; justify-self:center; gap:4px; padding:4px; border:1px solid var(--nd-semantic-color-line-decorative); border-radius:var(--nd-semantic-radius-round); background:var(--nd-semantic-color-surface); }
+[data-ui-theme="xiacheng"] .ui-theme-switcher button { display:flex; align-items:center; justify-content:center; gap:8px; min-height:var(--nd-semantic-size-control); padding:8px 16px; border:0; border-radius:var(--nd-semantic-radius-round); font-size:var(--nd-semantic-type-control-size); white-space:nowrap; color:var(--nd-semantic-color-text-muted); background:var(--nd-semantic-color-transparent); }
+[data-ui-theme="xiacheng"] .ui-theme-switcher button:hover { color:var(--nd-semantic-color-text); background:var(--nd-semantic-color-selection); }
+[data-ui-theme="xiacheng"] .ui-theme-switcher button[aria-pressed="true"] { color:var(--nd-semantic-color-on-solid); background:var(--nd-semantic-color-commit); }
+[data-ui-theme="xiacheng"] .ui-theme-switcher button:disabled { color:var(--nd-semantic-color-disabled-text); background:var(--nd-semantic-color-disabled-surface); cursor:not-allowed; }
+.ui-theme-symbol { font-size:16px; line-height:20px; }
+.studio-header { grid-template-columns:minmax(180px,1fr) auto minmax(40px,1fr); }
+.studio-shell[data-ui-preset="nightwave"] { color-scheme:dark; }
+[data-ui-theme="xiacheng"][data-ui-preset="nightwave"] { color-scheme:dark; }
+.studio-shell[data-ui-preset="nightwave"] .home-scene-label { background:var(--nd-semantic-color-surface); color:var(--nd-semantic-color-text); border:1px solid var(--nd-semantic-color-line-control); border-bottom:3px solid var(--nd-semantic-color-entry); }
+.studio-shell[data-ui-preset="nightwave"] .home-scene-note { background:var(--nd-semantic-color-selection); }
+.studio-shell[data-ui-preset="nightwave"] .home-scene-note>span { color:var(--nd-semantic-color-text-muted); }
+.studio-shell[data-ui-preset="nightwave"] .home-scene-note p { color:var(--nd-semantic-color-text); }
+/* Legacy page geometry/controls stay intact; bridge only the established palette variables. */
+[data-ui-preset="nightwave"]:is(.studio-shell,.ui-modal-backdrop) {
+  color-scheme:dark;
+  --bg:var(--nd-semantic-color-canvas); --bg-soft:var(--nd-semantic-color-surface);
+  --panel:var(--nd-semantic-color-surface); --panel-2:var(--nd-semantic-color-disabled-surface); --panel-3:var(--nd-semantic-color-selection);
+  --text:var(--nd-semantic-color-text); --muted:var(--nd-semantic-color-text-muted);
+  --line:var(--nd-semantic-color-line-decorative); --line-strong:var(--nd-semantic-color-line-control);
+  --accent:var(--nd-semantic-color-entry); --accent-ink:var(--nd-semantic-color-entry); --accent-2:var(--nd-semantic-color-accent-decorative);
+  --ok:var(--nd-semantic-color-success); --warn:var(--nd-semantic-color-warning); --bad:var(--nd-semantic-color-danger); --busy:var(--nd-semantic-color-commit);
+  --control-surface:var(--nd-semantic-color-surface); --control-focus:var(--nd-semantic-color-selection);
+}
+@media (max-width:959px) { .studio-header { grid-template-columns:minmax(0,1fr) auto; gap:12px; } .studio-header>.ui-theme-switcher { grid-column:1/-1; grid-row:2; } }
+@media (max-width:599px) { [data-ui-theme="xiacheng"] .ui-theme-switcher button { min-height:40px; padding:6px 16px; } .studio-header-actions .ui-settings-launcher { display:grid; } .studio-header { padding-block:8px; gap:4px 12px; } }

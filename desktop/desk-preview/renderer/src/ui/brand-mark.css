@@ -1,0 +1,7 @@
+[data-ui-theme="xiacheng"] .ui-brand-mark {
+  display:block;
+  flex-shrink:0;
+  width:var(--nd-component-brand-mark-width);
+  height:var(--nd-component-brand-mark-height);
+  object-fit:contain;
+}

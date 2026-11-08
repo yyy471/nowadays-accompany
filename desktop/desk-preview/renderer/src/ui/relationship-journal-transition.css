@@ -1,0 +1,31 @@
+/* 页面专属昼夜过渡：只隐藏被真实DOM线段代替的纸线/刻度。 */
+.wj-journal[data-journal-theme-transition="pre-to-night"] .leaf.right::before,
+.wj-journal[data-journal-theme-transition="to-night"] .leaf.right::before,
+.wj-journal[data-journal-theme-transition="to-day"] .leaf.right::before {
+  opacity: 0 !important;
+  transition: none !important;
+}
+.wj-journal[data-journal-theme-transition="pre-to-day"] .strip .tk,
+.wj-journal[data-journal-theme-transition="to-night"] .strip .tk,
+.wj-journal[data-journal-theme-transition="to-night"] .strip .fq {
+  opacity: 0 !important;
+  transition: none !important;
+}
+
+/* 线段装饰透传输入，不创建第二个可交互关系页。 */
+html[data-theme-transition="relationship-journal"] .wj-theme-morph {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  pointer-events: none;
+  view-transition-name: none;
+}
+html[data-theme-transition="relationship-journal"] .wj-theme-morph i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  transform-origin: 0 0;
+  will-change: transform, opacity;
+}
