@@ -36,6 +36,7 @@ import {
   AutonomyStore,
   type AutonomyWakeRecord,
 } from "../storage/autonomy-store.js";
+import { AppearanceStore } from "../storage/appearance-store.js";
 import type {
   ExecutionRecord,
   MessageRecord,
@@ -1300,6 +1301,11 @@ export class ConversationService {
     const roleId = execution.roleId;
     const windowId = execution.windowId ?? running.windowId;
     const autonomy = input.autonomy ?? null;
+    // 每日穿搭按本轮开始决策的业务本地日期登记，跨零点不改变本轮日期。
+    const roundLocalDate = localDateFromIso(
+      this.now().toISOString(),
+      this.timeZone,
+    );
     // 续行计量按原任务来源（DL-110）：唤醒接回的用户任务仍是用户任务，
     // 不消耗自主点数；只有自主任务继续受自主额度控制。
     const taskOrigin =
@@ -1470,6 +1476,12 @@ export class ConversationService {
         recent,
         autonomy?.intent ?? continuationTask?.goal ?? "",
       );
+      const outfitBrief = this.buildOutfitBrief(
+        storage,
+        roleId,
+        store.getRoleContext().state,
+        roundLocalDate,
+      );
       if (
         cachedCatalog !== undefined &&
         cachedCatalog.roleId === roleId
@@ -1519,6 +1531,7 @@ export class ConversationService {
                   intent: autonomy.intent,
                   resumed: autonomy.resumed,
                 },
+          outfitBrief,
         });
       const ensureTask = (): string => {
         if (taskId !== null) {
@@ -1576,6 +1589,7 @@ export class ConversationService {
           emitDelta,
           ensureTask,
           now: this.now,
+          localDate: roundLocalDate,
           maxToolRounds: this.maxToolRounds,
           purpose,
           meter,
@@ -1625,7 +1639,11 @@ export class ConversationService {
       store.commitConversation({
         executionId: execution.executionId,
         content: result.text,
-        statePatch: result.statePatch,
+        statePatch: this.validateOutfitStatePatch(
+          storage,
+          roleId,
+          result.statePatch,
+        ),
         countsAsConversationRound: autonomy === null,
         taskDecision,
         now: this.now().toISOString(),
@@ -2114,6 +2132,69 @@ export class ConversationService {
     }
   }
 
+  /** 读取当前衣柜与本轮穿搭状态；衣柜为空时不向模型增加提示。 */
+  private buildOutfitBrief(
+    storage: RoleStorage,
+    roleId: string,
+    state: Record<string, unknown>,
+    localDate: string,
+  ): OutfitBrief | null {
+    const outfits = new AppearanceStore(
+      storage.business.db,
+      roleId,
+    ).listOutfits();
+    if (outfits.length === 0) {
+      return null;
+    }
+    const rawOutfitId =
+      typeof state.outfitId === "string" ? state.outfitId : null;
+    const current =
+      rawOutfitId === null
+        ? null
+        : (outfits.find((outfit) => outfit.outfitId === rawOutfitId) ?? null);
+    return {
+      localDate,
+      reviewedToday:
+        current !== null &&
+        typeof state.outfitReviewedOn === "string" &&
+        state.outfitReviewedOn === localDate,
+      current:
+        current === null
+          ? null
+          : { outfitId: current.outfitId, name: current.name },
+      items: outfits.map((outfit) => ({
+        outfitId: outfit.outfitId,
+        name: outfit.name,
+        description: outfit.description,
+      })),
+    };
+  }
+
+  /** 提交前复核状态补丁引用的服饰仍属于该角色衣柜。 */
+  private validateOutfitStatePatch(
+    storage: RoleStorage,
+    roleId: string,
+    statePatch: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const outfitId = statePatch.outfitId;
+    if (outfitId === undefined) {
+      return statePatch;
+    }
+    const exists =
+      typeof outfitId === "string" &&
+      new AppearanceStore(storage.business.db, roleId).getOutfit(outfitId) !==
+        null;
+    if (!exists) {
+      throw new AppError(
+        400,
+        "OUTFIT_NOT_FOUND",
+        "角色状态引用的服饰不在衣柜中",
+        { outfitId },
+      );
+    }
+    return statePatch;
+  }
+
   private buildSystemPrompt(input: {
     roleContext: ReturnType<ConversationStore["getRoleContext"]>;
     recallBriefs: readonly RecallBrief[];
@@ -2132,6 +2213,7 @@ export class ConversationService {
     } | null;
     continuation: { taskId: string; goal: string } | null;
     autonomy: { intent: string; resumed: boolean } | null;
+    outfitBrief: OutfitBrief | null;
   }): string {
     const lines = [
       `你是角色「${input.roleContext.displayName}」，始终以该角色的身份、经历和当前状态回应。`,
@@ -2199,6 +2281,32 @@ export class ConversationService {
       if (input.autonomy.resumed) {
         lines.push(
           "这是额度恢复或中断后继续的自主任务；先结合最新情况与已有结果重新评估，不重复已完成操作。",
+        );
+      }
+    }
+    if (input.outfitBrief !== null) {
+      const outfit = input.outfitBrief;
+      lines.push(`今日穿搭（业务本地日期 ${outfit.localDate}）：`);
+      lines.push("可用服饰：");
+      for (const item of outfit.items) {
+        lines.push(
+          `- ${item.name}（id=${item.outfitId}）${item.description === null ? "" : `：${truncate(item.description, 200)}`}`,
+        );
+      }
+      if (outfit.current === null) {
+        lines.push("当前没有已选择的服饰，桌面使用角色默认呈现。");
+      } else {
+        lines.push(
+          `当前穿着：${outfit.current.name}（id=${outfit.current.outfitId}）。`,
+        );
+      }
+      if (outfit.reviewedToday) {
+        lines.push(
+          "今天已完成穿搭决定；如当前活动安排确有需要，可以换一套，仍通过 state_update 提交 outfitId。",
+        );
+      } else {
+        lines.push(
+          "今天还没有完成穿搭决定。请结合当天安排从衣柜选择一套，继续穿当前服饰也要提交当前 ID；调用 state_update，在 patch 中提供 outfitId，后端会写入今天日期。",
         );
       }
     }
@@ -2343,6 +2451,17 @@ function toCommittedTaskDecision(
       endReason: action.endReason,
     },
   };
+}
+
+interface OutfitBrief {
+  localDate: string;
+  reviewedToday: boolean;
+  current: { outfitId: string; name: string } | null;
+  items: Array<{
+    outfitId: string;
+    name: string;
+    description: string | null;
+  }>;
 }
 
 function errorCodeOf(error: unknown): string {

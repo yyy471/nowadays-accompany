@@ -17,6 +17,7 @@ export class RoleStorage {
       assertExistingRolePaths(paths);
     } else {
       fs.mkdirSync(paths.workspaceDir, { recursive: true });
+      fs.mkdirSync(paths.appearanceDir, { recursive: true });
     }
     const create = mode === "initialize";
     this.business = new RoleStore(paths.businessDatabasePath, { create });

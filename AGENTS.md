@@ -1,12 +1,12 @@
 # Nowadays 新主线协作指南
 
-最新结论（2026-11-06）：[198 独立复核](devDoc/198-p5-capability-gaps-independent-review.md#r01-第三次补修的独立复验)通过。R01～R06 在本机离线范围关闭，GAP-01～GAP-06 在首轮后端补齐范围通过。独立重跑统一离线验收 21 步，含 201 项正式测试。R01 提交前强杀后原任务续行一次并完成，提交后写入失败时恢复第二轮失败终态。下一阶段为桌面前端，完成后按 DL-115 恢复远程 Streamable HTTP MCP 的实施与联调。UI-PREP-01、管理与体验候选及 OPS 项未实施。
+最新结论（2026-11-08）：角色外观导入、Agent 每日穿搭和主页立绘已按 DL-136 完成首轮实施。[211 独立复验](devDoc/211-appearance-independent-review.md#r01-全帧校验补修独立复验)关闭 R01～R03，统一离线验收 21 步、213 项正式测试和 30 项桌面测试通过。千叶两套原图导入、自主换装、中断保留及重启读回通过。Electron 原生交互的实现方自验见 [210](devDoc/210-appearance-implementation-record.md) 与 [212](devDoc/212-appearance-review-fixes.md)，上传内存峰值及原生交互独立验证仍单列。对话演出与 SSE 即时刷新待接入，桌面前端完成后按 DL-115 恢复远程 Streamable HTTP MCP。
 
 历史补正自验见[183](devDoc/183-p2-05-review-fix-record.md)，R05／R09 修复自验见[185](devDoc/185-p2-06-r05-r09-fix-record.md)；最终独立复验与 P2 收口见[184 第 7 节](devDoc/184-p2-06-acceptance-report.md)。真实配置限 DeepSeek Anthropic Messages；P3 自主安排与额度只有离线模型／本地 MCP 自验，P4 恢复修复本轮也只用离线模型、本地 SQLite／stdio MCP 和强杀子进程，其他厂商／协议、真实恢复、P5 远程 MCP 和桌面交付继续按阶段验证。
 
 ## 当前阶段
 
-P5 整体独立复核见 195，首轮本机后端源码原型已收口。随后按 196 补齐 GAP-01～GAP-06，独立复验见 198。运行与配置入口为 backend/README.md，统一离线命令为 backend 下的 npm run accept:offline。桌面前端按 DL-45 先讨论方案，DL-115 排在桌面前端完成后。
+P5 整体独立复核见 195，首轮本机后端源码原型已收口。随后按 196 补齐 GAP-01～GAP-06，独立复验见 198。桌面前端已按 DL-136、208、209 完成外观导入、每日穿搭与主页立绘首轮实施，证据见 210～212。对话立绘演出和 SSE 即时刷新待推进。运行与配置入口为 backend/README.md，统一离线命令为 backend 下的 npm run accept:offline。桌面前端按 DL-45 先讨论方案，DL-115 排在桌面前端完成后。
 
 `master` 包含数字生命主线的设计、实施基线与已验收的后端原型，作为后续主要开发分支。历史开发分支 `codex/p1-role-storage` 的提交已并入 `master`。`dev` 用于归档旧版项目代码与历史。
 

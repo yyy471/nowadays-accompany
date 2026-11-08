@@ -8,6 +8,8 @@ import { useThemePreset } from '../ui/presets';
 export interface HomePageProps {
   accounts?: AccountsResponse;
   selectedAccountId: string;
+  outfitHomeUrl?: string | null;
+  outfitName?: string | null;
   loading: boolean;
   error?: string;
   locked?: boolean;
@@ -20,7 +22,7 @@ function ReadingGroup({ index, children }: { index: 0 | 1 | 2; children: ReactNo
 }
 
 /** 首页只承载主题与查看关系，不在此读取策略、绑定或修改账号。 */
-export function HomePage({ accounts, selectedAccountId, loading, error, locked, onRetry, onGoWorkbench }: HomePageProps) {
+export function HomePage({ accounts, selectedAccountId, outfitHomeUrl, outfitName, loading, error, locked, onRetry, onGoWorkbench }: HomePageProps) {
   const { preset } = useThemePreset();
   const night = preset === 'nightwave';
   const account = accounts?.accounts.find(item => item.accountId === selectedAccountId);
@@ -52,7 +54,7 @@ export function HomePage({ accounts, selectedAccountId, loading, error, locked, 
   }, [policy.reduced, scope]);
   return <div className="home-studio" ref={host}>
     <section className="home-hero" aria-label={night ? '晚风电台桌面' : '白昼来信桌面'}>
-      <HomeScene />
+      <HomeScene outfitHomeUrl={outfitHomeUrl} outfitName={outfitName} />
       <div className="home-copy">
         <ReadingGroup index={0}>
           <p className="home-eyebrow">{night ? 'STAY A LITTLE, LISTEN A LITTLE' : 'MAKE ROOM FOR EVERYDAY'}</p>

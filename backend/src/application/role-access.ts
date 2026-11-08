@@ -49,6 +49,24 @@ export class RoleAccess {
       storage.close();
     }
   }
+
+  async withStoreAsync<T>(
+    roleId: string,
+    action: (storage: RoleStorage) => Promise<T>,
+  ): Promise<T> {
+    this.requireReady(roleId);
+    let storage: RoleStorage;
+    try {
+      storage = RoleStorage.openExisting(rolePaths(this.dataRoot, roleId));
+    } catch (error) {
+      throw toStorageError(error);
+    }
+    try {
+      return await action(storage);
+    } finally {
+      storage.close();
+    }
+  }
 }
 
 function toStorageError(error: unknown): AppError {

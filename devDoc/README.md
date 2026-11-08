@@ -1,11 +1,16 @@
 # 新主线文档导航
 
-最新阶段（2026-11-06）：[198 首轮后端功能缺口独立复验](198-p5-capability-gaps-independent-review.md#r01-第三次补修的独立复验)通过。R01～R06 在本机离线范围关闭。
+最新阶段（2026-11-08）：[198 首轮后端功能缺口独立复验](198-p5-capability-gaps-independent-review.md#r01-第三次补修的独立复验)通过，R01～R06 在本机离线范围关闭。随后按 DL-136 与 208／209 完成角色外观导入、每日穿搭和桌面主页接入的首轮实施，见[210](210-appearance-implementation-record.md)；对话演出尚未实施。
 
-当前阶段：独立重跑 `npm run accept:offline` 的 21 个步骤全部通过，含 201 项正式测试。桌面前端开发与视觉优化计划见 [200](200-desktop-frontend-development-plan.md)，桌面前端完成后按 DL-115 恢复远程 Streamable HTTP MCP。
+当前阶段：角色外观与每日穿搭在 [212](212-appearance-review-fixes.md) 补修后完成[独立复验](211-appearance-independent-review.md#r01-全帧校验补修独立复验)。统一离线验收 21 步、213 项正式测试和 30 项桌面测试通过，R01～R03 在已复验范围关闭。对话逐段演出与 SSE 即时刷新待接入。桌面前端完成后按 DL-115 恢复远程 Streamable HTTP MCP。
 
 | 文档 | 定位与状态 |
 | --- | --- |
+| [212 211 外观复核 R01～R03 修复记录](212-appearance-review-fixes.md) | 图片全帧解码、状态版本门和图片与服饰名同步的实现方证据；独立结论见 211 |
+| [211 角色外观与每日穿搭独立复核](211-appearance-independent-review.md) | 统一离线验收、真实原图与 Agent 链路通过。R01～R03 在已复验范围关闭 |
+| [210 角色外观导入与每日穿搭首轮实施记录](210-appearance-implementation-record.md) | 衣柜存储、图片导入读图、Agent 穿搭状态、桌面入口与主页立绘的实现方自验；对话演出待实施 |
+| [209 Agent 每日穿搭开发文档](209-agent-daily-outfit-development-guide.md) | DL-136 的穿搭决策时机、角色状态提交、主页与对话刷新及验收；首轮实施见 210，对话同步待实施 |
+| [208 角色外观导入与对话立绘接入](208-character-appearance-import-and-dialogue.md) | DL-136 的用户图片规范、素材登记接口、桌面接入与验收；首轮实施见 210，对话立绘待实施 |
 | [207 桌面前端四页重做记录](207-desktop-four-page-rebuild.md) | DL-135 的四页范围、主页与关系页实现及本机自验记录 |
 | [206 桌面主页精简、环境流转与角色外观入口](206-desktop-home-scene-and-role-visual-plan.md) | DL-132～DL-134 的历史前端方案与实现方自验，当前页面范围按 DL-135 |
 | [205 光影书房与器物剧场前端重构计划](205-luminary-study-theater-frontend-plan.md) | `dev-front` 分支重构方案：单舞台双焦距、全屏五层光影流转与信笺／手账／胶片／推演四大器物转场 |
@@ -32,7 +37,7 @@
 | [184 P2-06 阶段验收报告](184-p2-06-acceptance-report.md) | 第 7 节最终通过：105 项回归、20 个离线及 4 项真实复验，R01～R09 关闭；P2 首轮后端范围收口，可进入 P3；首轮失败证据保留 |
 | [183 P2-05 复核问题修复记录](183-p2-05-review-fix-record.md) | 历史修复自验保留；第 12 节模型停用续行补正已通过 182 第 6 节复验；新真实验收阻断见 184 |
 | [182 P2-05 独立开发复核](182-p2-05-independent-review.md) | 历次问题与复验记录；R01～R09 最终关闭，R05／R09 真实复验与 P2 收口见 184 第 7 节 |
-| [161 数字生命方向与持续决策](161-digital-life-direction-decisions.md) | 用户逐项确认的需求与修订，当前记录至 DL-131；桌面书桌主页和独立对话已确认 |
+| [161 数字生命方向与持续决策](161-digital-life-direction-decisions.md) | 用户逐项确认的需求与修订，当前记录至 DL-136，含角色自主选择服饰与素材导入 |
 | [162 首轮后端原型实施方案](162-backend-prototype-implementation-plan.md) | R1～R64 已确认，首轮实施基线已定；P0 已实施并自验，后续工程契约按阶段落实 |
 | [163 设计与方案一致性核对](163-design-consistency-review.md) | 本轮文档核对，记录已修正遗漏、需求覆盖、未采用底稿条款和剩余待讨论问题；非运行验收或独立复核 |
 | [164 首轮后端原型执行清单](164-backend-prototype-execution-checklist.md) | R64／DL-129 确认的阶段入口；P0、P1 已通过，P2-01 契约已建立 |

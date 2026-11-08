@@ -2,6 +2,69 @@ import type { IncomingMessage } from "node:http";
 import { HttpError } from "./errors.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
+const MAX_UPLOAD_BODY_BYTES = 128 * 1024 * 1024;
+
+export interface MultipartFile {
+  fileName: string;
+  data: Buffer;
+}
+
+export interface MultipartForm {
+  fields: Map<string, string>;
+  files: Map<string, MultipartFile[]>;
+}
+
+export async function readMultipartForm(
+  request: IncomingMessage,
+): Promise<MultipartForm> {
+  const contentType = request.headers["content-type"];
+  if (
+    typeof contentType !== "string" ||
+    !contentType.toLowerCase().startsWith("multipart/form-data")
+  ) {
+    throw new HttpError(
+      415,
+      "UNSUPPORTED_MEDIA_TYPE",
+      "请求必须使用 multipart/form-data",
+    );
+  }
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.length;
+    if (size > MAX_UPLOAD_BODY_BYTES) {
+      throw new HttpError(413, "PAYLOAD_TOO_LARGE", "上传内容超过 128 MiB 上限");
+    }
+    chunks.push(buffer);
+  }
+  if (size === 0) {
+    throw new HttpError(400, "EMPTY_BODY", "请求体不能为空");
+  }
+  let form: FormData;
+  try {
+    form = await new Response(Buffer.concat(chunks), {
+      headers: { "content-type": contentType },
+    }).formData();
+  } catch {
+    throw new HttpError(400, "INVALID_MULTIPART", "表单内容格式不正确");
+  }
+  const fields = new Map<string, string>();
+  const files = new Map<string, MultipartFile[]>();
+  for (const [key, value] of form.entries()) {
+    if (typeof value === "string") {
+      fields.set(key, value);
+      continue;
+    }
+    const list = files.get(key) ?? [];
+    list.push({
+      fileName: value.name,
+      data: Buffer.from(await value.arrayBuffer()),
+    });
+    files.set(key, list);
+  }
+  return { fields, files };
+}
 
 export async function readJsonBody(
   request: IncomingMessage,

@@ -1,0 +1,25 @@
+.ui-modal-panel.nd-appearance-modal { width: min(760px, 100%); }
+
+.nd-appearance { display: flex; flex-direction: column; gap: 14px; }
+.nd-appearance-hint { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.nd-appearance-hint code { padding: 1px 4px; border-radius: 4px; background: var(--panel-2); font-size: 12px; }
+.nd-appearance-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.nd-appearance-current { color: var(--accent-ink); font-size: 12px; }
+.nd-appearance-empty { margin: 0; color: var(--muted); font-size: 13px; }
+.nd-outfit-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; max-height: 46vh; margin: 0; padding: 0; overflow: auto; list-style: none; }
+.nd-outfit { position: relative; padding: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.nd-outfit.selected { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.nd-outfit.current::after { position: absolute; top: 6px; right: 8px; padding: 1px 6px; border-radius: 999px; background: var(--accent); color: #fff; content: "当前穿着"; font-size: 10px; }
+.nd-outfit-card { display: flex; gap: 10px; width: 100%; padding: 0; border: 0; background: none; color: inherit; text-align: left; cursor: pointer; }
+.nd-outfit-thumb { display: grid; flex: none; place-items: center; width: 64px; height: 80px; overflow: hidden; border-radius: 8px; background: var(--panel-2); color: var(--muted); font-size: 11px; }
+.nd-outfit-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.nd-outfit-meta { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.nd-outfit-meta b { font-size: 14px; }
+.nd-outfit-meta small { color: var(--muted); font-size: 11px; }
+.nd-outfit-sprites { margin: 8px 0 0; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.nd-sprite-upload { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; padding-top: 14px; border-top: 1px solid var(--line); }
+.nd-sprite-upload > :first-child { flex: 1 1 220px; }
+.nd-sprite-upload > button { margin-top: 24px; }
+.nd-appearance-notice { margin: 0; color: var(--ok); font-size: 13px; }
+.nd-appearance-error { margin: 0; color: var(--bad); font-size: 13px; }
+.nd-visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }

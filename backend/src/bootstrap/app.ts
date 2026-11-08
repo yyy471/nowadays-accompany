@@ -5,6 +5,7 @@ import {
   type ChatModelPortFactory,
 } from "../application/conversation-service.js";
 import { AutonomyService } from "../application/autonomy-service.js";
+import { AppearanceService } from "../application/appearance-service.js";
 import { MemoryQueryService } from "../application/memory-query-service.js";
 import {
   MemoryRuntime,
@@ -54,6 +55,7 @@ export function createBackendApp(
   const roleAccess = new RoleAccess(appStore, config.dataRoot);
   const messageService = new MessageService(roleAccess);
   const resourceService = new ResourceService(appStore, roleAccess);
+  const appearanceService = new AppearanceService(roleAccess);
   const memoryService = new MemoryQueryService(roleAccess, {
     now,
     ...(options.timeZone === undefined ? {} : { timeZone: options.timeZone }),
@@ -123,6 +125,7 @@ export function createBackendApp(
     modelServices: modelService,
     conversation,
     autonomy,
+    appearance: appearanceService,
   };
   let server: http.Server;
   try {

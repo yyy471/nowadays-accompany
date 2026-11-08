@@ -13,6 +13,21 @@ export interface JsonResponse {
   body: unknown;
 }
 
+export interface BinaryResponse {
+  status: number;
+  contentType: string;
+  body: Buffer;
+  cacheControl?: string;
+}
+
+export type RouteResponse = JsonResponse | BinaryResponse;
+
+export function isBinaryResponse(
+  result: RouteResponse,
+): result is BinaryResponse {
+  return Buffer.isBuffer(result.body);
+}
+
 export function writeJson(response: ServerResponse, result: JsonResponse): void {
   const payload = `${JSON.stringify(result.body)}\n`;
   response.writeHead(result.status, {
@@ -24,6 +39,21 @@ export function writeJson(response: ServerResponse, result: JsonResponse): void 
     "access-control-allow-headers": "content-type, last-event-id",
   });
   response.end(payload);
+}
+
+export function writeBinary(
+  response: ServerResponse,
+  result: BinaryResponse,
+): void {
+  response.writeHead(result.status, {
+    "content-type": result.contentType,
+    "content-length": result.body.length,
+    "cache-control": result.cacheControl ?? "no-store",
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+    "access-control-allow-headers": "content-type, last-event-id",
+  });
+  response.end(result.body);
 }
 
 export function writeError(response: ServerResponse, error: unknown): void {

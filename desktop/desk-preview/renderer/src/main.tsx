@@ -10,6 +10,7 @@ import './ui/character-tokens.css';
 import './ui/character-theme.css';
 import './styles/shell.css';
 import './styles/home.css';
+import './styles/appearance.css';
 import './ui/preset-appearance.css';
 import './ui/relationship-journal.css';
 import './ui/relationship-journal-integration.css';

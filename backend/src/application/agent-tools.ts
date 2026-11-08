@@ -21,6 +21,7 @@ import type { AutonomyService } from "./autonomy-service.js";
 import { McpToolClient, type McpToolInfo } from "../mcp/client.js";
 import { SkillLibrary } from "../skills/skill-library.js";
 import type { AppStore } from "../storage/app-store.js";
+import { AppearanceStore } from "../storage/appearance-store.js";
 import type { RoleAccess } from "./role-access.js";
 
 export interface AgentToolCatalog {
@@ -59,7 +60,7 @@ export async function loadAgentTools(
     memorySummaryEvidenceTool(input.roleId, input.memory),
     diaryWriteTool(input.roleId, input.memory),
     memoryDiaryTool(input.roleId, input.memory),
-    stateUpdateTool(),
+    stateUpdateTool(input.roleId, input.roleAccess),
     taskProgressTool(input.roleId, input.roleAccess),
     taskPauseTool(input.roleId, input.roleAccess),
     taskFinishTool(input.roleId, input.roleAccess),
@@ -829,18 +830,21 @@ function autonomyShareTool(
   };
 }
 
-function stateUpdateTool(): ConversationTool {
+function stateUpdateTool(
+  roleId: string,
+  roleAccess: RoleAccess,
+): ConversationTool {
   return {
     name: "state_update",
     source: "state",
     description:
-      "提出本轮角色当前状态的局部补丁。补丁会与回复、执行完成在同一事务提交，不会立即生效；版本冲突时整轮回滚。",
+      "提出本轮角色当前状态的局部补丁。补丁会与回复、执行完成在同一事务提交，不会立即生效；版本冲突时整轮回滚。提供 outfitId 时后端会校验衣柜归属并写入本轮穿搭日期。",
     inputSchema: {
       type: "object",
       properties: { patch: { type: "object" } },
       required: ["patch"],
     },
-    async execute(args) {
+    async execute(args, context) {
       const patch = args.patch;
       if (patch === null || typeof patch !== "object" || Array.isArray(patch)) {
         return failedOutcome(
@@ -848,10 +852,38 @@ function stateUpdateTool(): ConversationTool {
           "state_update 需要对象形式的 patch",
         );
       }
+      const normalized = { ...(patch as Record<string, unknown>) };
+      // 日期由后端按本轮开始决策的本地日期统一写入。
+      delete normalized.outfitReviewedOn;
+      if ("outfitId" in normalized) {
+        const outfitId = normalized.outfitId;
+        if (typeof outfitId !== "string" || outfitId.trim().length === 0) {
+          return failedOutcome(
+            "OUTFIT_ID_REQUIRED",
+            "outfitId 必须是非空字符串",
+          );
+        }
+        const exists = roleAccess.withStore(roleId, (storage) =>
+          new AppearanceStore(
+            storage.business.db,
+            roleId,
+          ).getOutfit(outfitId) !== null,
+        );
+        if (!exists) {
+          return failedOutcome(
+            "OUTFIT_NOT_FOUND",
+            `衣柜中没有服饰 ${outfitId}，请从当前可用服饰中选择`,
+          );
+        }
+        normalized.outfitId = outfitId;
+        normalized.outfitReviewedOn =
+          context.localDate ?? new Date().toISOString().slice(0, 10);
+      }
       return {
         status: "success",
         rawResponse: { accepted: true },
         adaptedResult: { accepted: true },
+        statePatch: normalized,
       };
     },
   };

@@ -5,13 +5,14 @@ import { Button, ControlButton, Field, Icon, Input, Modal, Textarea, UiThemeScop
 import { useThemePreset, useThemeTransitionStrategy } from './ui/presets';
 import { relationshipJournalThemeTransition } from './ui/relationship-journal-transition';
 import clerk from './assets/relationship-journal/clerk.svg';
+import { AppearancePanel } from './components/appearance/AppearancePanel';
 
-type Props = { roles: RoleListItem[]; detail?: RoleDetail; status: string; error: string; currentId: string; onSelect: (id: string) => void; onRefresh: (id?: string) => Promise<void> };
+type Props = { roles: RoleListItem[]; detail?: RoleDetail; status: string; error: string; currentId: string; currentOutfitId?: string; outfitHomeUrl?: string | null; onSelect: (id: string) => void; onRefresh: (id?: string) => Promise<void> };
 type Draft = { name: string; definition: string; revision: number; payload: Record<string, unknown> };
 type Binding = { capability: string; resourceId: string; modelName: string | null; enabled: boolean };
 type Resource = { resourceId: string; kind: string; name: string; enabled: boolean };
 
-export function Relations({ roles, detail, status, error, currentId, onSelect, onRefresh }: Props) {
+export function Relations({ roles, detail, status, error, currentId, currentOutfitId, outfitHomeUrl, onSelect, onRefresh }: Props) {
   const { preset } = useThemePreset();
   const motion = useMotionPolicy();
   useThemeTransitionStrategy(relationshipJournalThemeTransition);
@@ -29,6 +30,9 @@ export function Relations({ roles, detail, status, error, currentId, onSelect, o
   const [overview, setOverview] = useState(false);
   const [xray, setXray] = useState(false);
   const [selectedBinding, setSelectedBinding] = useState<Binding>();
+  const [appearance, setAppearance] = useState(false);
+  const [portraitFailed, setPortraitFailed] = useState(false);
+  useEffect(() => { setPortraitFailed(false); }, [outfitHomeUrl]);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
   useEffect(() => {
@@ -97,8 +101,8 @@ export function Relations({ roles, detail, status, error, currentId, onSelect, o
             <div className="ov-wall"><section className="ov-book c-blue"><header className="ob-h"><div className="ob-t"><h3>角色名册</h3><p className="cap">选择角色，翻到对应的一页</p></div></header><div className="ob-grid">{roles.map((role,i)=><ControlButton key={role.roleId} className="th k-private live" onClick={()=>{choose(role.roleId);setOverview(false);}}><span className="th-top"><span className="th-no">第 {i+1} 页</span></span><span className="th-pic"><img src={clerk} alt="角色示意插画"/></span><span className="th-nm">{role.displayName}</span><span className="th-foot"><span className="th-stamp">{role.status === 'ready'?'已就绪':'待处理'}</span></span></ControlButton>)}</div></section></div>
           </section> : <div className="spread"><article className="leaf left">
             <header className="lh"><p className="kicker">{night ? '角色电台' : '这一页 · 角色'}</p><h1>{current?.displayName || '关系手账'}</h1><p className="meta">{current ? (current.status === 'ready' ? '角色资料已连接' : current.initError || '角色尚未就绪') : '还没有角色'}</p></header>
-            <div className="who"><figure className="portrait"><span className="tape"/><span className="ph"><img src={clerk} alt="装饰性角色示意插画"/></span><span className="rim"/><span className="mic"><Icon name="radio"/></span></figure>
-              <div className="who-txt"><p className="k">{night ? '本台主持人' : '贴在页首的人'}</p><p className="role-n">{current?.displayName || '还没请人来'}</p><p className="role-s">{detail ? `角色设定 · 第 ${detail.definitionRevision} 版` : '创建角色后，可以在这里维护她的资料。'}</p><div className="row"><Button className="wj-action entry" disabled={!detail || busy} onClick={edit}>编辑资料</Button></div></div></div>
+            <div className="who"><figure className="portrait"><span className="tape"/><span className="ph"><img src={outfitHomeUrl && !portraitFailed ? outfitHomeUrl : clerk} alt={outfitHomeUrl && !portraitFailed ? `${current?.displayName ?? '角色'}当前服饰主页立绘` : '装饰性角色示意插画'} onError={() => setPortraitFailed(true)}/></span><span className="rim"/><span className="mic"><Icon name="radio"/></span></figure>
+              <div className="who-txt"><p className="k">{night ? '本台主持人' : '贴在页首的人'}</p><p className="role-n">{current?.displayName || '还没请人来'}</p><p className="role-s">{detail ? `角色设定 · 第 ${detail.definitionRevision} 版` : '创建角色后，可以在这里维护她的资料。'}</p><div className="row"><Button className="wj-action entry" disabled={!detail || busy} onClick={edit}>编辑资料</Button><Button className="wj-action" disabled={!detail || busy} onClick={() => { setMessage(''); setAppearance(true); }}>外观</Button></div></div></div>
             <section className="brief"><p className="k">她的近况</p><p>{status || '暂时没有近况记录'}</p></section>
             <section className="brief"><p className="k">{night?'手边接入的设备':'这一页带着'}</p><div className="b-ok">{bindings.length ? bindings.map(binding => <ControlButton key={binding.capability+binding.resourceId} className="b-chip" onClick={() => setSelectedBinding(binding)}>{resources.find(resource=>resource.resourceId===binding.resourceId)?.name || '资源'}{!binding.enabled?' · 已停用':''}</ControlButton>) : <span className="cap">{capabilityError || '暂时没有绑定能力'}</span>}</div></section>
           </article><div className="gutter" aria-hidden="true"/><article className="leaf right">
@@ -119,6 +123,9 @@ export function Relations({ roles, detail, status, error, currentId, onSelect, o
     <Modal open={creating} title="添加角色" onClose={() => setCreating(false)} closeDisabled={busy}>
       <Field label="名字"><Input value={name} maxLength={200} onChange={e=>setName(e.target.value)}/></Field><Field label="角色设定"><Textarea rows={8} value={definition} onChange={e=>setDefinition(e.target.value)}/></Field>
       {message && <p role="alert">{message}</p>}<Button disabled={busy || !name.trim() || !definition.trim()} onClick={() => void create()}>创建角色</Button>
+    </Modal>
+    <Modal open={appearance} title={`${current?.displayName || '角色'}的外观`} onClose={() => setAppearance(false)} closeDisabled={busy} className="nd-appearance-modal">
+      {currentId ? <AppearancePanel roleId={currentId} currentOutfitId={currentOutfitId} onChanged={() => { void onRefresh(currentId); }}/> : null}
     </Modal>
     <Modal open={!!selectedBinding} title="能力详情" onClose={() => setSelectedBinding(undefined)}>
       {selectedBinding && <><p>{resources.find(resource=>resource.resourceId===selectedBinding.resourceId)?.name || '资源不可用'}</p><p>角色绑定：{selectedBinding.enabled?'已启用':'已停用'}</p><p>资源状态：{resources.find(resource=>resource.resourceId===selectedBinding.resourceId)?.enabled?'已启用':'已停用或不可用'}</p>{selectedBinding.modelName&&<p>模型：{selectedBinding.modelName}</p>}</>}

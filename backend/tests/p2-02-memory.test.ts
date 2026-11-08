@@ -154,7 +154,7 @@ test("v1 business database migrates to the current schema and backfills evidence
     timeZone: "Asia/Shanghai",
   });
   try {
-    assert.equal(store.schemaVersion, 6);
+    assert.equal(store.schemaVersion, 7);
     const autonomyTables = store.db
       .prepare(
         `SELECT name FROM sqlite_master

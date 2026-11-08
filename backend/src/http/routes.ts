@@ -21,6 +21,7 @@ import type {
 import { readJsonBody } from "./body.js";
 import { HttpError, type JsonResponse } from "./errors.js";
 import type { Router } from "./router.js";
+import type { AppearanceService } from "../application/appearance-service.js";
 import type { ConversationService } from "../application/conversation-service.js";
 import type { AutonomyService } from "../application/autonomy-service.js";
 import type { MemoryQueryService } from "../application/memory-query-service.js";
@@ -51,6 +52,7 @@ import {
   updateResourceSchema,
 } from "./schemas.js";
 import { parseBody, queryInt } from "./validation.js";
+import { registerAppearanceRoutes } from "./appearance-routes.js";
 
 export interface ApiServices {
   roles: RoleService;
@@ -60,6 +62,7 @@ export interface ApiServices {
   modelServices: ModelService;
   conversation: ConversationService;
   autonomy: AutonomyService;
+  appearance: AppearanceService;
 }
 
 export function registerApiRoutes(
@@ -711,6 +714,8 @@ export function registerApiRoutes(
       };
     },
   );
+
+  registerAppearanceRoutes(router, services);
 
   return router;
 }

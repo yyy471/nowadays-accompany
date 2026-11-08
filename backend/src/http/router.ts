@@ -1,9 +1,11 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   HttpError,
+  isBinaryResponse,
+  writeBinary,
   writeError,
   writeJson,
-  type JsonResponse,
+  type RouteResponse,
 } from "./errors.js";
 
 export interface RouteContext {
@@ -15,7 +17,7 @@ export interface RouteContext {
 
 export type RouteHandler = (
   context: RouteContext,
-) => JsonResponse | undefined | Promise<JsonResponse | undefined>;
+) => RouteResponse | undefined | Promise<RouteResponse | undefined>;
 
 interface Route {
   method: string;
@@ -86,7 +88,11 @@ export class Router {
         });
         const result = await route.handler({ request, response, url, params });
         if (result !== undefined) {
-          writeJson(response, result);
+          if (isBinaryResponse(result)) {
+            writeBinary(response, result);
+          } else {
+            writeJson(response, result);
+          }
         }
       } catch (error) {
         if (response.headersSent) {

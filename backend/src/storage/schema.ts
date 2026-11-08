@@ -9,7 +9,7 @@ import {
 import { backfillEvidence } from "./evidence.js";
 
 export const APP_SCHEMA_VERSION = 2;
-export const BUSINESS_SCHEMA_VERSION = 6;
+export const BUSINESS_SCHEMA_VERSION = 7;
 export const EXECUTION_SCHEMA_VERSION = 1;
 
 export const APP_TABLES = ["roles", "resources", "model_test_calls"] as const;
@@ -51,6 +51,8 @@ export const BUSINESS_TABLES = [
   "autonomy_activities",
   "autonomy_tool_reservations",
   "task_notes",
+  "outfits",
+  "outfit_assets",
 ] as const;
 
 const APP_V2_SQL = `
@@ -701,6 +703,23 @@ const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
       "status",
     ],
   },
+  {
+    table: "outfits",
+    columns: ["outfit_id", "role_id", "name", "description"],
+  },
+  {
+    table: "outfit_assets",
+    columns: [
+      "asset_id",
+      "outfit_id",
+      "role_id",
+      "usage",
+      "file_name",
+      "display_name",
+      "media_type",
+      "relative_path",
+    ],
+  },
 ];
 
 const BUSINESS_INDEXES: readonly RequiredIndex[] = [
@@ -815,6 +834,28 @@ const BUSINESS_INDEXES: readonly RequiredIndex[] = [
     name: "idx_autonomy_tool_reservations_status",
     table: "autonomy_tool_reservations",
     columns: ["role_id", "status"],
+    unique: false,
+    partial: false,
+  },
+  {
+    name: "idx_outfits_role_name",
+    table: "outfits",
+    columns: ["role_id", "name"],
+    unique: true,
+    partial: false,
+  },
+  {
+    name: "idx_outfit_assets_single_home",
+    table: "outfit_assets",
+    columns: ["outfit_id"],
+    unique: true,
+    partial: true,
+    predicate: "usage = 'home'",
+  },
+  {
+    name: "idx_outfit_assets_outfit",
+    table: "outfit_assets",
+    columns: ["outfit_id", "usage", "created_at"],
     unique: false,
     partial: false,
   },
@@ -974,6 +1015,40 @@ const BUSINESS_V6_SQL = `
 ALTER TABLE executions ADD COLUMN task_decision_json TEXT;
 `;
 
+const BUSINESS_V7_SQL = `
+-- V7：角色衣柜与外观素材。目录名即服饰名，主页图每套最多一张，差分可同名。
+CREATE TABLE IF NOT EXISTS outfits (
+  outfit_id TEXT PRIMARY KEY,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  name TEXT NOT NULL,
+  description TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_outfits_role_name
+  ON outfits (role_id, name);
+
+CREATE TABLE IF NOT EXISTS outfit_assets (
+  asset_id TEXT PRIMARY KEY,
+  outfit_id TEXT NOT NULL REFERENCES outfits(outfit_id),
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  usage TEXT NOT NULL CHECK (usage IN ('home', 'sprite')),
+  file_name TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  media_type TEXT NOT NULL,
+  relative_path TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_outfit_assets_single_home
+  ON outfit_assets (outfit_id)
+  WHERE usage = 'home';
+
+CREATE INDEX IF NOT EXISTS idx_outfit_assets_outfit
+  ON outfit_assets (outfit_id, usage, created_at);
+`;
+
 export function openAppDatabase(dbPath: string): OpenedDatabase {
   return openVersionedDatabase(
     dbPath,
@@ -999,7 +1074,8 @@ export function openBusinessDatabase(
       BUSINESS_V3_SQL +
       BUSINESS_V4_SQL +
       BUSINESS_V5_SQL +
-      BUSINESS_V6_SQL,
+      BUSINESS_V6_SQL +
+      BUSINESS_V7_SQL,
     {
       1: (db) => {
         db.exec(BUSINESS_V2_SQL);
@@ -1009,6 +1085,7 @@ export function openBusinessDatabase(
       3: (db) => db.exec(BUSINESS_V4_SQL),
       4: (db) => db.exec(BUSINESS_V5_SQL),
       5: (db) => db.exec(BUSINESS_V6_SQL),
+      6: (db) => db.exec(BUSINESS_V7_SQL),
     },
     BUSINESS_TABLES,
     BUSINESS_INDEXES,

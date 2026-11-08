@@ -89,7 +89,7 @@ test("app and role stores initialize, persist and reopen", async () => {
 
     const paths = rolePaths(config.dataRoot, randomUUID());
     role = new RoleStorage(paths);
-    assert.equal(role.business.schemaVersion, 6);
+    assert.equal(role.business.schemaVersion, 7);
     assert.equal(role.checkpoint.schemaVersion, 1);
     assert.ok(fs.existsSync(paths.workspaceDir));
     const businessTables = tableNames(role.business.db);
@@ -106,7 +106,7 @@ test("app and role stores initialize, persist and reopen", async () => {
     const reopenedRole = new RoleStorage(paths);
     try {
       assert.equal(reopenedApp.schemaVersion, 2);
-      assert.equal(reopenedRole.business.schemaVersion, 6);
+      assert.equal(reopenedRole.business.schemaVersion, 7);
       assert.equal(reopenedRole.checkpoint.schemaVersion, 1);
       assert.ok(fs.existsSync(paths.businessDatabasePath));
       assert.ok(fs.existsSync(paths.executionDatabasePath));

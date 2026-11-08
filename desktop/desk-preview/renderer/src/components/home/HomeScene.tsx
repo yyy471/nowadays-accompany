@@ -5,8 +5,9 @@ import nightCharacter from '../../assets/themes/xiacheng/character-night.png';
 import scene from '../../assets/themes/xiacheng/scene-ink.png';
 import nightScene from '../../assets/themes/xiacheng/scene-night.png';
 import { useThemePreset } from '../../ui/presets';
+import { createOutfitDisplay, type DisplayedOutfit } from '../../outfit-display.js';
 
-export function HomeScene() {
+export function HomeScene({ outfitHomeUrl, outfitName }: { outfitHomeUrl?: string | null; outfitName?: string | null }) {
   const { preset } = useThemePreset();
   const night = preset === 'nightwave';
   const policy = useMotionPolicy();
@@ -17,6 +18,8 @@ export function HomeScene() {
   const artNight = artPreset === 'nightwave';
   const artReady = useRef(new Map<string, Promise<void>>());
   const [failed, setFailed] = useState(false);
+  const display = useRef(createOutfitDisplay());
+  const [displayedOutfit, setDisplayedOutfit] = useState<DisplayedOutfit | null>(null);
   const figure = useRef<HTMLElement>(null);
   const frame = useRef<number | undefined>(undefined);
   const reset = () => {
@@ -74,7 +77,20 @@ export function HomeScene() {
     void warm(preset === 'nightwave' ? 'daylight' : 'nightwave').catch(() => {});
     return () => { current = false; };
   }, [preset]);
-  return <figure ref={figure} className="home-scene" aria-label="夏澄主页主题展示" onPointerLeave={reset} onPointerMove={event => {
+  useEffect(() => {
+    let active = true;
+    void display.current.load(outfitHomeUrl, outfitName, url => {
+      const image = new Image();
+      image.src = url;
+      return image.decode();
+    }).then(next => {
+      if (!active) return;
+      setDisplayedOutfit(next);
+      if (next) setFailed(false);
+    });
+    return () => { active = false; };
+  }, [outfitHomeUrl, outfitName]);
+  return <figure ref={figure} className="home-scene" aria-label={displayedOutfit ? (displayedOutfit.name ? `${displayedOutfit.name}主页立绘` : '角色主页立绘') : '夏澄主页主题展示'} onPointerLeave={reset} onPointerMove={event => {
     if (event.pointerType !== 'mouse' || reduced.current) { reset(); return; }
     const box = event.currentTarget.getBoundingClientRect(), x = Math.max(-4, Math.min(4, (event.clientX - box.left - box.width / 2) / box.width * 8)), y = Math.max(-4, Math.min(4, (event.clientY - box.top - box.height / 2) / box.height * 8));
     if (frame.current !== undefined) cancelAnimationFrame(frame.current);
@@ -82,9 +98,9 @@ export function HomeScene() {
   }}>
     {failed ? <div className="home-art-fallback"><Icon name="user" size={40} /><p>主题插画暂时不可用</p></div> : <>
       <img className="home-scene-background" src={artNight ? nightScene : scene} alt="" onError={() => setFailed(true)} />
-      <img className="home-scene-character" src={artNight ? nightCharacter : character} alt={artNight ? '夏澄夜间插画：坐在木凳上戴耳机听歌，手托脸颊，膝上放着红色手账' : '夏澄日间插画：粉色开衫与红色手账'} onError={() => setFailed(true)} />
+      <img className="home-scene-character" src={displayedOutfit?.url ?? (artNight ? nightCharacter : character)} alt={displayedOutfit ? (displayedOutfit.name ? `${displayedOutfit.name}主页立绘` : '角色主页立绘') : (artNight ? '夏澄夜间插画：坐在木凳上戴耳机听歌，手托脸颊，膝上放着红色手账' : '夏澄日间插画：粉色开衫与红色手账')} onError={() => { if (displayedOutfit) setDisplayedOutfit(display.current.fail(displayedOutfit.url)); else setFailed(true); }} />
     </>}
-    <figcaption className="home-scene-label"><span>{night ? '晚风电台 / NIGHT EDITION' : '白昼来信 / DAY EDITION'}</span><strong>主题插画 · 夏澄</strong></figcaption>
+    <figcaption className="home-scene-label"><span>{night ? '晚风电台 / NIGHT EDITION' : '白昼来信 / DAY EDITION'}</span><strong>{displayedOutfit ? (displayedOutfit.name ? `当前服饰 · ${displayedOutfit.name}` : '当前服饰') : '主题插画 · 夏澄'}</strong></figcaption>
     <aside className="home-scene-note"><span>{night ? '留给夜晚的一页' : '主题寄语'}</span><p>{night ? <>白天没说完的话，<br />今晚也有人听。</> : <>喜欢傍晚的光，<br />也喜欢听你慢慢说。</>}</p></aside>
   </figure>;
 }

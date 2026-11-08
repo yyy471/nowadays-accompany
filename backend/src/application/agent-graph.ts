@@ -60,6 +60,8 @@ export interface AgentGraphDeps {
   emitDelta: (text: string) => void;
   ensureTask: () => string;
   now: () => Date;
+  /** 本轮开始决策时的业务本地日期。 */
+  localDate?: string;
   maxToolRounds?: number;
   purpose?: "user_chat" | "autonomous";
   meter?: AgentCallMeter | null;
@@ -400,7 +402,10 @@ export class AgentGraphRunner {
       if (tool.source === "state") {
         const args = asObject(call.arguments);
         const outcome = await this.executeInternal(tool, call, state, taskId, index, checkDispatch);
-        const patch = outcome.status === "success" ? patchOf(args) : null;
+        const patch =
+          outcome.status === "success"
+            ? (outcome.statePatch ?? patchOf(args))
+            : null;
         if (patch !== null) {
           statePatch = { ...statePatch, ...patch };
         }
@@ -611,6 +616,9 @@ export class AgentGraphRunner {
       executionId: state.executionId,
       taskId,
       autonomous: this.deps.purpose === "autonomous",
+      ...(this.deps.localDate === undefined
+        ? {}
+        : { localDate: this.deps.localDate }),
       signal: this.deps.signal,
       checkDispatch: () => {
         if (this.deps.checkDispatch !== undefined) {
@@ -1029,6 +1037,9 @@ export class AgentGraphRunner {
         executionId: state.executionId,
         taskId,
         autonomous: this.deps.purpose === "autonomous",
+        ...(this.deps.localDate === undefined
+          ? {}
+          : { localDate: this.deps.localDate }),
         signal: this.deps.signal,
         checkDispatch,
       });

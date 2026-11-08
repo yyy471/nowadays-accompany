@@ -106,6 +106,8 @@ export interface ConversationToolContext {
   executionId: string;
   taskId: string | null;
   autonomous?: boolean;
+  /** 本轮开始决策时的业务本地日期，用于每日穿搭登记。 */
+  localDate?: string;
   signal: AbortSignal;
   checkDispatch?: () => void;
   onDispatch?: () => void;
@@ -119,6 +121,8 @@ export interface ConversationToolOutcome {
   adaptedResult?: unknown;
   diagnosticCode?: string;
   error?: unknown;
+  /** 状态工具校验后实际并入本轮提交的补丁。 */
+  statePatch?: Record<string, unknown>;
 }
 
 export interface ConversationTool extends ModelToolSpec {
