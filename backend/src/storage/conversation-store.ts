@@ -2,16 +2,22 @@ import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import type {
   ClaimedMessage,
+  ConversationActiveReply,
   ConversationExecutionDetail,
   ConversationMessageView,
   ConversationStreamEvent,
   ConversationStreamType,
   ConversationToolOutcome,
+  MessageDetail,
+  MessageSegmentRecord,
   PendingWindow,
 } from "../domain/conversation.js";
+import { segmentMessage } from "../domain/message-segments.js";
 import {
   ExecutionNotFoundError,
   ExecutionNotRunningError,
+  MessageNotFoundError,
+  MessageSegmentNotFoundError,
   SseCursorInvalidError,
   StateVersionConflictError,
   WindowNotFoundError,
@@ -65,6 +71,21 @@ interface MessageRow {
   updated_at: string;
 }
 
+interface SegmentRow {
+  segment_id: string;
+  message_id: string;
+  window_id: string;
+  ordinal: number;
+  kind: "speech" | "narration";
+  text: string;
+  start_offset: number;
+  end_offset: number;
+  outfit_id: string | null;
+  sprite_asset_id: string | null;
+  annotated_at: string | null;
+  created_at: string;
+}
+
 export interface BeginExecutionResult {
   execution: ExecutionRecord;
   messages: ClaimedMessage[];
@@ -87,10 +108,17 @@ export interface CommitConversationInput {
   now?: string;
 }
 
+export interface SegmentAnnotationInput {
+  segmentId: string;
+  outfitId: string;
+  spriteAssetId: string;
+}
+
 export interface CommitConversationResult {
   execution: ExecutionRecord;
   replyMessage: MessageRecord;
   stateVersion: number;
+  state: Record<string, unknown>;
   decisionRound: number | null;
   event: ConversationStreamEvent;
 }
@@ -510,6 +538,204 @@ export class ConversationStore {
     }));
   }
 
+  getMessageDetail(windowId: string, messageId: string): MessageDetail {
+    const row = this.db
+      .prepare(
+        `SELECT m.* FROM messages m JOIN windows w ON w.window_id = m.window_id
+          WHERE m.message_id = ? AND m.window_id = ? AND w.role_id = ?`,
+      )
+      .get(messageId, windowId, this.roleId) as MessageRow | undefined;
+    if (!row) {
+      throw new MessageNotFoundError(windowId, messageId);
+    }
+    return {
+      message: mapMessage(row),
+      segments: this.listMessageSegments(messageId),
+    };
+  }
+
+  listMessageSegments(messageId: string): MessageSegmentRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT s.* FROM message_segments s
+           JOIN messages m ON m.message_id = s.message_id
+           JOIN windows w ON w.window_id = m.window_id
+          WHERE s.message_id = ? AND w.role_id = ?
+          ORDER BY s.ordinal ASC`,
+      )
+      .all(messageId, this.roleId) as SegmentRow[];
+    return rows.map(mapSegment);
+  }
+
+  getSegment(windowId: string, segmentId: string): MessageSegmentRecord {
+    const row = this.db
+      .prepare(
+        `SELECT s.* FROM message_segments s
+           JOIN windows w ON w.window_id = s.window_id
+          WHERE s.segment_id = ? AND s.window_id = ? AND w.role_id = ?`,
+      )
+      .get(segmentId, windowId, this.roleId) as SegmentRow | undefined;
+    if (!row) {
+      throw new MessageSegmentNotFoundError(windowId, segmentId);
+    }
+    return mapSegment(row);
+  }
+
+  listMessageSegmentsForMessages(
+    windowId: string,
+    messageIds: readonly string[],
+  ): MessageSegmentRecord[] {
+    if (messageIds.length === 0) {
+      return [];
+    }
+    const placeholders = messageIds.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare(
+        `SELECT s.* FROM message_segments s
+           JOIN messages m ON m.message_id = s.message_id
+           JOIN windows w ON w.window_id = m.window_id
+          WHERE s.window_id = ? AND w.role_id = ?
+            AND s.message_id IN (${placeholders})
+          ORDER BY m.sequence ASC, s.ordinal ASC`,
+      )
+      .all(windowId, this.roleId, ...messageIds) as SegmentRow[];
+    return rows.map(mapSegment);
+  }
+
+  getActiveReply(windowId: string): ConversationActiveReply | null {
+    const row = this.db
+      .prepare(
+        `SELECT m.message_id, m.execution_id FROM messages m
+           JOIN windows w ON w.window_id = m.window_id
+          WHERE m.window_id = ? AND w.role_id = ?
+            AND m.sender = 'assistant' AND m.status = 'generating'
+          ORDER BY m.sequence DESC LIMIT 1`,
+      )
+      .get(windowId, this.roleId) as
+      | { message_id: string; execution_id: string | null }
+      | undefined;
+    if (row === undefined || row.execution_id === null) {
+      return null;
+    }
+    return {
+      messageId: row.message_id,
+      executionId: row.execution_id,
+      text: this.partialText(row.execution_id),
+    };
+  }
+
+  applySegmentAnnotations(input: {
+    messageId: string;
+    windowId: string;
+    executionId: string;
+    annotations: readonly SegmentAnnotationInput[];
+    now?: string;
+  }): MessageSegmentRecord[] {
+    const now = input.now ?? new Date().toISOString();
+    return this.db.transaction(() => {
+      const updated: MessageSegmentRecord[] = [];
+      const update = this.db.prepare(
+        `UPDATE message_segments
+            SET outfit_id = COALESCE(outfit_id, ?), sprite_asset_id = ?,
+                annotated_at = ?
+          WHERE segment_id = ? AND message_id = ? AND window_id = ?
+            AND annotated_at IS NULL`,
+      );
+      const select = this.db.prepare(
+        "SELECT * FROM message_segments WHERE segment_id = ?",
+      );
+      for (const annotation of input.annotations) {
+        const result = update.run(
+          annotation.outfitId,
+          annotation.spriteAssetId,
+          now,
+          annotation.segmentId,
+          input.messageId,
+          input.windowId,
+        );
+        if (result.changes > 0) {
+          updated.push(mapSegment(select.get(annotation.segmentId) as SegmentRow));
+        }
+      }
+      if (updated.length > 0) {
+        this.appendStreamEventInternal({
+          windowId: input.windowId,
+          executionId: input.executionId,
+          type: "segment_annotations",
+          payload: {
+            executionId: input.executionId,
+            messageId: input.messageId,
+            items: updated.map((segment) => ({
+              segmentId: segment.segmentId,
+              outfitId: segment.outfitId,
+              spriteAssetId: segment.spriteAssetId,
+            })),
+          },
+          now,
+        });
+      }
+      return updated;
+    })();
+  }
+
+  private insertMessageSegments(
+    messageId: string,
+    windowId: string,
+    content: string,
+    outfitId: string | null,
+    now: string,
+  ): MessageSegmentRecord[] {
+    const existing = this.listMessageSegments(messageId);
+    if (existing.length > 0) {
+      return existing;
+    }
+    const insert = this.db.prepare(
+      `INSERT INTO message_segments
+         (segment_id, message_id, window_id, ordinal, kind, text, start_offset,
+          end_offset, outfit_id, sprite_asset_id, annotated_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)`,
+    );
+    for (const draft of segmentMessage(content)) {
+      insert.run(
+        randomUUID(),
+        messageId,
+        windowId,
+        draft.ordinal,
+        draft.kind,
+        draft.text,
+        draft.startOffset,
+        draft.endOffset,
+        outfitId,
+        now,
+      );
+    }
+    return this.listMessageSegments(messageId);
+  }
+
+  /** 句段服饰在回复落库时确定；没有对应服饰时为空，差分仍可后补。 */
+  private readCurrentOutfitId(): string | null {
+    return this.outfitIdOf(this.readRoleState());
+  }
+
+  private outfitIdOf(state: Record<string, unknown>): string | null {
+    const outfitId =
+      typeof state.outfitId === "string" ? state.outfitId : null;
+    if (outfitId === null) {
+      return null;
+    }
+    const row = this.db
+      .prepare("SELECT 1 FROM outfits WHERE outfit_id = ? AND role_id = ?")
+      .get(outfitId, this.roleId);
+    return row === undefined ? null : outfitId;
+  }
+
+  private readRoleState(): Record<string, unknown> {
+    const row = this.db
+      .prepare("SELECT state_json FROM roles WHERE role_id = ?")
+      .get(this.roleId) as { state_json: string } | undefined;
+    return row === undefined ? {} : parseJsonObject(row.state_json);
+  }
+
   getRoleContext(): {
     displayName: string;
     definitionText: string;
@@ -612,6 +838,27 @@ export class ConversationStore {
         ...(this.timeZone === undefined ? {} : { timeZone: this.timeZone }),
         now,
       });
+      const segments = this.insertMessageSegments(
+        message.messageId,
+        input.windowId,
+        input.content,
+        this.readCurrentOutfitId(),
+        now,
+      );
+      if (segments.length > 0) {
+        this.appendStreamEventInternal({
+          windowId: input.windowId,
+          executionId: input.executionId,
+          type: "message_segments",
+          payload: {
+            executionId: input.executionId,
+            replyMessageId: message.messageId,
+            proactive: true,
+            segments,
+          },
+          now,
+        });
+      }
       this.db
         .prepare(
           "UPDATE windows SET updated_at = ? WHERE window_id = ? AND role_id = ?",
@@ -689,6 +936,7 @@ export class ConversationStore {
           execution,
           replyMessage: mapMessage(reply),
           stateVersion: execution.stateVersionCommitted ?? 0,
+          state: this.readRoleState(),
           decisionRound: round,
           event: this.listLatestEvents(input.executionId, 1)[0]!,
         };
@@ -726,8 +974,9 @@ export class ConversationStore {
         )
         .run(JSON.stringify(nextState), nextVersion, now, this.roleId);
       const generatingId = this.generatingMessageId(input.executionId);
+      const windowId = execution.windowId;
       let replyMessage: MessageRecord | null = null;
-      if (execution.windowId === null) {
+      if (windowId === null) {
         replyMessage = null;
       } else if (generatingId !== null) {
         this.db
@@ -738,14 +987,14 @@ export class ConversationStore {
         replyMessage = this.getMessage(generatingId);
       } else {
         replyMessage = this.insertAssistantMessage({
-          windowId: execution.windowId,
+          windowId,
           content: input.content,
           status: "completed",
           executionId: input.executionId,
           now,
         });
       }
-      if (replyMessage === null) {
+      if (replyMessage === null || windowId === null) {
         throw new ExecutionNotRunningError(input.executionId, "window_missing");
       }
       const round =
@@ -787,6 +1036,26 @@ export class ConversationStore {
           "SELECT message_id FROM messages WHERE processed_by_execution_id = ? AND sender = 'user' ORDER BY sequence ASC",
         )
         .all(input.executionId) as Array<{ message_id: string }>;
+      const segments = this.insertMessageSegments(
+        replyMessage.messageId,
+        windowId,
+        input.content,
+        this.outfitIdOf(nextState),
+        now,
+      );
+      if (segments.length > 0) {
+        this.appendStreamEventInternal({
+          windowId,
+          executionId: input.executionId,
+          type: "message_segments",
+          payload: {
+            executionId: input.executionId,
+            replyMessageId: replyMessage.messageId,
+            segments,
+          },
+          now,
+        });
+      }
       registerMessageEvidence(this.db, {
         roleId: this.roleId,
         messageIds: [
@@ -798,7 +1067,7 @@ export class ConversationStore {
         now,
       });
       const event = this.appendStreamEventInternal({
-        windowId: execution.windowId,
+        windowId,
         executionId: input.executionId,
         type: "message_completed",
         payload: {
@@ -813,6 +1082,7 @@ export class ConversationStore {
         execution: this.getExecution(input.executionId),
         replyMessage: this.getMessage(replyMessage.messageId),
         stateVersion: nextVersion,
+        state: nextState,
         decisionRound: round,
         event,
       };
@@ -872,6 +1142,27 @@ export class ConversationStore {
             ...(this.timeZone === undefined ? {} : { timeZone: this.timeZone }),
             now,
           });
+          const segments = this.insertMessageSegments(
+            replyMessage.messageId,
+            execution.windowId,
+            input.partialText,
+            this.readCurrentOutfitId(),
+            now,
+          );
+          if (segments.length > 0) {
+            this.appendStreamEventInternal({
+              windowId: execution.windowId,
+              executionId: input.executionId,
+              type: "message_segments",
+              payload: {
+                executionId: input.executionId,
+                replyMessageId: replyMessage.messageId,
+                interrupted: true,
+                segments,
+              },
+              now,
+            });
+          }
           events.push(
             this.appendStreamEventInternal({
               windowId: execution.windowId,
@@ -1413,6 +1704,18 @@ export class ConversationStore {
     return continuations;
   }
 
+  /** 启动收尾：已完成或已中断执行遗留的在途调用归为进程中断。 */
+  failOrphanedModelCalls(now = new Date().toISOString()): number {
+    return this.db
+      .prepare(
+        `UPDATE model_calls
+            SET status = 'failed', error_code = 'PROCESS_INTERRUPTED',
+                finished_at = ?
+          WHERE role_id = ? AND status = 'running' AND execution_id IS NOT NULL`,
+      )
+      .run(now, this.roleId).changes;
+  }
+
   failRunningModelCalls(
     executionId: string,
     now = new Date().toISOString(),
@@ -1436,6 +1739,22 @@ export class ConversationStore {
             roleId: this.roleId, messageIds: [messageId], executionId,
             ...(this.timeZone === undefined ? {} : { timeZone: this.timeZone }), now,
           });
+          const windowId = this.getExecution(executionId).windowId;
+          if (windowId !== null) {
+            const segments = this.insertMessageSegments(
+              messageId,
+              windowId,
+              text,
+              this.readCurrentOutfitId(),
+              now,
+            );
+            if (segments.length > 0) {
+              this.appendStreamEventInternal({
+                windowId, executionId, type: "message_segments",
+                payload: { executionId, replyMessageId: messageId, interrupted: true, segments }, now,
+              });
+            }
+          }
           this.appendStreamEventInternal({
             windowId: this.getExecution(executionId).windowId,
             executionId, type: "message_interrupted",
@@ -1470,6 +1789,36 @@ export class ConversationStore {
       sequence: row.sequence,
       createdAt: row.created_at,
     }));
+  }
+
+  /** 附加模型调用按任务来源计量：自主任务扣点，其余走用户对话。 */
+  getExecutionPurpose(executionId: string): "user_chat" | "autonomous" {
+    const row = this.db
+      .prepare(
+        `SELECT e.trigger_type, t.origin
+           FROM executions e
+           LEFT JOIN execution_tasks et ON et.execution_id = e.execution_id
+             AND et.relation IN ('initiates', 'continues')
+           LEFT JOIN tasks t ON t.task_id = et.task_id AND t.role_id = e.role_id
+          WHERE e.execution_id = ? AND e.role_id = ?
+          ORDER BY CASE et.relation
+                     WHEN 'initiates' THEN 0
+                     WHEN 'continues' THEN 1
+                     ELSE 2
+                   END ASC,
+                   et.created_at ASC
+          LIMIT 1`,
+      )
+      .get(executionId, this.roleId) as
+      | { trigger_type: string; origin: string | null }
+      | undefined;
+    if (row === undefined) {
+      return "user_chat";
+    }
+    return row.origin === "autonomous" ||
+      (row.origin === null && row.trigger_type === "autonomous")
+      ? "autonomous"
+      : "user_chat";
   }
 
   getPrimaryExecutionTask(executionId: string): PrimaryExecutionTask | null {
@@ -1707,6 +2056,23 @@ function mapMessage(row: MessageRow): MessageRecord {
     submissionId: row.submission_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function mapSegment(row: SegmentRow): MessageSegmentRecord {
+  return {
+    segmentId: row.segment_id,
+    messageId: row.message_id,
+    windowId: row.window_id,
+    ordinal: row.ordinal,
+    kind: row.kind,
+    text: row.text,
+    startOffset: row.start_offset,
+    endOffset: row.end_offset,
+    outfitId: row.outfit_id,
+    spriteAssetId: row.sprite_asset_id,
+    annotatedAt: row.annotated_at,
+    createdAt: row.created_at,
   };
 }
 

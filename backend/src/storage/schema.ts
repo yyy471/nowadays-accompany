@@ -9,7 +9,7 @@ import {
 import { backfillEvidence } from "./evidence.js";
 
 export const APP_SCHEMA_VERSION = 2;
-export const BUSINESS_SCHEMA_VERSION = 7;
+export const BUSINESS_SCHEMA_VERSION = 12;
 export const EXECUTION_SCHEMA_VERSION = 1;
 
 export const APP_TABLES = ["roles", "resources", "model_test_calls"] as const;
@@ -53,6 +53,9 @@ export const BUSINESS_TABLES = [
   "task_notes",
   "outfits",
   "outfit_assets",
+  "message_segments",
+  "voice_assets",
+  "role_voice_settings",
 ] as const;
 
 const APP_V2_SQL = `
@@ -642,6 +645,18 @@ const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
     ],
   },
   {
+    table: "role_voice_settings",
+    columns: [
+      "protocol",
+      "voice_source",
+      "reference_mode",
+      "reference_text",
+      "preset_voice_id",
+      "capabilities_json",
+      "reference_mode_confirmed",
+    ],
+  },
+  {
     table: "memory_batches",
     columns: [
       "batch_id",
@@ -720,6 +735,22 @@ const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
       "relative_path",
     ],
   },
+  {
+    table: "message_segments",
+    columns: [
+      "segment_id",
+      "message_id",
+      "window_id",
+      "ordinal",
+      "kind",
+      "text",
+      "start_offset",
+      "end_offset",
+      "outfit_id",
+      "sprite_asset_id",
+      "annotated_at",
+    ],
+  },
 ];
 
 const BUSINESS_INDEXES: readonly RequiredIndex[] = [
@@ -795,6 +826,13 @@ const BUSINESS_INDEXES: readonly RequiredIndex[] = [
     partial: false,
   },
   {
+    name: "idx_voice_assets_role",
+    table: "voice_assets",
+    columns: ["role_id", "created_at"],
+    unique: false,
+    partial: false,
+  },
+  {
     name: "idx_autonomy_wakes_due",
     table: "autonomy_wakes",
     columns: ["role_id", "status", "scheduled_at"],
@@ -856,6 +894,13 @@ const BUSINESS_INDEXES: readonly RequiredIndex[] = [
     name: "idx_outfit_assets_outfit",
     table: "outfit_assets",
     columns: ["outfit_id", "usage", "created_at"],
+    unique: false,
+    partial: false,
+  },
+  {
+    name: "idx_message_segments_window",
+    table: "message_segments",
+    columns: ["window_id", "message_id", "ordinal"],
     unique: false,
     partial: false,
   },
@@ -1049,6 +1094,117 @@ CREATE INDEX IF NOT EXISTS idx_outfit_assets_outfit
   ON outfit_assets (outfit_id, usage, created_at);
 `;
 
+const BUSINESS_V8_SQL = `
+-- V8：回复句段与表情标注。正文仍整条保存，句段按自然段提供稳定标识。
+CREATE TABLE IF NOT EXISTS message_segments (
+  segment_id TEXT PRIMARY KEY,
+  message_id TEXT NOT NULL REFERENCES messages(message_id),
+  window_id TEXT NOT NULL REFERENCES windows(window_id),
+  ordinal INTEGER NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('speech', 'narration')),
+  text TEXT NOT NULL,
+  start_offset INTEGER NOT NULL,
+  end_offset INTEGER NOT NULL,
+  outfit_id TEXT REFERENCES outfits(outfit_id),
+  sprite_asset_id TEXT REFERENCES outfit_assets(asset_id),
+  annotated_at TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE (message_id, ordinal)
+);
+
+CREATE INDEX IF NOT EXISTS idx_message_segments_window
+  ON message_segments (window_id, message_id, ordinal);
+
+ALTER TABLE execution_stream_events RENAME TO execution_stream_events_v8_old;
+DROP INDEX IF EXISTS idx_execution_stream_window;
+DROP INDEX IF EXISTS idx_execution_stream_execution;
+
+CREATE TABLE execution_stream_events (
+  stream_event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  window_id TEXT REFERENCES windows(window_id),
+  execution_id TEXT NOT NULL REFERENCES executions(execution_id),
+  event_type TEXT NOT NULL CHECK (event_type IN (
+    'execution_started', 'message_delta', 'tool_started', 'tool_result_saved',
+    'tool_backgrounded', 'message_segments', 'segment_annotations',
+    'message_completed', 'message_interrupted', 'execution_superseded',
+    'execution_paused', 'execution_failed'
+  )),
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+INSERT INTO execution_stream_events
+  (stream_event_id, role_id, window_id, execution_id, event_type, payload_json, created_at)
+SELECT stream_event_id, role_id, window_id, execution_id, event_type, payload_json, created_at
+  FROM execution_stream_events_v8_old;
+
+DROP TABLE execution_stream_events_v8_old;
+CREATE INDEX idx_execution_stream_window
+  ON execution_stream_events (window_id, stream_event_id);
+CREATE INDEX idx_execution_stream_execution
+  ON execution_stream_events (execution_id, stream_event_id);
+`;
+
+const BUSINESS_V9_SQL = `
+-- V9：角色音色与参考音频。参考音频按受管文件保存，试听与按句合成共用同一服务。
+CREATE TABLE IF NOT EXISTS voice_assets (
+  asset_id TEXT PRIMARY KEY,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  file_name TEXT NOT NULL,
+  media_type TEXT NOT NULL,
+  relative_path TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_voice_assets_role
+  ON voice_assets (role_id, created_at);
+
+CREATE TABLE IF NOT EXISTS role_voice_settings (
+  role_id TEXT PRIMARY KEY REFERENCES roles(role_id),
+  engine TEXT NOT NULL,
+  base_url TEXT NOT NULL,
+  reference_asset_id TEXT REFERENCES voice_assets(asset_id),
+  language TEXT NOT NULL,
+  speed REAL NOT NULL,
+  emo_alpha REAL NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+`;
+
+const BUSINESS_V10_SQL = `
+-- V10：TTS 统一接入。旧行保持 indextts 协议和参考音色来源。
+ALTER TABLE role_voice_settings
+  ADD COLUMN protocol TEXT NOT NULL DEFAULT 'indextts';
+ALTER TABLE role_voice_settings
+  ADD COLUMN voice_source TEXT NOT NULL DEFAULT 'reference';
+ALTER TABLE role_voice_settings
+  ADD COLUMN reference_mode TEXT;
+ALTER TABLE role_voice_settings
+  ADD COLUMN reference_text TEXT;
+ALTER TABLE role_voice_settings
+  ADD COLUMN preset_voice_id TEXT;
+ALTER TABLE role_voice_settings
+  ADD COLUMN capabilities_json TEXT;
+`;
+
+const BUSINESS_V11_SQL = `
+-- V11：参考模式是否已由用户确认。旧行默认已确认。
+ALTER TABLE role_voice_settings
+  ADD COLUMN reference_mode_confirmed INTEGER NOT NULL DEFAULT 1;
+`;
+
+const BUSINESS_V12_SQL = `
+-- V12：上一版 V11 曾把统一协议下缺少模式的旧行标为已确认。
+-- 这类行无法证明用户确认过模式，修正为待确认；已绑定模式的行不受影响。
+UPDATE role_voice_settings
+SET reference_mode_confirmed = 0
+WHERE protocol = 'nowadays-tts-v1'
+  AND voice_source = 'reference'
+  AND reference_mode IS NULL;
+`;
+
 export function openAppDatabase(dbPath: string): OpenedDatabase {
   return openVersionedDatabase(
     dbPath,
@@ -1075,7 +1231,12 @@ export function openBusinessDatabase(
       BUSINESS_V4_SQL +
       BUSINESS_V5_SQL +
       BUSINESS_V6_SQL +
-      BUSINESS_V7_SQL,
+      BUSINESS_V7_SQL +
+      BUSINESS_V8_SQL +
+      BUSINESS_V9_SQL +
+      BUSINESS_V10_SQL +
+      BUSINESS_V11_SQL +
+      BUSINESS_V12_SQL,
     {
       1: (db) => {
         db.exec(BUSINESS_V2_SQL);
@@ -1086,6 +1247,11 @@ export function openBusinessDatabase(
       4: (db) => db.exec(BUSINESS_V5_SQL),
       5: (db) => db.exec(BUSINESS_V6_SQL),
       6: (db) => db.exec(BUSINESS_V7_SQL),
+      7: (db) => db.exec(BUSINESS_V8_SQL),
+      8: (db) => db.exec(BUSINESS_V9_SQL),
+      9: (db) => db.exec(BUSINESS_V10_SQL),
+      10: (db) => db.exec(BUSINESS_V11_SQL),
+      11: (db) => db.exec(BUSINESS_V12_SQL),
     },
     BUSINESS_TABLES,
     BUSINESS_INDEXES,

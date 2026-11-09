@@ -1,11 +1,19 @@
 # 新主线文档导航
 
-最新阶段（2026-11-08）：[198 首轮后端功能缺口独立复验](198-p5-capability-gaps-independent-review.md#r01-第三次补修的独立复验)通过，R01～R06 在本机离线范围关闭。随后按 DL-136 与 208／209 完成角色外观导入、每日穿搭和桌面主页接入的首轮实施，见[210](210-appearance-implementation-record.md)；对话演出尚未实施。
+最新阶段（2026-11-09）：对话演出第一包通过独立离线复验，见 [216 第 6 节](216-conversation-performance-independent-review.md#6-217-第-7-节补修独立复验)。旧 IndexTTS 接口的补修在 [219](219-indextts-integration-spec.md#补修独立复验) 通过复验。DL-140 统一 TTS 后端的 v12 回填在 [222 独立复验](222-tts-unified-independent-review.md#221-第-11-节-v12-回填独立复验) 通过 v10 和旧 v11 两条升级路径，R01～R04 在已验范围关闭。真实服务联调待验，生成过场图尚未开始。
 
-当前阶段：角色外观与每日穿搭在 [212](212-appearance-review-fixes.md) 补修后完成[独立复验](211-appearance-independent-review.md#r01-全帧校验补修独立复验)。统一离线验收 21 步、213 项正式测试和 30 项桌面测试通过，R01～R03 在已复验范围关闭。对话逐段演出与 SSE 即时刷新待接入。桌面前端完成后按 DL-115 恢复远程 Streamable HTTP MCP。
+当前阶段：角色外观与每日穿搭在 [212](212-appearance-review-fixes.md) 补修后完成[独立复验](211-appearance-independent-review.md#r01-全帧校验补修独立复验)。真实语音服务联调、桌面语音播放、角色配置页试听与生成过场图待推进。桌面前端完成后按 DL-115 恢复远程 Streamable HTTP MCP。
 
 | 文档 | 定位与状态 |
 | --- | --- |
+| [222 TTS 统一接入独立复核](222-tts-unified-independent-review.md) | R01～R04 在已验范围关闭，v10 和旧 v11 升级到 v12 通过，真实语音服务待联调 |
+| [221 TTS 统一接入首轮实施记录](221-tts-unified-implementation.md) | 能力探测、克隆／预置音色、multipart 合成、v10→v12 迁移与旧配置兼容；第 7～11 节记录 222 修复 |
+| [220 TTS 统一接入说明](220-tts-unified-integration.md) | 音色克隆与预置音色共用的配置流程、服务接口、后端迁移和验收，已按 221 完成首轮后端实施 |
+| [219 首版 IndexTTS 接入规范与独立复核](219-indextts-integration-spec.md) | R01～R03 及补修通过独立离线复验，真实桥接待联调 |
+| [218 TTS 与角色音色首轮实施记录](218-tts-implementation-record.md) | IndexTTS 本地 HTTP、参考音频导入、试听与按句合成、v9 存储；第 7 节记录 219 R01～R03 修复与自验 |
+| [217 对话演出第一包复核修复记录](217-conversation-performance-review-fixes.md) | R01～R04 的修复与实现方自验，最终独立结论见 216 第 6 节 |
+| [216 对话演出第一包独立复核](216-conversation-performance-independent-review.md) | 离线回归和 v7 样例迁移通过，R01～R04 在已验范围关闭 |
+| [215 对话演出第一包实施记录](215-conversation-segments-implementation.md) | 回复句段、快照、晚到表情标注与 v8 存储的实现方自验；历史结论见 216、217 |
 | [214 关系藏页接入记录](214-relationship-exlibris-page.md) | 关系页改为人物藏书票与经历、日记、介绍；资料维护留在设置 |
 | [213 对话演出后端方案](213-conversation-performance-backend-plan.md) | DL-137／DL-138 的回复消息设计、三条演出链路、句段契约和后端接口提案 |
 | [212 211 外观复核 R01～R03 修复记录](212-appearance-review-fixes.md) | 图片全帧解码、状态版本门和图片与服饰名同步的实现方证据；独立结论见 211 |

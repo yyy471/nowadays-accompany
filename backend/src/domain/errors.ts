@@ -56,6 +56,12 @@ export class WindowNotFoundError extends AppError {
   }
 }
 
+export class MessageNotFoundError extends AppError {
+  constructor(windowId: string, messageId: string) {
+    super(404, "MESSAGE_NOT_FOUND", "消息不存在", { windowId, messageId });
+  }
+}
+
 export class SubmissionConflictError extends AppError {
   constructor(windowId: string, submissionId: string) {
     super(409, "SUBMISSION_CONFLICT", "同一提交编号对应了不同消息内容", {
@@ -407,5 +413,50 @@ export class AutonomyBudgetExhaustedError extends AppError {
 export class InputStateInvalidError extends AppError {
   constructor(message: string, details?: unknown) {
     super(400, "INPUT_STATE_INVALID", message, details);
+  }
+}
+
+export class MessageSegmentNotFoundError extends AppError {
+  constructor(windowId: string, segmentId: string) {
+    super(404, "MESSAGE_SEGMENT_NOT_FOUND", "消息句段不存在", {
+      windowId,
+      segmentId,
+    });
+  }
+}
+
+export class TtsServiceUnavailableError extends AppError {
+  constructor(baseUrl: string) {
+    super(503, "TTS_SERVICE_UNAVAILABLE", "无法连接语音服务", { baseUrl });
+  }
+}
+
+export class TtsTimeoutError extends AppError {
+  constructor() {
+    super(504, "TTS_TIMEOUT", "语音合成超时");
+  }
+}
+
+export class TtsCanceledError extends AppError {
+  constructor() {
+    super(499, "TTS_CANCELED", "语音合成已取消");
+  }
+}
+
+export class TtsSynthesisFailedError extends AppError {
+  constructor(message: string, details?: unknown) {
+    super(502, "TTS_SYNTHESIS_FAILED", message, details);
+  }
+}
+
+export class TtsProbeFailedError extends AppError {
+  constructor(message: string, details?: unknown) {
+    super(502, "TTS_PROBE_FAILED", message, details);
+  }
+}
+
+export class TtsProtocolInvalidError extends AppError {
+  constructor(message: string) {
+    super(502, "TTS_PROTOCOL_INVALID", message);
   }
 }

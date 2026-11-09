@@ -23,12 +23,22 @@ export interface AutonomyStatus {
   paused: boolean;
 }
 
+export interface ProactiveMessageNotice {
+  roleId: string;
+  windowId: string;
+  messageId: string;
+  executionId: string;
+}
+
 const AUTONOMY_WINDOW_SOURCE = "nowadays-autonomy";
 
 export class AutonomyService {
   private readonly now: () => Date;
   private readonly timeZone: string | undefined;
   private wakeListener: ((roleId: string) => void) | null = null;
+  private proactiveMessageListener:
+    | ((notice: ProactiveMessageNotice) => void)
+    | null = null;
 
   constructor(
     private readonly access: RoleAccess,
@@ -40,6 +50,12 @@ export class AutonomyService {
 
   setWakeListener(listener: ((roleId: string) => void) | null): void {
     this.wakeListener = listener;
+  }
+
+  setProactiveMessageListener(
+    listener: ((notice: ProactiveMessageNotice) => void) | null,
+  ): void {
+    this.proactiveMessageListener = listener;
   }
 
   getStatus(roleId: string, activityLimit = 20): AutonomyStatus {
@@ -266,6 +282,12 @@ export class AutonomyService {
           now: this.now().toISOString(),
         });
       }
+      this.proactiveMessageListener?.({
+        roleId,
+        windowId: window.windowId,
+        messageId: message.messageId,
+        executionId: input.executionId,
+      });
       return { messageId: message.messageId, windowId: window.windowId };
     });
   }

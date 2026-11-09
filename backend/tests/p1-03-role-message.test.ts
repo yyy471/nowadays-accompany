@@ -197,15 +197,42 @@ test("role, state, windows and message dedup persist across reopen", async () =>
     );
     assert.equal(page.status, 200);
     assert.equal((page.body.items as unknown[]).length, 1);
-    assert.equal(page.body.nextAfter, 1);
+    assert.equal(
+      (page.body.items as Array<{ sequence: number }>)[0]?.sequence,
+      2,
+    );
+    assert.equal(page.body.nextBefore, 2);
+    assert.equal(page.body.nextAfter, null);
+    const olderPage = await request(
+      baseUrl,
+      "GET",
+      `/v1/roles/${roleId}/windows/${mainWindowId}/messages?before=2&limit=1`,
+    );
+    assert.equal(olderPage.status, 200);
+    assert.equal(
+      (olderPage.body.items as Array<{ sequence: number }>)[0]?.sequence,
+      1,
+    );
+    assert.equal(olderPage.body.nextBefore, null);
     const nextPage = await request(
       baseUrl,
       "GET",
-      `/v1/roles/${roleId}/windows/${mainWindowId}/messages?after=1&limit=1`,
+      `/v1/roles/${roleId}/windows/${mainWindowId}/messages?after=0&limit=1`,
     );
     assert.equal(nextPage.status, 200);
     assert.equal((nextPage.body.items as unknown[]).length, 1);
-    assert.equal(nextPage.body.nextAfter, null);
+    assert.equal(nextPage.body.nextAfter, 1);
+    assert.equal(nextPage.body.nextBefore, null);
+    const conflicting = await request(
+      baseUrl,
+      "GET",
+      `/v1/roles/${roleId}/windows/${mainWindowId}/messages?after=0&before=2`,
+    );
+    assert.equal(conflicting.status, 400);
+    assert.equal(
+      (conflicting.body.error as { code: string }).code,
+      "INVALID_QUERY",
+    );
 
     const isolated = await request(
       baseUrl,

@@ -18,6 +18,7 @@ export class RoleStorage {
     } else {
       fs.mkdirSync(paths.workspaceDir, { recursive: true });
       fs.mkdirSync(paths.appearanceDir, { recursive: true });
+      fs.mkdirSync(paths.voiceDir, { recursive: true });
     }
     const create = mode === "initialize";
     this.business = new RoleStore(paths.businessDatabasePath, { create });

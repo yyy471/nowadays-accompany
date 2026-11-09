@@ -6,7 +6,9 @@ Nowadays 是一个面向单用户桌面的数字生命项目。每个角色拥�
 
 首轮补齐的六项功能包括慢工具转后台、任务暂停与续行、未知结果补录、记忆容量分批、Skill 脚本执行和日记正文读取，均已通过本机离线复核。 [功能补齐复核记录](devDoc/198-p5-capability-gaps-independent-review.md#r01-第三次补修的独立复验)
 
-角色外观导入、Agent 每日穿搭和桌面主页立绘已完成首轮实施。独立复验覆盖千叶原图导入、图片全帧解码、换装状态与主页展示，R01～R03 在已复验范围关闭。对话立绘演出待实施。 [外观实施记录](devDoc/210-appearance-implementation-record.md) · [独立复验记录](devDoc/211-appearance-independent-review.md#r01-全帧校验补修独立复验)
+角色外观导入、Agent 每日穿搭和桌面主页立绘已完成首轮实施。独立复验覆盖千叶原图导入、图片全帧解码、换装状态与主页展示，R01～R03 在已复验范围关闭。 [外观实施记录](devDoc/210-appearance-implementation-record.md) · [独立复验记录](devDoc/211-appearance-independent-review.md#r01-全帧校验补修独立复验)
+
+对话演出第一包已完成首轮实现并经独立复核，发现快照接续、服饰回退、标注计量和旁白切分问题后已修复：回复按自然句段保存稳定标识，窗口快照携带 SSE 游标并支持向前翻页，句段保存回复时服饰，标注接入模型计量与自主额度；补充复验后，断线重连从较新游标续接、标注扣点与调用登记同事务、行内多段星号动作之间的台词归还台词；最新补修把标注适配器初始化前移到扣点之前，凭据缺失不扣点、不记调用。统一离线验收 21 步、230 项测试通过，已通过独立复验。第二部分 TTS 已完成 IndexTTS 本地 HTTP 后端，并通过 219 的 WAV 帧完整性、拒绝媒体类型时的连接收尾和空查询串／片段补修复验；DL-140 统一接入已按 220／221 完成首轮后端实施：服务能力探测、克隆／预置音色、multipart 合成、业务库升级到 v12 和旧配置兼容；222 复核的重定向、试听 `config`、服务切换音色绑定和语言／语速声明已修复，后续补充的单模式自动绑定、语速下限、模式确认持久化、默认语速范围、v10 迁移待确认状态和上一版 v11 迁移回填也已修复，统一离线验收 21 步、261 项测试通过，R01～R04 在已验范围关闭。[TTS 独立复验](devDoc/222-tts-unified-independent-review.md#221-第-11-节-v12-回填独立复验)生成过场图、桌面语音播放和角色配置页试听待实施。 [TTS 记录](devDoc/218-tts-implementation-record.md) [统一接入记录](devDoc/221-tts-unified-implementation.md) [复核记录](devDoc/216-conversation-performance-independent-review.md) · [修复记录](devDoc/217-conversation-performance-review-fixes.md)
 
 ## 主要功能
 

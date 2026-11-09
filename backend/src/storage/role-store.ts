@@ -77,6 +77,13 @@ export interface SubmitMessageResult {
 export interface ListMessagesResult {
   items: MessageRecord[];
   nextAfter: number | null;
+  nextBefore: number | null;
+}
+
+export interface MessagePageQuery {
+  after?: number | null;
+  before?: number | null;
+  limit: number;
 }
 
 export type BindingCapability = "chat_model" | "memory_model" | "mcp" | "skill";
@@ -645,17 +652,51 @@ export class RoleStore {
     after: number,
     limit: number,
   ): ListMessagesResult {
+    return this.listMessagePage(roleId, windowId, { after, limit });
+  }
+
+  /**
+   * 无游标时返回最近一页；after 向前翻页，before 向历史翻页。
+   * 返回按 sequence 升序。
+   */
+  listMessagePage(
+    roleId: string,
+    windowId: string,
+    query: MessagePageQuery,
+  ): ListMessagesResult {
     this.getWindow(roleId, windowId);
+    const limit = query.limit;
+    const columns =
+      "message_id, window_id, sender, content, source_platform, status, sequence, submission_id, submission_hash, created_at, updated_at";
+    if (query.after !== undefined && query.after !== null) {
+      const rows = this.db
+        .prepare(
+          `SELECT ${columns} FROM messages WHERE window_id = ? AND sequence > ? ORDER BY sequence ASC LIMIT ?`,
+        )
+        .all(windowId, query.after, limit + 1) as MessageRow[];
+      const hasMore = rows.length > limit;
+      const page = hasMore ? rows.slice(0, limit) : rows;
+      return {
+        items: page.map(mapMessage),
+        nextAfter: hasMore ? (page.at(-1)?.sequence ?? null) : null,
+        nextBefore: null,
+      };
+    }
+    const before =
+      query.before !== undefined && query.before !== null
+        ? query.before
+        : Number.MAX_SAFE_INTEGER;
     const rows = this.db
       .prepare(
-        "SELECT message_id, window_id, sender, content, source_platform, status, sequence, submission_id, submission_hash, created_at, updated_at FROM messages WHERE window_id = ? AND sequence > ? ORDER BY sequence ASC LIMIT ?",
+        `SELECT ${columns} FROM messages WHERE window_id = ? AND sequence < ? ORDER BY sequence DESC LIMIT ?`,
       )
-      .all(windowId, after, limit + 1) as MessageRow[];
+      .all(windowId, before, limit + 1) as MessageRow[];
     const hasMore = rows.length > limit;
-    const page = hasMore ? rows.slice(0, limit) : rows;
+    const page = (hasMore ? rows.slice(0, limit) : rows).reverse();
     return {
       items: page.map(mapMessage),
-      nextAfter: hasMore ? (page.at(-1)?.sequence ?? null) : null,
+      nextAfter: null,
+      nextBefore: hasMore ? (page[0]?.sequence ?? null) : null,
     };
   }
 

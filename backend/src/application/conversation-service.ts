@@ -60,6 +60,7 @@ import type {
   ResolvedModelBinding,
 } from "./model-binding-resolver.js";
 import type { RoleAccess } from "./role-access.js";
+import { SegmentAnnotationService } from "./segment-annotation-service.js";
 
 export type ChatModelPortFactory = (binding: ResolvedModelBinding) => ModelPort;
 
@@ -121,10 +122,13 @@ export class ConversationService {
   private readonly maxToolRounds: number;
   private readonly toolForegroundWaitMs: number;
   private readonly modelFactory: ChatModelPortFactory;
+  private readonly segmentAnnotation: SegmentAnnotationService;
   private readonly memoryRuntime: MemoryRuntime | null;
   private readonly autonomy: AutonomyService | null;
   private readonly running = new Map<string, RunningExecution>();
   private readonly detached = new Set<RunningExecution>();
+  private readonly segmentAnnotations = new Map<string, Set<Promise<void>>>();
+  private readonly annotationControllers = new Set<AbortController>();
   private readonly backgroundToolSettles = new Set<Promise<void>>();
   private readonly backgroundToolsByRole = new Map<string, number>();
   private readonly wakeTimers = new Map<string, NodeJS.Timeout>();
@@ -169,6 +173,16 @@ export class ConversationService {
         ));
     this.memoryRuntime = options.memoryRuntime ?? null;
     this.autonomy = options.autonomy ?? null;
+    this.segmentAnnotation = new SegmentAnnotationService(
+      this.roleAccess,
+      this.bindings,
+      {
+        now: this.now,
+        ...(this.timeZone === undefined ? {} : { timeZone: this.timeZone }),
+        modelFactory: this.modelFactory,
+        autonomy: this.autonomy,
+      },
+    );
     this.inputStates = new InputStateRegistry({
       typingMs: options.typingMs ?? 1000,
       now: this.now,
@@ -193,6 +207,48 @@ export class ConversationService {
     this.supersedeWindow(roleId, windowId);
     const decisionScheduled = this.schedule(roleId);
     return { ...result, decisionScheduled };
+  }
+
+  /** 回复落库后异步标注句段表情；正文与句段事件不等待标注完成。 */
+  queueSegmentAnnotation(input: {
+    roleId: string;
+    windowId: string;
+    messageId: string;
+    executionId: string;
+    outfitId?: string | null;
+  }): void {
+    if (this.closed) {
+      return;
+    }
+    const controller = new AbortController();
+    this.annotationControllers.add(controller);
+    let task: Promise<void>;
+    task = this.segmentAnnotation
+      .annotate({
+        roleId: input.roleId,
+        windowId: input.windowId,
+        messageId: input.messageId,
+        executionId: input.executionId,
+        ...(input.outfitId === undefined ? {} : { outfitId: input.outfitId }),
+        signal: controller.signal,
+      })
+      .then(() => undefined)
+      .catch(() => undefined)
+      .finally(() => {
+        this.annotationControllers.delete(controller);
+        const tasks = this.segmentAnnotations.get(input.roleId);
+        if (tasks !== undefined) {
+          tasks.delete(task);
+          if (tasks.size === 0) {
+            this.segmentAnnotations.delete(input.roleId);
+          }
+        }
+        void this.schedule(input.roleId);
+      });
+    const tasks =
+      this.segmentAnnotations.get(input.roleId) ?? new Set<Promise<void>>();
+    tasks.add(task);
+    this.segmentAnnotations.set(input.roleId, tasks);
   }
 
   updateInputState(input: {
@@ -466,6 +522,7 @@ export class ConversationService {
             // 预留结算失败保留原状态，后续启动继续重试。
           }
           interrupted = store.recoverInterruptedExecutions(now, resumableIds);
+          store.failOrphanedModelCalls(now);
           superseded = store.listSupersededTaskContinuations();
           storage.business.recoverInterruptedToolCalls(
             index.roleId,
@@ -826,6 +883,15 @@ export class ConversationService {
     const backgroundSettles = [...this.backgroundToolSettles];
     if (backgroundSettles.length > 0) {
       await Promise.allSettled(backgroundSettles);
+    }
+    for (const controller of this.annotationControllers) {
+      controller.abort();
+    }
+    const annotations = [...this.segmentAnnotations.values()].flatMap(
+      (tasks) => [...tasks],
+    );
+    if (annotations.length > 0) {
+      await Promise.allSettled(annotations);
     }
     const catalogs = [...this.taskCatalogs.values()];
     this.taskCatalogs.clear();
@@ -1636,7 +1702,7 @@ export class ConversationService {
         result.taskId === null
           ? null
           : toCommittedTaskDecision(result.taskId, result.taskAction);
-      store.commitConversation({
+      const committed = store.commitConversation({
         executionId: execution.executionId,
         content: result.text,
         statePatch: this.validateOutfitStatePatch(
@@ -1647,6 +1713,16 @@ export class ConversationService {
         countsAsConversationRound: autonomy === null,
         taskDecision,
         now: this.now().toISOString(),
+      });
+      this.queueSegmentAnnotation({
+        roleId,
+        windowId,
+        executionId: execution.executionId,
+        messageId: committed.replyMessage.messageId,
+        outfitId:
+          typeof committed.state.outfitId === "string"
+            ? committed.state.outfitId
+            : null,
       });
       if (result.taskId !== null && taskDecision !== null) {
         taskId = result.taskId;
@@ -2359,6 +2435,10 @@ export class ConversationService {
     }
     if ((this.backgroundToolsByRole.get(roleId) ?? 0) > 0) {
       // 仍有转后台的工具在途：结算后可能续行，不算空闲。
+      return false;
+    }
+    if ((this.segmentAnnotations.get(roleId)?.size ?? 0) > 0) {
+      // 表情标注晚于正文完成，但仍属于本轮演出的收尾工作。
       return false;
     }
     if ([...this.detached].some((running) => running.roleId === roleId)) {

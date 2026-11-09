@@ -12,6 +12,8 @@ export type ConversationStreamType =
   | "tool_started"
   | "tool_backgrounded"
   | "tool_result_saved"
+  | "message_segments"
+  | "segment_annotations"
   | "message_completed"
   | "message_interrupted"
   | "execution_superseded"
@@ -46,6 +48,33 @@ export interface ClaimedMessage {
 export interface ConversationMessageView extends ClaimedMessage {
   sender: "user" | "assistant";
   status: string;
+}
+
+export interface MessageSegmentRecord {
+  segmentId: string;
+  messageId: string;
+  windowId: string;
+  ordinal: number;
+  kind: "speech" | "narration";
+  text: string;
+  startOffset: number;
+  endOffset: number;
+  outfitId: string | null;
+  spriteAssetId: string | null;
+  annotatedAt: string | null;
+  createdAt: string;
+}
+
+export interface MessageDetail {
+  message: MessageRecord;
+  segments: MessageSegmentRecord[];
+}
+
+/** 打开窗口时读取的未完成回复快照；正文文字仍以流事件为增量。 */
+export interface ConversationActiveReply {
+  messageId: string;
+  executionId: string;
+  text: string;
 }
 
 export interface ConversationExecutionDetail {

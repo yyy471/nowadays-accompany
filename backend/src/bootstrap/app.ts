@@ -6,6 +6,7 @@ import {
 } from "../application/conversation-service.js";
 import { AutonomyService } from "../application/autonomy-service.js";
 import { AppearanceService } from "../application/appearance-service.js";
+import { VoiceService } from "../application/voice-service.js";
 import { MemoryQueryService } from "../application/memory-query-service.js";
 import {
   MemoryRuntime,
@@ -56,6 +57,7 @@ export function createBackendApp(
   const messageService = new MessageService(roleAccess);
   const resourceService = new ResourceService(appStore, roleAccess);
   const appearanceService = new AppearanceService(roleAccess);
+  const voiceService = new VoiceService(roleAccess, { now });
   const memoryService = new MemoryQueryService(roleAccess, {
     now,
     ...(options.timeZone === undefined ? {} : { timeZone: options.timeZone }),
@@ -117,6 +119,9 @@ export function createBackendApp(
   memoryRuntime?.recoverOnStartup();
   conversation.recoverOnStartup();
   autonomy.setWakeListener((roleId) => conversation.refreshWakeTimer(roleId));
+  autonomy.setProactiveMessageListener((notice) =>
+    conversation.queueSegmentAnnotation(notice),
+  );
   const services: ApiServices = {
     roles: roleService,
     messages: messageService,
@@ -126,6 +131,7 @@ export function createBackendApp(
     conversation,
     autonomy,
     appearance: appearanceService,
+    voice: voiceService,
   };
   let server: http.Server;
   try {

@@ -117,6 +117,12 @@ node --import tsx src/cli.ts autonomy status --role $roleId
 
 send 只登记输入并返回执行关联，不等待完整答复；稍后查询历史或订阅 SSE。重试同一发送使用同一 submissionId；新的消息使用新编号。HTTP 路由及请求体分别见 [routes.ts](src/http/routes.ts)、[schemas.ts](src/http/schemas.ts)，CLI 参数见 [commands.ts](src/cli/commands.ts)。事件流使用 `events --role <id> --window <id> --after <游标>`，首次订阅可省略 after；正常聊天、输入状态和新消息中断仍按已有契约执行。
 
+消息列表默认返回窗口最近一页，`before` 向历史翻页，`after` 保持向前续读；响应同时返回本页句段、未完成回复快照和与读取同一快照边界的 `cursor`，进入窗口后用 `after=cursor` 建立 SSE 即可续接终态与晚到媒体。断线重连同时带 `after` 与 `Last-Event-ID` 时从较新的游标继续，不重放已收到的事件。`segments` 为 `message_segments` 表中的自然段（含稳定 `segmentId`、原文范围、台词／旁白类型、回复时服饰及已标注差分），`activeReply` 在回复生成中给出 `messageId`、`executionId` 与已产生的文字；生成期间句段不提前发布，桌面先显示一个进行中的气泡。单条消息及句段可用 `GET /v1/roles/:roleId/windows/:windowId/messages/:messageId` 读取。流事件新增 `message_segments`（正文句段确定）与 `segment_annotations`（表情差分布晚到），两者均按游标重放。角色当前服饰有差分时，回复提交后会异步调用同一对话模型为句段选择差分；调用计入 `model_calls`／`call_metering`，用户对话不扣自主点数，自主任务先过额度，适配器与凭据初始化在扣点之前，初始化失败不计调用；扣点与调用登记在同一事务内完成，登记失败不消耗额度。没有服饰、没有差分、额度不足或标注失败时只保留文字和句段。[213 方案](../devDoc/213-conversation-performance-backend-plan.md) · [217 复核修复](../devDoc/217-conversation-performance-review-fixes.md)
+
+### 音色与语音合成
+
+音色服务支持旧 IndexTTS 路径协议和 `nowadays-tts-v1` 统一协议。`GET/PUT /v1/roles/:roleId/voice` 读取或保存 `baseUrl`、`protocol`、`voiceSource`（`reference` 参考音频或 `preset` 预置音色）、`capabilities`、`language`、`speed`、`emoAlpha`；旧请求的 `referenceAssetId` 保持原含义。`POST /v1/roles/:roleId/voice/probe` 读取 `{baseUrl}/health` 的能力与就绪状态，就绪且声明预置音色时返回 `{baseUrl}/voices` 列表。`POST /v1/roles/:roleId/voice/reference` 用 `multipart/form-data` 的 `file` 字段导入 WAV／MP3／FLAC／OGG 参考音频（≤32 MiB），返回受管 `assetId`；`POST /voice/preview` 用 `text` 和可选候选 `config`（或兼容的平铺字段）直接返回音频，试听不落库；`POST /windows/:windowId/segments/:segmentId/speech` 为台词句段返回音频，旁白返回 400 `VOICE_SEGMENT_NOT_SPEAKABLE`。统一协议调用 multipart `/tts`，克隆模式上传受管参考音频和可选原文，预置模式传 `voice_id`，语言按服务声明的语言代码传递，语速在 0.1–10 内按声明范围收敛且声明必须包含 1.0；统一协议请求不跟随重定向，遇到 3xx 返回 502。切换服务后参考模式确认状态随配置保存，未确认前试听和按句合成返回 `VOICE_REFERENCE_MODE_REQUIRED`。旧协议调用 `POST {baseUrl}/tts` JSON，传入参考音频绝对路径、`lang`、`emo_alpha` 和 `duration_factor`，语言限 `zh`／`en`／`ja`／`es`／`ar`，语速限 0.5–2。`baseUrl` 允许路径前缀，拒绝查询串、片段和账号信息。成功响应必须是完整 PCM WAV（校验 RIFF 块边界、格式字段和数据帧对齐），单次响应上限 16 MiB，拒绝非 WAV 媒体类型时主动关闭上游连接；本轮不控制情绪、不缓存音频。服务错误映射为 502，连不上 503，超时 504，调用取消 499。[218 记录](../devDoc/218-tts-implementation-record.md) · [221 统一接入记录](../devDoc/221-tts-unified-implementation.md)
+
 ## 6. 数据布局与验收
 
 ```text
@@ -124,6 +130,7 @@ send 只登记输入并返回执行关联，不等待完整答复；稍后查询
 <app-root>/data/roles/<roleId>/business.sqlite
 <app-root>/data/roles/<roleId>/execution.sqlite
 <app-root>/data/roles/<roleId>/workspace/
+<app-root>/data/roles/<roleId>/voice/
 ```
 
 业务库保存正式身份、状态、消息、记忆、任务和调用事实；execution.sqlite 为图检查点，不替代正式业务数据。备份时先停止后端，保留整个 app-root/data；不要只复制其中一个 SQLite 文件。
@@ -132,6 +139,6 @@ send 只登记输入并返回执行关联，不等待完整答复；稍后查询
 npm run accept:offline
 ```
 
-统一离线入口运行类型检查、交付回归、168 项当前正式测试、真实进程／CLI 重启冒烟，以及 P2 20、P3 11、P4 28 项定向场景。实际数量以本次报告为准。脚本使用当前 node，在新建 `test-results/p5-.../` 下保存 summary.json、源码哈希、逐步日志和业务报告；不会读取你的运行配置、调用真实模型、覆盖或清理旧验收目录。任何失败、报告缺失或用例数量不完整均返回非零退出码。
+统一离线入口运行类型检查、交付回归、当前正式测试（本次 261 项）、真实进程／CLI 重启冒烟，以及 P2 20、P3 11、P4 28 项定向场景。实际数量以本次报告为准。脚本使用当前 node，在新建 `test-results/p5-.../` 下保存 summary.json、源码哈希、逐步日志和业务报告；不会读取你的运行配置、调用真实模型、覆盖或清理旧验收目录。任何失败、报告缺失或用例数量不完整均返回非零退出码。
 
 本命令会启动本地子进程和本机回环 HTTP 服务。运行输出属于忽略的证据，稳定结论和覆盖限制见 194；独立复核与实现方自验分别记录。

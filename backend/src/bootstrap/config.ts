@@ -18,6 +18,7 @@ export interface RolePaths {
   executionDatabasePath: string;
   workspaceDir: string;
   appearanceDir: string;
+  voiceDir: string;
 }
 
 export function parseBackendConfig(
@@ -81,5 +82,6 @@ export function rolePaths(dataRoot: string, roleId: string): RolePaths {
     executionDatabasePath: path.join(roleDir, "execution.sqlite"),
     workspaceDir: path.join(roleDir, "workspace"),
     appearanceDir: path.join(roleDir, "appearance"),
+    voiceDir: path.join(roleDir, "voice"),
   };
 }

@@ -29,6 +29,7 @@ import type { MessageService } from "../application/message-service.js";
 import type { ModelService } from "../application/model-service.js";
 import type { ResourceService } from "../application/resource-service.js";
 import type { RoleService } from "../application/role-service.js";
+import type { VoiceService } from "../application/voice-service.js";
 import { InputStateInvalidError, SseCursorInvalidError } from "../domain/errors.js";
 import { resourceKindSchema } from "../domain/resource.js";
 import {
@@ -53,6 +54,7 @@ import {
 } from "./schemas.js";
 import { parseBody, queryInt } from "./validation.js";
 import { registerAppearanceRoutes } from "./appearance-routes.js";
+import { registerVoiceRoutes } from "./voice-routes.js";
 
 export interface ApiServices {
   roles: RoleService;
@@ -63,6 +65,7 @@ export interface ApiServices {
   conversation: ConversationService;
   autonomy: AutonomyService;
   appearance: AppearanceService;
+  voice: VoiceService;
 }
 
 export function registerApiRoutes(
@@ -206,11 +209,29 @@ export function registerApiRoutes(
     "GET",
     "/v1/roles/:roleId/windows/:windowId/messages",
     ({ params, url }): JsonResponse => {
-      const after = queryInt(url, "after", {
-        min: 0,
-        max: 2_147_483_647,
-        defaultValue: 0,
-      });
+      const afterRaw = url.searchParams.get("after");
+      const beforeRaw = url.searchParams.get("before");
+      if (afterRaw !== null && beforeRaw !== null) {
+        throw new HttpError(
+          400,
+          "INVALID_QUERY",
+          "查询参数 after 与 before 不能同时使用",
+        );
+      }
+      const after =
+        afterRaw === null
+          ? null
+          : queryInt(url, "after", {
+              min: 0,
+              max: 2_147_483_647,
+            });
+      const before =
+        beforeRaw === null
+          ? null
+          : queryInt(url, "before", {
+              min: 1,
+              max: 2_147_483_647,
+            });
       const limit = queryInt(url, "limit", {
         min: 1,
         max: 200,
@@ -223,9 +244,23 @@ export function registerApiRoutes(
           params.windowId ?? "",
           after,
           limit,
+          before,
         ),
       };
     },
+  );
+
+  router.add(
+    "GET",
+    "/v1/roles/:roleId/windows/:windowId/messages/:messageId",
+    ({ params }): JsonResponse => ({
+      status: 200,
+      body: services.messages.get(
+        params.roleId ?? "",
+        params.windowId ?? "",
+        params.messageId ?? "",
+      ),
+    }),
   );
 
   router.add(
@@ -716,6 +751,7 @@ export function registerApiRoutes(
   );
 
   registerAppearanceRoutes(router, services);
+  registerVoiceRoutes(router, services);
 
   return router;
 }
@@ -725,18 +761,25 @@ function parseSseCursor(
   url: URL,
 ): number | null {
   const header = request.headers["last-event-id"];
-  const raw =
-    url.searchParams.get("after") ??
-    (typeof header === "string" ? header : null);
-  if (raw === null) {
+  const candidates = [
+    url.searchParams.get("after"),
+    typeof header === "string" ? header : null,
+  ].filter((raw): raw is string => raw !== null);
+  if (candidates.length === 0) {
     return null;
   }
-  if (!/^\d+$/.test(raw)) {
-    throw new SseCursorInvalidError(raw);
+  // EventSource 自动重连会保留原 URL 并补上 Last-Event-ID；
+  // 两边同时存在时从较新的游标继续，避免重复重放。
+  let cursor = 0;
+  for (const raw of candidates) {
+    if (!/^\d+$/.test(raw)) {
+      throw new SseCursorInvalidError(raw);
+    }
+    const value = Number(raw);
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new SseCursorInvalidError(raw);
+    }
+    cursor = Math.max(cursor, value);
   }
-  const value = Number(raw);
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new SseCursorInvalidError(raw);
-  }
-  return value;
+  return cursor;
 }
