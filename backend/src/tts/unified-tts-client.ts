@@ -4,6 +4,7 @@ import {
   TtsProbeFailedError,
   TtsProtocolInvalidError,
   TtsSynthesisFailedError,
+  TtsVoiceUnavailableError,
 } from "../domain/errors.js";
 import { voiceCapabilitiesSchema } from "../domain/voice-capabilities.js";
 import type {
@@ -20,6 +21,7 @@ import {
   readResponseBody,
   readWavResponse,
   responseDetail,
+  responseFailure,
 } from "./transport.js";
 
 export interface UnifiedTtsReferenceInput {
@@ -135,14 +137,22 @@ export class UnifiedTtsClient {
             status: response.status,
           });
         }
-        let detail: string;
+        let failure: Awaited<ReturnType<typeof responseFailure>>;
         try {
-          detail = await responseDetail(response);
+          failure = await responseFailure(response);
         } catch {
           throw scope.error();
         }
-        throw new TtsSynthesisFailedError(detail, {
+        if (isVoiceMissing(response.status, failure.code)) {
+          // 桥接明确报告音色不存在时，给出可识别的配置错误，而不是通用合成失败。
+          throw new TtsVoiceUnavailableError(failure.detail, {
+            status: response.status,
+            code: failure.code,
+          });
+        }
+        throw new TtsSynthesisFailedError(failure.detail, {
           status: response.status,
+          code: failure.code,
         });
       }
       return await readWavResponse(response, scope, this.maxAudioBytes);
@@ -225,6 +235,21 @@ export class UnifiedTtsClient {
 
 function isRedirect(status: number): boolean {
   return status >= 300 && status < 400;
+}
+
+const VOICE_MISSING_CODES = new Set([
+  "VOICE_NOT_FOUND",
+  "voice_not_found",
+  "PRESET_VOICE_NOT_FOUND",
+  "preset_voice_not_found",
+]);
+
+/**
+ * 只有上游明确给出音色不存在时才映射；单纯 404 也可能来自地址或路由错误，
+ * 继续按通用合成失败处理，避免误导用户去改音色。
+ */
+function isVoiceMissing(status: number, code: string | null): boolean {
+  return status === 404 && code !== null && VOICE_MISSING_CODES.has(code);
 }
 
 function buildForm(input: UnifiedTtsSynthesisInput): FormData {

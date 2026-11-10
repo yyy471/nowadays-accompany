@@ -1,4 +1,5 @@
 import type { RoleAccess } from "../application/role-access.js";
+import type { CredentialResolver } from "../application/credential-resolver.js";
 import type { ModelBindingResolver, ResolvedModelBinding } from "../application/model-binding-resolver.js";
 import {
   SceneImageCanceledError,
@@ -36,6 +37,7 @@ export interface ModelSceneImagePlannerOptions {
   /** 没有可用对话模型或适配器无法初始化时使用，保持手动任务仍可完成。 */
   fallback?: SceneImagePlannerPort | null;
   maxOutputTokens?: number;
+  credentialResolver?: CredentialResolver;
 }
 
 /**
@@ -59,11 +61,19 @@ export class ModelSceneImagePlanner implements SceneImagePlannerPort {
     this.timeZone = options.timeZone;
     this.modelFactory =
       options.modelFactory ??
-      ((binding) =>
-        new HttpModelAdapter(
-          binding.config,
-          resolveCredential(options.appRoot, binding.config.credentialRef),
-        ));
+      ((binding) => {
+        const credential =
+          options.credentialResolver === undefined
+            ? resolveCredential(
+                options.appRoot,
+                binding.config.credentialRef,
+              )
+            : options.credentialResolver.resolve(
+                binding.resourceId,
+                binding.config.credentialRef,
+              );
+        return new HttpModelAdapter(binding.config, credential);
+      });
     this.fallback = options.fallback ?? null;
     this.maxOutputTokens = options.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
   }

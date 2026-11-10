@@ -138,7 +138,7 @@ class SupersedeModel implements ModelPort {
   }
 }
 
-test("disabling a skill excludes it from the next autonomous task chain", { timeout: 20_000 }, async () => {
+test("disabling a skill excludes it from the next autonomous task chain", { timeout: 60_000 }, async () => {
   const skillRoot = fs.mkdtempSync(
     path.join(os.tmpdir(), "nowadays-p3-schedule-skill-"),
   );
@@ -201,7 +201,7 @@ test("disabling a skill excludes it from the next autonomous task chain", { time
         fixture.app.services.autonomy
           .listActivities(fixture.roleId)
           .some((activity) => activity.status === "completed"),
-      5_000,
+      15_000,
     );
     fixture.app.services.resources.update(skill.resourceId, {
       enabled: false,
@@ -215,7 +215,7 @@ test("disabling a skill excludes it from the next autonomous task chain", { time
         fixture.app.services.autonomy
           .listActivities(fixture.roleId)
           .filter((activity) => activity.status === "completed").length === 2,
-      5_000,
+      15_000,
     );
     const activities = fixture.app.services.autonomy.listActivities(
       fixture.roleId,

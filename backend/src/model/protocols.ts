@@ -1,5 +1,8 @@
 import {
+  ModelListIncompatibleError,
+  ModelRedirectBlockedError,
   ModelRequestFailedError,
+  ModelRequestTimeoutError,
   ModelToolArgumentsError,
 } from "../domain/errors.js";
 import type {
@@ -10,29 +13,55 @@ import type {
   ModelServiceConfig,
 } from "../domain/model.js";
 
+const DEFAULT_LIST_TIMEOUT_MS = 20_000;
+
+export interface HttpModelAdapterOptions {
+  /** 列表等短请求的等待上限；流式请求沿用调用方提供的信号。 */
+  listTimeoutMs?: number;
+}
+
 export class HttpModelAdapter implements ModelPort {
+  private readonly listTimeoutMs: number;
+
   constructor(
     private readonly config: ModelServiceConfig,
     private readonly credential: string | undefined,
-  ) {}
+    options: HttpModelAdapterOptions = {},
+  ) {
+    this.listTimeoutMs = options.listTimeoutMs ?? DEFAULT_LIST_TIMEOUT_MS;
+  }
 
-  async listModels(): Promise<string[]> {
+  async listModels(signal?: AbortSignal): Promise<string[]> {
     const headers = this.baseHeaders("application/json");
     const response = await this.request(
       endpoint(this.config.baseUrl, "/models"),
       { method: "GET", headers },
+      { timeoutMs: this.listTimeoutMs, ...(signal === undefined ? {} : { signal }) },
     );
-    let body: { data?: Array<{ id?: unknown }> };
+    let parsed: unknown;
     try {
-      body = (await response.json()) as {
-        data?: Array<{ id?: unknown }>;
-      };
+      parsed = await response.json();
     } catch {
-      throw new ModelRequestFailedError("模型列表响应不是有效 JSON");
+      throw new ModelListIncompatibleError("INVALID_JSON");
     }
-    const models = (body.data ?? [])
-      .map((item) => item.id)
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new ModelListIncompatibleError("NOT_OBJECT");
+    }
+    const data = (parsed as { data?: unknown }).data;
+    if (!Array.isArray(data)) {
+      throw new ModelListIncompatibleError("DATA_NOT_ARRAY");
+    }
+    const models = data
+      .map((item) =>
+        item !== null && typeof item === "object"
+          ? (item as { id?: unknown }).id
+          : undefined,
+      )
       .filter((id): id is string => typeof id === "string" && id.length > 0);
+    if (models.length !== data.length) {
+      // 有条目但取不到 id 时按格式不兼容处理，不静默丢弃半个列表。
+      throw new ModelListIncompatibleError("ITEMS_WITHOUT_ID");
+    }
     return models;
   }
 
@@ -551,14 +580,47 @@ export class HttpModelAdapter implements ModelPort {
   private async request(
     url: string,
     init: RequestInit,
+    options: { timeoutMs?: number; signal?: AbortSignal } = {},
   ): Promise<Response> {
+    const timeout =
+      options.timeoutMs === undefined
+        ? null
+        : AbortSignal.timeout(options.timeoutMs);
+    const signals = [init.signal, options.signal, timeout].filter(
+      (signal): signal is AbortSignal => signal !== null && signal !== undefined,
+    );
+    const signal =
+      signals.length === 0
+        ? undefined
+        : signals.length === 1
+          ? signals[0]
+          : AbortSignal.any(signals);
     let response: Response;
     try {
-      response = await fetch(url, init);
+      response = await fetch(url, {
+        ...init,
+        // 带凭据的请求不跟随重定向，避免密钥被带到未预期的地址。
+        redirect: "manual",
+        ...(signal === undefined ? {} : { signal }),
+      });
     } catch (error) {
+      if (timeout?.aborted === true) {
+        throw new ModelRequestTimeoutError(options.timeoutMs ?? 0);
+      }
+      if (
+        error instanceof Error &&
+        (error.name === "AbortError" || error.name === "TimeoutError")
+      ) {
+        throw new ModelRequestFailedError("模型请求已取消", {
+          reason: "ABORTED",
+        });
+      }
       throw new ModelRequestFailedError("模型服务不可达", {
         reason: error instanceof Error ? error.name : "NETWORK_ERROR",
       });
+    }
+    if (response.status >= 300 && response.status < 400) {
+      throw new ModelRedirectBlockedError(response.status);
     }
     if (!response.ok) {
       const body = await response.text();

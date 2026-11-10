@@ -155,6 +155,27 @@ export function registerVoiceRoutes(
   );
 
   router.add(
+    "GET",
+    "/v1/roles/:roleId/voice/references",
+    ({ params }): RouteResponse => ({
+      status: 200,
+      body: services.voice.listReferences(params.roleId ?? ""),
+    }),
+  );
+
+  router.add(
+    "DELETE",
+    "/v1/roles/:roleId/voice/references/:assetId",
+    ({ params }): RouteResponse => ({
+      status: 200,
+      body: services.voice.deleteReference(
+        params.roleId ?? "",
+        params.assetId ?? "",
+      ),
+    }),
+  );
+
+  router.add(
     "POST",
     "/v1/roles/:roleId/voice/preview",
     async ({ request, response, params }): Promise<RouteResponse> => {

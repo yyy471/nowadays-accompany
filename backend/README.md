@@ -53,7 +53,11 @@ node --import tsx src/cli.ts role get --role $roleId
 
 角色创建即获得默认窗口。设定修订使用 `role update --role <id> --definition @文件 --expected-revision <当前版本>`，身份和已有记录保留。
 
-从 examples/model-anthropic.json、model-openai-chat.json 或 model-openai-responses.json 复制一份到 `.nowadays/model.json`，按实际服务修改 baseUrl；样例地址故意不可用。baseUrl 填服务的 API 根路径，适配层拼接 messages、chat/completions 或 responses。credentialRef 可为 `env:NOWADAYS_MODEL_API_KEY` 或 `file:<密钥文件绝对路径>`。环境引用应在启动后端前设置，后端进程才能读到；密钥不要放入样例或提交。
+从 examples/model-anthropic.json、model-openai-chat.json 或 model-openai-responses.json 复制一份到 `.nowadays/model.json`，按实际服务修改 baseUrl；样例地址故意不可用。baseUrl 只接受 http/https，不能内嵌账号、查询串或片段，末尾斜杠会统一去掉；适配层拼接 messages、chat/completions 或 responses。credentialRef 可为 `env:NOWADAYS_MODEL_API_KEY` 或 `file:<密钥文件绝对路径>`。环境引用应在启动后端前设置，后端进程才能读到；密钥不要放入样例或提交。
+
+也可以在 `POST /v1/resources` 或 `PATCH /v1/resources/:id` 时直接提交 `secret`（只写）。创建时资源与密钥在同一事务落库；更新时省略 `secret` 保留、`null` 清除、字符串替换。直填密钥与 `credentialRef` 二选一，同时提供返回 `RESOURCE_CREDENTIAL_CONFLICT`。已存密钥只在同一服务内沿用：协议或 origin 变化时，省略 `secret` 会返回 `RESOURCE_CREDENTIAL_STALE`，需要重新填写密钥或显式清除；同站点换路径仍可保留。读接口只返回 `credential.status`（`stored` 已保存、`reference` 引用、`missing` 未配置、`unavailable` 不可解密）和 `resolvable`，不回明文。密钥用应用目录下的主密钥加密后存于 app 库；这是原型阶段的本地静态加密，同账户进程仍可读取主密钥，桌面打包与跨重启验证后再决定是否改用系统密钥链。
+
+已保存服务可直接按资源探测：`POST /v1/resources/:resourceId/models` 列模型，`POST /v1/resources/:resourceId/model-test`（body `{ "model": "..." }`）测试连接。测试记录带资源归属和配置指纹；密钥替换后旧结果在资源视图中标为 `lastTest.stale=true`，地址或协议变化会清空该资源的旧测试。新建服务仍可用 `POST /v1/model-services/models` 与 `/test` 临时探测，候选 `secret` 只用于本次请求、不落库。列模型请求 20 秒超时、连接测试 60 秒超时，均拒绝跟随重定向；列表响应不是 `{ "data": [...] }` 时返回 `MODEL_LIST_INCOMPATIBLE`，与空列表区分。
 
 ```powershell
 Copy-Item examples/model-anthropic.json .nowadays/model.json
@@ -121,7 +125,7 @@ send 只登记输入并返回执行关联，不等待完整答复；稍后查询
 
 ### 音色与语音合成
 
-音色服务支持旧 IndexTTS 路径协议和 `nowadays-tts-v1` 统一协议。`GET/PUT /v1/roles/:roleId/voice` 读取或保存 `baseUrl`、`protocol`、`voiceSource`（`reference` 参考音频或 `preset` 预置音色）、`capabilities`、`language`、`speed`、`emoAlpha`；旧请求的 `referenceAssetId` 保持原含义。`POST /v1/roles/:roleId/voice/probe` 读取 `{baseUrl}/health` 的能力与就绪状态，就绪且声明预置音色时返回 `{baseUrl}/voices` 列表。`POST /v1/roles/:roleId/voice/reference` 用 `multipart/form-data` 的 `file` 字段导入 WAV／MP3／FLAC／OGG 参考音频（≤32 MiB），返回受管 `assetId`；`POST /voice/preview` 用 `text` 和可选候选 `config`（或兼容的平铺字段）直接返回音频，试听不落库；`POST /windows/:windowId/segments/:segmentId/speech` 为台词句段返回音频，旁白返回 400 `VOICE_SEGMENT_NOT_SPEAKABLE`。统一协议调用 multipart `/tts`，克隆模式上传受管参考音频和可选原文，预置模式传 `voice_id`，语言按服务声明的语言代码传递，语速在 0.1–10 内按声明范围收敛且声明必须包含 1.0；统一协议请求不跟随重定向，遇到 3xx 返回 502。切换服务后参考模式确认状态随配置保存，未确认前试听和按句合成返回 `VOICE_REFERENCE_MODE_REQUIRED`。旧协议调用 `POST {baseUrl}/tts` JSON，传入参考音频绝对路径、`lang`、`emo_alpha` 和 `duration_factor`，语言限 `zh`／`en`／`ja`／`es`／`ar`，语速限 0.5–2。`baseUrl` 允许路径前缀，拒绝查询串、片段和账号信息。成功响应必须是完整 PCM WAV（校验 RIFF 块边界、格式字段和数据帧对齐），单次响应上限 16 MiB，拒绝非 WAV 媒体类型时主动关闭上游连接；本轮不控制情绪、不缓存音频。服务错误映射为 502，连不上 503，超时 504，调用取消 499。[218 记录](../devDoc/218-tts-implementation-record.md) · [221 统一接入记录](../devDoc/221-tts-unified-implementation.md)
+音色服务支持旧 IndexTTS 路径协议和 `nowadays-tts-v1` 统一协议。`GET/PUT /v1/roles/:roleId/voice` 读取或保存 `baseUrl`、`protocol`、`voiceSource`（`reference` 参考音频或 `preset` 预置音色）、`capabilities`、`language`、`speed`、`emoAlpha`；旧请求的 `referenceAssetId` 保持原含义。`POST /v1/roles/:roleId/voice/probe` 读取 `{baseUrl}/health` 的能力与就绪状态，就绪且声明预置音色时返回 `{baseUrl}/voices` 列表。`POST /v1/roles/:roleId/voice/reference` 用 `multipart/form-data` 的 `file` 字段导入 WAV／MP3／FLAC／OGG 参考音频（≤32 MiB），返回受管 `assetId`；`GET /v1/roles/:roleId/voice/references` 列出已导入音频并标记当前引用，`DELETE /v1/roles/:roleId/voice/references/:assetId` 删除未使用的音频，正在使用时返回 409 `VOICE_REFERENCE_IN_USE`，记录删除后文件清理失败返回 `fileRemoved=false` 供重试；`POST /voice/preview` 用 `text` 和可选候选 `config`（或兼容的平铺字段）直接返回音频，试听不落库；`POST /windows/:windowId/segments/:segmentId/speech` 为台词句段返回音频，旁白返回 400 `VOICE_SEGMENT_NOT_SPEAKABLE`。统一协议调用 multipart `/tts`，克隆模式上传受管参考音频和可选原文，预置模式传 `voice_id`，语言按服务声明的语言代码传递，语速在 0.1–10 内按声明范围收敛且声明必须包含 1.0；统一协议请求不跟随重定向，遇到 3xx 返回 502。上游返回 404 且错误体带机器可读的 `code: VOICE_NOT_FOUND`（或 `PRESET_VOICE_NOT_FOUND`）时映射为 409 `TTS_VOICE_UNAVAILABLE`；单纯 404 仍按通用合成失败处理，避免把地址或路由错误误判成音色下架。切换服务后参考模式确认状态随配置保存，未确认前试听和按句合成返回 `VOICE_REFERENCE_MODE_REQUIRED`。旧协议调用 `POST {baseUrl}/tts` JSON，传入参考音频绝对路径、`lang`、`emo_alpha` 和 `duration_factor`，语言限 `zh`／`en`／`ja`／`es`／`ar`，语速限 0.5–2。`baseUrl` 允许路径前缀，拒绝查询串、片段和账号信息。成功响应必须是完整 PCM WAV（校验 RIFF 块边界、格式字段和数据帧对齐），单次响应上限 16 MiB，拒绝非 WAV 媒体类型时主动关闭上游连接；本轮不控制情绪、不缓存音频。服务错误映射为 502，连不上 503，超时 504，调用取消 499。[218 记录](../devDoc/218-tts-implementation-record.md) · [221 统一接入记录](../devDoc/221-tts-unified-implementation.md)
 
 ### 生成过场图
 
@@ -133,6 +137,7 @@ send 只登记输入并返回执行关联，不等待完整答复；稍后查询
 
 ```text
 <app-root>/data/app.sqlite
+<app-root>/secrets/master.key
 <app-root>/data/roles/<roleId>/business.sqlite
 <app-root>/data/roles/<roleId>/execution.sqlite
 <app-root>/data/roles/<roleId>/workspace/
@@ -140,12 +145,12 @@ send 只登记输入并返回执行关联，不等待完整答复；稍后查询
 <app-root>/data/roles/<roleId>/scene-images/
 ```
 
-业务库保存正式身份、状态、消息、记忆、任务和调用事实；execution.sqlite 为图检查点，不替代正式业务数据。备份时先停止后端，保留整个 app-root/data；不要只复制其中一个 SQLite 文件。
+业务库保存正式身份、状态、消息、记忆、任务和调用事实；execution.sqlite 为图检查点，不替代正式业务数据。`secrets/master.key` 是模型服务直填密钥的本地加密主密钥，首次保存密钥时生成；备份时应保留整个 app-root（至少 `data/` 与 `secrets/`），丢失主密钥后已保存密钥会显示为不可解密，需要重新填写。备份时先停止后端，不要只复制其中一个 SQLite 文件。
 
 ```powershell
 npm run accept:offline
 ```
 
-统一离线入口运行类型检查、交付回归、当前正式测试（本次 286 项）、真实进程／CLI 重启冒烟，以及 P2 20、P3 11、P4 28 项定向场景。实际数量以本次报告为准。脚本使用当前 node，在新建 `test-results/p5-.../` 下保存 summary.json、源码哈希、逐步日志和业务报告；不会读取你的运行配置、调用真实模型、覆盖或清理旧验收目录。任何失败、报告缺失或用例数量不完整均返回非零退出码。
+统一离线入口运行类型检查、交付回归、当前正式测试（本次 298 项）、真实进程／CLI 重启冒烟，以及 P2 20、P3 11、P4 28 项定向场景。实际数量以本次报告为准。脚本使用当前 node，在新建 `test-results/p5-.../` 下保存 summary.json、源码哈希、逐步日志和业务报告；不会读取你的运行配置、调用真实模型、覆盖或清理旧验收目录。任何失败、报告缺失或用例数量不完整均返回非零退出码。
 
 本命令会启动本地子进程和本机回环 HTTP 服务。运行输出属于忽略的证据，稳定结论和覆盖限制见 194；独立复核与实现方自验分别记录。

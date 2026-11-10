@@ -15,6 +15,7 @@ import {
 import { MessageService } from "../application/message-service.js";
 import { ModelBindingResolver } from "../application/model-binding-resolver.js";
 import { ModelService } from "../application/model-service.js";
+import { CredentialResolver } from "../application/credential-resolver.js";
 import { ResourceService } from "../application/resource-service.js";
 import { RoleAccess } from "../application/role-access.js";
 import { RoleService } from "../application/role-service.js";
@@ -25,6 +26,8 @@ import {
 import { createHttpServer } from "../http/server.js";
 import type { ApiServices } from "../http/routes.js";
 import { AppStore } from "../storage/app-store.js";
+import { SecretStore } from "../storage/secret-store.js";
+import { SecretCipher } from "../security/secret-cipher.js";
 import { FixedSceneImagePlanner } from "../scene/fixed-planner.js";
 import { ModelSceneImagePlanner } from "../scene/model-planner.js";
 import type { BackendConfig } from "./config.js";
@@ -62,17 +65,27 @@ export function createBackendApp(
   fs.mkdirSync(config.dataRoot, { recursive: true });
   const now = options.now ?? (() => new Date());
   const appStore = new AppStore(config.appDatabasePath);
+  const credentials = new CredentialResolver(
+    config.appRoot,
+    new SecretStore(appStore.db, new SecretCipher(config.appRoot)),
+  );
   const roleService = new RoleService(appStore, config.dataRoot);
   const roleAccess = new RoleAccess(appStore, config.dataRoot);
   const messageService = new MessageService(roleAccess);
-  const resourceService = new ResourceService(appStore, roleAccess);
+  const resourceService = new ResourceService(appStore, roleAccess, {
+    credentialResolver: credentials,
+    now,
+  });
   const appearanceService = new AppearanceService(roleAccess);
   const voiceService = new VoiceService(roleAccess, { now });
   const memoryService = new MemoryQueryService(roleAccess, {
     now,
     ...(options.timeZone === undefined ? {} : { timeZone: options.timeZone }),
   });
-  const modelService = new ModelService(appStore, config.appRoot, { now });
+  const modelService = new ModelService(appStore, config.appRoot, {
+    now,
+    credentialResolver: credentials,
+  });
   const bindings = new ModelBindingResolver(appStore, roleAccess);
   const autonomy = new AutonomyService(roleAccess, {
     now,
@@ -88,6 +101,7 @@ export function createBackendApp(
         config.dataRoot,
         {
           now,
+          credentialResolver: credentials,
           ...(options.timeZone === undefined
             ? {}
             : { timeZone: options.timeZone }),
@@ -108,6 +122,7 @@ export function createBackendApp(
     config.dataRoot,
     {
       now,
+      credentialResolver: credentials,
       ...(options.timeZone === undefined ? {} : { timeZone: options.timeZone }),
       ...(options.typingMs === undefined ? {} : { typingMs: options.typingMs }),
       ...(options.autoRecallLimit === undefined
@@ -135,6 +150,7 @@ export function createBackendApp(
       new ModelSceneImagePlanner(roleAccess, bindings, {
         appRoot: config.appRoot,
         now,
+        credentialResolver: credentials,
         ...(options.timeZone === undefined
           ? {}
           : { timeZone: options.timeZone }),

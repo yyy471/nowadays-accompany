@@ -2,15 +2,20 @@
 
 2026-11-09。对话演出第一包通过独立离线复验，见 [216 第 6 节](216-conversation-performance-independent-review.md#6-217-第-7-节补修独立复验)。旧 IndexTTS 接口的补修在 [219](219-indextts-integration-spec.md#补修独立复验) 通过复验。DL-140 统一 TTS 后端的 v12 回填在 [222 独立复验](222-tts-unified-independent-review.md#221-第-11-节-v12-回填独立复验) 通过 v10 和旧 v11 两条升级路径，TTS 的 R01～R04 在已验范围关闭。真实服务联调待验。
 
-角色外观与每日穿搭在 [212](212-appearance-review-fixes.md) 补修后完成[独立复验](211-appearance-independent-review.md#r01-全帧校验补修独立复验)。过场图 CG-01／CG-02 经 [227 第 7 节](227-scene-image-independent-review.md#7-228-第-10-节-r06-独立复验) 独立复验通过，R01～R06 在已验范围关闭。关系藏页按 [233](233-relations-exlibris-migration-fixes.md) 迁移后，[234](234-relations-exlibris-independent-review.md) 复核未通过的三项已按 [235](235-relations-exlibris-review-fixes.md) 修复并自验，[234 第 3 节](234-relations-exlibris-independent-review.md#3-235-修复独立复验) 原场景通过；扩展场景 EX-R04、EX-R05 已在 [235 第 7 节](235-relations-exlibris-review-fixes.md#7-234-第-3-节补充修复ex-r04ex-r05) 补修，[234 第 4 节](234-relations-exlibris-independent-review.md#4-235-第-7-节补修独立复验) 确认 EX-R01～EX-R05 在离线范围关闭。对话页的明暗切换已按 `dialogue-demo-v4` 重做为「日落刻度」，实现方自验见 [237](237-dialogue-theme-transition.md)；关系页的「明暗推进」方案效果未获认可，已整块回滚到原折页刻度。CG-03、残留文件自动清扫、真实服务和桌面对话按工作包推进。桌面前端完成后按 DL-115 恢复远程 Streamable HTTP MCP。
+角色外观与每日穿搭在 [212](212-appearance-review-fixes.md) 补修后完成[独立复验](211-appearance-independent-review.md#r01-全帧校验补修独立复验)。过场图 CG-01／CG-02 经 [227 第 7 节](227-scene-image-independent-review.md#7-228-第-10-节-r06-独立复验) 独立复验通过，R01～R06 在已验范围关闭。关系藏页按 [233](233-relations-exlibris-migration-fixes.md) 迁移后，[234](234-relations-exlibris-independent-review.md) 复核未通过的三项已按 [235](235-relations-exlibris-review-fixes.md) 修复并自验，[234 第 3 节](234-relations-exlibris-independent-review.md#3-235-修复独立复验) 原场景通过；扩展场景 EX-R04、EX-R05 已在 [235 第 7 节](235-relations-exlibris-review-fixes.md#7-234-第-3-节补充修复ex-r04ex-r05) 补修，[234 第 4 节](234-relations-exlibris-independent-review.md#4-235-第-7-节补修独立复验) 确认 EX-R01～EX-R05 在离线范围关闭。对话页的明暗切换已按 `dialogue-demo-v4` 重做为「日落刻度」，实现方自验见 [237](237-dialogue-theme-transition.md)；关系页的「明暗推进」方案效果未获认可，已整块回滚到原折页刻度。角色配置与全局设置的后端缺口按 [236](236-role-settings-backend-gap-review.md) 复核，第一包 RS-01（密钥直填、按资源探测、地址与请求边界、参考音频列表／删除、音色下架映射）已按 [241](241-role-settings-backend-rs-01.md) 完成实现方自验，[244 第 7 节](244-role-settings-independent-review.md#7-245-第-12-节补修独立复验) 确认 RS-R01～RS-R08 在各自已验离线范围关闭；外观目录导入已按 [242](242-role-appearance-folder-import.md) 在桌面端实现，声音配置页已按 [243](243-voice-settings-desktop.md) 接入连接测试、试听与参考音频管理，生图锚点与删除规则待实施。CG-03、残留文件自动清扫、真实服务和桌面对话按工作包推进。桌面前端完成后按 DL-115 恢复远程 Streamable HTTP MCP。
 
 | 文档 | 定位与状态 |
 | --- | --- |
+| [244 角色配置开发进展独立复核](244-role-settings-independent-review.md) | 第 7 节复验关闭 RS-R08，RS-R01～RS-R08 在各自已验离线范围关闭 |
+| [241 角色配置后端第一包（RS-01）](241-role-settings-backend-rs-01.md) | 密钥只写存储与统一解析、按资源探测与结果过期、地址与请求边界、参考音频列表／删除、音色下架映射；实现方自验见 241，独立发现见 244 |
+| [242 角色外观目录导入（AI-01）](242-role-appearance-folder-import.md) | `standees`／`expressions` 识别、导入预览、跨目录手动归并与结果汇总，`outfits` 锚点与说明文件跳过；桌面端 67 项测试与类型检查、构建通过 |
+| [243 声音配置页接入（VS-01）](243-voice-settings-desktop.md) | 连接测试、试听、参考音频上传／列表／删除、预置音色下架提示与按能力校验；桌面端 81 项测试与类型检查、构建通过 |
+| [245 244 复核问题修复记录](245-role-settings-review-fixes.md) | 第 1～8 节为 RS-R01～RS-R05 首轮修复，第 9 节补修扩展场景（引用凭据、音色随服务失效、卸载后作废、忙碌状态归属），第 10 节补修换服务时参考模式失效，第 11 节补修能力来源顺序与不支持来源拒绝，第 12 节让请求与校验共用同一份能力声明；后端 301 项、桌面 89 项与 21 步离线验收通过 |
 | [240 关系页顶部栏精简](240-relations-header-removal.md) | 移除关系页顶部标题栏，按用户澄清将日夜装饰条移入书页右上方；实现方自验，待独立复核 |
 | [239 对话页 Dock 显示设置](239-dialogue-dock-visibility.md) | 对话页可隐藏底部导航、其他页面保留导航及本地偏好；实现方自验，待独立复核 |
 | [238 对话页顶部精简与布局调整](238-dialogue-layout-refinement.md) | 对话框内工具图标、舞台上移和移除全局顶部设置入口；实现方自验，待独立复核 |
 | [237 对话页明暗切换（关系页推进方案已回滚）](237-dialogue-theme-transition.md) | 对话页照 v4 参考实现舞台光线 + 纸面 14 档逐行推进；关系页快照推进方案经用户判定效果不对，已回滚到原折页刻度并复验无残留；实现方自验，独立复核待执行 |
-| [236 角色配置与全局设置后端缺口复核](236-role-settings-backend-gap-review.md) | 对照现有接口核对附件，区分首版接入项、补齐项和后续能力 |
+| [236 角色配置与全局设置后端缺口复核](236-role-settings-backend-gap-review.md) | 对照现有接口核对附件，区分首版接入项、补齐项和后续能力；第一包实施进展见第 7 节与 241 |
 | [235 关系藏页复核修复记录](235-relations-exlibris-review-fixes.md) | EX-R01～EX-R03 的修复与实现方自验，第 7 节补修 EX-R04／EX-R05；独立结论见 234 第 3～4 节 |
 | [234 关系藏页迁移独立复核](234-relations-exlibris-independent-review.md) | 第 4 节确认 EX-R01～EX-R05 在离线范围关闭，真实数据联调待验 |
 | [233 关系藏页原型对照与迁移修复](233-relations-exlibris-migration-fixes.md) | 对照用户提供的关系页原型，修复布局、主题、交互和资料读取，独立结论见 234 |

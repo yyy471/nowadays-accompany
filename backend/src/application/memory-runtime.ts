@@ -15,6 +15,7 @@ import type { AppStore } from "../storage/app-store.js";
 import { MemoryStore } from "../storage/memory-store.js";
 import { RoleStorage } from "../storage/role-storage.js";
 import { MemoryService } from "./memory-service.js";
+import type { CredentialResolver } from "./credential-resolver.js";
 import type { ModelBindingResolver, ResolvedModelBinding } from "./model-binding-resolver.js";
 import type { RoleAccess } from "./role-access.js";
 
@@ -27,6 +28,7 @@ export interface MemoryRuntimeOptions {
   now?: () => Date;
   enabled?: boolean;
   idleMs?: number;
+  credentialResolver?: CredentialResolver;
 }
 
 interface QueueState {
@@ -51,6 +53,7 @@ export class MemoryRuntime {
   private readonly modelFactory: MemoryModelFactory;
   private readonly customModelFactory: boolean;
   private readonly appRoot: string;
+  private readonly credentials: CredentialResolver | null;
   private closed = false;
 
   constructor(
@@ -66,6 +69,7 @@ export class MemoryRuntime {
     this.enabled = options.enabled ?? true;
     this.idleWakeMs = options.idleMs ?? IDLE_WAKE_MS;
     this.appRoot = appRoot;
+    this.credentials = options.credentialResolver ?? null;
     this.customModelFactory = options.modelFactory !== undefined;
     this.modelFactory =
       options.modelFactory ??
@@ -309,7 +313,12 @@ export class MemoryRuntime {
     return new HttpMemoryModel(
       new HttpModelAdapter(
         binding.config,
-        resolveCredential(this.appRoot, binding.config.credentialRef),
+        this.credentials === null
+          ? resolveCredential(this.appRoot, binding.config.credentialRef)
+          : this.credentials.resolve(
+              binding.resourceId,
+              binding.config.credentialRef,
+            ),
       ),
       binding,
     );

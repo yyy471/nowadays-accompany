@@ -6,7 +6,7 @@ import {
   summaryCorrectionSchema,
 } from "../domain/memory.js";
 import {
-  modelServiceConfigSchema,
+  modelServiceProbeSchema,
   modelServiceTestSchema,
 } from "../domain/model.js";
 import { resourceKindSchema } from "../domain/resource.js";
@@ -68,6 +68,8 @@ export const createResourceSchema = z
     name: z.string().trim().min(1).max(200),
     enabled: z.boolean().optional(),
     config: recordSchema,
+    /** 只写的模型服务密钥，创建时与资源同一事务保存。 */
+    secret: z.string().min(1).max(4000).optional(),
   })
   .strict();
 
@@ -76,14 +78,19 @@ export const updateResourceSchema = z
     name: z.string().trim().min(1).max(200).optional(),
     enabled: z.boolean().optional(),
     config: recordSchema.optional(),
+    /** 省略保留、null 清除、字符串替换。 */
+    secret: z
+      .union([z.string().min(1).max(4000), z.null()])
+      .optional(),
   })
   .strict()
   .refine(
     (value) =>
       value.name !== undefined ||
       value.enabled !== undefined ||
-      value.config !== undefined,
-    { message: "name、enabled 或 config 至少提供一项" },
+      value.config !== undefined ||
+      value.secret !== undefined,
+    { message: "name、enabled、config 或 secret 至少提供一项" },
   );
 
 const bindingSchema = z
@@ -140,8 +147,14 @@ export const memorySearchBodySchema = memorySearchRequestSchema;
 export const eventCorrectionBodySchema = eventCorrectionSchema;
 export const summaryCorrectionBodySchema = summaryCorrectionSchema;
 export const diaryCreateBodySchema = diaryCreateSchema;
-export const modelServiceConfigBodySchema = modelServiceConfigSchema;
+export const modelServiceConfigBodySchema = modelServiceProbeSchema;
 export const modelServiceTestBodySchema = modelServiceTestSchema;
+
+export const resourceModelTestSchema = z
+  .object({
+    model: z.string().trim().min(1).max(300),
+  })
+  .strict();
 
 export type CreateRoleBody = z.infer<typeof createRoleSchema>;
 export type UpdateDefinitionBody = z.infer<typeof updateDefinitionSchema>;
@@ -157,6 +170,7 @@ export type SummaryCorrectionBody = z.infer<typeof summaryCorrectionBodySchema>;
 export type DiaryCreateBody = z.infer<typeof diaryCreateBodySchema>;
 export type ModelServiceConfigBody = z.infer<typeof modelServiceConfigBodySchema>;
 export type ModelServiceTestBody = z.infer<typeof modelServiceTestBodySchema>;
+export type ResourceModelTestBody = z.infer<typeof resourceModelTestSchema>;
 export type InputStateBody = z.infer<typeof inputStateBodySchema>;
 export type SceneImageRequestBody = z.infer<typeof sceneImageRequestSchema>;
 export type TaskFinishBody = z.infer<typeof taskFinishBodySchema>;

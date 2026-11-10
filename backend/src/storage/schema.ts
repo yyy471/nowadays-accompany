@@ -8,11 +8,16 @@ import {
 } from "../domain/errors.js";
 import { backfillEvidence } from "./evidence.js";
 
-export const APP_SCHEMA_VERSION = 2;
+export const APP_SCHEMA_VERSION = 3;
 export const BUSINESS_SCHEMA_VERSION = 13;
 export const EXECUTION_SCHEMA_VERSION = 1;
 
-export const APP_TABLES = ["roles", "resources", "model_test_calls"] as const;
+export const APP_TABLES = [
+  "roles",
+  "resources",
+  "model_test_calls",
+  "resource_secrets",
+] as const;
 export const BUSINESS_TABLES = [
   "roles",
   "windows",
@@ -74,6 +79,25 @@ CREATE TABLE IF NOT EXISTS model_test_calls (
   finished_at TEXT NOT NULL,
   usage_json TEXT
 );
+`;
+
+/**
+ * v3：模型服务密钥只写存储，以及连接测试的配置指纹。
+ * 密钥密文独立于资源配置，读接口只暴露状态，不回明文。
+ */
+const APP_V3_SQL = `
+CREATE TABLE IF NOT EXISTS resource_secrets (
+  resource_id TEXT PRIMARY KEY,
+  ciphertext TEXT NOT NULL,
+  key_version INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+ALTER TABLE model_test_calls ADD COLUMN config_fingerprint TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_model_test_calls_resource
+  ON model_test_calls (resource_id, finished_at);
 `;
 
 const APP_SCHEMA_SQL = `
@@ -1383,8 +1407,11 @@ export function openAppDatabase(dbPath: string): OpenedDatabase {
   return openVersionedDatabase(
     dbPath,
     APP_SCHEMA_VERSION,
-    APP_SCHEMA_SQL + APP_V2_SQL,
-    { 1: (db) => db.exec(APP_V2_SQL) },
+    APP_SCHEMA_SQL + APP_V2_SQL + APP_V3_SQL,
+    {
+      1: (db) => db.exec(APP_V2_SQL),
+      2: (db) => db.exec(APP_V3_SQL),
+    },
     APP_TABLES,
     [],
     [],

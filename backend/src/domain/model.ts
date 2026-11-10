@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { modelBaseConfigSchema } from "./resource.js";
 
 export const modelProtocolSchema = z.enum([
   "openai-chat",
@@ -7,24 +8,19 @@ export const modelProtocolSchema = z.enum([
 ]);
 export type ModelProtocol = z.infer<typeof modelProtocolSchema>;
 
-export const modelServiceConfigSchema = z
-  .object({
-    protocol: modelProtocolSchema,
-    baseUrl: z.string().url().max(2000),
-    credentialRef: z
-      .string()
-      .trim()
-      .regex(/^(env|file):[^\s]+$/, "凭据只允许 env: 或 file: 引用")
-      .max(500)
-      .optional(),
-    /** 可核实的模型容量声明（字符口径），供记忆整理按容量分批。 */
-    maxInputChars: z.number().int().positive().max(10_000_000).optional(),
-    maxOutputChars: z.number().int().positive().max(10_000_000).optional(),
-  })
-  .strict();
+export const modelServiceConfigSchema = modelBaseConfigSchema;
 export type ModelServiceConfig = z.infer<typeof modelServiceConfigSchema>;
 
-export const modelServiceTestSchema = modelServiceConfigSchema
+/**
+ * 候选配置探测：可以带一次性密钥，只用于本次列表或测试，不落库。
+ * 已保存服务走按 resourceId 的接口，密钥从统一凭据解析读取。
+ */
+export const modelServiceProbeSchema = modelBaseConfigSchema.extend({
+  secret: z.string().min(1).max(4000).optional(),
+});
+export type ModelServiceProbe = z.infer<typeof modelServiceProbeSchema>;
+
+export const modelServiceTestSchema = modelServiceProbeSchema
   .extend({
     model: z.string().trim().min(1).max(300),
   })
@@ -125,5 +121,7 @@ export interface ModelListResult {
 export interface ModelTestResult {
   ok: boolean;
   elapsedMs: number;
+  /** 本次测试对应的配置与凭据版本；与当前配置不一致即视为过期。 */
+  fingerprint: string;
   error?: { code: string; message: string };
 }

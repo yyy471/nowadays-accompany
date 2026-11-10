@@ -91,26 +91,55 @@ export async function readWavResponse(
   return { data, mediaType: "audio/wav" };
 }
 
-export async function responseDetail(response: Response): Promise<string> {
+export interface UpstreamFailure {
+  detail: string;
+  /** 上游可选的机器可读错误码，用于把「音色不存在」等状态映射成明确错误。 */
+  code: string | null;
+}
+
+export async function responseFailure(
+  response: Response,
+): Promise<UpstreamFailure> {
   let raw: Buffer;
   try {
     raw = await readResponseBody(response, MAX_ERROR_BODY_BYTES);
   } catch (error) {
     if (error instanceof TtsSynthesisFailedError) {
-      return `语音服务返回 HTTP ${response.status}`;
+      return {
+        detail: `语音服务返回 HTTP ${response.status}`,
+        code: null,
+      };
     }
     throw error;
   }
   let detail = `语音服务返回 HTTP ${response.status}`;
+  let code: string | null = null;
   try {
-    const body = JSON.parse(raw.toString("utf8")) as { detail?: unknown };
+    const body = JSON.parse(raw.toString("utf8")) as {
+      detail?: unknown;
+      code?: unknown;
+      error?: unknown;
+    };
     if (typeof body.detail === "string" && body.detail.trim().length > 0) {
       detail = body.detail;
+    }
+    if (typeof body.code === "string" && body.code.length > 0) {
+      code = body.code;
+    } else if (
+      typeof body.error === "object" &&
+      body.error !== null &&
+      typeof (body.error as { code?: unknown }).code === "string"
+    ) {
+      code = (body.error as { code: string }).code;
     }
   } catch {
     // 非 JSON 错误体使用状态码说明。
   }
-  return detail;
+  return { detail, code };
+}
+
+export async function responseDetail(response: Response): Promise<string> {
+  return (await responseFailure(response)).detail;
 }
 
 export async function readResponseBody(

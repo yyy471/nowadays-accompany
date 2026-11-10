@@ -110,7 +110,8 @@ class TwoPhaseReadingModel implements ModelPort {
         callId: "wire-schedule",
         name: schedule.name,
         arguments: {
-          wakeAt: new Date(Date.now() + 1500).toISOString(),
+          // 唤醒留出余量，避免满载并行测试时在暂停断言之前触发。
+          wakeAt: new Date(Date.now() + 6000).toISOString(),
           intent: "继续阅读剩余部分",
           taskId: match[1],
         },

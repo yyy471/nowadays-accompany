@@ -52,6 +52,7 @@ import {
 } from "./agent-graph.js";
 import { loadAgentTools, type AgentToolCatalog } from "./agent-tools.js";
 import type { AutonomyService } from "./autonomy-service.js";
+import type { CredentialResolver } from "./credential-resolver.js";
 import { InputStateRegistry } from "./input-state.js";
 import type { MemoryQueryService } from "./memory-query-service.js";
 import type { MemoryRuntime } from "./memory-runtime.js";
@@ -77,6 +78,7 @@ export interface ConversationServiceOptions {
   modelPortFactory?: ChatModelPortFactory;
   memoryRuntime?: MemoryRuntime | null;
   autonomy?: AutonomyService | null;
+  credentialResolver?: CredentialResolver;
 }
 
 interface RunningExecution {
@@ -122,6 +124,7 @@ export class ConversationService {
   private readonly maxToolRounds: number;
   private readonly toolForegroundWaitMs: number;
   private readonly modelFactory: ChatModelPortFactory;
+  private readonly credentials: CredentialResolver | null;
   private readonly segmentAnnotation: SegmentAnnotationService;
   private readonly memoryRuntime: MemoryRuntime | null;
   private readonly autonomy: AutonomyService | null;
@@ -164,12 +167,18 @@ export class ConversationService {
     this.maxToolRounds = options.maxToolRounds ?? 8;
     this.toolForegroundWaitMs =
       options.toolForegroundWaitMs ?? DEFAULT_TOOL_FOREGROUND_WAIT_MS;
+    this.credentials = options.credentialResolver ?? null;
     this.modelFactory =
       options.modelPortFactory ??
       ((binding) =>
         new HttpModelAdapter(
           binding.config,
-          resolveCredential(this.appRoot, binding.config.credentialRef),
+          this.credentials === null
+            ? resolveCredential(this.appRoot, binding.config.credentialRef)
+            : this.credentials.resolve(
+                binding.resourceId,
+                binding.config.credentialRef,
+              ),
         ));
     this.memoryRuntime = options.memoryRuntime ?? null;
     this.autonomy = options.autonomy ?? null;

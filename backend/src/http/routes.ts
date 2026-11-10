@@ -8,6 +8,7 @@ import type {
   MemorySearchBody,
   ModelServiceConfigBody,
   ModelServiceTestBody,
+  ResourceModelTestBody,
   PutBindingsBody,
   PutStateBody,
   SubmitMessageBody,
@@ -45,6 +46,7 @@ import {
   modelServiceTestBodySchema,
   putBindingsSchema,
   putStateSchema,
+  resourceModelTestSchema,
   submitMessageSchema,
   summaryCorrectionBodySchema,
   taskFinishBodySchema,
@@ -514,7 +516,7 @@ export function registerApiRoutes(
     "/v1/resources/:resourceId",
     ({ params }): JsonResponse => ({
       status: 200,
-      body: services.resources.get(params.resourceId ?? ""),
+      body: services.resources.getView(params.resourceId ?? ""),
     }),
   );
 
@@ -529,6 +531,35 @@ export function registerApiRoutes(
       return {
         status: 200,
         body: services.resources.update(params.resourceId ?? "", body),
+      };
+    },
+  );
+
+  router.add(
+    "POST",
+    "/v1/resources/:resourceId/models",
+    async ({ params }): Promise<JsonResponse> => ({
+      status: 200,
+      body: await services.modelServices.listModelsForResource(
+        params.resourceId ?? "",
+      ),
+    }),
+  );
+
+  router.add(
+    "POST",
+    "/v1/resources/:resourceId/model-test",
+    async ({ request, params }): Promise<JsonResponse> => {
+      const body = parseBody<ResourceModelTestBody>(
+        resourceModelTestSchema,
+        await readJsonBody(request),
+      );
+      return {
+        status: 200,
+        body: await services.modelServices.testForResource(
+          params.resourceId ?? "",
+          body.model,
+        ),
       };
     },
   );

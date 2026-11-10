@@ -2,7 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
-import { AppError } from "../domain/errors.js";
+import {
+  AppError,
+  VoiceReferenceInUseError,
+  VoiceReferenceNotFoundError,
+} from "../domain/errors.js";
 import { VOICE_LANGUAGE_CODE_PATTERN } from "../domain/voice-capabilities.js";
 import {
   VOICE_LANGUAGES,
@@ -90,6 +94,15 @@ export interface SaveVoiceInput {
 export interface VoicePreviewInput extends VoiceOverrides {
   emotion?: string;
   text: string;
+}
+
+/** 参考音频列表项：只给配置页需要的字段，不暴露角色目录内的相对路径。 */
+export interface VoiceReferenceView {
+  assetId: string;
+  fileName: string;
+  mediaType: string;
+  createdAt: string;
+  inUse: boolean;
 }
 
 interface ResolvedLegacyVoice {
@@ -266,6 +279,70 @@ export class VoiceService {
         fs.rmSync(absolutePath, { force: true });
         throw error;
       }
+    });
+  }
+
+  listReferences(roleId: string): { items: VoiceReferenceView[] } {
+    return this.roleAccess.withStore(roleId, (storage) => {
+      const store = new VoiceStore(storage.business.db, roleId);
+      const settings = store.getSettings();
+      const inUseId =
+        settings?.voiceSource.kind === "reference"
+          ? settings.voiceSource.referenceAssetId
+          : null;
+      return {
+        items: store.listReferences().map((reference) => ({
+          assetId: reference.assetId,
+          fileName: reference.fileName,
+          mediaType: reference.mediaType,
+          createdAt: reference.createdAt,
+          inUse: reference.assetId === inUseId,
+        })),
+      };
+    });
+  }
+
+  /**
+   * 删除未使用的参考音频。正在使用的先切换音源再删，避免角色配置悬空。
+   * 数据库记录删除成功即视为删除完成；文件清理失败返回 fileRemoved=false，
+   * 便于配置页提示重试，不把已删记录回滚成半删除状态。
+   */
+  deleteReference(
+    roleId: string,
+    assetId: string,
+  ): { deleted: true; fileRemoved: boolean } {
+    return this.roleAccess.withStore(roleId, (storage) => {
+      const store = new VoiceStore(storage.business.db, roleId);
+      const settings = store.getSettings();
+      if (
+        settings?.voiceSource.kind === "reference" &&
+        settings.voiceSource.referenceAssetId === assetId
+      ) {
+        throw new VoiceReferenceInUseError(assetId);
+      }
+      const reference = store.getReference(assetId);
+      if (reference === null) {
+        throw new VoiceReferenceNotFoundError(assetId);
+      }
+      if (!store.deleteReference(assetId)) {
+        throw new VoiceReferenceNotFoundError(assetId);
+      }
+      const absolutePath = resolveVoiceAssetPath(
+        storage.paths.roleDir,
+        reference.relativePath,
+      );
+      let fileRemoved = false;
+      if (absolutePath !== null) {
+        try {
+          fs.rmSync(absolutePath, { force: true });
+          fileRemoved = true;
+        } catch {
+          console.warn(
+            `[voice] 参考音频文件未能清理：${absolutePath}`,
+          );
+        }
+      }
+      return { deleted: true, fileRemoved };
     });
   }
 
@@ -966,6 +1043,22 @@ function referenceOf(
     settings.voiceSource.referenceAssetId !== null
     ? store.getReference(settings.voiceSource.referenceAssetId)
     : null;
+}
+
+/** 只清理角色目录内的文件；异常记录返回 null，避免越界删除。 */
+function resolveVoiceAssetPath(
+  roleDir: string,
+  relativePath: string,
+): string | null {
+  if (relativePath.length === 0) {
+    return null;
+  }
+  const root = path.resolve(roleDir);
+  const target = path.resolve(root, relativePath);
+  if (target !== root && !target.startsWith(`${root}${path.sep}`)) {
+    return null;
+  }
+  return target;
 }
 
 function normalizeBaseUrl(raw: string): string {

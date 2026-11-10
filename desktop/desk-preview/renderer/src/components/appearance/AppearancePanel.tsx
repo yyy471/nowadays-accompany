@@ -1,8 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, apiUpload } from '../../api';
 import type { Outfit } from '../../types';
 import { appearanceAssetUrl } from '../../types';
 import { Button, Field, LoadingNote, Select } from '../../ui';
+import {
+  mergeOutfitEntries,
+  planOutfitImport,
+  scanAppearanceFolder,
+  summarizeOutfitPlan,
+  type AppearanceImportPlan,
+  type AppearanceScanResult,
+} from '../../appearance-import.js';
 
 type Props = {
   roleId: string;
@@ -10,16 +18,19 @@ type Props = {
   onChanged?: () => void;
 };
 
-type FolderGroup = {
-  name: string;
-  home?: File;
-  sprites: File[];
-};
-
 const folderAttributes = {
   webkitdirectory: '',
   directory: '',
 } as unknown as Record<string, string>;
+
+const SKIP_REASON_LABELS: Record<string, string> = {
+  DOCUMENT: '说明文件',
+  NOT_IMAGE: '非图片',
+  HIDDEN: '隐藏文件',
+  OUTFITS_SKIPPED: 'outfits 锚点目录',
+  OUTSIDE_SOURCE: '素材目录外',
+  UNRECOGNIZED: '无法归类',
+};
 
 export function AppearancePanel({ roleId, currentOutfitId, onChanged }: Props) {
   const [items, setItems] = useState<Outfit[]>([]);
@@ -28,26 +39,42 @@ export function AppearancePanel({ roleId, currentOutfitId, onChanged }: Props) {
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState('');
+  const [scan, setScan] = useState<AppearanceScanResult | null>(null);
+  const [merges, setMerges] = useState<Record<string, string>>({});
+  const [renames, setRenames] = useState<Record<string, string>>({});
+  const [homePicks, setHomePicks] = useState<Record<string, number>>({});
   const folderInput = useRef<HTMLInputElement>(null);
   const spriteInput = useRef<HTMLInputElement>(null);
 
-  const load = async () => {
+  // 角色切换令牌：导入或补图晚到的回调不能写进另一个角色的页面状态。
+  const roleToken = useRef(0);
+  const lastRole = useRef(roleId);
+  if (lastRole.current !== roleId) {
+    lastRole.current = roleId;
+    roleToken.current += 1;
+  }
+  const isStale = (token: number) => roleToken.current !== token;
+
+  const load = async (token: number = roleToken.current) => {
     setLoading(true);
     try {
       const result = await api<{ items: Outfit[] }>(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits`);
+      if (isStale(token)) return;
       setItems(result.items);
       setError('');
       setSelected(previous => result.items.some(item => item.outfitId === previous) ? previous : (result.items[0]?.outfitId ?? ''));
     } catch (e) {
+      if (isStale(token)) return;
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (!isStale(token)) setLoading(false);
     }
   };
 
   useEffect(() => {
     let active = true;
-    setItems([]); setSelected(''); setError(''); setNotice(''); setLoading(true);
+    setItems([]); setSelected(''); setError(''); setNotice(''); setLoading(true); setBusy(false);
+    setScan(null); setMerges({}); setRenames({}); setHomePicks({});
     void api<{ items: Outfit[] }>(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits`).then(result => {
       if (!active) return;
       setItems(result.items);
@@ -59,34 +86,109 @@ export function AppearancePanel({ roleId, currentOutfitId, onChanged }: Props) {
     return () => { active = false; };
   }, [roleId]);
 
-  const importFolder = async (files: FileList | null) => {
-    if (!files || files.length === 0 || busy) return;
-    const groups = groupFolderFiles([...files]);
-    if (groups.length === 0) {
-      setNotice('没有找到 outfits/<服饰名>/home.* 或 sprites/ 图片。');
-      return;
+  const plans = useMemo<AppearanceImportPlan[]>(() => {
+    if (scan === null) return [];
+    const merged = mergeOutfitEntries(scan.entries, merges);
+    const renamed = merged.map(entry => renames[entry.id] === undefined ? entry : { ...entry, name: renames[entry.id]! });
+    return planOutfitImport(renamed, { existingNames: items.map(item => item.name) });
+  }, [scan, merges, renames, items]);
+
+  const summary = useMemo(() => summarizeOutfitPlan(plans), [plans]);
+
+  // 缩略图只跟随扫描结果重建，改名和归并不会让图片重新解码。
+  const thumbs = useMemo(() => {
+    const map = new Map<File, string>();
+    for (const entry of scan?.entries ?? []) {
+      for (const file of [entry.home, ...entry.homeCandidates]) {
+        if (file !== null && file !== undefined && !map.has(file)) map.set(file, URL.createObjectURL(file));
+      }
     }
+    return map;
+  }, [scan]);
+
+  useEffect(() => () => {
+    for (const url of thumbs.values()) URL.revokeObjectURL(url);
+  }, [thumbs]);
+
+  const scanFolder = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const entries = [...files].map(file => ({
+      relativePath: (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name,
+      file,
+    }));
+    const result = scanAppearanceFolder(entries);
+    setScan(result); setMerges({}); setRenames({}); setHomePicks({});
+    setNotice(''); setError('');
+    if (folderInput.current) folderInput.current.value = '';
+    if (result.entries.length === 0) {
+      setError('所选文件夹里没有 standees 或 expressions 素材。请选择角色自己的素材文件夹。');
+    }
+  };
+
+  const cancelScan = () => {
+    setScan(null); setMerges({}); setRenames({}); setHomePicks({});
+  };
+
+  const homeFor = (plan: AppearanceImportPlan): File | null => {
+    const picked = homePicks[plan.id];
+    if (picked !== undefined) return plan.homeCandidates[picked] ?? plan.home;
+    return plan.home;
+  };
+
+  const mergeInto = (fromId: string, toId: string) => {
+    if (toId.length === 0) return;
+    setMerges(previous => ({ ...previous, [fromId]: toId }));
+  };
+
+  const undoMerge = (toId: string) => {
+    setMerges(previous => {
+      const next = { ...previous };
+      for (const [fromId, target] of Object.entries(next)) {
+        if (target === toId) delete next[fromId];
+      }
+      return next;
+    });
+  };
+
+  const confirmImport = async () => {
+    const ready = plans.filter(plan => plan.status === 'ready');
+    if (ready.length === 0 || busy) return;
+    const token = roleToken.current;
     setBusy(true); setNotice(''); setError('');
-    const results: string[] = [];
+    const imported: string[] = [];
+    const failed: string[] = [];
     try {
-      for (const group of groups) {
+      for (const plan of ready) {
         const form = new FormData();
-        form.append('name', group.name);
-        if (group.home) form.append('home', group.home, group.home.name);
-        for (const sprite of group.sprites) form.append('sprites', sprite, sprite.name);
+        form.append('name', plan.name);
+        const home = homeFor(plan);
+        if (home) form.append('home', home, home.name);
+        for (const sprite of plan.sprites) form.append('sprites', sprite, sprite.name);
         try {
           await apiUpload<Outfit>(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits`, form);
-          results.push(`已导入「${group.name}」`);
+          imported.push(plan.name);
         } catch (e) {
-          results.push(`「${group.name}」${e instanceof Error ? e.message : String(e)}`);
+          failed.push(`「${plan.name}」${e instanceof Error ? e.message : String(e)}`);
         }
       }
-      setNotice(results.join('；'));
-      await load();
+      // 已经切到别的角色：上传仍归属原角色，但不再改动当前页面。
+      if (isStale(token)) return;
+      const duplicates = plans.filter(plan => plan.status === 'duplicate').map(plan => plan.name);
+      const missing = plans.filter(plan => plan.status === 'ready' && (plan.missingHome || plan.missingSprites)).map(plan => plan.name);
+      const parts: string[] = [];
+      if (imported.length > 0) parts.push(`已导入 ${imported.length} 套：${imported.join('、')}`);
+      if (duplicates.length > 0) parts.push(`跳过重名 ${duplicates.length} 套：${duplicates.join('、')}`);
+      if (missing.length > 0) parts.push(`缺项待补：${missing.join('、')}`);
+      if (failed.length > 0) parts.push(`失败 ${failed.length} 套`);
+      setNotice(parts.join('。'));
+      if (failed.length > 0) setError(failed.join('；'));
+      cancelScan();
+      await load(token);
+      if (isStale(token)) return;
       onChanged?.();
     } finally {
-      setBusy(false);
-      if (folderInput.current) folderInput.current.value = '';
+      // 过期操作不能清掉当前角色的忙碌状态。
+      if (!isStale(token)) setBusy(false);
     }
   };
 
@@ -94,29 +196,94 @@ export function AppearancePanel({ roleId, currentOutfitId, onChanged }: Props) {
     const file = files?.[0];
     if (!file || busy) return;
     if (!selected) { setNotice('请先选择一套已有服饰。'); return; }
+    const token = roleToken.current;
     setBusy(true); setNotice(''); setError('');
     try {
       const form = new FormData();
       form.append('sprite', file, file.name);
       await apiUpload(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits/${encodeURIComponent(selected)}/sprites`, form);
+      if (isStale(token)) return;
       setNotice(`已添加差分「${file.name.replace(/\.[^.]+$/, '')}」`);
-      await load();
+      await load(token);
+      if (isStale(token)) return;
       onChanged?.();
     } catch (e) {
+      if (isStale(token)) return;
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
-      if (spriteInput.current) spriteInput.current.value = '';
+      if (!isStale(token)) {
+        setBusy(false);
+        if (spriteInput.current) spriteInput.current.value = '';
+      }
     }
   };
 
+  const skippedSummary = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of scan?.skipped ?? []) {
+      counts.set(item.reason, (counts.get(item.reason) ?? 0) + 1);
+    }
+    return [...counts.entries()].map(([reason, count]) => `${SKIP_REASON_LABELS[reason] ?? reason} ${count}`);
+  }, [scan]);
+
   return <div className="nd-appearance">
-    <p className="nd-appearance-hint">选择包含 <code>outfits</code> 目录的角色文件夹整套导入。每套服饰的 <code>home.*</code> 为主页立绘，<code>sprites/</code> 下为对话差分；同一角色的服饰名不能重复，已有服饰可继续补差分。</p>
+    <p className="nd-appearance-hint">选择角色自己的素材文件夹，读取 <code>standees/&lt;服饰&gt;/</code> 作为主页立绘、<code>expressions/&lt;服饰&gt;/</code> 作为对话差分。素材库里的 <code>outfits/</code> 是生图锚点，不会导入。旧格式的 <code>outfits/&lt;服饰名&gt;/home.*</code> 仍然可用。</p>
     <div className="nd-appearance-actions">
-      <input ref={folderInput} type="file" multiple accept="image/png,image/jpeg,image/webp" {...folderAttributes} className="nd-visually-hidden" onChange={event => void importFolder(event.target.files)} />
-      <Button disabled={busy} onClick={() => folderInput.current?.click()}>{busy ? '正在导入…' : '导入整套服饰'}</Button>
+      <input ref={folderInput} type="file" multiple {...folderAttributes} className="nd-visually-hidden" onChange={event => scanFolder(event.target.files)} />
+      <Button disabled={busy} onClick={() => folderInput.current?.click()}>{scan === null ? '选择角色素材文件夹' : '重新选择'}</Button>
       {currentOutfitId ? <span className="nd-appearance-current">当前穿着：{items.find(item => item.outfitId === currentOutfitId)?.name ?? '未知服饰'}</span> : null}
     </div>
+
+    {scan !== null ? <section className="nd-import" aria-label="导入预览">
+      <div className="nd-import-summary">
+        <b>识别到 {summary.total} 套服饰{scan.root ? `（${scan.root}）` : ''}</b>
+        <small>可导入 {summary.ready} · 重名 {summary.duplicate} · 缺主页图 {summary.missingHome} · 缺差分 {summary.missingSprites} · 差分共 {summary.spriteCount} 张</small>
+        {skippedSummary.length > 0 ? <small>已跳过：{skippedSummary.join('、')}</small> : null}
+        {scan.issues.some(issue => issue.code === 'MULTIPLE_ROOTS') ? <small className="nd-import-warn">所选目录包含多个角色，只按第一个角色识别。</small> : null}
+      </div>
+      <ul className="nd-import-list">
+        {plans.map(plan => {
+          const home = homeFor(plan);
+          const thumb = home === null ? undefined : thumbs.get(home);
+          const mergeTargets = plans.filter(other => other.id !== plan.id && (
+            (plan.home === null && other.home !== null) || (plan.sprites.length === 0 && other.sprites.length > 0)
+          ));
+          return <li key={plan.id} className={'nd-import-item' + (plan.status === 'duplicate' ? ' duplicate' : '') + (plan.status === 'ready' ? '' : ' blocked')}>
+            <span className="nd-import-thumb">{thumb ? <img src={thumb} alt="" /> : <span>无主页图</span>}</span>
+            <div className="nd-import-meta">
+              <input
+                className="nd-import-name"
+                aria-label="服饰名称"
+                value={renames[plan.id] ?? plan.name}
+                onChange={event => setRenames(previous => ({ ...previous, [plan.id]: event.target.value }))}
+              />
+              <small>{plan.sprites.length} 张差分{plan.standeeDir ? ` · 立绘目录 ${plan.standeeDir}` : ''}{plan.expressionDir ? ` · 差分目录 ${plan.expressionDir}` : ''}</small>
+              {plan.homeCandidates.length > 1 ? <Select
+                value={String(homePicks[plan.id] ?? 0)}
+                onChange={event => setHomePicks(previous => ({ ...previous, [plan.id]: Number(event.target.value) }))}
+              >
+                {plan.homeCandidates.map((file, index) => <option key={file.name + String(index)} value={String(index)}>主页图：{file.name}</option>)}
+              </Select> : null}
+              {mergeTargets.length > 0 ? <Select value="" onChange={event => mergeInto(plan.id, event.target.value)}>
+                <option value="">归并到…</option>
+                {mergeTargets.map(other => <option key={other.id} value={other.id}>{other.name}</option>)}
+              </Select> : null}
+              {plan.notes.length > 0 ? <small className="nd-import-notes">{plan.notes.join('；')}</small> : null}
+              {plan.mergedFrom !== undefined && plan.mergedFrom.length > 0
+                ? <button type="button" className="nd-import-undo" onClick={() => undoMerge(plan.id)}>撤销归并</button>
+                : null}
+            </div>
+          </li>;
+        })}
+      </ul>
+      <div className="nd-appearance-actions">
+        <Button variant="primary" disabled={busy || summary.ready === 0} onClick={() => void confirmImport()}>
+          {busy ? '正在导入…' : `确认导入 ${summary.ready} 套`}
+        </Button>
+        <Button disabled={busy} onClick={cancelScan}>取消</Button>
+      </div>
+    </section> : null}
+
     {loading ? <LoadingNote label="正在读取衣柜…" /> : items.length === 0 ? <p className="nd-appearance-empty">这个角色还没有导入服饰。</p> : <ul className="nd-outfit-list">
       {items.map(outfit => <li key={outfit.outfitId} className={'nd-outfit' + (outfit.outfitId === selected ? ' selected' : '') + (outfit.outfitId === currentOutfitId ? ' current' : '')}>
         <button type="button" className="nd-outfit-card" aria-pressed={outfit.outfitId === selected} onClick={() => setSelected(outfit.outfitId)}>
@@ -136,24 +303,4 @@ export function AppearancePanel({ roleId, currentOutfitId, onChanged }: Props) {
     {notice ? <p className="nd-appearance-notice" role="status">{notice}</p> : null}
     {error ? <p className="nd-appearance-error" role="alert">{error}</p> : null}
   </div>;
-}
-
-function groupFolderFiles(files: File[]): FolderGroup[] {
-  const groups = new Map<string, FolderGroup>();
-  for (const file of files) {
-    const parts = file.webkitRelativePath.split('/').filter(Boolean);
-    const outfits = parts.indexOf('outfits');
-    if (outfits < 0 || parts.length < outfits + 3) continue;
-    const name = parts[outfits + 1];
-    if (!name) continue;
-    const rest = parts.slice(outfits + 2);
-    const group = groups.get(name) ?? { name, sprites: [] };
-    if (rest.length === 1 && /^home\.[^.]+$/i.test(rest[0])) {
-      group.home = file;
-    } else if (rest[0] === 'sprites' && rest.length === 2) {
-      group.sprites.push(file);
-    }
-    groups.set(name, group);
-  }
-  return [...groups.values()].filter(group => group.home !== undefined || group.sprites.length > 0);
 }

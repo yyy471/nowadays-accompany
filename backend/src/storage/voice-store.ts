@@ -148,6 +148,25 @@ export class VoiceStore {
       .get(assetId, this.roleId) as AssetRow | undefined;
     return row === undefined ? null : mapReference(row);
   }
+
+  listReferences(): VoiceReferenceRecord[] {
+    const rows = this.db
+      .prepare(
+        "SELECT * FROM voice_assets WHERE role_id = ? ORDER BY created_at DESC, rowid DESC",
+      )
+      .all(this.roleId) as AssetRow[];
+    return rows.map(mapReference);
+  }
+
+  deleteReference(assetId: string): boolean {
+    return (
+      this.db
+        .prepare(
+          "DELETE FROM voice_assets WHERE asset_id = ? AND role_id = ?",
+        )
+        .run(assetId, this.roleId).changes === 1
+    );
+  }
 }
 
 function mapSettings(row: SettingsRow): VoiceSettingsRecord {

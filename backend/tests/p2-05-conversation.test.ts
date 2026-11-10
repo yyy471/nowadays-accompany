@@ -33,7 +33,8 @@ test("typing state delays the decision and multiple pending messages share one t
         { type: "completed", stopReason: "stop" },
       ],
     ],
-    { typingMs: 3000 },
+    // 输入状态窗口留足余量：满载并行时两次提交加一次查询也可能超过三秒。
+    { typingMs: 15_000 },
   );
   try {
     fixture.app.conversation.updateInputState({

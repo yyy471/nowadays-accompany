@@ -3,6 +3,7 @@ import { api } from '../api';
 import type { RoleDetail, RoleListItem } from '../types';
 import { Button, Field, Input, Textarea } from '../ui';
 import { AppearancePanel } from '../components/appearance/AppearancePanel';
+import { VoicePanel } from '../components/voice/VoicePanel';
 
 type Binding = { capability: string; resourceId: string; modelName: string | null; enabled: boolean };
 type Resource = { resourceId: string; kind: string; name: string; enabled: boolean };
@@ -101,7 +102,11 @@ export function SettingsPage({ roles, detail, currentId, currentOutfitId, onSele
     </section>
     {currentId && <section>
       <h2>外观</h2>
-      <AppearancePanel roleId={currentId} currentOutfitId={currentOutfitId} onChanged={() => { void onRefresh(currentId); }} />
+      <AppearancePanel roleId={currentId} currentOutfitId={currentOutfitId} onChanged={() => { void onRefresh(); }} />
+    </section>}
+    {currentId && <section>
+      <h2>声音</h2>
+      <VoicePanel roleId={currentId} onChanged={() => { void onRefresh(); }} />
     </section>}
     <section>
       <h2>已绑定的能力</h2>

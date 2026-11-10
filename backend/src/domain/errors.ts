@@ -102,8 +102,8 @@ export class FtsUnavailableError extends AppError {
 }
 
 export class ModelCredentialUnavailableError extends AppError {
-  constructor(reference: string) {
-    super(500, "MODEL_CREDENTIAL_UNAVAILABLE", "模型凭据引用无法读取", {
+  constructor(reference: string, message = "模型凭据引用无法读取") {
+    super(500, "MODEL_CREDENTIAL_UNAVAILABLE", message, {
       reference,
     });
   }
@@ -120,6 +120,53 @@ export class ModelToolArgumentsError extends AppError {
     super(502, "MODEL_TOOL_ARGUMENTS_INVALID", "模型工具参数无法解析", {
       toolName,
     });
+  }
+}
+
+export class ModelListIncompatibleError extends AppError {
+  constructor(reason: string) {
+    super(502, "MODEL_LIST_INCOMPATIBLE", "模型列表响应格式不兼容", {
+      reason,
+    });
+  }
+}
+
+export class ModelRequestTimeoutError extends AppError {
+  constructor(timeoutMs: number) {
+    super(504, "MODEL_REQUEST_TIMEOUT", "模型服务请求超时", { timeoutMs });
+  }
+}
+
+export class ModelRedirectBlockedError extends AppError {
+  constructor(status: number) {
+    super(502, "MODEL_REDIRECT_BLOCKED", "模型服务返回重定向，已拒绝跟随", {
+      status,
+    });
+  }
+}
+
+export class ResourceCredentialConflictError extends AppError {
+  constructor() {
+    super(
+      400,
+      "RESOURCE_CREDENTIAL_CONFLICT",
+      "不能同时保存直填密钥和 credentialRef 引用",
+    );
+  }
+}
+
+/**
+ * 服务地址跨站点或协议变更后，已存凭据不能继续沿用：
+ * 旧密钥或旧引用会被发送到新服务，必须由用户重新确认。
+ */
+export class ResourceCredentialStaleError extends AppError {
+  constructor(detail: { from: string; to: string }) {
+    super(
+      400,
+      "RESOURCE_CREDENTIAL_STALE",
+      "服务地址已更换，请重新确认凭据：填写新密钥，或把 credentialRef 换成新的引用",
+      detail,
+    );
   }
 }
 
@@ -452,6 +499,26 @@ export class TtsSynthesisFailedError extends AppError {
 export class TtsProbeFailedError extends AppError {
   constructor(message: string, details?: unknown) {
     super(502, "TTS_PROBE_FAILED", message, details);
+  }
+}
+
+export class TtsVoiceUnavailableError extends AppError {
+  constructor(message: string, details?: unknown) {
+    super(409, "TTS_VOICE_UNAVAILABLE", message, details);
+  }
+}
+
+export class VoiceReferenceNotFoundError extends AppError {
+  constructor(assetId: string) {
+    super(404, "VOICE_REFERENCE_NOT_FOUND", "参考音频不存在", { assetId });
+  }
+}
+
+export class VoiceReferenceInUseError extends AppError {
+  constructor(assetId: string) {
+    super(409, "VOICE_REFERENCE_IN_USE", "参考音频正在使用，不能删除", {
+      assetId,
+    });
   }
 }
 

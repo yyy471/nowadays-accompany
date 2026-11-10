@@ -59,6 +59,30 @@ interface ResourceRow {
   updated_at: string;
 }
 
+export interface ModelTestCallRecord {
+  testCallId: string;
+  resourceId: string | null;
+  modelName: string;
+  protocol: ModelProtocol;
+  status: "succeeded" | "failed";
+  errorCode: string | null;
+  configFingerprint: string | null;
+  startedAt: string;
+  finishedAt: string;
+}
+
+interface ModelTestCallRow {
+  test_call_id: string;
+  resource_id: string | null;
+  model_name: string;
+  protocol: ModelProtocol;
+  status: "succeeded" | "failed";
+  error_code: string | null;
+  config_fingerprint: string | null;
+  started_at: string;
+  finished_at: string;
+}
+
 export class AppStore {
   readonly db: Database.Database;
   readonly path: string;
@@ -77,6 +101,7 @@ export class AppStore {
     protocol: ModelProtocol;
     status: "succeeded" | "failed";
     errorCode: string | null;
+    configFingerprint: string | null;
     startedAt: string;
     finishedAt: string;
     usageJson: string | null;
@@ -86,8 +111,8 @@ export class AppStore {
       .prepare(
         `INSERT INTO model_test_calls
          (test_call_id, resource_id, model_name, protocol, status, error_code,
-          started_at, finished_at, usage_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          config_fingerprint, started_at, finished_at, usage_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         testCallId,
@@ -96,11 +121,32 @@ export class AppStore {
         input.protocol,
         input.status,
         input.errorCode,
+        input.configFingerprint,
         input.startedAt,
         input.finishedAt,
         input.usageJson,
       );
     return testCallId;
+  }
+
+  latestModelTestCall(resourceId: string): ModelTestCallRecord | null {
+    const row = this.db
+      .prepare(
+        `SELECT test_call_id, resource_id, model_name, protocol, status,
+                error_code, config_fingerprint, started_at, finished_at
+           FROM model_test_calls
+          WHERE resource_id = ?
+          ORDER BY finished_at DESC, rowid DESC
+          LIMIT 1`,
+      )
+      .get(resourceId) as ModelTestCallRow | undefined;
+    return row === undefined ? null : mapModelTestCall(row);
+  }
+
+  deleteModelTestCalls(resourceId: string): number {
+    return this.db
+      .prepare("DELETE FROM model_test_calls WHERE resource_id = ?")
+      .run(resourceId).changes;
   }
 
   createRoleIndex(input: {
@@ -261,6 +307,20 @@ function mapResource(row: ResourceRow): ResourceRecord {
     config: JSON.parse(row.config_json) as Record<string, unknown>,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function mapModelTestCall(row: ModelTestCallRow): ModelTestCallRecord {
+  return {
+    testCallId: row.test_call_id,
+    resourceId: row.resource_id,
+    modelName: row.model_name,
+    protocol: row.protocol,
+    status: row.status,
+    errorCode: row.error_code,
+    configFingerprint: row.config_fingerprint,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
   };
 }
 

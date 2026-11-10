@@ -1,3 +1,29 @@
+/** 带状态码与机器可读错误码的接口错误，供调用方区分下架、占用等场景。 */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+
+  constructor(message: string, status: number, code: string | null) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
+async function readError(response: Response): Promise<ApiError> {
+  let message = `请求失败（${response.status}）`;
+  let code: string | null = null;
+  try {
+    const body = await response.json() as { error?: { message?: string; code?: string } };
+    if (body.error?.message) message = body.error.message;
+    if (body.error?.code) code = body.error.code;
+  } catch {
+    // 非 JSON 错误沿用状态码提示。
+  }
+  return new ApiError(message, response.status, code);
+}
+
 export async function api<T>(path: string, options: { method?: string; body?: unknown; signal?: AbortSignal } = {}): Promise<T> {
   const response = await fetch(path, {
     method: options.method,
@@ -5,14 +31,24 @@ export async function api<T>(path: string, options: { method?: string; body?: un
     headers: options.body === undefined ? undefined : { 'content-type': 'application/json' },
     body: options.body === undefined ? undefined : JSON.stringify(options.body)
   });
-  const body = await response.json();
-  if (!response.ok) throw new Error(body.error?.message || `请求失败（${response.status}）`);
-  return body as T;
+  if (!response.ok) throw await readError(response);
+  return await response.json() as T;
 }
 
 export async function apiUpload<T>(path: string, form: FormData): Promise<T> {
   const response = await fetch(path, { method: 'POST', body: form });
-  const body = await response.json();
-  if (!response.ok) throw new Error(body.error?.message || `请求失败（${response.status}）`);
-  return body as T;
+  if (!response.ok) throw await readError(response);
+  return await response.json() as T;
+}
+
+/** 读取二进制响应，用于试听音频等非 JSON 接口。 */
+export async function apiBinary(path: string, options: { method?: string; body?: unknown; signal?: AbortSignal } = {}): Promise<Blob> {
+  const response = await fetch(path, {
+    method: options.method,
+    signal: options.signal,
+    headers: options.body === undefined ? undefined : { 'content-type': 'application/json' },
+    body: options.body === undefined ? undefined : JSON.stringify(options.body)
+  });
+  if (!response.ok) throw await readError(response);
+  return await response.blob();
 }

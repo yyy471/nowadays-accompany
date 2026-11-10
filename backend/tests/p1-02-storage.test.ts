@@ -78,11 +78,12 @@ test("app and role stores initialize, persist and reopen", async () => {
     assert.equal(config.dataRoot, path.join(path.resolve(root), "data"));
 
     app = createBackendApp(config);
-    assert.equal(app.appStore.schemaVersion, 2);
+    assert.equal(app.appStore.schemaVersion, 3);
     assert.equal(app.appStore.db.pragma("foreign_keys", { simple: true }), 1);
     assert.equal(app.appStore.db.pragma("journal_mode", { simple: true }), "wal");
     assert.deepEqual(tableNames(app.appStore.db), [
       "model_test_calls",
+      "resource_secrets",
       "resources",
       "roles",
     ]);
@@ -105,7 +106,7 @@ test("app and role stores initialize, persist and reopen", async () => {
     const reopenedApp = new AppStore(config.appDatabasePath);
     const reopenedRole = new RoleStorage(paths);
     try {
-      assert.equal(reopenedApp.schemaVersion, 2);
+      assert.equal(reopenedApp.schemaVersion, 3);
       assert.equal(reopenedRole.business.schemaVersion, 13);
       assert.equal(reopenedRole.checkpoint.schemaVersion, 1);
       assert.ok(fs.existsSync(paths.businessDatabasePath));

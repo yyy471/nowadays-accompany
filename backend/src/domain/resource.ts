@@ -11,20 +11,55 @@ const credentialRefSchema = z
     "credentialRef 必须为 env:<NAME> 或 file:<PATH>",
   );
 
-export const modelConfigSchema = z
+/**
+ * 模型服务地址只允许 http/https，且不能把账号、查询串或片段混进基础路径。
+ * 统一去掉末尾斜杠，避免同一服务因写法不同被当成两套配置。
+ */
+export const modelBaseUrlSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(2000)
+  .transform((value) => value.replace(/\/+$/, ""))
+  .refine(isModelBaseUrl, {
+    message: "baseUrl 必须是 http/https 地址，且不能包含账号、查询串或片段",
+  });
+
+export function isModelBaseUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return false;
+  }
+  if (url.username !== "" || url.password !== "") {
+    return false;
+  }
+  if (url.search !== "" || url.hash !== "") {
+    return false;
+  }
+  return url.hostname.length > 0;
+}
+
+export const modelBaseConfigSchema = z
   .object({
     protocol: z.enum([
       "openai-chat",
       "openai-responses",
       "anthropic-messages",
     ]),
-    baseUrl: z.string().min(1).max(2000),
+    baseUrl: modelBaseUrlSchema,
     credentialRef: credentialRefSchema.optional(),
     /** 可核实的模型容量声明（字符口径），供记忆整理按容量分批。 */
     maxInputChars: z.number().int().positive().max(10_000_000).optional(),
     maxOutputChars: z.number().int().positive().max(10_000_000).optional(),
   })
   .strict();
+
+export const modelConfigSchema = modelBaseConfigSchema;
 
 export const mcpConfigSchema = z
   .object({
