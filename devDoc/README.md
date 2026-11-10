@@ -6,6 +6,7 @@
 
 | 文档 | 定位与状态 |
 | --- | --- |
+| [236 角色配置与全局设置后端缺口复核](236-role-settings-backend-gap-review.md) | 对照现有接口核对附件，区分首版接入项、补齐项和后续能力 |
 | [235 关系藏页复核修复记录](235-relations-exlibris-review-fixes.md) | EX-R01～EX-R03 的修复与实现方自验，第 7 节补修 EX-R04／EX-R05；独立结论见 234 第 3～4 节 |
 | [234 关系藏页迁移独立复核](234-relations-exlibris-independent-review.md) | 第 4 节确认 EX-R01～EX-R05 在离线范围关闭，真实数据联调待验 |
 | [233 关系藏页原型对照与迁移修复](233-relations-exlibris-migration-fixes.md) | 对照用户提供的关系页原型，修复布局、主题、交互和资料读取，独立结论见 234 |
