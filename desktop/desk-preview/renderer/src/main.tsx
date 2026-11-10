@@ -12,6 +12,7 @@ import './styles/shell.css';
 import './styles/home.css';
 import './styles/appearance.css';
 import './styles/relations-exlibris.css';
+import './styles/conversation.css';
 import './ui/preset-appearance.css';
 import './ui/relationship-journal.css';
 import './ui/relationship-journal-integration.css';

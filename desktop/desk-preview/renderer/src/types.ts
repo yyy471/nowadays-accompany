@@ -1,7 +1,7 @@
 export interface AccountsResponse {
   accounts: Array<{ accountId: string; nickname: string; signature?: string; avatarDataUrl?: string; avatarSource?: 'local' | 'remote' }>;
 }
-export interface RoleListItem { roleId: string; displayName: string; status: string; initError: string | null }
+export interface RoleListItem { roleId: string; displayName: string; status: string; initError: string | null; defaultWindowId?: string | null }
 export interface RoleDetail { roleId: string; displayName: string; definitionRevision: number; defaultWindowId?: string; definition: { text: string; payload: Record<string, unknown> } }
 export interface RoleStateResponse { state: Record<string, unknown>; stateVersion: number; updatedAt: string }
 export interface OutfitAsset { assetId: string; outfitId: string; usage: 'home' | 'sprite'; fileName: string; displayName: string; mediaType: string; relativePath: string; createdAt: string }

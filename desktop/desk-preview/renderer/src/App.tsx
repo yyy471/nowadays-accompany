@@ -9,6 +9,7 @@ import { PageDock } from './components/shell/PageDock';
 import { HomePage } from './pages/Home';
 import { Relations } from './Relations';
 import { SettingsPage } from './pages/Settings';
+import { ConversationPage } from './pages/Conversation';
 import { createStateVersionGate } from './state-version.js';
 
 export function App() {
@@ -112,10 +113,10 @@ export function App() {
       <div className="studio-header-actions"><ControlButton className="ui-settings-launcher" aria-label="应用设置" onClick={() => setPage('settings')}><Icon name="settings" size={20}/></ControlButton></div>
     </header></UiThemeScope>
     <main className="studio-content" tabIndex={-1} aria-label="当前页面内容"><UiThemeProvider theme="xiacheng">
-      <div ref={pageBody} className={page === 'home' ? 'studio-home-content' : page === 'roles' ? 'studio-relations-content' : 'studio-legacy-page'}>
+      <div ref={pageBody} className={page === 'home' ? 'studio-home-content' : page === 'roles' ? 'studio-relations-content' : page === 'conversation' ? 'studio-conversation-content' : 'studio-legacy-page'}>
         {page === 'home' && <UiThemeScope theme="xiacheng"><HomePage accounts={accounts} selectedAccountId={currentId} outfitHomeUrl={outfitHomeUrl} outfitName={currentOutfit?.name ?? null} loading={!roles && !error} error={error} onRetry={() => refresh()} onGoWorkbench={() => setPage('roles')}/></UiThemeScope>}
         {page === 'roles' && <Relations roles={roles || []} error={error} currentId={currentId} visit={rolesVisit} onSelect={setCurrentId} onOpenSettings={() => setPage('settings')}/>}
-        {page === 'conversation' && <header className="studio-page-heading"><h1>对话</h1><p>这里会收留你们的对话。</p></header>}
+        {page === 'conversation' && <ConversationPage roles={roles || []} currentId={currentId} currentOutfit={currentOutfit} outfits={outfits} outfitHomeUrl={outfitHomeUrl} loading={!roles && !error} error={error} onSelectRole={setCurrentId} onOpenRelations={() => setPage('roles')}/>}
         {page === 'settings' && <SettingsPage roles={roles || []} detail={detail} currentId={currentId} currentOutfitId={typeof state.outfitId === 'string' ? state.outfitId : ''} onSelect={setCurrentId} onRefresh={refresh}/>}
       </div>
     </UiThemeProvider></main>

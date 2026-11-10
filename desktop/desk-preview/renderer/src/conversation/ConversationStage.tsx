@@ -1,0 +1,94 @@
+import { useEffect, useRef, useState } from 'react';
+import type { PerformanceSnapshot, PerfScene, SceneLayerMode } from './performance.js';
+import type { PerfRow } from './history.js';
+import { spriteForRow } from './window-model.js';
+import { Icon, useMotionPolicy } from '../ui';
+
+export interface StageSources {
+  /** 当前默认背景（随明暗主题）。 */
+  backgroundUrl: string;
+  /** 当前服饰/主题立绘回退。 */
+  characterUrl: string;
+  /** 句段差分素材按真实素材编号解析为图片地址。 */
+  resolveSprite?: (assetId: string) => string;
+}
+
+function decodeImage(src: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve();
+    image.onerror = () => reject(new Error('decode'));
+    image.src = src;
+  });
+}
+
+/** 双缓冲图层：新图解码成功后淡入，旧图留在非活动缓冲槽。 */
+function CrossfadeLayer({ src, alt, className }: { src: string; alt: string; className: string }) {
+  const [slots, setSlots] = useState<[string, string]>([src, '']);
+  const [active, setActive] = useState(0);
+  const generation = useRef(0);
+  useEffect(() => {
+    const version = ++generation.current;
+    const current = slots[active];
+    const other = slots[1 - active];
+    if (src === current) return;
+    // 目标图仍在另一缓冲槽时直接切回，不必重新解码。
+    if (src === other) { setActive(1 - active); return; }
+    void decodeImage(src).then(() => {
+      if (generation.current !== version) return;
+      const nextActive = 1 - active;
+      const nextSlots: [string, string] = [...slots];
+      nextSlots[nextActive] = src;
+      setSlots(nextSlots);
+      setActive(nextActive);
+    }).catch(() => {});
+    return () => { generation.current += 1; };
+  }, [src, slots, active]);
+  const first = active === 0;
+  return <div className={className} aria-hidden="true">
+    {slots[0] ? <img className={`layer-image${first ? ' active' : ''}`} src={slots[0]} alt={first ? alt : ''} /> : null}
+    {slots[1] ? <img className={`layer-image${first ? '' : ' active'}`} src={slots[1]} alt={first ? '' : alt} /> : null}
+  </div>;
+}
+
+function sceneLabel(mode: SceneLayerMode): string {
+  return mode === 'background' ? '背景图' : '人物场景图';
+}
+
+export function ConversationStage({
+  snapshot,
+  current,
+  sources,
+  visibleScene,
+  live,
+  cue,
+  onDismiss,
+}: {
+  snapshot: PerformanceSnapshot;
+  current: PerfRow | null;
+  sources: StageSources;
+  visibleScene: PerfScene | null;
+  /** 是否处于实时演出（非回看、非历史）。 */
+  live: boolean;
+  /** 上一段为动作时点亮舞台提示。 */
+  cue: boolean;
+  onDismiss: () => void;
+}) {
+  const policy = useMotionPolicy();
+  const visible = visibleScene;
+  const full = visible?.mode === 'full_scene';
+  const poseId = spriteForRow(snapshot.messages, current);
+  const poseUrl = poseId ? sources.resolveSprite?.(poseId) ?? null : null;
+  const characterUrl = poseUrl ?? sources.characterUrl;
+  const sceneAsset = visible?.assetUrl ?? null;
+  const backgroundSrc = visible && !full ? (sceneAsset ?? sources.backgroundUrl) : sources.backgroundUrl;
+  const day = !policy.reduced && current?.action && live && cue;
+  return <section className="dialogue-stage" data-scene={visible?.mode ?? ''} aria-label="背景与角色独立的演出画布">
+    <CrossfadeLayer className="dialogue-background" src={backgroundSrc} alt="" />
+    <CrossfadeLayer className="dialogue-character" src={characterUrl} alt="角色立绘" />
+    {full && sceneAsset ? <div className="dialogue-scene-full"><img src={sceneAsset} alt="过场图" /></div> : null}
+    <div className="dialogue-stage-cue" aria-hidden="true" data-live={day ? 'cue' : ''} />
+    {visible ? <button type="button" className="dialogue-scene-dismiss" onClick={onDismiss}>收起过场图</button> : null}
+    {visible ? <span className="dialogue-stage-note" aria-hidden="true">{sceneLabel(visible.mode)}</span> : null}
+  </section>;
+}
