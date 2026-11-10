@@ -47,7 +47,17 @@ export function reduceRelation(state, action) {
   }
   if (action.type === "loaded") {
     if (action.roleId !== state.roleId) return state;
-    return { ...state, packet: action.packet, error: "" };
+    // 日记分批到达：补入排序靠前的日记会把后面的条目整体后移，
+    // 按 id 重新定位，用户正在读的那一篇不会被换掉。
+    const selected = state.packet?.diaries[state.diaryIndex];
+    let diaryIndex = state.diaryIndex;
+    if (selected) {
+      const nextIndex = action.packet.diaries.findIndex(item => item.id === selected.id);
+      diaryIndex = nextIndex >= 0
+        ? nextIndex
+        : Math.min(state.diaryIndex, Math.max(0, action.packet.diaries.length - 1));
+    }
+    return { ...state, packet: action.packet, error: "", diaryIndex };
   }
   if (action.type === "failed") {
     if (action.roleId !== state.roleId) return state;

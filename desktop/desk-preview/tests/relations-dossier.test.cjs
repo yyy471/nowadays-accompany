@@ -16,7 +16,7 @@ test("介绍页换角色时丢掉上一份设定，晚到的旧请求不能写�
   state = reduceRelation(state, {
     type: "loaded",
     roleId: "role-a",
-    packet: { roleId: "role-a", displayName: "甲", definitionText: "甲的介绍", definitionRevision: 1, createdAt: "", stateLines: [], sentence: "甲的近况", portraitUrl: null, events: [], diaries: [], summaries: [], memoryError: "" }
+    packet: { roleId: "role-a", displayName: "甲", definitionText: "甲的介绍", definitionRevision: 1, createdAt: "", stateLines: [], sentence: "甲的近况", portraitUrl: null, events: [], diaries: [], summaries: [], memoryError: "", pending: { events: false, summaries: false, diaries: false } }
   });
   assert.equal(profileModel(state, "甲").definition, "甲的介绍");
   const first = gate.begin("role-a");
@@ -30,17 +30,40 @@ test("介绍页换角色时丢掉上一份设定，晚到的旧请求不能写�
   state = reduceRelation(state, {
     type: "loaded",
     roleId: "role-a",
-    packet: { roleId: "role-a", displayName: "甲", definitionText: "过期的介绍", definitionRevision: 1, createdAt: "", stateLines: [], sentence: "", portraitUrl: null, events: [], diaries: [], summaries: [], memoryError: "" }
+    packet: { roleId: "role-a", displayName: "甲", definitionText: "过期的介绍", definitionRevision: 1, createdAt: "", stateLines: [], sentence: "", portraitUrl: null, events: [], diaries: [], summaries: [], memoryError: "", pending: { events: false, summaries: false, diaries: false } }
   });
   assert.equal(profileModel(state, "乙").definition, "", "过期响应不能回到介绍页");
   assert.equal(gate.accept(second), true);
   state = reduceRelation(state, {
     type: "loaded",
     roleId: "role-b",
-    packet: { roleId: "role-b", displayName: "乙", definitionText: "乙的介绍", definitionRevision: 2, createdAt: "", stateLines: [{ key: "目标", label: "目标", value: "把话说完" }], sentence: "把话说完", portraitUrl: null, events: [], diaries: [], summaries: [], memoryError: "" }
+    packet: { roleId: "role-b", displayName: "乙", definitionText: "乙的介绍", definitionRevision: 2, createdAt: "", stateLines: [{ key: "目标", label: "目标", value: "把话说完" }], sentence: "把话说完", portraitUrl: null, events: [], diaries: [], summaries: [], memoryError: "", pending: { events: false, summaries: false, diaries: false } }
   });
   assert.equal(profileModel(state, "乙").definition, "乙的介绍");
   assert.equal(profileModel(state, "乙").lines[0].value, "把话说完");
+});
+
+test("日记分批补入靠前条目时，保持当前选中的日记", async () => {
+  const { initialRelationUi, reduceRelation } = await load();
+  const packet = diaries => ({ roleId: "role-a", displayName: "甲", definitionText: "", definitionRevision: 1, createdAt: "", stateLines: [], sentence: "", portraitUrl: null, events: [], summaries: [], memoryError: "", diaries, pending: { events: false, summaries: false, diaries: true } });
+  const entry = (id, date) => ({ id, date, title: id, paragraphs: [] });
+  let state = reduceRelation(initialRelationUi("role-a"), {
+    type: "loaded", roleId: "role-a",
+    packet: packet([entry("d2", "2026-11-08"), entry("d3", "2026-11-07")])
+  });
+  state = reduceRelation(state, { type: "diary", index: 1 });
+  assert.equal(state.diaryIndex, 1);
+  state = reduceRelation(state, {
+    type: "loaded", roleId: "role-a",
+    packet: packet([entry("d1", "2026-11-09"), entry("d2", "2026-11-08"), entry("d3", "2026-11-07")])
+  });
+  assert.equal(state.packet.diaries[state.diaryIndex].id, "d3", "补入靠前日记后应停在原来那篇");
+  assert.equal(state.diaryIndex, 2);
+  state = reduceRelation(state, {
+    type: "loaded", roleId: "role-a",
+    packet: packet([entry("d1", "2026-11-09")])
+  });
+  assert.equal(state.diaryIndex, 0, "选中的日记消失时下标应夹回有效范围");
 });
 
 test("近况只取已保存的字符串，不补心情", async () => {

@@ -5,6 +5,12 @@ export interface RoleRequestGate {
   currentRoleId(): string;
 }
 export interface StateLine { key: string; label: string; value: string }
+/** 各分组是否仍在读取；已返回的分组先展示，慢的一篇不挡住其余资料。 */
+export interface RelationPending {
+  events: boolean;
+  summaries: boolean;
+  diaries: boolean;
+}
 export interface RelationPacket {
   roleId: string;
   displayName: string;
@@ -18,6 +24,8 @@ export interface RelationPacket {
   diaries: RelationDiary[];
   summaries: RelationSummary[];
   memoryError: string;
+  diaryError: string;
+  pending: RelationPending;
 }
 export interface RelationEvent {
   id: string;
