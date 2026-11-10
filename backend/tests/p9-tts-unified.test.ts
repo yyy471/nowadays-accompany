@@ -60,6 +60,7 @@ interface UnifiedTtsRequest {
   voiceId: string | null;
   language: string | null;
   speed: string | null;
+  emotion: string | null;
   audio: { fileName: string; mediaType: string; data: Buffer } | null;
 }
 
@@ -144,6 +145,7 @@ async function startFakeUnifiedTts(): Promise<FakeUnifiedTts> {
       voiceId: optionalField(form, "voice_id"),
       language: optionalField(form, "language"),
       speed: optionalField(form, "speed"),
+      emotion: optionalField(form, "emotion"),
       audio:
         audio instanceof File
           ? {
@@ -330,6 +332,11 @@ async function createSpeechSegments(
 
 test("voice probe discovers capabilities and preset voices", async () => {
   const fake = await startFakeUnifiedTts();
+  fake.setHealth({ capabilities: {
+    ...CAPABILITIES,
+    engines: { cosyvoice: { ready: true, active: true }, indextts: { ready: false, active: false } },
+    defaultEngine: "cosyvoice",
+  } });
   const fixture = createFixture([]);
   try {
     const port = await listen(fixture.app.server, 0, "127.0.0.1");
@@ -502,11 +509,12 @@ test("unified clone requires and forwards reference text", async () => {
     const preview = await fetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: "试听一句。" }),
+      body: JSON.stringify({ text: "试听一句。", emotion: "温柔" }),
     });
     assert.equal(preview.status, 200);
     assert.equal(fake.requests.length, 1);
     assert.equal(fake.requests[0]!.referenceText, "这是录音中实际说的话。");
+    assert.equal(fake.requests[0]!.emotion, "温柔");
 
     const { speech, narration } = await createSpeechSegments(fixture);
     const spoken = await fetch(
@@ -518,6 +526,7 @@ test("unified clone requires and forwards reference text", async () => {
     assert.equal(fake.requests[1]!.text, speech.text);
     assert.equal(fake.requests[1]!.mode, "reference");
     assert.equal(fake.requests[1]!.referenceMode, "clone-text");
+    assert.equal(fake.requests[1]!.emotion, null);
     assert.equal(
       fake.requests[1]!.referenceText,
       "这是录音中实际说的话。",
@@ -587,12 +596,17 @@ test("unified preset voice previews and synthesizes without reference audio", as
     const { speech } = await createSpeechSegments(fixture);
     const spoken = await fetch(
       `${base}/windows/${fixture.windowId}/segments/${speech.segmentId}/speech`,
-      { method: "POST" },
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ emotion: "开心" }),
+      },
     );
     assert.equal(spoken.status, 200);
     assert.equal(fake.requests.length, 2);
     assert.equal(fake.requests[1]!.text, speech.text);
     assert.equal(fake.requests[1]!.voiceId, "speaker-01");
+    assert.equal(fake.requests[1]!.emotion, "开心");
   } finally {
     await fixture.close();
     await fake.close();
@@ -797,7 +811,7 @@ test("legacy voice rows stay readable as the reference source", async () => {
     }
     assert.equal(
       withStorage(fixture, (storage) => storage.business.schemaVersion),
-      12,
+      13,
     );
   } finally {
     await fixture.close();
@@ -1169,7 +1183,7 @@ test("v9 voice rows migrate to v12 without touching messages, segments or SSE cu
           .get() as { latest: number | null }
       ).latest,
     }));
-    assert.equal(countsAfter.schemaVersion, 12);
+    assert.equal(countsAfter.schemaVersion, 13);
     assert.equal(countsAfter.messages, countsBefore.messages);
     assert.equal(countsAfter.segments, countsBefore.segments);
     assert.equal(countsAfter.events, countsBefore.events);

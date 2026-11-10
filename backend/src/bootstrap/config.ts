@@ -19,6 +19,7 @@ export interface RolePaths {
   workspaceDir: string;
   appearanceDir: string;
   voiceDir: string;
+  sceneImageDir: string;
 }
 
 export function parseBackendConfig(
@@ -83,5 +84,6 @@ export function rolePaths(dataRoot: string, roleId: string): RolePaths {
     workspaceDir: path.join(roleDir, "workspace"),
     appearanceDir: path.join(roleDir, "appearance"),
     voiceDir: path.join(roleDir, "voice"),
+    sceneImageDir: path.join(roleDir, "scene-images"),
   };
 }

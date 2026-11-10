@@ -108,6 +108,13 @@ export const inputStateBodySchema = z
   })
   .strict();
 
+export const sceneImageRequestSchema = z
+  .object({
+    idempotencyKey: z.string().trim().min(1).max(128),
+    layerMode: z.enum(["background", "full_scene"]).optional(),
+  })
+  .strict();
+
 export const taskFinishBodySchema = z
   .object({
     status: z.enum(["completed", "failed"]),
@@ -151,6 +158,7 @@ export type DiaryCreateBody = z.infer<typeof diaryCreateBodySchema>;
 export type ModelServiceConfigBody = z.infer<typeof modelServiceConfigBodySchema>;
 export type ModelServiceTestBody = z.infer<typeof modelServiceTestBodySchema>;
 export type InputStateBody = z.infer<typeof inputStateBodySchema>;
+export type SceneImageRequestBody = z.infer<typeof sceneImageRequestSchema>;
 export type TaskFinishBody = z.infer<typeof taskFinishBodySchema>;
 export type AutonomyBudgetBody = z.infer<typeof autonomyBudgetBodySchema>;
 export type AutonomyWakeBody = z.infer<typeof autonomyWakeBodySchema>;

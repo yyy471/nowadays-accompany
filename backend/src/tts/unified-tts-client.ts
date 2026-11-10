@@ -39,6 +39,7 @@ export interface UnifiedTtsSynthesisInput {
   source: UnifiedTtsSource;
   language: VoiceLanguage | null;
   speed: number | null;
+  emotion?: string;
   signal?: AbortSignal;
 }
 
@@ -49,7 +50,10 @@ const healthSchema = z.object({
   service: z.string().min(1).max(200),
   model: z.string().min(1).max(200),
   ready: z.boolean(),
-  capabilities: voiceCapabilitiesSchema,
+  capabilities: voiceCapabilitiesSchema.safeExtend({
+    engines: z.record(z.string(), z.object({ ready: z.boolean(), active: z.boolean() })).optional(),
+    defaultEngine: z.string().min(1).optional(),
+  }),
 });
 
 const voicesSchema = z
@@ -175,7 +179,8 @@ export class UnifiedTtsClient {
     if (!parsed.success) {
       throw new TtsProtocolInvalidError("健康响应不符合 nowadays-tts-v1 协议");
     }
-    return parsed.data;
+    const { engines, defaultEngine, ...capabilities } = parsed.data.capabilities;
+    return { ...parsed.data, capabilities };
   }
 
   private async readVoices(
@@ -222,7 +227,8 @@ function isRedirect(status: number): boolean {
   return status >= 300 && status < 400;
 }
 
-function buildForm(input: UnifiedTtsSynthesisInput): FormData {  const form = new FormData();
+function buildForm(input: UnifiedTtsSynthesisInput): FormData {
+  const form = new FormData();
   form.set("text", input.text);
   if (input.source.kind === "reference") {
     form.set("mode", "reference");
@@ -246,6 +252,9 @@ function buildForm(input: UnifiedTtsSynthesisInput): FormData {  const form = ne
   }
   if (input.speed !== null) {
     form.set("speed", String(input.speed));
+  }
+  if (input.emotion !== undefined) {
+    form.set("emotion", input.emotion);
   }
   return form;
 }

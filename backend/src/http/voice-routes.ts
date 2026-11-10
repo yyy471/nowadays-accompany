@@ -12,6 +12,8 @@ import { parseBody } from "./validation.js";
 
 const voiceProtocolSchema = z.enum(["indextts", "nowadays-tts-v1"]);
 const voiceSpeedSchema = z.number().min(0.1).max(10);
+const emotionSchema = z.string().trim().min(1).max(100).optional();
+const speechSchema = z.object({ emotion: emotionSchema }).strict();
 
 const voiceSourceSchema = z.discriminatedUnion("kind", [
   z
@@ -64,6 +66,7 @@ const saveVoiceSchema = z
 const previewVoiceSchema = z
   .object({
     text: z.string().min(1).max(4000),
+    emotion: emotionSchema,
     config: voiceCandidateSchema.optional(),
     ...voiceCandidateShape,
   })
@@ -156,10 +159,10 @@ export function registerVoiceRoutes(
     "/v1/roles/:roleId/voice/preview",
     async ({ request, response, params }): Promise<RouteResponse> => {
       const body = parseBody(previewVoiceSchema, await readJsonBody(request));
-      const { text, config, ...flat } = body;
+      const { text, emotion, config, ...flat } = body;
       const audio = await services.voice.preview(
         params.roleId ?? "",
-        { text, ...(config ?? flat) },
+        { text, ...(config ?? flat), ...(emotion === undefined ? {} : { emotion }) },
         abortSignalFor(request, response),
       );
       return {
@@ -175,11 +178,15 @@ export function registerVoiceRoutes(
     "POST",
     "/v1/roles/:roleId/windows/:windowId/segments/:segmentId/speech",
     async ({ request, response, params }): Promise<RouteResponse> => {
+      const hasBody = request.headers["transfer-encoding"] !== undefined ||
+        Number(request.headers["content-length"] ?? 0) > 0;
+      const body = hasBody ? parseBody(speechSchema, await readJsonBody(request)) : {};
       const audio = await services.voice.synthesizeSegment(
         params.roleId ?? "",
         params.windowId ?? "",
         params.segmentId ?? "",
         abortSignalFor(request, response),
+        body.emotion,
       );
       return {
         status: 200,

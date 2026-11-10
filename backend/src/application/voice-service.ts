@@ -88,6 +88,7 @@ export interface SaveVoiceInput {
 }
 
 export interface VoicePreviewInput extends VoiceOverrides {
+  emotion?: string;
   text: string;
 }
 
@@ -291,7 +292,7 @@ export class VoiceService {
     const resolved = this.roleAccess.withStore(roleId, (storage) =>
       resolveVoice(storage.paths, storage.business.db, roleId, input),
     );
-    return this.synthesize(resolved, text, signal);
+    return this.synthesize(resolved, text, signal, input.emotion);
   }
 
   async synthesizeSegment(
@@ -299,6 +300,7 @@ export class VoiceService {
     windowId: string,
     segmentId: string,
     signal?: AbortSignal,
+    emotion?: string,
   ): Promise<SynthesizedAudio> {
     const { resolved, text } = this.roleAccess.withStore(roleId, (storage) => {
       const segment = new ConversationStore(
@@ -324,13 +326,14 @@ export class VoiceService {
         text: segmentText,
       };
     });
-    return this.synthesize(resolved, text, signal);
+    return this.synthesize(resolved, text, signal, emotion);
   }
 
   private synthesize(
     resolved: ResolvedVoice,
     text: string,
     signal: AbortSignal | undefined,
+    emotion: string | undefined,
   ): Promise<SynthesizedAudio> {
     if (resolved.protocol === "indextts") {
       return new IndexTtsClient(resolved.baseUrl, this.timeoutMs).synthesize({
@@ -354,6 +357,7 @@ export class VoiceService {
       source: resolved.source,
       language: resolved.language,
       speed: resolved.speed,
+      ...(emotion === undefined ? {} : { emotion }),
       ...(signal === undefined ? {} : { signal }),
     });
   }

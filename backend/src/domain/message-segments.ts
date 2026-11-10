@@ -87,6 +87,21 @@ export function segmentMessage(content: string): MessageSegmentDraft[] {
   });
 }
 
+/** 排除仍会被续写、短句合并或未闭合标记改变的尾部。 */
+export function settledMessageSegments(content: string): MessageSegmentDraft[] {
+  const drafts = segmentMessage(content);
+  const lineStart = Math.max(content.lastIndexOf("\n"), content.lastIndexOf("\r")) + 1;
+  const last = drafts.at(-1);
+  if (last === undefined || last.endOffset <= lineStart) {
+    return drafts;
+  }
+  const line = content.slice(lineStart);
+  // 动作和引号可能改变同行短段的类型与合并范围，等换行再发布。
+  const hasInlineFormatting = /[*（(【“「『]|^(?:旁白|台词|对白)\s*[:：]/.test(line.trimStart());
+  const boundary = hasInlineFormatting ? lineStart : last.startOffset;
+  return drafts.filter((draft) => draft.endOffset <= boundary);
+}
+
 function splitLines(content: string): LineRange[] {
   const lines: LineRange[] = [];
   let start = 0;

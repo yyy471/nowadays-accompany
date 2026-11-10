@@ -460,3 +460,78 @@ export class TtsProtocolInvalidError extends AppError {
     super(502, "TTS_PROTOCOL_INVALID", message);
   }
 }
+
+export class SceneImageTaskNotFoundError extends AppError {
+  constructor(windowId: string, taskId: string) {
+    super(404, "SCENE_IMAGE_TASK_NOT_FOUND", "过场图任务不存在", {
+      windowId,
+      taskId,
+    });
+  }
+}
+
+export class SceneImageAnchorInvalidError extends AppError {
+  constructor(message: string, details?: unknown) {
+    super(409, "SCENE_IMAGE_ANCHOR_INVALID", message, details);
+  }
+}
+
+export class SceneImageSegmentsMissingError extends AppError {
+  constructor(messageId: string) {
+    super(409, "SCENE_IMAGE_SEGMENTS_MISSING", "目标回复没有可用的句段", {
+      messageId,
+    });
+  }
+}
+
+export class SceneImagePlanInvalidError extends AppError {
+  constructor(message: string, details?: unknown) {
+    super(500, "SCENE_IMAGE_PLAN_INVALID", message, details);
+  }
+}
+
+export class SceneImageGenerationFailedError extends AppError {
+  constructor(message: string, details?: unknown) {
+    super(502, "SCENE_IMAGE_GENERATION_FAILED", message, details);
+  }
+}
+
+export class SceneImageGenerationTimeoutError extends AppError {
+  constructor(timeoutMs: number) {
+    super(504, "SCENE_IMAGE_GENERATION_TIMEOUT", "过场图生成超时", {
+      timeoutMs,
+    });
+  }
+}
+
+export class SceneImagePlannerUnavailableError extends AppError {
+  constructor(message = "没有可用的对话模型，无法规划过场图") {
+    super(503, "SCENE_IMAGE_PLANNER_UNAVAILABLE", message);
+  }
+}
+
+export class SceneImagePlanUnavailableError extends AppError {
+  constructor(message = "规划调用未能登记，未发出模型请求") {
+    super(503, "SCENE_IMAGE_PLAN_UNAVAILABLE", message);
+  }
+}
+
+export class SceneImageCanceledError extends AppError {
+  constructor() {
+    super(499, "SCENE_IMAGE_CANCELED", "过场图生成已取消");
+  }
+}
+
+export class SceneImageAssetNotFoundError extends AppError {
+  constructor(assetId: string) {
+    super(404, "SCENE_IMAGE_ASSET_NOT_FOUND", "过场图素材不存在", { assetId });
+  }
+}
+
+export class SceneImageAssetFileMissingError extends AppError {
+  constructor(assetId: string) {
+    super(404, "SCENE_IMAGE_ASSET_FILE_MISSING", "过场图素材文件缺失", {
+      assetId,
+    });
+  }
+}

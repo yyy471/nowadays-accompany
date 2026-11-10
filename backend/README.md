@@ -123,6 +123,12 @@ send 只登记输入并返回执行关联，不等待完整答复；稍后查询
 
 音色服务支持旧 IndexTTS 路径协议和 `nowadays-tts-v1` 统一协议。`GET/PUT /v1/roles/:roleId/voice` 读取或保存 `baseUrl`、`protocol`、`voiceSource`（`reference` 参考音频或 `preset` 预置音色）、`capabilities`、`language`、`speed`、`emoAlpha`；旧请求的 `referenceAssetId` 保持原含义。`POST /v1/roles/:roleId/voice/probe` 读取 `{baseUrl}/health` 的能力与就绪状态，就绪且声明预置音色时返回 `{baseUrl}/voices` 列表。`POST /v1/roles/:roleId/voice/reference` 用 `multipart/form-data` 的 `file` 字段导入 WAV／MP3／FLAC／OGG 参考音频（≤32 MiB），返回受管 `assetId`；`POST /voice/preview` 用 `text` 和可选候选 `config`（或兼容的平铺字段）直接返回音频，试听不落库；`POST /windows/:windowId/segments/:segmentId/speech` 为台词句段返回音频，旁白返回 400 `VOICE_SEGMENT_NOT_SPEAKABLE`。统一协议调用 multipart `/tts`，克隆模式上传受管参考音频和可选原文，预置模式传 `voice_id`，语言按服务声明的语言代码传递，语速在 0.1–10 内按声明范围收敛且声明必须包含 1.0；统一协议请求不跟随重定向，遇到 3xx 返回 502。切换服务后参考模式确认状态随配置保存，未确认前试听和按句合成返回 `VOICE_REFERENCE_MODE_REQUIRED`。旧协议调用 `POST {baseUrl}/tts` JSON，传入参考音频绝对路径、`lang`、`emo_alpha` 和 `duration_factor`，语言限 `zh`／`en`／`ja`／`es`／`ar`，语速限 0.5–2。`baseUrl` 允许路径前缀，拒绝查询串、片段和账号信息。成功响应必须是完整 PCM WAV（校验 RIFF 块边界、格式字段和数据帧对齐），单次响应上限 16 MiB，拒绝非 WAV 媒体类型时主动关闭上游连接；本轮不控制情绪、不缓存音频。服务错误映射为 502，连不上 503，超时 504，调用取消 499。[218 记录](../devDoc/218-tts-implementation-record.md) · [221 统一接入记录](../devDoc/221-tts-unified-implementation.md)
 
+### 生成过场图
+
+过场图任务从一条已保存的角色回复发起，锚定该回复的正式句段区间。`POST /v1/roles/:roleId/windows/:windowId/messages/:messageId/scene-images` 接受 `idempotencyKey` 与可选 `layerMode`（`background` 纯背景、`full_scene` 整幅图），返回 `{ task, duplicate }`；同一幂等键复用原任务并返回 200，新请求返回 201。任务状态为 `queued → planning → generating → succeeded`，异常终态为 `failed` 并保留错误码与摘要。`GET /v1/roles/:roleId/windows/:windowId/scene-images/:taskId` 同时校验角色、窗口和任务归属，跨窗口或跨角色返回 404。`GET /v1/roles/:roleId/scene-images/assets/:assetId` 按受管素材编号读取图片，校验角色归属、格式与记录长度后返回图像 MIME。消息分页新增 `sceneImages`，单条消息详情同样返回该消息的任务与结果引用；每次状态变化写入 `scene_image_task` 流事件，按既有窗口游标重放，进入窗口用 `after=cursor` 即可补齐晚到状态。服务重启会把上次未完成的任务结算为 `SCENE_IMAGE_INTERRUPTED`，已成功结果仍从原句段读取。
+
+规划默认使用角色的对话模型：读取目标回复正文、目标轮之前的上下文和该轮保存的服饰，返回画面描述、图层模式与同轮起止句段；模型调用先登记后发出，登记失败时任务失败为 `SCENE_IMAGE_PLAN_UNAVAILABLE` 且不发出请求。没有可用对话模型或适配器无法初始化时回退固定规划器（首段到末段），手动任务仍可完成；模型返回非法区间时任务失败为 `SCENE_IMAGE_PLAN_INVALID`，回复照常可读。手动请求的 `layerMode` 在规划前写入提示词与输入，规划结果与指定图层冲突、缺失或非法时直接拒绝，不把矛盾方案送到生成端。服饰只取该回复句段记录，没有记录时按未知服饰处理，不用当前服饰回填历史场景。`full_scene` 会把该服饰的 `home` 参考图传给生成器，`background` 不传；参考素材缺失或不可读时降级为无参考图。单次生成默认 120 秒超时，超时记为 `SCENE_IMAGE_GENERATION_TIMEOUT`；生成与解码都在服务侧与信号竞速，生成器不理会取消也能按时结算，关闭不被挂起的生成器或解码拖住。写盘先排他取得新文件所有权再写入，中途失败或取消会删除已创建文件，目标已存在时不会误删已有素材，提交前还会复查取消；清理被拒绝时保留原失败原因并照常结算，未清理文件写入错误摘要并在日志留下路径。同一幂等键不会重复生成，新幂等键按新尝试（`attempt` 递增）重试。本轮仍使用本地假生成器：输出确定性 PNG，整幅图会把参考图合成进画面，不访问网络、不产生费用；真实生图服务与自动触发规则待确认。
+
 ## 6. 数据布局与验收
 
 ```text
@@ -131,6 +137,7 @@ send 只登记输入并返回执行关联，不等待完整答复；稍后查询
 <app-root>/data/roles/<roleId>/execution.sqlite
 <app-root>/data/roles/<roleId>/workspace/
 <app-root>/data/roles/<roleId>/voice/
+<app-root>/data/roles/<roleId>/scene-images/
 ```
 
 业务库保存正式身份、状态、消息、记忆、任务和调用事实；execution.sqlite 为图检查点，不替代正式业务数据。备份时先停止后端，保留整个 app-root/data；不要只复制其中一个 SQLite 文件。
@@ -139,6 +146,6 @@ send 只登记输入并返回执行关联，不等待完整答复；稍后查询
 npm run accept:offline
 ```
 
-统一离线入口运行类型检查、交付回归、当前正式测试（本次 261 项）、真实进程／CLI 重启冒烟，以及 P2 20、P3 11、P4 28 项定向场景。实际数量以本次报告为准。脚本使用当前 node，在新建 `test-results/p5-.../` 下保存 summary.json、源码哈希、逐步日志和业务报告；不会读取你的运行配置、调用真实模型、覆盖或清理旧验收目录。任何失败、报告缺失或用例数量不完整均返回非零退出码。
+统一离线入口运行类型检查、交付回归、当前正式测试（本次 286 项）、真实进程／CLI 重启冒烟，以及 P2 20、P3 11、P4 28 项定向场景。实际数量以本次报告为准。脚本使用当前 node，在新建 `test-results/p5-.../` 下保存 summary.json、源码哈希、逐步日志和业务报告；不会读取你的运行配置、调用真实模型、覆盖或清理旧验收目录。任何失败、报告缺失或用例数量不完整均返回非零退出码。
 
 本命令会启动本地子进程和本机回环 HTTP 服务。运行输出属于忽略的证据，稳定结论和覆盖限制见 194；独立复核与实现方自验分别记录。

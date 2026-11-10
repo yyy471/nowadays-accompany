@@ -12,7 +12,11 @@ import type {
   MessageSegmentRecord,
   PendingWindow,
 } from "../domain/conversation.js";
-import { segmentMessage } from "../domain/message-segments.js";
+import {
+  segmentMessage,
+  settledMessageSegments,
+  type MessageSegmentDraft,
+} from "../domain/message-segments.js";
 import {
   ExecutionNotFoundError,
   ExecutionNotRunningError,
@@ -684,10 +688,32 @@ export class ConversationStore {
     content: string,
     outfitId: string | null,
     now: string,
+    streaming = false,
   ): MessageSegmentRecord[] {
+    const drafts = streaming ? settledMessageSegments(content) : segmentMessage(content);
+    if (streaming && drafts.length === 0) {
+      return [];
+    }
     const existing = this.listMessageSegments(messageId);
-    if (existing.length > 0) {
-      return existing;
+    let retained = 0;
+    while (retained < existing.length && sameSegment(existing[retained]!, drafts[retained])) {
+      retained += 1;
+    }
+    if (streaming && retained !== existing.length) {
+      return [];
+    }
+    if (!streaming && existing.length > 0) {
+      // 恢复后若正式正文改变，只替换发生变化的后缀，保留一致句段的 ID。
+      if (retained < existing.length) {
+        this.db.prepare("DELETE FROM message_segments WHERE message_id = ? AND ordinal >= ?")
+          .run(messageId, retained);
+      }
+      this.db.prepare("UPDATE message_segments SET outfit_id = ? WHERE message_id = ?")
+        .run(outfitId, messageId);
+    }
+    const pending = drafts.slice(retained);
+    if (streaming && pending.length === 0) {
+      return [];
     }
     const insert = this.db.prepare(
       `INSERT INTO message_segments
@@ -695,7 +721,7 @@ export class ConversationStore {
           end_offset, outfit_id, sprite_asset_id, annotated_at, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)`,
     );
-    for (const draft of segmentMessage(content)) {
+    for (const draft of pending) {
       insert.run(
         randomUUID(),
         messageId,
@@ -709,7 +735,8 @@ export class ConversationStore {
         now,
       );
     }
-    return this.listMessageSegments(messageId);
+    const segments = this.listMessageSegments(messageId);
+    return streaming ? segments.slice(retained) : segments;
   }
 
   /** 句段服饰在回复落库时确定；没有对应服饰时为空，差分仍可后补。 */
@@ -892,29 +919,43 @@ export class ConversationStore {
     executionId: string;
     windowId: string;
     text: string;
+    fullText?: string;
     now?: string;
   }): ConversationStreamEvent {
     const now = input.now ?? new Date().toISOString();
     return this.db.transaction(() => {
-      if (
-        input.text.length > 0 &&
-        this.generatingMessageId(input.executionId) === null
-      ) {
-        this.insertAssistantMessage({
+      let messageId = this.generatingMessageId(input.executionId);
+      if (input.text.length > 0 && messageId === null) {
+        messageId = this.insertAssistantMessage({
           windowId: input.windowId,
           content: "",
           status: "generating",
           executionId: input.executionId,
           now,
-        });
+        }).messageId;
       }
-      return this.appendStreamEventInternal({
+      const event = this.appendStreamEventInternal({
         windowId: input.windowId,
         executionId: input.executionId,
         type: "message_delta",
         payload: { executionId: input.executionId, delta: input.text },
         now,
       });
+      if (messageId !== null && input.fullText !== undefined) {
+        const segments = this.insertMessageSegments(
+          messageId, input.windowId, input.fullText, null, now, true,
+        );
+        if (segments.length > 0) {
+          this.appendStreamEventInternal({
+            windowId: input.windowId,
+            executionId: input.executionId,
+            type: "message_segments",
+            payload: { executionId: input.executionId, replyMessageId: messageId, partial: true, segments },
+            now,
+          });
+        }
+      }
+      return event;
     })();
   }
 
@@ -1105,6 +1146,7 @@ export class ConversationStore {
       if (execution.windowId !== null) {
         const generatingId = this.generatingMessageId(input.executionId);
         if (generatingId !== null && input.partialText.length === 0) {
+          this.db.prepare("DELETE FROM message_segments WHERE message_id = ?").run(generatingId);
           this.db
             .prepare("DELETE FROM messages WHERE message_id = ?")
             .run(generatingId);
@@ -2057,6 +2099,17 @@ function mapMessage(row: MessageRow): MessageRecord {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function sameSegment(
+  segment: MessageSegmentRecord,
+  draft: MessageSegmentDraft | undefined,
+): boolean {
+  return draft !== undefined &&
+    segment.kind === draft.kind &&
+    segment.text === draft.text &&
+    segment.startOffset === draft.startOffset &&
+    segment.endOffset === draft.endOffset;
 }
 
 function mapSegment(row: SegmentRow): MessageSegmentRecord {

@@ -25,12 +25,16 @@ function submit(fixture: ReturnType<typeof createFixture>, content: string): str
 }
 
 test("typing state delays the decision and multiple pending messages share one turn", { timeout: 15_000 }, async () => {
-  const fixture = createFixture([
+  // 输入窗口留出余量，避免满载并行测试时在两次提交之间提前到期。
+  const fixture = createFixture(
     [
-      { type: "text_delta", text: "我一起回应。" },
-      { type: "completed", stopReason: "stop" },
+      [
+        { type: "text_delta", text: "我一起回应。" },
+        { type: "completed", stopReason: "stop" },
+      ],
     ],
-  ]);
+    { typingMs: 3000 },
+  );
   try {
     fixture.app.conversation.updateInputState({
       roleId: fixture.roleId,

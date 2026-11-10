@@ -9,7 +9,7 @@ import {
 import { backfillEvidence } from "./evidence.js";
 
 export const APP_SCHEMA_VERSION = 2;
-export const BUSINESS_SCHEMA_VERSION = 12;
+export const BUSINESS_SCHEMA_VERSION = 13;
 export const EXECUTION_SCHEMA_VERSION = 1;
 
 export const APP_TABLES = ["roles", "resources", "model_test_calls"] as const;
@@ -56,6 +56,8 @@ export const BUSINESS_TABLES = [
   "message_segments",
   "voice_assets",
   "role_voice_settings",
+  "scene_image_tasks",
+  "scene_image_assets",
 ] as const;
 
 const APP_V2_SQL = `
@@ -751,6 +753,44 @@ const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
       "annotated_at",
     ],
   },
+  {
+    table: "scene_image_tasks",
+    columns: [
+      "task_id",
+      "role_id",
+      "window_id",
+      "message_id",
+      "execution_id",
+      "trigger_source",
+      "layer_mode",
+      "start_segment_id",
+      "end_segment_id",
+      "status",
+      "idempotency_key",
+      "attempt_no",
+      "plan_json",
+      "error_code",
+      "error_summary",
+      "created_at",
+      "updated_at",
+    ],
+  },
+  {
+    table: "scene_image_assets",
+    columns: [
+      "asset_id",
+      "task_id",
+      "role_id",
+      "window_id",
+      "message_id",
+      "media_type",
+      "relative_path",
+      "width",
+      "height",
+      "byte_size",
+      "created_at",
+    ],
+  },
 ];
 
 const BUSINESS_INDEXES: readonly RequiredIndex[] = [
@@ -901,6 +941,50 @@ const BUSINESS_INDEXES: readonly RequiredIndex[] = [
     name: "idx_message_segments_window",
     table: "message_segments",
     columns: ["window_id", "message_id", "ordinal"],
+    unique: false,
+    partial: false,
+  },
+  {
+    name: "idx_scene_image_manual_key",
+    table: "scene_image_tasks",
+    columns: ["role_id", "window_id", "message_id", "idempotency_key"],
+    unique: true,
+    partial: true,
+    predicate: "trigger_source = 'manual' AND idempotency_key IS NOT NULL",
+  },
+  {
+    name: "idx_scene_image_auto_attempt",
+    table: "scene_image_tasks",
+    columns: ["message_id", "attempt_no"],
+    unique: true,
+    partial: true,
+    predicate: "trigger_source = 'auto'",
+  },
+  {
+    name: "idx_scene_image_window",
+    table: "scene_image_tasks",
+    columns: ["window_id", "message_id", "created_at"],
+    unique: false,
+    partial: false,
+  },
+  {
+    name: "idx_scene_image_status",
+    table: "scene_image_tasks",
+    columns: ["status", "updated_at"],
+    unique: false,
+    partial: false,
+  },
+  {
+    name: "idx_scene_image_assets_task",
+    table: "scene_image_assets",
+    columns: ["task_id"],
+    unique: true,
+    partial: false,
+  },
+  {
+    name: "idx_scene_image_assets_role",
+    table: "scene_image_assets",
+    columns: ["role_id", "created_at"],
     unique: false,
     partial: false,
   },
@@ -1205,6 +1289,96 @@ WHERE protocol = 'nowadays-tts-v1'
   AND reference_mode IS NULL;
 `;
 
+const BUSINESS_V13_SQL = `
+-- V13：生成过场图任务。任务锚定一条已保存的角色回复和同轮句段区间，
+-- 结果素材与任务同事务提交，状态更新写入既有窗口流事件供重连补齐。
+CREATE TABLE IF NOT EXISTS scene_image_tasks (
+  task_id TEXT PRIMARY KEY,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  window_id TEXT NOT NULL REFERENCES windows(window_id),
+  message_id TEXT NOT NULL REFERENCES messages(message_id),
+  execution_id TEXT NOT NULL REFERENCES executions(execution_id),
+  trigger_source TEXT NOT NULL CHECK (trigger_source IN ('manual', 'auto')),
+  layer_mode TEXT NOT NULL CHECK (layer_mode IN ('background', 'full_scene')),
+  start_segment_id TEXT NOT NULL REFERENCES message_segments(segment_id),
+  end_segment_id TEXT NOT NULL REFERENCES message_segments(segment_id),
+  status TEXT NOT NULL CHECK (status IN (
+    'queued', 'planning', 'generating', 'succeeded', 'skipped', 'failed'
+  )),
+  idempotency_key TEXT,
+  attempt_no INTEGER NOT NULL DEFAULT 1,
+  plan_json TEXT,
+  error_code TEXT,
+  error_summary TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scene_image_manual_key
+  ON scene_image_tasks (role_id, window_id, message_id, idempotency_key)
+  WHERE trigger_source = 'manual' AND idempotency_key IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scene_image_auto_attempt
+  ON scene_image_tasks (message_id, attempt_no)
+  WHERE trigger_source = 'auto';
+
+CREATE INDEX IF NOT EXISTS idx_scene_image_window
+  ON scene_image_tasks (window_id, message_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_scene_image_status
+  ON scene_image_tasks (status, updated_at);
+
+CREATE TABLE IF NOT EXISTS scene_image_assets (
+  asset_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES scene_image_tasks(task_id),
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  window_id TEXT NOT NULL REFERENCES windows(window_id),
+  message_id TEXT NOT NULL REFERENCES messages(message_id),
+  media_type TEXT NOT NULL,
+  relative_path TEXT NOT NULL,
+  width INTEGER NOT NULL,
+  height INTEGER NOT NULL,
+  byte_size INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scene_image_assets_task
+  ON scene_image_assets (task_id);
+
+CREATE INDEX IF NOT EXISTS idx_scene_image_assets_role
+  ON scene_image_assets (role_id, created_at);
+
+ALTER TABLE execution_stream_events RENAME TO execution_stream_events_v13_old;
+DROP INDEX IF EXISTS idx_execution_stream_window;
+DROP INDEX IF EXISTS idx_execution_stream_execution;
+
+CREATE TABLE execution_stream_events (
+  stream_event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  window_id TEXT REFERENCES windows(window_id),
+  execution_id TEXT NOT NULL REFERENCES executions(execution_id),
+  event_type TEXT NOT NULL CHECK (event_type IN (
+    'execution_started', 'message_delta', 'tool_started', 'tool_result_saved',
+    'tool_backgrounded', 'message_segments', 'segment_annotations',
+    'scene_image_task', 'message_completed', 'message_interrupted',
+    'execution_superseded', 'execution_paused', 'execution_failed'
+  )),
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+INSERT INTO execution_stream_events
+  (stream_event_id, role_id, window_id, execution_id, event_type, payload_json, created_at)
+SELECT stream_event_id, role_id, window_id, execution_id, event_type, payload_json, created_at
+  FROM execution_stream_events_v13_old;
+
+DROP TABLE execution_stream_events_v13_old;
+CREATE INDEX idx_execution_stream_window
+  ON execution_stream_events (window_id, stream_event_id);
+CREATE INDEX idx_execution_stream_execution
+  ON execution_stream_events (execution_id, stream_event_id);
+`;
+
 export function openAppDatabase(dbPath: string): OpenedDatabase {
   return openVersionedDatabase(
     dbPath,
@@ -1236,7 +1410,8 @@ export function openBusinessDatabase(
       BUSINESS_V9_SQL +
       BUSINESS_V10_SQL +
       BUSINESS_V11_SQL +
-      BUSINESS_V12_SQL,
+      BUSINESS_V12_SQL +
+      BUSINESS_V13_SQL,
     {
       1: (db) => {
         db.exec(BUSINESS_V2_SQL);
@@ -1252,6 +1427,7 @@ export function openBusinessDatabase(
       9: (db) => db.exec(BUSINESS_V10_SQL),
       10: (db) => db.exec(BUSINESS_V11_SQL),
       11: (db) => db.exec(BUSINESS_V12_SQL),
+      12: (db) => db.exec(BUSINESS_V13_SQL),
     },
     BUSINESS_TABLES,
     BUSINESS_INDEXES,

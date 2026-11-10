@@ -1497,6 +1497,7 @@ export class ConversationService {
         windowId,
         executionId: execution.executionId,
         text,
+        fullText: running.partialText,
         now: this.now().toISOString(),
       });
     };
@@ -2293,6 +2294,7 @@ export class ConversationService {
   }): string {
     const lines = [
       `你是角色「${input.roleContext.displayName}」，始终以该角色的身份、经历和当前状态回应。`,
+      "回复按自然句段换行。需要演出表情或动作时，用一行简短动作文字呈现，例如 *她轻轻点头*；动作和台词分行。",
       "以下角色设定是长期身份依据：",
       truncate(input.roleContext.definitionText, 12_000),
     ];

@@ -18,9 +18,15 @@ import { ModelService } from "../application/model-service.js";
 import { ResourceService } from "../application/resource-service.js";
 import { RoleAccess } from "../application/role-access.js";
 import { RoleService } from "../application/role-service.js";
+import {
+  SceneImageService,
+  type SceneImageServiceOptions,
+} from "../application/scene-image-service.js";
 import { createHttpServer } from "../http/server.js";
 import type { ApiServices } from "../http/routes.js";
 import { AppStore } from "../storage/app-store.js";
+import { FixedSceneImagePlanner } from "../scene/fixed-planner.js";
+import { ModelSceneImagePlanner } from "../scene/model-planner.js";
 import type { BackendConfig } from "./config.js";
 
 export interface BackendAppOptions {
@@ -34,6 +40,10 @@ export interface BackendAppOptions {
   memoryModelFactory?: MemoryModelFactory;
   memoryIdleMs?: number;
   disableMemoryRuntime?: boolean;
+  sceneImagePlanner?: SceneImageServiceOptions["planner"];
+  sceneImageGenerator?: SceneImageServiceOptions["generator"];
+  sceneImageGenerationTimeoutMs?: number;
+  sceneImageInspector?: SceneImageServiceOptions["imageInspector"];
 }
 
 export interface BackendApp {
@@ -118,6 +128,32 @@ export function createBackendApp(
   );
   memoryRuntime?.recoverOnStartup();
   conversation.recoverOnStartup();
+  const sceneImages = new SceneImageService(appStore, roleAccess, config.dataRoot, {
+    now,
+    planner:
+      options.sceneImagePlanner ??
+      new ModelSceneImagePlanner(roleAccess, bindings, {
+        appRoot: config.appRoot,
+        now,
+        ...(options.timeZone === undefined
+          ? {}
+          : { timeZone: options.timeZone }),
+        ...(options.modelPortFactory === undefined
+          ? {}
+          : { modelFactory: options.modelPortFactory }),
+        fallback: new FixedSceneImagePlanner(),
+      }),
+    ...(options.sceneImageGenerator === undefined
+      ? {}
+      : { generator: options.sceneImageGenerator }),
+    ...(options.sceneImageGenerationTimeoutMs === undefined
+      ? {}
+      : { generationTimeoutMs: options.sceneImageGenerationTimeoutMs }),
+    ...(options.sceneImageInspector === undefined
+      ? {}
+      : { imageInspector: options.sceneImageInspector }),
+  });
+  sceneImages.recoverOnStartup();
   autonomy.setWakeListener((roleId) => conversation.refreshWakeTimer(roleId));
   autonomy.setProactiveMessageListener((notice) =>
     conversation.queueSegmentAnnotation(notice),
@@ -132,6 +168,7 @@ export function createBackendApp(
     autonomy,
     appearance: appearanceService,
     voice: voiceService,
+    sceneImages,
   };
   let server: http.Server;
   try {
@@ -154,6 +191,7 @@ export function createBackendApp(
       }
       closed = true;
       await conversation.close();
+      await sceneImages.close();
       if (server.listening) {
         await closeServer(server);
       }

@@ -14,6 +14,7 @@ export type ConversationStreamType =
   | "tool_result_saved"
   | "message_segments"
   | "segment_annotations"
+  | "scene_image_task"
   | "message_completed"
   | "message_interrupted"
   | "execution_superseded"

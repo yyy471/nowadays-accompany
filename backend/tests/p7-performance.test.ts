@@ -7,13 +7,14 @@ import {
 } from "../src/application/segment-annotation-service.js";
 import type { MessageSegmentRecord } from "../src/domain/conversation.js";
 import type { OutfitRecord } from "../src/domain/appearance.js";
-import { segmentMessage } from "../src/domain/message-segments.js";
+import { segmentMessage, settledMessageSegments } from "../src/domain/message-segments.js";
 import type { ModelEvent, ModelRequest } from "../src/domain/model.js";
 import { resolveCredential } from "../src/model/credentials.js";
 import { ConversationStore } from "../src/storage/conversation-store.js";
 import {
   createFixture,
   createFixtureWithModel,
+  deferred,
   GatedChatModel,
   ScriptedChatModel,
   withStorage,
@@ -280,6 +281,12 @@ test("natural segmentation keeps source ranges, merges short clauses and marks n
     2,
   );
   assert.deepEqual(segmentMessage("  \n\n  "), []);
+  assert.deepEqual(settledMessageSegments("嗯。（她转身。）（"), []);
+  assert.deepEqual(
+    settledMessageSegments("第一句话说得比较完整。第二句话也足够长，还没写完")
+      .map((segment) => segment.text),
+    ["第一句话说得比较完整。"],
+  );
 });
 
 test("one reply keeps one message with stable segments and replayable events", { timeout: 30_000 }, async () => {
@@ -333,7 +340,9 @@ test("one reply keeps one message with stable segments and replayable events", {
       messageExecutionId(fixture, message.messageId),
     );
     const eventTypes = events.map((event) => event.event_type);
-    const segmentsIndex = eventTypes.indexOf("message_segments");
+    const segmentsIndex = events.findIndex((event) =>
+      event.event_type === "message_segments" && JSON.parse(event.payload_json).partial !== true,
+    );
     const completedIndex = eventTypes.indexOf("message_completed");
     assert.ok(segmentsIndex >= 0);
     assert.ok(completedIndex > segmentsIndex);
@@ -354,7 +363,7 @@ test("one reply keeps one message with stable segments and replayable events", {
       ).listStreamEventsAfter(fixture.windowId, 0),
     );
     const replayedSegments = replay.find(
-      (event) => event.type === "message_segments",
+      (event) => event.type === "message_segments" && event.payload.partial !== true,
     );
     assert.ok(replayedSegments);
     assert.deepEqual(
@@ -393,6 +402,42 @@ test("one reply keeps one message with stable segments and replayable events", {
     );
     assert.equal(wrongWindow.status, 404);
   } finally {
+    await fixture.close();
+  }
+});
+
+test("a running reply publishes settled segments and keeps their IDs after completion", { timeout: 30_000 }, async () => {
+  const started = deferred<void>();
+  const release = deferred<void>();
+  const first = "我在这里。\n*她挥挥手*\n";
+  const fixture = createFixtureWithModel({
+    async *stream() {
+      yield { type: "text_delta", text: first + "那我们" };
+      started.resolve();
+      await release.promise;
+      yield { type: "text_delta", text: "出发吧。" };
+      yield { type: "completed", stopReason: "stop" };
+    },
+  });
+  try {
+    submit(fixture, "你好");
+    await started.promise;
+    const live = fixture.app.services.messages.list(fixture.roleId, fixture.windowId, null, 50);
+    assert.ok(live.activeReply);
+    assert.deepEqual(live.segments.map(({ text, kind }) => [text, kind]), [
+      ["我在这里。", "speech"], ["她挥挥手", "narration"],
+    ]);
+    const events = executionEvents(fixture, live.activeReply.executionId);
+    const liveEvent = events.find((event) => event.event_type === "message_segments");
+    assert.ok(liveEvent);
+    assert.equal(JSON.parse(liveEvent.payload_json).partial, true);
+    release.resolve();
+    await fixture.app.conversation.waitForIdle(fixture.roleId);
+    const saved = fixture.app.services.messages.get(fixture.roleId, fixture.windowId, live.activeReply.messageId);
+    assert.deepEqual(saved.segments.slice(0, 2), live.segments);
+    assert.equal(saved.segments[2]?.text, "那我们出发吧。");
+  } finally {
+    release.resolve();
     await fixture.close();
   }
 });
@@ -716,10 +761,12 @@ test("SSE replays segments before completion and late annotations after it", { t
 
     const frames = parseFrames(text);
     const types = frames.map((frame) => String(frame.data.type));
-    const segmentsIndex = types.indexOf("message_segments");
+    const liveFrame = frames.find(({ data }) => data.type === "message_segments" && data.partial === true);
+    const segmentsIndex = frames.findIndex(({ data }) => data.type === "message_segments" && data.partial !== true);
     const completedIndex = types.indexOf("message_completed");
     const annotationsIndex = types.indexOf("segment_annotations");
     assert.ok(segmentsIndex >= 0);
+    assert.ok(liveFrame);
     assert.ok(completedIndex > segmentsIndex);
     assert.ok(annotationsIndex > completedIndex);
 
@@ -730,6 +777,8 @@ test("SSE replays segments before completion and late annotations after it", { t
       segmentPayload.segments.map((segment) => segment.text),
       ["第一句话说得比较完整。", "第二句话也足够长，单独成为一段。"],
     );
+    const liveSegments = liveFrame.data.segments as Array<{ segmentId: string }>;
+    assert.deepEqual(liveSegments.map(({ segmentId }) => segmentId), [segmentPayload.segments[0]!.segmentId]);
     const annotationPayload = frames[annotationsIndex]!.data as {
       items: Array<{
         segmentId: string;

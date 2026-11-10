@@ -29,6 +29,7 @@ import type { MessageService } from "../application/message-service.js";
 import type { ModelService } from "../application/model-service.js";
 import type { ResourceService } from "../application/resource-service.js";
 import type { RoleService } from "../application/role-service.js";
+import type { SceneImageService } from "../application/scene-image-service.js";
 import type { VoiceService } from "../application/voice-service.js";
 import { InputStateInvalidError, SseCursorInvalidError } from "../domain/errors.js";
 import { resourceKindSchema } from "../domain/resource.js";
@@ -54,6 +55,7 @@ import {
 } from "./schemas.js";
 import { parseBody, queryInt } from "./validation.js";
 import { registerAppearanceRoutes } from "./appearance-routes.js";
+import { registerSceneImageRoutes } from "./scene-image-routes.js";
 import { registerVoiceRoutes } from "./voice-routes.js";
 
 export interface ApiServices {
@@ -66,6 +68,7 @@ export interface ApiServices {
   autonomy: AutonomyService;
   appearance: AppearanceService;
   voice: VoiceService;
+  sceneImages: SceneImageService;
 }
 
 export function registerApiRoutes(
@@ -752,6 +755,7 @@ export function registerApiRoutes(
 
   registerAppearanceRoutes(router, services);
   registerVoiceRoutes(router, services);
+  registerSceneImageRoutes(router, services);
 
   return router;
 }
