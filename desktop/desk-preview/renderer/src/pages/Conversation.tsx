@@ -2,7 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { Outfit, RoleListItem } from '../types';
 import { appearanceAssetUrl } from '../types';
 import { Button, ControlButton, Icon, IconButton, Modal, UiThemeScope, useMotionPolicy } from '../ui';
-import { useThemePreset } from '../ui/presets';
+import { useThemePreset, useThemeTransitionStrategy } from '../ui/presets';
+import { dialogueThemeTransition } from '../conversation/dialogue-theme';
 import type { PerfScene, SceneLayerMode } from '../conversation/performance.js';
 import type { PerfRow } from '../conversation/history.js';
 import { dayKey, dateLabel } from '../conversation/history.js';
@@ -37,6 +38,8 @@ export function ConversationPage({
   outfitHomeUrl,
   loading,
   error,
+  hideDock,
+  onHideDockChange,
   onSelectRole,
   onOpenRelations,
 }: {
@@ -47,10 +50,14 @@ export function ConversationPage({
   outfitHomeUrl: string | null;
   loading: boolean;
   error: string;
+  hideDock: boolean;
+  onHideDockChange: (hidden: boolean) => void;
   onSelectRole: (id: string) => void;
   onOpenRelations: () => void;
 }) {
   const { preset } = useThemePreset();
+  // 换光由本页接管：舞台光线 + 纸面逐行推进，不再退回整页天气动画。
+  useThemeTransitionStrategy(dialogueThemeTransition);
   const night = preset === 'nightwave';
   const motion = useMotionPolicy();
   const role = roles.find(item => item.roleId === currentId);
@@ -92,6 +99,7 @@ export function ConversationPage({
   const noticeTimer = useRef<number | undefined>(undefined);
   const locatedTimer = useRef<number | undefined>(undefined);
   const historyLocationRequest = useRef(0);
+  const historyButton = useRef<HTMLButtonElement>(null);
   const frozenScene = useRef<PerfScene | null>(null);
 
   const showToast = useCallback((message: string) => {
@@ -354,13 +362,14 @@ export function ConversationPage({
 
   return <UiThemeScope theme="xiacheng" motion={motion.reduced ? 'reduced' : 'full'} className="dialogue-host">
     <div className="dialogue-page" data-theme={night ? 'night' : 'day'} data-motion={motion.reduced ? 'reduced' : 'full'}>
-      <header className="dialogue-topbar">
-        <div className="dialogue-identity">
-          <h1>{roleName}</h1>
-          <span className="dialogue-identity-rule" aria-hidden="true" />
-          <span className="dialogue-identity-caption">对话</span>
+      <main className="dialogue-layout">
+        <ConversationStage snapshot={snapshot} current={visibleStageRow} sources={sources}
+          visibleScene={visibleScene} live={stageLive} cue={cue} onDismiss={dismissScene} />
+        <section className="dialogue-pane" aria-label={historyOpen ? '历史消息' : `与 ${roleName} 的对话`}>
+        <div className="dialogue-pane-toolbar" inert={historyOpen} aria-hidden={historyOpen || undefined}>
+          <div className="dialogue-pane-switches">
           {roles.length > 1 ? <div className="dialogue-role-switch">
-            <ControlButton type="button" className="dialogue-role-button" aria-expanded={roleMenuOpen} aria-haspopup="menu" onClick={() => setRoleMenuOpen(value => !value)}>
+            <ControlButton type="button" className="dialogue-role-button" aria-label={`切换角色，当前${roleName}`} aria-expanded={roleMenuOpen} aria-haspopup="menu" onClick={() => setRoleMenuOpen(value => !value)}>
               <Icon name="person" size={15} /><span>换一位</span>
             </ControlButton>
             {roleMenuOpen ? <div className="dialogue-role-menu" role="menu">
@@ -381,17 +390,13 @@ export function ConversationPage({
               </button>)}
             </div> : null}
           </div> : null}
+          </div>
+          <div className="dialogue-pane-actions">
+            <span className="dialogue-connection" data-state={snapshot.loading ? 'loading' : snapshot.connection} role="status" aria-label={snapshot.loading ? '读取中' : connectionText} title={snapshot.loading ? '读取中' : connectionText}><span className="sr-only">{snapshot.loading ? '读取中' : connectionText}</span></span>
+            <IconButton className="dialogue-pane-icon" icon="tune" label="演出设置" onClick={() => setPerformanceOpen(true)} />
+            <IconButton ref={historyButton} className="dialogue-pane-icon dialogue-history-button" icon="history" label="历史消息" aria-expanded={historyOpen} onClick={toggleHistory} />
+          </div>
         </div>
-        <div className="dialogue-topbar-actions">
-          <span className="dialogue-connection" data-state={snapshot.loading ? 'loading' : snapshot.connection} role="status">{snapshot.loading ? '读取中' : connectionText}</span>
-          <IconButton icon="tune" label="演出设置" title="演出设置" onClick={() => setPerformanceOpen(true)} />
-          <Button className="dialogue-history-button" icon="history" size="sm" aria-expanded={historyOpen} onClick={toggleHistory}>历史消息</Button>
-        </div>
-      </header>
-      <main className="dialogue-layout">
-        <ConversationStage snapshot={snapshot} current={visibleStageRow} sources={sources}
-          visibleScene={visibleScene} live={stageLive} cue={cue} onDismiss={dismissScene} />
-        <section className="dialogue-pane" aria-label={historyOpen ? '历史消息' : `与 ${roleName} 的对话`}>
           <div className="dialogue-chat-wrap" inert={historyOpen} aria-hidden={historyOpen || undefined}>
             {snapshot.loading && snapshot.messages.length === 0
               ? <div className="dialogue-chat-loading"><span className="spinner" aria-hidden="true" />正在读取这个窗口的消息…</div>
@@ -409,6 +414,7 @@ export function ConversationPage({
           </div>
           <HistoryPanel open={historyOpen} messages={snapshot.historyMessages} scenes={snapshot.scenes}
             loading={snapshot.historyLoading || locatingHistory} complete={snapshot.historyComplete} error={snapshot.historyError}
+            openerRef={historyButton}
             onRetry={() => void session.loadHistory()} onOpenScene={openScene} onLocate={id => void locate(id)}
             onClose={() => { historyLocationRequest.current += 1; setLocatingHistory(false); session.cancelHistory(); setHistoryOpen(false); }} />
         </section>
@@ -417,8 +423,9 @@ export function ConversationPage({
       <div className="sr-only" aria-live="polite" aria-atomic="true">{announce}</div>
     </div>
 
-    <Modal open={performanceOpen} title="演出设置" onClose={() => setPerformanceOpen(false)} description="台词通过角色音色按句合成，未配置音色时点读会给出提示。">
+    <Modal open={performanceOpen} title="演出设置" onClose={() => setPerformanceOpen(false)} description="调整对话页面的演出与显示方式。">
       <div className="dialogue-settings-options">
+        <label className="dialogue-option"><input type="checkbox" checked={hideDock} onChange={event => onHideDockChange(event.target.checked)} /><span>隐藏底部导航栏</span></label>
         <label className="dialogue-option"><input type="checkbox" checked={voiceAuto} onChange={event => {
           const next = event.target.checked;
           setVoiceAuto(next); savePreference('voice', next);

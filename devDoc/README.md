@@ -1,15 +1,28 @@
 # 新主线文档导航
 
-最新阶段（2026-11-09）：对话演出第一包通过独立离线复验，见 [216 第 6 节](216-conversation-performance-independent-review.md#6-217-第-7-节补修独立复验)。旧 IndexTTS 接口的补修在 [219](219-indextts-integration-spec.md#补修独立复验) 通过复验。DL-140 统一 TTS 后端的 v12 回填在 [222 独立复验](222-tts-unified-independent-review.md#221-第-11-节-v12-回填独立复验) 通过 v10 和旧 v11 两条升级路径，R01～R04 在已验范围关闭。真实服务联调待验，生成过场图尚未开始。
+2026-11-09。对话演出第一包通过独立离线复验，见 [216 第 6 节](216-conversation-performance-independent-review.md#6-217-第-7-节补修独立复验)。旧 IndexTTS 接口的补修在 [219](219-indextts-integration-spec.md#补修独立复验) 通过复验。DL-140 统一 TTS 后端的 v12 回填在 [222 独立复验](222-tts-unified-independent-review.md#221-第-11-节-v12-回填独立复验) 通过 v10 和旧 v11 两条升级路径，TTS 的 R01～R04 在已验范围关闭。真实服务联调待验。
 
-当前阶段：角色外观与每日穿搭在 [212](212-appearance-review-fixes.md) 补修后完成[独立复验](211-appearance-independent-review.md#r01-全帧校验补修独立复验)。真实语音服务联调、桌面语音播放、角色配置页试听与生成过场图待推进。桌面前端完成后按 DL-115 恢复远程 Streamable HTTP MCP。
+角色外观与每日穿搭在 [212](212-appearance-review-fixes.md) 补修后完成[独立复验](211-appearance-independent-review.md#r01-全帧校验补修独立复验)。过场图 CG-01／CG-02 经 [227 第 7 节](227-scene-image-independent-review.md#7-228-第-10-节-r06-独立复验) 独立复验通过，R01～R06 在已验范围关闭。关系藏页按 [233](233-relations-exlibris-migration-fixes.md) 迁移后，[234](234-relations-exlibris-independent-review.md) 复核未通过的三项已按 [235](235-relations-exlibris-review-fixes.md) 修复并自验，[234 第 3 节](234-relations-exlibris-independent-review.md#3-235-修复独立复验) 原场景通过；扩展场景 EX-R04、EX-R05 已在 [235 第 7 节](235-relations-exlibris-review-fixes.md#7-234-第-3-节补充修复ex-r04ex-r05) 补修，[234 第 4 节](234-relations-exlibris-independent-review.md#4-235-第-7-节补修独立复验) 确认 EX-R01～EX-R05 在离线范围关闭。对话页的明暗切换已按 `dialogue-demo-v4` 重做为「日落刻度」，实现方自验见 [237](237-dialogue-theme-transition.md)；关系页的「明暗推进」方案效果未获认可，已整块回滚到原折页刻度。CG-03、残留文件自动清扫、真实服务和桌面对话按工作包推进。桌面前端完成后按 DL-115 恢复远程 Streamable HTTP MCP。
 
 | 文档 | 定位与状态 |
 | --- | --- |
+| [240 关系页顶部栏精简](240-relations-header-removal.md) | 移除关系页顶部标题栏，按用户澄清将日夜装饰条移入书页右上方；实现方自验，待独立复核 |
+| [239 对话页 Dock 显示设置](239-dialogue-dock-visibility.md) | 对话页可隐藏底部导航、其他页面保留导航及本地偏好；实现方自验，待独立复核 |
+| [238 对话页顶部精简与布局调整](238-dialogue-layout-refinement.md) | 对话框内工具图标、舞台上移和移除全局顶部设置入口；实现方自验，待独立复核 |
+| [237 对话页明暗切换（关系页推进方案已回滚）](237-dialogue-theme-transition.md) | 对话页照 v4 参考实现舞台光线 + 纸面 14 档逐行推进；关系页快照推进方案经用户判定效果不对，已回滚到原折页刻度并复验无残留；实现方自验，独立复核待执行 |
 | [236 角色配置与全局设置后端缺口复核](236-role-settings-backend-gap-review.md) | 对照现有接口核对附件，区分首版接入项、补齐项和后续能力 |
 | [235 关系藏页复核修复记录](235-relations-exlibris-review-fixes.md) | EX-R01～EX-R03 的修复与实现方自验，第 7 节补修 EX-R04／EX-R05；独立结论见 234 第 3～4 节 |
 | [234 关系藏页迁移独立复核](234-relations-exlibris-independent-review.md) | 第 4 节确认 EX-R01～EX-R05 在离线范围关闭，真实数据联调待验 |
 | [233 关系藏页原型对照与迁移修复](233-relations-exlibris-migration-fixes.md) | 对照用户提供的关系页原型，修复布局、主题、交互和资料读取，独立结论见 234 |
+| [232 桌面对话 231 复核修复记录](232-conversation-desktop-review-fixes.md) | FE-R01～FE-R04 修复与离线自验，独立结论见 231 第 4 节 |
+| [231 桌面对话页独立复核](231-conversation-desktop-independent-review.md) | 53 项桌面测试、10 组浏览器场景通过，FE-R01～FE-R04 在离线范围关闭 |
+| [229 桌面对话页第一包实施记录](229-conversation-desktop-fe-01-record.md) | FE-01 页面装配、演出状态、演示语音与历史面板的实现方自验；当前接入与复核见 230、231 |
+| [228 过场图复核修复记录](228-scene-image-review-fixes.md) | R01～R06 的实现方修复与自验，独立结论见 227 第 7 节 |
+| [227 过场图后端独立复核](227-scene-image-independent-review.md) | CG-01／CG-02 离线范围通过，R01～R06 关闭 |
+| [226 生成过场图第二包实施记录](226-scene-image-cg-02-record.md) | CG-02 模型规划、上下文与服饰参考素材、生成超时与重试的实现方自验；独立结论见 227 |
+| [225 桌面对话页开发文档](225-conversation-desktop-development-guide.md) | v5 交互原型、正式前端分期、消息与媒体契约、验收清单 |
+| [224 生成过场图第一包实施记录](224-scene-image-cg-01-record.md) | CG-01 任务与读取契约、v13 存储、假规划与假生成器、失败重试与重连的实现方自验；独立结论见 227 |
+| [223 对话演出开发文档](223-conversation-performance-development-guide.md) | 213 的实现现状、过场图后端工作包与契约草案、待决策项、桌面与真实联调排期 |
 | [222 TTS 统一接入独立复核](222-tts-unified-independent-review.md) | R01～R04 在已验范围关闭，v10 和旧 v11 升级到 v12 通过，真实语音服务待联调 |
 | [221 TTS 统一接入首轮实施记录](221-tts-unified-implementation.md) | 能力探测、克隆／预置音色、multipart 合成、v10→v12 迁移与旧配置兼容；第 7～11 节记录 222 修复 |
 | [220 TTS 统一接入说明](220-tts-unified-integration.md) | 音色克隆与预置音色共用的配置流程、服务接口、后端迁移和验收，已按 221 完成首轮后端实施 |
@@ -26,6 +39,7 @@
 | [209 Agent 每日穿搭开发文档](209-agent-daily-outfit-development-guide.md) | DL-136 的穿搭决策时机、角色状态提交、主页与对话刷新及验收；首轮实施见 210，对话同步待实施 |
 | [208 角色外观导入与对话立绘接入](208-character-appearance-import-and-dialogue.md) | DL-136 的用户图片规范、素材登记接口、桌面接入与验收；首轮实施见 210，对话立绘待实施 |
 | [207 桌面前端四页重做记录](207-desktop-four-page-rebuild.md) | DL-135 的四页范围、主页与关系页实现及本机自验记录 |
+| [230 桌面对话 FE-02 接入进展](230-conversation-desktop-fe-02-progress.md) | 窗口接入、历史分页定位、舞台与语音补修及离线自验；独立复核见 231 |
 | [206 桌面主页精简、环境流转与角色外观入口](206-desktop-home-scene-and-role-visual-plan.md) | DL-132～DL-134 的历史前端方案与实现方自验，当前页面范围按 DL-135 |
 | [205 光影书房与器物剧场前端重构计划](205-luminary-study-theater-frontend-plan.md) | `dev-front` 分支重构方案：单舞台双焦距、全屏五层光影流转与信笺／手账／胶片／推演四大器物转场 |
 | [204 书桌 v0.1.2 原生窗口与天气细化](204-desktop-desk-window-weather-refinement.md) | 原生窗口、独立受光玩偶、画室拍立得、分层雨雪和室内外风动 |

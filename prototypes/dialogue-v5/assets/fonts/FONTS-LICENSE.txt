@@ -1,0 +1,7 @@
+hand.woff  — Ma Shan Zheng（马善政毛笔楷书）子集
+  Copyright 2018 The MaShanZheng Project Authors (https://github.com/googlefonts/mashanzheng)
+title.woff — ZCOOL XiaoWei（站酷小薇）子集（已剔除字形有缺陷的「回」）
+  Copyright 2018 The ZCOOL XiaoWei Project Authors (https://www.github.com/googlefonts/xiaowei)
+
+两者均以 SIL Open Font License 1.1 授权：https://openfontlicense.org
+本目录中的文件为按原型用字生成的子集，仅用于本概念原型。

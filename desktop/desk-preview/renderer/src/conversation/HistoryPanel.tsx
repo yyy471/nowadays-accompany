@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Icon, useMotionPolicy } from '../ui';
 import { buildDays, calendarDays, dateLabel, dayKey, daySnippets, dotTier, findHits, keyToDate, rangesFor, snippet, termsFor, textFor } from './history.js';
 import type { DaySummary, PerfRow } from './history.js';
@@ -62,6 +62,7 @@ export function HistoryPanel({
   onOpenScene,
   onLocate,
   onClose,
+  openerRef,
 }: {
   open: boolean;
   messages: PerfRow[];
@@ -73,6 +74,7 @@ export function HistoryPanel({
   onOpenScene: (scene: PerfScene) => void;
   onLocate: (targetId: number) => void;
   onClose: () => void;
+  openerRef?: RefObject<HTMLButtonElement | null>;
 }) {
   const policy = useMotionPolicy();
   const [present, setPresent] = useState(open);
@@ -121,7 +123,7 @@ export function HistoryPanel({
   // 打开：记录触发点、初始化到最近一天的末张片段。关闭：动画结束后恢复焦点。
   useEffect(() => {
     if (!open) return;
-    opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    opener.current = openerRef?.current ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     setPresent(true);
     setLeaving(false);
     const key = selectedKey && dayMap.has(selectedKey) ? selectedKey : latestKey;

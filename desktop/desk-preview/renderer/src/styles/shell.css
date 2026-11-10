@@ -1,5 +1,6 @@
 /* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 · desktop companion shell */
 .studio-shell { display: grid; grid-template-rows: auto minmax(0,1fr) auto; width: 100%; height: 100dvh; min-width: 0; background: var(--nd-semantic-color-canvas); color: var(--nd-semantic-color-text); font-family: var(--nd-semantic-font-body); font-size: var(--nd-semantic-type-body-size); line-height: var(--nd-semantic-type-body-line); }
+.studio-shell[data-page="conversation"][data-dialogue-dock-hidden] { grid-template-rows: auto minmax(0,1fr); }
 .studio-header-scope { z-index: var(--nd-semantic-layer-shell); min-width: 0; }
 .studio-header { display: grid; grid-template-columns: minmax(180px,.8fr) minmax(0,1.3fr) auto; align-items: center; gap: 24px; min-height: var(--nd-semantic-size-header); padding: 12px 0; margin-inline: 3%; border-bottom: 1px solid var(--nd-semantic-color-line-decorative); }
 .studio-header-actions { display: flex; justify-content: flex-end; align-items: center; gap: 12px; }

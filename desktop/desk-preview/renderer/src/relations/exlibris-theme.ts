@@ -7,7 +7,7 @@ function reduced(): boolean {
     || (root.dataset.motion !== 'full' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 }
 
-/** 顶部主题胶囊走这条转场：纸背暖光掠过，横线收成刻度。不锁导航。 */
+/** 顶部主题胶囊走这条转场：纸背暖光掠过，横线收向书页内的刻度。不锁导航。 */
 export const exlibrisThemeTransition: ThemeTransitionStrategy = (request) => {
   const page = document.querySelector<HTMLElement>('.exlibris');
   if (!page || !page.isConnected || reduced()) {
@@ -19,8 +19,10 @@ export const exlibrisThemeTransition: ThemeTransitionStrategy = (request) => {
   const strip = page.querySelector<HTMLElement>('.edition-strip');
   const morph = page.querySelector<HTMLElement>('.fold-morph');
   const toNight = request.to === 'nightwave';
-  if (leaf && strip && morph) {
-    const marks = buildFoldMarks(leaf.getBoundingClientRect(), strip.getBoundingClientRect(), strip.clientWidth < 400 ? 25 : 41);
+  if (leaf && morph) {
+    const leafRect = leaf.getBoundingClientRect();
+    const stripRect = strip?.getBoundingClientRect();
+    const marks = buildFoldMarks(leafRect, stripRect ?? null, (stripRect?.width ?? leafRect.width) < 400 ? 25 : 41);
     morph.replaceChildren(...marks.map(mark => {
       const bar = document.createElement('i');
       bar.style.setProperty('--i', String(mark.index));

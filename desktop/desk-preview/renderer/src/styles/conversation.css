@@ -16,7 +16,7 @@
   color: var(--dlg-ink);
   color-scheme: light;
   display: grid;
-  grid-template-rows: 60px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -37,31 +37,21 @@
 .dialogue-page .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; margin: -1px; }
 .dialogue-page :is(button, input, textarea, [tabindex="0"]):focus-visible { outline: 2px solid var(--dlg-commit); outline-offset: 2px; }
 
-/* ---------- Topbar ---------- */
-.dialogue-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding-inline: 4px;
-  border-bottom: 1px solid var(--dlg-rule);
-  min-width: 0;
-}
-.dialogue-identity { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.dialogue-identity h1 { margin: 0; font-size: 18px; font-weight: 700; line-height: 26px; letter-spacing: 0.02em; }
-.dialogue-identity-rule { width: 1px; height: 18px; background: var(--dlg-rule); }
-.dialogue-identity-caption { font-size: var(--nd-semantic-type-caption-size); line-height: var(--nd-semantic-type-caption-line); color: var(--dlg-muted); }
-.dialogue-topbar-actions { display: flex; align-items: center; gap: 6px; }
-.dialogue-history-button { min-width: 0; gap: 6px !important; font-size: 13px !important; }
-.dialogue-history-button svg { width: 17px; height: 17px; }
+/* ---------- 对话框内工具 ---------- */
+.dialogue-pane-toolbar { position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: none; min-width: 0; padding: 7px 10px 0; }
+.dialogue-pane-switches, .dialogue-pane-actions { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.dialogue-pane-actions { margin-left: auto; flex: none; }
+.dialogue-page .dialogue-pane-icon { display: grid; place-items: center; width: 34px; height: 34px; min-width: 34px; padding: 0; border: 1px solid transparent; border-radius: 9px; color: var(--dlg-muted); background: transparent; box-shadow: none; }
+.dialogue-page .dialogue-pane-icon:hover, .dialogue-page .dialogue-pane-icon[aria-expanded="true"] { color: var(--dlg-ink); background: var(--dlg-selection); }
+.dialogue-pane-icon svg { width: 17px; height: 17px; }
 .dialogue-role-switch { position: relative; }
 .dialogue-window-switch { position: relative; }
-.dialogue-connection { display: inline-flex; align-items: center; gap: 6px; padding-inline: 4px; font-size: 11px; color: var(--dlg-muted); white-space: nowrap; }
+.dialogue-connection { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 34px; flex: none; }
 .dialogue-connection::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--dlg-commit); opacity: .7; }
 .dialogue-connection[data-state="open"]::before { background: var(--nd-semantic-color-success); opacity: 1; }
 .dialogue-connection[data-state="retrying"]::before, .dialogue-connection[data-state="connecting"]::before, .dialogue-connection[data-state="loading"]::before { background: var(--nd-semantic-color-warning); animation: dialogue-connection-pulse 1.4s ease-in-out infinite; }
 .dialogue-connection[data-state="closed"]::before { background: var(--nd-semantic-color-danger); opacity: 1; }
-.dialogue-role-button { display: inline-flex; align-items: center; gap: 5px; min-height: 32px; padding: 0 10px; border: 1px solid var(--dlg-rule); border-radius: 9px; color: var(--dlg-muted); font-size: 12px; }
+.dialogue-page .dialogue-role-button { display: inline-flex; align-items: center; gap: 5px; min-height: 32px; padding: 0 8px; border: 1px solid var(--dlg-rule); border-radius: 9px; color: var(--dlg-muted); font-size: 12px; }
 .dialogue-role-button:hover { background: var(--dlg-selection); color: var(--dlg-ink); }
 .dialogue-role-button[aria-expanded="true"] { border-color: var(--dlg-entry); background: var(--dlg-selection); color: var(--dlg-ink); }
 .dialogue-role-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; min-width: 168px; padding: 6px; border: 1px solid var(--dlg-rule); border-radius: 12px; background: var(--dlg-paper); box-shadow: var(--nd-semantic-shadow-floating); }
@@ -70,7 +60,7 @@
 .dialogue-role-menu button svg { color: var(--dlg-entry); }
 
 /* ---------- Layout ---------- */
-.dialogue-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 16px; min-height: 0; min-width: 0; padding: 14px 0 18px; height: 100%; }
+.dialogue-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 16px; min-height: 0; min-width: 0; padding: 8px 0 18px; height: 100%; }
 
 /* ---------- Stage ---------- */
 .dialogue-stage { position: relative; isolation: isolate; min-width: 0; min-height: 0; overflow: hidden; border-radius: 12px; background: var(--dlg-canvas); }
@@ -90,8 +80,8 @@
 .dialogue-stage-note { position: absolute; right: 10px; bottom: 10px; z-index: 5; padding: 5px 9px; border-radius: 7px; background: color-mix(in srgb, var(--dlg-paper) 86%, transparent); color: var(--dlg-muted); font-size: 11px; pointer-events: none; backdrop-filter: blur(4px); }
 
 /* ---------- Conversation pane ---------- */
-.dialogue-pane { position: relative; isolation: isolate; min-height: 0; min-width: 0; border: 1px solid var(--dlg-rule); border-radius: 12px; background: var(--dlg-paper); overflow: hidden; }
-.dialogue-chat-wrap { height: 100%; }
+.dialogue-pane { position: relative; isolation: isolate; display: flex; flex-direction: column; min-height: 0; min-width: 0; border: 1px solid var(--dlg-rule); border-radius: 12px; background: var(--dlg-paper); overflow: hidden; }
+.dialogue-chat-wrap { flex: 1; min-height: 0; }
 .dialogue-chat-loading { display: flex; align-items: center; justify-content: center; gap: 10px; height: 100%; color: var(--dlg-muted); font-size: 13px; }
 .dialogue-chat { height: 100%; display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; }
 .dialogue-messages-wrap { position: relative; min-height: 0; }
@@ -289,12 +279,8 @@
   .dialogue-time { right: calc(3% + 10px); }
 }
 @media (max-width: 760px) {
-  .dialogue-page { grid-template-rows: 54px minmax(0, 1fr); }
-  .dialogue-topbar { gap: 8px; }
-  .dialogue-identity { gap: 8px; }
-  .dialogue-identity h1 { font-size: 17px; }
-  .dialogue-identity-rule, .dialogue-identity-caption { display: none; }
   .dialogue-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: 154px minmax(0, 1fr); gap: 8px; padding: 8px 0 10px; }
+  .dialogue-pane-toolbar { padding: 5px 8px 0; }
   .dialogue-stage { border-radius: 9px; }
   .dialogue-character .layer-image { padding-top: 2px; width: 100%; }
   .dialogue-background .layer-image { object-position: 50% 45%; }
@@ -353,7 +339,6 @@
   .dialogue-history-search { padding-top: 8px; }
 }
 @media (max-width: 760px) and (max-height: 520px) {
-  .dialogue-page { grid-template-rows: 48px minmax(0, 1fr); }
   .dialogue-layout { grid-template-rows: 64px minmax(0, 1fr); padding-block: 5px; }
   .dialogue-zone { padding: 5px 8px 6px; }
   .dialogue-writing textarea { height: 25px; min-height: 25px; }
@@ -363,3 +348,42 @@
 @media (hover: none) {
   .dialogue-stage-note { right: 10px; bottom: 42px; }
 }
+
+/* ---------- 换光：舞台光线先走，纸面再逐行推进 ---------- */
+.dialogue-sun-beam{position:absolute;left:-30%;top:-14%;width:160%;height:1.5px;opacity:0;z-index:4;pointer-events:none;transform:rotate(-21deg)}
+.dialogue-sun-beam::before,.dialogue-sun-beam::after{content:'';position:absolute;inset:0;border-radius:2px;background:linear-gradient(90deg,transparent 6%,rgba(255,234,190,.98) 52%,transparent 94%);box-shadow:0 0 6px 1.5px rgba(255,206,132,.5)}
+.dialogue-sun-beam::after{background:linear-gradient(90deg,transparent 6%,rgba(212,226,255,.95) 52%,transparent 94%);box-shadow:0 0 5px 1px rgba(150,180,235,.35);opacity:0}
+.dialogue-page[data-light-dir="dusk"] .dialogue-sun-beam{animation:dialogue-beam-down 1.05s cubic-bezier(.45,.05,.55,.95) both}
+.dialogue-page[data-light-dir="dusk"] .dialogue-sun-beam::after{animation:dialogue-beam-cool 1.05s ease both}
+.dialogue-page[data-light-dir="dawn"] .dialogue-sun-beam{animation:dialogue-beam-up 1.05s cubic-bezier(.45,.05,.55,.95) both}
+.dialogue-page[data-light-dir="dawn"] .dialogue-sun-beam::after{animation:dialogue-beam-warm 1.05s ease both}
+@keyframes dialogue-beam-down{0%{top:-14%;opacity:0}12%{opacity:.9}82%{opacity:.6}100%{top:114%;opacity:0}}
+@keyframes dialogue-beam-up{0%{top:114%;opacity:0}12%{opacity:.9}82%{opacity:.6}100%{top:-14%;opacity:0}}
+@keyframes dialogue-beam-cool{0%,22%{opacity:0}72%,100%{opacity:1}}
+@keyframes dialogue-beam-warm{0%,22%{opacity:1}72%,100%{opacity:0}}
+/* 换光期间把子树钉在指定预置：元素自带令牌，不跟随根节点切换。 */
+.dialogue-page .dlg-pal{
+  --dlg-ink:var(--nd-semantic-color-text);--dlg-muted:var(--nd-semantic-color-text-muted);
+  --dlg-canvas:var(--nd-semantic-color-canvas);--dlg-paper:var(--nd-semantic-color-surface);
+  --dlg-rule:var(--nd-semantic-color-line-decorative);--dlg-outline:var(--nd-semantic-color-line-control);
+  --dlg-commit:var(--nd-semantic-color-commit);--dlg-entry:var(--nd-semantic-color-entry);
+  --dlg-pink:var(--nd-semantic-color-accent-decorative);--dlg-selection:var(--nd-semantic-color-selection);
+  --dlg-cue-ink:#6A627B;--dlg-cue-line:rgba(106,98,123,.55);--dlg-user-line:55%;
+  color:var(--dlg-ink);color-scheme:light;
+}
+.dialogue-page .dlg-pal[data-ui-preset="nightwave"]{--dlg-cue-ink:#B9AFA4;--dlg-cue-line:rgba(185,175,164,.5);--dlg-user-line:0%;color-scheme:dark}
+/* 纸面色带：面板整体留在旧预置，新纸色按 --band 从一侧推进。 */
+.dialogue-pane.sweeping{border-color:var(--sweep-rule,var(--dlg-rule))}
+.dialogue-pane.sweeping::before{content:'';position:absolute;inset:0;z-index:0;pointer-events:none;background:var(--sweep-paper,var(--dlg-paper));clip-path:inset(0 0 calc(100% - var(--band,0%)) 0)}
+.dialogue-pane.sweeping.dawn::before{clip-path:inset(calc(100% - var(--band,0%)) 0 0 0)}
+.dialogue-pane.sweeping>.dialogue-chat-wrap{position:relative;z-index:1}
+.dialogue-pane.sweeping .dialogue-zone:not(.flipped){background:transparent}
+.dialogue-pane.sweeping .dialogue-history{background:transparent}
+.dialogue-pane.sweeping.sweeping-history .dialogue-chat-wrap{visibility:hidden}
+.dialogue-pane.sweeping .dialogue-writing{background:transparent}
+.dialogue-pane.sweeping .dialogue-zone.flipped .dialogue-writing{background:color-mix(in srgb,var(--dlg-canvas) 23%,var(--dlg-paper))}
+.dialogue-pane.sweeping :is(.dialogue-latest,.dialogue-date-notice):not(.flipped){background:transparent}
+.dialogue-pane.sweep-settle,.dialogue-pane.sweep-settle *,.dialogue-pane.sweep-settle *::before,.dialogue-pane.sweep-settle *::after,.dialogue-pane.sweep-settle::before{transition:none!important}
+/* 顶栏与舞台在换光保护期内跟着换色，收尾时已经到位。 */
+.dialogue-page[data-lighting] .dialogue-stage{transition:background-color .6s ease}
+.dialogue-page[data-lighting] :is(.dialogue-pane-toolbar,.dialogue-pane-toolbar *){transition:color .45s,border-color .45s,background-color .45s}

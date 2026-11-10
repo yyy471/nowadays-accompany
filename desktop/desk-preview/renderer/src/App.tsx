@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import type { Outfit, RoleDetail, RoleListItem, RoleStateResponse } from './types';
 import { appearanceAssetUrl } from './types';
-import { BrandMark, Button, ControlButton, Icon, UiThemeProvider, UiThemeScope, createMotionScope, readMotionPx, readMotionTime, readMotionValue, useMotionPolicy } from './ui';
+import { BrandMark, Button, ControlButton, UiThemeProvider, UiThemeScope, createMotionScope, readMotionPx, readMotionTime, readMotionValue, useMotionPolicy } from './ui';
 import { useThemePreset } from './ui/presets';
 import { ThemeSwitcher } from './components/shell/ThemeSwitcher';
 import { PageDock } from './components/shell/PageDock';
@@ -18,6 +18,9 @@ export function App() {
   const [scope] = useState(createMotionScope);
   const pageBody = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState('home');
+  const [hideConversationDock, setHideConversationDock] = useState(() => {
+    try { return localStorage.getItem('nowadays-dialogue-hide-dock') === '1'; } catch { return false; }
+  });
   const [rolesVisit, setRolesVisit] = useState(0);
   const [roles, setRoles] = useState<RoleListItem[]>();
   const [currentId, setCurrentId] = useState('');
@@ -106,23 +109,28 @@ export function App() {
   const accounts = roles ? { accounts: roles.map(r => ({ accountId: r.roleId, nickname: r.displayName, signature: r.roleId === currentId ? status : '' })) } : undefined;
   const currentOutfit = outfits.find(outfit => outfit.outfitId === state.outfitId) ?? null;
   const outfitHomeUrl = currentOutfit?.home ? appearanceAssetUrl(currentId, currentOutfit.home.assetId) : null;
-  return <div className="studio-shell" data-ui-palette="xiacheng" data-ui-preset={preset} data-page={page}>
+  const dockHidden = page === 'conversation' && hideConversationDock;
+  const setConversationDockHidden = (hidden: boolean) => {
+    setHideConversationDock(hidden);
+    try { localStorage.setItem('nowadays-dialogue-hide-dock', hidden ? '1' : '0'); } catch { /* 本地偏好不可写时仅保留本次设置。 */ }
+  };
+  return <div className="studio-shell" data-ui-palette="xiacheng" data-ui-preset={preset} data-page={page} data-dialogue-dock-hidden={dockHidden || undefined}>
     <UiThemeScope theme="xiacheng" className="studio-header-scope"><header className="studio-header">
       <ControlButton className="ui-studio-brand" aria-label="返回主页" onClick={() => setPage('home')}><BrandMark/><span>Nowadays<small>A NOTE FOR YOUR EVERYDAY.</small></span></ControlButton>
       <ThemeSwitcher/>
-      <div className="studio-header-actions"><ControlButton className="ui-settings-launcher" aria-label="应用设置" onClick={() => setPage('settings')}><Icon name="settings" size={20}/></ControlButton></div>
+      <div className="studio-header-actions" aria-hidden="true" />
     </header></UiThemeScope>
     <main className="studio-content" tabIndex={-1} aria-label="当前页面内容"><UiThemeProvider theme="xiacheng">
       <div ref={pageBody} className={page === 'home' ? 'studio-home-content' : page === 'roles' ? 'studio-relations-content' : page === 'conversation' ? 'studio-conversation-content' : 'studio-legacy-page'}>
         {page === 'home' && <UiThemeScope theme="xiacheng"><HomePage accounts={accounts} selectedAccountId={currentId} outfitHomeUrl={outfitHomeUrl} outfitName={currentOutfit?.name ?? null} loading={!roles && !error} error={error} onRetry={() => refresh()} onGoWorkbench={() => setPage('roles')}/></UiThemeScope>}
         {page === 'roles' && <Relations roles={roles || []} error={error} currentId={currentId} visit={rolesVisit} onSelect={setCurrentId} onOpenSettings={() => setPage('settings')}/>}
-        {page === 'conversation' && <ConversationPage roles={roles || []} currentId={currentId} currentOutfit={currentOutfit} outfits={outfits} outfitHomeUrl={outfitHomeUrl} loading={!roles && !error} error={error} onSelectRole={setCurrentId} onOpenRelations={() => setPage('roles')}/>}
+        {page === 'conversation' && <ConversationPage roles={roles || []} currentId={currentId} currentOutfit={currentOutfit} outfits={outfits} outfitHomeUrl={outfitHomeUrl} loading={!roles && !error} error={error} hideDock={hideConversationDock} onHideDockChange={setConversationDockHidden} onSelectRole={setCurrentId} onOpenRelations={() => setPage('roles')}/>}
         {page === 'settings' && <SettingsPage roles={roles || []} detail={detail} currentId={currentId} currentOutfitId={typeof state.outfitId === 'string' ? state.outfitId : ''} onSelect={setCurrentId} onRefresh={refresh}/>}
       </div>
     </UiThemeProvider></main>
-    <UiThemeScope theme="xiacheng" className="studio-footer-scope"><footer className="studio-footer">
+    {!dockHidden && <UiThemeScope theme="xiacheng" className="studio-footer-scope"><footer className="studio-footer">
       <span className="studio-runtime">{error ? '连接状态待更新' : roles ? `${roles.length} 位角色 · 本地生活空间` : '正在连接'}</span>
       <PageDock page={page} onNavigate={next => { setPage(next); if (next === 'roles') setRolesVisit(value => value + 1); }}/><span className="studio-edition">CHARACTER STUDIO / 开发版</span>
-    </footer></UiThemeScope>
+    </footer></UiThemeScope>}
   </div>;
 }

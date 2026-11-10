@@ -174,24 +174,16 @@ export function Relations({ roles, error, currentId, visit, onSelect, onOpenSett
   return <UiThemeScope theme="xiacheng" preset={preset} motion={motion.reduced ? 'reduced' : 'full'} className="exlibris-host">
     <div className={'exlibris' + (enter === 'home' ? ' home-enter' : '')} data-theme={night ? 'night' : 'day'} data-motion={motion.reduced ? 'reduced' : 'full'}>
     <div className="relationship-stage">
-      <header className="relationship-topbar">
-        <div className="page-heading">
-          <div className="chapter-kicker">这一页 · 关系</div>
-          <h1><span className="day-only">关系藏页</span><span className="night-only">相伴电台</span></h1>
-          <p>{listRole ? listRole.displayName : roles.length ? '选择一位角色' : '本地生活空间'}</p>
-        </div>
-        <div className="edition-strip strip" aria-hidden="true">
-          <div className="letter-strip"><svg viewBox="0 0 450 70"><path d="M10 37h100l40-26 40 26 40-26 40 26h170M110 37l40 26 40-26 40 26 40-26" /></svg><span>留白，也是相处的一部分。</span><i>来信</i></div>
-          <div className="glass"><div className="scale-caption"><span>晚风电台 · 日常藏本</span><span>装帧刻度 / 非状态数据</span></div><div className="scale-ticks">{Array.from({ length: 41 }, (_, index) => <i key={index} />)}</div><span className="scale-needle" /></div>
-        </div>
-        <div className="page-tools" />
-      </header>
       <div className={'book collection' + (fold.on ? ' illuminating' : '') + (fold.reverse ? ' reverse' : '') + (turning ? '' : '')} data-view={ui.view} id="collection">
         <div className="spread book-surface" aria-hidden="true"><div className="leaf left" /><div className="gutter" /><div className="leaf right" /></div>
         <div className="ribbon" aria-hidden="true" />
         <div className="book-thread" aria-hidden="true"><i /><i /></div>
         <div className="sheet-grain" aria-hidden="true" />
         <div className="backlight" aria-hidden="true"><div className="light-beam" /><div className="reverse-print"><span>日常来信</span><em>所藏的，是相遇。</em><svg viewBox="0 0 64 80"><path d="M31 74C15 48 22 27 45 8c8 29 0 50-17 52M29 61 45 8M32 48 23 35m13-1 11-9M31 57l12-10" /></svg></div></div>
+        <div className="edition-strip strip" aria-hidden="true">
+          <div className="letter-strip"><svg viewBox="0 0 450 70" preserveAspectRatio="none"><path d="M10 37h100l40-26 40 26 40-26 40 26h170M110 37l40 26 40-26 40 26 40-26" /></svg><span>留白，也是相处的一部分。</span><i>来信</i></div>
+          <div className="glass"><div className="scale-caption"><span>晚风电台 · 日常藏本</span><span>装帧刻度 / 非状态数据</span></div><div className="scale-ticks">{Array.from({ length: 41 }, (_, index) => <i key={index} />)}</div><span className="scale-needle" /></div>
+        </div>
         <div className="plate-heading">
           <nav className="breadcrumb" aria-label="当前位置">
             <button type="button" onClick={() => openView('home')}>关系</button>

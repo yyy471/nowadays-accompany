@@ -65,6 +65,7 @@
 | `voice_id` | 预置必填，值来自同一个服务的 `/voices` |
 | `language` | 可选。提供时必须在声明列表内，省略时由服务决定 |
 | `speed` | 可选。用户语速倍数，`1.25` 表示更快。省略时按自然语速，提供时必须在声明范围内 |
+| `emotion` | 可选。桥接支持时接收 UTF-8 情绪指令。省略时由服务自行处理，本地桥接会根据台词自动判断 |
 
 ```powershell
 # 音色克隆。若该模式要求原文，再添加 -F "reference_text=录音中实际说的话"
@@ -95,6 +96,8 @@ curl.exe -f -X POST http://127.0.0.1:9890/tts -F "mode=preset" -F "voice_id=spea
 | `POST /windows/:windowId/segments/:segmentId/speech` | 复用现有路径。后端检查角色与窗口归属、读取台词和已保存音色、直接返回 WAV |
 
 试听请求的候选配置使用 `config` 对象，包含 `baseUrl`、`protocol`、`voiceSource`、`capabilities`、`language`、`speed`、`emoAlpha` 和旧字段 `referenceAssetId`。兼容既有调用时也可把同一组字段平铺在顶层，但两种形状不能同时使用。试听不保存角色配置。
+
+使用统一协议时，试听可在请求顶层传 `emotion`，按段合成可选传 JSON `{"emotion":"温柔"}`。原无请求体调用继续有效。服务按自身支持的风格解释该值，旧直连 IndexTTS 协议沿用 `emoAlpha`。本地桥接 `/health` 可附带 `capabilities.engines` 和 `capabilities.defaultEngine`，通用音色配置只保存公共能力。
 
 ```json
 {

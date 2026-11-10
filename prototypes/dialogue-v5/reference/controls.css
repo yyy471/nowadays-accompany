@@ -1,0 +1,81 @@
+/* Verbatim control rules from supplied character-theme.css lines 29–108. */
+[data-ui-theme="xiacheng"], [data-ui-theme="xiacheng"] * { box-sizing: border-box; }
+[data-ui-theme="xiacheng"] :is(button,input,select,textarea) { font-family: inherit; }
+[data-ui-theme="xiacheng"] ::selection { background: var(--nd-semantic-color-selection); color: var(--nd-semantic-color-text); }
+[data-ui-theme="xiacheng"] :is(button,input,select,textarea,a):focus-visible,
+[data-ui-theme="xiacheng"] [data-preview-state="focus"] {
+  outline: var(--nd-component-focus-width) solid var(--nd-component-focus-color);
+  outline-offset: var(--nd-component-focus-offset);
+}
+[data-ui-theme="xiacheng"] .btn {
+  position: relative;
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: var(--nd-component-button-gap); min-height: var(--nd-component-button-height);
+  padding: 10px 16px; border: 1px solid var(--nd-semantic-color-line-control);
+  border-radius: var(--nd-component-button-radius); background: var(--nd-semantic-color-surface);
+  color: var(--nd-semantic-color-text); font-family: var(--nd-component-button-font);
+  font-size: var(--nd-component-button-font-size); line-height: var(--nd-component-button-line-height);
+  font-weight: var(--nd-component-button-font-weight); white-space: nowrap; cursor: pointer;
+  box-shadow: none; opacity: 1;
+  transition: background-color var(--nd-semantic-motion-control) var(--nd-semantic-motion-ease), transform var(--nd-semantic-motion-feedback) var(--nd-semantic-motion-ease), box-shadow var(--nd-semantic-motion-feedback) var(--nd-semantic-motion-ease);
+}
+[data-ui-theme="xiacheng"] .btn:hover:not([aria-disabled="true"]),
+[data-ui-theme="xiacheng"] .btn[data-preview-state="hover"] { background: var(--nd-semantic-color-selection); border-color: var(--nd-semantic-color-line-control); }
+[data-ui-theme="xiacheng"] .btn-primary {
+  background: var(--nd-component-button-background); color: var(--nd-component-button-foreground);
+  border-color: var(--nd-component-button-background); box-shadow: 0 var(--nd-component-button-depth) 0 var(--nd-component-button-depth-color);
+}
+[data-ui-theme="xiacheng"] .btn-primary:hover:not([aria-disabled="true"]),
+[data-ui-theme="xiacheng"] .btn-primary[data-preview-state="hover"] { background: var(--nd-component-button-hover-background); border-color: var(--nd-component-button-hover-background); }
+[data-ui-theme="xiacheng"] .btn-entry {
+  background: var(--nd-component-entry-button-background); color: var(--nd-component-entry-button-foreground);
+  border-color: var(--nd-component-entry-button-background); box-shadow: 0 var(--nd-component-button-depth) 0 var(--nd-component-entry-button-depth-color);
+  padding-right: 0; overflow: visible; justify-content: space-between; isolation: isolate;
+}
+[data-ui-theme="xiacheng"] .btn-entry:hover:not([aria-disabled="true"]) { background: var(--nd-component-entry-button-hover-background); border-color: var(--nd-component-entry-button-hover-background); }
+[data-ui-theme="xiacheng"] .ui-button-end {
+  position: relative; display: grid; place-items: center; align-self: stretch; margin-block: -10px; min-width: 40px;
+  border-radius: 0 var(--nd-component-button-radius) var(--nd-component-button-radius) 0;
+  background: var(--nd-component-entry-button-depth-color);
+  transform: translateX(0);
+  transition: transform var(--nd-component-motion-control) var(--nd-component-motion-surface-ease);
+}
+[data-ui-theme="xiacheng"] .btn-sm .ui-button-end { margin-block: -6px; }
+/* 书签尾部：外扩装饰透传输入，不改变布局与命中框。 */
+[data-ui-theme="xiacheng"] .ui-button-end::after {
+  content: ''; position: absolute; top: calc(100% - 1px); left: 0; width: 100%;
+  height: var(--nd-component-motion-bookmark-tail); pointer-events: none;
+  background: var(--nd-component-entry-button-depth-color);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 60%, 0 100%);
+  transform: scaleY(0); transform-origin: top;
+  transition: transform var(--nd-component-motion-control) var(--nd-component-motion-surface-ease);
+}
+[data-ui-theme="xiacheng"] .ui-button-end svg { transform: rotate(-90deg); transition: transform var(--nd-component-motion-control) var(--nd-semantic-motion-ease); }
+@media (hover: hover) {
+  [data-ui-theme="xiacheng"] .btn-entry:hover:not([aria-disabled="true"]):not([data-preview-state="pressed"]) .ui-button-end { transform: translateX(var(--nd-component-motion-bookmark-reach)); }
+  [data-ui-theme="xiacheng"] .btn-entry:hover:not([aria-disabled="true"]):not([data-preview-state="pressed"]) .ui-button-end::after { transform: scaleY(1); }
+  [data-ui-theme="xiacheng"] .btn-entry:hover:not([aria-disabled="true"]):not([data-preview-state="pressed"]) .ui-button-end svg { transform: translateX(var(--nd-component-motion-arrow-offset)) rotate(-90deg); }
+}
+[data-ui-theme="xiacheng"] .btn-entry:focus-visible .ui-button-end,
+[data-ui-theme="xiacheng"] .btn-entry[data-preview-state="focus"] .ui-button-end { transform: translateX(var(--nd-component-motion-bookmark-reach)); }
+[data-ui-theme="xiacheng"] .btn-entry:focus-visible .ui-button-end::after,
+[data-ui-theme="xiacheng"] .btn-entry[data-preview-state="focus"] .ui-button-end::after { transform: scaleY(1); }
+[data-ui-theme="xiacheng"] .btn-entry:focus-visible .ui-button-end svg,
+[data-ui-theme="xiacheng"] .btn-entry[data-preview-state="focus"] .ui-button-end svg { transform: translateX(var(--nd-component-motion-arrow-offset)) rotate(-90deg); }
+[data-ui-theme="xiacheng"] .btn-entry:is(:active, [data-preview-state="pressed"]):not([aria-disabled="true"]) .ui-button-end { transform: translateX(0); }
+[data-ui-theme="xiacheng"] .btn-entry:is(:active, [data-preview-state="pressed"]):not([aria-disabled="true"]) .ui-button-end::after { transform: scaleY(.45); }
+[data-ui-theme="xiacheng"] .btn-entry:is(:active, [data-preview-state="pressed"]):not([aria-disabled="true"]) .ui-button-end svg { transform: rotate(-90deg); }
+[data-ui-theme="xiacheng"] .ui-button-leading { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: var(--nd-semantic-size-icon-small); height: var(--nd-semantic-size-icon-small); }
+[data-ui-theme="xiacheng"] .btn-danger { color: var(--nd-semantic-color-danger); background: var(--nd-semantic-color-danger-surface); border-color: var(--nd-semantic-color-danger); }
+[data-ui-theme="xiacheng"] .btn-danger:hover:not([aria-disabled="true"]) { color: var(--nd-semantic-color-on-solid); background: var(--nd-semantic-color-danger); border-color: var(--nd-semantic-color-danger); }
+[data-ui-theme="xiacheng"] .btn-ghost { color: var(--nd-semantic-color-commit); background: var(--nd-semantic-color-transparent); border-color: var(--nd-semantic-color-transparent); }
+[data-ui-theme="xiacheng"] .btn-ghost:hover:not([aria-disabled="true"]) { color: var(--nd-semantic-color-commit); background: var(--nd-semantic-color-selection); border-color: var(--nd-semantic-color-transparent); }
+[data-ui-theme="xiacheng"] .btn-sm { min-height: var(--nd-component-button-compact-height); padding-block: 6px; }
+[data-ui-theme="xiacheng"] .btn:is(:active,[data-preview-state="pressed"]):not([aria-disabled="true"]) { transform: translateY(1px); }
+[data-ui-theme="xiacheng"] .btn-primary:is(:active,[data-preview-state="pressed"]):not([aria-disabled="true"]) { box-shadow: 0 1px 0 var(--nd-component-button-depth-color); }
+[data-ui-theme="xiacheng"] .btn[data-feedback="error"],
+[data-ui-theme="xiacheng"] .btn[data-feedback="error"]:is(:hover,:active) { color: var(--nd-semantic-color-danger); background: var(--nd-semantic-color-danger-surface); border-color: var(--nd-semantic-color-danger); box-shadow: none; }
+[data-ui-theme="xiacheng"] .btn[data-feedback="success"],
+[data-ui-theme="xiacheng"] .btn[data-feedback="success"]:is(:hover,:active) { color: var(--nd-semantic-color-success); background: var(--nd-semantic-color-success-surface); border-color: var(--nd-semantic-color-success); box-shadow: none; }
+[data-ui-theme="xiacheng"] .btn:disabled,
+[data-ui-theme="xiacheng"] .btn[aria-disabled="true"]:not([aria-busy="true"]) { opacity: 1; color: var(--nd-semantic-color-disabled-text); background: var(--nd-semantic-color-disabled-surface); border-color: var(--nd-semantic-color-line-control); box-shadow: none; cursor: not-allowed; transform: none; }

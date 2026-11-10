@@ -94,8 +94,36 @@
 @media(max-height:820px) and (min-width:960px){.exlibris .plate-switch{top:352px}}
 
 /* Flex 交叉轴上自动外边距会让书页按内容收窄；维持原型的满宽书面。 */
-.exlibris .relationship-stage{width:100%;min-width:0}
-.studio-shell[data-page="roles"] .studio-content{padding-bottom:14px}
+.exlibris .relationship-stage{width:100%;min-width:0;grid-template-rows:minmax(0,1fr)}
+.studio-shell[data-page="roles"] .studio-content{padding-top:8px;padding-bottom:14px}
+/* 信笺／电台装饰沿书页上缘安置，留出右侧日期与左侧导航。 */
+.exlibris .edition-strip{display:block;position:absolute;z-index:5;top:12px;left:calc(38% + 34px);right:145px;height:40px;pointer-events:none}
+.exlibris .edition-strip .letter-strip{position:absolute;inset:0;display:flex;opacity:1;transition:opacity .65s ease;padding:0 8px;gap:8px}
+.exlibris[data-theme=night] .edition-strip .letter-strip{display:flex;opacity:0}
+.exlibris .edition-strip .letter-strip svg{height:100%;bottom:0}
+.exlibris .edition-strip .letter-strip>span{background:var(--surface);padding:3px 8px;font-size:11px;line-height:18px;letter-spacing:.08em;white-space:nowrap}
+.exlibris .edition-strip .letter-strip>i{font-size:14px;line-height:18px;padding:5px 8px}
+.exlibris .edition-strip .glass{display:block!important;opacity:0;transition:opacity .65s ease;border-radius:8px}
+.exlibris[data-theme=night] .edition-strip .glass{opacity:1}
+/* 全局主题过渡会暂停普通 transition；仅恢复装饰条透明度过渡。 */
+html[data-theme-transition="relationship-journal"] .exlibris[data-motion="full"] .edition-strip :is(.letter-strip,.glass){transition:opacity .65s ease!important}
+.exlibris .edition-strip .scale-caption{padding:4px 12px;font-size:9px;line-height:13px}
+.exlibris .edition-strip .scale-caption span:last-child{font-size:9px}
+.exlibris .edition-strip .scale-ticks{left:12px;right:12px;bottom:4px;height:14px}
+.exlibris .edition-strip .scale-ticks i{height:5px}
+.exlibris .edition-strip .scale-ticks i:nth-child(5n+1){height:13px}
+.exlibris .edition-strip .scale-ticks i:nth-child(2n){height:8px}
+.exlibris .edition-strip .scale-needle{top:18px;bottom:3px}
+@media(max-width:959px){
+  .exlibris .edition-strip{left:105px;right:125px;top:16px;height:32px}
+  .exlibris[data-theme=night] .edition-strip .glass{display:block!important}
+  .exlibris .edition-strip .scale-caption{display:none}
+  .exlibris .edition-strip .scale-needle{top:8px}
+  .exlibris .edition-strip .letter-strip>span{font-size:10px;letter-spacing:0;overflow:hidden;text-overflow:ellipsis}
+  .exlibris .edition-strip .letter-strip>i{display:none}
+}
+@media(max-width:599px){.exlibris .edition-strip{left:90px;right:111px;top:16px;height:30px}}
+@media(max-width:359px){.exlibris .edition-strip{left:78px;right:104px}}
 .exlibris button{font:inherit;color:inherit;cursor:pointer;border:0;background:none;touch-action:manipulation}
 .exlibris button:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .exlibris .back-button{justify-content:flex-start;padding:6px 0;width:max-content;min-height:36px;gap:9px}

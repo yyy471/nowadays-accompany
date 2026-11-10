@@ -88,6 +88,7 @@ export function ConversationStage({
     <CrossfadeLayer className="dialogue-character" src={characterUrl} alt="角色立绘" />
     {full && sceneAsset ? <div className="dialogue-scene-full"><img src={sceneAsset} alt="过场图" /></div> : null}
     <div className="dialogue-stage-cue" aria-hidden="true" data-live={day ? 'cue' : ''} />
+    <i className="dialogue-sun-beam" aria-hidden="true" />
     {visible ? <button type="button" className="dialogue-scene-dismiss" onClick={onDismiss}>收起过场图</button> : null}
     {visible ? <span className="dialogue-stage-note" aria-hidden="true">{sceneLabel(visible.mode)}</span> : null}
   </section>;
