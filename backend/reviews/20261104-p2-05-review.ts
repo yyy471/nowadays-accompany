@@ -179,7 +179,7 @@ await probe("R02-mcp-config-refresh", async () => {
   const model: ModelPort = { async *stream(request) {
     requests += 1;
     if (requests <= 2) {
-      if (requests === 2) fixture.app.services.resources.update(resource.resourceId, { config: { ...resource.config, env: { ...(resource.config.env as object), REVIEW_VALUE: "new" } } });
+      if (requests === 2) { const raw = fixture.app.appStore.getResource(resource.resourceId); fixture.app.appStore.updateResource({ resourceId: resource.resourceId, config: { ...raw.config, env: { ...(raw.config.env as object), REVIEW_VALUE: "new" } } }); }
       const tool = request.tools.find((tool) => tool.name.includes("command_run"));
       if (!tool) throw new Error("MCP_TOOL_MISSING");
       yield { type: "tool_call", callId: `wire-${requests}`, name: tool.name, arguments: { command: process.execPath, args: ["-e", "console.log(process.env.REVIEW_VALUE)"] } };

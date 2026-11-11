@@ -293,6 +293,109 @@ export class AppStore {
     return this.getResource(input.resourceId);
   }
 
+  /**
+   * 删除全局资源及其测试记录。引用检查由 ResourceService 在调用前完成；
+   * 这里只保证资源不存在时给出 404，而不是静默成功。
+   */
+  deleteResource(resourceId: string): void {
+    this.db.transaction(() => {
+      this.getResource(resourceId);
+      this.db
+        .prepare("DELETE FROM model_test_calls WHERE resource_id = ?")
+        .run(resourceId);
+      this.db
+        .prepare("DELETE FROM resources WHERE resource_id = ?")
+        .run(resourceId);
+    })();
+  }
+
+  /**
+   * 待清理的已删除资源（RP-R05）。与资源删除放在同一事务里写入：决策提交
+   * 成功后，即使后续角色库清理中断，也能靠这条记录在启动恢复或重试时继续
+   * 清理残留绑定；读侧也据此过滤尚未物理删除的绑定。
+   */
+  recordResourceDeletion(resourceId: string, at: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO resource_deletions (resource_id, created_at)
+         VALUES (?, ?)
+         ON CONFLICT(resource_id) DO NOTHING`,
+      )
+      .run(resourceId, at);
+  }
+
+  listResourceDeletions(): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT resource_id FROM resource_deletions
+          ORDER BY created_at, resource_id`,
+      )
+      .all() as Array<{ resource_id: string }>;
+    return rows.map((row) => row.resource_id);
+  }
+
+  isResourceDeletionPending(resourceId: string): boolean {
+    const row = this.db
+      .prepare("SELECT 1 AS present FROM resource_deletions WHERE resource_id = ?")
+      .get(resourceId) as { present: number } | undefined;
+    return row !== undefined;
+  }
+
+  clearResourceDeletion(resourceId: string): void {
+    this.db
+      .prepare("DELETE FROM resource_deletions WHERE resource_id = ?")
+      .run(resourceId);
+  }
+
+  /**
+   * 移除角色索引与其活动记录。两条删除路径都从管理列表移除角色；
+   * role_activity 有外键指向 roles，必须先删。
+   */
+  deleteRole(roleId: string): void {
+    this.db.transaction(() => {
+      this.db
+        .prepare("DELETE FROM role_activity WHERE role_id = ?")
+        .run(roleId);
+      this.db.prepare("DELETE FROM roles WHERE role_id = ?").run(roleId);
+    })();
+  }
+
+  /**
+   * 已接受但角色目录尚未删除的清理记录（DL-148）。与移除角色放在同一
+   * 事务里写入，目录删除失败或进程中断时由启动恢复与删除重试继续。
+   */
+  recordRoleDeletion(roleId: string, at: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO role_deletions (role_id, created_at)
+         VALUES (?, ?)
+         ON CONFLICT(role_id) DO NOTHING`,
+      )
+      .run(roleId, at);
+  }
+
+  listRoleDeletions(): string[] {
+    const rows = this.db
+      .prepare(
+        "SELECT role_id FROM role_deletions ORDER BY created_at, role_id",
+      )
+      .all() as Array<{ role_id: string }>;
+    return rows.map((row) => row.role_id);
+  }
+
+  isRoleDeletionPending(roleId: string): boolean {
+    const row = this.db
+      .prepare("SELECT 1 AS present FROM role_deletions WHERE role_id = ?")
+      .get(roleId) as { present: number } | undefined;
+    return row !== undefined;
+  }
+
+  clearRoleDeletion(roleId: string): void {
+    this.db
+      .prepare("DELETE FROM role_deletions WHERE role_id = ?")
+      .run(roleId);
+  }
+
   close(): void {
     this.db.close();
   }

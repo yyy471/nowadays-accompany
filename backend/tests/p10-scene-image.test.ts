@@ -510,6 +510,8 @@ test("a v12 role database migrates to v13 and keeps messages, segments and event
       raw.exec("DROP TABLE scene_image_tasks");
       // v12 的库里没有后加的语音启用标记，模拟旧库时一并去掉。
       raw.exec("ALTER TABLE role_voice_settings DROP COLUMN enabled");
+      // v12 的库里没有 V17 的外观软删除与句段立绘快照。
+      stripAppearanceV17(raw);
       raw.pragma("user_version = 12");
     } finally {
       raw.close();
@@ -533,7 +535,7 @@ test("a v12 role database migrates to v13 and keeps messages, segments and event
     assert.equal(migrated.cursor, beforeEvents);
     assert.equal(
       withStorageFor(config, role.roleId, (storage) => storage.business.schemaVersion),
-      16,
+      17,
     );
     const tables = withStorageFor(config, role.roleId, (storage) =>
       (
@@ -768,4 +770,13 @@ function withStorageFor<T>(
   } finally {
     storage.close();
   }
+}
+
+/** 把业务库还原到 V16（去掉 V17 的外观软删除与句段立绘快照），用于复现旧库迁移。 */
+function stripAppearanceV17(db: Database.Database): void {
+  db.exec("DROP INDEX IF EXISTS idx_outfits_role_name");
+  db.exec("DROP INDEX IF EXISTS idx_outfit_assets_single_home");
+  db.exec("ALTER TABLE outfits DROP COLUMN deleted_at");
+  db.exec("ALTER TABLE outfit_assets DROP COLUMN deleted_at");
+  db.exec("ALTER TABLE message_segments DROP COLUMN home_asset_id");
 }

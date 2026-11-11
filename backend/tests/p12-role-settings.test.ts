@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { configFetch } from "./config-write.js";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
@@ -106,7 +107,7 @@ async function api(
   route: string,
   body?: unknown,
 ): Promise<ApiResponse> {
-  const response = await fetch(`${baseUrl}${route}`, {
+  const response = await configFetch(`${baseUrl}${route}`, {
     method,
     headers: body === undefined ? {} : { "content-type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -713,7 +714,7 @@ async function uploadReference(
 ): Promise<{ assetId: string; relativePath: string }> {
   const form = new FormData();
   form.set("file", new Blob([wavAudio()], { type: "audio/wav" }), fileName);
-  const response = await fetch(`${base}/voice/reference`, {
+  const response = await configFetch(`${base}/voice/reference`, {
     method: "POST",
     body: form,
   });
@@ -925,7 +926,7 @@ test("an app database from v2 upgrades to v3 and keeps resources", { timeout: 30
 
   const reopened = new AppStore(config.appDatabasePath);
   try {
-    assert.equal(reopened.schemaVersion, 4);
+    assert.equal(reopened.schemaVersion, 7);
     assert.equal(reopened.getResource(resourceId).name, "旧版服务");
     const tables = reopened.db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")

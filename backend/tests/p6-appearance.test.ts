@@ -1,13 +1,18 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { configFetch } from "./config-write.js";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import Database from "better-sqlite3";
 import { inspectImage } from "../src/application/image-inspect.js";
 import { createBackendApp, listen } from "../src/bootstrap/app.js";
 import { rolePaths } from "../src/bootstrap/config.js";
 import type { OutfitRecord } from "../src/domain/appearance.js";
 import { AppError } from "../src/domain/errors.js";
-import { createFixtureWithModel, ScriptedChatModel } from "./p2-05-fixture.js";
+import { SceneImageSettingsStore } from "../src/storage/scene-image-settings-store.js";
+import { RoleStorage } from "../src/storage/role-storage.js";
+import { createFixtureWithModel, ScriptedChatModel, type Fixture } from "./p2-05-fixture.js";
 
 // 以下样本由 Pillow 12.3.0 实际编码，均可完整解码：48×64 像素。
 const PNG_SAMPLE = Buffer.from(
@@ -108,7 +113,7 @@ async function uploadOutfit(
       sprite.fileName,
     );
   }
-  return fetch(`${baseUrl}/v1/roles/${roleId}/appearance/outfits`, {
+  return configFetch(`${baseUrl}/v1/roles/${roleId}/appearance/outfits`, {
     method: "POST",
     body: form,
   });
@@ -126,9 +131,50 @@ async function uploadSprite(
     new Blob([file.data], { type: file.mediaType }),
     file.fileName,
   );
-  return fetch(
+  return configFetch(
     `${baseUrl}/v1/roles/${roleId}/appearance/outfits/${outfitId}/sprites`,
     { method: "POST", body: form },
+  );
+}
+
+async function uploadHome(
+  baseUrl: string,
+  roleId: string,
+  outfitId: string,
+  file: FilePart,
+): Promise<Response> {
+  const form = new FormData();
+  form.append(
+    "home",
+    new Blob([file.data], { type: file.mediaType }),
+    file.fileName,
+  );
+  return configFetch(
+    `${baseUrl}/v1/roles/${roleId}/appearance/outfits/${outfitId}/home`,
+    { method: "POST", body: form },
+  );
+}
+
+function deleteOutfitRequest(
+  baseUrl: string,
+  roleId: string,
+  outfitId: string,
+): Promise<Response> {
+  return configFetch(
+    `${baseUrl}/v1/roles/${roleId}/appearance/outfits/${outfitId}`,
+    { method: "DELETE" },
+  );
+}
+
+function deleteSpriteRequest(
+  baseUrl: string,
+  roleId: string,
+  outfitId: string,
+  assetId: string,
+): Promise<Response> {
+  return configFetch(
+    `${baseUrl}/v1/roles/${roleId}/appearance/outfits/${outfitId}/sprites/${assetId}`,
+    { method: "DELETE" },
   );
 }
 
@@ -239,7 +285,7 @@ test("appearance import stores outfits and reads images back", { timeout: 60_000
     assert.equal(second.status, 201);
     const knit = (await second.json()) as OutfitRecord;
 
-    const list = await fetch(
+    const list = await configFetch(
       `${baseUrl}/v1/roles/${fixture.roleId}/appearance/outfits`,
     );
     assert.equal(list.status, 200);
@@ -249,19 +295,19 @@ test("appearance import stores outfits and reads images back", { timeout: 60_000
       ["黑白长裙", "白色针织裙"],
     );
 
-    const asset = await fetch(
+    const asset = await configFetch(
       `${baseUrl}/v1/roles/${fixture.roleId}/appearance/assets/${dress.home!.assetId}`,
     );
     assert.equal(asset.status, 200);
     assert.equal(asset.headers.get("content-type"), "image/png");
     assert.deepEqual(Buffer.from(await asset.arrayBuffer()), PNG_SAMPLE);
 
-    const jpegSprite = await fetch(
+    const jpegSprite = await configFetch(
       `${baseUrl}/v1/roles/${fixture.roleId}/appearance/assets/${dress.sprites[3]!.assetId}`,
     );
     assert.equal(jpegSprite.headers.get("content-type"), "image/jpeg");
     assert.deepEqual(Buffer.from(await jpegSprite.arrayBuffer()), JPEG_SAMPLE);
-    const losslessSprite = await fetch(
+    const losslessSprite = await configFetch(
       `${baseUrl}/v1/roles/${fixture.roleId}/appearance/assets/${dress.sprites[4]!.assetId}`,
     );
     assert.equal(losslessSprite.headers.get("content-type"), "image/webp");
@@ -327,7 +373,7 @@ test("appearance import stores outfits and reads images back", { timeout: 60_000
       definition: { text: "测试角色" },
       state: {},
     });
-    const foreign = await fetch(
+    const foreign = await configFetch(
       `${baseUrl}/v1/roles/${other.roleId}/appearance/assets/${dress.home!.assetId}`,
     );
     assert.equal(foreign.status, 404);
@@ -429,7 +475,7 @@ test("animated WebP validates every frame in both import entries", { timeout: 60
       "bad-later-frame.webp",
     );
 
-    const list = await fetch(
+    const list = await configFetch(
       `${baseUrl}/v1/roles/${fixture.roleId}/appearance/outfits`,
     );
     const listed = (await list.json()) as { items: OutfitRecord[] };
@@ -550,7 +596,7 @@ test("appearance import rejects unsupported or undecodable images and multiple h
       fixture.roleId,
     ).appearanceDir;
     assert.deepEqual(fs.readdirSync(appearanceDir), []);
-    const list = await fetch(
+    const list = await configFetch(
       `${baseUrl}/v1/roles/${fixture.roleId}/appearance/outfits`,
     );
     assert.deepEqual(((await list.json()) as { items: unknown[] }).items, []);
@@ -567,7 +613,7 @@ test("appearance import rejects unsupported or undecodable images and multiple h
       new Blob([PNG_SAMPLE], { type: "image/png" }),
       "home2.png",
     );
-    const multiple = await fetch(
+    const multiple = await configFetch(
       `${baseUrl}/v1/roles/${fixture.roleId}/appearance/outfits`,
       { method: "POST", body: form },
     );
@@ -618,6 +664,567 @@ test("appearance survives restart and reads from the managed copy", { timeout: 6
     );
   } finally {
     await reopened?.close();
+    await fixture.close();
+  }
+});
+
+function replyScript(
+  text: string,
+): Array<{ type: "text_delta"; text: string } | { type: "completed"; stopReason: "stop" }> {
+  return [
+    { type: "text_delta", text },
+    { type: "completed", stopReason: "stop" },
+  ];
+}
+
+function withRoleDb<T>(fixture: Fixture, action: (db: Database.Database) => T): T {
+  const db = new Database(
+    rolePaths(fixture.app.config.dataRoot, fixture.roleId).businessDatabasePath,
+  );
+  try {
+    return action(db);
+  } finally {
+    db.close();
+  }
+}
+
+/** 把业务库还原到 V16，用于复现旧库升级。 */
+function stripAppearanceV17(db: Database.Database): void {
+  db.exec("DROP INDEX IF EXISTS idx_outfits_role_name");
+  db.exec("DROP INDEX IF EXISTS idx_outfit_assets_single_home");
+  db.exec("ALTER TABLE outfits DROP COLUMN deleted_at");
+  db.exec("ALTER TABLE outfit_assets DROP COLUMN deleted_at");
+  db.exec("ALTER TABLE message_segments DROP COLUMN home_asset_id");
+}
+
+test("服饰改名与立绘替换保留旧句段的立绘指向", { timeout: 60_000 }, async () => {
+  const model = new ScriptedChatModel([
+    replyScript("今天穿这件。\n（她理了理裙摆）"),
+    replyScript("换成新的了。"),
+  ]);
+  const fixture = createFixtureWithModel(model);
+  try {
+    const port = await listen(fixture.app.server, 0, "127.0.0.1");
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const created = await uploadOutfit(baseUrl, fixture.roleId, {
+      name: "旧名",
+      home: { fileName: "home.png", data: PNG_SAMPLE, mediaType: "image/png" },
+    });
+    assert.equal(created.status, 201);
+    const outfit = (await created.json()) as OutfitRecord;
+    fixture.app.services.roles.setState(fixture.roleId, {
+      state: { outfitId: outfit.outfitId },
+    });
+
+    // 活动中的角色不能修改外观配置。
+    const blocked = await fetch(
+      `${baseUrl}/v1/roles/${fixture.roleId}/appearance/outfits/${outfit.outfitId}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "新名" }),
+      },
+    );
+    assert.equal(blocked.status, 409);
+    assert.equal(await errorCode(blocked), "ROLE_NOT_STOPPED");
+
+    const renamed = await configFetch(
+      `${baseUrl}/v1/roles/${fixture.roleId}/appearance/outfits/${outfit.outfitId}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "新名", description: "新说明" }),
+      },
+    );
+    assert.equal(renamed.status, 200);
+    const renamedOutfit = (await renamed.json()) as OutfitRecord;
+    assert.equal(renamedOutfit.outfitId, outfit.outfitId);
+    assert.equal(renamedOutfit.name, "新名");
+    assert.equal(renamedOutfit.description, "新说明");
+
+    fixture.app.conversation.submitMessage(fixture.roleId, fixture.windowId, {
+      content: "今天穿什么？",
+      submissionId: randomUUID(),
+      sourcePlatform: "nowadays",
+    });
+    await fixture.app.conversation.waitForIdle(fixture.roleId);
+    const firstPage = fixture.app.services.messages.list(
+      fixture.roleId,
+      fixture.windowId,
+      null,
+      50,
+    );
+    const firstReply = firstPage.items
+      .filter((item) => item.sender === "assistant")
+      .at(-1);
+    assert.ok(firstReply);
+    const firstDetail = fixture.app.services.messages.get(
+      fixture.roleId,
+      fixture.windowId,
+      firstReply.messageId,
+    );
+    assert.equal(firstDetail.segments[0]!.outfitId, outfit.outfitId);
+    assert.equal(firstDetail.segments[0]!.homeAssetId, outfit.home!.assetId);
+
+    const replacedResponse = await uploadHome(
+      baseUrl,
+      fixture.roleId,
+      outfit.outfitId,
+      { fileName: "new-home.jpg", data: JPEG_SAMPLE, mediaType: "image/jpeg" },
+    );
+    assert.equal(replacedResponse.status, 201);
+    const newHome = (await replacedResponse.json()) as { assetId: string };
+    assert.notEqual(newHome.assetId, outfit.home!.assetId);
+    const oldAsset = await configFetch(
+      `${baseUrl}/v1/roles/${fixture.roleId}/appearance/assets/${outfit.home!.assetId}`,
+    );
+    assert.equal(oldAsset.status, 200, "被历史句段引用的旧立绘应保留");
+    const listed = (await (
+      await configFetch(`${baseUrl}/v1/roles/${fixture.roleId}/appearance/outfits`)
+    ).json()) as { items: OutfitRecord[] };
+    assert.equal(listed.items[0]!.home!.assetId, newHome.assetId);
+
+    fixture.app.conversation.submitMessage(fixture.roleId, fixture.windowId, {
+      content: "再问一次",
+      submissionId: randomUUID(),
+      sourcePlatform: "nowadays",
+    });
+    await fixture.app.conversation.waitForIdle(fixture.roleId);
+    const secondPage = fixture.app.services.messages.list(
+      fixture.roleId,
+      fixture.windowId,
+      null,
+      50,
+    );
+    const secondReply = secondPage.items
+      .filter((item) => item.sender === "assistant")
+      .at(-1);
+    assert.ok(secondReply);
+    const secondDetail = fixture.app.services.messages.get(
+      fixture.roleId,
+      fixture.windowId,
+      secondReply.messageId,
+    );
+    assert.equal(secondDetail.segments[0]!.homeAssetId, newHome.assetId);
+    const firstAgain = fixture.app.services.messages.get(
+      fixture.roleId,
+      fixture.windowId,
+      firstReply.messageId,
+    );
+    assert.equal(firstAgain.segments[0]!.homeAssetId, outfit.home!.assetId);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("删除服饰与差分保留历史素材并回退当前服饰", { timeout: 60_000 }, async () => {
+  const fixture = createFixtureWithModel(
+    new ScriptedChatModel([replyScript("今天穿这套。\n（她转了一圈）")]),
+  );
+  try {
+    const port = await listen(fixture.app.server, 0, "127.0.0.1");
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const outfitA = (await (
+      await uploadOutfit(baseUrl, fixture.roleId, {
+        name: "黑白长裙",
+        home: { fileName: "home.png", data: PNG_SAMPLE, mediaType: "image/png" },
+      })
+    ).json()) as OutfitRecord;
+    const outfitB = (await (
+      await uploadOutfit(baseUrl, fixture.roleId, {
+        name: "白色针织裙",
+        home: { fileName: "home.webp", data: WEBP_LOSSY_SAMPLE, mediaType: "image/webp" },
+      })
+    ).json()) as OutfitRecord;
+    fixture.app.services.roles.setState(fixture.roleId, {
+      state: { outfitId: outfitA.outfitId },
+    });
+
+    // 先在没有差分时回复，避免标注模型调用；随后补两张差分并模拟历史标注。
+    fixture.app.conversation.submitMessage(fixture.roleId, fixture.windowId, {
+      content: "今天穿什么？",
+      submissionId: randomUUID(),
+      sourcePlatform: "nowadays",
+    });
+    await fixture.app.conversation.waitForIdle(fixture.roleId);
+    const page = fixture.app.services.messages.list(
+      fixture.roleId,
+      fixture.windowId,
+      null,
+      50,
+    );
+    const reply = page.items.filter((item) => item.sender === "assistant").at(-1);
+    assert.ok(reply);
+    const detail = fixture.app.services.messages.get(
+      fixture.roleId,
+      fixture.windowId,
+      reply.messageId,
+    );
+    const segmentId = detail.segments[0]!.segmentId;
+
+    const spriteOne = (await (
+      await uploadSprite(baseUrl, fixture.roleId, outfitA.outfitId, {
+        fileName: "微笑.png",
+        data: PNG_SAMPLE,
+        mediaType: "image/png",
+      })
+    ).json()) as { assetId: string };
+    const spriteTwo = (await (
+      await uploadSprite(baseUrl, fixture.roleId, outfitA.outfitId, {
+        fileName: "侧目.png",
+        data: PNG_SAMPLE,
+        mediaType: "image/png",
+      })
+    ).json()) as { assetId: string };
+    withRoleDb(fixture, (db) =>
+      db
+        .prepare("UPDATE message_segments SET sprite_asset_id = ? WHERE segment_id = ?")
+        .run(spriteOne.assetId, segmentId),
+    );
+
+    const storage = RoleStorage.openExisting(
+      rolePaths(fixture.app.config.dataRoot, fixture.roleId),
+    );
+    try {
+      new SceneImageSettingsStore(storage.business.db, fixture.roleId).save(
+        {
+          serviceId: "service-1",
+          modelType: "text2img",
+          modelPath: "moss",
+          basePrompt: "base",
+          negativePrompt: "neg",
+          outfitPrompts: { [outfitA.outfitId]: "a", [outfitB.outfitId]: "b" },
+          width: 1024,
+          height: 576,
+          steps: 20,
+          cfg: 4,
+          sampler: "euler",
+          scheduler: "normal",
+          seed: null,
+          workflow: null,
+          outputNodeId: null,
+        },
+        new Date().toISOString(),
+      );
+    } finally {
+      storage.close();
+    }
+
+    // 被历史句段引用的差分：从衣柜移除但保留素材。
+    const referenced = await deleteSpriteRequest(
+      baseUrl,
+      fixture.roleId,
+      outfitA.outfitId,
+      spriteOne.assetId,
+    );
+    assert.equal(referenced.status, 200);
+    assert.equal(((await referenced.json()) as { retained: boolean }).retained, true);
+    assert.equal(
+      (
+        await configFetch(
+          `${baseUrl}/v1/roles/${fixture.roleId}/appearance/assets/${spriteOne.assetId}`,
+        )
+      ).status,
+      200,
+    );
+    // 未引用的差分：行与文件一并清理。
+    const unreferenced = await deleteSpriteRequest(
+      baseUrl,
+      fixture.roleId,
+      outfitA.outfitId,
+      spriteTwo.assetId,
+    );
+    assert.equal(unreferenced.status, 200);
+    assert.equal(((await unreferenced.json()) as { retained: boolean }).retained, false);
+    assert.equal(
+      (
+        await configFetch(
+          `${baseUrl}/v1/roles/${fixture.roleId}/appearance/assets/${spriteTwo.assetId}`,
+        )
+      ).status,
+      404,
+    );
+    const afterSpriteDelete = (await (
+      await configFetch(`${baseUrl}/v1/roles/${fixture.roleId}/appearance/outfits`)
+    ).json()) as { items: OutfitRecord[] };
+    assert.deepEqual(
+      afterSpriteDelete.items
+        .find((item) => item.outfitId === outfitA.outfitId)!
+        .sprites.map((sprite) => sprite.assetId),
+      [],
+    );
+
+    // 删除当前服饰：衣柜移除，当前服饰回退到最早创建的另一套。
+    const removed = await deleteOutfitRequest(
+      baseUrl,
+      fixture.roleId,
+      outfitA.outfitId,
+    );
+    assert.equal(removed.status, 200);
+    const removedBody = (await removed.json()) as {
+      removedAssets: number;
+      retainedAssets: number;
+    };
+    assert.ok(removedBody.retainedAssets >= 2, "历史引用的立绘与差分应保留");
+    const afterDelete = (await (
+      await configFetch(`${baseUrl}/v1/roles/${fixture.roleId}/appearance/outfits`)
+    ).json()) as { items: OutfitRecord[] };
+    assert.deepEqual(
+      afterDelete.items.map((item) => item.name),
+      ["白色针织裙"],
+    );
+    assert.equal(
+      fixture.app.services.roles.getState(fixture.roleId).state.outfitId,
+      outfitB.outfitId,
+    );
+    assert.equal(
+      (
+        await configFetch(
+          `${baseUrl}/v1/roles/${fixture.roleId}/appearance/assets/${outfitA.home!.assetId}`,
+        )
+      ).status,
+      200,
+      "被历史引用的主页立绘应保留",
+    );
+    const settingsStorage = RoleStorage.openExisting(
+      rolePaths(fixture.app.config.dataRoot, fixture.roleId),
+    );
+    try {
+      const settings = new SceneImageSettingsStore(
+        settingsStorage.business.db,
+        fixture.roleId,
+      ).get();
+      assert.deepEqual(Object.keys(settings?.outfitPrompts ?? {}), [
+        outfitB.outfitId,
+      ]);
+    } finally {
+      settingsStorage.close();
+    }
+
+    // 不能删到空衣柜。
+    const last = await deleteOutfitRequest(
+      baseUrl,
+      fixture.roleId,
+      outfitB.outfitId,
+    );
+    assert.equal(last.status, 409);
+    assert.equal(await errorCode(last), "LAST_OUTFIT_REQUIRED");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("旧库升级按句段服饰当时的主页立绘回填", { timeout: 60_000 }, async () => {
+  const model = new ScriptedChatModel([replyScript("旧句段。\n（她点头）")]);
+  const fixture = createFixtureWithModel(model);
+  const config = fixture.app.config;
+  try {
+    const port = await listen(fixture.app.server, 0, "127.0.0.1");
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const outfit = (await (
+      await uploadOutfit(baseUrl, fixture.roleId, {
+        name: "旧服饰",
+        home: { fileName: "home.png", data: PNG_SAMPLE, mediaType: "image/png" },
+      })
+    ).json()) as OutfitRecord;
+    fixture.app.services.roles.setState(fixture.roleId, {
+      state: { outfitId: outfit.outfitId },
+    });
+    fixture.app.conversation.submitMessage(fixture.roleId, fixture.windowId, {
+      content: "以前穿什么？",
+      submissionId: randomUUID(),
+      sourcePlatform: "nowadays",
+    });
+    await fixture.app.conversation.waitForIdle(fixture.roleId);
+    const page = fixture.app.services.messages.list(
+      fixture.roleId,
+      fixture.windowId,
+      null,
+      50,
+    );
+    const reply = page.items.filter((item) => item.sender === "assistant").at(-1);
+    assert.ok(reply);
+    const detail = fixture.app.services.messages.get(
+      fixture.roleId,
+      fixture.windowId,
+      reply.messageId,
+    );
+    assert.equal(detail.segments[0]!.homeAssetId, outfit.home!.assetId);
+
+    await fixture.app.close();
+    const raw = new Database(
+      rolePaths(config.dataRoot, fixture.roleId).businessDatabasePath,
+    );
+    try {
+      stripAppearanceV17(raw);
+      raw.pragma("user_version = 16");
+    } finally {
+      raw.close();
+    }
+
+    const reopened = createBackendApp(config, {
+      typingMs: 1000,
+      timeZone: "Asia/Shanghai",
+      modelPortFactory: () => model,
+      disableMemoryRuntime: true,
+    });
+    try {
+      const migrated = reopened.services.messages.get(
+        fixture.roleId,
+        fixture.windowId,
+        reply.messageId,
+      );
+      assert.equal(migrated.segments[0]!.homeAssetId, outfit.home!.assetId);
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("旧立绘清理失败不影响新的主页立绘", { timeout: 60_000 }, async () => {
+  const fixture = createFixtureWithModel(new ScriptedChatModel([]));
+  try {
+    const port = await listen(fixture.app.server, 0, "127.0.0.1");
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const created = await uploadOutfit(baseUrl, fixture.roleId, {
+      name: "替换立绘",
+      home: { fileName: "old.png", data: PNG_SAMPLE, mediaType: "image/png" },
+    });
+    assert.equal(created.status, 201);
+    const outfit = (await created.json()) as OutfitRecord;
+    const oldHomeId = outfit.home!.assetId;
+
+    withRoleDb(fixture, (db) =>
+      db.exec(
+        "CREATE TRIGGER review_fail_asset_delete BEFORE DELETE ON outfit_assets " +
+          "BEGIN SELECT RAISE(ABORT, 'injected asset cleanup failure'); END",
+      ),
+    );
+    try {
+      const replaced = await uploadHome(
+        baseUrl,
+        fixture.roleId,
+        outfit.outfitId,
+        { fileName: "new.jpg", data: JPEG_SAMPLE, mediaType: "image/jpeg" },
+      );
+      assert.equal(replaced.status, 201, "旧图清理失败不应使替换失败");
+      const newHome = (await replaced.json()) as { assetId: string };
+      assert.equal(
+        (
+          await configFetch(
+            `${baseUrl}/v1/roles/${fixture.roleId}/appearance/assets/${newHome.assetId}`,
+          )
+        ).status,
+        200,
+        "新立绘应当可读",
+      );
+      const listed = (await (
+        await configFetch(
+          `${baseUrl}/v1/roles/${fixture.roleId}/appearance/outfits`,
+        )
+      ).json()) as { items: OutfitRecord[] };
+      assert.equal(listed.items[0]!.home!.assetId, newHome.assetId);
+      assert.equal(
+        (
+          await configFetch(
+            `${baseUrl}/v1/roles/${fixture.roleId}/appearance/assets/${oldHomeId}`,
+          )
+        ).status,
+        200,
+      );
+    } finally {
+      withRoleDb(fixture, (db) =>
+        db.exec("DROP TRIGGER IF EXISTS review_fail_asset_delete"),
+      );
+    }
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("上传与服饰删除交错时不写入已删除服饰", { timeout: 60_000 }, async () => {
+  const fixture = createFixtureWithModel(new ScriptedChatModel([]));
+  try {
+    const port = await listen(fixture.app.server, 0, "127.0.0.1");
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const createOutfit = async (name: string): Promise<OutfitRecord> =>
+      (await (
+        await uploadOutfit(baseUrl, fixture.roleId, {
+          name,
+          home: { fileName: "home.png", data: PNG_SAMPLE, mediaType: "image/png" },
+        })
+      ).json()) as OutfitRecord;
+    const outfitA = await createOutfit("服饰甲");
+    const outfitB = await createOutfit("服饰乙");
+    const outfitC = await createOutfit("服饰丙");
+    const appearanceDir = rolePaths(
+      fixture.app.config.dataRoot,
+      fixture.roleId,
+    ).appearanceDir;
+    assert.equal(fs.readdirSync(appearanceDir).length, 3);
+
+    // 差分上传在解码等待期间服饰被删除：入库时复验失败，本次文件被清理。
+    const pendingSprite = fixture.app.services.appearance.addSprite(
+      fixture.roleId,
+      outfitA.outfitId,
+      { fileName: "微笑.png", data: PNG_SAMPLE },
+    );
+    fixture.app.services.appearance.deleteOutfit(
+      fixture.roleId,
+      outfitA.outfitId,
+    );
+    await assert.rejects(pendingSprite, (error: unknown) => {
+      assert.ok(error instanceof AppError, String(error));
+      assert.equal(error.code, "OUTFIT_NOT_FOUND");
+      return true;
+    });
+    assert.equal(
+      fs.readdirSync(appearanceDir).length,
+      2,
+      "被拒绝的差分上传不应留下文件",
+    );
+
+    // 主页立绘补传在解码等待期间服饰被删除：同样不写入新素材。
+    const pendingHome = fixture.app.services.appearance.replaceHome(
+      fixture.roleId,
+      outfitB.outfitId,
+      { fileName: "new-home.jpg", data: JPEG_SAMPLE },
+    );
+    fixture.app.services.appearance.deleteOutfit(
+      fixture.roleId,
+      outfitB.outfitId,
+    );
+    await assert.rejects(pendingHome, (error: unknown) => {
+      assert.ok(error instanceof AppError, String(error));
+      assert.equal(error.code, "OUTFIT_NOT_FOUND");
+      return true;
+    });
+    assert.equal(
+      fs.readdirSync(appearanceDir).length,
+      1,
+      "被拒绝的立绘补传不应留下文件",
+    );
+
+    // 已删除服饰下没有未标记删除的素材，列表只剩最后一套。
+    withRoleDb(fixture, (db) => {
+      const active = db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM outfit_assets
+            WHERE outfit_id IN (?, ?) AND deleted_at IS NULL`,
+        )
+        .get(outfitA.outfitId, outfitB.outfitId) as { count: number };
+      assert.equal(active.count, 0);
+    });
+    const listed = (await (
+      await configFetch(`${baseUrl}/v1/roles/${fixture.roleId}/appearance/outfits`)
+    ).json()) as { items: OutfitRecord[] };
+    assert.deepEqual(
+      listed.items.map((item) => item.outfitId),
+      [outfitC.outfitId],
+    );
+  } finally {
     await fixture.close();
   }
 });

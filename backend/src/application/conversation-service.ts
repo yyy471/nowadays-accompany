@@ -17,9 +17,14 @@ import {
   AutonomyBudgetExhaustedError,
   ExecutionSupersededError,
   ModelRequestFailedError,
+  RoleStopRequestedError,
   SseCursorInvalidError,
   TaskEndedError,
 } from "../domain/errors.js";
+import {
+  ROLE_STOP_TASK_END_REASON,
+  type RoleActivityGate,
+} from "../domain/role-activity.js";
 import type { ModelPort } from "../domain/model.js";
 import { localDateFromIso } from "../storage/evidence.js";
 import { resolveCredential } from "../model/credentials.js";
@@ -79,6 +84,8 @@ export interface ConversationServiceOptions {
   memoryRuntime?: MemoryRuntime | null;
   autonomy?: AutonomyService | null;
   credentialResolver?: CredentialResolver;
+  /** DL-148 停止边界：由 app 层注入，图中每个可保存节点都会询问。 */
+  activity?: RoleActivityGate | null;
 }
 
 interface RunningExecution {
@@ -128,6 +135,7 @@ export class ConversationService {
   private readonly segmentAnnotation: SegmentAnnotationService;
   private readonly memoryRuntime: MemoryRuntime | null;
   private readonly autonomy: AutonomyService | null;
+  private readonly activity: RoleActivityGate | null;
   private readonly running = new Map<string, RunningExecution>();
   private readonly detached = new Set<RunningExecution>();
   private readonly segmentAnnotations = new Map<string, Set<Promise<void>>>();
@@ -148,7 +156,7 @@ export class ConversationService {
       modelBinding: ResolvedModelBinding;
     }
   >();
-  private readonly activeStreams = new Set<() => void>();
+  private readonly activeStreams = new Map<() => void, string>();
   private readonly blockedWindows = new Set<string>();
   private closed = false;
 
@@ -182,6 +190,7 @@ export class ConversationService {
         ));
     this.memoryRuntime = options.memoryRuntime ?? null;
     this.autonomy = options.autonomy ?? null;
+    this.activity = options.activity ?? null;
     this.segmentAnnotation = new SegmentAnnotationService(
       this.roleAccess,
       this.bindings,
@@ -364,6 +373,64 @@ export class ConversationService {
     throw new Error("CONVERSATION_IDLE_TIMEOUT");
   }
 
+  /**
+   * 删除角色前确认没有前台执行、后台工具、差分标注或待续行。
+   * 与 isIdle 不同，不把「已领取但被停止搁置的待处理窗口」算作在途。
+   */
+  async waitForQuiescent(roleId: string, timeoutMs = 15_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (!this.isRunning(roleId) && this.isQuiescent(roleId)) {
+        return;
+      }
+      await delay(20);
+    }
+    throw new Error("CONVERSATION_QUIESCE_TIMEOUT");
+  }
+
+  private isQuiescent(roleId: string): boolean {
+    return (
+      (this.segmentAnnotations.get(roleId)?.size ?? 0) === 0 &&
+      (this.pendingContinuations.get(roleId)?.length ?? 0) === 0
+    );
+  }
+
+  /** 关闭该角色的事件流：删除角色目录前释放角色库句柄。 */
+  closeStreams(roleId: string): void {
+    for (const [cleanup, streamRoleId] of [...this.activeStreams]) {
+      if (streamRoleId === roleId) {
+        cleanup();
+      }
+    }
+  }
+
+  /** 清掉该角色的定时器、待续行、输入状态与工具目录；角色索引移除前调用。 */
+  async disposeRole(roleId: string): Promise<void> {
+    this.closeStreams(roleId);
+    const timer = this.wakeTimers.get(roleId);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      this.wakeTimers.delete(roleId);
+    }
+    this.dueWakeChecks.delete(roleId);
+    this.pendingContinuations.delete(roleId);
+    this.backgroundToolsByRole.delete(roleId);
+    this.segmentAnnotations.delete(roleId);
+    for (const key of [...this.blockedWindows]) {
+      if (key.startsWith(`${roleId}\u0000`)) {
+        this.blockedWindows.delete(key);
+      }
+    }
+    this.inputStates.clearRole(roleId);
+    const catalogs = [...this.taskCatalogs.entries()].filter(
+      ([, entry]) => entry.roleId === roleId,
+    );
+    for (const [taskId, entry] of catalogs) {
+      this.taskCatalogs.delete(taskId);
+      await entry.catalog.close();
+    }
+  }
+
   async streamEvents(input: {
     roleId: string;
     windowId: string;
@@ -419,7 +486,7 @@ export class ConversationService {
         }
       }
     };
-    this.activeStreams.add(cleanup);
+    this.activeStreams.set(cleanup, input.roleId);
     input.request.once("close", () => {
       closed = true;
       cleanup();
@@ -879,7 +946,7 @@ export class ConversationService {
     }
     this.wakeTimers.clear();
     this.dueWakeChecks.clear();
-    for (const cleanup of [...this.activeStreams]) {
+    for (const cleanup of [...this.activeStreams.keys()]) {
       cleanup();
     }
     this.inputStates.close();
@@ -914,8 +981,40 @@ export class ConversationService {
     return started;
   }
 
+  /** 是否还有属于该角色的执行或后台工具在跑；停止确认据此判断是否要等边界。 */
+  isRunning(roleId: string): boolean {
+    if (this.running.has(roleId)) return true;
+    if ((this.backgroundToolsByRole.get(roleId) ?? 0) > 0) return true;
+    for (const detached of this.detached) {
+      if (detached.roleId === roleId) return true;
+    }
+    return false;
+  }
+
+  /**
+   * 没有前台执行、只剩后台工具时，停止确认只能在最后一个后台工具结算后收敛。
+   * 只改活动状态，不改工具调用记录：晚到结果仍按原调用结算并保留原始响应。
+   */
+  private confirmStopIfIdle(
+    roleId: string,
+    boundaryExecutionId: string | null,
+  ): void {
+    if (this.closed) return;
+    if (this.activity?.isStopRequested(roleId) !== true) return;
+    if (this.isRunning(roleId)) return;
+    try {
+      this.activity.confirmStop(roleId, boundaryExecutionId);
+    } catch {
+      // 确认失败时保持 stopping，不放行配置写入。
+    }
+  }
+
   private scheduleInternal(roleId: string): boolean {
     if (this.closed || this.running.has(roleId)) {
+      return false;
+    }
+    // 已停止或正在停止的角色不再启动任何新步骤（DL-148）。
+    if (this.activity !== null && !this.activity.canStart(roleId)) {
       return false;
     }
     let pending: ReturnType<ConversationStore["listPendingWindows"]>;
@@ -1005,6 +1104,46 @@ export class ConversationService {
 
   refreshWakeTimer(roleId: string): void {
     this.armWakeTimer(roleId);
+  }
+
+  /**
+   * 恢复活动后的重新调度（RA-R02）：把因停止而暂停的任务链改回 active 并排队
+   * 续行，再交给统一调度接上到期待办与后台工具留下的续行。待办、任务链与
+   * 自主额度原样保留，不新建任务、不清空排队、不重置额度。
+   */
+  rescheduleAfterStop(roleId: string): void {
+    if (this.closed) return;
+    let resumed: PendingTaskContinuation[] = [];
+    try {
+      resumed = this.roleAccess.withStore(roleId, (storage) => {
+        const store = new ConversationStore(
+          storage.business.db,
+          roleId,
+          this.timeZone,
+        );
+        const targets = store.listStoppedTaskContinuations(
+          ROLE_STOP_TASK_END_REASON,
+        );
+        const queued: PendingTaskContinuation[] = [];
+        for (const target of targets) {
+          try {
+            storage.business.resumeTask({ roleId, taskId: target.taskId });
+            queued.push(target);
+          } catch {
+            // 任务已被其他路径结束或恢复时跳过，不影响其余任务。
+          }
+        }
+        return queued;
+      });
+    } catch {
+      // 存储暂不可用时不阻塞恢复：下一次调度或新消息会重新接上。
+      resumed = [];
+    }
+    for (const continuation of resumed) {
+      this.queueTaskContinuation(roleId, continuation);
+    }
+    // 统一调度同时负责重挂唤醒定时器，让停止期间到期的待办继续推进。
+    this.schedule(roleId);
   }
 
   private canStartAutonomyWake(
@@ -1449,6 +1588,7 @@ export class ConversationService {
     let saver: SqliteSaver | null = null;
     let pausedForBudget = false;
     let pausedByDecision = false;
+    let pausedByStop = false;
     let backgroundedTool = false;
     let taskId: string | null = input.taskId ?? null;
     const checkRunning = (): void => {
@@ -1458,6 +1598,20 @@ export class ConversationService {
       const current = store.getExecution(execution.executionId);
       if (current.status !== "running") {
         throw new ExecutionSupersededError(execution.executionId);
+      }
+    };
+    // 停止边界要保存进度：这一轮可能还没派发过外部工具、任务链尚未建立，
+    // 此时先把任务建起来，恢复后才能由同一任务续行接手已领取的消息。
+    let ensureTaskForStop: (() => string) | null = null;
+    // 停止只在图节点入口生效，不在流式吐字中途打断，保证停在可保存进度处。
+    const checkStopBoundary = (): void => {
+      if (this.activity?.isStopRequested(roleId) === true) {
+        try {
+          ensureTaskForStop?.();
+        } catch {
+          // 建任务失败不阻止停止：执行仍按 paused 收尾，消息保持领取。
+        }
+        throw new RoleStopRequestedError(roleId);
       }
     };
     const checkDispatch = (): void => {
@@ -1641,6 +1795,7 @@ export class ConversationService {
         taskId = task.taskId;
         return taskId;
       };
+      ensureTaskForStop = ensureTask;
       const messages = [
         ...this.buildMessages(recent, pendingMessages),
         ...(continuationTask === null
@@ -1661,6 +1816,7 @@ export class ConversationService {
           systemPrompt,
           signal: running.controller.signal,
           checkRunning,
+          checkStopBoundary,
           checkDispatch,
           emitDelta,
           ensureTask,
@@ -1688,6 +1844,18 @@ export class ConversationService {
                 this.backgroundToolsByRole.delete(roleId);
               } else {
                 this.backgroundToolsByRole.set(roleId, remaining);
+              }
+              if (remaining <= 0) {
+                // 最后一个后台工具结算：前台执行可能早已退出，停止确认不能只等
+                // 前台收尾。结算回调先于计数递减执行，这里确认不会丢原调用记录。
+                this.confirmStopIfIdle(roleId, execution.executionId);
+                // 前台执行恰好还在收尾时同步确认会跳过，再延后一次兜底收敛。
+                const deferredRoleId = roleId;
+                const deferredExecutionId = execution.executionId;
+                const timer = setTimeout(() => {
+                  this.confirmStopIfIdle(deferredRoleId, deferredExecutionId);
+                }, 0);
+                timer.unref?.();
               }
             });
           },
@@ -1787,6 +1955,36 @@ export class ConversationService {
             // 状态已由其他路径改变，保留已有事件。
           }
           backgroundedTool = true;
+        } else if (code === "ROLE_STOP_REQUESTED") {
+          // 停在可保存节点：执行与任务链都记为 paused，不判失败、不拉黑窗口。
+          // 用户消息保持领取状态，恢复后由原任务续行接手。
+          pausedByStop = true;
+          try {
+            store.interruptExecution({
+              executionId: execution.executionId,
+              partialText: running.partialText,
+              status: "paused",
+              reason: code,
+              errorCode: code,
+              keepClaimedMessages: true,
+              now: this.now().toISOString(),
+            });
+          } catch {
+            // 状态已由其他路径改变，保留已有事件。
+          }
+          try {
+            if (taskId !== null) {
+              storage.business.pauseTask({ roleId, taskId, endReason: code });
+            }
+          } catch {
+            // 任务已结束时不强改状态；停止确认照常进行。
+          }
+          try {
+            this.activity?.confirmStop(roleId, execution.executionId);
+          } catch {
+            // 确认失败时保持 stopping，避免误放行配置写入。
+          }
+          this.memoryRuntime?.notifyEvidence(roleId);
         } else if (code === "AUTONOMY_BUDGET_EXHAUSTED" && autonomy !== null) {
           pausedForBudget = true;
           try {
@@ -1878,6 +2076,14 @@ export class ConversationService {
           keepCatalog = false;
         }
       }
+      if (!keepCatalog && pausedByStop && taskId !== null) {
+        try {
+          keepCatalog =
+            storage.business.getTask(roleId, taskId).status === "paused";
+        } catch {
+          keepCatalog = false;
+        }
+      }
       if (!keepCatalog && pausedByDecision && taskId !== null) {
         try {
           keepCatalog =
@@ -1903,6 +2109,20 @@ export class ConversationService {
       }
       saver?.db.close();
       storage.close();
+      // 执行已收尾：正常完成或失败时若停止请求没在节点边界命中，这里兜底确认，
+      // 避免角色永久卡在 stopping。重复确认由存储的 WHERE state='stopping' 幂等处理。
+      // 仍有后台工具在途时不在这里确认：它们还属于本轮活动，由最后一个工具
+      // 结算后的收敛路径确认（RA-R01）。
+      if (
+        (this.backgroundToolsByRole.get(roleId) ?? 0) === 0 &&
+        this.activity?.isStopRequested(roleId) === true
+      ) {
+        try {
+          this.activity.confirmStop(roleId, execution.executionId);
+        } catch {
+          // 确认失败时保留 stopping，不放行配置写入。
+        }
+      }
     }
   }
 

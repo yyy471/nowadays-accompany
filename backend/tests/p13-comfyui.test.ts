@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { configFetch } from "./config-write.js";
 import { randomUUID } from "node:crypto";
 import http from "node:http";
 import test from "node:test";
@@ -222,7 +223,7 @@ async function api(
   route: string,
   body?: unknown,
 ): Promise<ApiResponse> {
-  const response = await fetch(`${base}${route}`, {
+  const response = await configFetch(`${base}${route}`, {
     method,
     headers: body === undefined ? {} : { "content-type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -558,7 +559,7 @@ test("a scene image task uses the configured comfyui service", { timeout: 60_000
     assert.ok(finished.result !== null);
     assert.equal(finished.result.width, 64);
 
-    const image = await fetch(
+    const image = await configFetch(
       `${context.base}/v1/roles/${context.fixture.roleId}/scene-images/assets/${finished.result.assetId}`,
     );
     assert.equal(image.status, 200);

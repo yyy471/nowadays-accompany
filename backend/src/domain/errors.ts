@@ -219,6 +219,42 @@ export class ResourceKindMismatchError extends AppError {
   }
 }
 
+/** 资源仍被角色选择或未结束任务链占用，删除／修改／全局关闭被拒绝。 */
+export interface ResourceReferenceDetail {
+  roleId: string;
+  capability: string | null;
+  bindingEnabled: boolean | null;
+  /** role_binding：角色仍选择该资源；task_chain：未结束任务链仍占用。 */
+  reason: "ROLE_BINDING" | "TASK_CHAIN";
+  taskId?: string;
+  taskStatus?: string;
+}
+
+export class ResourceInUseError extends AppError {
+  constructor(
+    resourceId: string,
+    action: "UPDATE" | "DISABLE" | "DELETE",
+    references: readonly ResourceReferenceDetail[],
+  ) {
+    super(409, "RESOURCE_IN_USE", "资源仍被角色或未结束任务链使用", {
+      resourceId,
+      action,
+      references,
+    });
+  }
+}
+
+/** 绑定整表替换时的乐观并发保护：调用方持有的版本已过期。 */
+export class BindingRevisionConflictError extends AppError {
+  constructor(roleId: string, expected: string, actual: string) {
+    super(409, "BINDING_REVISION_CONFLICT", "绑定已被其他编辑更新，请重新读取后再保存", {
+      roleId,
+      expected,
+      actual,
+    });
+  }
+}
+
 export class InvalidBindingError extends AppError {
   constructor(message: string, details?: unknown) {
     super(400, "INVALID_BINDING", message, details);
@@ -674,5 +710,55 @@ export class ImageServiceDisabledError extends AppError {
 export class SceneImageNotConfiguredError extends AppError {
   constructor(message = "角色还没有配置生图服务") {
     super(409, "SCENE_IMAGE_NOT_CONFIGURED", message);
+  }
+}
+
+/** DL-148：配置写入前必须由后端确认角色活动已停止，拒绝时带出可定位的状态。 */
+export class RoleNotStoppedError extends AppError {
+  constructor(details: {
+    roleId: string;
+    state: string;
+    reason: "ACTIVE" | "STOPPING";
+  }) {
+    super(409, "ROLE_NOT_STOPPED", "角色活动未停止，不能修改或删除配置", details);
+  }
+}
+
+/** 全局模型服务的建改删要求所有角色都已停止。 */
+export class RolesNotStoppedError extends AppError {
+  constructor(
+    roles: Array<{ roleId: string; state: string; running: boolean }>,
+  ) {
+    super(409, "ROLES_NOT_STOPPED", "仍有角色活动未停止，不能修改全局模型服务", {
+      roles,
+    });
+  }
+}
+
+/** 状态机不接受该跳转，或恢复与正在进行的配置写入冲突。 */
+export class RoleActivityConflictError extends AppError {
+  constructor(roleId: string, state: string, reason: string) {
+    super(409, "ROLE_ACTIVITY_CONFLICT", "角色活动状态不允许该操作", {
+      roleId,
+      state,
+      reason,
+    });
+  }
+}
+
+/** 内部使用：在可保存节点抛出，让执行按暂停收尾而不是失败。 */
+export class RoleStopRequestedError extends AppError {
+  constructor(roleId: string) {
+    super(409, "ROLE_STOP_REQUESTED", "角色活动已请求停止", { roleId });
+  }
+}
+
+/** 已停止的角色不接受新的对话或自主活动，须先恢复。 */
+export class RoleActivityStoppedError extends AppError {
+  constructor(roleId: string, state: string) {
+    super(409, "ROLE_ACTIVITY_STOPPED", "角色活动已停止，请先恢复活动", {
+      roleId,
+      state,
+    });
   }
 }

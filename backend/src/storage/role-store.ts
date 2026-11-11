@@ -761,6 +761,18 @@ export class RoleStore {
     })();
   }
 
+  /**
+   * 删除指向某个全局资源的绑定行。全局资源被删除时调用：
+   * 236 §8 规定关闭的绑定不再拦截删除，删掉资源后这些行必须一起清理，
+   * 否则角色会留下指向不存在资源的绑定。
+   */
+  deleteBindingsForResource(resourceId: string): number {
+    const result = this.db
+      .prepare("DELETE FROM role_bindings WHERE resource_id = ?")
+      .run(resourceId);
+    return result.changes;
+  }
+
   createTask(input: {
     roleId: string;
     goal: string;
@@ -1667,6 +1679,30 @@ export class RoleStore {
         .run(now, roleId);
       return result.changes;
     })();
+  }
+
+  /**
+   * 仍未结束的任务链对该资源的占用（DL-71／DL-73）。
+   * 只有 active／paused 的任务算占用；终态任务留下的未关闭记录由
+   * endOpenResourceContinuationsForTerminalTasks 清理，不作为拦截依据。
+   */
+  listOpenResourceContinuations(
+    resourceId: string,
+  ): Array<{ taskId: string; taskStatus: TaskStatus }> {
+    const rows = this.db
+      .prepare(
+        `SELECT c.task_id AS task_id, t.status AS task_status
+           FROM task_resource_continuations c
+           JOIN tasks t ON t.task_id = c.task_id
+          WHERE c.resource_id = ? AND c.ended_at IS NULL
+            AND t.status IN ('active', 'paused')
+          ORDER BY c.granted_at ASC, c.task_id ASC`,
+      )
+      .all(resourceId) as Array<{ task_id: string; task_status: TaskStatus }>;
+    return rows.map((row) => ({
+      taskId: row.task_id,
+      taskStatus: row.task_status,
+    }));
   }
 
   listResourceContinuations(

@@ -42,6 +42,17 @@ export const updateDefinitionSchema = z
     { message: "displayName 或 definition 至少提供一项" },
   );
 
+export const renameOutfitBodySchema = z
+  .object({
+    name: z.string().trim().min(1).max(100).optional(),
+    description: z.string().max(500).nullable().optional(),
+  })
+  .strict()
+  .refine(
+    (value) => value.name !== undefined || value.description !== undefined,
+    { message: "name 或 description 至少提供一项" },
+  );
+
 export const putStateSchema = z
   .object({
     state: recordSchema,
@@ -107,6 +118,8 @@ const bindingSchema = z
 export const putBindingsSchema = z
   .object({
     bindings: z.array(bindingSchema).max(1000),
+    // 页面并行编辑的乐观并发版本；省略表示按整表覆盖提交。
+    expectedRevision: z.string().trim().min(1).max(64).optional(),
   })
   .strict();
 
@@ -197,6 +210,7 @@ export const resourceModelTestSchema = z
 
 export type CreateRoleBody = z.infer<typeof createRoleSchema>;
 export type UpdateDefinitionBody = z.infer<typeof updateDefinitionSchema>;
+export type RenameOutfitBody = z.infer<typeof renameOutfitBodySchema>;
 export type PutStateBody = z.infer<typeof putStateSchema>;
 export type CreateWindowBody = z.infer<typeof createWindowSchema>;
 export type SubmitMessageBody = z.infer<typeof submitMessageSchema>;

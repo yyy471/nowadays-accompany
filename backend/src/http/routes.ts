@@ -34,6 +34,15 @@ import type { SceneImageService } from "../application/scene-image-service.js";
 import type { ImageServiceService } from "../application/image-service.js";
 import type { SceneImageSettingsService } from "../application/scene-image-settings.js";
 import type { VoiceService } from "../application/voice-service.js";
+import type { RoleActivityService } from "../application/role-activity-service.js";
+import type { RoleDeletionService } from "../application/role-deletion-service.js";
+import { registerRoleActivityRoutes } from "./role-activity-routes.js";
+import { globalWrite, resourceWrite, roleWrite } from "./write-guard.js";
+import {
+  GLOBAL_CONFIG_WRITES,
+  RESOURCE_CONFIG_WRITES,
+  ROLE_CONFIG_WRITES,
+} from "./config-writes.js";
 import { InputStateInvalidError, SseCursorInvalidError } from "../domain/errors.js";
 import { resourceKindSchema } from "../domain/resource.js";
 import {
@@ -76,6 +85,8 @@ export interface ApiServices {
   sceneImages: SceneImageService;
   imageServices: ImageServiceService;
   sceneImageSettings: SceneImageSettingsService;
+  activity: RoleActivityService;
+  roleDeletion: RoleDeletionService;
 }
 
 export function registerApiRoutes(
@@ -83,6 +94,23 @@ export function registerApiRoutes(
   services: ApiServices,
   version: string,
 ): Router {
+  const { activity } = services;
+  // 一处注册策略覆盖主路由与拆分的子路由文件，新增配置写入接口不会漏掉保护。
+  router.setGuard((method, pattern, handler) => {
+    const key = `${method} ${pattern}`;
+    if (ROLE_CONFIG_WRITES.has(key)) return roleWrite(activity, handler);
+    if (GLOBAL_CONFIG_WRITES.has(key)) return globalWrite(activity, handler);
+    if (RESOURCE_CONFIG_WRITES.has(key)) {
+      // 模型资源要求全角色停止；MCP／Skill 交给服务层占用检查（DL-148）。
+      return resourceWrite(
+        activity,
+        (resourceId) => services.resources.get(resourceId).kind,
+        handler,
+      );
+    }
+    return handler;
+  });
+  registerRoleActivityRoutes(router, activity);
   router.add("GET", "/v1/health", (): JsonResponse => ({
     status: 200,
     body: { status: "ok", version },
@@ -103,6 +131,36 @@ export function registerApiRoutes(
       body: { ...services.roles.createRole(body), status: "ready" },
     };
   });
+
+  router.add(
+    "DELETE",
+    "/v1/roles/:roleId",
+    async ({ url, params }): Promise<JsonResponse> => {
+      const raw = url.searchParams.get("keepHistory");
+      if (raw === null) {
+        throw new HttpError(
+          400,
+          "KEEP_HISTORY_REQUIRED",
+          "请明确选择是否保留记忆与对话数据：keepHistory=1 保留，0 清理",
+        );
+      }
+      if (raw !== "1" && raw !== "0" && raw !== "true" && raw !== "false") {
+        throw new HttpError(
+          400,
+          "INVALID_QUERY",
+          "keepHistory 只接受 0、1、true 或 false",
+        );
+      }
+      const keepHistory = raw === "1" || raw === "true";
+      return {
+        status: 200,
+        body: await services.roleDeletion.remove(
+          params.roleId ?? "",
+          keepHistory,
+        ),
+      };
+    },
+  );
 
   router.add(
     "POST",
@@ -199,6 +257,7 @@ export function registerApiRoutes(
         submitMessageSchema,
         await readJsonBody(request),
       );
+      activity.assertCanStart(params.roleId ?? "");
       const result = services.conversation.submitMessage(
         params.roleId ?? "",
         params.windowId ?? "",
@@ -526,6 +585,15 @@ export function registerApiRoutes(
   );
 
   router.add(
+    "GET",
+    "/v1/resources/:resourceId/references",
+    ({ params }): JsonResponse => ({
+      status: 200,
+      body: services.resources.references(params.resourceId ?? ""),
+    }),
+  );
+
+  router.add(
     "PATCH",
     "/v1/resources/:resourceId",
     async ({ request, params }): Promise<JsonResponse> => {
@@ -538,6 +606,15 @@ export function registerApiRoutes(
         body: services.resources.update(params.resourceId ?? "", body),
       };
     },
+  );
+
+  router.add(
+    "DELETE",
+    "/v1/resources/:resourceId",
+    ({ params }): JsonResponse => ({
+      status: 200,
+      body: services.resources.remove(params.resourceId ?? ""),
+    }),
   );
 
   router.add(
@@ -574,7 +651,7 @@ export function registerApiRoutes(
     "/v1/roles/:roleId/bindings",
     ({ params }): JsonResponse => ({
       status: 200,
-      body: { items: services.resources.listBindings(params.roleId ?? "") },
+      body: services.resources.bindingsView(params.roleId ?? ""),
     }),
   );
 
@@ -588,12 +665,11 @@ export function registerApiRoutes(
       );
       return {
         status: 200,
-        body: {
-          items: services.resources.replaceBindings(
-            params.roleId ?? "",
-            body.bindings,
-          ),
-        },
+        body: services.resources.replaceBindings(
+          params.roleId ?? "",
+          body.bindings,
+          body.expectedRevision,
+        ),
       };
     },
   );

@@ -8,16 +8,19 @@ import {
 } from "../domain/errors.js";
 import { backfillEvidence } from "./evidence.js";
 
-export const APP_SCHEMA_VERSION = 4;
-export const BUSINESS_SCHEMA_VERSION = 16;
+export const APP_SCHEMA_VERSION = 7;
+export const BUSINESS_SCHEMA_VERSION = 17;
 export const EXECUTION_SCHEMA_VERSION = 1;
 
 export const APP_TABLES = [
   "roles",
   "resources",
+  "resource_deletions",
+  "role_deletions",
   "model_test_calls",
   "resource_secrets",
   "image_services",
+  "role_activity",
 ] as const;
 export const BUSINESS_TABLES = [
   "roles",
@@ -117,6 +120,20 @@ CREATE TABLE IF NOT EXISTS image_services (
 
 CREATE INDEX IF NOT EXISTS idx_image_services_enabled
   ON image_services (enabled, created_at);
+`;
+
+const APP_V5_SQL = `
+-- v5：角色活动的持久化状态（DL-148）。没有记录视为 active，老库升级无需回填。
+-- stopping 表示已请求停止、还在等下一个可保存节点；stopped 是后端确认后的
+-- 粘滞状态，必须显式恢复，配置写入也只认这个状态。
+CREATE TABLE IF NOT EXISTS role_activity (
+  role_id TEXT PRIMARY KEY REFERENCES roles(role_id),
+  state TEXT NOT NULL CHECK (state IN ('active', 'stopping', 'stopped')),
+  requested_at TEXT,
+  confirmed_at TEXT,
+  boundary_execution_id TEXT,
+  updated_at TEXT NOT NULL
+);
 `;
 
 const APP_SCHEMA_SQL = `
@@ -786,7 +803,7 @@ const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
   },
   {
     table: "outfits",
-    columns: ["outfit_id", "role_id", "name", "description"],
+    columns: ["outfit_id", "role_id", "name", "description", "deleted_at"],
   },
   {
     table: "outfit_assets",
@@ -799,6 +816,7 @@ const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
       "display_name",
       "media_type",
       "relative_path",
+      "deleted_at",
     ],
   },
   {
@@ -814,6 +832,7 @@ const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
       "end_offset",
       "outfit_id",
       "sprite_asset_id",
+      "home_asset_id",
       "annotated_at",
     ],
   },
@@ -985,7 +1004,8 @@ const BUSINESS_INDEXES: readonly RequiredIndex[] = [
     table: "outfits",
     columns: ["role_id", "name"],
     unique: true,
-    partial: false,
+    partial: true,
+    predicate: "deleted_at IS NULL",
   },
   {
     name: "idx_outfit_assets_single_home",
@@ -993,7 +1013,7 @@ const BUSINESS_INDEXES: readonly RequiredIndex[] = [
     columns: ["outfit_id"],
     unique: true,
     partial: true,
-    predicate: "usage = 'home'",
+    predicate: "usage = 'home' AND deleted_at IS NULL",
   },
   {
     name: "idx_outfit_assets_outfit",
@@ -1482,15 +1502,70 @@ ALTER TABLE scene_image_tasks
   ADD COLUMN config_json TEXT;
 `;
 
+const BUSINESS_V17_SQL = `
+-- V17：服饰与素材支持软删除，句段保存主页立绘（standee）素材快照（DL-151）。
+-- 删除后的服饰从衣柜、管理列表和 Agent 候选移除，但历史句段仍按素材标识读图。
+ALTER TABLE outfits ADD COLUMN deleted_at TEXT;
+ALTER TABLE outfit_assets ADD COLUMN deleted_at TEXT;
+ALTER TABLE message_segments
+  ADD COLUMN home_asset_id TEXT REFERENCES outfit_assets(asset_id);
+DROP INDEX IF EXISTS idx_outfits_role_name;
+CREATE UNIQUE INDEX idx_outfits_role_name
+  ON outfits(role_id, name) WHERE deleted_at IS NULL;
+DROP INDEX IF EXISTS idx_outfit_assets_single_home;
+CREATE UNIQUE INDEX idx_outfit_assets_single_home
+  ON outfit_assets(outfit_id)
+  WHERE usage = 'home' AND deleted_at IS NULL;
+-- 旧句段没有立绘标识：按升级时所属服饰的主页立绘回填，之后替换或删除不再影响。
+UPDATE message_segments
+   SET home_asset_id = (
+     SELECT a.asset_id
+       FROM outfit_assets a
+      WHERE a.outfit_id = message_segments.outfit_id
+        AND a.usage = 'home'
+        AND a.deleted_at IS NULL
+      ORDER BY a.created_at DESC, a.rowid DESC
+      LIMIT 1
+   )
+ WHERE home_asset_id IS NULL AND outfit_id IS NOT NULL;
+`;
+
+const APP_V6_SQL = `
+-- v6：删除资源时先在全局库同事务提交「资源删除 + 待清理记录」（RP-R05）。
+-- 角色业务库的残留绑定由启动恢复、删除重试和读侧过滤继续清理。
+CREATE TABLE IF NOT EXISTS resource_deletions (
+  resource_id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL
+);
+`;
+
+const APP_V7_SQL = `
+-- v7：角色删除（清理数据路径）先在全局库提交「移除角色 + 待清理记录」，
+-- 角色目录的删除失败时由启动恢复或删除重试继续（DL-148）。
+CREATE TABLE IF NOT EXISTS role_deletions (
+  role_id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL
+);
+`;
+
 export function openAppDatabase(dbPath: string): OpenedDatabase {
   return openVersionedDatabase(
     dbPath,
     APP_SCHEMA_VERSION,
-    APP_SCHEMA_SQL + APP_V2_SQL + APP_V3_SQL + APP_V4_SQL,
+    APP_SCHEMA_SQL +
+      APP_V2_SQL +
+      APP_V3_SQL +
+      APP_V4_SQL +
+      APP_V5_SQL +
+      APP_V6_SQL +
+      APP_V7_SQL,
     {
       1: (db) => db.exec(APP_V2_SQL),
       2: (db) => db.exec(APP_V3_SQL),
       3: (db) => db.exec(APP_V4_SQL),
+      4: (db) => db.exec(APP_V5_SQL),
+      5: (db) => db.exec(APP_V6_SQL),
+      6: (db) => db.exec(APP_V7_SQL),
     },
     APP_TABLES,
     [],
@@ -1521,7 +1596,8 @@ export function openBusinessDatabase(
       BUSINESS_V13_SQL +
       BUSINESS_V14_SQL +
       BUSINESS_V15_SQL +
-      BUSINESS_V16_SQL,
+      BUSINESS_V16_SQL +
+      BUSINESS_V17_SQL,
     {
       1: (db) => {
         db.exec(BUSINESS_V2_SQL);
@@ -1541,6 +1617,7 @@ export function openBusinessDatabase(
       13: (db) => db.exec(BUSINESS_V14_SQL),
       14: (db) => db.exec(BUSINESS_V15_SQL),
       15: (db) => db.exec(BUSINESS_V16_SQL),
+      16: (db) => db.exec(BUSINESS_V17_SQL),
     },
     BUSINESS_TABLES,
     BUSINESS_INDEXES,

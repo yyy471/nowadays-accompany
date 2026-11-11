@@ -19,6 +19,13 @@ export type RouteHandler = (
   context: RouteContext,
 ) => RouteResponse | undefined | Promise<RouteResponse | undefined>;
 
+/** 注册时的统一包装，用于把配置写入挂到同一套状态校验上。 */
+export type RouteGuard = (
+  method: string,
+  pattern: string,
+  handler: RouteHandler,
+) => RouteHandler;
+
 interface Route {
   method: string;
   regex: RegExp;
@@ -28,8 +35,14 @@ interface Route {
 
 export class Router {
   private readonly routes: Route[] = [];
+  private guard: RouteGuard | null = null;
 
-  add(method: string, pattern: string, handler: RouteHandler): this {
+  setGuard(guard: RouteGuard): this {
+    this.guard = guard;
+    return this;
+  }
+
+  add(method: string, pattern: string, rawHandler: RouteHandler): this {
     const keys: string[] = [];
     const source = pattern
       .split("/")
@@ -41,6 +54,8 @@ export class Router {
         return segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       })
       .join("/");
+    const handler =
+      this.guard === null ? rawHandler : this.guard(method, pattern, rawHandler);
     this.routes.push({
       method,
       regex: new RegExp(`^${source}$`),

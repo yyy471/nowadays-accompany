@@ -21,6 +21,9 @@ import { CredentialResolver } from "../application/credential-resolver.js";
 import { ResourceService } from "../application/resource-service.js";
 import { RoleAccess } from "../application/role-access.js";
 import { RoleService } from "../application/role-service.js";
+import { RoleActivityService } from "../application/role-activity-service.js";
+import { RoleDeletionService } from "../application/role-deletion-service.js";
+import { AppError } from "../domain/errors.js";
 import {
   SceneImageService,
   type SceneImageServiceOptions,
@@ -75,6 +78,7 @@ export function createBackendApp(
   );
   const roleService = new RoleService(appStore, config.dataRoot);
   const roleAccess = new RoleAccess(appStore, config.dataRoot);
+  const activity = new RoleActivityService(appStore, { now });
   const messageService = new MessageService(roleAccess);
   const resourceService = new ResourceService(appStore, roleAccess, {
     credentialResolver: credentials,
@@ -152,10 +156,21 @@ export function createBackendApp(
         : { modelPortFactory: options.modelPortFactory }),
       memoryRuntime,
       autonomy,
+      activity: activity.gate,
     },
   );
+  activity.attachRuntime({
+    isRunning: (roleId) => conversation.isRunning(roleId),
+    // 恢复后把停止时暂停的原任务链与到期待办接回调度（RA-R02）。
+    resumeWork: (roleId) => conversation.rescheduleAfterStop(roleId),
+  });
   memoryRuntime?.recoverOnStartup();
   conversation.recoverOnStartup();
+  // 执行记录恢复后再核对持久化的停止请求：已无在途执行或后台工具的
+  // stopping 记录自动收敛为 stopped，避免重启后卡在正在停止（RA-R05）。
+  activity.reconcileStartup();
+  // 完成上一次删除中断留下的角色绑定清理（RP-R05）。
+  resourceService.reconcilePendingDeletions();
   const sceneImages = new SceneImageService(appStore, roleAccess, config.dataRoot, {
     now,
     planner:
@@ -186,6 +201,31 @@ export function createBackendApp(
       : { imageInspector: options.sceneImageInspector }),
   });
   sceneImages.recoverOnStartup();
+  const roleDeletion = new RoleDeletionService(
+    appStore,
+    roleAccess,
+    {
+      dispose: async (roleId) => {
+        try {
+          // 先中止过场图任务，再等待对话与标注收尾，最后释放定时器与目录。
+          await sceneImages.cancelRole(roleId);
+          await conversation.waitForQuiescent(roleId);
+        } catch {
+          throw new AppError(
+            409,
+            "ROLE_BUSY",
+            "角色仍有在途工作，请稍后再删除",
+            { roleId },
+          );
+        }
+        await conversation.disposeRole(roleId);
+        await memoryRuntime?.disposeRole(roleId);
+      },
+    },
+    config.dataRoot,
+    { now },
+  );
+  roleDeletion.reconcilePendingDeletions();
   autonomy.setWakeListener((roleId) => conversation.refreshWakeTimer(roleId));
   autonomy.setProactiveMessageListener((notice) =>
     conversation.queueSegmentAnnotation(notice),
@@ -203,6 +243,8 @@ export function createBackendApp(
     sceneImages,
     imageServices,
     sceneImageSettings,
+    activity,
+    roleDeletion,
   };
   let server: http.Server;
   try {

@@ -67,6 +67,29 @@ export class RoleAccess {
       storage.close();
     }
   }
+
+  /**
+   * 一次性打开多个角色的业务库，供删除资源前的预检（RP-R03）：
+   * 任一库打不开时先关闭已打开的句柄再报错，调用方可在改动任何绑定之前终止。
+   * 返回的句柄由调用方负责关闭。
+   */
+  openReadyStores(roleIds: Iterable<string>): RoleStorage[] {
+    const opened: RoleStorage[] = [];
+    try {
+      for (const roleId of roleIds) {
+        this.requireReady(roleId);
+        try {
+          opened.push(RoleStorage.openExisting(rolePaths(this.dataRoot, roleId)));
+        } catch (error) {
+          throw toStorageError(error);
+        }
+      }
+      return opened;
+    } catch (error) {
+      for (const storage of opened) storage.close();
+      throw error;
+    }
+  }
 }
 
 function toStorageError(error: unknown): AppError {

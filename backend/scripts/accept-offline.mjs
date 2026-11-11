@@ -25,6 +25,10 @@ delete env.NOWADAYS_REVIEW_OUTPUT;
 delete env.NOWADAYS_APP_ROOT;
 const guard = pathToFileURL(path.join(backend, "scripts/fs-guard.mjs")).href;
 const imports = ["--import", guard, "--import", "tsx"];
+// Node 默认按 CPU 数并发运行测试文件。本机 32 核时会同时拉起大量 tsx／MCP／skill
+// 子进程，前台等待窗口和脚本派发这类时序断言会被抢资源而偶发失败。限制并发后
+// 全部用例仍逐个执行，断言与覆盖范围不变，且实测更稳定、更快。可用环境变量按机器调整。
+const testConcurrency = process.env.ACCEPT_TEST_CONCURRENCY ?? "8";
 const matrices = [
   ["p2-original", "20261104-p2-05-review.ts", "report.json", 10, "contractPassed"],
   ["p2-extended", "20261104-p2-05-fix-recheck.ts", "extended-report.json", 5, "contractPassed"],
@@ -114,7 +118,7 @@ try {
   await step("review-typecheck", ["node_modules/typescript/bin/tsc", "--noEmit", "--target", "ES2022", "--module", "NodeNext", "--moduleResolution", "NodeNext", "--esModuleInterop", "--skipLibCheck", "--strict", "--exactOptionalPropertyTypes", "--noUncheckedIndexedAccess", "--types", "node", "scripts/process-smoke.ts", ...matrices.map((m) => `reviews/${m[1]}`)]);
   await step("delivery-tests", ["--import", guard, "--test", "--test-reporter=tap", "scripts/acceptance.test.mjs"], (log) => ({ totals: readTestTotals(fs.readFileSync(log, "utf8")) }));
   const tests = fs.readdirSync(path.join(backend, "tests")).filter((file) => file.endsWith(".test.ts")).sort().map((file) => `tests/${file}`);
-  await step("tests", [...imports, "--test", "--test-reporter=tap", ...tests], (log) => ({ totals: readTestTotals(fs.readFileSync(log, "utf8")) }));
+  await step("tests", [...imports, "--test", "--test-reporter=tap", `--test-concurrency=${testConcurrency}`, ...tests], (log) => ({ totals: readTestTotals(fs.readFileSync(log, "utf8")) }));
   await step("process-smoke", [...imports, "scripts/process-smoke.ts"], (_log, output) => ({ caseIds: readCases(path.join(output, "smoke-report.json"), 1, "passed") }));
   for (const [id, script, report, expected, field] of matrices) {
     await step(id, [...imports, `reviews/${script}`], (_log, output) => ({ report: `${id}/${report}`, caseIds: readCases(path.join(output, report), expected, field, id === "p2-continuation" ? "model-continuation" : undefined) }));

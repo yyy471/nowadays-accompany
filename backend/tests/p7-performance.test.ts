@@ -544,7 +544,7 @@ test("a proactive share also stores segments and publishes them before completio
 });
 
 test("annotation selects a sprite from the committed outfit and ignores unknown ids", { timeout: 60_000 }, async () => {
-  const ids = { black: "", blackSprite: "", white: "", whiteSprite: "" };
+  const ids = { black: "", blackSprite: "", blackHome: "", white: "", whiteSprite: "" };
   const fixture = createFixture([
     () =>
       toolCall("wire-outfit-black", "state_update", {
@@ -613,6 +613,7 @@ test("annotation selects a sprite from the committed outfit and ignores unknown 
     const black = await importOutfit(fixture, "黑白长裙", ["微笑", "侧目"]);
     ids.black = black.outfitId;
     ids.blackSprite = black.sprites[0]!.assetId;
+    ids.blackHome = black.home!.assetId;
     const white = await importOutfit(fixture, "白色针织裙", ["浅笑"]);
     ids.white = white.outfitId;
     ids.whiteSprite = white.sprites[0]!.assetId;
@@ -640,6 +641,7 @@ test("annotation selects a sprite from the committed outfit and ignores unknown 
     assert.equal(firstDetail.segments.length, 3);
     assert.equal(firstDetail.segments[0]!.outfitId, ids.black);
     assert.equal(firstDetail.segments[0]!.spriteAssetId, ids.blackSprite);
+    assert.equal(firstDetail.segments[0]!.homeAssetId, ids.blackHome);
     assert.notEqual(firstDetail.segments[0]!.annotatedAt, null);
     assert.equal(firstDetail.segments[1]!.annotatedAt, null);
     assert.equal(firstDetail.segments[2]!.annotatedAt, null);
@@ -661,6 +663,7 @@ test("annotation selects a sprite from the committed outfit and ignores unknown 
         segmentId: string;
         outfitId: string;
         spriteAssetId: string;
+        homeAssetId: string | null;
       }>;
     };
     assert.equal(annotationPayload.messageId, first.messageId);
@@ -669,6 +672,7 @@ test("annotation selects a sprite from the committed outfit and ignores unknown 
         segmentId: firstDetail.segments[0]!.segmentId,
         outfitId: ids.black,
         spriteAssetId: ids.blackSprite,
+        homeAssetId: ids.blackHome,
       },
     ]);
 
@@ -784,6 +788,7 @@ test("SSE replays segments before completion and late annotations after it", { t
         segmentId: string;
         outfitId: string;
         spriteAssetId: string;
+        homeAssetId: string | null;
       }>;
     };
     assert.deepEqual(annotationPayload.items, [
@@ -791,6 +796,7 @@ test("SSE replays segments before completion and late annotations after it", { t
         segmentId: segmentPayload.segments[0]!.segmentId,
         outfitId: ids.outfit,
         spriteAssetId: ids.sprite,
+        homeAssetId: outfit.home!.assetId,
       },
     ]);
   } finally {

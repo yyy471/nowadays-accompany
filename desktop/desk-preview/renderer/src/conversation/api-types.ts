@@ -32,6 +32,7 @@ export interface SegmentView {
   startOffset: number;
   endOffset: number;
   outfitId: string | null;
+  homeAssetId: string | null;
   spriteAssetId: string | null;
   annotatedAt: string | null;
   createdAt: string;

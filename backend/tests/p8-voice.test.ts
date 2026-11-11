@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { configFetch } from "./config-write.js";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -200,7 +201,7 @@ async function uploadReference(
 ): Promise<{ assetId: string; relativePath: string }> {
   const form = new FormData();
   form.set("file", new Blob([data], { type: "audio/wav" }), fileName);
-  const response = await fetch(`${base}/voice/reference`, {
+  const response = await configFetch(`${base}/voice/reference`, {
     method: "POST",
     body: form,
   });
@@ -215,7 +216,7 @@ async function saveVoice(
   base: string,
   input: Record<string, unknown>,
 ): Promise<Response> {
-  return fetch(`${base}/voice`, {
+  return configFetch(`${base}/voice`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
@@ -267,7 +268,7 @@ test("voice settings and reference audio persist with the current schema", async
     assert.equal(savedBody.voice.speed, 0.8);
     assert.equal(savedBody.voice.emoAlpha, 0.7);
 
-    const fetched = await fetch(`${base}/voice`);
+    const fetched = await configFetch(`${base}/voice`);
     assert.equal(fetched.status, 200);
     const fetchedBody = (await fetched.json()) as typeof savedBody;
     assert.deepEqual(fetchedBody.voice, savedBody.voice);
@@ -293,7 +294,7 @@ test("voice settings and reference audio persist with the current schema", async
     assert.deepEqual(tables, ["role_voice_settings", "voice_assets"]);
     assert.equal(
       withStorage(fixture, (storage) => storage.business.schemaVersion),
-      16,
+      17,
     );
   } finally {
     await fixture.close();
@@ -309,7 +310,7 @@ test("preview uses candidate settings and sends the managed reference path", asy
     const base = roleBase(fixture, port);
     const reference = await uploadReference(base);
 
-    const preview = await fetch(`${base}/voice/preview`, {
+    const preview = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -355,7 +356,7 @@ test("preview uses candidate settings and sends the managed reference path", asy
       ).status,
       200,
     );
-    const savedPreview = await fetch(`${base}/voice/preview`, {
+    const savedPreview = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "用保存的音色试听。" }),
@@ -412,7 +413,7 @@ test("segment speech synthesizes speech and rejects narration", async () => {
     assert.ok(speech);
     assert.ok(narration);
 
-    const spoken = await fetch(
+    const spoken = await configFetch(
       `${base}/windows/${fixture.windowId}/segments/${speech.segmentId}/speech`,
       { method: "POST" },
     );
@@ -421,7 +422,7 @@ test("segment speech synthesizes speech and rejects narration", async () => {
     assert.equal(fake.requests.length, 1);
     assert.equal(fake.requests[0]!.text, speech.text);
 
-    const narrationResponse = await fetch(
+    const narrationResponse = await configFetch(
       `${base}/windows/${fixture.windowId}/segments/${narration.segmentId}/speech`,
       { method: "POST" },
     );
@@ -432,7 +433,7 @@ test("segment speech synthesizes speech and rejects narration", async () => {
     assert.equal(narrationError.error.code, "VOICE_SEGMENT_NOT_SPEAKABLE");
     assert.equal(fake.requests.length, 1);
 
-    const missing = await fetch(
+    const missing = await configFetch(
       `${base}/windows/${fixture.windowId}/segments/${randomUUID()}/speech`,
       { method: "POST" },
     );
@@ -454,7 +455,7 @@ test("voice routes require configuration and a reference", async () => {
     const port = await listen(fixture.app.server, 0, "127.0.0.1");
     const base = roleBase(fixture, port);
 
-    const notConfigured = await fetch(`${base}/voice/preview`, {
+    const notConfigured = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "还没配置。", baseUrl: fake.baseUrl }),
@@ -465,7 +466,7 @@ test("voice routes require configuration and a reference", async () => {
       "VOICE_REFERENCE_REQUIRED",
     );
 
-    const noBaseUrl = await fetch(`${base}/voice/preview`, {
+    const noBaseUrl = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "没有服务地址。" }),
@@ -484,7 +485,7 @@ test("voice routes require configuration and a reference", async () => {
       ).status,
       200,
     );
-    const noReference = await fetch(`${base}/voice/preview`, {
+    const noReference = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "配置了服务但没参考音色。" }),
@@ -508,7 +509,7 @@ test("voice reference upload rejects unsupported and empty audio", async () => {
     const base = roleBase(fixture, port);
     const form = new FormData();
     form.set("file", new Blob(["not audio"], { type: "text/plain" }), "a.txt");
-    const unsupported = await fetch(`${base}/voice/reference`, {
+    const unsupported = await configFetch(`${base}/voice/reference`, {
       method: "POST",
       body: form,
     });
@@ -520,7 +521,7 @@ test("voice reference upload rejects unsupported and empty audio", async () => {
 
     const emptyForm = new FormData();
     emptyForm.set("file", new Blob([], { type: "audio/wav" }), "empty.wav");
-    const empty = await fetch(`${base}/voice/reference`, {
+    const empty = await configFetch(`${base}/voice/reference`, {
       method: "POST",
       body: emptyForm,
     });
@@ -721,7 +722,7 @@ test("voice base url rejects query and fragment and keeps the path prefix", asyn
     const savedBody = (await saved.json()) as { voice: { baseUrl: string } };
     assert.equal(savedBody.voice.baseUrl, `${fake.baseUrl}/bridge`);
 
-    const preview = await fetch(`${base}/voice/preview`, {
+    const preview = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "前缀测试。" }),

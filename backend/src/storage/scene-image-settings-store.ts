@@ -43,8 +43,22 @@ export class SceneImageSettingsStore {
     return row === undefined ? null : mapRow(row);
   }
 
-  save(input: SceneImageSettingsInput, now: string): SceneImageSettingsRecord {
+  /** 删除服饰后清掉它的提示词，避免生图配置保留孤儿键。 */
+  removeOutfitPrompt(outfitId: string, now: string): void {
+    const current = this.get();
+    if (current === null || !(outfitId in current.outfitPrompts)) {
+      return;
+    }
+    const next = { ...current.outfitPrompts };
+    delete next[outfitId];
     this.db
+      .prepare(
+        "UPDATE role_scene_image_settings SET outfit_prompts_json = ?, updated_at = ? WHERE role_id = ?",
+      )
+      .run(JSON.stringify(next), now, this.roleId);
+  }
+
+  save(input: SceneImageSettingsInput, now: string): SceneImageSettingsRecord {    this.db
       .prepare(
         `INSERT INTO role_scene_image_settings
            (role_id, service_id, model_type, model_path, base_prompt, negative_prompt,

@@ -71,6 +71,27 @@ async function cli(port: number, args: string[]): Promise<Record<string, unknown
   });
 }
 
+/**
+ * 配置写入的 CLI 作用域（DL-148 / 252 第一包）。
+ * 后端统一要求写入前由活动接口确认角色已停止；这里用 CLI 自身的 activity
+ * 命令完成停止与恢复，既不绕过路由守卫，也顺便覆盖活动命令组。
+ */
+async function configCli(
+  port: number,
+  roleId: string,
+  args: string[],
+): Promise<Record<string, unknown>> {
+  const stopped = await cli(port, ["activity", "stop", "--role", roleId]);
+  assert.equal(stopped.confirmed, true, "冒烟阶段没有执行在跑，停止应由后端立即确认");
+  assert.equal((stopped.activity as { state: string }).state, "stopped");
+  try {
+    return await cli(port, args);
+  } finally {
+    const resumed = await cli(port, ["activity", "resume", "--role", roleId]);
+    assert.equal((resumed.activity as { state: string }).state, "active");
+  }
+}
+
 let report: Record<string, unknown>;
 try {
   const port = await start();
@@ -79,7 +100,11 @@ try {
   assert.equal(typeof role.roleId, "string");
   assert.equal(typeof role.defaultWindowId, "string");
   const roleId = role.roleId as string;
-  const revised = await cli(port, ["role", "update", "--role", roleId, "--definition", "修订设定后保持原身份", "--expected-revision", "1"]);
+  const activityBefore = await cli(port, ["activity", "get", "--role", roleId]);
+  assert.equal((activityBefore.activity as { state: string }).state, "active");
+  const activities = await cli(port, ["activity", "list"]);
+  assert.equal((activities.items as unknown[]).length, 1);
+  const revised = await configCli(port, roleId, ["role", "update", "--role", roleId, "--definition", "修订设定后保持原身份", "--expected-revision", "1"]);
   assert.equal(revised.definitionRevision, 2);
   assert.equal((await cli(port, ["role", "get", "--role", roleId])).roleId, roleId);
   const models = [];
@@ -108,10 +133,12 @@ try {
     .replaceAll("__MODEL_RESOURCE_ID__", String(models[0]!.resourceId)).replaceAll("__MODEL_ID__", "offline-not-dispatched")
     .replaceAll("__MCP_RESOURCE_ID__", String(mcpResource.resourceId)).replaceAll("__SKILL_RESOURCE_ID__", String(skillResource.resourceId));
   fs.writeFileSync(path.join(output, "bindings.json"), bindings);
-  await cli(port, ["binding", "put", "--role", roleId, "--json", `@${path.join(output, "bindings.json")}`]);
+  await configCli(port, roleId, ["binding", "put", "--role", roleId, "--json", `@${path.join(output, "bindings.json")}`]);
   await stop();
   const secondPort = await start();
   const restored = await cli(secondPort, ["role", "get", "--role", roleId]);
+  const restoredActivity = await cli(secondPort, ["activity", "get", "--role", roleId]);
+  assert.equal((restoredActivity.activity as { state: string }).state, "active", "配置写入作用域恢复后的活动状态应随 app 库持久化");
   assert.equal(restored.roleId, roleId);
   assert.equal(restored.defaultWindowId, role.defaultWindowId);
   assert.equal(restored.definitionRevision, 2);
@@ -123,7 +150,7 @@ try {
   const savedBindings = await cli(secondPort, ["binding", "get", "--role", roleId]);
   assert.equal((savedBindings.items as unknown[]).length, 4);
   assert.equal(fs.readFileSync(path.join(workspace, "notes/p5.md"), "utf8"), "交付样例实际写入");
-  report = { id: "process-cli-restart", passed: true, observed: { role, restored, launches, appRoot, modelExamplesRegistered: models.length, savedBindings, note: "notes/p5.md" } };
+  report = { id: "process-cli-restart", passed: true, observed: { role, restored, launches, appRoot, modelExamplesRegistered: models.length, savedBindings, activityBefore, activities, restoredActivity, note: "notes/p5.md" } };
 } catch (error) {
   report = { id: "process-cli-restart", passed: false, error: error instanceof Error ? (error.stack ?? error.message) : String(error) };
   process.exitCode = 1;

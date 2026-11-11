@@ -9,6 +9,7 @@ import type {
 } from "../domain/appearance.js";
 import type { RolePaths } from "../bootstrap/config.js";
 import { AppearanceStore, type NewAssetInput } from "../storage/appearance-store.js";
+import { SceneImageSettingsStore } from "../storage/scene-image-settings-store.js";
 import type { RoleStorage } from "../storage/role-storage.js";
 import type { RoleAccess } from "./role-access.js";
 import { inspectImage } from "./image-inspect.js";
@@ -28,6 +29,24 @@ export interface AppearanceAssetFile {
   data: Buffer;
   mediaType: string;
   fileName: string;
+}
+
+export interface AppearanceRenameInput {
+  name?: string | undefined;
+  description?: string | null | undefined;
+}
+
+/** 删除服饰后的素材去向：历史句段引用的保留，其余清理。 */
+export interface AppearanceDeleteResult {
+  outfitId: string;
+  removedAssets: number;
+  retainedAssets: number;
+}
+
+export interface SpriteDeleteResult {
+  assetId: string;
+  /** 仍被历史句段引用时为 true：从衣柜移除，但保留素材行与文件供回放。 */
+  retained: boolean;
 }
 
 export class AppearanceService {
@@ -129,6 +148,170 @@ export class AppearanceService {
     });
   }
 
+  /** 改名与用途说明；服饰 ID 不变，历史句段与生图提示词键保持有效。 */
+  async renameOutfit(
+    roleId: string,
+    outfitId: string,
+    input: AppearanceRenameInput,
+  ): Promise<OutfitRecord> {
+    const name =
+      input.name === undefined ? undefined : normalizeName(input.name);
+    const description =
+      input.description === undefined
+        ? undefined
+        : normalizeDescription(input.description);
+    return this.roleAccess.withStoreAsync(roleId, async (storage) => {
+      const store = new AppearanceStore(storage.business.db, roleId);
+      if (store.getOutfit(outfitId) === null) {
+        throw new AppError(404, "OUTFIT_NOT_FOUND", "服饰不存在", {
+          outfitId,
+        });
+      }
+      return store.renameOutfit(
+        outfitId,
+        {
+          ...(name === undefined ? {} : { name }),
+          ...(description === undefined ? {} : { description }),
+        },
+        new Date().toISOString(),
+      );
+    });
+  }
+
+  /**
+   * 主页立绘补传或替换：旧立绘标记删除。旧图仍被历史句段引用时保留行与
+   * 文件，句段继续按 home_asset_id 读取原图；未引用时清理行与文件。
+   */
+  async replaceHome(
+    roleId: string,
+    outfitId: string,
+    image: UploadedImage,
+  ): Promise<OutfitAssetRecord> {
+    return this.roleAccess.withStoreAsync(roleId, async (storage) => {
+      const store = new AppearanceStore(storage.business.db, roleId);
+      if (store.getOutfit(outfitId) === null) {
+        throw new AppError(404, "OUTFIT_NOT_FOUND", "服饰不存在", {
+          outfitId,
+        });
+      }
+      const written: string[] = [];
+      try {
+        const asset = await writeImage(storage.paths, image, "home", written);
+        const now = new Date().toISOString();
+        const { home, replaced } = store.replaceHome(outfitId, asset, now);
+        if (replaced !== null) {
+          releaseUnreferencedAsset(storage, store, replaced);
+        }
+        return home;
+      } catch (error) {
+        for (const filePath of written) {
+          fs.rmSync(filePath, { force: true });
+        }
+        throw error;
+      }
+    });
+  }
+
+  /**
+   * 删除一套服饰：从衣柜、管理列表和 Agent 候选移除，并切换当前服饰到
+   * 最早创建的另一套。历史句段引用的素材保留，其余清理（DL-151）。
+   */
+  deleteOutfit(roleId: string, outfitId: string): AppearanceDeleteResult {
+    return this.roleAccess.withStore(roleId, (storage) => {
+      const store = new AppearanceStore(storage.business.db, roleId);
+      if (store.getOutfit(outfitId) === null) {
+        throw new AppError(404, "OUTFIT_NOT_FOUND", "服饰不存在", {
+          outfitId,
+        });
+      }
+      if (store.countActiveOutfits(outfitId) === 0) {
+        throw new AppError(
+          409,
+          "LAST_OUTFIT_REQUIRED",
+          "至少保留一套服饰，请先导入新服饰",
+          { roleId },
+        );
+      }
+      const now = new Date().toISOString();
+      let assets: OutfitAssetRecord[] = [];
+      storage.business.db.transaction(() => {
+        assets = store.deleteOutfit(outfitId, now);
+        new SceneImageSettingsStore(
+          storage.business.db,
+          roleId,
+        ).removeOutfitPrompt(outfitId, now);
+        const current = storage.business.getState(roleId).state;
+        if (current.outfitId === outfitId) {
+          const earliest = store.earliestActiveOutfit(outfitId);
+          const nextState: Record<string, unknown> = {
+            ...current,
+            outfitId: earliest?.outfitId ?? null,
+          };
+          delete nextState.outfitReviewedOn;
+          storage.business.setState({ roleId, state: nextState });
+        }
+      })();
+
+      let removedAssets = 0;
+      let retainedAssets = 0;
+      for (const asset of assets) {
+        if (releaseUnreferencedAsset(storage, store, asset)) {
+          removedAssets += 1;
+        } else {
+          retainedAssets += 1;
+        }
+      }
+      return { outfitId, removedAssets, retainedAssets };
+    });
+  }
+
+  /** 删除单张差分；被历史句段引用时只从衣柜移除。 */
+  deleteSprite(
+    roleId: string,
+    outfitId: string,
+    assetId: string,
+  ): SpriteDeleteResult {
+    return this.roleAccess.withStore(roleId, (storage) => {
+      const store = new AppearanceStore(storage.business.db, roleId);
+      if (store.getOutfit(outfitId) === null) {
+        throw new AppError(404, "OUTFIT_NOT_FOUND", "服饰不存在", {
+          outfitId,
+        });
+      }
+      const asset = store.getAsset(assetId);
+      if (
+        asset === null ||
+        asset.outfitId !== outfitId ||
+        asset.deletedAt !== null
+      ) {
+        throw new AppError(404, "ASSET_NOT_FOUND", "外观素材不存在", {
+          assetId,
+        });
+      }
+      if (asset.usage !== "sprite") {
+        throw new AppError(
+          409,
+          "ASSET_NOT_SPRITE",
+          "主页立绘请使用替换接口，差分才能单独删除",
+          { assetId, usage: asset.usage },
+        );
+      }
+      if (store.countAssetReferences(assetId) > 0) {
+        store.softDeleteAsset(assetId, new Date().toISOString());
+        return { assetId, retained: true };
+      }
+      try {
+        store.deleteAssetRow(assetId);
+        removeAssetFile(storage.paths, asset);
+        return { assetId, retained: false };
+      } catch {
+        // 物理清理失败时保留为已删除素材：衣柜不再展示，文件与行留待后续清理。
+        store.softDeleteAsset(assetId, new Date().toISOString());
+        return { assetId, retained: true };
+      }
+    });
+  }
+
   readAsset(roleId: string, assetId: string): AppearanceAssetFile {
     return this.roleAccess.withStore(roleId, (storage) => {
       const asset = new AppearanceStore(
@@ -202,6 +385,33 @@ function resolveAssetPath(paths: RolePaths, relativePath: string): string {
     throw new AppError(404, "ASSET_NOT_FOUND", "外观素材不存在");
   }
   return target;
+}
+
+/** 未被任何历史句段引用的素材才删除行与文件；引用中或清理失败时保留。 */
+function releaseUnreferencedAsset(
+  storage: RoleStorage,
+  store: AppearanceStore,
+  asset: OutfitAssetRecord,
+): boolean {
+  try {
+    if (store.countAssetReferences(asset.assetId) > 0) {
+      return false;
+    }
+    store.deleteAssetRow(asset.assetId);
+    removeAssetFile(storage.paths, asset);
+    return true;
+  } catch {
+    // 清理可延后：素材行已按删除状态过滤，失败不推翻已提交的替换或删除。
+    return false;
+  }
+}
+
+function removeAssetFile(paths: RolePaths, asset: OutfitAssetRecord): void {
+  try {
+    fs.rmSync(resolveAssetPath(paths, asset.relativePath), { force: true });
+  } catch {
+    // 文件已缺失或暂不可删除：素材行已清理，残留文件不影响读取。
+  }
 }
 
 function normalizeName(raw: string): string {

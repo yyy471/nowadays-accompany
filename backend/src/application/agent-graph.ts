@@ -55,6 +55,8 @@ export interface AgentGraphDeps {
   systemPrompt: () => string;
   signal: AbortSignal;
   checkRunning: () => void;
+  /** 可保存节点入口的停止检查；中途吐字不检查，避免半句落库。 */
+  checkStopBoundary?: () => void;
   /** 外部工具派发前的检查；转后台后由服务改用新的存储句柄核对任务。 */
   checkDispatch?: () => void;
   emitDelta: (text: string) => void;
@@ -210,6 +212,7 @@ export class AgentGraphRunner {
   }
 
   async modelNode(state: AgentStateValue): Promise<Partial<AgentGraphValue>> {
+    this.deps.checkStopBoundary?.();
     this.deps.checkRunning();
     this.checkTask(state.roleId, state.taskId);
     const current = this.deps.resolveModel();
@@ -346,6 +349,7 @@ export class AgentGraphRunner {
   }
 
   async toolsNode(state: AgentStateValue): Promise<Partial<AgentGraphValue>> {
+    this.deps.checkStopBoundary?.();
     this.deps.checkRunning();
     this.checkTask(state.roleId, state.taskId);
     const toolMessages: ModelMessage[] = [];

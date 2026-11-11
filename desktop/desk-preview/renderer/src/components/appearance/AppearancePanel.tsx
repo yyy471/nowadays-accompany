@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { api, apiUpload } from '../../api';
+import { api, apiUpload, ApiError } from '../../api';
 import type { Outfit } from '../../types';
 import { appearanceAssetUrl } from '../../types';
 import { Button, Field, LoadingNote, Select } from '../../ui';
@@ -15,7 +15,10 @@ import {
 type Props = {
   roleId: string;
   currentOutfitId?: string;
+  canWrite?: boolean;
   onChanged?: () => void;
+  onPreview?: (outfit: Outfit) => void;
+  onPreviewAsset?: (assetId: string) => void;
 };
 
 const folderAttributes = {
@@ -32,28 +35,34 @@ const SKIP_REASON_LABELS: Record<string, string> = {
   UNRECOGNIZED: '无法归类',
 };
 
-export function AppearancePanel({ roleId, currentOutfitId, onChanged }: Props) {
+export function AppearancePanel({ roleId, currentOutfitId, canWrite = true, onChanged, onPreview, onPreviewAsset }: Props) {
   const [items, setItems] = useState<Outfit[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState('');
+  const [rename, setRename] = useState('');
+  const [confirm, setConfirm] = useState<{ kind: 'outfit' | 'sprite'; id: string; name: string } | null>(null);
+  const confirmTrigger = useRef<HTMLButtonElement | null>(null);
   const [scan, setScan] = useState<AppearanceScanResult | null>(null);
   const [merges, setMerges] = useState<Record<string, string>>({});
   const [renames, setRenames] = useState<Record<string, string>>({});
   const [homePicks, setHomePicks] = useState<Record<string, number>>({});
   const folderInput = useRef<HTMLInputElement>(null);
   const spriteInput = useRef<HTMLInputElement>(null);
+  const homeInput = useRef<HTMLInputElement>(null);
 
   // 角色切换令牌：导入或补图晚到的回调不能写进另一个角色的页面状态。
   const roleToken = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const lastRole = useRef(roleId);
   if (lastRole.current !== roleId) {
     lastRole.current = roleId;
     roleToken.current += 1;
   }
-  const isStale = (token: number) => roleToken.current !== token;
+  const isStale = (token: number) => !mounted.current || roleToken.current !== token;
 
   const load = async (token: number = roleToken.current) => {
     setLoading(true);
@@ -152,7 +161,7 @@ export function AppearancePanel({ roleId, currentOutfitId, onChanged }: Props) {
 
   const confirmImport = async () => {
     const ready = plans.filter(plan => plan.status === 'ready');
-    if (ready.length === 0 || busy) return;
+    if (ready.length === 0 || busy || !canWrite) return;
     const token = roleToken.current;
     setBusy(true); setNotice(''); setError('');
     const imported: string[] = [];
@@ -194,7 +203,7 @@ export function AppearancePanel({ roleId, currentOutfitId, onChanged }: Props) {
 
   const uploadSprite = async (files: FileList | null) => {
     const file = files?.[0];
-    if (!file || busy) return;
+    if (!file || busy || !canWrite) return;
     if (!selected) { setNotice('请先选择一套已有服饰。'); return; }
     const token = roleToken.current;
     setBusy(true); setNotice(''); setError('');
@@ -218,6 +227,30 @@ export function AppearancePanel({ roleId, currentOutfitId, onChanged }: Props) {
     }
   };
 
+  const selectedOutfit = items.find(item => item.outfitId === selected);
+  useEffect(() => { setRename(selectedOutfit?.name ?? ''); setConfirm(null); }, [selected, selectedOutfit?.name]);
+  const errorMessage = (reason: unknown) => reason instanceof ApiError && reason.code === 'LAST_OUTFIT_REQUIRED' ? '至少保留一套服饰。' : reason instanceof ApiError && reason.code === 'ROLE_NOT_STOPPED' ? '角色尚未停止，请先到角色状态中停止。' : reason instanceof Error ? reason.message : String(reason);
+  const updateOutfit = async (operation: 'rename' | 'home' | 'outfit' | 'sprite', file?: File, assetId?: string) => {
+    if (busy || !canWrite || !selected || (operation === 'rename' && !rename.trim())) return;
+    const token = roleToken.current;
+    const outfitId = selected;
+    const path = `/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits/${encodeURIComponent(outfitId)}`;
+    setBusy(true); setNotice(''); setError('');
+    try {
+      if (operation === 'rename') await api(path, { method: 'PATCH', body: { name: rename.trim() } });
+      else if (operation === 'home' && file) { const body = new FormData(); body.append('home', file, file.name); await apiUpload(`${path}/home`, body); }
+      else if (operation === 'outfit') await api(path, { method: 'DELETE' });
+      else if (operation === 'sprite' && assetId) await api(`${path}/sprites/${encodeURIComponent(assetId)}`, { method: 'DELETE' });
+      else return;
+      if (isStale(token)) return;
+      setConfirm(null);
+      setNotice(operation === 'rename' ? '服饰已改名。' : operation === 'home' ? '主页立绘已更新，历史句段保留原图。' : operation === 'outfit' ? '服饰已删除，历史引用的素材会保留。' : '差分已删除，历史引用的素材会保留。');
+      await load(token);
+      if (!isStale(token)) onChanged?.();
+    } catch (reason) { if (!isStale(token)) setError(errorMessage(reason)); }
+    finally { if (!isStale(token)) { setBusy(false); if (homeInput.current) homeInput.current.value = ''; } }
+  };
+
   const skippedSummary = useMemo(() => {
     const counts = new Map<string, number>();
     for (const item of scan?.skipped ?? []) {
@@ -230,7 +263,7 @@ export function AppearancePanel({ roleId, currentOutfitId, onChanged }: Props) {
     <p className="nd-appearance-hint">选择角色自己的素材文件夹，读取 <code>standees/&lt;服饰&gt;/</code> 作为主页立绘、<code>expressions/&lt;服饰&gt;/</code> 作为对话差分。素材库里的 <code>outfits/</code> 是生图锚点，不会导入。旧格式的 <code>outfits/&lt;服饰名&gt;/home.*</code> 仍然可用。</p>
     <div className="nd-appearance-actions">
       <input ref={folderInput} type="file" multiple {...folderAttributes} className="nd-visually-hidden" onChange={event => scanFolder(event.target.files)} />
-      <Button disabled={busy} onClick={() => folderInput.current?.click()}>{scan === null ? '选择角色素材文件夹' : '重新选择'}</Button>
+      <Button disabled={busy || !canWrite} onClick={() => folderInput.current?.click()}>{scan === null ? '选择角色素材文件夹' : '重新选择'}</Button>
       {currentOutfitId ? <span className="nd-appearance-current">当前穿着：{items.find(item => item.outfitId === currentOutfitId)?.name ?? '未知服饰'}</span> : null}
     </div>
 
@@ -277,7 +310,7 @@ export function AppearancePanel({ roleId, currentOutfitId, onChanged }: Props) {
         })}
       </ul>
       <div className="nd-appearance-actions">
-        <Button variant="primary" disabled={busy || summary.ready === 0} onClick={() => void confirmImport()}>
+        <Button variant="primary" disabled={busy || !canWrite || summary.ready === 0} onClick={() => void confirmImport()}>
           {busy ? '正在导入…' : `确认导入 ${summary.ready} 套`}
         </Button>
         <Button disabled={busy} onClick={cancelScan}>取消</Button>
@@ -286,19 +319,31 @@ export function AppearancePanel({ roleId, currentOutfitId, onChanged }: Props) {
 
     {loading ? <LoadingNote label="正在读取衣柜…" /> : items.length === 0 ? <p className="nd-appearance-empty">这个角色还没有导入服饰。</p> : <ul className="nd-outfit-list">
       {items.map(outfit => <li key={outfit.outfitId} className={'nd-outfit' + (outfit.outfitId === selected ? ' selected' : '') + (outfit.outfitId === currentOutfitId ? ' current' : '')}>
-        <button type="button" className="nd-outfit-card" aria-pressed={outfit.outfitId === selected} onClick={() => setSelected(outfit.outfitId)}>
+        <button type="button" className="nd-outfit-card" aria-pressed={outfit.outfitId === selected} onClick={() => { setSelected(outfit.outfitId); onPreview?.(outfit); }}>
           <span className="nd-outfit-thumb">{outfit.home ? <img src={appearanceAssetUrl(roleId, outfit.home.assetId)} alt="" /> : <span>无主页图</span>}</span>
           <span className="nd-outfit-meta"><b>{outfit.name}</b><small>{outfit.description ?? '未填写用途'} · {outfit.sprites.length} 张差分</small></span>
         </button>
         {outfit.sprites.length > 0 ? <p className="nd-outfit-sprites">{outfit.sprites.map(sprite => sprite.displayName).join('、')}</p> : null}
       </li>)}
     </ul>}
+    {selectedOutfit && <section className="nd-outfit-manage" aria-label="服饰管理">
+      <h3>{selectedOutfit.name}</h3>
+      <Field label="服饰名称"><input value={rename} disabled={busy} maxLength={100} onChange={event => setRename(event.target.value)} /></Field>
+      <div className="nd-appearance-actions"><Button disabled={busy || !canWrite || !rename.trim() || rename.trim() === selectedOutfit.name} onClick={() => void updateOutfit('rename')}>保存名称</Button>
+        <input ref={homeInput} type="file" accept="image/png,image/jpeg,image/webp" className="nd-visually-hidden" onChange={event => { const file = event.target.files?.[0]; if (file) void updateOutfit('home', file); }}/>
+        <Button disabled={busy || !canWrite} onClick={() => homeInput.current?.click()}>{selectedOutfit.home ? '替换主页立绘' : '补传主页立绘'}</Button>
+        <Button disabled={busy || !canWrite || items.length <= 1} onClick={event => { confirmTrigger.current = event.currentTarget; setConfirm({ kind: 'outfit', id: selectedOutfit.outfitId, name: selectedOutfit.name }); }}>删除服饰</Button>
+      </div>
+      {items.length <= 1 && <p>至少保留一套服饰。</p>}
+      {selectedOutfit.sprites.length > 0 && <ul className="nd-outfit-assets">{selectedOutfit.sprites.map(sprite => <li key={sprite.assetId}><button type="button" className="nd-sprite-preview" onClick={() => onPreviewAsset?.(sprite.assetId)}><img src={appearanceAssetUrl(roleId, sprite.assetId)} alt=""/><span>{sprite.displayName}</span></button><button type="button" disabled={busy || !canWrite} onClick={event => { confirmTrigger.current = event.currentTarget; setConfirm({ kind: 'sprite', id: sprite.assetId, name: sprite.displayName }); }}>删除差分</button></li>)}</ul>}
+      {confirm && <div role="alert" className="nd-outfit-confirm"><p>删除{confirm.kind === 'outfit' ? '服饰' : '差分'}「{confirm.name}」？历史消息引用的素材将保留。</p><Button disabled={busy || !canWrite} onClick={() => void updateOutfit(confirm.kind, undefined, confirm.id)}>确认删除</Button> <button type="button" disabled={busy} onClick={() => { setConfirm(null); requestAnimationFrame(() => confirmTrigger.current?.focus()); }}>取消</button></div>}
+    </section>}
     <div className="nd-sprite-upload">
       <Field label="补一张差分到已有服饰"><Select value={selected} disabled={busy || items.length === 0} onChange={event => setSelected(event.target.value)}>
         {items.length === 0 ? <option value="">暂无服饰</option> : items.map(outfit => <option key={outfit.outfitId} value={outfit.outfitId}>{outfit.name}</option>)}
       </Select></Field>
       <input ref={spriteInput} type="file" accept="image/png,image/jpeg,image/webp" className="nd-visually-hidden" onChange={event => void uploadSprite(event.target.files)} />
-      <Button disabled={busy || !selected} onClick={() => spriteInput.current?.click()}>上传差分图片</Button>
+      <Button disabled={busy || !canWrite || !selected} onClick={() => spriteInput.current?.click()}>上传差分图片</Button>
     </div>
     {notice ? <p className="nd-appearance-notice" role="status">{notice}</p> : null}
     {error ? <p className="nd-appearance-error" role="alert">{error}</p> : null}

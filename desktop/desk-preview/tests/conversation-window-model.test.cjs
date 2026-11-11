@@ -153,6 +153,22 @@ test("回看句段的服饰和差分只取该句之前的同轮数据", async ()
   assert.equal(spriteForRow(rows, rows[2]), "later");
 });
 
+test("历史立绘按句段素材快照回放，换服饰不沿用旧差分", async () => {
+  const { rowsForMessage, createRowIdRegistry, spriteForRow, applySegmentAnnotations } = await load();
+  const segments = [
+    segment(0, "speech", "过去", { outfitId: "old", homeAssetId: "old-home", spriteAssetId: "old-sprite" }),
+    segment(1, "speech", "后来", { outfitId: "new", homeAssetId: "new-home" }),
+    segment(2, "speech", "没有服饰", { outfitId: null, homeAssetId: null })
+  ];
+  const rows = rowsForMessage(message(), segments, createRowIdRegistry().id);
+  assert.equal(rows[0].homeAssetId, "old-home");
+  assert.equal(rows[1].homeAssetId, "new-home");
+  assert.equal(rows[2].homeAssetId, null);
+  assert.equal(spriteForRow(rows, rows[1]), null);
+  const updated = applySegmentAnnotations(segments, [{ segmentId: "m1-1", homeAssetId: "snapshot-home" }]);
+  assert.equal(updated[1].homeAssetId, "snapshot-home");
+});
+
 test("过场图任务映射到同轮句段区间与素材地址", async () => {
   const { sceneView, groupSegments } = await load();
   const segments = [

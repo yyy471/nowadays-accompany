@@ -8,6 +8,7 @@ import { SkillLibrary } from "../src/skills/skill-library.js";
 import {
   addBinding,
   createFixture,
+  disableResourceDirect,
   withStorage,
   type Fixture,
 } from "./p2-05-fixture.js";
@@ -280,9 +281,8 @@ test("reading a skill and its script stays read-only while a disabled skill offe
     );
     assert.equal(calls.count, 0, "读取正文不产生外部调用记录");
 
-    fixture.app.services.resources.update(pack.resourceId, {
-      enabled: false,
-    });
+    // 236 §8：角色开启时全局关闭会被 API 拒绝，这里模拟资源被外部关闭。
+    disableResourceDirect(fixture, pack.resourceId);
     submit(fixture, "禁用后再试一次");
     await fixture.app.conversation.waitForIdle(fixture.roleId);
     const disabledCalls = withStorage(

@@ -307,7 +307,7 @@ export function Relations({ roles, error, currentId, visit, onSelect, onOpenSett
           </div>
           <div className="unfold-trace" aria-hidden="true"><i /><i /><i /></div>
         </section>}
-        <footer className="sheet-footer"><span>{roles.length ? `${roles.length} 位角色` : '还没有角色'}</span><button type="button" className="footer-hint" onClick={onOpenSettings}>角色资料在设置里</button><span className="sheet-code">本地藏页 / {pageCode}</span></footer>
+        <footer className="sheet-footer"><span>{roles.length ? `${roles.length} 位角色` : '还没有角色'}</span><button type="button" className="footer-hint" onClick={onOpenSettings}>角色资料在角色配置里</button><span className="sheet-code">本地藏页 / {pageCode}</span></footer>
       </div>
     </div>
     <div className="fold-morph" aria-hidden="true" />

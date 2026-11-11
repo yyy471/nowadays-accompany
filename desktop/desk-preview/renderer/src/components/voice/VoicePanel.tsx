@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, apiBinary, apiUpload } from '../../api';
 import { Button, Field, Input, LoadingNote, Select, Textarea } from '../../ui';
+import type { ConfigDraftState } from '../config-draft';
 import {
   createVoiceForm,
   describeProtocolHint,
@@ -23,14 +24,19 @@ import {
 
 type Props = {
   roleId: string;
+  active?: boolean;
   onChanged?: () => void;
+  onDraftStateChange?: (state: ConfigDraftState) => void;
 };
 
 const DEFAULT_PREVIEW_TEXT = '今天想和你一起，慢慢走一段路。';
 
-export function VoicePanel({ roleId, onChanged }: Props) {
+export function VoicePanel({ roleId, active = true, onChanged, onDraftStateChange }: Props) {
   const [config, setConfig] = useState<VoiceConfigView | null>(null);
   const [form, setForm] = useState<VoiceForm>(() => createVoiceForm(null));
+  const [savedForm, setSavedForm] = useState<VoiceForm | null>(null);
+  const draftCallback = useRef(onDraftStateChange);
+  draftCallback.current = onDraftStateChange;
   const [references, setReferences] = useState<VoiceReferenceItem[]>([]);
   const [probe, setProbe] = useState<VoiceProbeResult | null>(null);
   const [probeSource, setProbeSource] = useState<{ baseUrl: string; protocol: string } | null>(null);
@@ -63,7 +69,13 @@ export function VoicePanel({ roleId, onChanged }: Props) {
 
   // 角色切换令牌：晚到的响应一律丢弃，避免写进另一个角色的页面状态。
   const roleToken = useRef(0);
+  const previewToken = useRef(0);
   const lastRole = useRef(roleId);
+  const lastActive = useRef(active);
+  if (lastActive.current !== active) {
+    lastActive.current = active;
+    if (!active) previewToken.current += 1;
+  }
   if (lastRole.current !== roleId) {
     lastRole.current = roleId;
     roleToken.current += 1;
@@ -95,8 +107,33 @@ export function VoicePanel({ roleId, onChanged }: Props) {
   };
 
   useEffect(() => {
+    // 探测返回的能力声明是服务信息，不代表用户修改了配置。
+    const comparable = (value: VoiceForm) => {
+      const { capabilities: _capabilities, ...fields } = value;
+      return JSON.stringify(fields);
+    };
+    draftCallback.current?.({
+      dirty: savedForm !== null && comparable(form) !== comparable(savedForm),
+      busy: busy || toggleBusy || probeBusy,
+      discard: () => {
+        if (savedForm) setForm(savedForm);
+        previewToken.current += 1;
+        stopPreview(); setPreviewBusy(false);
+        setProbe(null); setProbeSource(null); setError(''); setNotice('');
+      },
+    });
+  }, [form, savedForm, busy, toggleBusy, probeBusy]);
+
+  useEffect(() => {
+    if (!active) {
+      stopPreview();
+      setPreviewBusy(false);
+    }
+  }, [active]);
+
+  useEffect(() => {
     let active = true;
-    setConfig(null); setForm(createVoiceForm(null)); setReferences([]);
+    setConfig(null); setForm(createVoiceForm(null)); setSavedForm(null); setReferences([]);
     setProbe(null); setProbeSource(null); setNotice(''); setError('');
     setProbeBusy(false); setPreviewBusy(false); setBusy(false); setToggleBusy(false);
     setLoading(true); setPlaying(false);
@@ -108,7 +145,8 @@ export function VoicePanel({ roleId, onChanged }: Props) {
     ]).then(([voice, reference]) => {
       if (!active) return;
       setConfig(voice.voice);
-      setForm(createVoiceForm(voice.voice));
+      const initial = createVoiceForm(voice.voice);
+      setForm(initial); setSavedForm(initial);
       setReferences(reference.items);
       setLoading(false);
     }).catch(reason => {
@@ -190,6 +228,7 @@ export function VoicePanel({ roleId, onChanged }: Props) {
     const text = previewText.trim();
     if (text.length === 0) { setError('试听文本不能为空。'); return; }
     const token = roleToken.current;
+    const preview = previewToken.current;
     const issues = validateVoiceForm(form, { capabilities: activeCapabilities });
     if (issues.length > 0) { setError(issues.map(item => item.message).join('；')); return; }
     setPreviewBusy(true); setError(''); setNotice('');
@@ -199,15 +238,15 @@ export function VoicePanel({ roleId, onChanged }: Props) {
         body: { text, ...toVoicePayload(form, { capabilities: activeCapabilities }) },
       });
       // 切到别的角色后不再播放上一段试听。
-      if (isStale(token)) return;
+      if (isStale(token) || preview !== previewToken.current) return;
       if (blob.size === 0) { setError('试听返回了空音频。'); return; }
       playBlob(blob);
       setNotice('已按当前表单生成试听，正在播放。');
     } catch (reason) {
-      if (isStale(token)) return;
+      if (isStale(token) || preview !== previewToken.current) return;
       setError(failureText(reason));
     } finally {
-      if (!isStale(token)) setPreviewBusy(false);
+      if (!isStale(token) && preview === previewToken.current) setPreviewBusy(false);
     }
   };
 
@@ -284,7 +323,8 @@ export function VoicePanel({ roleId, onChanged }: Props) {
       });
       if (isStale(token)) return;
       if (stateSeq.current === configSeq) setConfig(result.voice);
-      setForm(createVoiceForm(result.voice));
+      const saved = createVoiceForm(result.voice);
+      setForm(saved); setSavedForm(saved);
       setProbe(null);
       setProbeSource(null);
       await refreshReferences(token);

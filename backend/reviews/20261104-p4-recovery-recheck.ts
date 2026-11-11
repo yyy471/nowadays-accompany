@@ -69,7 +69,7 @@ async function worker(mode: string, directory: string) {
   }
   if (mode.endsWith("disabled")) {
     for (const binding of fixture.app.services.resources.listBindings(fixture.roleId)) {
-      fixture.app.services.resources.update(binding.resourceId, { enabled: false });
+      fixture.app.appStore.updateResource({ resourceId: binding.resourceId, enabled: false });
     }
   }
   fs.writeFileSync(path.join(directory, "fixture.json"), JSON.stringify({ root: fixture.root, roleId: fixture.roleId, windowId: fixture.windowId }));

@@ -165,6 +165,29 @@ export function addBinding(
   ]);
 }
 
+/**
+ * 直接写存储层关闭资源，模拟「运行期间资源被外部改动」。
+ *
+ * 正式路径受 236 §8 的占用检查约束：角色开启或任务链未结束时，全局关闭会被
+ * 拒（API 层行为见 p15 用例）。这里要观察的是运行中的任务链如何取舍，
+ * 所以绕过服务层，直接从存储层改。
+ */
+export function disableResourceDirect(
+  fixture: Fixture,
+  resourceId: string,
+): void {
+  fixture.app.appStore.updateResource({ resourceId, enabled: false });
+}
+
+/** 同上，用于「运行期间配置被外部改动」的场景。 */
+export function updateResourceConfigDirect(
+  fixture: Fixture,
+  resourceId: string,
+  config: Record<string, unknown>,
+): void {
+  fixture.app.appStore.updateResource({ resourceId, config });
+}
+
 export function withStorage<T>(
   fixture: Fixture,
   action: (storage: RoleStorage) => T,

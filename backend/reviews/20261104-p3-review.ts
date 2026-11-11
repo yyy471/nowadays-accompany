@@ -93,7 +93,8 @@ for (const resourceType of ["model", "mcp"] as const) {
       await start(fixture, clock);
       const task = fixture.app.conversation.listTasks(fixture.roleId)[0]!;
       const resourceId = resourceType === "mcp" ? mcp.resourceId : fixture.app.services.resources.listBindings(fixture.roleId).find((item) => item.capability === "chat_model")!.resourceId;
-      fixture.app.services.resources.update(resourceId, { enabled: false });
+      // 236 §8：角色开启时全局关闭会被 API 拒绝，这里模拟资源被外部关闭。
+      fixture.app.appStore.updateResource({ resourceId, enabled: false });
       fixture.app.services.autonomy.setBudget(fixture.roleId, { dailyLimit: 10, unlimited: false });
       clock.value = new Date("2026-11-05T00:00:01.000Z");
       const resumed = fixture.app.conversation.runDueAutonomy(fixture.roleId);

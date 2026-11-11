@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { configFetch } from "./config-write.js";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -222,7 +223,7 @@ async function uploadReference(
 ): Promise<{ assetId: string; relativePath: string }> {
   const form = new FormData();
   form.set("file", new Blob([data], { type: "audio/wav" }), fileName);
-  const response = await fetch(`${base}/voice/reference`, {
+  const response = await configFetch(`${base}/voice/reference`, {
     method: "POST",
     body: form,
   });
@@ -237,7 +238,7 @@ async function saveVoice(
   base: string,
   input: Record<string, unknown>,
 ): Promise<Response> {
-  return fetch(`${base}/voice`, {
+  return configFetch(`${base}/voice`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
@@ -248,7 +249,7 @@ async function setVoiceEnabled(
   base: string,
   enabled: boolean,
 ): Promise<Response> {
-  return fetch(`${base}/voice/enabled`, {
+  return configFetch(`${base}/voice/enabled`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ enabled }),
@@ -259,7 +260,7 @@ async function probeVoice(
   base: string,
   baseUrl: string,
 ): Promise<Response> {
-  return fetch(`${base}/voice/probe`, {
+  return configFetch(`${base}/voice/probe`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ baseUrl }),
@@ -283,6 +284,7 @@ function downgradeVoiceSettingsToV10(fixture: Fixture): void {
     db.exec("ALTER TABLE role_voice_settings DROP COLUMN enabled");
     // v10 的过场图任务没有固定配置快照。
     db.exec("ALTER TABLE scene_image_tasks DROP COLUMN config_json");
+    stripAppearanceV17(db);
   } finally {
     db.close();
   }
@@ -315,6 +317,7 @@ function simulatePreviousV11Migration(fixture: Fixture): void {
     db.exec("ALTER TABLE role_voice_settings DROP COLUMN enabled");
     // v11 的过场图任务没有固定配置快照。
     db.exec("ALTER TABLE scene_image_tasks DROP COLUMN config_json");
+    stripAppearanceV17(db);
   } finally {
     db.close();
   }
@@ -453,7 +456,7 @@ test("unified clone preview uploads the managed reference audio", async () => {
     assert.equal(savedBody.voice.language, "en");
     assert.equal(savedBody.voice.speed, 1.25);
 
-    const preview = await fetch(`${base}/voice/preview`, {
+    const preview = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "你好，今天过得怎么样？" }),
@@ -504,7 +507,7 @@ test("unified clone requires and forwards reference text", async () => {
     });
     assert.equal(saved.status, 200);
 
-    const missing = await fetch(`${base}/voice/preview`, {
+    const missing = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "缺少原文。" }),
@@ -525,7 +528,7 @@ test("unified clone requires and forwards reference text", async () => {
     });
     assert.equal(updated.status, 200);
 
-    const preview = await fetch(`${base}/voice/preview`, {
+    const preview = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "试听一句。", emotion: "温柔" }),
@@ -536,7 +539,7 @@ test("unified clone requires and forwards reference text", async () => {
     assert.equal(fake.requests[0]!.emotion, "温柔");
 
     const { speech, narration } = await createSpeechSegments(fixture);
-    const spoken = await fetch(
+    const spoken = await configFetch(
       `${base}/windows/${fixture.windowId}/segments/${speech.segmentId}/speech`,
       { method: "POST" },
     );
@@ -551,7 +554,7 @@ test("unified clone requires and forwards reference text", async () => {
       "这是录音中实际说的话。",
     );
 
-    const narrationResponse = await fetch(
+    const narrationResponse = await configFetch(
       `${base}/windows/${fixture.windowId}/segments/${narration.segmentId}/speech`,
       { method: "POST" },
     );
@@ -598,7 +601,7 @@ test("voice can be disabled and enabled without losing the saved config", async 
 
     const { speech } = await createSpeechSegments(fixture);
     const speak = (): Promise<Response> =>
-      fetch(`${base}/windows/${fixture.windowId}/segments/${speech.segmentId}/speech`, {
+      configFetch(`${base}/windows/${fixture.windowId}/segments/${speech.segmentId}/speech`, {
         method: "POST",
       });
     assert.equal((await speak()).status, 200);
@@ -615,7 +618,7 @@ test("voice can be disabled and enabled without losing the saved config", async 
     assert.equal(blocked.status, 409);
     assert.equal(await errorCode(blocked), "VOICE_DISABLED");
     assert.equal(fake.requests.length, requestsAfterSpeak, "停用后不再调用语音服务");
-    const preview = await fetch(`${base}/voice/preview`, {
+    const preview = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "停用期间试听。" }),
@@ -682,7 +685,7 @@ test("unified preset voice previews and synthesizes without reference audio", as
     });
     assert.equal(savedBody.voice.reference, null);
 
-    const preview = await fetch(`${base}/voice/preview`, {
+    const preview = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "使用预置音色。" }),
@@ -696,7 +699,7 @@ test("unified preset voice previews and synthesizes without reference audio", as
     assert.equal(fake.requests[0]!.speed, "0.9");
 
     const { speech } = await createSpeechSegments(fixture);
-    const spoken = await fetch(
+    const spoken = await configFetch(
       `${base}/windows/${fixture.windowId}/segments/${speech.segmentId}/speech`,
       {
         method: "POST",
@@ -811,7 +814,7 @@ test("voice source validation follows declared capabilities", async () => {
       },
     });
     assert.equal(noCapabilities.status, 200);
-    const fetched = await fetch(`${base}/voice`);
+    const fetched = await configFetch(`${base}/voice`);
     const fetchedBody = (await fetched.json()) as {
       voice: {
         capabilities: unknown;
@@ -832,7 +835,7 @@ test("voice source validation follows declared capabilities", async () => {
       },
     });
     assert.equal(draft.status, 200);
-    const draftPreview = await fetch(`${base}/voice/preview`, {
+    const draftPreview = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "草稿还不能试听。" }),
@@ -867,7 +870,7 @@ test("legacy voice rows stay readable as the reference source", async () => {
         .run(fixture.roleId, reference.assetId, timestamp, timestamp);
     });
 
-    const fetched = await fetch(`${base}/voice`);
+    const fetched = await configFetch(`${base}/voice`);
     assert.equal(fetched.status, 200);
     const body = (await fetched.json()) as {
       voice: {
@@ -914,7 +917,7 @@ test("legacy voice rows stay readable as the reference source", async () => {
     }
     assert.equal(
       withStorage(fixture, (storage) => storage.business.schemaVersion),
-      16,
+      17,
     );
   } finally {
     await fixture.close();
@@ -937,7 +940,7 @@ test("preview drafts do not change the saved voice configuration", async () => {
       ).status,
       200,
     );
-    const preview = await fetch(`${base}/voice/preview`, {
+    const preview = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -955,7 +958,7 @@ test("preview drafts do not change the saved voice configuration", async () => {
     assert.equal(fake.requests.length, 1);
     assert.equal(fake.requests[0]!.mode, "reference");
 
-    const saved = (await (await fetch(`${base}/voice`)).json()) as {
+    const saved = (await (await configFetch(`${base}/voice`)).json()) as {
       voice: { protocol: string; voiceSource: { kind: string } };
     };
     assert.equal(saved.voice.protocol, "indextts");
@@ -1074,7 +1077,7 @@ test("unified requests omit language and speed when the service does not declare
       speed: 1.5,
     });
     assert.equal(saved.status, 200);
-    const preview = await fetch(`${base}/voice/preview`, {
+    const preview = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "服务自行决定语言和语速。" }),
@@ -1118,7 +1121,7 @@ test("unified reference files are re-read from the role voice directory", async 
     );
     assert.ok(fs.existsSync(file));
     fs.rmSync(file);
-    const preview = await fetch(`${base}/voice/preview`, {
+    const preview = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "参考文件已缺失。" }),
@@ -1214,6 +1217,7 @@ test("v9 voice rows migrate to v12 without touching messages, segments or SSE cu
       }
       // v9 的过场图任务表还没有固定配置快照。
       raw.exec("ALTER TABLE scene_image_tasks DROP COLUMN config_json");
+      stripAppearanceV17(raw);
     } finally {
       raw.close();
     }
@@ -1289,7 +1293,7 @@ test("v9 voice rows migrate to v12 without touching messages, segments or SSE cu
           .get() as { latest: number | null }
       ).latest,
     }));
-    assert.equal(countsAfter.schemaVersion, 16);
+    assert.equal(countsAfter.schemaVersion, 17);
     assert.equal(countsAfter.messages, countsBefore.messages);
     assert.equal(countsAfter.segments, countsBefore.segments);
     assert.equal(countsAfter.events, countsBefore.events);
@@ -1393,7 +1397,7 @@ test("v10 pending reference mode stays unconfirmed after migration", async () =>
     };
     assert.equal(unrelatedBody.voice.voiceSource.referenceMode, null);
     assert.equal(storedReferenceModeConfirmed(pending), 0);
-    const blocked = await fetch(`${pendingBase}/voice/preview`, {
+    const blocked = await configFetch(`${pendingBase}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "迁移后的待确认状态仍需显式选择。" }),
@@ -1413,7 +1417,7 @@ test("v10 pending reference mode stays unconfirmed after migration", async () =>
     });
     assert.equal(confirmed.status, 200);
     assert.equal(storedReferenceModeConfirmed(pending), 1);
-    const preview = await fetch(`${pendingBase}/voice/preview`, {
+    const preview = await configFetch(`${pendingBase}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "显式确认后恢复合成。" }),
@@ -1534,7 +1538,7 @@ test("earlier v11 migration is repaired so pending reference mode stays unconfir
     };
     assert.equal(unrelatedBody.voice.voiceSource.referenceMode, null);
     assert.equal(storedReferenceModeConfirmed(pending), 0);
-    const blocked = await fetch(`${pendingBase}/voice/preview`, {
+    const blocked = await configFetch(`${pendingBase}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "旧 v11 库仍需显式确认模式。" }),
@@ -1554,7 +1558,7 @@ test("earlier v11 migration is repaired so pending reference mode stays unconfir
     });
     assert.equal(confirmed.status, 200);
     assert.equal(storedReferenceModeConfirmed(pending), 1);
-    const preview = await fetch(`${pendingBase}/voice/preview`, {
+    const preview = await configFetch(`${pendingBase}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "显式确认后恢复合成。" }),
@@ -1610,7 +1614,7 @@ test("voice assets are role scoped and synthesis failures keep segments readable
       200,
     );
     const { speech } = await createSpeechSegments(first);
-    const crossWindow = await fetch(
+    const crossWindow = await configFetch(
       `${secondBase}/windows/${first.windowId}/segments/${speech.segmentId}/speech`,
       { method: "POST" },
     );
@@ -1618,7 +1622,7 @@ test("voice assets are role scoped and synthesis failures keep segments readable
     assert.equal(await errorCode(crossWindow), "MESSAGE_SEGMENT_NOT_FOUND");
 
     fake.setMode("error");
-    const failed = await fetch(
+    const failed = await configFetch(
       `${firstBase}/windows/${first.windowId}/segments/${speech.segmentId}/speech`,
       { method: "POST" },
     );
@@ -1665,7 +1669,7 @@ test("unified requests refuse redirects without contacting the target", async ()
     );
 
     source.setRedirect("/tts", target.baseUrl);
-    const preset = await fetch(`${base}/voice/preview`, {
+    const preset = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "预置模式不应跟随重定向。" }),
@@ -1692,7 +1696,7 @@ test("unified requests refuse redirects without contacting the target", async ()
       ).status,
       200,
     );
-    const clone = await fetch(`${base}/voice/preview`, {
+    const clone = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "克隆模式不应跟随重定向。" }),
@@ -1734,7 +1738,7 @@ test("preview accepts the documented config envelope", async () => {
       language: "en",
       speed: 1.1,
     };
-    const preview = await fetch(`${base}/voice/preview`, {
+    const preview = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "按文档的 config 形状试听。", config }),
@@ -1745,12 +1749,12 @@ test("preview accepts the documented config envelope", async () => {
     assert.equal(fake.requests[0]!.language, "en");
     assert.equal(fake.requests[0]!.speed, "1.1");
 
-    const saved = (await (await fetch(`${base}/voice`)).json()) as {
+    const saved = (await (await configFetch(`${base}/voice`)).json()) as {
       voice: unknown;
     };
     assert.equal(saved.voice, null);
 
-    const mixed = await fetch(`${base}/voice/preview`, {
+    const mixed = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -1790,7 +1794,7 @@ test("service switch requires reselecting the voice and resetting the reference 
     const switched = await saveVoice(base, { baseUrl: target.baseUrl });
     assert.equal(switched.status, 400);
     assert.equal(await errorCode(switched), "VOICE_SOURCE_REQUIRED");
-    const switchedPreview = await fetch(`${base}/voice/preview`, {
+    const switchedPreview = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -1809,7 +1813,7 @@ test("service switch requires reselecting the voice and resetting the reference 
       capabilities: CAPABILITIES,
     });
     assert.equal(reselected.status, 200);
-    const preview = await fetch(`${base}/voice/preview`, {
+    const preview = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "使用目标服务重新选择的音色。" }),
@@ -1847,7 +1851,7 @@ test("service switch requires reselecting the voice and resetting the reference 
     };
     assert.equal(switchedBody.voice.voiceSource.referenceMode, null);
     assert.equal(switchedBody.voice.voiceSource.referenceText, "第一段原文。");
-    const noMode = await fetch(`${base}/voice/preview`, {
+    const noMode = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "旧模式不能带到新服务。" }),
@@ -1887,7 +1891,7 @@ test("changing reference audio drops text that belongs to the previous recording
       200,
     );
 
-    const sameAsset = await fetch(`${base}/voice/preview`, {
+    const sameAsset = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -1902,7 +1906,7 @@ test("changing reference audio drops text that belongs to the previous recording
     assert.deepEqual(fake.requests[0]!.audio?.data, firstAudio);
     assert.equal(fake.requests[0]!.referenceText, "第一段原文。");
 
-    const missingText = await fetch(`${base}/voice/preview`, {
+    const missingText = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -1916,7 +1920,7 @@ test("changing reference audio drops text that belongs to the previous recording
     assert.equal(await errorCode(missingText), "VOICE_REFERENCE_TEXT_REQUIRED");
     assert.equal(fake.requests.length, 1);
 
-    const withNewText = await fetch(`${base}/voice/preview`, {
+    const withNewText = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -2006,7 +2010,7 @@ test("service switch does not auto-bind a single reference mode", async () => {
     assert.equal(switchedBody.voice.voiceSource.referenceMode, null);
     assert.deepEqual(switchedBody.voice.capabilities, targetCapabilities);
 
-    const unconfirmed = await fetch(`${base}/voice/preview`, {
+    const unconfirmed = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "未确认新服务模式不能直接使用。" }),
@@ -2030,7 +2034,7 @@ test("service switch does not auto-bind a single reference mode", async () => {
     assert.equal(secondBody.voice.voiceSource.referenceMode, null);
     assert.equal(target.requests.length, 0);
 
-    const stillUnconfirmed = await fetch(`${base}/voice/preview`, {
+    const stillUnconfirmed = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "改语速也不能绕过模式确认。" }),
@@ -2041,7 +2045,7 @@ test("service switch does not auto-bind a single reference mode", async () => {
       "VOICE_REFERENCE_MODE_REQUIRED",
     );
     const { speech } = await createSpeechSegments(fixture);
-    const unconfirmedSpeech = await fetch(
+    const unconfirmedSpeech = await configFetch(
       `${base}/windows/${fixture.windowId}/segments/${speech.segmentId}/speech`,
       { method: "POST" },
     );
@@ -2052,7 +2056,7 @@ test("service switch does not auto-bind a single reference mode", async () => {
     );
     assert.equal(target.requests.length, 0);
 
-    const confirmed = await fetch(`${base}/voice/preview`, {
+    const confirmed = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -2080,7 +2084,7 @@ test("service switch does not auto-bind a single reference mode", async () => {
       },
     });
     assert.equal(confirmedSave.status, 200);
-    const confirmedSpeech = await fetch(
+    const confirmedSpeech = await configFetch(
       `${base}/windows/${fixture.windowId}/segments/${speech.segmentId}/speech`,
       { method: "POST" },
     );
@@ -2149,7 +2153,7 @@ test("unified language codes and speed ranges follow the service declaration", a
     };
     assert.equal(savedBody.voice.language, "ko");
     assert.equal(savedBody.voice.speed, 2.5);
-    const preview = await fetch(`${base}/voice/preview`, {
+    const preview = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "按服务声明的语言和语速合成。" }),
@@ -2168,7 +2172,7 @@ test("unified language codes and speed ranges follow the service declaration", a
       speed: 0.1,
     });
     assert.equal(boundary.status, 200);
-    const boundaryPreview = await fetch(`${base}/voice/preview`, {
+    const boundaryPreview = await configFetch(`${base}/voice/preview`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "使用声明下限的语速。" }),
@@ -2200,3 +2204,12 @@ test("unified language codes and speed ranges follow the service declaration", a
     await fake.close();
   }
 });
+
+/** 把业务库还原到 V16（去掉 V17 的外观软删除与句段立绘快照），用于复现旧库迁移。 */
+function stripAppearanceV17(db: Database.Database): void {
+  db.exec("DROP INDEX IF EXISTS idx_outfits_role_name");
+  db.exec("DROP INDEX IF EXISTS idx_outfit_assets_single_home");
+  db.exec("ALTER TABLE outfits DROP COLUMN deleted_at");
+  db.exec("ALTER TABLE outfit_assets DROP COLUMN deleted_at");
+  db.exec("ALTER TABLE message_segments DROP COLUMN home_asset_id");
+}

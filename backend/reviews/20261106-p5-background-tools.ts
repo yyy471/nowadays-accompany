@@ -302,7 +302,7 @@ async function caseDisabledResourceLateResult(): Promise<CaseResult> {
     await waitFor(() => snapshot(fixture).executions[0]?.status === "superseded");
     // 资源关闭 + 任务结束：晚到结果只落库，不复活、不续行。
     for (const binding of fixture.app.services.resources.listBindings(fixture.roleId)) {
-      fixture.app.services.resources.update(binding.resourceId, { enabled: false });
+      fixture.app.appStore.updateResource({ resourceId: binding.resourceId, enabled: false });
     }
     const task = fixture.app.conversation.listTasks(fixture.roleId)[0]!;
     fixture.app.conversation.finishTask({

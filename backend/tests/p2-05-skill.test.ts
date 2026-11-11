@@ -9,6 +9,7 @@ import {
   ScriptedChatModel,
   addBinding,
   createFixtureWithModel,
+  updateResourceConfigDirect,
   withStorage,
 } from "./p2-05-fixture.js";
 
@@ -92,8 +93,10 @@ test("skill reads resolve the resource's latest sourcePath between rounds", { ti
     (request) => {
       const tool = request.tools.find((item) => item.name === "skill_read");
       assert.ok(tool);
-      fixture.app.services.resources.update(resourceId, {
-        config: { sourcePath: secondRoot },
+      // 236 §8：角色开启期间改 Skill 会被 API 拒绝（见 p15），
+      // 这里模拟目录被外部改动（换盘、重装 Skill 包），验证每次调用重新解析资源。
+      updateResourceConfigDirect(fixture, resourceId, {
+        sourcePath: secondRoot,
       });
       return [
         {

@@ -8,7 +8,7 @@ export interface StageSources {
   /** 当前默认背景（随明暗主题）。 */
   backgroundUrl: string;
   /** 当前服饰/主题立绘回退。 */
-  characterUrl: string;
+  characterUrl: string | null;
   /** 句段差分素材按真实素材编号解析为图片地址。 */
   resolveSprite?: (assetId: string) => string;
 }
@@ -23,12 +23,13 @@ function decodeImage(src: string): Promise<void> {
 }
 
 /** 双缓冲图层：新图解码成功后淡入，旧图留在非活动缓冲槽。 */
-function CrossfadeLayer({ src, alt, className }: { src: string; alt: string; className: string }) {
-  const [slots, setSlots] = useState<[string, string]>([src, '']);
+function CrossfadeLayer({ src, alt, className }: { src: string | null; alt: string; className: string }) {
+  const [slots, setSlots] = useState<[string, string]>([src ?? '', '']);
   const [active, setActive] = useState(0);
   const generation = useRef(0);
   useEffect(() => {
     const version = ++generation.current;
+    if (!src) { if (slots[0] || slots[1]) setSlots(['', '']); if (active !== 0) setActive(0); return; }
     const current = slots[active];
     const other = slots[1 - active];
     if (src === current) return;
@@ -77,7 +78,7 @@ export function ConversationStage({
   const policy = useMotionPolicy();
   const visible = visibleScene;
   const full = visible?.mode === 'full_scene';
-  const poseId = spriteForRow(snapshot.messages, current);
+  const poseId = current?.role === 'assistant' && !current.outfitId ? null : spriteForRow(snapshot.messages, current);
   const poseUrl = poseId ? sources.resolveSprite?.(poseId) ?? null : null;
   const characterUrl = poseUrl ?? sources.characterUrl;
   const sceneAsset = visible?.assetUrl ?? null;

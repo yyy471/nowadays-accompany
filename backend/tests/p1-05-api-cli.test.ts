@@ -181,6 +181,29 @@ function ok(result: CliResult): Record<string, unknown> {
   return result.json as Record<string, unknown>;
 }
 
+/**
+ * 配置写入的 CLI 作用域：后端统一要求先由活动接口确认停止，写完再恢复。
+ * 用 CLI 自身的 activity 命令完成，既覆盖新命令，也不绕过路由守卫。
+ */
+async function runConfigCli(
+  baseUrl: string,
+  roleId: string,
+  args: readonly string[],
+): Promise<CliResult> {
+  const stopped = ok(
+    await runCli(baseUrl, ["activity", "stop", "--role", roleId]),
+  );
+  assert.equal((stopped.activity as { state: string }).state, "stopped");
+  try {
+    return await runCli(baseUrl, args);
+  } finally {
+    const resumed = ok(
+      await runCli(baseUrl, ["activity", "resume", "--role", roleId]),
+    );
+    assert.equal((resumed.activity as { state: string }).state, "active");
+  }
+}
+
 function cliError(result: CliResult): string {
   assert.notEqual(result.status, 0);
   assert.equal(result.stdout, "");
@@ -228,6 +251,13 @@ test("independent CLI completes the P1 flow through the backend process", async 
     assert.ok(roleId);
     assert.ok(mainWindowId);
 
+    const activity = ok(
+      await runCli(baseUrl, ["activity", "get", "--role", roleId]),
+    );
+    assert.equal((activity.activity as { state: string }).state, "active");
+    const activities = ok(await runCli(baseUrl, ["activity", "list"]));
+    assert.equal((activities.items as unknown[]).length, 1);
+
     const fetched = ok(
       await runCli(baseUrl, ["role", "get", "--role", roleId]),
     );
@@ -256,7 +286,7 @@ test("independent CLI completes the P1 flow through the backend process", async 
     assert.equal(stateUpdated.stateVersion, 2);
 
     const updated = ok(
-      await runCli(baseUrl, [
+      await runConfigCli(baseUrl, roleId, [
         "role",
         "update",
         "--role",
@@ -362,7 +392,7 @@ test("independent CLI completes the P1 flow through the backend process", async 
     );
     assert.equal(resourceFetched.name, "CLI 模型");
     const resourceUpdated = ok(
-      await runCli(baseUrl, [
+      await runConfigCli(baseUrl, roleId, [
         "resource",
         "update",
         "--id",
@@ -374,7 +404,7 @@ test("independent CLI completes the P1 flow through the backend process", async 
     assert.equal(resourceUpdated.enabled, false);
 
     const bindings = ok(
-      await runCli(baseUrl, [
+      await runConfigCli(baseUrl, roleId, [
         "binding",
         "put",
         "--role",

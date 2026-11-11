@@ -9,6 +9,8 @@ export interface OutfitAssetRecord {
   displayName: string;
   mediaType: string;
   relativePath: string;
+  /** 素材已从衣柜移除但为历史句段保留时为删除时间；正常衣柜项为 null。 */
+  deletedAt: string | null;
   createdAt: string;
 }
 

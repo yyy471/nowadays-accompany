@@ -11,6 +11,8 @@ import {
   ScriptedChatModel,
   addBinding,
   createFixtureWithModel,
+  disableResourceDirect,
+  updateResourceConfigDirect,
   withStorage,
   type Fixture,
 } from "./p2-05-fixture.js";
@@ -383,9 +385,10 @@ for (const disabled of ["model", "mcp"] as const) {
         .listBindings(fixture.roleId)
         .find((item) => item.capability === "chat_model");
       assert.ok(chatBinding);
-      fixture.app.services.resources.update(
+      // 236 §8：角色开启时全局关闭会被 API 拒绝，这里模拟资源被外部关闭。
+      disableResourceDirect(
+        fixture,
         disabled === "mcp" ? mcp.resourceId : chatBinding.resourceId,
-        { enabled: false },
       );
       fixture.app.services.autonomy.setBudget(fixture.roleId, {
         dailyLimit: 10,
@@ -744,12 +747,11 @@ test("an MCP connection failure releases the reserved tool point", { timeout: 30
   try {
     const mcp = addWorkspaceMcp(fixture);
     breakConfig = () => {
-      fixture.app.services.resources.update(mcp.resourceId, {
-        config: {
-          command: "nowadays-nonexistent-mcp-command",
-          args: [],
-          env: {},
-        },
+      // 运行中改 MCP 会被 236 §8 拒绝；这里模拟外部故障（命令被卸载）。
+      updateResourceConfigDirect(fixture, mcp.resourceId, {
+        command: "nowadays-nonexistent-mcp-command",
+        args: [],
+        env: {},
       });
     };
     fixture.app.services.autonomy.setBudget(fixture.roleId, {

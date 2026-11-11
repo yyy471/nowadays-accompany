@@ -335,6 +335,10 @@ test("a late background result after the task ended is recorded without reviving
 });
 
 test("a fast tool inside the window stays foreground without mode changes", { timeout: 30_000 }, async () => {
+  // 这里验证「工具在窗口内完成 → 保持前台」，不是 600ms 边界本身。
+  // 本地 MCP 用 tsx 现场拉起子进程，全量用例并发时握手可能超过短窗口，
+  // 会把本该前台的工具转后台并产生 superseded + completed 两条执行。
+  // 与 p5-skill-run 一致放宽窗口，使断言只针对前台／后台模式。
   const fixture = createFixture(
     [
       (request) => {
@@ -357,7 +361,7 @@ test("a fast tool inside the window stays foreground without mode changes", { ti
         { type: "completed", stopReason: "stop" },
       ],
     ],
-    { toolForegroundWaitMs: 600 },
+    { toolForegroundWaitMs: 5_000 },
   );
   try {
     const workspace = rolePaths(

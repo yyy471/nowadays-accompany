@@ -46,6 +46,7 @@ const MAINTENANCE_RECHECK_MS = 3_600_000;
 export class MemoryRuntime {
   private readonly queues = new Map<string, QueueState>();
   private readonly timers = new Map<string, NodeJS.Timeout>();
+  private readonly disposedRoles = new Set<string>();
   private readonly timeZone: string | undefined;
   private readonly now: () => Date;
   private readonly enabled: boolean;
@@ -138,11 +139,31 @@ export class MemoryRuntime {
     );
   }
 
+  /** 等待该角色的记忆队列收尾并停止后续调度；删除角色前调用。 */
+  async disposeRole(roleId: string): Promise<void> {
+    this.disposedRoles.add(roleId);
+    const timer = this.timers.get(roleId);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      this.timers.delete(roleId);
+    }
+    const queue = this.queues.get(roleId);
+    if (queue?.promise !== null && queue?.promise !== undefined) {
+      await queue.promise.catch(() => {});
+    }
+    const late = this.timers.get(roleId);
+    if (late !== undefined) {
+      clearTimeout(late);
+      this.timers.delete(roleId);
+    }
+    this.queues.delete(roleId);
+  }
+
   private enqueue(
     roleId: string,
     mark: (queue: QueueState) => void,
   ): Promise<void> {
-    if (!this.enabled || this.closed) {
+    if (!this.enabled || this.closed || this.disposedRoles.has(roleId)) {
       return Promise.resolve();
     }
     const queue = this.queues.get(roleId) ?? {
@@ -201,7 +222,7 @@ export class MemoryRuntime {
   }
 
   private armTimer(roleId: string): void {
-    if (!this.enabled || this.closed) {
+    if (!this.enabled || this.closed || this.disposedRoles.has(roleId)) {
       return;
     }
     const existing = this.timers.get(roleId);

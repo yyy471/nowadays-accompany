@@ -69,6 +69,7 @@ export function rowsForMessage(message, segments, idFor) {
     actionVisible: segment.kind === 'narration',
     sprite: segment.spriteAssetId ?? null,
     outfitId: segment.outfitId ?? null,
+    homeAssetId: segment.homeAssetId ?? null,
     status: message.status === 'interrupted' && index === ordered.length - 1 ? 'interrupted' : 'completed',
     createdAt: parseTime(message.createdAt)
   }));
@@ -111,6 +112,7 @@ export function applySegmentAnnotations(segments, items, now = new Date().toISOS
     return {
       ...segment,
       outfitId: item.outfitId ?? segment.outfitId,
+      homeAssetId: item.homeAssetId ?? segment.homeAssetId,
       spriteAssetId: item.spriteAssetId ?? segment.spriteAssetId,
       annotatedAt: now
     };
@@ -168,6 +170,6 @@ export function lastRowOf(rows) {
 export function spriteForRow(rows, current) {
   if (!current) return null;
   return [...rows].reverse().find(row =>
-    row.messageId === current.messageId && row.ordinal <= current.ordinal && row.sprite
+    row.messageId === current.messageId && row.ordinal <= current.ordinal && row.outfitId === current.outfitId && row.sprite
   )?.sprite ?? null;
 }

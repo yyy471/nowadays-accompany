@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { configFetch } from "./config-write.js";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -26,7 +27,7 @@ async function request(
   route: string,
   body?: unknown,
 ) {
-  const response = await fetch(`${baseUrl}${route}`, {
+  const response = await configFetch(`${baseUrl}${route}`, {
     method,
     headers: body === undefined ? {} : { "content-type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),

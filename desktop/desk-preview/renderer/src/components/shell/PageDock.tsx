@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { ControlButton, Icon, createMotionScope, readMotionPx, readMotionTime, readMotionValue, useMotionPolicy, type IconName } from '../../ui';
 import { MoreMenu } from './MoreMenu';
-import { PAGES } from '../../lib/navigation';
+import { ALL_PAGES, PAGES } from '../../lib/navigation';
 
 /** 正式Dock的直达目标；开发样板据此显示同一组标签，不另维护一份导航。 */
 export const dockDestinations: Array<{ id: string; label: string; icon: IconName }> = [
@@ -233,7 +233,7 @@ export function PageDock({ page, onNavigate }: { page: string; onNavigate: (page
       <span className="ui-dock-label">{item.label}</span>
       <span className="ui-dock-surface" aria-hidden="true" />
     </ControlButton>)}
-    <MoreMenu label="更多" currentLabel={direct ? undefined : PAGES.find(item => item.id === page)?.title}
+    <MoreMenu label="更多" currentLabel={direct ? undefined : [...PAGES, ...ALL_PAGES].find(item => item.id === page)?.title}
       onNavigate={onNavigate} triggerIcon="more" triggerLayout="stacked" triggerClassName="ui-dock-more"
       triggerRef={moreRef} triggerDecoration={<span className="ui-dock-surface" aria-hidden="true" />} />
   </nav>;

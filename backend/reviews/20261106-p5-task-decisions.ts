@@ -331,7 +331,7 @@ async function caseNewGoalNewChain(): Promise<CaseResult> {
     // 关闭 MCP 资源后另起目标：新链不延续被关闭的资源。
     for (const binding of fixture.app.services.resources.listBindings(fixture.roleId)) {
       if (binding.capability === "mcp") {
-        fixture.app.services.resources.update(binding.resourceId, { enabled: false });
+        fixture.app.appStore.updateResource({ resourceId: binding.resourceId, enabled: false });
       }
     }
     fixture.app.services.autonomy.scheduleWake(fixture.roleId, {

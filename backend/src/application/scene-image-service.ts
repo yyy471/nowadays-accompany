@@ -79,6 +79,7 @@ export class SceneImageService {
   private readonly inspect: typeof inspectImage;
   private readonly inFlight = new Map<string, Set<Promise<void>>>();
   private readonly controllers = new Set<AbortController>();
+  private readonly controllerRoles = new Map<AbortController, string>();
   private closed = false;
 
   constructor(
@@ -252,6 +253,19 @@ export class SceneImageService {
     }
   }
 
+  /** 中止该角色正在进行的过场图任务并等待收尾；删除角色前调用。 */
+  async cancelRole(roleId: string): Promise<void> {
+    for (const [controller, id] of this.controllerRoles) {
+      if (id === roleId) {
+        controller.abort();
+      }
+    }
+    const tasks = this.inFlight.get(roleId);
+    if (tasks !== undefined) {
+      await Promise.allSettled([...tasks]);
+    }
+  }
+
   private start(roleId: string, windowId: string, taskId: string): void {
     if (this.closed) {
       this.settle(roleId, taskId, INTERRUPTED_CODE, "服务已关闭，任务未开始");
@@ -259,6 +273,7 @@ export class SceneImageService {
     }
     const controller = new AbortController();
     this.controllers.add(controller);
+    this.controllerRoles.set(controller, roleId);
     let promise: Promise<void>;
     promise = this.run(roleId, windowId, taskId, controller.signal)
       // 兜底：任何未预期异常都要留下终态，不能让任务停在 generating。
@@ -273,6 +288,7 @@ export class SceneImageService {
       })
       .finally(() => {
         this.controllers.delete(controller);
+        this.controllerRoles.delete(controller);
         const tasks = this.inFlight.get(roleId);
         if (tasks !== undefined) {
           tasks.delete(promise);

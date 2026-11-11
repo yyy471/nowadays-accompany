@@ -186,7 +186,8 @@ async function caseReadOnlyAndDisabled(): Promise<CaseResult> {
     await fixture.app.conversation.waitForIdle(fixture.roleId);
     const snap = callsOf(fixture);
     const readOnlyOk = snap.calls.length === 0;
-    fixture.app.services.resources.update(resourceId, { enabled: false });
+    // 236 §8：角色开启时全局关闭会被 API 拒绝，这里模拟资源被外部关闭。
+    fixture.app.appStore.updateResource({ resourceId, enabled: false });
     submit(fixture, "禁用后再试一次");
     await fixture.app.conversation.waitForIdle(fixture.roleId);
     return {

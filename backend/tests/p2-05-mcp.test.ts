@@ -10,6 +10,8 @@ import {
   ScriptedChatModel,
   addBinding,
   createFixtureWithModel,
+  disableResourceDirect,
+  updateResourceConfigDirect,
   withStorage,
   type Fixture,
 } from "./p2-05-fixture.js";
@@ -139,9 +141,7 @@ test("disabling an MCP resource keeps the running chain but excludes the next ta
       },
     });
     addBinding(fixture, "mcp", mcp.resourceId);
-    model.disableMcp = () => {
-      fixture.app.services.resources.update(mcp.resourceId, { enabled: false });
-    };
+    model.disableMcp = () => disableResourceDirect(fixture, mcp.resourceId);
 
     fixture.app.conversation.submitMessage(
       fixture.roleId,
@@ -643,13 +643,13 @@ test("each MCP tool dispatch reads the resource's latest config", { timeout: 30_
       );
       assert.ok(tool);
       const resource = fixture.app.services.resources.get(resourceId);
-      fixture.app.services.resources.update(resourceId, {
-        config: {
-          ...resource.config,
-          env: {
-            ...(resource.config.env as Record<string, string>),
-            REVIEW_VALUE: "new",
-          },
+      // 236 §8：角色开启期间改 MCP 会被服务层拒绝；这里模拟外部改动，
+      // 验证的是「每次派发都重新读取配置」，不是配置写入规则本身。
+      updateResourceConfigDirect(fixture, resourceId, {
+        ...resource.config,
+        env: {
+          ...(resource.config.env as Record<string, string>),
+          REVIEW_VALUE: "new",
         },
       });
       return [
@@ -1062,7 +1062,7 @@ test("a disabled MCP resource still serves an active task chain and is released 
     );
     submit(fixture, "读取后继续保存成果");
     await waitUntil(() => model.requests.length >= 2);
-    fixture.app.services.resources.update(resourceId, { enabled: false });
+    disableResourceDirect(fixture, resourceId);
     submit(fixture, "先回答这条消息");
     await waitUntil(() =>
       fixture.app.services.messages

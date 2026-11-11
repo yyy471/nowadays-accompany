@@ -14,7 +14,7 @@ export function reconcileFinalSegments(existing: SegmentView[], incoming: Segmen
 export function newerSceneTask(previous: SceneTaskView | undefined, incoming: SceneTaskView): SceneTaskView;
 export function applySegmentAnnotations(
   segments: SegmentView[],
-  items: Array<{ segmentId: string; outfitId?: string | null; spriteAssetId?: string | null }>,
+  items: Array<{ segmentId: string; outfitId?: string | null; homeAssetId?: string | null; spriteAssetId?: string | null }>,
   now?: string
 ): SegmentView[];
 export function sceneView(task: SceneTaskView, segmentsByMessage: Map<string, SegmentView[]>, roleId: string): PerfScene;

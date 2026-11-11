@@ -191,7 +191,13 @@ export class ModelBindingResolver {
     if (!binding || !binding.modelName) {
       return null;
     }
-    const resource = this.appStore.getResource(binding.resourceId);
+    let resource: ResourceRecord;
+    try {
+      resource = this.appStore.getResource(binding.resourceId);
+    } catch {
+      // 资源已删除但绑定尚未清理完（RP-R05）：按未绑定处理。
+      return null;
+    }
     if (!resource.enabled) {
       return null;
     }

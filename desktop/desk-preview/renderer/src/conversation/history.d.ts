@@ -10,6 +10,7 @@ export interface PerfRow {
   actionVisible: boolean;
   sprite: string | null;
   outfitId?: string | null;
+  homeAssetId?: string | null;
   status: 'completed' | 'interrupted' | 'failed';
   createdAt: number;
 }

@@ -4,6 +4,29 @@ import { HttpError } from "./errors.js";
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_UPLOAD_BODY_BYTES = 128 * 1024 * 1024;
 
+/**
+ * 请求体读完后的提交前校验（DL-148 / RA-R03）。
+ *
+ * 受保护的配置写入在入口校验之后还要读请求体，读体期间可能新增角色或改变
+ * 活动状态。守卫在这里挂一个校验钩子，读完体、真正落库之前再验一次，
+ * 避免「校验通过 → 期间新建活动角色 → 写入仍落到不一致的状态上」。
+ */
+const bodyReadHooks = new WeakMap<IncomingMessage, () => void>();
+
+export function setBodyReadHook(
+  request: IncomingMessage,
+  hook: () => void,
+): void {
+  bodyReadHooks.set(request, hook);
+}
+
+function afterBodyRead(request: IncomingMessage): void {
+  const hook = bodyReadHooks.get(request);
+  if (hook === undefined) return;
+  bodyReadHooks.delete(request);
+  hook();
+}
+
 export interface MultipartFile {
   fileName: string;
   data: Buffer;
@@ -38,6 +61,7 @@ export async function readMultipartForm(
     }
     chunks.push(buffer);
   }
+  afterBodyRead(request);
   if (size === 0) {
     throw new HttpError(400, "EMPTY_BODY", "请求体不能为空");
   }
@@ -91,6 +115,7 @@ export async function readJsonBody(
     }
     chunks.push(buffer);
   }
+  afterBodyRead(request);
   if (size === 0) {
     throw new HttpError(400, "EMPTY_BODY", "请求体不能为空");
   }

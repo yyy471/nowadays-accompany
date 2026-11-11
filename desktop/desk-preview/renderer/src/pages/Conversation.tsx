@@ -245,15 +245,12 @@ export function ConversationPage({
   useLayoutEffect(() => {
     if (stageLive) frozenScene.current = visibleScene;
   }, [stageLive, visibleScene]);
-  const segmentOutfit = visibleStageRow?.outfitId
-    ? outfits.find(outfit => outfit.outfitId === visibleStageRow.outfitId) ?? null
-    : currentOutfit;
-  const segmentHomeUrl = segmentOutfit?.home
-    ? appearanceAssetUrl(currentId, segmentOutfit.home.assetId)
-    : visibleStageRow?.outfitId ? null : outfitHomeUrl;
+  const segmentHomeUrl = visibleStageRow?.role === 'assistant'
+    ? (visibleStageRow.homeAssetId ? appearanceAssetUrl(currentId, visibleStageRow.homeAssetId) : null)
+    : outfitHomeUrl ?? (night ? nightCharacter : character);
   const sources: StageSources = useMemo(() => ({
     backgroundUrl: night ? nightScene : scene,
-    characterUrl: segmentHomeUrl ?? (night ? nightCharacter : character),
+    characterUrl: segmentHomeUrl,
     resolveSprite: (assetId: string) => appearanceAssetUrl(currentId, assetId)
   }), [currentId, night, segmentHomeUrl]);
 

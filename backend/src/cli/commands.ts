@@ -43,8 +43,40 @@ export async function runCli(
       return runModel(rest, client);
     case "autonomy":
       return runAutonomy(rest, client);
+    case "activity":
+      return runActivity(rest, client);
     default:
       throw new CliError("UNKNOWN_COMMAND", `未知命令 ${group}`);
+  }
+}
+
+/** 角色活动状态：配置写入前须先 stop，完成后按需 resume（DL-148）。 */
+async function runActivity(
+  args: readonly string[],
+  client: HttpClient,
+): Promise<unknown> {
+  const [action, ...rest] = args;
+  switch (action) {
+    case "list":
+      parseArgs(rest, []);
+      return client.request("GET", "/v1/activities");
+    case "get": {
+      const options = parseArgs(rest, ["role"]);
+      const roleId = encodeURIComponent(required(options, "role"));
+      return client.request("GET", `/v1/roles/${roleId}/activity`);
+    }
+    case "stop": {
+      const options = parseArgs(rest, ["role"]);
+      const roleId = encodeURIComponent(required(options, "role"));
+      return client.request("POST", `/v1/roles/${roleId}/activity/stop`);
+    }
+    case "resume": {
+      const options = parseArgs(rest, ["role"]);
+      const roleId = encodeURIComponent(required(options, "role"));
+      return client.request("POST", `/v1/roles/${roleId}/activity/resume`);
+    }
+    default:
+      throw new CliError("UNKNOWN_COMMAND", `未知角色活动命令 ${action ?? ""}`);
   }
 }
 
@@ -437,6 +469,20 @@ async function runResource(
         "PATCH",
         `/v1/resources/${encodeURIComponent(required(options, "id"))}`,
         parseJsonObject(required(options, "json"), "--json"),
+      );
+    }
+    case "references": {
+      const options = parseArgs(rest, ["id"]);
+      return client.request(
+        "GET",
+        `/v1/resources/${encodeURIComponent(required(options, "id"))}/references`,
+      );
+    }
+    case "delete": {
+      const options = parseArgs(rest, ["id"]);
+      return client.request(
+        "DELETE",
+        `/v1/resources/${encodeURIComponent(required(options, "id"))}`,
       );
     }
     default:

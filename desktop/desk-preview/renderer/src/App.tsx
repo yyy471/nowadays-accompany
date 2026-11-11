@@ -8,7 +8,7 @@ import { ThemeSwitcher } from './components/shell/ThemeSwitcher';
 import { PageDock } from './components/shell/PageDock';
 import { HomePage } from './pages/Home';
 import { Relations } from './Relations';
-import { SettingsPage } from './pages/Settings';
+import { SettingsWorkspace } from './pages/Settings';
 import { ConversationPage } from './pages/Conversation';
 import { createStateVersionGate } from './state-version.js';
 
@@ -18,12 +18,20 @@ export function App() {
   const [scope] = useState(createMotionScope);
   const pageBody = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState('home');
+  const [settingsVisited, setSettingsVisited] = useState(false);
+  useEffect(() => { if (page === 'settings' || page === 'role-config') setSettingsVisited(true); }, [page]);
   const [hideConversationDock, setHideConversationDock] = useState(() => {
     try { return localStorage.getItem('nowadays-dialogue-hide-dock') === '1'; } catch { return false; }
   });
   const [rolesVisit, setRolesVisit] = useState(0);
   const [roles, setRoles] = useState<RoleListItem[]>();
+  const rolesRef = useRef<RoleListItem[]>([]);
+  const removedRoles = useRef(new Set<string>());
+  const roleListRequest = useRef(0);
+  const [roleListError, setRoleListError] = useState('');
   const [currentId, setCurrentId] = useState('');
+  const currentIdRef = useRef(currentId);
+  currentIdRef.current = currentId;
   const [detail, setDetail] = useState<RoleDetail>();
   const [status, setStatus] = useState('');
   const [state, setState] = useState<Record<string, unknown>>({});
@@ -42,13 +50,31 @@ export function App() {
     return true;
   }, []);
   const refresh = useCallback(async (preferred?: string) => {
+    const request = ++roleListRequest.current;
     try {
       const list = await api<{items: RoleListItem[]}>('/v1/roles');
-      setRoles(list.items);
+      if (request !== roleListRequest.current) return;
+      const items = list.items.filter(role => !removedRoles.current.has(role.roleId));
+      rolesRef.current = items;
+      setRoles(items);
+      setRoleListError('');
       setError('');
-      setCurrentId(previous => list.items.some(r => r.roleId === (preferred || previous)) ? (preferred || previous) : (list.items[0]?.roleId || ''));
+      setCurrentId(previous => items.some(r => r.roleId === (preferred || previous)) ? (preferred || previous) : (items[0]?.roleId || ''));
       setRevision(value => value + 1);
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    } catch (e) { if (request === roleListRequest.current) { const message = e instanceof Error ? e.message : String(e); setError(message); setRoleListError(message); } }
+  }, []);
+  const removeRoleLocally = useCallback((roleId: string) => {
+    removedRoles.current.add(roleId);
+    roleListRequest.current += 1;
+    const remaining = rolesRef.current.filter(role => role.roleId !== roleId);
+    rolesRef.current = remaining;
+    setRoles(remaining);
+    setCurrentId(previous => previous === roleId ? (remaining[0]?.roleId || '') : previous);
+    // 作废删除前发起的详情请求与轮询结果。
+    if (currentIdRef.current === roleId) {
+      requestId.current += 1;
+      stateGate.current.activate('');
+    }
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => {
@@ -123,14 +149,14 @@ export function App() {
     <main className="studio-content" tabIndex={-1} aria-label="当前页面内容"><UiThemeProvider theme="xiacheng">
       <div ref={pageBody} className={page === 'home' ? 'studio-home-content' : page === 'roles' ? 'studio-relations-content' : page === 'conversation' ? 'studio-conversation-content' : 'studio-legacy-page'}>
         {page === 'home' && <UiThemeScope theme="xiacheng"><HomePage accounts={accounts} selectedAccountId={currentId} outfitHomeUrl={outfitHomeUrl} outfitName={currentOutfit?.name ?? null} loading={!roles && !error} error={error} onRetry={() => refresh()} onGoWorkbench={() => setPage('roles')}/></UiThemeScope>}
-        {page === 'roles' && <Relations roles={roles || []} error={error} currentId={currentId} visit={rolesVisit} onSelect={setCurrentId} onOpenSettings={() => setPage('settings')}/>}
+        {page === 'roles' && <Relations roles={roles || []} error={error} currentId={currentId} visit={rolesVisit} onSelect={setCurrentId} onOpenSettings={() => setPage('role-config')}/>}
         {page === 'conversation' && <ConversationPage roles={roles || []} currentId={currentId} currentOutfit={currentOutfit} outfits={outfits} outfitHomeUrl={outfitHomeUrl} loading={!roles && !error} error={error} hideDock={hideConversationDock} onHideDockChange={setConversationDockHidden} onSelectRole={setCurrentId} onOpenRelations={() => setPage('roles')}/>}
-        {page === 'settings' && <SettingsPage roles={roles || []} detail={detail} currentId={currentId} currentOutfitId={typeof state.outfitId === 'string' ? state.outfitId : ''} onSelect={setCurrentId} onRefresh={refresh}/>}
+        {settingsVisited && <SettingsWorkspace page={page} roles={roles || []} currentId={currentId} roleListError={roleListError} onRoleDeleted={removeRoleLocally} onSelectCompanion={setCurrentId} onRefresh={refresh} onNavigate={setPage}/>}
       </div>
     </UiThemeProvider></main>
     {!dockHidden && <UiThemeScope theme="xiacheng" className="studio-footer-scope"><footer className="studio-footer">
-      <span className="studio-runtime">{error ? '连接状态待更新' : roles ? `${roles.length} 位角色 · 本地生活空间` : '正在连接'}</span>
-      <PageDock page={page} onNavigate={next => { setPage(next); if (next === 'roles') setRolesVisit(value => value + 1); }}/><span className="studio-edition">CHARACTER STUDIO / 开发版</span>
+      {page === 'role-config' || page === 'settings' ? <div id="config-footer-left" className="config-footer-left"/> : <span className="studio-runtime">{error ? '连接状态待更新' : roles ? `${roles.length} 位角色 · 本地生活空间` : '正在连接'}</span>}
+      <PageDock page={page} onNavigate={next => { setPage(next); if (next === 'roles') setRolesVisit(value => value + 1); }}/>{page === 'role-config' || page === 'settings' ? <div id="config-footer-right" className="config-footer-right"/> : <span className="studio-edition">CHARACTER STUDIO / 开发版</span>}
     </footer></UiThemeScope>}
   </div>;
 }

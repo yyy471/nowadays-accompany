@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../../api';
 import { Button, Field, Input, LoadingNote, Select, Textarea } from '../../ui';
+import type { ConfigDraftState } from '../config-draft';
 import {
   createImageForm,
   describeImageFailure,
@@ -18,6 +19,7 @@ import {
 type Props = {
   roleId: string;
   onChanged?: () => void;
+  onDraftStateChange?: (state: ConfigDraftState) => void;
 };
 
 interface ServiceItem {
@@ -40,11 +42,14 @@ function failureText(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
 }
 
-export function ImagePanel({ roleId, onChanged }: Props) {
+export function ImagePanel({ roleId, onChanged, onDraftStateChange }: Props) {
   const [view, setView] = useState<ImageSettingsViewPayload | null>(null);
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [outfits, setOutfits] = useState<OutfitItem[]>([]);
   const [form, setForm] = useState<ImageForm>(() => createImageForm(null));
+  const [savedForm, setSavedForm] = useState<ImageForm | null>(null);
+  const draftCallback = useRef(onDraftStateChange);
+  draftCallback.current = onDraftStateChange;
   const [probe, setProbe] = useState<ImageProbeResult | null>(null);
   const [preview, setPreview] = useState<ImagePreview | null>(null);
   const [previewPrompt, setPreviewPrompt] = useState(DEFAULT_PREVIEW_PROMPT);
@@ -71,6 +76,17 @@ export function ImagePanel({ roleId, onChanged }: Props) {
   const isStale = (token: number) => !mounted.current || roleToken.current !== token;
 
   useEffect(() => {
+    draftCallback.current?.({
+      dirty: savedForm !== null && JSON.stringify(form) !== JSON.stringify(savedForm),
+      busy: busy || probeBusy,
+      discard: () => {
+        if (savedForm) setForm(savedForm);
+        setProbe(null); setPreview(null); setError(''); setNotice('');
+      },
+    });
+  }, [form, savedForm, busy, probeBusy]);
+
+  useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; };
   }, []);
@@ -78,7 +94,7 @@ export function ImagePanel({ roleId, onChanged }: Props) {
   useEffect(() => {
     const token = roleToken.current;
     setLoading(true); setError(''); setNotice(''); setView(null);
-    setProbe(null); setPreview(null); setForm(createImageForm(null));
+    setProbe(null); setPreview(null); setForm(createImageForm(null)); setSavedForm(null);
     if (!roleId) { setLoading(false); return; }
     Promise.all([
       api<ImageSettingsViewPayload>(`/v1/roles/${encodeURIComponent(roleId)}/scene-image`),
@@ -93,7 +109,7 @@ export function ImagePanel({ roleId, onChanged }: Props) {
       if (next.serviceId === '' && available.items.length > 0) {
         next.serviceId = available.items[0]!.serviceId;
       }
-      setForm(next);
+      setForm(next); setSavedForm(next);
       setLoading(false);
     }).catch(reason => {
       if (isStale(token)) return;
@@ -111,6 +127,7 @@ export function ImagePanel({ roleId, onChanged }: Props) {
     const issues = validateImageForm(form);
     if (issues.length > 0) { setError(issues[0]!.message); return; }
     const token = roleToken.current;
+    const submittedForm = form;
     setBusy(true); setError(''); setNotice('');
     try {
       const saved = await api<ImageSettingsViewPayload>(
@@ -119,6 +136,7 @@ export function ImagePanel({ roleId, onChanged }: Props) {
       );
       if (isStale(token)) return;
       setView(saved);
+      setSavedForm(submittedForm);
       setNotice('已保存生图配置。');
       onChanged?.();
     } catch (reason) {

@@ -62,6 +62,8 @@ export interface MessageSegmentRecord {
   endOffset: number;
   outfitId: string | null;
   spriteAssetId: string | null;
+  /** 回复落库时确定的服饰主页立绘（standee）素材；历史按素材标识读取。 */
+  homeAssetId: string | null;
   annotatedAt: string | null;
   createdAt: string;
 }

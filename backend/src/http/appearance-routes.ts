@@ -2,7 +2,16 @@ import type { Router } from "./router.js";
 import type { ApiServices } from "./routes.js";
 import type { UploadedImage } from "../domain/appearance.js";
 import { HttpError, type RouteResponse } from "./errors.js";
-import { readMultipartForm, type MultipartFile } from "./body.js";
+import {
+  readJsonBody,
+  readMultipartForm,
+  type MultipartFile,
+} from "./body.js";
+import { parseBody } from "./validation.js";
+import {
+  renameOutfitBodySchema,
+  type RenameOutfitBody,
+} from "./schemas.js";
 
 export function registerAppearanceRoutes(
   router: Router,
@@ -65,6 +74,74 @@ export function registerAppearanceRoutes(
         ),
       };
     },
+  );
+
+  router.add(
+    "PATCH",
+    "/v1/roles/:roleId/appearance/outfits/:outfitId",
+    async ({ request, params }): Promise<RouteResponse> => {
+      const body = parseBody<RenameOutfitBody>(
+        renameOutfitBodySchema,
+        await readJsonBody(request),
+      );
+      return {
+        status: 200,
+        body: await services.appearance.renameOutfit(
+          params.roleId ?? "",
+          params.outfitId ?? "",
+          body,
+        ),
+      };
+    },
+  );
+
+  router.add(
+    "POST",
+    "/v1/roles/:roleId/appearance/outfits/:outfitId/home",
+    async ({ request, params }): Promise<RouteResponse> => {
+      const form = await readMultipartForm(request);
+      const homes = form.files.get("home") ?? [];
+      if (homes.length !== 1) {
+        throw new HttpError(
+          400,
+          "HOME_FILE_REQUIRED",
+          "主页立绘补传或替换需要且只能包含一张 home 文件",
+        );
+      }
+      return {
+        status: 201,
+        body: await services.appearance.replaceHome(
+          params.roleId ?? "",
+          params.outfitId ?? "",
+          toImage(homes[0]!),
+        ),
+      };
+    },
+  );
+
+  router.add(
+    "DELETE",
+    "/v1/roles/:roleId/appearance/outfits/:outfitId",
+    ({ params }): RouteResponse => ({
+      status: 200,
+      body: services.appearance.deleteOutfit(
+        params.roleId ?? "",
+        params.outfitId ?? "",
+      ),
+    }),
+  );
+
+  router.add(
+    "DELETE",
+    "/v1/roles/:roleId/appearance/outfits/:outfitId/sprites/:assetId",
+    ({ params }): RouteResponse => ({
+      status: 200,
+      body: services.appearance.deleteSprite(
+        params.roleId ?? "",
+        params.outfitId ?? "",
+        params.assetId ?? "",
+      ),
+    }),
   );
 
   router.add(

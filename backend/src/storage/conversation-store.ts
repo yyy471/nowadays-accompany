@@ -86,6 +86,7 @@ interface SegmentRow {
   end_offset: number;
   outfit_id: string | null;
   sprite_asset_id: string | null;
+  home_asset_id: string | null;
   annotated_at: string | null;
   created_at: string;
 }
@@ -269,6 +270,37 @@ export class ConversationStore {
     return row?.task_id ?? null;
   }
 
+  /**
+   * 因角色停止而暂停、等待恢复后继续的任务链及其窗口（RA-R02）。
+   * 恢复时据此把原任务改回 active 并排队续行，不重新创建任务。
+   */
+  listStoppedTaskContinuations(
+    endReason: string,
+  ): Array<{ taskId: string; windowId: string }> {
+    const rows = this.db
+      .prepare(
+        `SELECT t.task_id AS task_id, e.window_id AS window_id
+           FROM tasks t
+           JOIN execution_tasks et ON et.task_id = t.task_id
+           JOIN executions e ON e.execution_id = et.execution_id
+          WHERE t.role_id = ? AND t.status = 'paused' AND t.end_reason = ?
+            AND e.status = 'paused' AND e.window_id IS NOT NULL
+          ORDER BY t.created_at ASC, e.created_at DESC, e.rowid DESC`,
+      )
+      .all(this.roleId, endReason) as Array<{
+      task_id: string;
+      window_id: string;
+    }>;
+    const seen = new Set<string>();
+    const result: Array<{ taskId: string; windowId: string }> = [];
+    for (const row of rows) {
+      if (seen.has(row.task_id)) continue;
+      seen.add(row.task_id);
+      result.push({ taskId: row.task_id, windowId: row.window_id });
+    }
+    return result;
+  }
+
   beginExecution(input: {
     windowId: string;
     triggerType?: ExecutionTriggerType;
@@ -400,8 +432,9 @@ export class ConversationStore {
            VALUES (?, ?, 'continues', ?)`,
         )
         .run(executionId, input.taskId, now);
-      // 慢工具转后台等场景：原任务链的终态执行仍领取着未处理消息，
-      // 续行接手这些消息并在提交时完成处理与证据登记。
+      // 慢工具转后台、角色停止等场景：原任务链的终态执行仍领取着未处理消息，
+      // 续行接手这些消息并在提交时完成处理与证据登记。停止时执行记为 paused
+      // 且保留领取，恢复后的续行必须能接手，否则消息会永远悬挂。
       this.db
         .prepare(
           `UPDATE messages
@@ -410,7 +443,8 @@ export class ConversationStore {
               AND claimed_by_execution_id IN (
                 SELECT e.execution_id FROM executions e
                 JOIN execution_tasks et ON et.execution_id = e.execution_id
-                WHERE et.task_id = ? AND e.status IN ('superseded', 'failed')
+                WHERE et.task_id = ?
+                  AND e.status IN ('superseded', 'failed', 'paused')
               )`,
         )
         .run(executionId, now, input.taskId);
@@ -641,6 +675,17 @@ export class ConversationStore {
       const update = this.db.prepare(
         `UPDATE message_segments
             SET outfit_id = COALESCE(outfit_id, ?), sprite_asset_id = ?,
+                home_asset_id = COALESCE(
+                  home_asset_id,
+                  (SELECT a.asset_id
+                     FROM outfit_assets a
+                    WHERE a.outfit_id = COALESCE(message_segments.outfit_id, ?)
+                      AND a.role_id = ?
+                      AND a.usage = 'home'
+                      AND a.deleted_at IS NULL
+                    ORDER BY a.created_at DESC, a.rowid DESC
+                    LIMIT 1)
+                ),
                 annotated_at = ?
           WHERE segment_id = ? AND message_id = ? AND window_id = ?
             AND annotated_at IS NULL`,
@@ -652,6 +697,8 @@ export class ConversationStore {
         const result = update.run(
           annotation.outfitId,
           annotation.spriteAssetId,
+          annotation.outfitId,
+          this.roleId,
           now,
           annotation.segmentId,
           input.messageId,
@@ -673,6 +720,7 @@ export class ConversationStore {
               segmentId: segment.segmentId,
               outfitId: segment.outfitId,
               spriteAssetId: segment.spriteAssetId,
+              homeAssetId: segment.homeAssetId,
             })),
           },
           now,
@@ -695,6 +743,7 @@ export class ConversationStore {
       return [];
     }
     const existing = this.listMessageSegments(messageId);
+    const homeAssetId = this.homeAssetIdOf(outfitId);
     let retained = 0;
     while (retained < existing.length && sameSegment(existing[retained]!, drafts[retained])) {
       retained += 1;
@@ -708,8 +757,9 @@ export class ConversationStore {
         this.db.prepare("DELETE FROM message_segments WHERE message_id = ? AND ordinal >= ?")
           .run(messageId, retained);
       }
-      this.db.prepare("UPDATE message_segments SET outfit_id = ? WHERE message_id = ?")
-        .run(outfitId, messageId);
+      this.db.prepare(
+        "UPDATE message_segments SET outfit_id = ?, home_asset_id = ? WHERE message_id = ?",
+      ).run(outfitId, homeAssetId, messageId);
     }
     const pending = drafts.slice(retained);
     if (streaming && pending.length === 0) {
@@ -718,8 +768,9 @@ export class ConversationStore {
     const insert = this.db.prepare(
       `INSERT INTO message_segments
          (segment_id, message_id, window_id, ordinal, kind, text, start_offset,
-          end_offset, outfit_id, sprite_asset_id, annotated_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)`,
+          end_offset, outfit_id, sprite_asset_id, home_asset_id, annotated_at,
+          created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?)`,
     );
     for (const draft of pending) {
       insert.run(
@@ -732,6 +783,7 @@ export class ConversationStore {
         draft.startOffset,
         draft.endOffset,
         outfitId,
+        homeAssetId,
         now,
       );
     }
@@ -751,9 +803,27 @@ export class ConversationStore {
       return null;
     }
     const row = this.db
-      .prepare("SELECT 1 FROM outfits WHERE outfit_id = ? AND role_id = ?")
+      .prepare(
+        "SELECT 1 FROM outfits WHERE outfit_id = ? AND role_id = ? AND deleted_at IS NULL",
+      )
       .get(outfitId, this.roleId);
     return row === undefined ? null : outfitId;
+  }
+
+  /** 句段落库时快照服饰当前的主页立绘，之后替换或删除不影响旧回放。 */
+  private homeAssetIdOf(outfitId: string | null): string | null {
+    if (outfitId === null) {
+      return null;
+    }
+    const row = this.db
+      .prepare(
+        `SELECT asset_id FROM outfit_assets
+          WHERE outfit_id = ? AND role_id = ? AND usage = 'home'
+            AND deleted_at IS NULL
+          ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+      )
+      .get(outfitId, this.roleId) as { asset_id: string } | undefined;
+    return row?.asset_id ?? null;
   }
 
   private readRoleState(): Record<string, unknown> {
@@ -2124,6 +2194,7 @@ function mapSegment(row: SegmentRow): MessageSegmentRecord {
     endOffset: row.end_offset,
     outfitId: row.outfit_id,
     spriteAssetId: row.sprite_asset_id,
+    homeAssetId: row.home_asset_id,
     annotatedAt: row.annotated_at,
     createdAt: row.created_at,
   };

@@ -11,12 +11,14 @@ import type {
   ModelPort,
   ModelRequest,
 } from "../src/domain/model.js";
+import { configFetch } from "./config-write.js";
 import {
   ScriptedChatModel,
   addBinding,
   createFixture,
   createFixtureWithModel,
   deferred,
+  disableResourceDirect,
   type Fixture,
 } from "./p2-05-fixture.js";
 
@@ -74,6 +76,24 @@ function runCli(
       reject(error);
     });
   });
+}
+
+/**
+ * 配置写入的 CLI 作用域：自主额度属于角色配置，须先由活动接口确认停止，
+ * 写完再恢复。用 CLI 自身的 activity 命令完成，不绕过路由守卫。
+ */
+async function runConfigCli(
+  baseUrl: string,
+  roleId: string,
+  args: readonly string[],
+): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  const stopped = await runCli(baseUrl, ["activity", "stop", "--role", roleId]);
+  if (stopped.status !== 0) return stopped;
+  try {
+    return await runCli(baseUrl, args);
+  } finally {
+    await runCli(baseUrl, ["activity", "resume", "--role", roleId]);
+  }
 }
 
 test("a soon due wake starts without manual scheduling", { timeout: 20_000 }, async () => {
@@ -203,9 +223,8 @@ test("disabling a skill excludes it from the next autonomous task chain", { time
           .some((activity) => activity.status === "completed"),
       15_000,
     );
-    fixture.app.services.resources.update(skill.resourceId, {
-      enabled: false,
-    });
+    // 236 §8：角色开启时全局关闭会被 API 拒绝，这里模拟资源被外部关闭。
+    disableResourceDirect(fixture, skill.resourceId);
     fixture.app.services.autonomy.scheduleWake(fixture.roleId, {
       wakeAt: new Date(Date.now() + 100).toISOString(),
       intent: "再做一次记录",
@@ -331,7 +350,7 @@ test("HTTP and CLI expose autonomy budget, wakes and activities", { timeout: 25_
     const baseUrl = `http://127.0.0.1:${port}`;
     const roleBase = `${baseUrl}/v1/roles/${fixture.roleId}`;
 
-    const initial = await fetch(`${roleBase}/autonomy`);
+    const initial = await configFetch(`${roleBase}/autonomy`);
     assert.equal(initial.status, 200);
     const initialBody = (await initial.json()) as {
       budget: { dailyLimit: number; unlimited: boolean; usedPoints: number };
@@ -344,7 +363,7 @@ test("HTTP and CLI expose autonomy budget, wakes and activities", { timeout: 25_
     assert.equal(initialBody.nextWake, null);
     assert.deepEqual(initialBody.activities, []);
 
-    const updated = await fetch(`${roleBase}/autonomy/budget`, {
+    const updated = await configFetch(`${roleBase}/autonomy/budget`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ dailyLimit: 12, unlimited: false }),
@@ -355,7 +374,7 @@ test("HTTP and CLI expose autonomy budget, wakes and activities", { timeout: 25_
       12,
     );
 
-    const unlimited = await fetch(`${roleBase}/autonomy/budget`, {
+    const unlimited = await configFetch(`${roleBase}/autonomy/budget`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ unlimited: true }),
@@ -369,7 +388,7 @@ test("HTTP and CLI expose autonomy budget, wakes and activities", { timeout: 25_
     assert.equal(unlimitedBody.unlimited, true);
 
     const wakeAt = new Date(Date.now() + 60_000).toISOString();
-    const created = await fetch(`${roleBase}/autonomy/wakes`, {
+    const created = await configFetch(`${roleBase}/autonomy/wakes`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ wakeAt, intent: "稍后整理书桌" }),
@@ -383,20 +402,20 @@ test("HTTP and CLI expose autonomy budget, wakes and activities", { timeout: 25_
     assert.equal(wake.status, "pending");
     assert.equal(wake.scheduledAt, wakeAt);
 
-    const listed = await fetch(`${roleBase}/autonomy/wakes`);
+    const listed = await configFetch(`${roleBase}/autonomy/wakes`);
     assert.equal(listed.status, 200);
     assert.equal(
       ((await listed.json()) as { items: unknown[] }).items.length,
       1,
     );
-    const activities = await fetch(`${roleBase}/autonomy/activities`);
+    const activities = await configFetch(`${roleBase}/autonomy/activities`);
     assert.equal(activities.status, 200);
     assert.deepEqual(
       ((await activities.json()) as { items: unknown[] }).items,
       [],
     );
 
-    const cancelled = await fetch(
+    const cancelled = await configFetch(
       `${roleBase}/autonomy/wakes/${wake.wakeId}`,
       { method: "DELETE" },
     );
@@ -406,7 +425,7 @@ test("HTTP and CLI expose autonomy budget, wakes and activities", { timeout: 25_
       "cancelled",
     );
 
-    const cliBudget = await runCli(baseUrl, [
+    const cliBudget = await runConfigCli(baseUrl, fixture.roleId, [
       "autonomy",
       "budget",
       "set",

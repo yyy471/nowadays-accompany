@@ -527,7 +527,7 @@ export function useWindowSession({
       case 'segment_annotations': {
         const messageId = typeof payload.messageId === 'string' ? payload.messageId : null;
         if (messageId === null) return;
-        const items = Array.isArray(payload.items) ? payload.items as Array<{ segmentId: string; outfitId?: string | null; spriteAssetId?: string | null }> : [];
+        const items = Array.isArray(payload.items) ? payload.items as Array<{ segmentId: string; outfitId?: string | null; homeAssetId?: string | null; spriteAssetId?: string | null }> : [];
         if (current.pending?.replyMessageId === messageId) {
           current.pending.segments = applySegmentAnnotations(current.pending.segments, items);
         }
