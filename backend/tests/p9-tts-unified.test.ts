@@ -244,6 +244,17 @@ async function saveVoice(
   });
 }
 
+async function setVoiceEnabled(
+  base: string,
+  enabled: boolean,
+): Promise<Response> {
+  return fetch(`${base}/voice/enabled`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+}
+
 async function probeVoice(
   base: string,
   baseUrl: string,
@@ -268,6 +279,10 @@ function downgradeVoiceSettingsToV10(fixture: Fixture): void {
     db.exec(
       "ALTER TABLE role_voice_settings DROP COLUMN reference_mode_confirmed",
     );
+    // v10 的库里没有后加的启用标记，模拟旧库时一并去掉。
+    db.exec("ALTER TABLE role_voice_settings DROP COLUMN enabled");
+    // v10 的过场图任务没有固定配置快照。
+    db.exec("ALTER TABLE scene_image_tasks DROP COLUMN config_json");
   } finally {
     db.close();
   }
@@ -296,6 +311,10 @@ function simulatePreviousV11Migration(fixture: Fixture): void {
           SET reference_mode_confirmed = 1
         WHERE role_id = ?`,
     ).run(fixture.roleId);
+    // v11 的库里没有后加的启用标记，模拟旧库时一并去掉。
+    db.exec("ALTER TABLE role_voice_settings DROP COLUMN enabled");
+    // v11 的过场图任务没有固定配置快照。
+    db.exec("ALTER TABLE scene_image_tasks DROP COLUMN config_json");
   } finally {
     db.close();
   }
@@ -542,6 +561,89 @@ test("unified clone requires and forwards reference text", async () => {
       "VOICE_SEGMENT_NOT_SPEAKABLE",
     );
     assert.equal(fake.requests.length, 2);
+  } finally {
+    await fixture.close();
+    await fake.close();
+  }
+});
+
+test("voice can be disabled and enabled without losing the saved config", async () => {
+  const fake = await startFakeUnifiedTts();
+  const fixture = createFixture([
+    [
+      { type: "text_delta", text: "你好呀。\n（她挥手）" },
+      { type: "completed", stopReason: "stop" },
+    ],
+  ]);
+  try {
+    const port = await listen(fixture.app.server, 0, "127.0.0.1");
+    const base = roleBase(fixture, port);
+    const reference = await uploadReference(base);
+    const saved = await saveVoice(base, {
+      baseUrl: fake.baseUrl,
+      protocol: "nowadays-tts-v1",
+      voiceSource: {
+        kind: "reference",
+        referenceAssetId: reference.assetId,
+        referenceMode: "clone",
+      },
+      capabilities: CAPABILITIES,
+    });
+    assert.equal(saved.status, 200);
+    assert.equal(
+      ((await saved.json()) as { voice: { enabled: boolean } }).voice.enabled,
+      true,
+      "新配置默认启用",
+    );
+
+    const { speech } = await createSpeechSegments(fixture);
+    const speak = (): Promise<Response> =>
+      fetch(`${base}/windows/${fixture.windowId}/segments/${speech.segmentId}/speech`, {
+        method: "POST",
+      });
+    assert.equal((await speak()).status, 200);
+    const requestsAfterSpeak = fake.requests.length;
+
+    // 停用后对话语音被拒，语音服务不再被调用；试听属于配置验证，仍然可用。
+    const disabled = await setVoiceEnabled(base, false);
+    assert.equal(disabled.status, 200);
+    assert.equal(
+      ((await disabled.json()) as { voice: { enabled: boolean } }).voice.enabled,
+      false,
+    );
+    const blocked = await speak();
+    assert.equal(blocked.status, 409);
+    assert.equal(await errorCode(blocked), "VOICE_DISABLED");
+    assert.equal(fake.requests.length, requestsAfterSpeak, "停用后不再调用语音服务");
+    const preview = await fetch(`${base}/voice/preview`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "停用期间试听。" }),
+    });
+    assert.equal(preview.status, 200);
+
+    // 停用期间保存新配置：覆盖配置但不改变启用状态。
+    const resaved = await saveVoice(base, {
+      baseUrl: fake.baseUrl,
+      protocol: "nowadays-tts-v1",
+      voiceSource: { kind: "preset", voiceId: "preset-a" },
+    });
+    assert.equal(resaved.status, 200);
+    const resavedVoice = (
+      await resaved.json()
+    ) as { voice: { enabled: boolean; voiceSource: { kind: string } } };
+    assert.equal(resavedVoice.voice.enabled, false, "保存新配置不改变停用状态");
+    assert.equal(resavedVoice.voice.voiceSource.kind, "preset");
+
+    // 再次启用读同一份配置，语音恢复合成。
+    const enabled = await setVoiceEnabled(base, true);
+    assert.equal(enabled.status, 200);
+    const enabledVoice = (
+      await enabled.json()
+    ) as { voice: { enabled: boolean; voiceSource: { kind: string } } };
+    assert.equal(enabledVoice.voice.enabled, true);
+    assert.equal(enabledVoice.voice.voiceSource.kind, "preset");
+    assert.equal((await speak()).status, 200);
   } finally {
     await fixture.close();
     await fake.close();
@@ -806,12 +908,13 @@ test("legacy voice rows stay readable as the reference source", async () => {
       "preset_voice_id",
       "capabilities_json",
       "reference_mode_confirmed",
+      "enabled",
     ]) {
       assert.ok(columns.includes(column), `missing column ${column}`);
     }
     assert.equal(
       withStorage(fixture, (storage) => storage.business.schemaVersion),
-      13,
+      16,
     );
   } finally {
     await fixture.close();
@@ -1105,9 +1208,12 @@ test("v9 voice rows migrate to v12 without touching messages, segments or SSE cu
         "preset_voice_id",
         "capabilities_json",
         "reference_mode_confirmed",
+        "enabled",
       ]) {
         raw.exec(`ALTER TABLE role_voice_settings DROP COLUMN ${column}`);
       }
+      // v9 的过场图任务表还没有固定配置快照。
+      raw.exec("ALTER TABLE scene_image_tasks DROP COLUMN config_json");
     } finally {
       raw.close();
     }
@@ -1183,7 +1289,7 @@ test("v9 voice rows migrate to v12 without touching messages, segments or SSE cu
           .get() as { latest: number | null }
       ).latest,
     }));
-    assert.equal(countsAfter.schemaVersion, 13);
+    assert.equal(countsAfter.schemaVersion, 16);
     assert.equal(countsAfter.messages, countsBefore.messages);
     assert.equal(countsAfter.segments, countsBefore.segments);
     assert.equal(countsAfter.events, countsBefore.events);

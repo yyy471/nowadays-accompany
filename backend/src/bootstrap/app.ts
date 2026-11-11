@@ -7,6 +7,8 @@ import {
 import { AutonomyService } from "../application/autonomy-service.js";
 import { AppearanceService } from "../application/appearance-service.js";
 import { VoiceService } from "../application/voice-service.js";
+import { ImageServiceService } from "../application/image-service.js";
+import { SceneImageSettingsService } from "../application/scene-image-settings.js";
 import { MemoryQueryService } from "../application/memory-query-service.js";
 import {
   MemoryRuntime,
@@ -29,6 +31,8 @@ import { AppStore } from "../storage/app-store.js";
 import { SecretStore } from "../storage/secret-store.js";
 import { SecretCipher } from "../security/secret-cipher.js";
 import { FixedSceneImagePlanner } from "../scene/fixed-planner.js";
+import { FakeSceneImageGenerator } from "../scene/fake-generator.js";
+import { ConfiguredSceneImageGenerator } from "../scene/comfyui-generator.js";
 import { ModelSceneImagePlanner } from "../scene/model-planner.js";
 import type { BackendConfig } from "./config.js";
 
@@ -78,6 +82,15 @@ export function createBackendApp(
   });
   const appearanceService = new AppearanceService(roleAccess);
   const voiceService = new VoiceService(roleAccess, { now });
+  const imageServices = new ImageServiceService(appStore, {
+    credentialResolver: credentials,
+    now,
+  });
+  const sceneImageSettings = new SceneImageSettingsService(
+    roleAccess,
+    imageServices,
+    { now },
+  );
   const memoryService = new MemoryQueryService(roleAccess, {
     now,
     ...(options.timeZone === undefined ? {} : { timeZone: options.timeZone }),
@@ -159,9 +172,12 @@ export function createBackendApp(
           : { modelFactory: options.modelPortFactory }),
         fallback: new FixedSceneImagePlanner(),
       }),
-    ...(options.sceneImageGenerator === undefined
-      ? {}
-      : { generator: options.sceneImageGenerator }),
+    generator:
+      options.sceneImageGenerator ??
+      new ConfiguredSceneImageGenerator({
+        source: sceneImageSettings.source,
+        fallback: new FakeSceneImageGenerator(),
+      }),
     ...(options.sceneImageGenerationTimeoutMs === undefined
       ? {}
       : { generationTimeoutMs: options.sceneImageGenerationTimeoutMs }),
@@ -185,6 +201,8 @@ export function createBackendApp(
     appearance: appearanceService,
     voice: voiceService,
     sceneImages,
+    imageServices,
+    sceneImageSettings,
   };
   let server: http.Server;
   try {

@@ -90,6 +90,12 @@ const probeVoiceSchema = z
   })
   .strict();
 
+const setVoiceEnabledSchema = z
+  .object({
+    enabled: z.boolean(),
+  })
+  .strict();
+
 export function registerVoiceRoutes(
   router: Router,
   services: ApiServices,
@@ -111,6 +117,18 @@ export function registerVoiceRoutes(
       return {
         status: 200,
         body: services.voice.saveVoice(params.roleId ?? "", body),
+      };
+    },
+  );
+
+  router.add(
+    "PUT",
+    "/v1/roles/:roleId/voice/enabled",
+    async ({ request, params }): Promise<RouteResponse> => {
+      const body = parseBody(setVoiceEnabledSchema, await readJsonBody(request));
+      return {
+        status: 200,
+        body: services.voice.setEnabled(params.roleId ?? "", body.enabled),
       };
     },
   );

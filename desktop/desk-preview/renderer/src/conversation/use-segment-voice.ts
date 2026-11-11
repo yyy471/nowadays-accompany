@@ -14,6 +14,15 @@ export interface SegmentVoiceHandle {
 
 const MAX_CACHE = 48;
 const AUTO_DEBOUNCE_MS = 220;
+/** 与后端 VOICE_DISABLED 的提示保持一致，用于合并预取失败时的通用文案。 */
+const DISABLED_MESSAGE = '角色语音已停用，启用后才能播放对话语音。';
+
+class SpeechRequestError extends Error {
+  constructor(message: string, readonly code: string | null) {
+    super(message);
+    this.name = 'SpeechRequestError';
+  }
+}
 
 async function fetchSpeech(roleId: string, windowId: string, segmentId: string): Promise<Blob> {
   const response = await fetch(
@@ -26,13 +35,15 @@ async function fetchSpeech(roleId: string, windowId: string, segmentId: string):
   );
   if (!response.ok) {
     let message = `语音请求失败（${response.status}）`;
+    let code: string | null = null;
     try {
-      const body = await response.json() as { error?: { message?: string } };
+      const body = await response.json() as { error?: { message?: string; code?: string } };
       if (body.error?.message) message = body.error.message;
+      if (body.error?.code) code = body.error.code;
     } catch {
       // 非 JSON 错误沿用状态码提示。
     }
-    throw new Error(message);
+    throw new SpeechRequestError(message, code);
   }
   return response.blob();
 }
@@ -51,6 +62,8 @@ export function useSegmentVoice({ roleId, windowId, onToast }: { roleId: string;
   const pendingTimer = useRef<number | undefined>(undefined);
   const playToken = useRef(0);
   const cacheGeneration = useRef(0);
+  /** 服务端已明确告知停用：预取与自动播放不再发请求，手动点播视为重试。 */
+  const voiceDisabled = useRef(false);
   const revision = useRef('unknown');
   const roleRef = useRef(roleId); roleRef.current = roleId;
   const windowRef = useRef(windowId); windowRef.current = windowId;
@@ -74,6 +87,7 @@ export function useSegmentVoice({ roleId, windowId, onToast }: { roleId: string;
     pendingTimer.current = undefined;
     playToken.current += 1;
     cacheGeneration.current += 1;
+    voiceDisabled.current = false;
     discardCandidate();
     const element = audio.current;
     if (element) {
@@ -108,6 +122,9 @@ export function useSegmentVoice({ roleId, windowId, onToast }: { roleId: string;
   const keyFor = (row: PerfRow) => JSON.stringify([roleRef.current, windowRef.current, revision.current, row.segmentId, row.text]);
 
   const ensureAudio = useCallback((row: PerfRow, manual: boolean): Promise<string | null> => {
+    // 手动点播是显式重试：清掉停用标记重新问一次服务端，启用后立刻恢复。
+    if (manual && voiceDisabled.current) voiceDisabled.current = false;
+    if (!manual && voiceDisabled.current) return Promise.resolve(null);
     const key = keyFor(row);
     const cached = cache.current.get(key);
     if (cached) return Promise.resolve(cached);
@@ -116,7 +133,9 @@ export function useSegmentVoice({ roleId, windowId, onToast }: { roleId: string;
       if (!manual) return running;
       const generation = cacheGeneration.current;
       return running.then(url => {
-        if (!url && cacheGeneration.current === generation) notify('这句语音暂时无法合成，请稍后重试。');
+        if (!url && cacheGeneration.current === generation) {
+          notify(voiceDisabled.current ? DISABLED_MESSAGE : '这句语音暂时无法合成，请稍后重试。');
+        }
         return url;
       });
     }
@@ -141,6 +160,14 @@ export function useSegmentVoice({ roleId, windowId, onToast }: { roleId: string;
       return url;
     }).catch(error => {
       if (promises.current.get(key) === task) promises.current.delete(key);
+      if (error instanceof SpeechRequestError && error.code === 'VOICE_DISABLED') {
+        // 旧角色或旧窗口的停用响应不能影响当前范围，先按代际丢弃。
+        if (cacheGeneration.current !== generation) return null;
+        // 停用是配置状态，不是故障：预取与自动播放静默跳过，手动点播提示一次原因。
+        voiceDisabled.current = true;
+        if (manual) notify(DISABLED_MESSAGE);
+        return null;
+      }
       if (manual && cacheGeneration.current === generation) notify(error instanceof Error ? error.message : String(error));
       return null;
     });

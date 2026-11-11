@@ -68,6 +68,8 @@ export interface VoiceSettingsRecord {
   baseUrl: string;
   voiceSource: VoiceSource;
   referenceModeConfirmed: boolean;
+  /** 停用只阻止新的对话语音合成，配置本身保留（DL-149）。 */
+  enabled: boolean;
   language: VoiceLanguage;
   speed: number;
   emoAlpha: number;
@@ -83,6 +85,7 @@ export interface VoiceConfigView {
   voiceSource: VoiceSource;
   reference: VoiceReferenceRecord | null;
   capabilities: VoiceCapabilities | null;
+  enabled: boolean;
   language: VoiceLanguage;
   speed: number;
   emoAlpha: number;

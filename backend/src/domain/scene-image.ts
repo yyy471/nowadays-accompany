@@ -1,4 +1,6 @@
 import type { MessageSegmentRecord } from "./conversation.js";
+import type { ImageServiceProtocol } from "./image-service.js";
+import type { SceneImageSettingsRecord } from "./scene-image-settings.js";
 
 /** 过场图触发来源：用户从指定回复发起，或整轮完成后由系统判断。 */
 export type SceneImageTrigger = "manual" | "auto";
@@ -112,12 +114,34 @@ export interface SceneImageReferenceImage {
   data: Buffer;
 }
 
+/** 生成器在任务接收时固定的运行配置；settings 为 null 表示当时未配置真实服务。 */
+export interface SceneImageConfigSnapshot {
+  version: 1;
+  settings: SceneImageSettingsRecord | null;
+  service: {
+    protocol: ImageServiceProtocol;
+    baseUrl: string;
+    timeoutMs: number | null;
+  } | null;
+}
+
 export interface SceneImageGenerationInput {
+  roleId: string;
   prompt: string;
   layerMode: SceneImageLayerMode;
+  /** 目标回复实际使用的服饰；生成器据此取该服饰的锚点提示词。 */
+  outfit: SceneImageOutfitRef;
+  /** 任务接收时固定的配置；缺省时按当前配置解析。 */
+  config?: SceneImageConfigSnapshot | null;
   /** 只在整幅图模式下提供；纯背景图不传角色参考。 */
   references?: readonly SceneImageReferenceImage[];
   signal?: AbortSignal;
+}
+
+export interface SceneImageOutfitRef {
+  outfitId: string | null;
+  name: string | null;
+  description: string | null;
 }
 
 export interface GeneratedSceneImage {
@@ -129,5 +153,7 @@ export interface GeneratedSceneImage {
 
 /** 生图适配端口。首轮使用本地假生成器，真实服务在适配时固定。 */
 export interface SceneImageGeneratorPort {
+  /** 任务接收时固定当前生效配置；没有可固定的配置时返回 null。 */
+  lock?(roleId: string): SceneImageConfigSnapshot | null;
   generate(input: SceneImageGenerationInput): Promise<GeneratedSceneImage>;
 }

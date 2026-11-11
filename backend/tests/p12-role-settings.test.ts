@@ -925,7 +925,7 @@ test("an app database from v2 upgrades to v3 and keeps resources", { timeout: 30
 
   const reopened = new AppStore(config.appDatabasePath);
   try {
-    assert.equal(reopened.schemaVersion, 3);
+    assert.equal(reopened.schemaVersion, 4);
     assert.equal(reopened.getResource(resourceId).name, "旧版服务");
     const tables = reopened.db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")

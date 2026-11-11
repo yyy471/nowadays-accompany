@@ -563,6 +563,17 @@ export class SceneImageGenerationFailedError extends AppError {
   }
 }
 
+export class SceneImageServiceChangedError extends AppError {
+  constructor(from: string, to: string) {
+    super(
+      409,
+      "SCENE_IMAGE_SERVICE_CHANGED",
+      "生图服务地址已更改，请重新发起过场图任务",
+      { from, to },
+    );
+  }
+}
+
 export class SceneImageGenerationTimeoutError extends AppError {
   constructor(timeoutMs: number) {
     super(504, "SCENE_IMAGE_GENERATION_TIMEOUT", "过场图生成超时", {
@@ -600,5 +611,68 @@ export class SceneImageAssetFileMissingError extends AppError {
     super(404, "SCENE_IMAGE_ASSET_FILE_MISSING", "过场图素材文件缺失", {
       assetId,
     });
+  }
+}
+
+export class InvalidImageServiceConfigError extends AppError {
+  constructor(issues: unknown) {
+    super(400, "INVALID_IMAGE_SERVICE_CONFIG", "生图服务配置结构不正确", {
+      issues,
+    });
+  }
+}
+
+export class ImageServiceNotFoundError extends AppError {
+  constructor(serviceId: string) {
+    super(404, "IMAGE_SERVICE_NOT_FOUND", "生图服务不存在", { serviceId });
+  }
+}
+
+/** 连不上、被重定向或响应不是 ComfyUI 的形状，都归到这里。 */
+export class ImageServiceUnavailableError extends AppError {
+  constructor(message: string, details?: unknown) {
+    super(502, "IMAGE_SERVICE_UNAVAILABLE", message, details);
+  }
+}
+
+export class ImageServiceAuthFailedError extends AppError {
+  constructor(status: number) {
+    super(401, "IMAGE_SERVICE_AUTH_FAILED", "生图服务拒绝了当前凭据", { status });
+  }
+}
+
+/** 工作流本身不合法：节点缺失、参数类型不符或提交被拒。 */
+export class ImageWorkflowInvalidError extends AppError {
+  constructor(message: string, details?: unknown) {
+    super(400, "IMAGE_WORKFLOW_INVALID", message, details);
+  }
+}
+
+export class ImageGenerationTimeoutError extends AppError {
+  constructor(timeoutMs: number) {
+    super(504, "IMAGE_GENERATION_TIMEOUT", "生图超时，服务没有在等待上限内出图", {
+      timeoutMs,
+    });
+  }
+}
+
+export class ImageGenerationFailedError extends AppError {
+  constructor(message: string, details?: unknown) {
+    super(502, "IMAGE_GENERATION_FAILED", message, details);
+  }
+}
+
+export class ImageServiceDisabledError extends AppError {
+  constructor(serviceId: string) {
+    super(409, "IMAGE_SERVICE_DISABLED", "生图服务已停用，请先启用或换一个服务", {
+      serviceId,
+    });
+  }
+}
+
+/** 角色还没有可用的生图配置，无法按真实服务出图。 */
+export class SceneImageNotConfiguredError extends AppError {
+  constructor(message = "角色还没有配置生图服务") {
+    super(409, "SCENE_IMAGE_NOT_CONFIGURED", message);
   }
 }

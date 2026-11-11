@@ -353,11 +353,12 @@ export function describeVoiceSummary(config) {
     return "这个角色还没有保存声音配置。";
   }
   const protocol = PROTOCOL_LABELS[config.protocol] ?? config.protocol;
+  const state = config.enabled === false ? "已停用 · " : "";
   if (config.voiceSource?.kind === "preset") {
-    return `${protocol} · 预置音色 ${config.voiceSource.voiceId}`;
+    return `${state}${protocol} · 预置音色 ${config.voiceSource.voiceId}`;
   }
   const name = config.reference?.fileName ?? "参考音频缺失";
-  return `${protocol} · 参考音频 ${name}`;
+  return `${state}${protocol} · 参考音频 ${name}`;
 }
 
 /**

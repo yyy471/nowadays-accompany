@@ -153,6 +153,25 @@ export class VoiceService {
     });
   }
 
+  /**
+   * 启用或停用角色语音。停用保留这份配置，只阻止新的对话语音合成；
+   * 再次启用读同一份配置，保存新配置不改变启用状态（DL-149）。
+   */
+  setEnabled(roleId: string, enabled: boolean): { voice: VoiceConfigView } {
+    return this.roleAccess.withStore(roleId, (storage) => {
+      const store = new VoiceStore(storage.business.db, roleId);
+      const settings = store.setEnabled(enabled, this.now().toISOString());
+      if (settings === null) {
+        throw new AppError(
+          400,
+          "VOICE_NOT_CONFIGURED",
+          "尚未配置音色服务，无法启用或停用",
+        );
+      }
+      return { voice: toView(settings, referenceOf(store, settings)) };
+    });
+  }
+
   saveVoice(roleId: string, input: SaveVoiceInput): { voice: VoiceConfigView } {
     const baseUrl = normalizeBaseUrl(input.baseUrl);
     return this.roleAccess.withStore(roleId, (storage) => {
@@ -380,6 +399,8 @@ export class VoiceService {
     emotion?: string,
   ): Promise<SynthesizedAudio> {
     const { resolved, text } = this.roleAccess.withStore(roleId, (storage) => {
+      const store = new VoiceStore(storage.business.db, roleId);
+      // 停用只阻止新的对话语音合成；试听属于配置验证，仍可进行。
       const segment = new ConversationStore(
         storage.business.db,
         roleId,
@@ -397,6 +418,15 @@ export class VoiceService {
         throw new AppError(400, "VOICE_SEGMENT_EMPTY", "句段没有可合成文字", {
           segmentId,
         });
+      }
+      // 停用只阻止新的对话语音合成；试听属于配置验证，仍可进行。
+      if (store.getSettings()?.enabled === false) {
+        throw new AppError(
+          409,
+          "VOICE_DISABLED",
+          "角色语音已停用，启用后才能播放对话语音",
+          { roleId },
+        );
       }
       return {
         resolved: resolveVoice(storage.paths, storage.business.db, roleId, {}),
@@ -1027,6 +1057,7 @@ function toView(
     voiceSource: settings.voiceSource,
     reference,
     capabilities: settings.capabilities,
+    enabled: settings.enabled,
     language: settings.language,
     speed: settings.speed,
     emoAlpha: settings.emoAlpha,

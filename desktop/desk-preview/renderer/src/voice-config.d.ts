@@ -52,6 +52,8 @@ export interface VoiceConfigView {
   voiceSource: VoiceSource;
   reference: VoiceReferenceRecord | null;
   capabilities: VoiceCapabilities | null;
+  /** 停用只阻止新的对话语音合成，配置本身保留。 */
+  enabled: boolean;
   language: string;
   speed: number;
   emoAlpha: number;

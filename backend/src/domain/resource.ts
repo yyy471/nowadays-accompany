@@ -4,7 +4,7 @@ import { InvalidResourceConfigError } from "./errors.js";
 export const resourceKindSchema = z.enum(["model", "mcp", "skill"]);
 export type ResourceKind = z.infer<typeof resourceKindSchema>;
 
-const credentialRefSchema = z
+export const credentialRefSchema = z
   .string()
   .regex(
     /^(env:[A-Za-z_][A-Za-z0-9_]*|file:.+)$/,

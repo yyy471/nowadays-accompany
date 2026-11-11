@@ -39,6 +39,21 @@ export function VoicePanel({ roleId, onChanged }: Props) {
   const [previewBusy, setPreviewBusy] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [toggleBusy, setToggleBusy] = useState(false);
+  // 启用状态的写入序号：保存的旧响应不能用过期快照覆盖已确认的启停结果。
+  const stateSeq = useRef(0);
+  // 保存与启停共用一把锁。状态更新是异步的，同一帧内的两次点击靠 useState 拦不住。
+  // 锁带身份，释放时比对身份：切换角色后旧请求的 finally 不能放掉新角色的锁。
+  const inFlight = useRef<{ kind: 'save' | 'toggle'; seq: number } | null>(null);
+  const lockSeq = useRef(0);
+  const acquire = (kind: 'save' | 'toggle') => {
+    const lock = { kind, seq: ++lockSeq.current };
+    inFlight.current = lock;
+    return lock;
+  };
+  const release = (lock: { seq: number }) => {
+    if (inFlight.current?.seq === lock.seq) inFlight.current = null;
+  };
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -52,6 +67,8 @@ export function VoicePanel({ roleId, onChanged }: Props) {
   if (lastRole.current !== roleId) {
     lastRole.current = roleId;
     roleToken.current += 1;
+    // 换角色即放锁：旧请求已经作废，不该继续挡住新角色的保存与启停。
+    inFlight.current = null;
   }
   // 卸载后挂起的请求同样作废：离开设置页不应再启动播放或写状态。
   const mounted = useRef(true);
@@ -81,7 +98,7 @@ export function VoicePanel({ roleId, onChanged }: Props) {
     let active = true;
     setConfig(null); setForm(createVoiceForm(null)); setReferences([]);
     setProbe(null); setProbeSource(null); setNotice(''); setError('');
-    setProbeBusy(false); setPreviewBusy(false); setBusy(false);
+    setProbeBusy(false); setPreviewBusy(false); setBusy(false); setToggleBusy(false);
     setLoading(true); setPlaying(false);
     stopPreview();
     if (!roleId) { setLoading(false); return; }
@@ -252,10 +269,13 @@ export function VoicePanel({ roleId, onChanged }: Props) {
   };
 
   const save = async () => {
-    if (busy) return;
-    const token = roleToken.current;
+    // 保存与启停互斥：任一进行中都不接受另一个，避免旧快照覆盖已确认的启用状态。
+    if (inFlight.current !== null || busy || toggleBusy) return;
     const issues = validateVoiceForm(form, { capabilities: activeCapabilities });
     if (issues.length > 0) { setError(issues.map(item => item.message).join('；')); return; }
+    const lock = acquire('save');
+    const token = roleToken.current;
+    const configSeq = stateSeq.current;
     setBusy(true); setError(''); setNotice('');
     try {
       const result = await api<{ voice: VoiceConfigView }>(`/v1/roles/${encodeURIComponent(roleId)}/voice`, {
@@ -263,7 +283,7 @@ export function VoicePanel({ roleId, onChanged }: Props) {
         body: toVoicePayload(form, { capabilities: activeCapabilities }),
       });
       if (isStale(token)) return;
-      setConfig(result.voice);
+      if (stateSeq.current === configSeq) setConfig(result.voice);
       setForm(createVoiceForm(result.voice));
       setProbe(null);
       setProbeSource(null);
@@ -275,7 +295,35 @@ export function VoicePanel({ roleId, onChanged }: Props) {
       if (isStale(token)) return;
       setError(failureText(reason));
     } finally {
+      release(lock);
       if (!isStale(token)) setBusy(false);
+    }
+  };
+
+  // 启用／停用只改开关，不动这份配置：停用后再启用仍读同一份（DL-149）。
+  const toggleVoiceEnabled = async (next: boolean) => {
+    if (inFlight.current !== null || toggleBusy || busy) return;
+    const lock = acquire('toggle');
+    const token = roleToken.current;
+    setToggleBusy(true); setError(''); setNotice('');
+    try {
+      const result = await api<{ voice: VoiceConfigView }>(
+        `/v1/roles/${encodeURIComponent(roleId)}/voice/enabled`,
+        { method: 'PUT', body: { enabled: next } },
+      );
+      if (isStale(token)) return;
+      setConfig(result.voice);
+      stateSeq.current += 1;
+      setNotice(result.voice.enabled
+        ? '已启用角色语音，对话会按句合成。'
+        : '已停用角色语音，配置已保留，随时可以再启用。');
+      onChanged?.();
+    } catch (reason) {
+      if (isStale(token)) return;
+      setError(failureText(reason));
+    } finally {
+      release(lock);
+      if (!isStale(token)) setToggleBusy(false);
     }
   };
 
@@ -297,6 +345,21 @@ export function VoicePanel({ roleId, onChanged }: Props) {
 
   return <div className="nd-voice">
     <p className="nd-appearance-hint">{describeVoiceSummary(config)}</p>
+
+    <label className="nd-voice-toggle">
+      <input
+        type="checkbox"
+        checked={config !== null && config.enabled !== false}
+        disabled={config === null || busy || toggleBusy}
+        onChange={event => void toggleVoiceEnabled(event.target.checked)}
+      />
+      <span>启用角色语音</span>
+      <small>{config === null
+        ? '保存配置后可以启用或停用。'
+        : config.enabled === false
+          ? '已停用：对话不再合成语音，这份配置保留。'
+          : '对话会按句合成语音。'}</small>
+    </label>
 
     <Field label="协议" hint={describeProtocolHint(form)}>
       <Select value={form.protocol} disabled={busy} onChange={event => setForm(previous => withVoiceService(previous, { protocol: event.target.value as VoiceForm['protocol'] }))}>
@@ -412,7 +475,7 @@ export function VoicePanel({ roleId, onChanged }: Props) {
     <div className="nd-appearance-actions">
       <Button disabled={busy || previewBusy} onClick={() => void runPreview()}>{previewBusy ? '正在合成…' : '生成试听'}</Button>
       <Button disabled={!playing} onClick={stopPreview}>停止播放</Button>
-      <Button variant="primary" disabled={busy} onClick={() => void save()}>{busy ? '正在保存…' : '保存声音配置'}</Button>
+      <Button variant="primary" disabled={busy || toggleBusy} onClick={() => void save()}>{busy ? '正在保存…' : '保存声音配置'}</Button>
     </div>
     {notice ? <p className="nd-appearance-notice" role="status">{notice}</p> : null}
     {error ? <p className="nd-appearance-error" role="alert">{error}</p> : null}

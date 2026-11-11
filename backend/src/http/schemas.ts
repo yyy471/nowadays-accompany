@@ -10,6 +10,8 @@ import {
   modelServiceTestSchema,
 } from "../domain/model.js";
 import { resourceKindSchema } from "../domain/resource.js";
+import { imageServiceConfigSchema } from "../domain/image-service.js";
+import { sceneImageSettingsSchema } from "../domain/scene-image-settings.js";
 
 const recordSchema = z.record(z.string(), z.unknown());
 
@@ -119,6 +121,43 @@ export const sceneImageRequestSchema = z
   .object({
     idempotencyKey: z.string().trim().min(1).max(128),
     layerMode: z.enum(["background", "full_scene"]).optional(),
+  })
+  .strict();
+
+const secretSchema = z.string().min(1).max(4000);
+
+export const createImageServiceSchema = z
+  .object({
+    name: z.string().trim().min(1).max(200),
+    enabled: z.boolean().optional(),
+    config: imageServiceConfigSchema,
+    secret: secretSchema.optional(),
+  })
+  .strict();
+
+export const updateImageServiceSchema = z
+  .object({
+    name: z.string().trim().min(1).max(200).optional(),
+    enabled: z.boolean().optional(),
+    config: imageServiceConfigSchema.optional(),
+    /** undefined 保留、null 清除、字符串替换。 */
+    secret: secretSchema.nullable().optional(),
+  })
+  .strict();
+
+export const sceneImageSettingsBodySchema = sceneImageSettingsSchema;
+
+export const sceneImageProbeBodySchema = z
+  .object({
+    serviceId: z.string().trim().min(1).max(100).optional(),
+    workflow: z.record(z.string(), z.unknown()).nullable().optional(),
+  })
+  .strict();
+
+export const sceneImagePreviewBodySchema = z
+  .object({
+    prompt: z.string().trim().max(2000).optional(),
+    outfitId: z.string().trim().max(200).nullable().optional(),
   })
   .strict();
 

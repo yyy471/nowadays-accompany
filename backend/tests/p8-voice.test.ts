@@ -235,7 +235,7 @@ function synthesisInput(
   };
 }
 
-test("voice settings and reference audio persist with schema v12 tables", async () => {
+test("voice settings and reference audio persist with the current schema", async () => {
   const fake = await startFakeTts();
   const fixture = createFixture([]);
   try {
@@ -293,7 +293,7 @@ test("voice settings and reference audio persist with schema v12 tables", async 
     assert.deepEqual(tables, ["role_voice_settings", "voice_assets"]);
     assert.equal(
       withStorage(fixture, (storage) => storage.business.schemaVersion),
-      13,
+      16,
     );
   } finally {
     await fixture.close();

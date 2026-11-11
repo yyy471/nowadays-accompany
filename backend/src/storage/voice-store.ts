@@ -22,6 +22,7 @@ interface SettingsRow {
   preset_voice_id: string | null;
   capabilities_json: string | null;
   reference_mode_confirmed: number;
+  enabled: number;
   language: VoiceLanguage;
   speed: number;
   emo_alpha: number;
@@ -123,6 +124,18 @@ export class VoiceStore {
     return this.getSettings()!;
   }
 
+  /** 启用或停用这份配置；没有配置时返回 null，由调用方报错。 */
+  setEnabled(enabled: boolean, now: string): VoiceSettingsRecord | null {
+    const changed = this.db
+      .prepare(
+        `UPDATE role_voice_settings
+            SET enabled = ?, updated_at = ?
+          WHERE role_id = ?`,
+      )
+      .run(enabled ? 1 : 0, now, this.roleId);
+    return changed.changes === 0 ? null : this.getSettings();
+  }
+
   addReference(input: NewVoiceReference): VoiceReferenceRecord {
     const assetId = input.assetId ?? randomUUID();
     this.db
@@ -178,6 +191,7 @@ function mapSettings(row: SettingsRow): VoiceSettingsRecord {
     baseUrl: row.base_url,
     voiceSource: mapSource(row),
     referenceModeConfirmed: row.reference_mode_confirmed !== 0,
+    enabled: row.enabled !== 0,
     language: row.language,
     speed: row.speed,
     emoAlpha: row.emo_alpha,

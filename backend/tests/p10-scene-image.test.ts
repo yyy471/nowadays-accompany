@@ -508,6 +508,8 @@ test("a v12 role database migrates to v13 and keeps messages, segments and event
     try {
       raw.exec("DROP TABLE scene_image_assets");
       raw.exec("DROP TABLE scene_image_tasks");
+      // v12 的库里没有后加的语音启用标记，模拟旧库时一并去掉。
+      raw.exec("ALTER TABLE role_voice_settings DROP COLUMN enabled");
       raw.pragma("user_version = 12");
     } finally {
       raw.close();
@@ -531,7 +533,7 @@ test("a v12 role database migrates to v13 and keeps messages, segments and event
     assert.equal(migrated.cursor, beforeEvents);
     assert.equal(
       withStorageFor(config, role.roleId, (storage) => storage.business.schemaVersion),
-      13,
+      16,
     );
     const tables = withStorageFor(config, role.roleId, (storage) =>
       (

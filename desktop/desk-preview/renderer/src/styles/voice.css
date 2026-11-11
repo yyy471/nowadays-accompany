@@ -9,3 +9,8 @@
 .nd-voice-references button { flex: none; padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--muted); font-size: 11px; cursor: pointer; }
 .nd-voice-references button:hover:not(:disabled) { border-color: var(--bad); color: var(--bad); }
 .nd-voice-references button:disabled { opacity: .5; cursor: not-allowed; }
+.nd-voice-toggle { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); font-size: 12px; cursor: pointer; }
+.nd-voice-toggle input { accent-color: var(--accent); }
+.nd-voice-toggle span { font-weight: 600; }
+.nd-voice-toggle small { color: var(--muted); font-size: 11px; }
+.nd-voice-toggle:has(input:disabled) { cursor: default; opacity: .7; }

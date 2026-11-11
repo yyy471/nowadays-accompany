@@ -16,6 +16,7 @@ import {
 } from "../domain/errors.js";
 import type { MessageSegmentRecord } from "../domain/conversation.js";
 import type {
+  SceneImageConfigSnapshot,
   SceneImageContextMessage,
   SceneImageGeneratorPort,
   SceneImageLayerMode,
@@ -42,7 +43,7 @@ const MAX_REFERENCE_BYTES = 8 * 1024 * 1024;
 const MAX_PROMPT_CHARS = 2000;
 const MAX_ERROR_SUMMARY_CHARS = 500;
 const MAX_CONTEXT_MESSAGES = 4;
-const DEFAULT_GENERATION_TIMEOUT_MS = 120_000;
+const DEFAULT_GENERATION_TIMEOUT_MS = 180_000;
 const INTERRUPTED_CODE = "SCENE_IMAGE_INTERRUPTED";
 
 export interface SceneImageServiceOptions {
@@ -74,7 +75,7 @@ export class SceneImageService {
   private readonly now: () => Date;
   private readonly planner: SceneImagePlannerPort;
   private readonly generator: SceneImageGeneratorPort;
-  private readonly generationTimeoutMs: number;
+  private readonly generationTimeoutOverride: number | null;
   private readonly inspect: typeof inspectImage;
   private readonly inFlight = new Map<string, Set<Promise<void>>>();
   private readonly controllers = new Set<AbortController>();
@@ -89,8 +90,7 @@ export class SceneImageService {
     this.now = options.now ?? (() => new Date());
     this.planner = options.planner ?? new FixedSceneImagePlanner();
     this.generator = options.generator ?? new FakeSceneImageGenerator();
-    this.generationTimeoutMs =
-      options.generationTimeoutMs ?? DEFAULT_GENERATION_TIMEOUT_MS;
+    this.generationTimeoutOverride = options.generationTimeoutMs ?? null;
     this.inspect = options.imageInspector ?? inspectImage;
   }
 
@@ -104,6 +104,8 @@ export class SceneImageService {
     messageId: string,
     input: RequestSceneImageInput,
   ): SceneImageRequestResult {
+    // 接收任务时就固定当前生图配置，规划期间修改模型或锚点不影响本次任务。
+    const config = this.generator.lock?.(roleId) ?? null;
     const result = this.roleAccess.withStore(roleId, (storage) => {
       storage.business.getWindow(roleId, windowId);
       const db = storage.business.db;
@@ -141,6 +143,7 @@ export class SceneImageService {
         startSegmentId: first.segmentId,
         endSegmentId: last.segmentId,
         idempotencyKey: input.idempotencyKey,
+        config,
         now: this.nowIso(),
       });
     });
@@ -317,6 +320,7 @@ export class SceneImageService {
           anchor.sequence,
           MAX_CONTEXT_MESSAGES,
         ),
+        config: store.getTaskConfig(taskId),
         appearanceDir: storage.paths.appearanceDir,
       };
     });
@@ -409,14 +413,20 @@ export class SceneImageService {
       plan.layerMode === "full_scene"
         ? this.loadReferenceImages(prepared.reference, prepared.appearanceDir)
         : [];
-    const timeout = AbortSignal.timeout(this.generationTimeoutMs);
+    // 外层等待上限采用任务接收时固定的服务超时，与客户端内部上限保持一致；
+    // 未配置真实服务或旧任务没有快照时用默认值。
+    const generationTimeoutMs =
+      this.generationTimeoutOverride ??
+      prepared.config?.service?.timeoutMs ??
+      DEFAULT_GENERATION_TIMEOUT_MS;
+    const timeout = AbortSignal.timeout(generationTimeoutMs);
     const generationSignal = AbortSignal.any([signal, timeout]);
     const assertActive = (): void => {
       if (signal.aborted) {
         throw new SceneImageCanceledError();
       }
       if (timeout.aborted) {
-        throw new SceneImageGenerationTimeoutError(this.generationTimeoutMs);
+        throw new SceneImageGenerationTimeoutError(generationTimeoutMs);
       }
     };
     const paths = rolePaths(this.dataRoot, roleId);
@@ -426,9 +436,16 @@ export class SceneImageService {
       // 生成器之后返回的结果不再写盘或改变任务状态。
       const generated = await raceWithSignal(
         this.generator.generate({
+          roleId,
           prompt: plan.description,
           layerMode: plan.layerMode,
+          outfit: {
+            outfitId: outfitInput.outfitId,
+            name: outfitInput.name,
+            description: outfitInput.description,
+          },
           ...(references.length === 0 ? {} : { references }),
+          ...(prepared.config === null ? {} : { config: prepared.config }),
           signal: generationSignal,
         }),
         generationSignal,
@@ -481,7 +498,7 @@ export class SceneImageService {
       const cleanupNote = this.discardUncommitted(writtenPath);
       const settled =
         timeout.aborted && !signal.aborted
-          ? new SceneImageGenerationTimeoutError(this.generationTimeoutMs)
+          ? new SceneImageGenerationTimeoutError(generationTimeoutMs)
           : error;
       this.settle(
         roleId,

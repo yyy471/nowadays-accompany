@@ -8,8 +8,8 @@ import {
 } from "../domain/errors.js";
 import { backfillEvidence } from "./evidence.js";
 
-export const APP_SCHEMA_VERSION = 3;
-export const BUSINESS_SCHEMA_VERSION = 13;
+export const APP_SCHEMA_VERSION = 4;
+export const BUSINESS_SCHEMA_VERSION = 16;
 export const EXECUTION_SCHEMA_VERSION = 1;
 
 export const APP_TABLES = [
@@ -17,6 +17,7 @@ export const APP_TABLES = [
   "resources",
   "model_test_calls",
   "resource_secrets",
+  "image_services",
 ] as const;
 export const BUSINESS_TABLES = [
   "roles",
@@ -63,6 +64,7 @@ export const BUSINESS_TABLES = [
   "role_voice_settings",
   "scene_image_tasks",
   "scene_image_assets",
+  "role_scene_image_settings",
 ] as const;
 
 const APP_V2_SQL = `
@@ -98,6 +100,23 @@ ALTER TABLE model_test_calls ADD COLUMN config_fingerprint TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_model_test_calls_resource
   ON model_test_calls (resource_id, finished_at);
+`;
+
+const APP_V4_SQL = `
+-- v4：ComfyUI 生图服务连接。ComfyUI 本身不规定模型，模型差异落在
+-- 角色生图配置的工作流模板上（DL-150）。密钥仍走 resource_secrets，
+-- 读接口只暴露状态，不回明文。
+CREATE TABLE IF NOT EXISTS image_services (
+  service_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+  config_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_image_services_enabled
+  ON image_services (enabled, created_at);
 `;
 
 const APP_SCHEMA_SQL = `
@@ -680,6 +699,27 @@ const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
       "preset_voice_id",
       "capabilities_json",
       "reference_mode_confirmed",
+      "enabled",
+    ],
+  },
+  {
+    table: "role_scene_image_settings",
+    columns: [
+      "service_id",
+      "model_type",
+      "model_path",
+      "base_prompt",
+      "negative_prompt",
+      "outfit_prompts_json",
+      "width",
+      "height",
+      "steps",
+      "cfg",
+      "sampler",
+      "scheduler",
+      "seed",
+      "workflow_json",
+      "output_node_id",
     ],
   },
   {
@@ -795,6 +835,7 @@ const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
       "plan_json",
       "error_code",
       "error_summary",
+      "config_json",
       "created_at",
       "updated_at",
     ],
@@ -1403,14 +1444,53 @@ CREATE INDEX idx_execution_stream_execution
   ON execution_stream_events (execution_id, stream_event_id);
 `;
 
+const BUSINESS_V14_SQL = `
+-- V14：角色语音启用／停用。停用保留当前这份配置，只阻止新的对话语音合成；
+-- 保存新配置不改变启用状态（DL-149）。
+ALTER TABLE role_voice_settings
+  ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;
+`;
+
+const BUSINESS_V15_SQL = `
+-- V15：角色生图配置。首版只做文生图（MOSS-Image），服务连接存 app 库的
+-- image_services，本表只记角色选择的模型、锚点提示词与采样参数（DL-150）。
+CREATE TABLE IF NOT EXISTS role_scene_image_settings (
+  role_id TEXT PRIMARY KEY REFERENCES roles(role_id),
+  service_id TEXT NOT NULL,
+  model_type TEXT NOT NULL CHECK (model_type IN ('text2img')),
+  model_path TEXT NOT NULL,
+  base_prompt TEXT NOT NULL,
+  negative_prompt TEXT NOT NULL,
+  outfit_prompts_json TEXT NOT NULL,
+  width INTEGER NOT NULL,
+  height INTEGER NOT NULL,
+  steps INTEGER NOT NULL,
+  cfg REAL NOT NULL,
+  sampler TEXT NOT NULL,
+  scheduler TEXT NOT NULL,
+  seed INTEGER,
+  workflow_json TEXT,
+  output_node_id TEXT,
+  updated_at TEXT NOT NULL
+);
+`;
+
+const BUSINESS_V16_SQL = `
+-- V16：过场图任务在接收时固定服务、模型与锚点版本，
+-- 规划或排队期间修改配置不影响已接收任务的生成结果。
+ALTER TABLE scene_image_tasks
+  ADD COLUMN config_json TEXT;
+`;
+
 export function openAppDatabase(dbPath: string): OpenedDatabase {
   return openVersionedDatabase(
     dbPath,
     APP_SCHEMA_VERSION,
-    APP_SCHEMA_SQL + APP_V2_SQL + APP_V3_SQL,
+    APP_SCHEMA_SQL + APP_V2_SQL + APP_V3_SQL + APP_V4_SQL,
     {
       1: (db) => db.exec(APP_V2_SQL),
       2: (db) => db.exec(APP_V3_SQL),
+      3: (db) => db.exec(APP_V4_SQL),
     },
     APP_TABLES,
     [],
@@ -1438,7 +1518,10 @@ export function openBusinessDatabase(
       BUSINESS_V10_SQL +
       BUSINESS_V11_SQL +
       BUSINESS_V12_SQL +
-      BUSINESS_V13_SQL,
+      BUSINESS_V13_SQL +
+      BUSINESS_V14_SQL +
+      BUSINESS_V15_SQL +
+      BUSINESS_V16_SQL,
     {
       1: (db) => {
         db.exec(BUSINESS_V2_SQL);
@@ -1455,6 +1538,9 @@ export function openBusinessDatabase(
       10: (db) => db.exec(BUSINESS_V11_SQL),
       11: (db) => db.exec(BUSINESS_V12_SQL),
       12: (db) => db.exec(BUSINESS_V13_SQL),
+      13: (db) => db.exec(BUSINESS_V14_SQL),
+      14: (db) => db.exec(BUSINESS_V15_SQL),
+      15: (db) => db.exec(BUSINESS_V16_SQL),
     },
     BUSINESS_TABLES,
     BUSINESS_INDEXES,

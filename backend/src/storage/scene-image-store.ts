@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import type {
   SceneImageAssetRecord,
+  SceneImageConfigSnapshot,
   SceneImageLayerMode,
   SceneImagePlanRecord,
   SceneImageResultRecord,
@@ -96,6 +97,8 @@ export interface NewSceneImageTaskInput {
   endSegmentId: string;
   idempotencyKey: string | null;
   attempt?: number;
+  /** 任务接收时固定的生图配置；没有真实配置时为空。 */
+  config?: SceneImageConfigSnapshot | null;
   now: string;
 }
 
@@ -233,10 +236,10 @@ export class SceneImageStore {
             `INSERT INTO scene_image_tasks
                (task_id, role_id, window_id, message_id, execution_id,
                 trigger_source, layer_mode, start_segment_id, end_segment_id,
-                status, idempotency_key, attempt_no, plan_json, error_code,
-                error_summary, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, NULL, NULL,
-                     NULL, ?, ?)`,
+                status, idempotency_key, attempt_no, plan_json, config_json,
+                error_code, error_summary, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, NULL, ?,
+                     NULL, NULL, ?, ?)`,
           )
           .run(
             taskId,
@@ -250,6 +253,9 @@ export class SceneImageStore {
             input.endSegmentId,
             input.idempotencyKey,
             attempt,
+            input.config === undefined || input.config === null
+              ? null
+              : JSON.stringify(input.config),
             input.now,
             input.now,
           );
@@ -289,6 +295,25 @@ export class SceneImageStore {
       )
       .get(taskId, windowId, this.roleId) as TaskRow | undefined;
     return row === undefined ? null : mapTask(row);
+  }
+
+  /** 任务接收时固定的生成配置；旧任务没有快照时返回 null。 */
+  getTaskConfig(taskId: string): SceneImageConfigSnapshot | null {
+    const row = this.db
+      .prepare(
+        `SELECT config_json FROM scene_image_tasks
+          WHERE task_id = ? AND role_id = ?`,
+      )
+      .get(taskId, this.roleId) as { config_json: string | null } | undefined;
+    if (row === undefined || row.config_json === null) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(row.config_json) as SceneImageConfigSnapshot;
+      return parsed.version === 1 ? parsed : null;
+    } catch {
+      return null;
+    }
   }
 
   getAsset(assetId: string): SceneImageAssetRecord | null {
