@@ -17,6 +17,11 @@ export type ModelServiceConfig = z.infer<typeof modelServiceConfigSchema>;
  */
 export const modelServiceProbeSchema = modelBaseConfigSchema.extend({
   secret: z.string().min(1).max(4000).optional(),
+  /**
+   * 复用已保存服务的密钥：以资源为基准解析，仅当协议与 origin 一致时允许
+   * （同站点改路径可复用；换协议、主机或端口需另填密钥）。
+   */
+  resourceId: z.string().min(1).max(100).optional(),
 });
 export type ModelServiceProbe = z.infer<typeof modelServiceProbeSchema>;
 

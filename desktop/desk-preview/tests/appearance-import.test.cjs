@@ -3,6 +3,7 @@
 // 角色素材目录识别与导入计划的纯逻辑测试。运行：在 desktop/desk-preview 下执行 `npm test`。
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 
@@ -51,22 +52,55 @@ test("千叶：识别 standees 与 expressions，按同名配对，跳过 outfit
   assert.ok(!anchorNames.includes("anchor.png"));
 });
 
-test("千叶：白色针织裙跨目录手动归并后合成一套", async () => {
+test("千叶：编号唯一且服饰目录前缀一致时预先归并，可撤销", async () => {
   const { scanAppearanceFolder, mergeOutfitEntries } = await load();
   const scan = scanAppearanceFolder([
     image("千叶诗织/standees/06_white_knit_barelegs/main.png"),
     image("千叶诗织/expressions/06_white_knit/happy.png"),
-    image("千叶诗织/expressions/06_white_knit/listen.png")
+    image("千叶诗织/expressions/06_white_knit/握手.webp")
   ]);
 
   assert.equal(scan.entries.length, 2, "归并前是两个只含单边素材的条目");
-  const merged = mergeOutfitEntries(scan.entries, { "06_white_knit": "06_white_knit_barelegs" });
+  assert.deepEqual(scan.suggestedMerges, { "06_white_knit": "06_white_knit_barelegs" });
+  const merged = mergeOutfitEntries(scan.entries, scan.suggestedMerges);
   assert.equal(merged.length, 1);
   const outfit = merged[0];
   assert.equal(outfit.id, "06_white_knit_barelegs");
   assert.equal(outfit.home.name, "main.png");
-  assert.deepEqual(outfit.sprites.map((file) => file.name), ["happy.png", "listen.png"]);
+  assert.deepEqual(outfit.sprites.map((file) => file.name).sort(), ["happy.png", "握手.webp"]);
   assert.deepEqual(outfit.mergedFrom, ["06_white_knit"]);
+  assert.deepEqual(mergeOutfitEntries(scan.entries, {}).map((entry) => entry.id), [
+    "06_white_knit", "06_white_knit_barelegs"
+  ]);
+});
+
+test("编号有歧义或只是编号相同时保留各服饰", async () => {
+  const { scanAppearanceFolder } = await load();
+  const scan = scanAppearanceFolder([
+    image("千叶诗织/standees/06_white_knit_barelegs/main.png"),
+    image("千叶诗织/standees/06_white_knit_stockings/main.png"),
+    image("千叶诗织/expressions/06_white_knit/握手.png"),
+    image("千叶诗织/standees/08_dress/main.png"),
+    image("千叶诗织/expressions/08_coat/握手.png")
+  ]);
+  assert.deepEqual(scan.suggestedMerges, {});
+  assert.equal(scan.entries.length, 5);
+});
+
+test("现代格式只扫描角色直属的 standees 和 expressions", async () => {
+  const { scanAppearanceFolder } = await load();
+  const scan = scanAppearanceFolder([
+    image("千叶诗织/backup/expressions/旧衣/旧图.png"),
+    image("千叶诗织/outfits/standees/锚点/main.png"),
+    image("千叶诗织/qysz_anchor_v3.png"),
+    image("千叶诗织/standees/02_classic/main.png"),
+    image("千叶诗织/expressions/02_classic/自定义名字.jpg")
+  ]);
+  assert.deepEqual(scan.issues, []);
+  assert.deepEqual(scan.entries.map((entry) => entry.id), ["02_classic"]);
+  assert.equal(scan.entries[0].sprites[0].name, "自定义名字.jpg");
+  assert.deepEqual(reasonsFor(scan.skipped), ["OUTFITS_SKIPPED", "OUTSIDE_SOURCE", "OUTSIDE_SOURCE"]);
+  assert.equal(scanAppearanceFolder([image("千叶诗织/backup/expressions/旧衣/旧图.png")]).format, "none");
 });
 
 test("归并保留目标原有主页图，来源主页图只作为候选补充", async () => {
@@ -214,7 +248,8 @@ test("选择多个角色目录时给出提示，仍以第一个为根", async ()
 
   assert.equal(scan.issues[0].code, "MULTIPLE_ROOTS");
   assert.equal(scan.root, "角色A");
-  assert.equal(scan.entries.length, 2);
+  assert.deepEqual(scan.entries.map((entry) => entry.id), ["一套"]);
+  assert.deepEqual(reasonsFor(scan.skipped), ["OUTSIDE_SOURCE"]);
 });
 
 test("没有素材目录时明确报缺，而不是静默返回空列表", async () => {
@@ -234,4 +269,9 @@ test("接受原生 File 列表，回落到 webkitRelativePath", async () => {
   assert.equal(scan.entries.length, 1);
   assert.equal(scan.entries[0].home.name, "main.png");
   assert.equal(scan.entries[0].sprites.length, 1);
+});
+
+test("renderer CSP allows blob images for appearance import previews", () => {
+  const html = fs.readFileSync(path.join(__dirname, "../renderer/index.html"), "utf8");
+  assert.match(html, /img-src[^;]*blob:/);
 });

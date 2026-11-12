@@ -748,7 +748,7 @@ test("自主额度写入纳入角色配置保护", { timeout: 40_000 }, async ()
   }
 });
 
-test("全局写入读完请求体后重验停止条件", { timeout: 20_000 }, async () => {
+test("全局写入期间新建角色默认已停止，提交时按新语义放行", { timeout: 20_000 }, async () => {
   const fixture = createFixture([]);
   let patch: http.ClientRequest | undefined;
   try {
@@ -796,7 +796,8 @@ test("全局写入读完请求体后重验停止条件", { timeout: 20_000 }, as
     })();
     assert.equal(rejected, true, "全局写入期间应拒绝恢复");
 
-    // 读体期间新建默认 active 的角色，提交时必须重验并拒绝。
+    // 读体期间新建角色：268 §4 起新角色默认已停止，不再形成「新增 active
+    // 角色绕过全局停止条件」的路径；提交按新语义放行。
     const created = await api(base, "POST", "/v1/roles", {
       displayName: "新增角色",
       definition: { text: "新增角色定义" },
@@ -805,18 +806,21 @@ test("全局写入读完请求体后重验停止条件", { timeout: 20_000 }, as
     const roles = (await api(base, "GET", "/v1/activities")).body
       .items as ActivityView[];
     assert.ok(
-      roles.some((item) => item.roleId !== fixture.roleId && item.state === "active"),
-      "新建角色默认处于 active",
+      roles.some(
+        (item) =>
+          item.roleId !== fixture.roleId && item.state === "stopped",
+      ),
+      "新建角色默认处于 stopped",
     );
 
     patch!.end('"changed during new role"}');
-    assert.equal(await response, 409, "提交时应重验所有角色已停止");
+    assert.equal(await response, 200, "新增角色已停止，提交应按新语义放行");
     const after = await api(
       base,
       "GET",
       `/v1/resources/${resource.resourceId}`,
     );
-    assert.notEqual(after.body.name, "changed during new role");
+    assert.equal(after.body.name, "changed during new role");
   } finally {
     patch?.destroy();
     await fixture.close();

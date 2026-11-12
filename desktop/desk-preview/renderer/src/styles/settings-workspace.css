@@ -105,3 +105,10 @@
 @media(prefers-reduced-motion:reduce){html:not([data-motion="full"]) .config-tabs button,html:not([data-motion="full"]) .config-poster,html:not([data-motion="full"]) .config-portrait-old,html:not([data-motion="full"]) .config-dirty-ribbon{animation:none!important;transition:none!important}}
 [data-motion="reduced"] .config-tabs button,[data-motion="reduced"] .config-poster,[data-motion="reduced"] .config-portrait-old,[data-motion="reduced"] .config-dirty-ribbon{animation:none!important;transition:none!important}
 html[data-config-switching] .studio-shell *,html[data-config-switching] .studio-shell *:before,html[data-config-switching] .studio-shell *:after{transition:none!important}
+
+/* 模型名称选择控件 */
+.nd-model-picker { position: relative; }
+.nd-model-options { position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 4px); max-height: 220px; overflow-y: auto; margin: 0; padding: 4px; list-style: none; border: 1px solid var(--cfg-line); border-radius: 10px; background: var(--cfg-paper); box-shadow: var(--nd-semantic-shadow-surface); }
+.nd-model-options li { margin: 0; }
+.nd-model-options button { display: block; width: 100%; min-height: 34px; padding: 6px 10px; border-radius: 8px; text-align: left; font-size: 13px; color: var(--cfg-ink); }
+.nd-model-options button:hover, .nd-model-options button:focus-visible { background: var(--cfg-selection); }

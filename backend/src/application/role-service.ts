@@ -6,6 +6,7 @@ import {
 } from "../domain/errors.js";
 import type { AppStore, RoleInitPayload } from "../storage/app-store.js";
 import { RoleStorage } from "../storage/role-storage.js";
+import { RoleActivityStore } from "../storage/role-activity-store.js";
 import type { RoleRecord, WindowRecord } from "../storage/role-store.js";
 import { RoleAccess } from "./role-access.js";
 
@@ -54,6 +55,14 @@ export class RoleService {
     this.access = new RoleAccess(appStore, dataRoot);
   }
 
+  /** 新建角色默认已停止：先完成配置，再由用户显式开始活动（268 §4）。 */
+  private markCreatedStopped(roleId: string): void {
+    new RoleActivityStore(this.appStore.db).markCreatedStopped(
+      roleId,
+      new Date().toISOString(),
+    );
+  }
+
   createRole(input: CreateRoleInput): RoleView {
     const roleId = randomUUID();
     const initPayload: RoleInitPayload = {
@@ -72,6 +81,7 @@ export class RoleService {
 
     let storage: RoleStorage | undefined;
     try {
+      this.markCreatedStopped(roleId);
       storage = new RoleStorage(rolePaths(this.dataRoot, roleId));
       const created = storage.business.createRoleRecord({
         roleId,
@@ -102,6 +112,7 @@ export class RoleService {
 
     let storage: RoleStorage | undefined;
     try {
+      this.markCreatedStopped(roleId);
       storage = new RoleStorage(rolePaths(this.dataRoot, roleId));
       let role: RoleRecord;
       let window: WindowRecord;

@@ -67,7 +67,7 @@ runner=r"""<script>
    evidence={before:[...document.querySelectorAll('.dialogue-message.assistant')].map(n=>n.dataset.segmentId),inputVisible:!!document.querySelector('.dialogue-composer')};
    if(testCase==='legacy')evidence.sceneButton=[...document.querySelectorAll('button')].some(b=>b.textContent.includes('生成过场图'));
    if(testCase==='segments-more'){
-     tap(await poll(()=>document.querySelector('.dialogue-next[aria-disabled=false]')));await pause(45);
+     tap(await poll(()=>document.querySelector('.dialogue-messages[data-can-advance="true"]')));await pause(45);
      evidence.after={segments:[...document.querySelectorAll('.dialogue-message.assistant')].map(n=>n.dataset.segmentId),inputVisible:!!document.querySelector('.dialogue-composer')};
    }
  }else if(testCase==='audio' || testCase==='audio-success' || testCase==='audio-cancel'){

@@ -30,6 +30,7 @@ export interface AppearanceScanResult {
   root: string;
   format: "standees" | "legacy" | "none";
   entries: AppearanceImportEntry[];
+  suggestedMerges: Record<string, string>;
   skipped: AppearanceImportSkipped[];
   issues: AppearanceImportIssue[];
 }

@@ -66,6 +66,8 @@ test("保留记忆与对话数据：移除角色但保留角色目录", { timeou
     const roleId = secondRole(fixture, "保留角色");
     const paths = rolePaths(fixture.app.config.dataRoot, roleId);
     assert.ok(fs.existsSync(paths.roleDir));
+    // 新建角色默认已停止；显式开始活动以验证运行中拒绝删除。
+    fixture.app.services.activity.resume(roleId);
 
     // 运行中的角色不能删除配置与数据。
     const blocked = await api(

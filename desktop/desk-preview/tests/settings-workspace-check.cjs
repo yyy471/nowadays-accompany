@@ -177,7 +177,9 @@ async function run() {
   await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) textarea')?.value==='乙的未保存草稿'"));
   await ev("[...document.querySelectorAll('.config-tabs button')].find(x=>x.textContent.includes('模型')).click()");
   await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) select')"));
-  await ev("(()=>{const a=document.querySelector('.config-role-editor:not([hidden]) .config-model-details:not([hidden]) select');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(a,'m1');a.dispatchEvent(new Event('change',{bubbles:true}));const b=document.querySelector('.config-role-editor:not([hidden]) .config-model-details:not([hidden]) input[type=text]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(b,'local-model');b.dispatchEvent(new Event('input',{bubbles:true}));})()");
+  await ev("(()=>{const a=document.querySelector('.config-role-editor:not([hidden]) .config-model-details:not([hidden]) select');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(a,'m1');a.dispatchEvent(new Event('change',{bubbles:true}));})()");
+  await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) .config-model-details:not([hidden]) input[role=combobox]')"));
+  await ev("(()=>{const b=document.querySelector('.config-role-editor:not([hidden]) .config-model-details:not([hidden]) input[role=combobox]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(b,'local-model');b.dispatchEvent(new Event('input',{bubbles:true}));})()");
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].find(x=>x.textContent==='保存模型选择'&&!x.disabled).click()");
   await until(() => bindings.b.some(item => item.capability === 'chat_model'));
   assert.ok(bindings.b.some(item => item.capability === 'mcp' && item.enabled), '保存模型时必须保留原扩展');
@@ -223,11 +225,12 @@ async function run() {
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-model-toggle')].find(x=>x.textContent.includes('对话')).click()");
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].find(x=>x.textContent.includes('在设置中查看模型')).click()");
   await until(() => ev("document.querySelector('.config-leaf').innerText.includes('测试模型')"));
+  await ev("(()=>{const e=document.querySelector('.config-prose:not([hidden]) input[role=combobox]');e.focus();})()");
   await ev("[...document.querySelectorAll('.config-prose:not([hidden]) button')].find(x=>x.textContent.includes('读取模型列表')).click()");
-  await until(() => ev("document.querySelector('#config-model-options-m1 option')?.value==='local-model'"));
-  await ev("(()=>{const e=document.querySelector('input[list=config-model-options-m1]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'local-model');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
-  await ev("[...document.querySelector('input[list=config-model-options-m1]').closest('.config-prose').querySelectorAll('button')].find(x=>x.textContent.includes('测试连接')).click()");
-  await until(() => ev("document.querySelector('.config-leaf').innerText.includes('连接测试成功')"));
+  await until(() => ev("[...document.querySelectorAll('.config-prose:not([hidden]) [role=option]')].some(x=>x.textContent==='local-model')"));
+  await ev("(()=>{const e=document.querySelector('.config-prose:not([hidden]) input[role=combobox]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'local-model');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
+  await ev("[...document.querySelectorAll('.config-prose:not([hidden]) button')].find(x=>x.textContent.includes('测试连接')).click()");
+  await until(() => ev("document.querySelector('.config-leaf').innerText.includes('测试通过')"));
   await shot('settings-1280.png');
   await ev("[...document.querySelectorAll('.config-tabs button')].find(x=>x.textContent.includes('角色')).click()");
   await until(() => ev("!!document.querySelector('.config-status-poster')"));
@@ -303,13 +306,8 @@ async function run() {
   await until(() => ev("document.querySelector('.studio-shell').dataset.uiPreset==='nightwave'")); await delay(500); await shot('settings-night-720.png');
   await ev("document.querySelector('.config-return-footer').click()");
   await until(() => ev("document.querySelector('.studio-shell').dataset.page==='role-config'"));
-  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-model-details:not([hidden]) button')].find(x=>x.textContent.includes('新建模型服务')).click()");
-  await until(() => ev("document.querySelector('.studio-shell').dataset.page==='settings' && [...document.querySelectorAll('.config-prose:not([hidden]) h2')].some(x=>x.textContent==='添加模型服务')"));
-  await ev("(()=>{const p=[...document.querySelectorAll('.config-prose')].find(x=>!x.hidden&&x.textContent.includes('添加模型服务'));const set=(e,v)=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,v);e.dispatchEvent(new Event('input',{bubbles:true}));};set(p.querySelector('input[type=text]'),'角色新模型');set(p.querySelectorAll('input[type=text]')[1],'http://127.0.0.1:9001');})()");
-  await ev("[...document.querySelectorAll('.config-prose:not([hidden]) button')].find(x=>x.textContent.includes('保存模型服务')).click()");
-  await until(() => ev("document.querySelector('.studio-shell').dataset.page==='role-config' && document.querySelector('.config-role-editor:not([hidden]) .config-model-details:not([hidden]) select')?.value==='m3'"));
-  assert.equal(bindings.b.find(item => item.capability === 'chat_model').resourceId, 'm1', '新建服务只能预填草稿，不应自动保存绑定');
-  assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden]) .config-model-details:not([hidden]) input[type=text]')?.value"), '', '新服务不能沿用旧模型 ID');
+  assert.equal(await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].some(x=>x.textContent.includes('新建模型服务'))"), false, '角色页不再提供新建模型服务入口');
+  assert.equal(bindings.b.find(item => item.capability === 'chat_model').resourceId, 'm1', '模型绑定保持不变');
   await ev("document.querySelector('.config-switch-role').click()");
   await until(() => ev("!!document.querySelector('.config-create-role')"));
   await ev("document.querySelector('.config-create-role').click()");
@@ -340,6 +338,6 @@ async function run() {
   await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='丙角色' && document.querySelector('#config-footer-right').textContent.includes('丙角色')"));
   assert.ok(await ev("document.querySelector('.config-delete-notice')?.textContent.includes('尚待清理')"));
   await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].find(x=>x.textContent==='删除角色')?.disabled"));
-  assert.deepEqual(errors, []); assert.ok(requests.includes('DELETE /v1/resources/x2')); console.log(JSON.stringify({ editIsolation: true, crossPageDraft: true, roleDraft: true, voiceImageDraft: true, activityStop: true, profileSave: true, outfitManagement: true, roleDeleteBothPaths: true, bindingPreservation: true, quotaSave: true, roleCreation: true, modelCreation: true, modelPrefill: true, modelList: true, modelTest: true, extensionManagement: true, night: true, visibleBounds, widths: [1280,1440,720], errors }, null, 2));
+  assert.deepEqual(errors, []); assert.ok(requests.includes('DELETE /v1/resources/x2')); console.log(JSON.stringify({ editIsolation: true, crossPageDraft: true, roleDraft: true, voiceImageDraft: true, activityStop: true, profileSave: true, outfitManagement: true, roleDeleteBothPaths: true, bindingPreservation: true, quotaSave: true, roleCreation: true, modelCreation: true, modelList: true, modelTest: true, extensionManagement: true, night: true, visibleBounds, widths: [1280,1440,720], errors }, null, 2));
 }
 run().catch(error => { console.error(error, logs.slice(-1200)); process.exitCode = 1; }).finally(async () => { try { if (ws?.readyState === 1) { ws.send(JSON.stringify({ id: 99999, method: 'Browser.close' })); ws.close(); } } catch {} await delay(500); if (proc && proc.exitCode === null) proc.kill(); server.close(); try { if (path.dirname(path.resolve(temp)) === path.resolve(os.tmpdir()) && path.basename(temp).startsWith('settings-workspace-')) fs.rmSync(temp, { recursive: true, force: true }); } catch {} });

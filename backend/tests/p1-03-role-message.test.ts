@@ -61,6 +61,12 @@ test("role, state, windows and message dedup persist across reopen", async () =>
     const mainWindowId = created.body.defaultWindowId as string;
     assert.ok(roleId);
     assert.ok(mainWindowId);
+    // 新建角色默认已停止（268 §4）：先显式开始活动再走对话流程。
+    assert.equal(
+      (await request(baseUrl, "POST", `/v1/roles/${roleId}/activity/resume`))
+        .status,
+      200,
+    );
     assert.equal(created.body.status, "ready");
     assert.equal(created.body.definitionRevision, 1);
     assert.equal(created.body.stateVersion, 1);

@@ -38,6 +38,7 @@ const UNRECOGNIZED_REASON = "UNRECOGNIZED";
  *   root: string,
  *   format: "standees" | "legacy" | "none",
  *   entries: AppearanceImportEntry[],
+ *   suggestedMerges: Record<string, string>,
  *   skipped: Array<{ path: string, reason: string }>,
  *   issues: Array<{ code: string, id?: string, detail?: string }>
  * }}
@@ -53,6 +54,7 @@ export function scanAppearanceFolder(input) {
       root: "",
       format: "none",
       entries: [],
+      suggestedMerges: {},
       skipped,
       issues: [{ code: "NO_OUTFITS" }]
     };
@@ -68,6 +70,8 @@ export function scanAppearanceFolder(input) {
   const standees = new Map();
   const expressions = new Map();
   const legacy = new Map();
+  const root = layout.roots[0];
+  const sourceIndex = root === "" ? 0 : 1;
 
   for (const { relativePath, file } of files) {
     const parts = segmentsOf(relativePath);
@@ -79,16 +83,14 @@ export function scanAppearanceFolder(input) {
 
     const fileName = parts[parts.length - 1];
     const extension = extensionOf(fileName);
-    const standeeIndex = parts.indexOf(STANDEE_DIR);
-    const expressionIndex = parts.indexOf(EXPRESSION_DIR);
-    const outfitsIndex = parts.indexOf(LEGACY_DIR);
+    const source = sourceIndex === 0 || parts[0] === root ? parts[sourceIndex] : undefined;
 
     if (layout.format === "standees") {
       // 新素材库里的 outfits 放的是用户自行生图用的服饰锚点，不进入素材库。
-      if (standeeIndex < 0 && expressionIndex < 0) {
+      if (source !== STANDEE_DIR && source !== EXPRESSION_DIR) {
         skipped.push({
           path: relativePath,
-          reason: outfitsIndex >= 0 ? OUTFITS_SKIPPED_REASON : OUTSIDE_SOURCE_REASON
+          reason: source === LEGACY_DIR ? OUTFITS_SKIPPED_REASON : OUTSIDE_SOURCE_REASON
         });
         continue;
       }
@@ -97,18 +99,17 @@ export function scanAppearanceFolder(input) {
         skipped.push({ path: relativePath, reason });
         continue;
       }
-      const index = standeeIndex >= 0 ? standeeIndex : expressionIndex;
-      const id = parts[index + 1];
-      if (!id || index + 1 >= parts.length - 1) {
+      const id = parts[sourceIndex + 1];
+      if (!id || sourceIndex + 1 >= parts.length - 1) {
         skipped.push({ path: relativePath, reason: UNRECOGNIZED_REASON });
         continue;
       }
-      const target = standeeIndex >= 0 ? standees : expressions;
+      const target = source === STANDEE_DIR ? standees : expressions;
       pushTo(target, id, file);
       continue;
     }
 
-    if (outfitsIndex < 0) {
+    if (source !== LEGACY_DIR) {
       skipped.push({ path: relativePath, reason: OUTSIDE_SOURCE_REASON });
       continue;
     }
@@ -117,8 +118,8 @@ export function scanAppearanceFolder(input) {
       skipped.push({ path: relativePath, reason });
       continue;
     }
-    const name = parts[outfitsIndex + 1];
-    const rest = parts.slice(outfitsIndex + 2);
+    const name = parts[sourceIndex + 1];
+    const rest = parts.slice(sourceIndex + 2);
     if (!name || rest.length === 0) {
       skipped.push({ path: relativePath, reason: UNRECOGNIZED_REASON });
       continue;
@@ -177,9 +178,10 @@ export function scanAppearanceFolder(input) {
   }
 
   return {
-    root: layout.roots[0] ?? "",
+    root,
     format: layout.format,
     entries,
+    suggestedMerges: suggestOutfitMerges(standees, expressions),
     skipped,
     issues
   };
@@ -290,33 +292,50 @@ function createEntry({ id, source, standeeDir, expressionDir, homeCandidates, sp
 }
 
 function detectLayout(files) {
-  const roots = new Set();
-  let format = "none";
-  for (const { relativePath } of files) {
-    const parts = segmentsOf(relativePath);
-    if (parts.some(isHiddenSegment)) continue;
-    const standeeIndex = parts.indexOf(STANDEE_DIR);
-    const expressionIndex = parts.indexOf(EXPRESSION_DIR);
-    if (standeeIndex >= 0 || expressionIndex >= 0) {
-      const index = standeeIndex >= 0 ? standeeIndex : expressionIndex;
-      // 目录本身（没有服饰标识段）不算素材目录。
-      if (index + 1 > parts.length - 1) continue;
-      format = "standees";
-      roots.add(parts.slice(0, index).join("/"));
+  const paths = files.map(({ relativePath }) => segmentsOf(relativePath))
+    .filter((parts) => !parts.some(isHiddenSegment));
+  // 浏览器相对路径带一层角色目录，同时接受已去掉角色目录的路径。
+  for (const sourceIndex of [1, 0]) {
+    const modernRoots = new Set();
+    const legacyRoots = new Set();
+    for (const parts of paths) {
+      if (parts.length < sourceIndex + 2) continue;
+      const root = sourceIndex === 0 ? "" : parts[0];
+      const source = parts[sourceIndex];
+      if (source === STANDEE_DIR || source === EXPRESSION_DIR) modernRoots.add(root);
+      if (source === LEGACY_DIR) legacyRoots.add(root);
+    }
+    if (modernRoots.size > 0) return { format: "standees", roots: [...modernRoots] };
+    if (legacyRoots.size > 0) return { format: "legacy", roots: [...legacyRoots] };
+  }
+  return { format: "none", roots: [] };
+}
+
+function groupOutfitDirectoriesByNumber(directories) {
+  const groups = new Map();
+  for (const id of directories.keys()) {
+    const number = /^(\d+)[_-]/.exec(id)?.[1];
+    if (number !== undefined) pushTo(groups, number, id);
+  }
+  return groups;
+}
+
+function suggestOutfitMerges(standees, expressions) {
+  const standeeGroups = groupOutfitDirectoriesByNumber(standees);
+  const expressionGroups = groupOutfitDirectoriesByNumber(expressions);
+  const merges = {};
+  for (const [number, standeeIds] of standeeGroups) {
+    const expressionIds = expressionGroups.get(number);
+    if (standeeIds.length !== 1 || expressionIds?.length !== 1) continue;
+    const [standee] = standeeIds;
+    const [expression] = expressionIds;
+    if (["_", "-"].some((separator) =>
+      standee.startsWith(expression + separator) || expression.startsWith(standee + separator)
+    )) {
+      merges[expression] = standee;
     }
   }
-  if (format === "standees") {
-    return { format, roots: [...roots] };
-  }
-  for (const { relativePath } of files) {
-    const parts = segmentsOf(relativePath);
-    if (parts.some(isHiddenSegment)) continue;
-    const outfitsIndex = parts.indexOf(LEGACY_DIR);
-    if (outfitsIndex < 0) continue;
-    format = "legacy";
-    roots.add(parts.slice(0, outfitsIndex).join("/"));
-  }
-  return { format, roots: [...roots] };
+  return merges;
 }
 
 function normalizeInput(input) {

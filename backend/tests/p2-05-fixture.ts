@@ -116,6 +116,8 @@ export function createFixtureWithModel(
       enabled: true,
     },
   ]);
+  // 新建角色默认 stopped（268 §4）：夹具显式开始活动，保持既有对话语义。
+  app.services.activity.resume(role.roleId);
   return {
     app,
     root,

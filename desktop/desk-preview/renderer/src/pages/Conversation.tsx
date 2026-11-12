@@ -245,14 +245,16 @@ export function ConversationPage({
   useLayoutEffect(() => {
     if (stageLive) frozenScene.current = visibleScene;
   }, [stageLive, visibleScene]);
-  const segmentHomeUrl = visibleStageRow?.role === 'assistant'
-    ? (visibleStageRow.homeAssetId ? appearanceAssetUrl(currentId, visibleStageRow.homeAssetId) : null)
-    : outfitHomeUrl ?? (night ? nightCharacter : character);
+  const segmentHomeUrl = visibleStageRow?.role === 'assistant' && visibleStageRow.homeAssetId
+    ? appearanceAssetUrl(currentId, visibleStageRow.homeAssetId)
+    : null;
   const sources: StageSources = useMemo(() => ({
     backgroundUrl: night ? nightScene : scene,
-    characterUrl: segmentHomeUrl,
+    segmentHomeUrl,
+    outfitUrl: outfitHomeUrl,
+    themeUrl: night ? nightCharacter : character,
     resolveSprite: (assetId: string) => appearanceAssetUrl(currentId, assetId)
-  }), [currentId, night, segmentHomeUrl]);
+  }), [currentId, night, segmentHomeUrl, outfitHomeUrl]);
 
   const send = (text: string) => {
     if (!session.send(text)) return false;
@@ -406,6 +408,7 @@ export function ConversationPage({
                   onDraftFocusHandled={() => setRequestDraftFocus(0)}
                   onScrollFollow={next => { setFollow(next); if (next) { setHasNew(false); setHistoryLock(false); } }}
                   onLatest={onLatest} onSend={send} onTyping={session.noteTyping} onLoadOlder={() => void session.loadOlder()} onAdvance={advance}
+                  notice={outfits.length === 0 ? null : currentOutfit === null ? '当前未选择服饰' : currentOutfit.sprites.length === 0 ? '这套服饰没有对话表情，可先补一张差分' : null}
                   onSpeaker={row => voice.play(row, false)} onGenerateScene={messageId => { setSceneTarget(messageId); setSceneOpen(true); }}
                   onOpenScene={openScene} />}
           </div>

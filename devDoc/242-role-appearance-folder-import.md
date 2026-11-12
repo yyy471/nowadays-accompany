@@ -15,15 +15,15 @@
 ## 2. 目录识别与布局判定
 
 - 扫描入口 `scanAppearanceFolder`（[appearance-import.js](../desktop/desk-preview/renderer/src/appearance-import.js)）只读路径字符串，不读文件内容、不碰 DOM，可在 `node:test` 里直接构造目录树。
-- 布局按优先级判定：只要出现 `standees` 或 `expressions` 段，就按新素材库处理，`outfits/` 下的文件一律记为 `OUTFITS_SKIPPED`；两者都没有时才回退旧格式，按 `outfits/<服饰名>/home.<ext>` 与 `outfits/<服饰名>/sprites/**` 识别。
+- 角色根目录直属的 `standees` 或 `expressions` 用于识别新素材库，`outfits/` 下的文件记为 `OUTFITS_SKIPPED`，根目录散图和其他子目录也会跳过。两者都没有时回退旧格式，按 `outfits/<服饰名>/home.<ext>` 与 `outfits/<服饰名>/sprites/**` 识别。
 - 这样处理是因为 §5 要求「跳过 `outfits` 锚点图」，而 208 又要求「旧格式 `outfits/<服饰名>/home.*` 继续兼容」。同一个目录名在两种素材库里含义不同，用「是否存在 `standees`／`expressions`」区分，比检查 `outfits` 内部结构更稳定。
-- 角色根取 `standees`／`expressions` 所在路径的前缀。一次选到多个角色目录时给出 `MULTIPLE_ROOTS`，仍按第一个角色识别，避免把两个角色的服饰混进同一个衣柜。
+- 文件选择器应选中角色自己的目录。一次选到多个可识别的角色根时给出 `MULTIPLE_ROOTS`，只处理第一个角色的素材。
 - 只有目录、没有服饰标识段的条目（如 `千叶诗织/standees/`）不算素材目录，避免空目录被识别成一套服饰。
 
 ## 3. 归并与预览
 
 - 默认按完全一致的服饰标识配对：`standees/02_classic` 与 `expressions/02_classic` 合成一套。
-- 名称不同的两侧保留为两个条目，由用户在预览里用「归并到…」指定目标。千叶的 `06_white_knit_barelegs`（立绘）与 `06_white_knit`（差分）即此路径，归并后主页图取目标条目，差分为两侧并集，来源记入 `mergedFrom` 并显示「撤销归并」。
+- 两侧同一开头编号各只有一个服饰目录，且一个目录名是另一个加下划线或连字符后缀时，预览默认把差分归到立绘条目。例如千叶的 `06_white_knit_barelegs`（立绘）与 `06_white_knit`（差分）。预览显示「撤销归并」。其他异名目录可通过「归并到…」指定目标。
 - 同一服饰有多张主页立绘候选时默认按文件名排序取第一张，并在预览里提供下拉指定，同时记录 `MULTIPLE_HOME_CANDIDATES` 供页面提示。
 - 缩略图用 `URL.createObjectURL` 生成，只跟随扫描结果重建；改名和归并不重新解码图片，离开或重新选择时统一 `revokeObjectURL`。
 - 预览只计算、不落库：`planOutfitImport` 输出 `ready`／`duplicate` 与 `missingHome`／`missingSprites`，`summarizeOutfitPlan` 汇总套数与差分总数。
@@ -43,7 +43,7 @@
 | `DOCUMENT` | `manifest.md`、`表情清单.md` 等说明文件 |
 | `NOT_IMAGE` | 扩展名不是 png／jpeg／webp |
 | `HIDDEN` | `.DS_Store`、`.gitkeep` 等隐藏文件 |
-| `OUTSIDE_SOURCE` | 不在 `standees`／`expressions`／`outfits` 下的文件 |
+| `OUTSIDE_SOURCE` | 所选角色素材目录之外的文件 |
 | `UNRECOGNIZED` | 目录深度或命名不符合约定，如 `outfits/<名>/` 下既不是 `home.*` 也不是 `sprites/` 的图片 |
 
 跳过项按原因计数后显示在预览顶部，不逐条铺开，避免 19 张差分加若干说明文件时预览过长。
@@ -64,8 +64,19 @@
 
 ## 7. 未完成与后续
 
-- 未做自动归并建议：`06_white_knit` 与 `06_white_knit_barelegs` 这类前缀相近的目录仍需手动指定，避免把「同一套的不同部件」误并成一套。
 - 导入后不自动切换当前穿着，穿搭仍由 Agent 决定，与 DL-136 一致。
 - 服饰删除、主页图补传／替换与差分删除已按 [262](262-role-appearance-deletion-history.md) 补齐后端接口；桌面端入口按 253 接入。
 - 图片只校验格式与可解码性，未按角色做尺寸、透明通道或构图检查。
 - 素材库若同时存在新旧两套目录，旧格式整目录跳过；需要旧数据的用户应先确认新目录完整，再删除旧目录。
+
+## 8. 千叶实际目录复验（2026-11-11）
+
+在桌面角色配置的「外观」页直接选择千叶诗织目录并确认导入。临时后端读回 3 套服饰、3 张主页立绘和 38 张对话差分。根目录散图、`outfits` 锚点和说明文件均未导入。
+
+| 服饰 | 主页立绘 | 对话差分 |
+| --- | ---: | ---: |
+| `01_white_knit_stockings` | 1 | 0 |
+| `02_classic` | 1 | 19 |
+| `06_white_knit_barelegs` | 1 | 19 |
+
+目录测试覆盖非直属素材目录、跨角色混入、自定义文件名、异名默认归并及撤销，以及同编号歧义。桌面 100 项测试、渲染端类型检查和构建均通过。

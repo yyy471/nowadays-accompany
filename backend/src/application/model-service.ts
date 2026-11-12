@@ -3,6 +3,7 @@ import {
   AppError,
   InvalidResourceConfigError,
   ModelRequestFailedError,
+  ResourceCredentialStaleError,
   ResourceKindMismatchError,
 } from "../domain/errors.js";
 import { isIncompleteCompletion } from "../domain/model.js";
@@ -69,7 +70,7 @@ export class ModelService {
   }
 
   async test(config: ModelServiceTest): Promise<ModelTestResult> {
-    const fingerprint = fingerprintOf(config, probeSalt(config));
+    const fingerprint = fingerprintOf(config, this.probeSaltOf(config));
     return this.runTest({
       config,
       model: config.model,
@@ -229,10 +230,36 @@ export class ModelService {
     };
   }
 
+  /**
+   * 候选配置的适配器。带 `resourceId` 且未另填密钥时以已保存资源为基准
+   * 解析密钥；协议与 origin 不一致时拒绝复用（268 §2）。
+   */
   private probeAdapter(config: ModelServiceProbe): HttpModelAdapter {
+    if (config.resourceId !== undefined && config.secret === undefined) {
+      const { config: saved } = this.requireModelResource(config.resourceId);
+      const from = serviceIdentity(saved);
+      const to = serviceIdentity(config);
+      if (from !== to) {
+        throw new ResourceCredentialStaleError({ from, to });
+      }
+      const credential =
+        this.credentials === null
+          ? resolveCredential(this.appRoot, saved.credentialRef)
+          : this.credentials.resolve(config.resourceId, saved.credentialRef);
+      return new HttpModelAdapter(config, credential);
+    }
     const credential =
       config.secret ?? resolveCredential(this.appRoot, config.credentialRef);
     return new HttpModelAdapter(config, credential);
+  }
+
+  /** 候选配置的指纹盐：复用已保存密钥时随资源的密钥版本失效。 */
+  private probeSaltOf(config: ModelServiceProbe): string {
+    if (config.resourceId !== undefined && config.secret === undefined) {
+      const { config: saved } = this.requireModelResource(config.resourceId);
+      return this.saltForSaved(config.resourceId, saved);
+    }
+    return probeSalt(config);
   }
 
   private savedAdapter(
@@ -289,8 +316,16 @@ export class ModelService {
   }
 }
 
-function probeSalt(config: ModelServiceProbe): string {
-  if (config.secret !== undefined) {
+/** 协议相同且 origin 相同视为同一个服务；同站点换路径允许复用已存密钥。 */
+function serviceIdentity(config: ModelServiceConfig): string {
+  try {
+    return `${config.protocol} ${new URL(config.baseUrl).origin}`;
+  } catch {
+    return `${config.protocol} ${config.baseUrl}`;
+  }
+}
+
+function probeSalt(config: ModelServiceProbe): string {  if (config.secret !== undefined) {
     return `probe-secret:${createHash("sha256").update(config.secret).digest("hex").slice(0, 16)}`;
   }
   return config.credentialRef === undefined

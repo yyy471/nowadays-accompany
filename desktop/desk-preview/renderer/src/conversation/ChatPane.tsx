@@ -1,9 +1,10 @@
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { Icon, useMotionPolicy } from '../ui';
 import { dayKey, dateLabel } from './history.js';
 import type { PerfRow } from './history.js';
 import type { PerfScene } from './performance.js';
 import type { ConversationSnapshot } from './use-window-session';
+import { shouldAdvanceFromClick, shouldAdvanceFromKey } from './advance.js';
 
 function timeLabel(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
@@ -36,6 +37,7 @@ export function ChatPane({
   onSpeaker,
   onGenerateScene,
   onOpenScene,
+  notice,
 }: {
   snapshot: ConversationSnapshot;
   playingId: number | null;
@@ -59,11 +61,12 @@ export function ChatPane({
   onSpeaker: (row: PerfRow) => void;
   onGenerateScene: (messageId: string) => void;
   onOpenScene: (scene: PerfScene) => void;
+  /** 衣柜与当前穿着的提示，例如未选择服饰或服饰没有差分。 */
+  notice?: string | null;
 }) {
   const policy = useMotionPolicy();
   const scroller = useRef<HTMLDivElement>(null);
   const draft = useRef<HTMLTextAreaElement>(null);
-  const nextButton = useRef<HTMLButtonElement>(null);
   const rows = useRef(new Map<number, HTMLElement>());
   const composing = useRef(false);
   const focusAdvance = useRef(false);
@@ -109,7 +112,8 @@ export function ChatPane({
   useLayoutEffect(() => {
     if (!focusAdvance.current) return;
     focusAdvance.current = false;
-    nextButton.current?.focus({ preventScroll: true });
+    // 发送后把焦点交给消息区：按 Enter 继续下一句，不再依赖底部按钮。
+    scroller.current?.focus({ preventScroll: true });
   });
 
   useLayoutEffect(() => {
@@ -169,10 +173,41 @@ export function ChatPane({
       ? <span key={scene.id} className="dialogue-scene-pending" role="status">{scene.mode === 'background' ? '背景图' : '人物场景图'}生成失败</span>
       : <button key={scene.id} type="button" className="dialogue-scene-chip" onClick={() => onOpenScene(scene)}>查看{scene.mode === 'background' ? '背景图' : '人物场景图'}</button>;
 
+  // 首句等待与「已展示到最后一段、模型仍在生成」都给出等待反馈。
+  const waitingText = !advancing
+    ? null
+    : snapshot.awaiting || !snapshot.current
+      ? '正在组织回复…'
+      : !snapshot.canAdvance
+        ? '下一句还在准备…'
+        : null;
+
+  /** 点击消息区推进下一段；不吞掉按钮、链接、输入与选中文字的操作。 */
+  const advanceFromClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!snapshot.canAdvance) return;
+    const selection = window.getSelection();
+    const hasSelection = selection !== null && !selection.isCollapsed;
+    if (!shouldAdvanceFromClick(event.target, hasSelection)) return;
+    onAdvance();
+  };
+
+  /** 焦点在消息区时，Enter 或空格推进下一段。 */
+  const advanceFromKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!snapshot.canAdvance) return;
+    if (!shouldAdvanceFromKey(event.key, event.target, event.currentTarget)) return;
+    event.preventDefault();
+    onAdvance();
+  };
+
   let lastDay = '';
   return <div className="dialogue-chat">
     <div className="dialogue-messages-wrap">
-    <div className="dialogue-messages" ref={scroller} onScroll={onScroll} role="log" aria-live="off" aria-label="对话记录，可上下滚动" tabIndex={0}>
+    <div className="dialogue-messages" ref={scroller} onScroll={onScroll}
+      onClick={advanceFromClick} onKeyDown={advanceFromKey}
+      role="log" aria-live="off" tabIndex={0}
+      data-can-advance={snapshot.canAdvance ? 'true' : undefined}
+      aria-keyshortcuts={snapshot.canAdvance ? 'Enter Space' : undefined}
+      aria-label={snapshot.canAdvance ? '对话记录，可上下滚动；点击或按 Enter 继续下一句' : '对话记录，可上下滚动'}>
       {snapshot.hasOlder && <button type="button" className="dialogue-scene-chip" disabled={snapshot.loadingOlder} onClick={() => {
         if (scroller.current) olderAnchor.current = { height: scroller.current.scrollHeight, top: scroller.current.scrollTop };
         onScrollFollow(false);
@@ -219,6 +254,11 @@ export function ChatPane({
       {unanchoredScenes.length > 0 && <div className="dialogue-round-tools" aria-label="未能定位句段的过场图">
         <span className="dialogue-scene-pending">未找到对应句段</span>{unanchoredScenes.map(sceneControl)}
       </div>}
+      {waitingText ? <div className="dialogue-waiting" role="status">
+        <span>{waitingText}</span>
+        {!policy.reduced ? <span className="dialogue-waiting-dots" aria-hidden="true"><i /><i /><i /></span> : null}
+      </div> : null}
+      {advancing && snapshot.canAdvance && !snapshot.awaiting ? <p className="dialogue-advance-hint" aria-hidden="true">点击对话框或按 Enter 继续</p> : null}
     </div>
     <div className="dialogue-date-notice" hidden={!dateNotice} role="status">{dateNotice}</div>
     <button type="button" className="dialogue-latest" hidden={follow} data-new={hasNew ? '' : undefined} onClick={onLatest}>
@@ -226,15 +266,8 @@ export function ChatPane({
     </button>
     </div>
     <div className="dialogue-zone">
-      {advancing
-        ? <div className="dialogue-turn-controls">
-            <span className="dialogue-turn-status" role="status">{snapshot.canAdvance ? '继续这轮对话' : snapshot.awaiting || !snapshot.current ? '等对方开口…' : '下一句还在准备…'}</span>
-            <button ref={nextButton} type="button" className="dialogue-next" aria-disabled={!snapshot.canAdvance}
-              onClick={() => { if (snapshot.canAdvance) onAdvance(); }}>
-              <span>下一句</span><Icon name="chev-right" size={16} />
-            </button>
-          </div>
-        : <form className="dialogue-composer" onSubmit={submit}>
+      {notice ? <p className="dialogue-outfit-notice" role="status">{notice}</p> : null}
+      {advancing ? null : <form className="dialogue-composer" onSubmit={submit}>
             <div className="dialogue-writing">
               <label className="sr-only" htmlFor="dialogue-draft">输入消息</label>
               <textarea ref={draft} id="dialogue-draft" rows={2} maxLength={2000} placeholder="想说什么，就慢慢说。"

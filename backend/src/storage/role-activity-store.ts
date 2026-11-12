@@ -57,8 +57,22 @@ export class RoleActivityStore {
     return rows.map((row) => toRecord(row, row.role_id));
   }
 
-  requestStop(roleId: string, at: string): RoleActivityRecord {
+  /**
+   * 新建角色默认已停止：先完成配置，再由用户显式开始活动（268 §4）。
+   * 已有记录（初始化重试）保持原状态。
+   */
+  markCreatedStopped(roleId: string, at: string): void {
     this.db
+      .prepare(
+        `INSERT INTO role_activity
+           (role_id, state, requested_at, confirmed_at, boundary_execution_id, updated_at)
+         VALUES (?, 'stopped', NULL, ?, NULL, ?)
+         ON CONFLICT(role_id) DO NOTHING`,
+      )
+      .run(roleId, at, at);
+  }
+
+  requestStop(roleId: string, at: string): RoleActivityRecord {    this.db
       .prepare(
         `INSERT INTO role_activity
            (role_id, state, requested_at, confirmed_at, boundary_execution_id, updated_at)

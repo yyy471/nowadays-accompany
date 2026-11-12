@@ -101,7 +101,7 @@ try {
   assert.equal(typeof role.defaultWindowId, "string");
   const roleId = role.roleId as string;
   const activityBefore = await cli(port, ["activity", "get", "--role", roleId]);
-  assert.equal((activityBefore.activity as { state: string }).state, "active");
+  assert.equal((activityBefore.activity as { state: string }).state, "stopped");
   const activities = await cli(port, ["activity", "list"]);
   assert.equal((activities.items as unknown[]).length, 1);
   const revised = await configCli(port, roleId, ["role", "update", "--role", roleId, "--definition", "修订设定后保持原身份", "--expected-revision", "1"]);

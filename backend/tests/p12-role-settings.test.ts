@@ -210,6 +210,49 @@ test("a saved model key is write-only and is used by tests and conversations", {
     assert.equal(tested.body.ok, true);
     assert.equal(typeof tested.body.fingerprint, "string");
 
+    // 草稿探测可复用已保存服务的密钥（同协议同 origin），换 origin 则拒绝。
+    const draftList = await api(
+      app.baseUrl,
+      "POST",
+      "/v1/model-services/models",
+      {
+        protocol: "openai-chat",
+        baseUrl: server.baseUrl,
+        resourceId,
+      },
+    );
+    assert.equal(draftList.status, 200);
+    assert.deepEqual(draftList.body, { models: ["mock-model"] });
+    assert.equal(
+      server.requests.at(-1)?.headers.authorization,
+      "Bearer sk-live-secret",
+    );
+    const draftTest = await api(
+      app.baseUrl,
+      "POST",
+      "/v1/model-services/test",
+      {
+        protocol: "openai-chat",
+        baseUrl: server.baseUrl,
+        model: "mock-model",
+        resourceId,
+      },
+    );
+    assert.equal(draftTest.status, 200);
+    assert.equal(draftTest.body.ok, true);
+    const staleReuse = await api(
+      app.baseUrl,
+      "POST",
+      "/v1/model-services/models",
+      {
+        protocol: "openai-chat",
+        baseUrl: "http://127.0.0.1:1/v1",
+        resourceId,
+      },
+    );
+    assert.equal(staleReuse.status, 400);
+    assert.equal(errorCode(staleReuse.body), "RESOURCE_CREDENTIAL_STALE");
+
     const role = await api(app.baseUrl, "POST", "/v1/roles", {
       displayName: "凭据角色",
       definition: { text: "用已保存密钥对话" },
@@ -231,6 +274,13 @@ test("a saved model key is write-only and is used by tests and conversations", {
       },
     );
     assert.equal(bindings.status, 200);
+    // 新建角色默认已停止（268 §4）：配置完成后显式开始活动再对话。
+    const activity = await api(
+      app.baseUrl,
+      "POST",
+      `/v1/roles/${roleId}/activity/resume`,
+    );
+    assert.equal(activity.status, 200);
     const window = await api(
       app.baseUrl,
       "POST",
@@ -705,7 +755,15 @@ async function createRole(baseUrl: string): Promise<string> {
     definition: { text: "参考音频管理" },
   });
   assert.equal(role.status, 201);
-  return role.body.roleId as string;
+  const roleId = role.body.roleId as string;
+  // 新建角色默认已停止（268 §4）：显式开始活动以保持既有用例语义。
+  const resumed = await api(
+    baseUrl,
+    "POST",
+    `/v1/roles/${roleId}/activity/resume`,
+  );
+  assert.equal(resumed.status, 200);
+  return roleId;
 }
 
 async function uploadReference(

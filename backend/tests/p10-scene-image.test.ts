@@ -472,6 +472,7 @@ test("a v12 role database migrates to v13 and keeps messages, segments and event
       displayName: "阿澄",
       definition: { text: "你是阿澄。" },
     });
+    app.services.activity.resume(role.roleId);
     const resource = app.services.resources.create({
       kind: "model",
       name: "离线对话模型",
@@ -584,6 +585,7 @@ test("restart settles unfinished tasks as interrupted and keeps the result reada
       displayName: "阿澄",
       definition: { text: "你是阿澄。" },
     });
+    app.services.activity.resume(role.roleId);
     const resource = app.services.resources.create({
       kind: "model",
       name: "离线对话模型",

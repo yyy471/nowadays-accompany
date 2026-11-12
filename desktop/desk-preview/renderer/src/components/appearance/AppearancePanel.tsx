@@ -126,7 +126,7 @@ export function AppearancePanel({ roleId, currentOutfitId, canWrite = true, onCh
       file,
     }));
     const result = scanAppearanceFolder(entries);
-    setScan(result); setMerges({}); setRenames({}); setHomePicks({});
+    setScan(result); setMerges(result.suggestedMerges); setRenames({}); setHomePicks({});
     setNotice(''); setError('');
     if (folderInput.current) folderInput.current.value = '';
     if (result.entries.length === 0) {
