@@ -30,6 +30,7 @@
 | [304 303 补修独立复验问题修复](304-303-reverification-fixes.md) | 维护／删除／无绑定期间停止安排零延迟定时器并刷新退避时间戳。独立结论见 [283 第 24 节](283-278-workflow-simplification-independent-review.md#24-304-补修独立复验) |
 | [305 304 补修独立复验问题修复](305-304-reverification-fixes.md) | 把调度绑定读取纳入异常保护，并在临时读库失败后继续处理已持久化触发。独立结论见 [283 第 25 节](283-278-workflow-simplification-independent-review.md#25-305-补修独立复验) |
 | [306 305 补修独立复验问题修复](306-305-reverification-fixes.md) | 启动读库失败后的批次恢复实施记录。独立复核及补修见 [283 第 26 节](283-278-workflow-simplification-independent-review.md#26-306-补修独立复验) |
+| [307 前端设计规范](307-frontend-design-system-spec.md) | 字体、间距、圆角、阴影与层级、颜色与昼夜、动效三档与曲线、交互状态、`ui/` 组件目录、页面布局、令牌新增流程及 `npm run lint:styles` 检查规则与豁免清单。令牌源文件为 [design/character-studio/tokens.json](design/character-studio/tokens.json) |
 | [282 278 进展三：模型依赖维护与资源详情](282-278-progress-model-impact-resource-detail.md) | 实施方自验记录，范围包括模型影响报告、扩展停用、批量关闭绑定、首次对话与绑定合并。独立结论见 283 |
 | [281 278 进展二：外观语音生图接入暂停保存](281-278-progress-guarded-panels.md) | 外观、语音配置保存与启停、生图保存接入暂停流程。参考录音上传和删除的缺口见 283 R08 |
 | [280 278 进展一：角色同页暂停保存与消息接收结果](280-278-progress-role-workspace-dialogue-receipt.md) | 人设／绑定／额度保存时自动暂停并可在原处继续活动；消息接收结果与等待原因、恢复／配置／重试入口；后端 358 项与桌面 109 项通过 |
