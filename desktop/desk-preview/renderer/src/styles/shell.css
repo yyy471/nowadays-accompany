@@ -19,7 +19,7 @@
 .studio-conversation-content>.ui-theme-scope { flex:1; min-height:0; height:100%; }
 .studio-notices:empty { display: none; }
 .studio-notices .notice { margin: 16px 0; }
-.studio-legacy-page { min-width: 0; padding-bottom: 24px; color: var(--text); font-family: var(--font); font-size: 13px; }
+.studio-legacy-page { min-width: 0; padding-bottom: 24px; color: var(--text); font-family: var(--nd-semantic-font-body); font-size: 13px; }
 .studio-page-heading { max-width: 1340px; margin: 24px auto; }
 .studio-page-heading h1 { margin: 0; color: var(--nd-semantic-color-text); font-family: var(--nd-semantic-font-heading); font-size: var(--nd-semantic-type-page-size); line-height: var(--nd-semantic-type-page-line); }
 .studio-page-heading p { margin: 8px 0 0; font-size: var(--nd-semantic-type-body-size); color: var(--nd-semantic-color-text-muted); }

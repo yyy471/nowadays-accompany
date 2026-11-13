@@ -1,15 +1,16 @@
+/* ds-allow-file: ds/color=1 — color：彩色按钮上的纯白文字 */
 .nd-voice { display: flex; flex-direction: column; gap: 12px; }
 .nd-voice-note { color: var(--muted); font-size: 11px; }
-.nd-voice-probe { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }
+.nd-voice-probe { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--nd-semantic-radius-action); background: var(--panel-2); }
 .nd-voice-probe small { color: var(--muted); font-size: 11px; line-height: 1.6; }
 .nd-voice-references { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
-.nd-voice-references li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); font-size: 12px; }
+.nd-voice-references li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--nd-semantic-radius-action); background: var(--panel); font-size: 12px; }
 .nd-voice-references li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nd-voice-references em { margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 10px; font-style: normal; }
-.nd-voice-references button { flex: none; padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--muted); font-size: 11px; cursor: pointer; }
+.nd-voice-references em { margin-left: 6px; padding: 1px 6px; border-radius: var(--nd-semantic-radius-round); background: var(--accent); color: #fff; font-size: 10px; font-style: normal; }
+.nd-voice-references button { flex: none; padding: 2px 8px; border: 1px solid var(--line); border-radius: var(--nd-semantic-radius-round); background: none; color: var(--muted); font-size: 11px; cursor: pointer; }
 .nd-voice-references button:hover:not(:disabled) { border-color: var(--bad); color: var(--bad); }
 .nd-voice-references button:disabled { opacity: .5; cursor: not-allowed; }
-.nd-voice-toggle { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); font-size: 12px; cursor: pointer; }
+.nd-voice-toggle { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--nd-semantic-radius-action); background: var(--panel-2); font-size: 12px; cursor: pointer; }
 .nd-voice-toggle input { accent-color: var(--accent); }
 .nd-voice-toggle span { font-weight: 600; }
 .nd-voice-toggle small { color: var(--muted); font-size: 11px; }

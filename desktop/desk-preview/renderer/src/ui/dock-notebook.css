@@ -1,3 +1,4 @@
+/* ds-allow-file: ds/shadow=5 — shadow：dock 纸质悬浮与书签的阴影，色值来自 dockNotebook 令牌（含 night 专用色） */
 /* 昼夜手账Dock：全局唯一导航外观，尺寸与材质消费 component.dockNotebook.*。 */
 [data-ui-theme="xiacheng"] .ui-page-dock {
   --dock-pad: var(--nd-component-dock-notebook-padding);
@@ -21,14 +22,14 @@
 }
 [data-ui-theme="xiacheng"] .ui-page-dock::after {
   content: ''; position: absolute; top: calc(100% - 1px); left: 12px; right: 12px; height: 4px; z-index: -2;
-  border: 1px solid var(--nd-semantic-color-line-decorative); border-top: 0; border-radius: 0 0 20px 20px;
+  border: 1px solid var(--nd-semantic-color-line-decorative); border-top: 0; border-radius: 0 0 var(--nd-semantic-radius-navigation) var(--nd-semantic-radius-navigation);
   background: var(--nd-semantic-color-surface); pointer-events: none;
 }
 [data-ui-theme="xiacheng"] .ui-page-dock :is(.ui-dock-item, .ui-menu-trigger) {
   position: relative; isolation: isolate; display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 2px; width: var(--dock-item-w); min-width: var(--dock-item-w);
   height: var(--dock-item-h); min-height: var(--dock-item-h);
-  margin: 0; padding: 6px 10px; border: 0; border-radius: 13px; background: transparent;
+  margin: 0; padding: 6px 10px; border: 0; border-radius: var(--nd-semantic-radius-field); background: transparent;
   color: var(--nd-semantic-color-text-muted);
   font-size: var(--nd-semantic-type-caption-size); line-height: var(--dock-label-line);
   white-space: nowrap; cursor: pointer;
@@ -49,7 +50,7 @@
 [data-ui-theme="xiacheng"] .ui-page-dock :is(.ui-dock-label, .ui-menu-trigger-label) { pointer-events: none; }
 [data-ui-theme="xiacheng"] .ui-page-dock .ui-dock-surface {
   position: absolute; inset: 1px 2px; z-index: -1; border: 1px solid color-mix(in srgb, var(--nd-semantic-color-line-decorative) var(--nd-component-dock-notebook-item-border-mix), transparent);
-  border-radius: 10px; opacity: 0; transform: translateY(0);
+  border-radius: var(--nd-semantic-radius-action); opacity: 0; transform: translateY(0);
   background: radial-gradient(ellipse at var(--dock-local-x, 50%) var(--dock-local-y, 40%), color-mix(in srgb, var(--nd-semantic-color-surface) var(--nd-component-dock-notebook-item-surface-mix), transparent), color-mix(in srgb, var(--nd-semantic-color-selection) var(--nd-component-dock-notebook-item-selection-mix), transparent));
   box-shadow: var(--dock-shadow-x, 0px) 3px 7px color-mix(in srgb, var(--nd-semantic-color-text) var(--nd-component-dock-notebook-day-shadow-mix), transparent);
   transition: opacity var(--nd-component-motion-control) var(--nd-semantic-motion-ease),
@@ -81,7 +82,7 @@
 [data-ui-theme="xiacheng"] .ui-page-dock .ui-dock-marker {
   position: absolute; top: calc(var(--dock-pad) - 2px); bottom: var(--dock-pad); left: 0; z-index: -1;
   width: var(--dock-item-w); border: 1px solid color-mix(in srgb, var(--nd-semantic-color-line-control) var(--nd-component-dock-notebook-marker-border-mix), var(--nd-semantic-color-surface));
-  border-radius: 10px 10px 8px 8px;
+  border-radius: var(--nd-semantic-radius-action) var(--nd-semantic-radius-action) var(--nd-semantic-radius-action) var(--nd-semantic-radius-action);
   background: linear-gradient(155deg, var(--nd-semantic-color-surface), color-mix(in srgb, var(--nd-semantic-color-surface) var(--nd-component-dock-notebook-marker-surface-mix), var(--nd-semantic-color-selection)));
   box-shadow: 0 2px 0 color-mix(in srgb, var(--nd-semantic-color-line-decorative) var(--nd-component-dock-notebook-marker-hairline-mix), var(--nd-semantic-color-surface)), 0 4px 9px color-mix(in srgb, var(--nd-semantic-color-text) var(--nd-component-dock-notebook-marker-shadow-mix), transparent);
   translate: 0 0; opacity: 0; transform-origin: left center; pointer-events: none;
@@ -90,12 +91,12 @@
 }
 [data-ui-theme="xiacheng"] .ui-page-dock .ui-dock-marker::before {
   content: ''; position: absolute; top: -3px; left: 50%; width: var(--nd-component-dock-notebook-day-flag-width); height: var(--nd-component-dock-notebook-day-flag-height);
-  border-radius: 1px; background: var(--nd-semantic-color-accent-decorative);
+  border-radius: var(--nd-semantic-radius-tick); background: var(--nd-semantic-color-accent-decorative);
   clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 68%, 0 100%); transform: translateX(-50%);
 }
 [data-ui-theme="xiacheng"] .ui-page-dock .ui-dock-marker::after {
   content: ''; position: absolute; inset: 4px 5px; border: 1px solid color-mix(in srgb, var(--nd-semantic-color-line-decorative) var(--nd-component-dock-notebook-marker-inset-mix), transparent);
-  border-radius: 6px; pointer-events: none;
+  border-radius: var(--nd-semantic-radius-action); pointer-events: none;
 }
 [data-ui-theme="xiacheng"] .ui-page-dock:has(:is(.ui-dock-item[data-pressed][aria-current="page"], .ui-menu-trigger[data-pressed][data-current="true"])) .ui-dock-marker {
   translate: 0 var(--nd-component-motion-press-offset);
@@ -128,7 +129,7 @@
 }
 [data-ui-preset="nightwave"] .ui-page-dock .ui-dock-marker::before {
   top: 0; width: var(--nd-component-dock-notebook-night-flag-width); height: var(--nd-component-dock-notebook-night-flag-height);
-  clip-path: none; border-radius: 2px; background: var(--nd-semantic-color-entry); opacity: .9;
+  clip-path: none; border-radius: var(--nd-semantic-radius-tick); background: var(--nd-semantic-color-entry); opacity: .9;
 }
 [data-ui-preset="nightwave"] .ui-page-dock .ui-dock-marker::after { border-color: color-mix(in srgb, var(--nd-semantic-color-line-control) var(--nd-component-dock-notebook-night-marker-inset-mix), transparent); }
 [data-ui-preset="nightwave"] .ui-page-dock .ui-dock-surface {

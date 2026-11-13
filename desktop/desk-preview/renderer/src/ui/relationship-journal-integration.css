@@ -15,7 +15,7 @@
 .wj-journal .wj-bottom .cap{margin-left:auto}
 .wj-journal .wj-notice{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:6px 12px;border:1px solid var(--line-c);border-radius:var(--r-btn);background:var(--surface);font-size:13px;line-height:20px;max-height:100px;overflow:auto;flex:none}
 .wj-journal .wj-notice.error{color:var(--bad);border-color:var(--bad)}
-.wj-journal .wj-state{position:relative;padding:32px;background:var(--surface);height:100%;border-radius:12px;overflow:auto}
+.wj-journal .wj-state{position:relative;padding:32px;background:var(--surface);height:100%;border-radius:var(--nd-semantic-radius-field);overflow:auto}
 .wj-journal .lh h1{overflow-wrap:anywhere;font-size:clamp(22px,2vw,30px);line-height:1.3}
 .wj-journal .who-txt{min-width:0}.wj-journal .role-n{overflow-wrap:anywhere}
 .wj-journal .portrait .ph img{display:block;width:100%;height:100%;object-fit:cover}
@@ -42,7 +42,7 @@
 .wj-journal[data-ui-preset="daylight"] .okmark::before{font-size:14px;content:"✓"}
 .wj-journal[data-ui-preset="daylight"] .cell.bad .okmark::before{content:"!";color:var(--bad)}
 .wj-journal .ct .under{white-space:normal}
-.wj-journal .wj-add-cell{display:flex;flex-direction:column;gap:6px;align-items:center;justify-content:center;min-height:100px;border:1px dashed var(--line-c);border-radius:10px;background:transparent;color:var(--muted);font-family:var(--hand);font-size:19px}
+.wj-journal .wj-add-cell{display:flex;flex-direction:column;gap:6px;align-items:center;justify-content:center;min-height:100px;border:1px dashed var(--line-c);border-radius:var(--nd-semantic-radius-action);background:transparent;color:var(--muted);font-family:var(--nd-semantic-font-hand);font-size:19px}
 .wj-journal .wj-add-cell:hover{background:var(--sel);color:var(--text)}
 .wj-journal .rf{gap:8px;flex-wrap:wrap;flex:none;margin-top:auto}
 .wj-journal .draft{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:6px 10px}

@@ -1,12 +1,13 @@
+/* ds-allow-file: ds/color=16 — color：旧版控件调色板（--control-*、按钮色阶），与 styles.css 同源；随旧调板一起迁移 */
 /* Component appearance belongs here; pages may arrange controls, not restyle them. */
 :root {
   --control-height: 42px;
   --control-height-compact: 34px;
-  --control-radius: 10px;
+  --control-radius: var(--nd-semantic-radius-action);
   --control-surface: #fffdf9;
   --control-focus: rgba(185, 130, 55, .16);
 }
-.btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: var(--control-height); padding: 9px 14px; border: 1px solid var(--line-strong); border-radius: var(--control-radius); background: var(--panel-2); color: var(--text); font-size: 12.5px; line-height: 1.25; white-space: nowrap; cursor: pointer; transition: background .16s ease,border-color .16s ease,transform .12s ease; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: var(--control-height); padding: 9px 14px; border: 1px solid var(--line-strong); border-radius: var(--control-radius); background: var(--panel-2); color: var(--text); font-size: 12.5px; line-height: 1.25; white-space: nowrap; cursor: pointer; transition: background var(--nd-semantic-motion-component-exit) ease,border-color var(--nd-semantic-motion-component-exit) ease,transform var(--nd-semantic-motion-micro) ease; }
 .btn:hover:not(:disabled) { background: var(--panel-3); border-color: rgba(67,59,52,.25); }
 .btn:active:not(:disabled) { transform: translateY(1px); }
 .btn-sm { min-height: var(--control-height-compact); padding: 7px 11px; font-size: 12px; }
@@ -21,14 +22,14 @@
 .field { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
 .field-label { color: var(--muted); font-size: 12px; letter-spacing: .01em; }
 .field-hint { color: var(--muted); font-size: 11.5px; line-height: 1.6; }
-.ui-input,.ui-select,.ui-textarea { width: 100%; min-width: 0; min-height: var(--control-height); padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--control-radius); background-color: var(--control-surface); color: var(--text); font: inherit; font-size: 12.5px; outline: none; transition: border-color .16s ease,box-shadow .16s ease; }
+.ui-input,.ui-select,.ui-textarea { width: 100%; min-width: 0; min-height: var(--control-height); padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--control-radius); background-color: var(--control-surface); color: var(--text); font: inherit; font-size: 12.5px; outline: none; transition: border-color var(--nd-semantic-motion-component-exit) ease,box-shadow var(--nd-semantic-motion-component-exit) ease; }
 .ui-input::placeholder,.ui-textarea::placeholder { color: #918575; }
 .ui-input:focus,.ui-select:focus,.ui-textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--control-focus); }
 .ui-input:disabled,.ui-select:disabled,.ui-textarea:disabled { opacity: .55; cursor: not-allowed; background-color: var(--panel-2); }
 .ui-input[aria-invalid="true"],.ui-select[aria-invalid="true"],.ui-textarea[aria-invalid="true"] { border-color: var(--bad); }
 .ui-select { appearance: none; padding-right: 32px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23746756' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 11px center; }
 .ui-textarea { min-height: 90px; resize: vertical; line-height: 1.6; }
-input.ui-input-checkbox,input.ui-input-radio { appearance: none; width: 16px; height: 16px; min-height: 16px; padding: 0; margin: 0; flex-shrink: 0; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--control-surface); background-position: center; background-repeat: no-repeat; accent-color: var(--accent); cursor: pointer; transition: background-color .16s ease,border-color .16s ease; }
+input.ui-input-checkbox,input.ui-input-radio { appearance: none; width: 16px; height: 16px; min-height: 16px; padding: 0; margin: 0; flex-shrink: 0; border: 1px solid var(--line-strong); border-radius: var(--nd-semantic-radius-chip); background: var(--control-surface); background-position: center; background-repeat: no-repeat; accent-color: var(--accent); cursor: pointer; transition: background-color var(--nd-semantic-motion-component-exit) ease,border-color var(--nd-semantic-motion-component-exit) ease; }
 input.ui-input-radio { border-radius: 50%; }
 input.ui-input-checkbox:hover:not(:disabled),input.ui-input-radio:hover:not(:disabled) { border-color: var(--accent); }
 input.ui-input-checkbox:checked,input.ui-input-checkbox:indeterminate,input.ui-input-radio:checked { border-color: var(--accent); background-color: var(--accent); }
@@ -45,11 +46,11 @@ input.ui-input-checkbox:focus-visible,input.ui-input-radio:focus-visible { outli
 .ui-icon-button { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; flex-shrink: 0; border: 1px solid var(--line); border-radius: var(--control-radius); padding: 0; color: var(--muted); background: transparent; cursor: pointer; }
 .ui-icon-button:hover:not(:disabled) { color: var(--text); background: var(--panel-2); }
 /* 折叠结构必须独立于主题作用域；未迁移页面也需真实隐藏内容。 */
-.ui-disclosure-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--nd-component-motion-surface-enter, 220ms) var(--nd-semantic-motion-ease, ease); }
+.ui-disclosure-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--nd-component-motion-surface-enter, var(--nd-semantic-motion-component)) var(--nd-semantic-motion-ease, ease); }
 .ui-disclosure[data-open="true"] .ui-disclosure-body { grid-template-rows: 1fr; }
 .ui-disclosure-inner { min-height: 0; overflow: hidden; }
 .ui-modal-backdrop { position: fixed; inset: 0; display: grid; place-items: center; padding: 28px; background: rgba(67,59,52,.25); backdrop-filter: blur(7px); }
-.ui-modal-panel { width: min(560px,100%); min-width: 0; max-height: calc(100dvh - 56px); overflow: auto; overscroll-behavior: contain; overflow-wrap: anywhere; border: 1px solid var(--line); border-radius: 22px; background: var(--panel); color: var(--text); box-shadow: 0 30px 100px rgba(67,59,52,.2); outline: none; }
+.ui-modal-panel { width: min(560px,100%); min-width: 0; max-height: calc(100dvh - 56px); overflow: auto; overscroll-behavior: contain; overflow-wrap: anywhere; border: 1px solid var(--line); border-radius: var(--nd-semantic-radius-navigation); background: var(--panel); color: var(--text); box-shadow: var(--nd-semantic-shadow-overlay); outline: none; }
 .ui-modal-header { display: flex; align-items: center; gap: 16px; justify-content: space-between; padding: 24px; }
 .ui-modal-header h2 { margin: 0; font-size: 20px; }
 .ui-modal-header p { margin: 14px 0 0; color: var(--muted); white-space: pre-line; line-height: 1.8; font-size: 13px; }

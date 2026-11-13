@@ -1,3 +1,4 @@
+/* ds-allow-file: ds/color=2 — color：mask-image 的不透明遮罩（#000 仅表示不透明度，不是视觉颜色） */
 @property --theme-weather-reveal { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
 .ui-theme-weather { position: fixed; inset: 0; pointer-events: none; overflow: clip; contain: layout style; }
 .ui-theme-leaf { position: absolute; width: 38px; height: 57px; color: var(--nd-semantic-color-accent-decorative); }

@@ -107,7 +107,7 @@
 [data-ui-theme="xiacheng"] .btn:disabled,
 [data-ui-theme="xiacheng"] .btn[aria-disabled="true"]:not([aria-busy="true"]) { opacity: 1; color: var(--nd-semantic-color-disabled-text); background: var(--nd-semantic-color-disabled-surface); border-color: var(--nd-semantic-color-line-control); box-shadow: none; cursor: not-allowed; transform: none; }
 [data-ui-theme="xiacheng"] [aria-busy="true"] { cursor: progress; }
-[data-ui-theme="xiacheng"] .spinner { width: 16px; height: 16px; flex-shrink: 0; border: 2px solid currentColor; border-right-color: var(--nd-semantic-color-transparent); border-radius: var(--nd-semantic-radius-round); animation: nd-spin 900ms linear infinite; }
+[data-ui-theme="xiacheng"] .spinner { width: 16px; height: 16px; flex-shrink: 0; border: 2px solid currentColor; border-right-color: var(--nd-semantic-color-transparent); border-radius: var(--nd-semantic-radius-round); animation: nd-spin var(--nd-semantic-motion-scene) linear infinite; }
 @keyframes nd-spin { to { transform: rotate(360deg); } }
 [data-ui-theme="xiacheng"] .ui-button-check { width: 16px; height: 16px; overflow: visible; }
 [data-ui-theme="xiacheng"] .ui-button-check path { stroke-dasharray: 1; stroke-dashoffset: 0; animation: nd-check-draw var(--nd-component-motion-control) var(--nd-semantic-motion-ease) both; }
@@ -116,7 +116,7 @@
 .ui-button-stamp { display: none; }
 [data-ui-theme="xiacheng"] .ui-button-stamp {
   display: inline-flex; align-items: center; position: absolute; left: calc(100% + 8px); top: 50%; z-index: 1;
-  padding: 2px 7px; border: 1px solid currentColor; border-radius: 3px;
+  padding: 2px 7px; border: 1px solid currentColor; border-radius: var(--nd-semantic-radius-tick);
   color: var(--nd-semantic-color-success); background: var(--nd-semantic-color-surface);
   box-shadow: inset 0 0 0 2px var(--nd-semantic-color-canvas), inset 0 0 0 3px currentColor;
   font-size: var(--nd-semantic-type-caption-size); line-height: var(--nd-semantic-type-caption-line);

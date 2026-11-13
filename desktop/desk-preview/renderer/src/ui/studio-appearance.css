@@ -23,7 +23,7 @@
 [data-ui-theme="xiacheng"] .ui-binding-shortcut { display:inline-flex;align-items:center;gap:12px;min-width:0;max-width:100%;min-height:44px;padding:8px 0;border:0;border-radius:var(--nd-semantic-radius-action);color:var(--nd-semantic-color-text-muted);background:var(--nd-semantic-color-transparent);font-size:var(--nd-semantic-type-control-size);cursor:pointer; }
 [data-ui-theme="xiacheng"] .ui-binding-shortcut>span { max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
 [data-ui-theme="xiacheng"] .ui-binding-shortcut>i { display:block;width:24px;height:1px;flex-shrink:0;background:var(--nd-semantic-color-accent-decorative); }
-[data-ui-theme="xiacheng"] .ui-binding-shortcut>strong { min-width:0;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--nd-semantic-color-entry);background:var(--nd-semantic-color-selection);padding:4px 8px;border-radius:4px; }
+[data-ui-theme="xiacheng"] .ui-binding-shortcut>strong { min-width:0;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--nd-semantic-color-entry);background:var(--nd-semantic-color-selection);padding:4px 8px;border-radius:var(--nd-semantic-radius-chip); }
 [data-ui-theme="xiacheng"] .ui-binding-shortcut:disabled { color:var(--nd-semantic-color-disabled-text);cursor:not-allowed; }
 [data-ui-theme="xiacheng"] .btn-entry:is(:active,[data-preview-state="pressed"]):not([aria-disabled="true"]) { box-shadow:0 1px 0 var(--nd-component-entry-button-depth-color); }
 @media (max-width:599px) { [data-ui-theme="xiacheng"] .ui-studio-brand { gap:8px;font-size:20px; } [data-ui-theme="xiacheng"] .ui-studio-brand small { font-size:var(--nd-semantic-type-caption-size); } }
