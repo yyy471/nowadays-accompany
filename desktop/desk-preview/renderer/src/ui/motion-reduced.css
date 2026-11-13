@@ -1,0 +1,29 @@
+/*
+ * 减少动效 = 瞬时：把「档位」时长令牌整体归零，所有用令牌写的 transition / animation 随之瞬时完成。
+ * 档位令牌的取值见 character-tokens.css（由 tokens.json 生成）；这里只负责 reduced 时的覆盖。
+ * 不归零：ambient / ambient-slow（常驻环境循环，由各组件在 reduced 下自行停掉）、theme-reveal / theme-total（主题切换由 theme-transition.ts 单独判断 reduced）。
+ * 命中条件与 ui/motion.tsx 一致：html 或主题作用域上 data-motion="reduced"；系统请求减少动效且未被显式设为 full。
+ * 特异性需高于令牌作用域 [data-ui-theme]，所以用 [data-ui-theme][data-motion] / html … [data-ui-theme] 的写法。
+ */
+[data-ui-theme="xiacheng"][data-motion="reduced"],
+[data-ui-palette="xiacheng"][data-motion="reduced"],
+html[data-motion="reduced"] [data-ui-theme="xiacheng"],
+html[data-motion="reduced"] [data-ui-palette="xiacheng"] {
+  --nd-semantic-motion-micro: 0ms; --nd-semantic-motion-micro-exit: 0ms; --nd-semantic-motion-component: 0ms;
+  --nd-semantic-motion-component-exit: 0ms; --nd-semantic-motion-page: 0ms; --nd-semantic-motion-page-exit: 0ms;
+  --nd-semantic-motion-linger: 0ms; --nd-semantic-motion-decay: 0ms; --nd-semantic-motion-scene: 0ms;
+  --nd-semantic-motion-scene-long: 0ms; --nd-semantic-motion-stagger: 0ms; --nd-semantic-motion-stagger-fine: 0ms;
+  --nd-semantic-motion-feedback: 0ms; --nd-semantic-motion-control: 0ms; --nd-semantic-motion-disclosure: 0ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion="full"]) [data-ui-theme="xiacheng"]:not([data-motion="full"]),
+  html:not([data-motion="full"]) [data-ui-palette="xiacheng"]:not([data-motion="full"]),
+  [data-ui-theme="xiacheng"][data-motion="system"],
+  [data-ui-palette="xiacheng"][data-motion="system"] {
+  --nd-semantic-motion-micro: 0ms; --nd-semantic-motion-micro-exit: 0ms; --nd-semantic-motion-component: 0ms;
+  --nd-semantic-motion-component-exit: 0ms; --nd-semantic-motion-page: 0ms; --nd-semantic-motion-page-exit: 0ms;
+  --nd-semantic-motion-linger: 0ms; --nd-semantic-motion-decay: 0ms; --nd-semantic-motion-scene: 0ms;
+  --nd-semantic-motion-scene-long: 0ms; --nd-semantic-motion-stagger: 0ms; --nd-semantic-motion-stagger-fine: 0ms;
+  --nd-semantic-motion-feedback: 0ms; --nd-semantic-motion-control: 0ms; --nd-semantic-motion-disclosure: 0ms;
+  }
+}

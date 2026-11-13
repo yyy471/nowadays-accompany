@@ -14,7 +14,7 @@
   --ease:var(--nd-semantic-motion-ease);--ease-s:var(--nd-semantic-motion-detail-surface-ease);
   --tilt:var(--nd-semantic-motion-detail-stamp-tilt);--tilt0:var(--nd-semantic-motion-detail-stamp-start-tilt);
   --r-btn:var(--nd-semantic-radius-action);--r-field:var(--nd-semantic-radius-field);--r-panel:var(--nd-semantic-radius-surface);--r-round:var(--nd-semantic-radius-round);
-  --sh-surface:var(--nd-semantic-shadow-surface);--sh-float:var(--nd-semantic-shadow-floating);
+  --sh-surface:var(--nd-semantic-shadow-rest);--sh-float:var(--nd-semantic-shadow-raised);
   --h-ctl:var(--nd-semantic-size-control);--h-cmp:var(--nd-semantic-size-compact);
   --m:1; /* 动效倍率：reduced 时置 0 */
 }

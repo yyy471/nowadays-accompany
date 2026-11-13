@@ -90,7 +90,7 @@ export function Modal({ open, title, description, children, onClose, closeDisabl
     origin.current = { x: dx, y: dy };
     const scale = readMotionValue(panelElement, '--nd-component-motion-modal-scale', '0.97');
     const duration = readMotionTime(panelElement, '--nd-component-motion-surface-enter', 220);
-    const ease = readMotionValue(panelElement, '--nd-component-motion-surface-ease', 'cubic-bezier(0.22, 0.61, 0.36, 1)');
+    const ease = readMotionValue(panelElement, '--nd-component-motion-surface-ease', 'cubic-bezier(0.2, 0.8, 0.2, 1)');
     scope.run(panelElement, [
       { opacity: startTransform ? (Number.isFinite(startOpacity) ? startOpacity : 1) : 0, transform: startTransform ?? `translate(${dx}px, ${dy}px) scale(${scale})` },
       { opacity: 1, transform: 'translate(0px, 0px) scale(1)' }
@@ -122,7 +122,7 @@ export function Modal({ open, title, description, children, onClose, closeDisabl
     const backdropOpacity = Number.parseFloat(getComputedStyle(backdropElement).opacity);
     scope.cancelAll();
     const duration = readMotionTime(panelElement, '--nd-component-motion-surface-exit', 160);
-    const ease = readMotionValue(panelElement, '--nd-component-motion-surface-ease', 'cubic-bezier(0.22, 0.61, 0.36, 1)');
+    const ease = readMotionValue(panelElement, '--nd-component-motion-surface-ease', 'cubic-bezier(0.2, 0.8, 0.2, 1)');
     const closeScale = readMotionValue(panelElement, '--nd-component-motion-modal-close-scale', '0.985');
     const { x, y } = origin.current;
     const animation = scope.run(panelElement, [

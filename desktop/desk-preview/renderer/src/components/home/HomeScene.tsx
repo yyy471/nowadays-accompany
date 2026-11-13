@@ -32,9 +32,9 @@ export function HomeScene({ outfitHomeUrl, outfitName }: { outfitHomeUrl?: strin
     if (reduced.current) return;
     const element = figure.current;
     if (!element) return;
-    const duration = readMotionTime(element, '--nd-component-motion-page', 280);
+    const duration = readMotionTime(element, '--nd-component-motion-page', 360);
     const offset = readMotionPx(element, '--nd-component-motion-page-offset', 4);
-    const ease = readMotionValue(element, '--nd-component-motion-ease', 'cubic-bezier(0.2, 0, 0, 1)');
+    const ease = readMotionValue(element, '--nd-component-motion-ease', 'cubic-bezier(0.2, 0.8, 0.2, 1)');
     scope.run(element, [
       { opacity: 0.35, transform: `translateY(${offset}px)` },
       { opacity: 1, transform: 'translateY(0)' }

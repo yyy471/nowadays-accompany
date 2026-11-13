@@ -7,6 +7,7 @@ import { applyMotionPreference, readMotionPreference } from './preferences';
 import './styles.css';
 import './ui/theme.css';
 import './ui/character-tokens.css';
+import './ui/motion-reduced.css';
 import './ui/character-theme.css';
 import './styles/shell.css';
 import './styles/home.css';

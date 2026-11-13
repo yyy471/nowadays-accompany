@@ -54,7 +54,7 @@
 .dialogue-page .dialogue-role-button { display: inline-flex; align-items: center; gap: 5px; min-height: 32px; padding: 0 8px; border: 1px solid var(--dlg-rule); border-radius: 9px; color: var(--dlg-muted); font-size: 12px; }
 .dialogue-role-button:hover { background: var(--dlg-selection); color: var(--dlg-ink); }
 .dialogue-role-button[aria-expanded="true"] { border-color: var(--dlg-entry); background: var(--dlg-selection); color: var(--dlg-ink); }
-.dialogue-role-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; min-width: 168px; padding: 6px; border: 1px solid var(--dlg-rule); border-radius: 12px; background: var(--dlg-paper); box-shadow: var(--nd-semantic-shadow-floating); }
+.dialogue-role-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; min-width: 168px; padding: 6px; border: 1px solid var(--dlg-rule); border-radius: 12px; background: var(--dlg-paper); box-shadow: var(--nd-semantic-shadow-raised); }
 .dialogue-role-menu button { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 36px; padding: 6px 10px; border-radius: 8px; text-align: left; font-size: 13px; }
 .dialogue-role-menu button:hover { background: var(--dlg-selection); }
 .dialogue-role-menu button svg { color: var(--dlg-entry); }
@@ -75,7 +75,7 @@
 .dialogue-scene-full img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .dialogue-stage-cue { position: absolute; inset: 35% 9% 8%; background: radial-gradient(ellipse at 55% 70%, #d9b2bc36, transparent 68%); z-index: 1; pointer-events: none; opacity: 0; }
 .dialogue-stage-cue[data-live="cue"] { animation: dialogue-cue-light 1s ease both; }
-.dialogue-scene-dismiss { position: absolute; z-index: 5; left: 10px; bottom: 10px; min-height: 34px; padding: 6px 12px; border: 1px solid var(--dlg-rule); border-radius: 9px; background: var(--dlg-paper); color: var(--dlg-ink); font-size: 12px; box-shadow: var(--nd-semantic-shadow-surface); }
+.dialogue-scene-dismiss { position: absolute; z-index: 5; left: 10px; bottom: 10px; min-height: 34px; padding: 6px 12px; border: 1px solid var(--dlg-rule); border-radius: 9px; background: var(--dlg-paper); color: var(--dlg-ink); font-size: 12px; box-shadow: var(--nd-semantic-shadow-rest); }
 .dialogue-scene-dismiss:hover { background: var(--dlg-selection); }
 .dialogue-stage-note { position: absolute; right: 10px; bottom: 10px; z-index: 5; padding: 5px 9px; border-radius: 7px; background: color-mix(in srgb, var(--dlg-paper) 86%, transparent); color: var(--dlg-muted); font-size: 11px; pointer-events: none; backdrop-filter: blur(4px); }
 
@@ -123,12 +123,12 @@
 .dialogue-scene-pending { color: var(--dlg-muted); font-size: 13px; }
 
 /* Latest + date notice */
-.dialogue-latest { position: absolute; bottom: 13px; right: 22px; display: flex; align-items: center; gap: 6px; background: var(--dlg-paper); border: 1px solid var(--dlg-outline); border-radius: 9px; padding: 7px 11px; font-size: 12px; line-height: 20px; box-shadow: var(--nd-semantic-shadow-surface); z-index: 4; }
+.dialogue-latest { position: absolute; bottom: 13px; right: 22px; display: flex; align-items: center; gap: 6px; background: var(--dlg-paper); border: 1px solid var(--dlg-outline); border-radius: 9px; padding: 7px 11px; font-size: 12px; line-height: 20px; box-shadow: var(--nd-semantic-shadow-rest); z-index: 4; }
 .dialogue-latest:hover { background: var(--dlg-selection); }
 .dialogue-latest svg { width: 15px; height: 15px; }
 .dialogue-latest i { display: none; width: 4px; height: 4px; background: var(--dlg-entry); border-radius: 50%; margin-left: 1px; }
 .dialogue-latest[data-new] i { display: block; }
-.dialogue-date-notice { position: absolute; top: 11px; left: 50%; translate: -50% 0; background: var(--dlg-paper); border: 1px solid var(--dlg-rule); border-radius: 9px; padding: 5px 12px; box-shadow: var(--nd-semantic-shadow-surface); font-size: 12px; z-index: 5; animation: dialogue-date-notice 0.25s ease both; white-space: nowrap; }
+.dialogue-date-notice { position: absolute; top: 11px; left: 50%; translate: -50% 0; background: var(--dlg-paper); border: 1px solid var(--dlg-rule); border-radius: 9px; padding: 5px 12px; box-shadow: var(--nd-semantic-shadow-rest); font-size: 12px; z-index: 5; animation: dialogue-date-notice 0.25s ease both; white-space: nowrap; }
 
 /* Composer / turn controls */
 .dialogue-zone { padding: 9px 18px 14px; border-top: 1px solid var(--dlg-rule); background: var(--dlg-paper); }
@@ -255,7 +255,7 @@
 .dialogue-option input { width: 17px; height: 17px; accent-color: var(--dlg-commit); }
 .dialogue-scene-options { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 24px 22px; }
 .dialogue-scene-options .btn { min-height: 44px; }
-.dialogue-toast { position: fixed; bottom: 24px; left: 50%; translate: -50% 0; z-index: 100; max-width: calc(100vw - 32px); padding: 10px 16px; border: 1px solid var(--dlg-rule); border-radius: 9px; background: var(--dlg-paper); color: var(--dlg-muted); font-size: 13px; line-height: 22px; box-shadow: var(--nd-semantic-shadow-floating); }
+.dialogue-toast { position: fixed; bottom: 24px; left: 50%; translate: -50% 0; z-index: 100; max-width: calc(100vw - 32px); padding: 10px 16px; border: 1px solid var(--dlg-rule); border-radius: 9px; background: var(--dlg-paper); color: var(--dlg-muted); font-size: 13px; line-height: 22px; box-shadow: var(--nd-semantic-shadow-raised); }
 .dialogue-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 40px 24px; text-align: center; color: var(--nd-semantic-color-text-muted); }
 .dialogue-empty-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; }
 

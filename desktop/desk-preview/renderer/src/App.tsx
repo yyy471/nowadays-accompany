@@ -130,7 +130,7 @@ export function App() {
     const element = pageBody.current;
     if (!element || page === 'home' || motion.reduced) return;
     scope.run(element, [{ opacity: .35, transform: `translateY(${readMotionPx(element, '--nd-component-motion-page-offset', 4)}px)` }, { opacity: 1, transform: 'translateY(0)' }],
-      { duration: readMotionTime(element, '--nd-component-motion-page', 280), easing: readMotionValue(element, '--nd-component-motion-ease', 'cubic-bezier(0.2, 0, 0, 1)'), slot: 'page', fill: 'backwards' });
+      { duration: readMotionTime(element, '--nd-component-motion-page', 360), easing: readMotionValue(element, '--nd-component-motion-ease', 'cubic-bezier(0.2, 0.8, 0.2, 1)'), slot: 'page', fill: 'backwards' });
     return () => scope.cancelAll();
   }, [page, motion.reduced, scope]);
   const accounts = roles ? { accounts: roles.map(r => ({ accountId: r.roleId, nickname: r.displayName, signature: r.roleId === currentId ? status : '' })) } : undefined;

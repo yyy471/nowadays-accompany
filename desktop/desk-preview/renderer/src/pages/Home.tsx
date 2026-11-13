@@ -40,7 +40,7 @@ export function HomePage({ accounts, selectedAccountId, outfitHomeUrl, outfitNam
     const stagger = readMotionTime(element, '--nd-component-motion-reading-stagger', 24);
     const maxDelay = readMotionTime(element, '--nd-component-motion-reading-delay-max', 72);
     const offset = readMotionPx(element, '--nd-component-motion-page-offset', 4);
-    const ease = readMotionValue(element, '--nd-component-motion-ease', 'cubic-bezier(0.2, 0, 0, 1)');
+    const ease = readMotionValue(element, '--nd-component-motion-ease', 'cubic-bezier(0.2, 0.8, 0.2, 1)');
     for (const [index, group] of groups.entries()) {
       const delay = Math.min(index * stagger, maxDelay);
       scope.run(group, [

@@ -96,7 +96,7 @@ export function DropdownMenu({ label, items, currentLabel, triggerIcon, triggerR
     scope.cancelAll();
     if (reduced.current) return;
     const duration = readMotionTime(element, '--nd-component-motion-control', 160);
-    const ease = readMotionValue(element, '--nd-component-motion-surface-ease', 'cubic-bezier(0.22, 0.61, 0.36, 1)');
+    const ease = readMotionValue(element, '--nd-component-motion-surface-ease', 'cubic-bezier(0.2, 0.8, 0.2, 1)');
     scope.run(element, [start, { opacity: 1, transform: 'translateY(0)' }], { duration, easing: ease, slot: 'menu', fill: 'backwards' });
   }, [present, open, scope]);
 
@@ -110,7 +110,7 @@ export function DropdownMenu({ label, items, currentLabel, triggerIcon, triggerR
     const from = { opacity: Number.parseFloat(drawn.opacity), transform: drawn.transform === 'none' ? 'translateY(0)' : drawn.transform };
     scope.cancelAll();
     const duration = readMotionTime(element, '--nd-component-motion-control', 160);
-    const ease = readMotionValue(element, '--nd-component-motion-surface-ease', 'cubic-bezier(0.22, 0.61, 0.36, 1)');
+    const ease = readMotionValue(element, '--nd-component-motion-surface-ease', 'cubic-bezier(0.2, 0.8, 0.2, 1)');
     const animation = scope.run(element, [from, { opacity: 0, transform: 'translateY(-2px)' }], { duration, easing: ease, slot: 'menu', fill: 'both' });
     void animation.finished.then(() => { if (generation.current === current) finishClose(); }).catch(() => undefined);
   }, [closing, finishClose, scope]);

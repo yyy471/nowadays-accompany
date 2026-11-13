@@ -85,7 +85,7 @@ export function PageDock({ page, onNavigate }: { page: string; onNavigate: (page
       { transform: `translateX(${nextX}px) scaleX(1)` }
     ], {
       duration: readMotionTime(nav, '--nd-component-motion-surface-enter', 220),
-      easing: readMotionValue(nav, '--nd-component-motion-surface-ease', 'cubic-bezier(0.22, 0.61, 0.36, 1)'),
+      easing: readMotionValue(nav, '--nd-component-motion-surface-ease', 'cubic-bezier(0.2, 0.8, 0.2, 1)'),
       slot: 'dock',
       fill: 'backwards'
     });
