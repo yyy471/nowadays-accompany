@@ -145,9 +145,29 @@ export function sceneView(task, segmentsByMessage, roleId) {
   };
 }
 
+/**
+ * 页面快照里已有同一提交标识的消息，说明原提交已经被确认。
+ * 窗口快照或补放事件据此收敛重试记录（283 §7 R02）。
+ */
+export function isSubmissionConfirmed(record, messages) {
+  if (!record || typeof record.submissionId !== "string") return false;
+  return (messages ?? []).some(
+    (message) => message?.submissionId === record.submissionId
+  );
+}
+
+/**
+ * 快照确认原提交时，是否应清空当前恢复草稿。
+ * 只清理由那次恢复带来且未被用户编辑过的内容；用户手动改成相同文本
+ * 也算编辑过，不能被清空（283 §9 R02）。
+ */
+export function shouldClearRecoveredDraft(record, confirmedContent) {
+  if (!record || record.edited === true) return false;
+  return String(record.value ?? "").trim() === String(confirmedContent ?? "").trim();
+}
+
 /** 把页面快照里的句段按消息分组。 */
-export function groupSegments(segments) {
-  const map = new Map();
+export function groupSegments(segments) {  const map = new Map();
   for (const segment of segments) {
     const list = map.get(segment.messageId) ?? [];
     list.push(segment);

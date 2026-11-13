@@ -37,13 +37,13 @@ import type { VoiceService } from "../application/voice-service.js";
 import type { RoleActivityService } from "../application/role-activity-service.js";
 import type { RoleDeletionService } from "../application/role-deletion-service.js";
 import { registerRoleActivityRoutes } from "./role-activity-routes.js";
-import { globalWrite, resourceWrite, roleWrite } from "./write-guard.js";
+import { globalWrite, roleWrite } from "./write-guard.js";
 import {
   GLOBAL_CONFIG_WRITES,
   RESOURCE_CONFIG_WRITES,
   ROLE_CONFIG_WRITES,
 } from "./config-writes.js";
-import { InputStateInvalidError, SseCursorInvalidError } from "../domain/errors.js";
+import { InputStateInvalidError, SseCursorInvalidError, AppError } from "../domain/errors.js";
 import { resourceKindSchema } from "../domain/resource.js";
 import {
   createResourceSchema,
@@ -101,12 +101,9 @@ export function registerApiRoutes(
     if (ROLE_CONFIG_WRITES.has(key)) return roleWrite(activity, handler);
     if (GLOBAL_CONFIG_WRITES.has(key)) return globalWrite(activity, handler);
     if (RESOURCE_CONFIG_WRITES.has(key)) {
-      // 模型资源要求全角色停止；MCP／Skill 交给服务层占用检查（DL-148）。
-      return resourceWrite(
-        activity,
-        (resourceId) => services.resources.get(resourceId).kind,
-        handler,
-      );
+      // 资源写入在处理器内按类型处理：模型只暂停实际依赖目标（278 §2），
+      // MCP／Skill 由服务层占用检查（DL-148）。
+      return handler;
     }
     return handler;
   });
@@ -257,16 +254,22 @@ export function registerApiRoutes(
         submitMessageSchema,
         await readJsonBody(request),
       );
-      activity.assertCanStart(params.roleId ?? "");
-      const result = services.conversation.submitMessage(
-        params.roleId ?? "",
-        params.windowId ?? "",
-        {
-          content: body.content,
-          submissionId: body.submissionId,
-          sourcePlatform: body.source ?? "nowadays",
-        },
+      const roleId = params.roleId ?? "";
+      const windowId = params.windowId ?? "";
+      // 先按提交标识找回已接收消息：角色随后停止也仍能确认原提交结果。
+      const existing = services.conversation.findSubmittedMessage(
+        roleId,
+        windowId,
+        body.submissionId,
       );
+      if (existing === null) {
+        activity.assertCanStart(roleId);
+      }
+      const result = services.conversation.submitMessage(roleId, windowId, {
+        content: body.content,
+        submissionId: body.submissionId,
+        sourcePlatform: body.source ?? "nowadays",
+      });
       return {
         status: result.duplicate ? 200 : 201,
         body: result,
@@ -594,17 +597,101 @@ export function registerApiRoutes(
   );
 
   router.add(
+    "GET",
+    "/v1/resources/:resourceId/impact",
+    ({ params }): JsonResponse => ({
+      status: 200,
+      body: services.resources.impact(params.resourceId ?? ""),
+    }),
+  );
+
+  router.add(
     "PATCH",
     "/v1/resources/:resourceId",
     async ({ request, params }): Promise<JsonResponse> => {
+      const resourceId = params.resourceId ?? "";
       const body = parseBody<UpdateResourceBody>(
         updateResourceSchema,
         await readJsonBody(request),
       );
-      return {
-        status: 200,
-        body: services.resources.update(params.resourceId ?? "", body),
-      };
+      // 可预判的校验在暂停角色之前完成（283 R05）。
+      services.resources.validateUpdate(resourceId, body);
+      // 模型连接参数或密钥变化时只暂停实际依赖它的角色（278 §2）。
+      const plan = services.resources.maintenancePlan(resourceId, body);
+      let pausedRoleIds: string[] = [];
+      let maintenance = false;
+      try {
+        if (plan.connectionChanged) {
+          // 维护期间拒绝新增依赖、恢复活动与调用领取（283 R01）。
+          services.resources.beginMaintenance(resourceId);
+          maintenance = true;
+        }
+        if (plan.pauseRoleIds.length > 0) {
+          const pause = services.resources.pauseRoles;
+          if (pause === null) {
+            throw new HttpError(
+              409,
+              "ROLES_NOT_STOPPED",
+              "角色维护协调尚未配置，请稍后重试",
+              { roles: plan.pauseRoleIds.map((roleId) => ({ roleId, state: "active", running: true })) },
+            );
+          }
+          pausedRoleIds = (await pause(plan.pauseRoleIds)).pausedRoleIds;
+        }
+        if (plan.waitRoleIds.length > 0) {
+          // 已停止角色在目标服务上的在途调用也要结算，但不加入恢复名单（283 §6 R01）。
+          const busy = await services.resources.waitForInflightIdle(
+            resourceId,
+            plan.waitRoleIds,
+            20_000,
+          );
+          if (busy.length > 0) {
+            throw new HttpError(
+              409,
+              "RESOURCE_MAINTENANCE",
+              "仍有后台调用正在使用这个服务，请等它结算后再保存",
+              { roleIds: busy },
+            );
+          }
+        }
+        if (maintenance) {
+          // 等待停止期间重新解析实际依赖；新增依赖不能抢在写入前进入。
+          const recheck = services.resources.maintenancePlan(resourceId, body);
+          const unpaused = recheck.pauseRoleIds.filter(
+            (roleId) => !pausedRoleIds.includes(roleId),
+          );
+          if (unpaused.length > 0) {
+            throw new HttpError(
+              409,
+              "RESOURCE_MAINTENANCE",
+              "维护期间出现新的依赖角色，请重新确认影响范围后再保存",
+              { roleIds: unpaused },
+            );
+          }
+        }
+        const view = services.resources.update(resourceId, body);
+        return {
+          status: 200,
+          body: {
+            ...view,
+            maintenance: { connectionChanged: plan.connectionChanged, pausedRoleIds },
+          },
+        };
+      } catch (error) {
+        // 停止后保存失败也要告诉界面本次暂停了谁，便于原处恢复（283 R05）。
+        // 多角色暂停超时时，实际已停止的角色由错误详情带回（283 §4 R05）。
+        const stopped = pausedRoleIds.length > 0
+          ? pausedRoleIds
+          : pausedRoleIdsFromError(error);
+        if (stopped.length > 0 && error instanceof AppError) {
+          throw withMaintenanceDetails(error, stopped);
+        }
+        throw error;
+      } finally {
+        if (maintenance) {
+          services.resources.endMaintenance(resourceId);
+        }
+      }
     },
   );
 
@@ -829,6 +916,15 @@ export function registerApiRoutes(
     "/v1/roles/:roleId/memory/batches",
     ({ params }): JsonResponse => {
       const roleId = params.roleId ?? "";
+      // 删除收尾期间不再接收新的手动整理；已有任务照常收尾（283 §15 R03）。
+      if (services.roleDeletion.isDeleting(roleId)) {
+        throw new HttpError(
+          409,
+          "ROLE_DELETING",
+          "角色正在删除，不能再发起记忆整理",
+          { roleId },
+        );
+      }
       const result = services.memory.trigger(roleId);
       void services.conversation.runMemoryPending(roleId);
       return { status: 202, body: result };
@@ -899,4 +995,39 @@ function parseSseCursor(
     cursor = Math.max(cursor, value);
   }
   return cursor;
+}
+
+/**
+ * 保存失败时补上本次已暂停的角色（283 R05）：界面可保留草稿、显示实际
+ * 状态，并在原处提供恢复入口。
+ */
+function withMaintenanceDetails(
+  error: AppError,
+  pausedRoleIds: readonly string[],
+): HttpError {
+  const details =
+    error.details !== null &&
+    typeof error.details === "object" &&
+    !Array.isArray(error.details)
+      ? (error.details as Record<string, unknown>)
+      : {};
+  return new HttpError(error.status, error.code, error.message, {
+    ...details,
+    maintenance: { pausedRoleIds: [...pausedRoleIds] },
+  });
+}
+
+/** 从暂停协调抛出的错误详情里读取本次已停止的角色（283 §4 R05）。 */
+function pausedRoleIdsFromError(error: unknown): string[] {
+  if (!(error instanceof AppError)) {
+    return [];
+  }
+  const details = error.details;
+  if (details === null || typeof details !== "object") {
+    return [];
+  }
+  const ids = (details as { pausedRoleIds?: unknown }).pausedRoleIds;
+  return Array.isArray(ids)
+    ? ids.filter((id): id is string => typeof id === "string")
+    : [];
 }

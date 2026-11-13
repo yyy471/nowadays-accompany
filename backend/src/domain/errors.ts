@@ -224,8 +224,9 @@ export interface ResourceReferenceDetail {
   roleId: string;
   capability: string | null;
   bindingEnabled: boolean | null;
-  /** role_binding：角色仍选择该资源；task_chain：未结束任务链仍占用。 */
-  reason: "ROLE_BINDING" | "TASK_CHAIN";
+  /** role_binding：角色仍选择该资源；task_chain：任务链仍占用；
+   * inflight_call：目标服务上仍有在途模型调用（283 §8 R01）。 */
+  reason: "ROLE_BINDING" | "TASK_CHAIN" | "INFLIGHT_CALL";
   taskId?: string;
   taskStatus?: string;
 }
@@ -240,6 +241,16 @@ export class ResourceInUseError extends AppError {
       resourceId,
       action,
       references,
+    });
+  }
+}
+
+/** 资源正在维护：相关绑定变更、恢复活动与新调用领取需要等待维护结束。 */
+export class ResourceMaintenanceError extends AppError {
+  constructor(resourceId: string, action: string) {
+    super(409, "RESOURCE_MAINTENANCE", "资源正在维护，请等待本次操作结束后重试", {
+      resourceId,
+      action,
     });
   }
 }
@@ -728,9 +739,11 @@ export class RoleNotStoppedError extends AppError {
 export class RolesNotStoppedError extends AppError {
   constructor(
     roles: Array<{ roleId: string; state: string; running: boolean }>,
+    pausedRoleIds: readonly string[] = [],
   ) {
     super(409, "ROLES_NOT_STOPPED", "仍有角色活动未停止，不能修改全局模型服务", {
       roles,
+      ...(pausedRoleIds.length === 0 ? {} : { pausedRoleIds }),
     });
   }
 }

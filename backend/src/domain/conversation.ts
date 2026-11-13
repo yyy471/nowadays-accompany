@@ -51,6 +51,14 @@ export interface ConversationMessageView extends ClaimedMessage {
   status: string;
 }
 
+/** 已接收但暂未安排回复的原因；用于桌面端区分排队、停止与缺少模型。 */
+export type ConversationWaitReason =
+  | "ROLE_STOPPED"
+  | "MODEL_MISSING"
+  | "BUSY"
+  | "WINDOW_BLOCKED"
+  | "QUEUE_PENDING";
+
 export interface MessageSegmentRecord {
   segmentId: string;
   messageId: string;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api } from '../api';
+import { api, ApiError } from '../api';
 import type {
   MessageDetailView,
   MessagePageView,
@@ -8,12 +8,13 @@ import type {
   SegmentView,
   StreamEventView,
   SubmitMessageView,
+  ConversationWaitReason,
   WindowView
 } from './api-types';
 import type { PerfRow } from './history.js';
 import type { PerformanceSnapshot, SceneLayerMode } from './performance.js';
 import { backendBaseUrl } from './backend-base';
-import { applySegmentAnnotations, createRowIdRegistry, groupSegments, lastRowOf, mergeSegments, messageStatusOf, newerSceneTask, reconcileFinalSegments, rowsForMessage, sceneView } from './window-model.js';
+import { applySegmentAnnotations, createRowIdRegistry, groupSegments, isSubmissionConfirmed, lastRowOf, mergeSegments, messageStatusOf, newerSceneTask, reconcileFinalSegments, rowsForMessage, sceneView } from './window-model.js';
 import { createTypingState } from './typing-state.js';
 
 export type ConnectionState = 'connecting' | 'open' | 'retrying' | 'closed';
@@ -42,6 +43,12 @@ export interface ConversationSnapshot extends PerformanceSnapshot {
   historyLoading: boolean;
   historyComplete: boolean;
   historyError: string;
+  /** 已收下但未安排回复的原因；null 表示正常排队或正在生成。 */
+  waitReason: string | null;
+  /** 最近一次发送因角色停止被拒绝：消息未入库，恢复后由用户再提交。 */
+  roleRejected: boolean;
+  /** 快照确认某条原提交已入库：页面据此收敛失败后恢复的草稿（283 §8 R02）。 */
+  confirmedDraft: { content: string; sequence: number } | null;
 }
 
 interface PendingReply {
@@ -81,6 +88,18 @@ interface SessionState {
   historyBefore: number | null;
   historyLoading: boolean;
   historyError: string;
+  /** 已收下但未安排回复：显示可读原因并释放输入区等待。 */
+  wait: {
+    reason: ConversationWaitReason;
+    submissionId: string;
+    content: string;
+    /** 原消息标识：对应执行真正开始后清除等待（283 §4 R02）。 */
+    messageId: string;
+  } | null;
+  /** 发送被角色停止拒绝：消息未入库，保留草稿与原提交标识。 */
+  roleRejected: boolean;
+  /** 快照确认的原提交；同一窗口重新载入时据此清除重复草稿。 */
+  confirmedDraft: { content: string; sequence: number } | null;
 }
 
 const LIMIT = 200;
@@ -107,7 +126,10 @@ function emptyState(): SessionState {
     historyEntries: new Map(),
     historyBefore: null,
     historyLoading: false,
-    historyError: ''
+    historyError: '',
+    wait: null,
+    roleRejected: false,
+    confirmedDraft: null
   };
 }
 
@@ -150,6 +172,7 @@ export function useWindowSession({
 }) {
   const state = useRef<SessionState>(emptyState());
   const generationCounter = useRef(0);
+  const draftConfirmationSequence = useRef(0);
   const rowIds = useRef<ReturnType<typeof createRowIdRegistry> | null>(null);
   const source = useRef<EventSource | null>(null);
   const typing = useRef<ReturnType<typeof createTypingState> | null>(null);
@@ -251,7 +274,10 @@ export function useWindowSession({
       historyMessages,
       historyLoading: current.historyLoading,
       historyComplete: current.historyBefore === null,
-      historyError: current.historyError
+      historyError: current.historyError,
+      waitReason: current.wait?.reason ?? null,
+      roleRejected: current.roleRejected,
+      confirmedDraft: current.confirmedDraft
     };
   }, [roleId]);
 
@@ -350,6 +376,17 @@ export function useWindowSession({
 
   function ingestPage(page: MessagePageView): void {
     const current = state.current;
+    // 读取快照时对照原提交：同一提交标识的消息已入库就结束重试记录，
+    // 并通知页面收敛失败后恢复的草稿（283 §7 R02、§8 R02）。
+    const submissionKey = JSON.stringify([roleRef.current, current.windowId]);
+    const submissionRecord = submissions.current.get(submissionKey);
+    if (submissionRecord !== undefined && isSubmissionConfirmed(submissionRecord, page.items)) {
+      submissions.current.delete(submissionKey);
+      current.confirmedDraft = {
+        content: submissionRecord.content,
+        sequence: ++draftConfirmationSequence.current
+      };
+    }
     const grouped = groupSegments(page.segments);
     const activeReply = page.activeReply;
     for (const message of page.items) {
@@ -465,15 +502,31 @@ export function useWindowSession({
     }
     switch (payload.type) {
       case 'execution_started': {
-        const pending = current.pending;
-        if (pending === null || pending.executionId !== null) return;
         const messageIds = Array.isArray(payload.messageIds) ? payload.messageIds.filter(item => typeof item === 'string') as string[] : [];
         const triggerType = typeof payload.triggerType === 'string' ? payload.triggerType : '';
-        const matches = pending.submittedMessageId !== null && messageIds.includes(pending.submittedMessageId);
-        if (matches && triggerType === 'user_message') {
-          pending.executionId = typeof payload.executionId === 'string' ? payload.executionId : null;
-          pending.awaitingExecution = false;
+        // 原消息对应的执行真正开始：清除「等待处理」提示。其他窗口或自主
+        // 消息不会出现在本窗口的 messageIds 里，不会提前清除（283 §4 R02）。
+        let clearedWait = false;
+        if (current.wait !== null && triggerType === 'user_message' && messageIds.includes(current.wait.messageId)) {
+          // 原执行已被确认：结束对应的重试记录，之后同文本再发使用新标识。
+          // 尚未确认的提交仍保留原标识用于去重（283 §6 R02）。
+          const cleared = current.wait;
+          current.wait = null;
+          clearedWait = true;
+          const key = JSON.stringify([roleRef.current, current.windowId]);
+          if (submissions.current.get(key)?.submissionId === cleared.submissionId) {
+            submissions.current.delete(key);
+          }
         }
+        const pending = current.pending;
+        if (pending !== null && pending.executionId === null) {
+          const matches = pending.submittedMessageId !== null && messageIds.includes(pending.submittedMessageId);
+          if (matches && triggerType === 'user_message') {
+            pending.executionId = typeof payload.executionId === 'string' ? payload.executionId : null;
+            pending.awaitingExecution = false;
+          }
+        }
+        if (clearedWait) emit({ reason: 'ready' });
         return;
       }
       case 'message_delta': {
@@ -669,6 +722,7 @@ export function useWindowSession({
     const content = text.trim();
     if (!targetRole || !targetWindow || !content || state.current.pending !== null) return false;
     state.current.error = '';
+    state.current.wait = null;
     const pending: PendingReply = {
       executionId: null,
       replyMessageId: null,
@@ -696,7 +750,10 @@ export function useWindowSession({
       body: { content, submissionId, source: 'nowadays' }
     }).then(result => {
       if (state.current.windowId !== targetWindow || state.current.generation !== generation || roleRef.current !== targetRole) return;
-      if (submissions.current.get(submissionKey)?.submissionId === submissionId) submissions.current.delete(submissionKey);
+      const waitReason = result.waitReason ?? null;
+      const releaseWaiting = result.decisionScheduled === false && (
+        waitReason === 'ROLE_STOPPED' || waitReason === 'MODEL_MISSING' || waitReason === 'WINDOW_BLOCKED'
+      );
       const message = result.message;
       if (!state.current.messages.has(message.messageId)) {
         state.current.messages.set(message.messageId, { record: message, segments: [] });
@@ -704,7 +761,27 @@ export function useWindowSession({
       if (state.current.pending === pending) {
         pending.submittedMessageId = message.messageId;
         pending.awaitingSubmission = false;
-        if (result.duplicate) {
+        // 响应晚于 SSE 时，缓冲里可能已经有原消息对应的执行与回复。
+        // 这时以流事件为准，不能落入旧的等待提示而丢掉已到达的内容（283 §5 R02）。
+        const bufferedHasExecution = pending.bufferedEvents.some(event =>
+          event.type === 'execution_started' &&
+          Array.isArray(event.messageIds) &&
+          event.messageIds.includes(message.messageId)
+        );
+        const waitRejected = releaseWaiting && !bufferedHasExecution;
+        state.current.roleRejected = false;
+        if (!waitRejected && submissions.current.get(submissionKey)?.submissionId === submissionId) submissions.current.delete(submissionKey);
+        if (waitRejected) {
+          // 消息已收下但没有安排回复：显示原因、释放输入区，保留原提交标识供重试。
+          state.current.wait = {
+            reason: waitReason as ConversationWaitReason,
+            submissionId,
+            content,
+            messageId: message.messageId
+          };
+          state.current.pending = null;
+          pending.bufferedEvents = [];
+        } else if (!bufferedHasExecution && result.duplicate) {
           // 上次请求可能已提交但响应丢失，重放原提交之前的游标以恢复执行归属。
           source.current?.close();
           source.current = null;
@@ -712,10 +789,11 @@ export function useWindowSession({
           state.current.lastEventId = startCursor;
           state.current.connection = 'connecting';
           openStream(targetRole, targetWindow);
+          pending.bufferedEvents = [];
         } else {
           for (const event of pending.bufferedEvents) handleStreamEvent(event);
+          pending.bufferedEvents = [];
         }
-        pending.bufferedEvents = [];
       }
       typing.current?.stop();
       emit({ reason: 'ready' });
@@ -725,10 +803,29 @@ export function useWindowSession({
         state.current.pending = null;
         for (const event of pending.bufferedEvents) handleStreamEvent(event);
       }
+      // 角色已停止会拒绝新消息：消息未入库，保留草稿并给出就地恢复入口（283 R07）。
+      if (error instanceof ApiError && error.code === 'ROLE_ACTIVITY_STOPPED') {
+        state.current.roleRejected = true;
+      }
       state.current.error = describeError(error);
       emit({ reason: 'error', message: state.current.error, draft: content });
     });
     return true;
+  }, [emit]);
+
+  /** 等待原因解除后（恢复活动、补好模型）用原提交标识重试，避免重复入库。 */
+  const retryWaiting = useCallback((): boolean => {
+    const wait = state.current.wait;
+    if (wait === null) return false;
+    state.current.wait = null;
+    return send(wait.content);
+  }, [send]);
+
+  /** 恢复活动成功后清掉「发送被拒绝」提示；消息仍由用户自己重新提交。 */
+  const clearRejection = useCallback((): void => {
+    if (!state.current.roleRejected) return;
+    state.current.roleRejected = false;
+    emit({ reason: 'ready' });
   }, [emit]);
 
   const advance = useCallback((): boolean => {
@@ -866,7 +963,7 @@ export function useWindowSession({
   }, [windows.length]);
 
   const noteTyping = useCallback(() => typing.current?.input(), []);
-  return { snapshot, windows, windowId, selectWindow, retry, send, advance, requestScene, noteTyping, loadOlder, loadHistory, cancelHistory, ensureVisible };
+  return { snapshot, windows, windowId, selectWindow, retry, send, retryWaiting, clearRejection, advance, requestScene, noteTyping, loadOlder, loadHistory, cancelHistory, ensureVisible };
 }
 
 function mergeSceneTask(previous: SceneTaskView | undefined, payload: StreamEventView, windowId: string): SceneTaskView {

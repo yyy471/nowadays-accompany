@@ -646,6 +646,19 @@ export class RoleStore {
     })();
   }
 
+  /** 只读查询：按提交标识找回已接收的消息，不要求角色仍在活动。 */
+  findMessageBySubmission(
+    windowId: string,
+    submissionId: string,
+  ): MessageRecord | null {
+    const row = this.db
+      .prepare(
+        "SELECT message_id, window_id, sender, content, source_platform, status, sequence, submission_id, submission_hash, created_at, updated_at FROM messages WHERE window_id = ? AND submission_id = ?",
+      )
+      .get(windowId, submissionId) as MessageRow | undefined;
+    return row === undefined ? null : mapMessage(row);
+  }
+
   listMessages(
     roleId: string,
     windowId: string,
@@ -1682,9 +1695,12 @@ export class RoleStore {
   }
 
   /**
-   * 仍未结束的任务链对该资源的占用（DL-71／DL-73）。
-   * 只有 active／paused 的任务算占用；终态任务留下的未关闭记录由
-   * endOpenResourceContinuationsForTerminalTasks 清理，不作为拦截依据。
+   * 仍未结束的任务链对该资源的占用（DL-71／DL-73、283 R03）。
+   *
+   * active／paused 任务算占用；已终结任务若仍留着开启的续用记录，并且确实
+   * 发出过工具调用（结果可能晚到或连接仍在收尾），也继续算占用，直到结算
+   * 与收尾完成关闭记录。没有工具调用的终态残留记录不拦修改，由启动恢复或
+   * 终结流程清理。
    */
   listOpenResourceContinuations(
     resourceId: string,
@@ -1695,7 +1711,12 @@ export class RoleStore {
            FROM task_resource_continuations c
            JOIN tasks t ON t.task_id = c.task_id
           WHERE c.resource_id = ? AND c.ended_at IS NULL
-            AND t.status IN ('active', 'paused')
+            AND (
+              t.status IN ('active', 'paused')
+              OR EXISTS (
+                SELECT 1 FROM tool_calls tc WHERE tc.task_id = c.task_id
+              )
+            )
           ORDER BY c.granted_at ASC, c.task_id ASC`,
       )
       .all(resourceId) as Array<{ task_id: string; task_status: TaskStatus }>;
@@ -1703,6 +1724,24 @@ export class RoleStore {
       taskId: row.task_id,
       taskStatus: row.task_status,
     }));
+  }
+
+  /** 任务是否还有已发出但未结算的工具调用；终结后要等它们结算再释放资源。 */
+  hasUnsettledToolCalls(roleId: string, taskId: string): boolean {
+    this.getTask(roleId, taskId);
+    const row = this.db
+      .prepare(
+        `SELECT 1 AS found
+           FROM tool_calls tc
+          WHERE tc.task_id = ? AND tc.status IN ('pending', 'running')
+            AND NOT EXISTS (
+              SELECT 1 FROM tool_results tr
+               WHERE tr.tool_call_id = tc.tool_call_id
+            )
+          LIMIT 1`,
+      )
+      .get(taskId) as { found: number } | undefined;
+    return row !== undefined;
   }
 
   listResourceContinuations(

@@ -20,6 +20,8 @@ type Props = {
   roleId: string;
   onChanged?: () => void;
   onDraftStateChange?: (state: ConfigDraftState) => void;
+  guardWrite?: <T>(action: () => Promise<T>) => Promise<T>;
+  pausedWrite?: boolean;
 };
 
 interface ServiceItem {
@@ -42,7 +44,7 @@ function failureText(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
 }
 
-export function ImagePanel({ roleId, onChanged, onDraftStateChange }: Props) {
+export function ImagePanel({ roleId, onChanged, onDraftStateChange, guardWrite = action => action(), pausedWrite = false }: Props) {
   const [view, setView] = useState<ImageSettingsViewPayload | null>(null);
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [outfits, setOutfits] = useState<OutfitItem[]>([]);
@@ -130,10 +132,10 @@ export function ImagePanel({ roleId, onChanged, onDraftStateChange }: Props) {
     const submittedForm = form;
     setBusy(true); setError(''); setNotice('');
     try {
-      const saved = await api<ImageSettingsViewPayload>(
+      const saved = await guardWrite(() => api<ImageSettingsViewPayload>(
         `/v1/roles/${encodeURIComponent(roleId)}/scene-image`,
         { method: 'PUT', body: toImagePayload(form) },
-      );
+      ));
       if (isStale(token)) return;
       setView(saved);
       setSavedForm(submittedForm);
@@ -285,7 +287,7 @@ export function ImagePanel({ roleId, onChanged, onDraftStateChange }: Props) {
       <Button variant="ghost" disabled={probeBusy || !form.serviceId} onClick={() => void runProbe()}>
         {probeBusy ? '正在测试…' : '测试连接'}
       </Button>
-      <Button disabled={busy} onClick={() => void save()}>{busy ? '正在保存…' : '保存配置'}</Button>
+      <Button disabled={busy} onClick={() => void save()}>{busy ? '正在保存…' : pausedWrite ? '暂停并保存配置' : '保存配置'}</Button>
     </div>
     {probeText && <p className={`nd-appearance-hint${probe?.probe.workflowReady === false ? ' nd-image-warn' : ''}`}>{probeText}</p>}
 

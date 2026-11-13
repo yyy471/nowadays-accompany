@@ -278,6 +278,27 @@ export function summarizeOutfitPlan(plans) {
   );
 }
 
+/**
+ * 把本轮已经确认上传成功的套标成不可重试，即使列表刷新失败拿不到新名称。
+ * 重试时只会提交仍未成功的套（283 §5 R09）。
+ *
+ * @param {AppearanceImportPlan[]} plans
+ * @param {Record<string, boolean>} importedIds
+ * @returns {AppearanceImportPlan[]}
+ */
+export function markImportedPlans(plans, importedIds) {
+  const imported = importedIds ?? {};
+  return plans.map((plan) =>
+    imported[plan.id]
+      ? {
+          ...plan,
+          status: "duplicate",
+          notes: [...plan.notes, "本次已导入"],
+        }
+      : plan
+  );
+}
+
 function createEntry({ id, source, standeeDir, expressionDir, homeCandidates, sprites }) {
   return {
     id,

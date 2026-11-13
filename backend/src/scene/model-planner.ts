@@ -18,6 +18,8 @@ import type {
 import { resolveCredential } from "../model/credentials.js";
 import { HttpModelAdapter } from "../model/protocols.js";
 import { ConversationStore } from "../storage/conversation-store.js";
+import { resolveClaimedModelBinding } from "../application/model-maintenance.js";
+import type { ModelCallClaim } from "../application/model-maintenance.js";
 
 const MAX_CONTENT_CHARS = 4_000;
 const MAX_CONTEXT_MESSAGE_CHARS = 600;
@@ -38,6 +40,15 @@ export interface ModelSceneImagePlannerOptions {
   fallback?: SceneImagePlannerPort | null;
   maxOutputTokens?: number;
   credentialResolver?: CredentialResolver;
+  /** 模型服务维护窗口：等待结束并按已保存配置重新解析（278 §2.1）。 */
+  maintenance?: {
+    isUnder(resourceId: string): boolean;
+    wait(resourceId: string, signal?: AbortSignal): Promise<void>;
+  } | null;
+  /** 在途模型调用登记：与维护检查同一步完成（283 §13 R01）。 */
+  claim?: {
+    claim(roleId: string, resourceId: string): ModelCallClaim;
+  } | null;
 }
 
 /**
@@ -51,6 +62,10 @@ export class ModelSceneImagePlanner implements SceneImagePlannerPort {
   private readonly modelFactory: SceneImagePlannerModelFactory;
   private readonly fallback: SceneImagePlannerPort | null;
   private readonly maxOutputTokens: number;
+  private readonly maintenance: ModelSceneImagePlannerOptions["maintenance"];
+  private readonly claim:
+    | { claim(roleId: string, resourceId: string): ModelCallClaim }
+    | null;
 
   constructor(
     private readonly access: RoleAccess,
@@ -76,6 +91,8 @@ export class ModelSceneImagePlanner implements SceneImagePlannerPort {
       });
     this.fallback = options.fallback ?? null;
     this.maxOutputTokens = options.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+    this.maintenance = options.maintenance ?? null;
+    this.claim = options.claim ?? null;
   }
 
   async plan(
@@ -83,11 +100,30 @@ export class ModelSceneImagePlanner implements SceneImagePlannerPort {
     signal?: AbortSignal,
   ): Promise<SceneImagePlanRecord> {
     let binding: ResolvedModelBinding;
+    let releaseClaim: (() => void) | null = null;
+    // 维护检查与在途登记同一步完成；改绑后的新目标也会重新检查（283 §12 R02、§13 R01）。
     try {
-      binding = this.bindings.resolveChat(input.roleId);
-    } catch {
+      const claimed = await resolveClaimedModelBinding(
+        () => this.bindings.resolveChat(input.roleId),
+        this.maintenance,
+        (resourceId) =>
+          this.claim === null
+            ? { admitted: true, release: () => undefined }
+            : this.claim.claim(input.roleId, resourceId),
+        signal,
+      );
+      if (claimed === null) {
+        throw new SceneImageCanceledError();
+      }
+      binding = claimed.binding;
+      releaseClaim = claimed.release;
+    } catch (error) {
+      if (error instanceof SceneImageCanceledError) {
+        throw error;
+      }
       return this.fallbackPlan(input, signal);
     }
+    try {
     let model: ModelPort;
     try {
       model = this.modelFactory(binding);
@@ -213,6 +249,9 @@ export class ModelSceneImagePlanner implements SceneImagePlannerPort {
       startSegmentId: parsed.startSegmentId ?? first?.segmentId ?? "",
       endSegmentId: parsed.endSegmentId ?? last?.segmentId ?? "",
     };
+    } finally {
+      releaseClaim?.();
+    }
   }
 
   private async fallbackPlan(

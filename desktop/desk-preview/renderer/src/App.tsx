@@ -18,6 +18,7 @@ export function App() {
   const [scope] = useState(createMotionScope);
   const pageBody = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState('home');
+  const [workspaceRequest, setWorkspaceRequest] = useState<{ kind: 'section'; roleId: string; section: 'models'; key: number } | { kind: 'create'; key: number } | null>(null);
   const [settingsVisited, setSettingsVisited] = useState(false);
   useEffect(() => { if (page === 'settings' || page === 'role-config') setSettingsVisited(true); }, [page]);
   const [hideConversationDock, setHideConversationDock] = useState(() => {
@@ -148,10 +149,10 @@ export function App() {
     </header></UiThemeScope>
     <main className="studio-content" tabIndex={-1} aria-label="当前页面内容"><UiThemeProvider theme="xiacheng">
       <div ref={pageBody} className={page === 'home' ? 'studio-home-content' : page === 'roles' ? 'studio-relations-content' : page === 'conversation' ? 'studio-conversation-content' : 'studio-legacy-page'}>
-        {page === 'home' && <UiThemeScope theme="xiacheng"><HomePage accounts={accounts} selectedAccountId={currentId} outfitHomeUrl={outfitHomeUrl} outfitName={currentOutfit?.name ?? null} loading={!roles && !error} error={error} onRetry={() => refresh()} onGoWorkbench={() => setPage('roles')}/></UiThemeScope>}
+        {page === 'home' && <UiThemeScope theme="xiacheng"><HomePage accounts={accounts} selectedAccountId={currentId} outfitHomeUrl={outfitHomeUrl} outfitName={currentOutfit?.name ?? null} loading={!roles && !error} error={error} onRetry={() => refresh()} onGoWorkbench={() => setPage('roles')} onCreateRole={() => { setWorkspaceRequest({ kind: 'create', key: Date.now() }); setPage('role-config'); }}/></UiThemeScope>}
         {page === 'roles' && <Relations roles={roles || []} error={error} currentId={currentId} visit={rolesVisit} onSelect={setCurrentId} onOpenSettings={() => setPage('role-config')}/>}
-        {page === 'conversation' && <ConversationPage roles={roles || []} currentId={currentId} currentOutfit={currentOutfit} outfits={outfits} outfitHomeUrl={outfitHomeUrl} loading={!roles && !error} error={error} hideDock={hideConversationDock} onHideDockChange={setConversationDockHidden} onSelectRole={setCurrentId} onOpenRelations={() => setPage('roles')}/>}
-        {settingsVisited && <SettingsWorkspace page={page} roles={roles || []} currentId={currentId} roleListError={roleListError} onRoleDeleted={removeRoleLocally} onSelectCompanion={setCurrentId} onRefresh={refresh} onNavigate={setPage}/>}
+        {page === 'conversation' && <ConversationPage roles={roles || []} currentId={currentId} currentOutfit={currentOutfit} outfits={outfits} outfitHomeUrl={outfitHomeUrl} loading={!roles && !error} error={error} hideDock={hideConversationDock} onHideDockChange={setConversationDockHidden} onSelectRole={setCurrentId} onOpenRelations={() => setPage('roles')} onConfigureModel={() => { setWorkspaceRequest({ kind: 'section', roleId: currentId, section: 'models', key: Date.now() }); setPage('role-config'); }} onCreateRole={() => { setWorkspaceRequest({ kind: 'create', key: Date.now() }); setPage('role-config'); }}/>}
+        {settingsVisited && <SettingsWorkspace page={page} roles={roles || []} currentId={currentId} roleListError={roleListError} onRoleDeleted={removeRoleLocally} onSelectCompanion={setCurrentId} onRefresh={refresh} onNavigate={setPage} workspaceRequest={workspaceRequest} onStartConversation={roleId => { setCurrentId(roleId); setPage('conversation'); }}/>}
       </div>
     </UiThemeProvider></main>
     {!dockHidden && <UiThemeScope theme="xiacheng" className="studio-footer-scope"><footer className="studio-footer">

@@ -23,6 +23,8 @@ import {
 } from '../../voice-config.js';
 
 type Props = {
+  guardWrite?: <T>(action: () => Promise<T>) => Promise<T>;
+  pausedWrite?: boolean;
   roleId: string;
   active?: boolean;
   onChanged?: () => void;
@@ -31,7 +33,14 @@ type Props = {
 
 const DEFAULT_PREVIEW_TEXT = '今天想和你一起，慢慢走一段路。';
 
-export function VoicePanel({ roleId, active = true, onChanged, onDraftStateChange }: Props) {
+export function VoicePanel({
+  roleId,
+  active,
+  onChanged,
+  onDraftStateChange,
+  guardWrite = action => action(),
+  pausedWrite = false,
+}: Props) {
   const [config, setConfig] = useState<VoiceConfigView | null>(null);
   const [form, setForm] = useState<VoiceForm>(() => createVoiceForm(null));
   const [savedForm, setSavedForm] = useState<VoiceForm | null>(null);
@@ -258,10 +267,11 @@ export function VoicePanel({ roleId, active = true, onChanged, onDraftStateChang
     try {
       const body = new FormData();
       body.append('file', file, file.name);
-      const result = await apiUpload<{ reference: { assetId: string; fileName: string } }>(
+      // 参考录音属于受活动保护的写入：先暂停角色，后端确认后再上传（283 R08）。
+      const result = await guardWrite(() => apiUpload<{ reference: { assetId: string; fileName: string } }>(
         `/v1/roles/${encodeURIComponent(roleId)}/voice/reference`,
         body,
-      );
+      ));
       if (isStale(token)) return;
       // 新录音不能沿用上一段录音的参考文本。
       setForm(previous => ({ ...withReferenceAudio(previous, result.reference.assetId), sourceKind: 'reference' }));
@@ -286,10 +296,10 @@ export function VoicePanel({ roleId, active = true, onChanged, onDraftStateChang
     const token = roleToken.current;
     setBusy(true); setError(''); setNotice('');
     try {
-      const result = await api<{ deleted: boolean; fileRemoved: boolean }>(
+      const result = await guardWrite(() => api<{ deleted: boolean; fileRemoved: boolean }>(
         `/v1/roles/${encodeURIComponent(roleId)}/voice/references/${encodeURIComponent(item.assetId)}`,
         { method: 'DELETE' },
-      );
+      ));
       if (isStale(token)) return;
       if (formRef.current.referenceAssetId === item.assetId) {
         setForm(previous => withReferenceAudio(previous, ''));
@@ -317,10 +327,10 @@ export function VoicePanel({ roleId, active = true, onChanged, onDraftStateChang
     const configSeq = stateSeq.current;
     setBusy(true); setError(''); setNotice('');
     try {
-      const result = await api<{ voice: VoiceConfigView }>(`/v1/roles/${encodeURIComponent(roleId)}/voice`, {
+      const result = await guardWrite(() => api<{ voice: VoiceConfigView }>(`/v1/roles/${encodeURIComponent(roleId)}/voice`, {
         method: 'PUT',
         body: toVoicePayload(form, { capabilities: activeCapabilities }),
-      });
+      }));
       if (isStale(token)) return;
       if (stateSeq.current === configSeq) setConfig(result.voice);
       const saved = createVoiceForm(result.voice);
@@ -347,10 +357,10 @@ export function VoicePanel({ roleId, active = true, onChanged, onDraftStateChang
     const token = roleToken.current;
     setToggleBusy(true); setError(''); setNotice('');
     try {
-      const result = await api<{ voice: VoiceConfigView }>(
+      const result = await guardWrite(() => api<{ voice: VoiceConfigView }>(
         `/v1/roles/${encodeURIComponent(roleId)}/voice/enabled`,
         { method: 'PUT', body: { enabled: next } },
-      );
+      ));
       if (isStale(token)) return;
       setConfig(result.voice);
       stateSeq.current += 1;
@@ -515,7 +525,7 @@ export function VoicePanel({ roleId, active = true, onChanged, onDraftStateChang
     <div className="nd-appearance-actions">
       <Button disabled={busy || previewBusy} onClick={() => void runPreview()}>{previewBusy ? '正在合成…' : '生成试听'}</Button>
       <Button disabled={!playing} onClick={stopPreview}>停止播放</Button>
-      <Button variant="primary" disabled={busy || toggleBusy} onClick={() => void save()}>{busy ? '正在保存…' : '保存声音配置'}</Button>
+      <Button variant="primary" disabled={busy || toggleBusy} onClick={() => void save()}>{busy ? '正在保存…' : pausedWrite ? '暂停并保存声音配置' : '保存声音配置'}</Button>
     </div>
     {notice ? <p className="nd-appearance-notice" role="status">{notice}</p> : null}
     {error ? <p className="nd-appearance-error" role="alert">{error}</p> : null}

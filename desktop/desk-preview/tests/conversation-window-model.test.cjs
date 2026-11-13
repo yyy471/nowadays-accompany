@@ -128,6 +128,44 @@ test("终态列表替换临时句段并按位置保留阅读进度", async () =>
   assert.deepEqual(reconcileFinalSegments(temporary, [], 1), { segments: [], shown: 0 });
 });
 
+test("窗口快照中同一提交标识已入库时结束重试记录", async () => {
+  const { isSubmissionConfirmed } = await load();
+  assert.equal(
+    isSubmissionConfirmed({ submissionId: "sub-1" }, [
+      message({ sender: "user", content: "在吗", submissionId: "sub-1" })
+    ]),
+    true,
+    "已入库的原提交不应继续复用标识"
+  );
+  assert.equal(
+    isSubmissionConfirmed({ submissionId: "sub-1" }, [
+      message({ sender: "user", content: "别的内容", submissionId: "sub-2" })
+    ]),
+    false,
+    "尚未确认的提交仍保留去重保护"
+  );
+  assert.equal(isSubmissionConfirmed(null, [message()]), false);
+});
+
+test("快照确认时只清空未编辑过的恢复草稿", async () => {
+  const { shouldClearRecoveredDraft } = await load();
+  assert.equal(
+    shouldClearRecoveredDraft({ value: "在吗", edited: false }, "在吗"),
+    true,
+    "未编辑的恢复草稿应清除"
+  );
+  assert.equal(
+    shouldClearRecoveredDraft({ value: "在吗", edited: true }, "在吗"),
+    false,
+    "用户手动改成相同文本也算编辑，应保留"
+  );
+  assert.equal(
+    shouldClearRecoveredDraft({ value: "别的内容", edited: false }, "在吗"),
+    false
+  );
+  assert.equal(shouldClearRecoveredDraft(null, "在吗"), false);
+});
+
 test("晚到表情标注只更新目标句段", async () => {
   const { applySegmentAnnotations } = await load();
   const segments = [segment(0, "speech", "第一段"), segment(1, "speech", "第二段")];

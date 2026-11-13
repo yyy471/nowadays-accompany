@@ -406,11 +406,19 @@ test("MCP 修改与全局关闭检查角色开关和未结束任务链", { timeo
     assert.equal(errorOf(blockedUpdate).code, "RESOURCE_IN_USE");
     assert.equal(errorOf(blockedUpdate).details?.action, "UPDATE");
 
-    const blockedDisable = await api(base, "PATCH", `/v1/resources/${mcpId}`, {
+    // 全局停用立即阻止新任务，原任务继续；启用中的绑定不拦停用（278 §3）。
+    const disabledWhileEnabled = await api(base, "PATCH", `/v1/resources/${mcpId}`, {
       enabled: false,
     });
-    assert.equal(blockedDisable.status, 409);
-    assert.equal(errorOf(blockedDisable).details?.action, "DISABLE");
+    assert.equal(disabledWhileEnabled.status, 200);
+    assert.equal(disabledWhileEnabled.body.enabled, false);
+    assert.ok(
+      (await putBindings(base, roleId, [
+        chatBinding(fixture),
+        { capability: "mcp", resourceId: mcpId },
+      ])).status === 200,
+      "停用后角色绑定仍可保留",
+    );
 
     // 关闭角色侧开关后，全局关闭可以执行。
     assert.equal((await putBindings(base, roleId, [
@@ -664,7 +672,7 @@ test("角色库不可读时引用检查失败并拒绝写入", { timeout: 20_000
       `/v1/resources/${resourceId}/references`,
     );
     assert.equal(baseline.status, 200);
-    assert.equal(baseline.body.canDisable, false);
+    assert.equal(baseline.body.canDisable, true, "全局停用不要求先关闭绑定");
 
     const db = rolePaths(
       fixture.app.config.dataRoot,
@@ -681,8 +689,9 @@ test("角色库不可读时引用检查失败并拒绝写入", { timeout: 20_000
       );
       assert.equal(refs.status, 500);
       assert.equal(errorOf(refs).code, "STORAGE_ERROR");
+      // 修改名称属于配置写入，仍依赖引用扫描的完整性。
       const blocked = await api(base, "PATCH", `/v1/resources/${resourceId}`, {
-        enabled: false,
+        name: "不可读时改名",
       });
       assert.equal(blocked.status, 500);
       assert.equal(errorOf(blocked).code, "STORAGE_ERROR");

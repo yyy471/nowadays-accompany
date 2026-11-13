@@ -10,8 +10,8 @@ import { classifyConfigWrite } from "../src/http/config-writes.js";
  * 只是把桌面端将来要做的「停止 → 编辑 → 恢复」在测试里显式做一遍。
  *
  * 全局服务写入要求所有角色都已停止：用 /v1/activities 列出角色，逐个停止，
- * 结束后只恢复原本为 active 的角色，原本已停止的保持停止。资源写入按类型
- * 分流：模型资源同样要求全角色停止，MCP／Skill 交给服务层占用检查，不加作用域。
+ * 结束后只恢复原本为 active 的角色，原本已停止的保持停止。资源写入交给后端
+ * 按实际依赖与占用处理，夹具不再预先停止角色。
  */
 
 interface ActivityView {
@@ -92,19 +92,11 @@ async function openScope(
     if (before.state !== "stopped") await stopRole(origin, roleId);
     return { resumeRoleIds: before.state === "active" ? [roleId] : [] };
   }
-  // 资源写入按类型分流：只有模型资源要求所有角色停止；
-  // MCP／Skill 由服务层占用检查把关，无关角色活动时不需停止（DL-148）。
+  // 资源写入由后端按实际依赖处理：模型连接变化只暂停依赖角色（278 §2），
+  // MCP／Skill 由服务层占用检查；夹具不再预先停止全部角色。
   if (scope.kind === "resource") {
-    const resourceId = scope.resourceId;
-    assert.ok(resourceId, "资源级配置写入必须能解析出资源标识");
-    const response = await fetch(`${origin}/v1/resources/${resourceId}`);
-    const body = await readBody(response);
-    if (
-      response.status !== 200 ||
-      (body as { kind?: string }).kind !== "model"
-    ) {
-      return { resumeRoleIds: [] };
-    }
+    assert.ok(scope.resourceId, "资源级配置写入必须能解析出资源标识");
+    return { resumeRoleIds: [] };
   }
   const items = await listActivities(origin);
   const resumeRoleIds: string[] = [];

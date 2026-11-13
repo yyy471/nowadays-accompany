@@ -29,6 +29,7 @@ export class RoleActivityService {
   private readonly store: RoleActivityStore;
   private readonly now: () => Date;
   private runtime: ActivityRuntime | null = null;
+  private resumeGuard: ((roleId: string) => void) | null = null;
   private readonly roleLeases = new Map<string, number>();
   /** 每个角色排队的配置写入尾结点；同一角色的写入与删除互斥执行。 */
   private readonly writeChains = new Map<string, Promise<void>>();
@@ -52,6 +53,14 @@ export class RoleActivityService {
 
   attachRuntime(runtime: ActivityRuntime): void {
     this.runtime = runtime;
+  }
+
+  /**
+   * 恢复活动的额外检查：资源维护期间，仍依赖目标服务的角色不能先恢复
+   * 再领取调用（283 R01）。由应用层注入，避免活动服务直接依赖资源服务。
+   */
+  setResumeGuard(guard: ((roleId: string) => void) | null): void {
+    this.resumeGuard = guard;
   }
 
   /**
@@ -158,6 +167,7 @@ export class RoleActivityService {
         "NOT_STOPPED",
       );
     }
+    this.resumeGuard?.(roleId);
     this.store.activate(roleId, this.iso());
     try {
       this.runtime?.resumeWork?.(roleId);

@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import http from "node:http";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
@@ -135,18 +134,14 @@ test("活动状态独立返回，空闲停止立即确认，写入保护与恢�
       details: { roleId: fixture.roleId, state: "active", reason: "ACTIVE" },
     });
 
-    const blockedGlobal = await api(
+    // 模型展示名可随时修改；只有连接参数变化才按实际依赖暂停角色（278 §2）。
+    const renamedWhileActive = await api(
       base,
       "PATCH",
       `/v1/resources/${resourceId}`,
-      { name: "不应改名" },
+      { name: "活动时改名" },
     );
-    assert.equal(blockedGlobal.status, 409);
-    const globalError = errorOf(blockedGlobal);
-    assert.equal(globalError.code, "ROLES_NOT_STOPPED");
-    assert.deepEqual(globalError.details?.roles, [
-      { roleId: fixture.roleId, state: "active", running: false },
-    ]);
+    assert.equal(renamedWhileActive.status, 200);
 
     const stopped = await api(base, "POST", `${role}/activity/stop`);
     assert.equal(stopped.status, 200);
@@ -748,81 +743,85 @@ test("自主额度写入纳入角色配置保护", { timeout: 40_000 }, async ()
   }
 });
 
-test("全局写入期间新建角色默认已停止，提交时按新语义放行", { timeout: 20_000 }, async () => {
+test("模型连接修改只暂停实际依赖的角色", { timeout: 30_000 }, async () => {
   const fixture = createFixture([]);
-  let patch: http.ClientRequest | undefined;
   try {
     const base = await start(fixture);
     const role = rolePath(fixture);
     const resource = fixture.app.services.resources.list("model")[0];
     assert.ok(resource, "夹具应已创建一个模型服务");
+    const second = fixture.app.services.roles.createRole({
+      displayName: "无关角色",
+      definition: { text: "不使用目标模型" },
+    });
+    // 新角色默认 stopped（268 §4），显式开始活动以验证无关角色不被暂停。
     assert.equal(
-      activityOf(await api(base, "POST", `${role}/activity/stop`)).state,
-      "stopped",
+      fixture.app.services.activity.resume(second.roleId).state,
+      "active",
     );
 
-    // 请求体只发一半：全局写入已进入租约，但还没提交。
-    const target = new URL(`${base}/v1/resources/${resource.resourceId}`);
-    const response = new Promise<number>((resolve, reject) => {
-      patch = http.request(
-        target,
-        { method: "PATCH", headers: { "content-type": "application/json" } },
-        (incoming) => {
-          incoming.resume();
-          incoming.on("end", () => resolve(incoming.statusCode ?? 0));
-        },
-      );
-      patch.on("error", reject);
-      patch.write('{"name":');
-    });
-    void response.catch(() => {});
-
-    await delay(100);
-    const rejected = await (async (): Promise<boolean> => {
-      for (let attempt = 0; attempt < 8; attempt += 1) {
-        const resumed = await api(base, "POST", `${role}/activity/resume`);
-        if (
-          resumed.status === 409 &&
-          errorOf(resumed).details?.reason === "CONFIG_WRITE_IN_PROGRESS"
-        ) {
-          return true;
-        }
-        if (resumed.status === 200) {
-          throw new Error("全局租约尚未建立就允许恢复");
-        }
-        await delay(30);
-      }
-      return false;
-    })();
-    assert.equal(rejected, true, "全局写入期间应拒绝恢复");
-
-    // 读体期间新建角色：268 §4 起新角色默认已停止，不再形成「新增 active
-    // 角色绕过全局停止条件」的路径；提交按新语义放行。
-    const created = await api(base, "POST", "/v1/roles", {
-      displayName: "新增角色",
-      definition: { text: "新增角色定义" },
-    });
-    assert.equal(created.status, 201);
-    const roles = (await api(base, "GET", "/v1/activities")).body
-      .items as ActivityView[];
-    assert.ok(
-      roles.some(
-        (item) =>
-          item.roleId !== fixture.roleId && item.state === "stopped",
-      ),
-      "新建角色默认处于 stopped",
-    );
-
-    patch!.end('"changed during new role"}');
-    assert.equal(await response, 200, "新增角色已停止，提交应按新语义放行");
-    const after = await api(
+    // 影响范围：夹具角色对话绑定到该服务；记忆未单独绑定，跟随对话模型。
+    const impact = await api(
       base,
       "GET",
-      `/v1/resources/${resource.resourceId}`,
+      `/v1/resources/${resource.resourceId}/impact`,
     );
-    assert.equal(after.body.name, "changed during new role");
+    assert.equal(impact.status, 200);
+    const roles = impact.body.roles as Array<{
+      roleId: string;
+      usages: string[];
+    }>;
+    assert.deepEqual(
+      roles.find((item) => item.roleId === fixture.roleId)?.usages.sort(),
+      ["chat", "memory"].sort(),
+    );
+    assert.equal(
+      roles.some((item) => item.roleId === second.roleId),
+      false,
+    );
+
+    // 只改展示名：不暂停任何角色。
+    const renamed = await api(
+      base,
+      "PATCH",
+      `/v1/resources/${resource.resourceId}`,
+      { name: "活动时改名" },
+    );
+    assert.equal(renamed.status, 200);
+    assert.equal(
+      fixture.app.services.activity.view(fixture.roleId).state,
+      "active",
+    );
+
+    // 同站点改路径：只暂停实际依赖该服务的夹具角色，无关角色保持活动。
+    const config = {
+      ...resource.config,
+      baseUrl: `${String(resource.config.baseUrl)}-v2`,
+    };
+    const changed = await api(
+      base,
+      "PATCH",
+      `/v1/resources/${resource.resourceId}`,
+      { config },
+    );
+    assert.equal(changed.status, 200);
+    assert.deepEqual(
+      (changed.body.maintenance as { pausedRoleIds: string[] }).pausedRoleIds,
+      [fixture.roleId],
+    );
+    assert.equal(
+      fixture.app.services.activity.view(fixture.roleId).state,
+      "stopped",
+    );
+    assert.equal(
+      fixture.app.services.activity.view(second.roleId).state,
+      "active",
+    );
+
+    const resumed = await api(base, "POST", `${role}/activity/resume`);
+    assert.equal(resumed.status, 200);
+    assert.equal(activityOf(resumed).state, "active");
   } finally {
-    patch?.destroy();
     await fixture.close();
   }
 });

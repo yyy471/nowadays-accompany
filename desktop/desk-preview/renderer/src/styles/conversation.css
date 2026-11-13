@@ -392,3 +392,8 @@
 /* 顶栏与舞台在换光保护期内跟着换色，收尾时已经到位。 */
 .dialogue-page[data-lighting] .dialogue-stage{transition:background-color .6s ease}
 .dialogue-page[data-lighting] :is(.dialogue-pane-toolbar,.dialogue-pane-toolbar *){transition:color .45s,border-color .45s,background-color .45s}
+
+/* 已接收但未安排回复：等待原因与恢复入口 */
+.dialogue-wait-notice { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 7px; padding: 8px 10px; border: 1px solid var(--dlg-rule); border-radius: 9px; background: color-mix(in srgb, var(--dlg-selection) 45%, var(--dlg-paper)); color: var(--dlg-ink); font-size: 12px; line-height: 18px; }
+.dialogue-wait-notice button { min-height: 30px; padding: 4px 10px; border: 1px solid var(--dlg-rule); border-radius: 8px; font-size: 12px; color: var(--dlg-ink); background: var(--dlg-paper); }
+.dialogue-wait-notice button:hover { background: var(--dlg-selection); }

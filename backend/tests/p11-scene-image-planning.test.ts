@@ -7,7 +7,8 @@ import test from "node:test";
 import sharp from "sharp";
 import { listen, type BackendApp } from "../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths } from "../src/bootstrap/config.js";
-import type { ModelEvent, ModelRequest } from "../src/domain/model.js";
+import type { ModelEvent, ModelRequest, ModelPort } from "../src/domain/model.js";
+import type { MemoryModelPort } from "../src/domain/memory.js";
 import type {
   SceneImageGenerationInput,
   SceneImageGeneratorPort,
@@ -18,7 +19,9 @@ import { FixedSceneImagePlanner } from "../src/scene/fixed-planner.js";
 import { SceneImageStore } from "../src/storage/scene-image-store.js";
 import { ConversationStore } from "../src/storage/conversation-store.js";
 import {
+  addBinding,
   createFixtureWithModel,
+  deferred,
   ScriptedChatModel,
   withStorage,
   type Fixture,
@@ -1025,6 +1028,599 @@ test("a rejected cleanup still settles the task and keeps the original failure",
   } finally {
     patchedWrite.writeFileSync = originalWrite;
     patchedRemove.rmSync = originalRemove;
+    await fixture.close();
+  }
+});
+
+test("scene planning waits for the model service maintenance window", { timeout: 60_000 }, async () => {
+  const memoryStarted = deferred<void>();
+  const memoryRelease = deferred<void>();
+  const memoryModel: MemoryModelPort = {
+    async form() {
+      memoryStarted.resolve();
+      await memoryRelease.promise;
+      return {};
+    },
+  };
+  const model = new ScriptedChatModel([
+    replyScript(),
+    planScript((payload) => ({
+      description: "维护结束后的河边，路灯已经亮起。",
+      layerMode: "full_scene",
+      startSegmentId: payload.segments[0]?.segmentId,
+      endSegmentId: payload.segments[payload.segments.length - 1]?.segmentId,
+    })),
+  ]);
+  const fixture = createFixtureWithModel(model, {
+    disableMemoryRuntime: false,
+    memoryModelFactory: () => memoryModel,
+    sceneImageGenerator: new RecordingGenerator(),
+  });
+  let patch: Promise<Response> | null = null;
+  try {
+    await attachOutfit(fixture, "深色长外套");
+    const reply = await send(fixture, "去河边走走吧");
+    const resource = fixture.app.services.resources.list("model")[0];
+    assert.ok(resource);
+    // 让目标服务上有一个挂起的后台记忆调用，模型维护进入等待。
+    assert.equal(
+      fixture.app.services.activity.requestStop(fixture.roleId).confirmed,
+      true,
+    );
+    addBinding(fixture, "memory_model", resource.resourceId);
+    const port = await listen(fixture.app.server, 0, "127.0.0.1");
+    const base = `http://127.0.0.1:${port}`;
+    const memory = await fetch(
+      `${base}/v1/roles/${fixture.roleId}/memory/batches`,
+      { method: "POST" },
+    );
+    assert.equal(memory.status, 202);
+    await memoryStarted.promise;
+
+    const originalUrl = String(resource.config.baseUrl);
+    patch = fetch(`${base}/v1/resources/${resource.resourceId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        config: { ...resource.config, baseUrl: `${originalUrl}-v2` },
+      }),
+    });
+    await waitFor(() =>
+      fixture.app.services.resources.isUnderMaintenance(resource.resourceId),
+    );
+
+    const http: HttpContext = {
+      port,
+      base: `${base}/v1/roles/${fixture.roleId}/windows/${fixture.windowId}`,
+    };
+    const created = await createTask(http, reply.messageId, {
+      idempotencyKey: "maintenance-plan",
+      layerMode: "full_scene",
+    });
+    assert.equal(created.status, 201);
+    // 维护期间不领取规划调用：只有回复那一轮用过对话模型。
+    await delayMs(400);
+    assert.equal(model.requests.length, 1);
+    const waiting = fixture.app.services.sceneImages.getTask(
+      fixture.roleId,
+      fixture.windowId,
+      created.task.taskId,
+    );
+    assert.notEqual(waiting.status, "succeeded");
+
+    memoryRelease.resolve();
+    const patched = await patch;
+    assert.equal(patched.status, 200);
+    await fixture.app.services.sceneImages.waitForIdle(fixture.roleId);
+    const task = fixture.app.services.sceneImages.getTask(
+      fixture.roleId,
+      fixture.windowId,
+      created.task.taskId,
+    );
+    assert.equal(task.status, "succeeded", task.errorSummary ?? "");
+    assert.match(task.plan?.description ?? "", /维护结束后的河边/);
+    assert.ok(model.requests.length >= 2, "维护结束后重新领取规划调用");
+  } finally {
+    memoryRelease.resolve();
+    if (patch !== null) {
+      await patch.catch(() => undefined);
+    }
+    await fixture.close();
+  }
+});
+
+function delayMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitFor(
+  condition: () => boolean,
+  timeoutMs = 10_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (condition()) return;
+    await delayMs(20);
+  }
+  throw new Error("WAIT_TIMEOUT");
+}
+
+/** 第一轮回复，第二轮规划挂起；用于观察规划在途占用。 */
+class HangingPlanModel implements ModelPort {
+  readonly planStarted = deferred<void>();
+  readonly planRelease = deferred<void>();
+  private calls = 0;
+
+  async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {
+    this.calls += 1;
+    if (this.calls === 1) {
+      yield { type: "text_delta", text: REPLY_CONTENT };
+      yield { type: "completed", stopReason: "stop" };
+      return;
+    }
+    this.planStarted.resolve();
+    await this.planRelease.promise;
+    const payload = JSON.parse(request.messages[0]?.content ?? "{}") as {
+      segments: Array<{ segmentId: string }>;
+    };
+    yield {
+      type: "text_delta",
+      text: JSON.stringify({
+        description: "在途规划完成的画面。",
+        layerMode: "full_scene",
+        startSegmentId: payload.segments[0]?.segmentId,
+        endSegmentId: payload.segments.at(-1)?.segmentId,
+      }),
+    };
+    yield { type: "completed", stopReason: "stop" };
+  }
+}
+
+/** 第一轮回复，第二轮句段标注挂起；用于观察标注在途占用。 */
+class HangingAnnotationModel implements ModelPort {
+  readonly annotationStarted = deferred<void>();
+  readonly annotationRelease = deferred<void>();
+  private calls = 0;
+
+  async *stream(): AsyncIterable<ModelEvent> {
+    this.calls += 1;
+    if (this.calls === 1) {
+      yield { type: "text_delta", text: REPLY_CONTENT };
+      yield { type: "completed", stopReason: "stop" };
+      return;
+    }
+    this.annotationStarted.resolve();
+    await this.annotationRelease.promise;
+    yield { type: "text_delta", text: '{"segments":[]}' };
+    yield { type: "completed", stopReason: "stop" };
+  }
+}
+
+async function attachOutfitWithSprite(fixture: Fixture, name: string): Promise<string> {
+  const png = await sharp({
+    create: {
+      width: 40,
+      height: 80,
+      channels: 3,
+      background: { r: 120, g: 130, b: 220 },
+    },
+  })
+    .png()
+    .toBuffer();
+  const outfit = await fixture.app.services.appearance.importOutfit(
+    fixture.roleId,
+    {
+      name,
+      description: "用于标注在途检查",
+      home: { fileName: "home.png", data: png },
+      sprites: [{ fileName: "微笑.png", data: png }],
+    },
+  );
+  const current = fixture.app.services.roles.getState(fixture.roleId);
+  fixture.app.services.roles.setState(fixture.roleId, {
+    state: { ...current.state, outfitId: outfit.outfitId },
+  });
+  return outfit.outfitId;
+}
+
+test("删除收尾期间拒绝该角色的新过场图任务", { timeout: 60_000 }, async () => {
+  const model = new HangingAnnotationModel();
+  const fixture = createFixtureWithModel(model);
+  try {
+    await attachOutfitWithSprite(fixture, "删除期服饰");
+    const port = await listen(fixture.app.server, 0, "127.0.0.1");
+    const base = resourceBase(port);
+    fixture.app.conversation.submitMessage(fixture.roleId, fixture.windowId, {
+      content: "删除前的一句话",
+      submissionId: randomUUID(),
+      sourcePlatform: "nowadays",
+    });
+    await model.annotationStarted.promise;
+    const page = fixture.app.services.messages.list(
+      fixture.roleId,
+      fixture.windowId,
+      null,
+      50,
+    );
+    const reply = page.items.filter((item) => item.sender === "assistant").at(-1);
+    assert.ok(reply);
+    const kept = fixture.app.services.roles.createRole({
+      displayName: "留下的角色",
+      definition: { text: "用于删除时保留一个角色" },
+    });
+    fixture.app.services.activity.requestStop(fixture.roleId);
+    await waitFor(
+      () =>
+        fixture.app.services.activity.view(fixture.roleId).state === "stopped",
+    );
+
+    const deletion = fetch(
+      `${base}/v1/roles/${fixture.roleId}?keepHistory=1`,
+      { method: "DELETE" },
+    );
+    await waitFor(() =>
+      fixture.app.services.roleDeletion.isDeleting(fixture.roleId),
+    );
+    assert.equal(
+      fixture.app.services.roleDeletion.isDeleting(kept.roleId),
+      false,
+      "其他角色不受影响",
+    );
+
+    const blocked = await fetch(
+      `${base}/v1/roles/${fixture.roleId}/windows/${fixture.windowId}/messages/${reply.messageId}/scene-images`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ idempotencyKey: "during-delete" }),
+      },
+    );
+    assert.equal(blocked.status, 409);
+    const body = (await blocked.json()) as {
+      error?: { code?: string };
+    };
+    assert.equal(body.error?.code, "ROLE_DELETING");
+
+    const blockedMemory = await fetch(
+      `${base}/v1/roles/${fixture.roleId}/memory/batches`,
+      { method: "POST" },
+    );
+    assert.equal(blockedMemory.status, 409);
+    assert.equal(
+      ((await blockedMemory.json()) as { error?: { code?: string } }).error
+        ?.code,
+      "ROLE_DELETING",
+    );
+    const otherMemory = await fetch(
+      `${base}/v1/roles/${kept.roleId}/memory/batches`,
+      { method: "POST" },
+    );
+    assert.equal(otherMemory.status, 202, "其他角色的整理不受影响");
+
+    model.annotationRelease.resolve();
+    const removed = await deletion;
+    assert.equal(removed.status, 200);
+  } finally {
+    model.annotationRelease.resolve();
+    await fixture.close();
+  }
+});
+
+test("删除失败后角色仍可创建过场图任务", { timeout: 60_000 }, async () => {
+  const model = new ScriptedChatModel([
+    replyScript(),
+    planScript((payload) => ({
+      description: "删除失败后的画面。",
+      layerMode: "full_scene",
+      startSegmentId: payload.segments[0]?.segmentId,
+      endSegmentId: payload.segments[payload.segments.length - 1]?.segmentId,
+    })),
+  ]);
+  const fixture = createFixtureWithModel(model, {
+    sceneImageGenerator: new RecordingGenerator(),
+  });
+  const conversation = fixture.app.conversation;
+  const originalQuiescent = conversation.waitForQuiescent;
+  try {
+    await attachOutfit(fixture, "删除失败服饰");
+    const reply = await send(fixture, "删除失败前的回复");
+    fixture.app.services.roles.createRole({
+      displayName: "留下的角色",
+      definition: { text: "用于删除时保留一个角色" },
+    });
+    assert.equal(
+      fixture.app.services.activity.requestStop(fixture.roleId).confirmed,
+      true,
+    );
+    const port = await listen(fixture.app.server, 0, "127.0.0.1");
+    const base = resourceBase(port);
+
+    conversation.waitForQuiescent = async () => {
+      throw new Error("BUSY");
+    };
+    const failed = await fetch(
+      `${base}/v1/roles/${fixture.roleId}?keepHistory=1`,
+      { method: "DELETE" },
+    );
+    assert.equal(failed.status, 409);
+    conversation.waitForQuiescent = originalQuiescent;
+    assert.equal(
+      fixture.app.services.roleDeletion.isDeleting(fixture.roleId),
+      false,
+      "删除失败后不应继续保持删除保护",
+    );
+    const memoryAfterFailure = await fetch(
+      `${base}/v1/roles/${fixture.roleId}/memory/batches`,
+      { method: "POST" },
+    );
+    assert.equal(memoryAfterFailure.status, 202, "删除失败后整理恢复可用");
+
+    const http: HttpContext = {
+      port,
+      base: `${base}/v1/roles/${fixture.roleId}/windows/${fixture.windowId}`,
+    };
+    const created = await createTask(http, reply.messageId, {
+      idempotencyKey: "after-failed-delete",
+      layerMode: "full_scene",
+    });
+    assert.equal(created.status, 201);
+    await fixture.app.services.sceneImages.waitForIdle(fixture.roleId);
+    const task = fixture.app.services.sceneImages.getTask(
+      fixture.roleId,
+      fixture.windowId,
+      created.task.taskId,
+    );
+    assert.equal(task.status, "succeeded", task.errorSummary ?? "");
+  } finally {
+    conversation.waitForQuiescent = originalQuiescent;
+    await fixture.close();
+  }
+});
+
+/** 收到取消后仍要一段时间才结算的规划模型，用于删除等待。 */
+class SlowCancelPlanModel implements ModelPort {
+  readonly planStarted = deferred<void>();
+  readonly cancelReceived = deferred<void>();
+  readonly settle = deferred<void>();
+  private calls = 0;
+
+  async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {
+    this.calls += 1;
+    if (this.calls === 1) {
+      yield { type: "text_delta", text: REPLY_CONTENT };
+      yield { type: "completed", stopReason: "stop" };
+      return;
+    }
+    this.planStarted.resolve();
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        this.cancelReceived.resolve();
+        void this.settle.promise.then(() => resolve());
+      };
+      if (request.signal?.aborted === true) {
+        done();
+      } else {
+        request.signal?.addEventListener("abort", done, { once: true });
+      }
+    });
+    if (request.signal?.aborted === true) {
+      throw new Error("canceled after settle");
+    }
+    yield {
+      type: "text_delta",
+      text: JSON.stringify({
+        description: "取消前完成的规划。",
+        layerMode: "full_scene",
+        startSegmentId: "",
+        endSegmentId: "",
+      }),
+    };
+    yield { type: "completed", stopReason: "stop" };
+  }
+}
+
+test("删除等待已领取的规划真正结算后才移除角色", { timeout: 60_000 }, async () => {
+  const model = new SlowCancelPlanModel();
+  const fixture = createFixtureWithModel(model, {
+    sceneImageGenerator: new RecordingGenerator(),
+  });
+  try {
+    await attachOutfit(fixture, "取消等待服饰");
+    const reply = await send(fixture, "删除前完成规划");
+    const port = await listen(fixture.app.server, 0, "127.0.0.1");
+    const base = resourceBase(port);
+    const http: HttpContext = {
+      port,
+      base: `${base}/v1/roles/${fixture.roleId}/windows/${fixture.windowId}`,
+    };
+    const created = await createTask(http, reply.messageId, {
+      idempotencyKey: "slow-cancel-plan",
+      layerMode: "full_scene",
+    });
+    assert.equal(created.status, 201);
+    await model.planStarted.promise;
+    fixture.app.services.roles.createRole({
+      displayName: "留下角色",
+      definition: { text: "用于删除时保留一个角色" },
+    });
+    assert.equal(
+      fixture.app.services.activity.requestStop(fixture.roleId).confirmed,
+      true,
+    );
+
+    const deletion = fetch(
+      `${base}/v1/roles/${fixture.roleId}?keepHistory=1`,
+      { method: "DELETE" },
+    );
+    await model.cancelReceived.promise;
+    // 外层取消已经结束，但模型仍在收尾：删除必须继续等领取释放。
+    const early = await Promise.race([
+      deletion.then(() => "done"),
+      delayMs(400).then(() => "waiting"),
+    ]);
+    assert.equal(early, "waiting", "规划结算前不得移除角色");
+    assert.equal(
+      fixture.app.services.resources.inflightRoleIds(
+        fixture.app.services.resources.list("model")[0]!.resourceId,
+      ).includes(fixture.roleId),
+      true,
+      "结算前仍保持 INFLIGHT_CALL",
+    );
+
+    model.settle.resolve();
+    const removed = await deletion;
+    assert.equal(removed.status, 200);
+    assert.equal(
+      fixture.app.services.roles.listRoles().some(
+        (role) => role.roleId === fixture.roleId,
+      ),
+      false,
+    );
+  } finally {
+    model.settle.resolve();
+    await fixture.close();
+  }
+});
+
+function resourceBase(port: number): string {
+  return `http://127.0.0.1:${port}`;
+}
+
+test("规划模型调用在途时计入占用并阻挡服务修改", { timeout: 60_000 }, async () => {
+  const model = new HangingPlanModel();
+  const fixture = createFixtureWithModel(model, {
+    sceneImageGenerator: new RecordingGenerator(),
+  });
+  let patch: Promise<Response> | null = null;
+  try {
+    await attachOutfit(fixture, "深色长外套");
+    const reply = await send(fixture, "去河边走走吧");
+    const resource = fixture.app.services.resources.list("model")[0];
+    assert.ok(resource);
+    const port = await listen(fixture.app.server, 0, "127.0.0.1");
+    const http: HttpContext = {
+      port,
+      base: `${resourceBase(port)}/v1/roles/${fixture.roleId}/windows/${fixture.windowId}`,
+    };
+    const created = await createTask(http, reply.messageId, {
+      idempotencyKey: "inflight-plan",
+      layerMode: "full_scene",
+    });
+    assert.equal(created.status, 201);
+    await model.planStarted.promise;
+
+    const busy = fixture.app.services.resources.references(resource.resourceId);
+    assert.ok(
+      busy.references.some((item) => item.reason === "INFLIGHT_CALL"),
+      "在途规划应出现在引用报告里",
+    );
+    assert.equal(busy.canDelete, false);
+
+    const originalUrl = String(resource.config.baseUrl);
+    patch = fetch(
+      `${resourceBase(port)}/v1/resources/${resource.resourceId}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          config: { ...resource.config, baseUrl: `${originalUrl}-v2` },
+        }),
+      },
+    );
+    await waitFor(() =>
+      fixture.app.services.resources.isUnderMaintenance(resource.resourceId),
+    );
+    await delayMs(300);
+    assert.equal(
+      String(
+        fixture.app.services.resources.get(resource.resourceId).config.baseUrl,
+      ),
+      originalUrl,
+      "规划结算前不得写入新地址",
+    );
+
+    model.planRelease.resolve();
+    const patched = await patch;
+    assert.equal(patched.status, 200);
+    await fixture.app.services.sceneImages.waitForIdle(fixture.roleId);
+    const task = fixture.app.services.sceneImages.getTask(
+      fixture.roleId,
+      fixture.windowId,
+      created.task.taskId,
+    );
+    assert.equal(task.status, "succeeded", task.errorSummary ?? "");
+    assert.equal(
+      fixture.app.services.resources
+        .references(resource.resourceId)
+        .references.some((item) => item.reason === "INFLIGHT_CALL"),
+      false,
+    );
+  } finally {
+    model.planRelease.resolve();
+    if (patch !== null) await patch.catch(() => undefined);
+    await fixture.close();
+  }
+});
+
+test("句段标注在途时计入占用并阻挡服务修改", { timeout: 60_000 }, async () => {
+  const model = new HangingAnnotationModel();
+  const fixture = createFixtureWithModel(model);
+  let patch: Promise<Response> | null = null;
+  try {
+    await attachOutfitWithSprite(fixture, "标注在途");
+    const resource = fixture.app.services.resources.list("model")[0];
+    assert.ok(resource);
+    const port = await listen(fixture.app.server, 0, "127.0.0.1");
+    fixture.app.conversation.submitMessage(fixture.roleId, fixture.windowId, {
+      content: "今天风很轻",
+      submissionId: randomUUID(),
+      sourcePlatform: "nowadays",
+    });
+    await model.annotationStarted.promise;
+
+    const busy = fixture.app.services.resources.references(resource.resourceId);
+    assert.ok(
+      busy.references.some((item) => item.reason === "INFLIGHT_CALL"),
+      "在途标注应出现在引用报告里",
+    );
+    assert.equal(busy.canDelete, false);
+
+    const originalUrl = String(resource.config.baseUrl);
+    patch = fetch(
+      `${resourceBase(port)}/v1/resources/${resource.resourceId}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          config: { ...resource.config, baseUrl: `${originalUrl}-v2` },
+        }),
+      },
+    );
+    await waitFor(() =>
+      fixture.app.services.resources.isUnderMaintenance(resource.resourceId),
+    );
+    await delayMs(300);
+    assert.equal(
+      String(
+        fixture.app.services.resources.get(resource.resourceId).config.baseUrl,
+      ),
+      originalUrl,
+      "标注结算前不得写入新地址",
+    );
+
+    model.annotationRelease.resolve();
+    const patched = await patch;
+    assert.equal(patched.status, 200);
+    await fixture.app.conversation.waitForIdle(fixture.roleId);
+    assert.equal(
+      fixture.app.services.resources
+        .references(resource.resourceId)
+        .references.some((item) => item.reason === "INFLIGHT_CALL"),
+      false,
+    );
+  } finally {
+    model.annotationRelease.resolve();
+    if (patch !== null) await patch.catch(() => undefined);
     await fixture.close();
   }
 });

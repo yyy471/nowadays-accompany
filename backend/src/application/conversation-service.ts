@@ -11,6 +11,7 @@ import type {
   ConversationTool,
   RecallBrief,
   SkillBrief,
+  ConversationWaitReason,
 } from "../domain/conversation.js";
 import {
   AppError,
@@ -65,6 +66,7 @@ import type {
   ModelBindingResolver,
   ResolvedModelBinding,
 } from "./model-binding-resolver.js";
+import type { ModelCallClaim } from "./model-maintenance.js";
 import type { RoleAccess } from "./role-access.js";
 import { SegmentAnnotationService } from "./segment-annotation-service.js";
 
@@ -86,6 +88,18 @@ export interface ConversationServiceOptions {
   credentialResolver?: CredentialResolver;
   /** DL-148 停止边界：由 app 层注入，图中每个可保存节点都会询问。 */
   activity?: RoleActivityGate | null;
+  /** 模型服务维护中：暂缓新执行与任务续行的调用领取（283 R01）。 */
+  isResourceUnderMaintenance?: ((resourceId: string) => boolean) | null;
+  /** 维护期间后台标注等待结束；醒来后用已保存配置重新解析（278 §2.1）。 */
+  waitForMaintenanceEnd?:
+    | ((resourceId: string, signal?: AbortSignal) => Promise<void>)
+    | null;
+  /** 角色是否仍有对话之外的在途调用（后台记忆整理）；停止确认要一起等（283 §5 R01）。 */
+  hasExternalWork?: ((roleId: string) => boolean) | null;
+  /** 后台标注的调用领取：维护检查与在途登记同步完成（283 §13 R01）。 */
+  claimModelCall?:
+    | ((roleId: string, resourceId: string) => ModelCallClaim)
+    | null;
 }
 
 interface RunningExecution {
@@ -121,6 +135,8 @@ interface ResumableExecution {
 
 export interface SubmitConversationResult extends SubmitMessageResult {
   decisionScheduled: boolean;
+  /** 未安排回复时的可读原因；已安排或重复找回且可调度时为 null。 */
+  waitReason: ConversationWaitReason | null;
 }
 
 export class ConversationService {
@@ -136,12 +152,26 @@ export class ConversationService {
   private readonly memoryRuntime: MemoryRuntime | null;
   private readonly autonomy: AutonomyService | null;
   private readonly activity: RoleActivityGate | null;
+  private readonly isResourceUnderMaintenance: ((resourceId: string) => boolean) | null;
+  private readonly waitForMaintenanceEnd:
+    | ((resourceId: string, signal?: AbortSignal) => Promise<void>)
+    | null;
+  private readonly hasExternalWork: (roleId: string) => boolean;
   private readonly running = new Map<string, RunningExecution>();
+  /** 正在使用某个模型服务的执行：维护等待按目标服务直接查询（283 §7 R01）。 */
+  private readonly inflightResources = new Map<
+    string,
+    { roleId: string; resourceId: string }
+  >();
   private readonly detached = new Set<RunningExecution>();
   private readonly segmentAnnotations = new Map<string, Set<Promise<void>>>();
   private readonly annotationControllers = new Set<AbortController>();
+  /** 等待维护结束的标注：删除角色时可取消，不影响已经发出的调用（283 §13 R03）。 */
+  private readonly annotationWaitControllers = new Map<string, Set<AbortController>>();
   private readonly backgroundToolSettles = new Set<Promise<void>>();
   private readonly backgroundToolsByRole = new Map<string, number>();
+  /** 按任务计数的在途后台工具：任务终结后要等它们结算再释放资源（283 R03）。 */
+  private readonly backgroundToolsByTask = new Map<string, number>();
   private readonly wakeTimers = new Map<string, NodeJS.Timeout>();
   private readonly dueWakeChecks = new Map<string, string>();
   private readonly pendingContinuations = new Map<
@@ -156,6 +186,10 @@ export class ConversationService {
       modelBinding: ResolvedModelBinding;
     }
   >();
+  /** 正在关闭连接的任务目录：释放资源占用要等它们真正收尾（283 R03）。 */
+  private readonly closingTaskCatalogs = new Set<string>();
+  /** 任务已终结但仍有在途后台工具：结算后再关闭工具目录（283 R03）。 */
+  private readonly catalogClosePending = new Set<string>();
   private readonly activeStreams = new Map<() => void, string>();
   private readonly blockedWindows = new Set<string>();
   private closed = false;
@@ -191,6 +225,10 @@ export class ConversationService {
     this.memoryRuntime = options.memoryRuntime ?? null;
     this.autonomy = options.autonomy ?? null;
     this.activity = options.activity ?? null;
+    this.isResourceUnderMaintenance =
+      options.isResourceUnderMaintenance ?? null;
+    this.waitForMaintenanceEnd = options.waitForMaintenanceEnd ?? null;
+    this.hasExternalWork = options.hasExternalWork ?? (() => false);
     this.segmentAnnotation = new SegmentAnnotationService(
       this.roleAccess,
       this.bindings,
@@ -199,6 +237,19 @@ export class ConversationService {
         ...(this.timeZone === undefined ? {} : { timeZone: this.timeZone }),
         modelFactory: this.modelFactory,
         autonomy: this.autonomy,
+        maintenance:
+          this.isResourceUnderMaintenance === null ||
+          this.waitForMaintenanceEnd === null
+            ? null
+            : {
+                isUnder: this.isResourceUnderMaintenance,
+                wait: this.waitForMaintenanceEnd,
+              },
+        claim:
+          options.claimModelCall === undefined ||
+          options.claimModelCall === null
+            ? null
+            : { claim: options.claimModelCall },
       },
     );
     this.inputStates = new InputStateRegistry({
@@ -219,12 +270,40 @@ export class ConversationService {
       storage.business.submitMessage(roleId, windowId, input),
     );
     if (result.duplicate) {
-      return { ...result, decisionScheduled: false };
+      // 响应丢失后的重试：已有消息按当前角色与模型状态重新尝试调度。
+      // 用户用原提交标识再次提交就是明确的重试意图，解除此前的窗口阻塞，
+      // 让模型恢复后的原消息能重新领取（283 R02）。
+      this.blockedWindows.delete(windowKey(roleId, windowId));
+      const reason = this.roleWaitReason(roleId, windowId);
+      const decisionScheduled =
+        reason === null ? this.schedule(roleId) : false;
+      return {
+        ...result,
+        decisionScheduled,
+        waitReason: decisionScheduled ? null : (reason ?? "QUEUE_PENDING"),
+      };
     }
     this.blockedWindows.delete(windowKey(roleId, windowId));
     this.supersedeWindow(roleId, windowId);
     const decisionScheduled = this.schedule(roleId);
-    return { ...result, decisionScheduled };
+    return {
+      ...result,
+      decisionScheduled,
+      waitReason: decisionScheduled
+        ? null
+        : (this.roleWaitReason(roleId, windowId) ?? "QUEUE_PENDING"),
+    };
+  }
+
+  /** 只读找回已接收的消息：角色已停止时仍能确认原提交是否入库。 */
+  findSubmittedMessage(
+    roleId: string,
+    windowId: string,
+    submissionId: string,
+  ): MessageRecord | null {
+    return this.roleAccess.withStore(roleId, (storage) =>
+      storage.business.findMessageBySubmission(windowId, submissionId),
+    );
   }
 
   /** 回复落库后异步标注句段表情；正文与句段事件不等待标注完成。 */
@@ -239,7 +318,13 @@ export class ConversationService {
       return;
     }
     const controller = new AbortController();
+    const waitController = new AbortController();
     this.annotationControllers.add(controller);
+    const waits =
+      this.annotationWaitControllers.get(input.roleId) ??
+      new Set<AbortController>();
+    waits.add(waitController);
+    this.annotationWaitControllers.set(input.roleId, waits);
     let task: Promise<void>;
     task = this.segmentAnnotation
       .annotate({
@@ -249,11 +334,19 @@ export class ConversationService {
         executionId: input.executionId,
         ...(input.outfitId === undefined ? {} : { outfitId: input.outfitId }),
         signal: controller.signal,
+        waitSignal: waitController.signal,
       })
       .then(() => undefined)
       .catch(() => undefined)
       .finally(() => {
         this.annotationControllers.delete(controller);
+        const remainingWaits = this.annotationWaitControllers.get(input.roleId);
+        if (remainingWaits !== undefined) {
+          remainingWaits.delete(waitController);
+          if (remainingWaits.size === 0) {
+            this.annotationWaitControllers.delete(input.roleId);
+          }
+        }
         const tasks = this.segmentAnnotations.get(input.roleId);
         if (tasks !== undefined) {
           tasks.delete(task);
@@ -267,6 +360,20 @@ export class ConversationService {
       this.segmentAnnotations.get(input.roleId) ?? new Set<Promise<void>>();
     tasks.add(task);
     this.segmentAnnotations.set(input.roleId, tasks);
+  }
+
+  /**
+   * 删除角色前取消尚未领取的标注等待；已经发出的标注继续按原调用结算
+   * （283 §13 R03）。
+   */
+  cancelQueuedAnnotations(roleId: string): void {
+    const waits = this.annotationWaitControllers.get(roleId);
+    if (waits === undefined) {
+      return;
+    }
+    for (const controller of waits) {
+      controller.abort();
+    }
   }
 
   updateInputState(input: {
@@ -332,22 +439,9 @@ export class ConversationService {
     status: "completed" | "failed";
     endReason: string;
   }): TaskRecord {
-    const task = this.roleAccess.withStore(input.roleId, (storage) => {
-      const finished = storage.business.finishTask(input);
-      for (const continuation of storage.business.listResourceContinuations(
-        input.roleId,
-        input.taskId,
-      )) {
-        if (continuation.endedAt === null) {
-          storage.business.endResourceContinuation({
-            roleId: input.roleId,
-            taskId: input.taskId,
-            resourceId: continuation.resourceId,
-          });
-        }
-      }
-      return finished;
-    });
+    const task = this.roleAccess.withStore(input.roleId, (storage) =>
+      storage.business.finishTask(input),
+    );
     try {
       this.autonomy?.cancelPendingBudgetResumes(
         input.roleId,
@@ -357,7 +451,9 @@ export class ConversationService {
     } catch {
       // 任务已经结束；取消失败时由恢复领取时的终态检查兜底。
     }
-    void this.closeTaskCatalog(input.taskId);
+    // 资源续用记录要等在途工具结算与连接收尾后释放（283 R03）。
+    this.closeTaskCatalogAfterSettled(input.taskId);
+    this.releaseTaskResources(input.roleId, input.taskId);
     this.memoryRuntime?.notifyTaskFinished(input.roleId, input.taskId);
     return task;
   }
@@ -389,10 +485,14 @@ export class ConversationService {
   }
 
   private isQuiescent(roleId: string): boolean {
-    return (
-      (this.segmentAnnotations.get(roleId)?.size ?? 0) === 0 &&
-      (this.pendingContinuations.get(roleId)?.length ?? 0) === 0
-    );
+    if ((this.segmentAnnotations.get(roleId)?.size ?? 0) > 0) {
+      return false;
+    }
+    // 已停止角色不会再启动续行；队列里的搁置续行由删除流程丢弃（283 §12 R03）。
+    if (this.activity !== null && !this.activity.canStart(roleId)) {
+      return true;
+    }
+    return (this.pendingContinuations.get(roleId)?.length ?? 0) === 0;
   }
 
   /** 关闭该角色的事件流：删除角色目录前释放角色库句柄。 */
@@ -416,6 +516,11 @@ export class ConversationService {
     this.pendingContinuations.delete(roleId);
     this.backgroundToolsByRole.delete(roleId);
     this.segmentAnnotations.delete(roleId);
+    const waits = this.annotationWaitControllers.get(roleId);
+    if (waits !== undefined) {
+      for (const controller of waits) controller.abort();
+      this.annotationWaitControllers.delete(roleId);
+    }
     for (const key of [...this.blockedWindows]) {
       if (key.startsWith(`${roleId}\u0000`)) {
         this.blockedWindows.delete(key);
@@ -427,6 +532,7 @@ export class ConversationService {
     );
     for (const [taskId, entry] of catalogs) {
       this.taskCatalogs.delete(taskId);
+      this.catalogClosePending.delete(taskId);
       await entry.catalog.close();
     }
   }
@@ -963,6 +1069,9 @@ export class ConversationService {
     for (const controller of this.annotationControllers) {
       controller.abort();
     }
+    for (const waits of this.annotationWaitControllers.values()) {
+      for (const controller of waits) controller.abort();
+    }
     const annotations = [...this.segmentAnnotations.values()].flatMap(
       (tasks) => [...tasks],
     );
@@ -973,6 +1082,55 @@ export class ConversationService {
     this.taskCatalogs.clear();
     await Promise.allSettled(catalogs.map((entry) => entry.catalog.close()));
     await this.memoryRuntime?.close();
+  }
+
+  /**
+   * 已接收但未安排回复的原因。用于桌面端区分「角色已停止」「缺少对话模型」
+   * 「其他窗口正在生成」与「正常排队」，避免用单一字段猜测。
+   */
+  private roleWaitReason(
+    roleId: string,
+    windowId: string,
+  ): ConversationWaitReason | null {
+    if (this.activity !== null && !this.activity.canStart(roleId)) {
+      return "ROLE_STOPPED";
+    }
+    if (this.running.has(roleId)) {
+      return "BUSY";
+    }
+    if (this.blockedWindows.has(windowKey(roleId, windowId))) {
+      return "WINDOW_BLOCKED";
+    }
+    let pending: ReturnType<ConversationStore["listPendingWindows"]>;
+    try {
+      pending = this.withConversationStore(roleId, (store) =>
+        store.listPendingWindows(),
+      );
+    } catch {
+      return "QUEUE_PENDING";
+    }
+    if (pending.length === 0) {
+      return "QUEUE_PENDING";
+    }
+    const target = pending.find(
+      (window) => !this.blockedWindows.has(windowKey(roleId, window.windowId)),
+    );
+    if (target === undefined) {
+      return "WINDOW_BLOCKED";
+    }
+    let pendingTaskId: string | null = null;
+    try {
+      pendingTaskId = this.withConversationStore(roleId, (store) =>
+        store.findInterruptedUserTask(target.windowId),
+      );
+    } catch {
+      return "QUEUE_PENDING";
+    }
+    const hasModel =
+      this.bindings.hasChatBinding(roleId) ||
+      (pendingTaskId !== null &&
+        this.bindings.hasChatForTask(roleId, pendingTaskId));
+    return hasModel ? null : "MODEL_MISSING";
   }
 
   private schedule(roleId: string): boolean {
@@ -991,6 +1149,15 @@ export class ConversationService {
     return false;
   }
 
+  /** 正在使用目标模型服务的执行角色；不受当前绑定变化影响（283 §7 R01）。 */
+  inflightRoleIds(resourceId: string): string[] {
+    const roles = new Set<string>();
+    for (const entry of this.inflightResources.values()) {
+      if (entry.resourceId === resourceId) roles.add(entry.roleId);
+    }
+    return [...roles].sort();
+  }
+
   /**
    * 没有前台执行、只剩后台工具时，停止确认只能在最后一个后台工具结算后收敛。
    * 只改活动状态，不改工具调用记录：晚到结果仍按原调用结算并保留原始响应。
@@ -1002,6 +1169,8 @@ export class ConversationService {
     if (this.closed) return;
     if (this.activity?.isStopRequested(roleId) !== true) return;
     if (this.isRunning(roleId)) return;
+    // 后台记忆整理也属于本角色的在途工作，必须等它到达安全边界（283 §5 R01）。
+    if (this.hasExternalWork(roleId)) return;
     try {
       this.activity.confirmStop(roleId, boundaryExecutionId);
     } catch {
@@ -1025,14 +1194,28 @@ export class ConversationService {
     } catch {
       return false;
     }
-    const target = pending.find(
-      (window) => !this.blockedWindows.has(windowKey(roleId, window.windowId)),
-    );
-    const pendingTaskId = target
-      ? this.withConversationStore(roleId, (store) =>
-          store.findInterruptedUserTask(target.windowId),
-        )
-      : null;
+    let target: (typeof pending)[number] | undefined;
+    let pendingTaskId: string | null = null;
+    for (const window of pending) {
+      if (this.blockedWindows.has(windowKey(roleId, window.windowId))) {
+        continue;
+      }
+      let taskId: string | null = null;
+      try {
+        taskId = this.withConversationStore(roleId, (store) =>
+          store.findInterruptedUserTask(window.windowId),
+        );
+      } catch {
+        taskId = null;
+      }
+      // 维护中的模型服务暂缓领取；其他窗口与任务仍可继续（283 R01）。
+      if (this.chatTargetUnderMaintenance(roleId, taskId)) {
+        continue;
+      }
+      target = window;
+      pendingTaskId = taskId;
+      break;
+    }
     if (target && (
       this.bindings.hasChatBinding(roleId) ||
       (pendingTaskId !== null && this.bindings.hasChatForTask(roleId, pendingTaskId))
@@ -1042,11 +1225,29 @@ export class ConversationService {
       }
       return this.startExecution(roleId, target.windowId);
     }
-    const continuation = this.pendingContinuations.get(roleId)?.[0];
+    const continuation = (this.pendingContinuations.get(roleId) ?? []).find(
+      (item) => !this.chatTargetUnderMaintenance(roleId, item.taskId),
+    );
     if (continuation) {
       return this.startTaskContinuation(roleId, continuation);
     }
     return this.startDueAutonomy(roleId);
+  }
+
+  /** 该窗口／任务实际使用的对话模型是否正在维护（283 R01、R04）。 */
+  private chatTargetUnderMaintenance(
+    roleId: string,
+    taskId: string | null,
+  ): boolean {
+    if (this.isResourceUnderMaintenance === null) {
+      return false;
+    }
+    const resourceId =
+      (taskId === null ? null : this.bindings.taskChatResourceId(roleId, taskId)) ??
+      this.bindings.chatResourceId(roleId);
+    return (
+      resourceId !== null && this.isResourceUnderMaintenance(resourceId)
+    );
   }
 
   private armWakeTimer(roleId: string): void {
@@ -1107,6 +1308,35 @@ export class ConversationService {
   }
 
   /**
+   * 后台记忆整理等外部工作收尾后的空闲通知（283 §4 R01）。
+   * 停止请求可能只等这些调用；这里在它们真正结束后确认停止。
+   */
+  notifyExternalIdle(roleId: string): void {
+    this.confirmStopIfIdle(roleId, null);
+  }
+
+  /**
+   * 模型恢复、绑定修复或维护结束后重新检查已有待处理工作（283 R02）。
+   * 不传角色时覆盖所有已初始化角色；停止中的角色由统一调度跳过。
+   */
+  wakePendingWork(roleId?: string): void {
+    if (this.closed) {
+      return;
+    }
+    const targets =
+      roleId === undefined
+        ? this.appStore
+            .listRoleIndexes()
+            .filter((index) => index.initStatus === "ready")
+            .map((index) => index.roleId)
+        : [roleId];
+    for (const target of targets) {
+      this.memoryRuntime?.kick(target);
+      this.schedule(target);
+    }
+  }
+
+  /**
    * 恢复活动后的重新调度（RA-R02）：把因停止而暂停的任务链改回 active 并排队
    * 续行，再交给统一调度接上到期待办与后台工具留下的续行。待办、任务链与
    * 自主额度原样保留，不新建任务、不清空排队、不重置额度。
@@ -1150,6 +1380,10 @@ export class ConversationService {
     roleId: string,
     wake: AutonomyWakeRecord,
   ): boolean {
+    // 唤醒会接回原任务时按任务模型判断；否则按当前对话模型判断。
+    if (this.chatTargetUnderMaintenance(roleId, wake.taskId)) {
+      return false;
+    }
     if (this.bindings.hasChatBinding(roleId)) {
       return true;
     }
@@ -1432,7 +1666,25 @@ export class ConversationService {
       return Promise.resolve();
     }
     this.taskCatalogs.delete(taskId);
-    return entry.catalog.close();
+    this.closingTaskCatalogs.add(taskId);
+    this.catalogClosePending.delete(taskId);
+    return entry.catalog.close().finally(() => {
+      this.closingTaskCatalogs.delete(taskId);
+      // 连接收尾完成后再释放任务资源占用（283 R03）。
+      this.releaseTaskResources(entry.roleId, taskId);
+    });
+  }
+
+  /**
+   * 任务终结后关闭工具目录，但要等已发出的后台工具结算完再收连接（283 R03）。
+   * 在途工具结算回调会再次调用这里，并在关闭完成后释放资源占用。
+   */
+  private closeTaskCatalogAfterSettled(taskId: string): void {
+    if ((this.backgroundToolsByTask.get(taskId) ?? 0) > 0) {
+      this.catalogClosePending.add(taskId);
+      return;
+    }
+    void this.closeTaskCatalog(taskId);
   }
 
   private startExecution(roleId: string, windowId: string): boolean {
@@ -1683,6 +1935,11 @@ export class ConversationService {
             ? (this.bindings.resolveChatForTask(roleId, input.taskId) ??
               this.bindings.resolveChat(roleId))
             : this.bindings.resolveChat(roleId);
+      // 本轮执行固定在初始模型服务上；维护等待据此判断目标服务的实际在途调用。
+      this.inflightResources.set(execution.executionId, {
+        roleId,
+        resourceId: initialBinding.resourceId,
+      });
       const resolveModel = (): AgentModelHandle => {
         const binding = this.bindings.refresh(initialBinding, roleId);
         return {
@@ -1831,26 +2088,48 @@ export class ConversationService {
           onToolBackgrounded: () => {
             backgroundedTool = true;
           },
-          registerBackgroundTool: (settlement, roleId) => {
+          registerBackgroundTool: (settlement, backgroundRoleId) => {
+            // 按任务记在途工具：任务终结后要等它们结算再释放资源（283 R03）。
+            const backgroundTaskId = taskId;
+            if (backgroundTaskId !== null) {
+              this.backgroundToolsByTask.set(
+                backgroundTaskId,
+                (this.backgroundToolsByTask.get(backgroundTaskId) ?? 0) + 1,
+              );
+            }
             this.backgroundToolSettles.add(settlement);
             this.backgroundToolsByRole.set(
-              roleId,
-              (this.backgroundToolsByRole.get(roleId) ?? 0) + 1,
+              backgroundRoleId,
+              (this.backgroundToolsByRole.get(backgroundRoleId) ?? 0) + 1,
             );
             void settlement.then(() => {
               this.backgroundToolSettles.delete(settlement);
-              const remaining = (this.backgroundToolsByRole.get(roleId) ?? 1) - 1;
+              const remaining = (this.backgroundToolsByRole.get(backgroundRoleId) ?? 1) - 1;
               if (remaining <= 0) {
-                this.backgroundToolsByRole.delete(roleId);
+                this.backgroundToolsByRole.delete(backgroundRoleId);
               } else {
-                this.backgroundToolsByRole.set(roleId, remaining);
+                this.backgroundToolsByRole.set(backgroundRoleId, remaining);
+              }
+              if (backgroundTaskId !== null) {
+                const taskRemaining =
+                  (this.backgroundToolsByTask.get(backgroundTaskId) ?? 1) - 1;
+                if (taskRemaining <= 0) {
+                  this.backgroundToolsByTask.delete(backgroundTaskId);
+                } else {
+                  this.backgroundToolsByTask.set(backgroundTaskId, taskRemaining);
+                }
+                if (taskRemaining <= 0 && this.catalogClosePending.has(backgroundTaskId)) {
+                  // 最后一个在途工具已结算：关闭目录，收尾后释放资源占用（283 R03）。
+                  void this.closeTaskCatalog(backgroundTaskId);
+                }
+                this.releaseTaskResources(backgroundRoleId, backgroundTaskId);
               }
               if (remaining <= 0) {
                 // 最后一个后台工具结算：前台执行可能早已退出，停止确认不能只等
                 // 前台收尾。结算回调先于计数递减执行，这里确认不会丢原调用记录。
-                this.confirmStopIfIdle(roleId, execution.executionId);
+                this.confirmStopIfIdle(backgroundRoleId, execution.executionId);
                 // 前台执行恰好还在收尾时同步确认会跳过，再延后一次兜底收敛。
-                const deferredRoleId = roleId;
+                const deferredRoleId = backgroundRoleId;
                 const deferredExecutionId = execution.executionId;
                 const timer = setTimeout(() => {
                   this.confirmStopIfIdle(deferredRoleId, deferredExecutionId);
@@ -1980,7 +2259,11 @@ export class ConversationService {
             // 任务已结束时不强改状态；停止确认照常进行。
           }
           try {
-            this.activity?.confirmStop(roleId, execution.executionId);
+            // 对话已到可保存节点，但后台记忆仍在途时不能先确认停止；
+            // 记忆收尾后的空闲通知会再走统一收敛（283 §5 R01）。
+            if (!this.hasExternalWork(roleId)) {
+              this.activity?.confirmStop(roleId, execution.executionId);
+            }
           } catch {
             // 确认失败时保持 stopping，避免误放行配置写入。
           }
@@ -2101,13 +2384,26 @@ export class ConversationService {
           keepCatalog = false;
         }
       }
+      if (
+        !keepCatalog &&
+        taskId !== null &&
+        (this.backgroundToolsByTask.get(taskId) ?? 0) > 0
+      ) {
+        // 任务已终结但仍有已发出的后台工具：先不关连接，
+        // 等结果结算后再关闭目录并释放资源占用（283 R03）。
+        this.catalogClosePending.add(taskId);
+        keepCatalog = true;
+      }
       if (!keepCatalog) {
         await catalog?.close();
         if (taskId !== null) {
           this.taskCatalogs.delete(taskId);
+          // 目录直接在此关闭时也要补上资源释放（283 R03）。
+          this.releaseTaskResources(roleId, taskId);
         }
       }
       saver?.db.close();
+      this.inflightResources.delete(execution.executionId);
       storage.close();
       // 执行已收尾：正常完成或失败时若停止请求没在节点边界命中，这里兜底确认，
       // 避免角色永久卡在 stopping。重复确认由存储的 WHERE state='stopping' 幂等处理。
@@ -2115,6 +2411,7 @@ export class ConversationService {
       // 结算后的收敛路径确认（RA-R01）。
       if (
         (this.backgroundToolsByRole.get(roleId) ?? 0) === 0 &&
+        !this.hasExternalWork(roleId) &&
         this.activity?.isStopRequested(roleId) === true
       ) {
         try {
@@ -2191,9 +2488,12 @@ export class ConversationService {
         storage.business.getTask(settlement.roleId, settlement.taskId!),
       );
       if (task.status !== "active") {
+        // 任务已终结：结果已记在原任务上，结算后即可释放资源占用（283 R03）。
+        this.releaseTaskResources(settlement.roleId, settlement.taskId!);
         return;
       }
     } catch {
+      this.releaseTaskResources(settlement.roleId, settlement.taskId!);
       return;
     }
     this.queueTaskContinuation(settlement.roleId, {
@@ -2250,18 +2550,6 @@ export class ConversationService {
     endReason: string,
   ): void {    try {
       storage.business.finishTask({ roleId, taskId, status, endReason });
-      for (const continuation of storage.business.listResourceContinuations(
-        roleId,
-        taskId,
-      )) {
-        if (continuation.endedAt === null) {
-          storage.business.endResourceContinuation({
-            roleId,
-            taskId,
-            resourceId: continuation.resourceId,
-          });
-        }
-      }
       this.autonomy?.cancelPendingBudgetResumes(
         roleId,
         taskId,
@@ -2269,6 +2557,55 @@ export class ConversationService {
       );
     } catch {
       // 结束任务失败不覆盖已提交的回复或工具结果。
+    }
+    // 已发出的工具调用仍按原任务结算；结算与目录收尾后再释放占用（283 R03）。
+    this.releaseTaskResources(roleId, taskId);
+  }
+
+  /**
+   * 任务已终结时释放资源续用记录（283 R03）。
+   *
+   * 仍有在途后台工具、未结算的工具调用或尚未关闭的任务目录时保留占用，
+   * 由结算回调与目录关闭后的收尾再次调用。任务仍在进行时不做任何处理。
+   */
+  private releaseTaskResources(roleId: string, taskId: string): void {
+    if (this.closed) {
+      return;
+    }
+    if ((this.backgroundToolsByTask.get(taskId) ?? 0) > 0) {
+      return;
+    }
+    if (this.taskCatalogs.has(taskId)) {
+      // 目录关闭完成后 closeTaskCatalog 会再次调用。
+      return;
+    }
+    if (this.closingTaskCatalogs.has(taskId)) {
+      return;
+    }
+    try {
+      this.roleAccess.withStore(roleId, (storage) => {
+        const task = storage.business.getTask(roleId, taskId);
+        if (task.status !== "completed" && task.status !== "failed") {
+          return;
+        }
+        if (storage.business.hasUnsettledToolCalls(roleId, taskId)) {
+          return;
+        }
+        for (const continuation of storage.business.listResourceContinuations(
+          roleId,
+          taskId,
+        )) {
+          if (continuation.endedAt === null) {
+            storage.business.endResourceContinuation({
+              roleId,
+              taskId,
+              resourceId: continuation.resourceId,
+            });
+          }
+        }
+      });
+    } catch {
+      // 存储暂不可用时保留续用记录；重启或下次收尾继续释放。
     }
   }
 

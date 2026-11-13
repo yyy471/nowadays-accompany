@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { api } from '../api';
 import type { Outfit, RoleListItem } from '../types';
 import { appearanceAssetUrl } from '../types';
 import { Button, ControlButton, Icon, IconButton, Modal, UiThemeScope, useMotionPolicy } from '../ui';
@@ -9,6 +10,7 @@ import type { PerfRow } from '../conversation/history.js';
 import { dayKey, dateLabel } from '../conversation/history.js';
 import { useWindowSession, type ConversationSnapshot, type SessionEvent } from '../conversation/use-window-session';
 import { useSegmentVoice } from '../conversation/use-segment-voice';
+import { shouldClearRecoveredDraft } from '../conversation/window-model.js';
 import { ConversationStage, type StageSources } from '../conversation/ConversationStage';
 import { ChatPane } from '../conversation/ChatPane';
 import { HistoryPanel } from '../conversation/HistoryPanel';
@@ -42,6 +44,8 @@ export function ConversationPage({
   onHideDockChange,
   onSelectRole,
   onOpenRelations,
+  onConfigureModel,
+  onCreateRole,
 }: {
   roles: RoleListItem[];
   currentId: string;
@@ -54,6 +58,8 @@ export function ConversationPage({
   onHideDockChange: (hidden: boolean) => void;
   onSelectRole: (id: string) => void;
   onOpenRelations: () => void;
+  onConfigureModel: () => void;
+  onCreateRole: () => void;
 }) {
   const { preset } = useThemePreset();
   // 换光由本页接管：舞台光线 + 纸面逐行推进，不再退回整页天气动画。
@@ -62,6 +68,26 @@ export function ConversationPage({
   const motion = useMotionPolicy();
   const role = roles.find(item => item.roleId === currentId);
   const roleName = role?.displayName?.trim() || '角色';
+
+  const [roleActivity, setRoleActivity] = useState<{ state: string } | null>(null);
+  useEffect(() => {
+    let live = true;
+    setRoleActivity(null);
+    api<{ activity: { state: string } }>(`/v1/roles/${encodeURIComponent(currentId)}/activity`)
+      .then(result => { if (live) setRoleActivity(result.activity); })
+      .catch(() => { if (live) setRoleActivity(null); });
+    return () => { live = false; };
+  }, [currentId]);
+  const resumeRole = useCallback(() => {
+    void api(`/v1/roles/${encodeURIComponent(currentId)}/activity/resume`, { method: 'POST' })
+      .then(() => {
+        setRoleActivity({ state: 'active' });
+        // 发送被拒绝的消息未入库，恢复后由用户自己重新提交（283 R07）。
+        sessionRef.current?.clearRejection();
+        sessionRef.current?.retryWaiting();
+      })
+      .catch(() => { /* 状态由下一次读取或操作反馈 */ });
+  }, [currentId]);
 
   const [liveRowId, setLiveRowId] = useState<number | null>(null);
   const [follow, setFollow] = useState(true);
@@ -88,6 +114,10 @@ export function ConversationPage({
   const [recoveredDraft, setRecoveredDraft] = useState<{ key: string; value: string; sequence: number } | null>(null);
   const recoverySequence = useRef(0);
   const drafts = useRef(new Map<string, string>());
+  // 每次恢复草稿记下来源文本与是否被用户编辑；快照确认时据此决定是否清空（283 §9 R02）。
+  const draftRecovery = useRef(new Map<string, { value: string; edited: boolean }>());
+  const [clearDraft, setClearDraft] = useState<{ key: string; sequence: number } | null>(null);
+  const clearDraftSequence = useRef(0);
 
   const prevActive = useRef<string | null>(null);
   const followRef = useRef(follow); followRef.current = follow;
@@ -115,6 +145,8 @@ export function ConversationPage({
     onEvent: (snapshot, event) => handleEventRef.current(snapshot, event)
   });
   const snapshot = session.snapshot;
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
   const voice = useSegmentVoice({ roleId: currentId, windowId: session.windowId, onToast: showToast });
   const prefetchRef = useRef(voice.prefetch);
   prefetchRef.current = voice.prefetch;
@@ -200,6 +232,7 @@ export function ConversationPage({
     } else if (event.reason === 'send') {
       setLiveRowId(null);
       voice.cancelPending();
+      if (session.windowId) draftRecovery.current.delete(`${currentId}:${session.windowId}`);
       if (!followRef.current) setHasNew(true);
       setAnnounce('消息已发送，等对方开口。');
     } else if (event.reason === 'segment') {
@@ -222,6 +255,7 @@ export function ConversationPage({
       if (event.draft && session.windowId) {
         const key = `${currentId}:${session.windowId}`;
         drafts.current.set(key, event.draft);
+        draftRecovery.current.set(key, { value: event.draft, edited: false });
         setRecoveredDraft({ key, value: event.draft, sequence: ++recoverySequence.current });
       }
     } else if (event.reason === 'connection' && event.message) {
@@ -232,6 +266,19 @@ export function ConversationPage({
     }
   }
   handleEventRef.current = handleEvent;
+
+  // 快照确认原提交已入库：只清理由那次恢复带来且未被编辑过的草稿（283 §9 R02）。
+  const confirmedDraftSequence = snapshot?.confirmedDraft?.sequence ?? 0;
+  useEffect(() => {
+    if (confirmedDraftSequence <= 0 || !session.windowId || !snapshot?.confirmedDraft) return;
+    const key = `${currentId}:${session.windowId}`;
+    const record = draftRecovery.current.get(key);
+    if (!shouldClearRecoveredDraft(record, snapshot.confirmedDraft.content)) return;
+    draftRecovery.current.delete(key);
+    drafts.current.set(key, '');
+    setClearDraft({ key, sequence: ++clearDraftSequence.current });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirmedDraftSequence, currentId, session.windowId]);
 
   const visibleStageRow = stageRow
     ? snapshot?.messages.find(row => row.id === stageRow.id) ?? stageRow
@@ -335,7 +382,7 @@ export function ConversationPage({
   if (!currentId || !role) {
     return <UiThemeScope theme="xiacheng" className="dialogue-host"><div className="dialogue-empty">
       <p>{error ? `角色资料更新失败${roles.length ? '，当前显示上次资料' : ''}。` : '还没有可对话的角色。'}</p>
-      <Button variant="entry" onClick={onOpenRelations}>查看关系</Button>
+      <div className="dialogue-empty-actions">{roles.length === 0 ? <Button variant="entry" onClick={onCreateRole}>创建角色</Button> : null}<Button variant="entry" onClick={onOpenRelations}>查看关系</Button></div>
     </div></UiThemeScope>;
   }
   if (!snapshot || snapshot.roleId !== currentId || (session.windowId !== null && snapshot.windowId !== session.windowId)) {
@@ -401,14 +448,26 @@ export function ConversationPage({
               ? <div className="dialogue-chat-loading"><span className="spinner" aria-hidden="true" />正在读取这个窗口的消息…</div>
               : <ChatPane key={`${currentId}:${session.windowId}`} snapshot={snapshot} playingId={voice.playingId} follow={follow} hasNew={hasNew}
                   initialDraft={drafts.current.get(`${currentId}:${session.windowId}`) ?? ''}
-                  onDraftChange={value => { drafts.current.set(`${currentId}:${session.windowId}`, value); }}
+                  onDraftChange={value => {
+                    const key = `${currentId}:${session.windowId}`;
+                    const record = draftRecovery.current.get(key);
+                    if (record !== undefined && value !== record.value) record.edited = true;
+                    drafts.current.set(key, value);
+                  }}
                   recoveredDraft={recoveredDraft?.key === `${currentId}:${session.windowId}` ? recoveredDraft : null}
                   onRecoveredDraftApplied={() => setRecoveredDraft(null)}
+                  clearDraft={clearDraft?.key === `${currentId}:${session.windowId}` ? clearDraft.sequence : null}
+                  onClearDraftApplied={() => setClearDraft(null)}
                   liveRowId={liveRowId} locatedRowId={locatedRow} dateNotice={dateNotice} requestDraftFocus={requestDraftFocus}
                   onDraftFocusHandled={() => setRequestDraftFocus(0)}
                   onScrollFollow={next => { setFollow(next); if (next) { setHasNew(false); setHistoryLock(false); } }}
                   onLatest={onLatest} onSend={send} onTyping={session.noteTyping} onLoadOlder={() => void session.loadOlder()} onAdvance={advance}
                   notice={outfits.length === 0 ? null : currentOutfit === null ? '当前未选择服饰' : currentOutfit.sprites.length === 0 ? '这套服饰没有对话表情，可先补一张差分' : null}
+                  waitReason={snapshot.waitReason}
+                  roleStopped={roleActivity?.state === 'stopped'}
+                  onResumeRole={resumeRole}
+                  onConfigureModel={onConfigureModel}
+                  onRetryWaiting={() => { session.retryWaiting(); }}
                   onSpeaker={row => voice.play(row, false)} onGenerateScene={messageId => { setSceneTarget(messageId); setSceneOpen(true); }}
                   onOpenScene={openScene} />}
           </div>

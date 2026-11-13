@@ -271,6 +271,23 @@ test("接受原生 File 列表，回落到 webkitRelativePath", async () => {
   assert.equal(scan.entries[0].sprites.length, 1);
 });
 
+test("本轮已导入的套不再进入重试集合，列表刷新失败也不重复上传", async () => {
+  const { markImportedPlans } = await load();
+  const plans = [
+    { id: "a", name: "甲", status: "ready", missingHome: false, missingSprites: false, notes: [] },
+    { id: "b", name: "乙", status: "ready", missingHome: false, missingSprites: false, notes: [] }
+  ];
+  const marked = markImportedPlans(plans, { a: true });
+  assert.equal(marked.find((plan) => plan.id === "a").status, "duplicate");
+  assert.equal(marked.find((plan) => plan.id === "b").status, "ready");
+  assert.ok(marked.find((plan) => plan.id === "a").notes.includes("本次已导入"));
+  assert.equal(
+    marked.filter((plan) => plan.status === "ready").length,
+    1,
+    "重试只应包含失败套"
+  );
+});
+
 test("renderer CSP allows blob images for appearance import previews", () => {
   const html = fs.readFileSync(path.join(__dirname, "../renderer/index.html"), "utf8");
   assert.match(html, /img-src[^;]*blob:/);

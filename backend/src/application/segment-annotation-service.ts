@@ -12,6 +12,8 @@ import type {
   ModelBindingResolver,
   ResolvedModelBinding,
 } from "./model-binding-resolver.js";
+import { resolveClaimedModelBinding } from "./model-maintenance.js";
+import type { ModelCallClaim } from "./model-maintenance.js";
 
 export type AnnotationModelFactory = (
   binding: ResolvedModelBinding,
@@ -22,6 +24,15 @@ export interface SegmentAnnotationServiceOptions {
   timeZone?: string;
   modelFactory: AnnotationModelFactory;
   autonomy?: AutonomyService | null;
+  /** 模型服务维护窗口：等待结束并按已保存配置重新解析（278 §2.1）。 */
+  maintenance?: {
+    isUnder(resourceId: string): boolean;
+    wait(resourceId: string, signal?: AbortSignal): Promise<void>;
+  } | null;
+  /** 在途模型调用登记：与维护检查同一步完成（283 §13 R01）。 */
+  claim?: {
+    claim(roleId: string, resourceId: string): ModelCallClaim;
+  } | null;
 }
 
 export interface SegmentAnnotationRequest {
@@ -31,7 +42,10 @@ export interface SegmentAnnotationRequest {
   executionId: string;
   /** 提交时的服饰；未提供时读取角色当前状态。 */
   outfitId?: string | null;
+  /** 取消已经发出的模型请求。 */
   signal?: AbortSignal;
+  /** 取消尚未领取的维护等待；删除角色时只取消这一类（283 §13 R03）。 */
+  waitSignal?: AbortSignal;
 }
 
 export interface AnnotationSegmentInput {
@@ -68,6 +82,10 @@ export class SegmentAnnotationService {
   private readonly timeZone: string | undefined;
   private readonly modelFactory: AnnotationModelFactory;
   private readonly autonomy: AutonomyService | null;
+  private readonly maintenance: SegmentAnnotationServiceOptions["maintenance"];
+  private readonly claim:
+    | { claim(roleId: string, resourceId: string): ModelCallClaim }
+    | null;
 
   constructor(
     private readonly access: RoleAccess,
@@ -78,6 +96,8 @@ export class SegmentAnnotationService {
     this.timeZone = options.timeZone;
     this.modelFactory = options.modelFactory;
     this.autonomy = options.autonomy ?? null;
+    this.maintenance = options.maintenance ?? null;
+    this.claim = options.claim ?? null;
   }
 
   async annotate(input: SegmentAnnotationRequest): Promise<number> {
@@ -86,11 +106,27 @@ export class SegmentAnnotationService {
       return 0;
     }
     let binding: ResolvedModelBinding;
+    let releaseClaim: (() => void) | null = null;
+    // 维护检查与在途登记同一步完成；改绑后的新目标也会重新检查（283 §12 R02、§13 R01）。
     try {
-      binding = this.bindings.resolveChat(input.roleId);
+      const claimed = await resolveClaimedModelBinding(
+        () => this.bindings.resolveChat(input.roleId),
+        this.maintenance,
+        (resourceId) =>
+          this.claim === null
+            ? { admitted: true, release: () => undefined }
+            : this.claim.claim(input.roleId, resourceId),
+        input.waitSignal ?? input.signal,
+      );
+      if (claimed === null) {
+        return 0;
+      }
+      binding = claimed.binding;
+      releaseClaim = claimed.release;
     } catch {
       return 0;
     }
+    try {
     if (prepared.purpose === "autonomous" && this.autonomy === null) {
       return 0;
     }
@@ -234,6 +270,9 @@ export class SegmentAnnotationService {
         now,
       }).length;
     });
+    } finally {
+      releaseClaim?.();
+    }
   }
 
   private prepare(input: SegmentAnnotationRequest): {

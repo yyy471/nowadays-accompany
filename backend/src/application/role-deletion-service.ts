@@ -7,6 +7,11 @@ import type { RoleAccess } from "./role-access.js";
 export interface RoleDeletionRuntime {
   /** 等待并释放该角色的在途工作：事件流、定时器、场景任务与记忆队列。 */
   dispose(roleId: string): Promise<void>;
+  /**
+   * 删除收尾失败、删除保护释放后通知：补发删除期间被拒绝的唤醒，
+   * 让已接收的后台整理自动继续（283 §17）。
+   */
+  onDeletionFailed?: (roleId: string) => void;
 }
 
 export interface RoleDeletionResult {
@@ -34,6 +39,8 @@ export class RoleDeletionService {
   private readonly now: () => Date;
   /** 串行化删除请求，避免两个 DELETE 交错后都通过「至少保留一个」检查。 */
   private queue: Promise<unknown> = Promise.resolve();
+  /** 正在删除的角色：收尾等待期间拒绝新的后台任务（283 §14 R03）。 */
+  private readonly deleting = new Set<string>();
 
   constructor(
     private readonly appStore: AppStore,
@@ -50,6 +57,11 @@ export class RoleDeletionService {
     keepHistory: boolean,
   ): Promise<RoleDeletionResult> {
     return this.serialized(() => this.removeInternal(roleId, keepHistory));
+  }
+
+  /** 删除是否正在收尾；删除期入口用它拒绝该角色的新后台任务。 */
+  isDeleting(roleId: string): boolean {
+    return this.deleting.has(roleId);
   }
 
   private serialized<T>(action: () => Promise<T>): Promise<T> {
@@ -73,7 +85,25 @@ export class RoleDeletionService {
     if (this.appStore.listRoleIndexes().length <= 1) {
       throw this.lastRoleError(roleId);
     }
-    await this.runtime.dispose(roleId);
+    this.deleting.add(roleId);
+    let failed = false;
+    try {
+      await this.runtime.dispose(roleId);
+    } catch (error) {
+      failed = true;
+      throw error;
+    } finally {
+      // 收尾失败时角色继续可用；成功时索引随后在同一轮同步移除。
+      this.deleting.delete(roleId);
+      if (failed) {
+        try {
+          // 删除期间被拒绝的维护唤醒在这里补发（283 §17）。
+          this.runtime.onDeletionFailed?.(roleId);
+        } catch {
+          // 补发失败不影响删除结果；下次维护或消息会重新触发。
+        }
+      }
+    }
     // 运行时收尾期间可能有并发删除；「至少保留一个」在写事务里再复验一次，
     // 与移除索引同事务，避免两个请求各删一个后剩零个角色（AD-R01）。
     this.appStore.db.transaction(() => {

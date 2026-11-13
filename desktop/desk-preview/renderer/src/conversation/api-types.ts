@@ -93,9 +93,18 @@ export interface MessageDetailView {
   sceneImages?: SceneTaskView[];
 }
 
+export type ConversationWaitReason =
+  | 'ROLE_STOPPED'
+  | 'MODEL_MISSING'
+  | 'BUSY'
+  | 'WINDOW_BLOCKED'
+  | 'QUEUE_PENDING';
+
 export interface SubmitMessageView {
   message: MessageView;
   duplicate: boolean;
+  decisionScheduled: boolean;
+  waitReason: ConversationWaitReason | null;
 }
 
 export interface WindowsResponse { items: WindowView[]; }

@@ -36,6 +36,7 @@
 .nd-import-meta small { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .nd-import-name { width: 100%; padding: 4px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-2); color: inherit; font-size: 13px; }
 .nd-import-meta small.nd-import-notes { color: var(--accent-ink); white-space: normal; }
+.nd-import-meta small.nd-import-error { color: var(--bad); white-space: normal; }
 .nd-import-undo { align-self: flex-start; padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--muted); font-size: 11px; cursor: pointer; }
 .nd-import-undo:hover { border-color: var(--accent); color: var(--accent-ink); }
 

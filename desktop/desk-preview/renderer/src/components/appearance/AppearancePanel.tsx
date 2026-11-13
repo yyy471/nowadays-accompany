@@ -4,6 +4,7 @@ import type { Outfit } from '../../types';
 import { appearanceAssetUrl } from '../../types';
 import { Button, Field, LoadingNote, Select } from '../../ui';
 import {
+  markImportedPlans,
   mergeOutfitEntries,
   planOutfitImport,
   scanAppearanceFolder,
@@ -19,6 +20,10 @@ type Props = {
   onChanged?: () => void;
   onPreview?: (outfit: Outfit) => void;
   onPreviewAsset?: (assetId: string) => void;
+  /** 受保护写入前先暂停角色；由角色编辑器注入。 */
+  guardWrite?: <T>(action: () => Promise<T>) => Promise<T>;
+  /** 角色当前未停止：按钮显示「暂停并…」。 */
+  pausedWrite?: boolean;
 };
 
 const folderAttributes = {
@@ -35,7 +40,7 @@ const SKIP_REASON_LABELS: Record<string, string> = {
   UNRECOGNIZED: '无法归类',
 };
 
-export function AppearancePanel({ roleId, currentOutfitId, canWrite = true, onChanged, onPreview, onPreviewAsset }: Props) {
+export function AppearancePanel({ roleId, currentOutfitId, canWrite = true, onChanged, onPreview, onPreviewAsset, guardWrite = action => action(), pausedWrite = false }: Props) {
   const [items, setItems] = useState<Outfit[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -49,6 +54,10 @@ export function AppearancePanel({ roleId, currentOutfitId, canWrite = true, onCh
   const [merges, setMerges] = useState<Record<string, string>>({});
   const [renames, setRenames] = useState<Record<string, string>>({});
   const [homePicks, setHomePicks] = useState<Record<string, number>>({});
+  /** 按套保存上次导入失败原因；刷新列表后仍保留，重试成功才清除（283 §4 R09）。 */
+  const [importFailures, setImportFailures] = useState<Record<string, string>>({});
+  /** 本轮已确认上传成功的套；列表刷新失败时仍据此只重试未成功的套（283 §5 R09）。 */
+  const [importedIds, setImportedIds] = useState<Record<string, true>>({});
   const folderInput = useRef<HTMLInputElement>(null);
   const spriteInput = useRef<HTMLInputElement>(null);
   const homeInput = useRef<HTMLInputElement>(null);
@@ -83,7 +92,7 @@ export function AppearancePanel({ roleId, currentOutfitId, canWrite = true, onCh
   useEffect(() => {
     let active = true;
     setItems([]); setSelected(''); setError(''); setNotice(''); setLoading(true); setBusy(false);
-    setScan(null); setMerges({}); setRenames({}); setHomePicks({});
+    setScan(null); setMerges({}); setRenames({}); setHomePicks({}); setImportFailures({}); setImportedIds({});
     void api<{ items: Outfit[] }>(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits`).then(result => {
       if (!active) return;
       setItems(result.items);
@@ -99,8 +108,10 @@ export function AppearancePanel({ roleId, currentOutfitId, canWrite = true, onCh
     if (scan === null) return [];
     const merged = mergeOutfitEntries(scan.entries, merges);
     const renamed = merged.map(entry => renames[entry.id] === undefined ? entry : { ...entry, name: renames[entry.id]! });
-    return planOutfitImport(renamed, { existingNames: items.map(item => item.name) });
-  }, [scan, merges, renames, items]);
+    const planned = planOutfitImport(renamed, { existingNames: items.map(item => item.name) });
+    // 本轮已经上传成功的套不再进入可重试集合，即使列表刷新失败拿不到新名称。
+    return markImportedPlans(planned, importedIds);
+  }, [scan, merges, renames, items, importedIds]);
 
   const summary = useMemo(() => summarizeOutfitPlan(plans), [plans]);
 
@@ -127,6 +138,7 @@ export function AppearancePanel({ roleId, currentOutfitId, canWrite = true, onCh
     }));
     const result = scanAppearanceFolder(entries);
     setScan(result); setMerges(result.suggestedMerges); setRenames({}); setHomePicks({});
+    setImportFailures({}); setImportedIds({});
     setNotice(''); setError('');
     if (folderInput.current) folderInput.current.value = '';
     if (result.entries.length === 0) {
@@ -136,6 +148,7 @@ export function AppearancePanel({ roleId, currentOutfitId, canWrite = true, onCh
 
   const cancelScan = () => {
     setScan(null); setMerges({}); setRenames({}); setHomePicks({});
+    setImportFailures({}); setImportedIds({});
   };
 
   const homeFor = (plan: AppearanceImportPlan): File | null => {
@@ -166,6 +179,8 @@ export function AppearancePanel({ roleId, currentOutfitId, canWrite = true, onCh
     setBusy(true); setNotice(''); setError('');
     const imported: string[] = [];
     const failed: string[] = [];
+    const importedIds: string[] = [];
+    const failureDetails: Record<string, string> = {};
     try {
       for (const plan of ready) {
         const form = new FormData();
@@ -174,14 +189,34 @@ export function AppearancePanel({ roleId, currentOutfitId, canWrite = true, onCh
         if (home) form.append('home', home, home.name);
         for (const sprite of plan.sprites) form.append('sprites', sprite, sprite.name);
         try {
-          await apiUpload<Outfit>(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits`, form);
+          await guardWrite(() => apiUpload<Outfit>(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits`, form));
           imported.push(plan.name);
+          importedIds.push(plan.id);
         } catch (e) {
-          failed.push(`「${plan.name}」${e instanceof Error ? e.message : String(e)}`);
+          const reason = e instanceof Error ? e.message : String(e);
+          failed.push(`「${plan.name}」${reason}`);
+          failureDetails[plan.id] = reason;
         }
       }
+      setImportFailures(previous => {
+        const next = { ...previous };
+        for (const id of importedIds) delete next[id];
+        for (const [id, reason] of Object.entries(failureDetails)) next[id] = reason;
+        return next;
+      });
       // 已经切到别的角色：上传仍归属原角色，但不再改动当前页面。
       if (isStale(token)) return;
+      setImportedIds(previous => {
+        const next = { ...previous };
+        for (const id of importedIds) next[id] = true;
+        return next;
+      });
+      setImportFailures(previous => {
+        const next = { ...previous };
+        for (const id of importedIds) delete next[id];
+        for (const [id, reason] of Object.entries(failureDetails)) next[id] = reason;
+        return next;
+      });
       const duplicates = plans.filter(plan => plan.status === 'duplicate').map(plan => plan.name);
       const missing = plans.filter(plan => plan.status === 'ready' && (plan.missingHome || plan.missingSprites)).map(plan => plan.name);
       const parts: string[] = [];
@@ -190,10 +225,15 @@ export function AppearancePanel({ roleId, currentOutfitId, canWrite = true, onCh
       if (missing.length > 0) parts.push(`缺项待补：${missing.join('、')}`);
       if (failed.length > 0) parts.push(`失败 ${failed.length} 套`);
       setNotice(parts.join('。'));
-      if (failed.length > 0) setError(failed.join('；'));
-      cancelScan();
+      // 部分失败时保留预览：已成功的服饰重读后会显示为重名，
+      // 原处再次导入只提交仍未成功的套（283 R09）。
+      if (failed.length === 0) cancelScan();
       await load(token);
       if (isStale(token)) return;
+      if (failed.length > 0) {
+        // load 会清掉通用错误；逐套原因保存在 importFailures 里，这里再给摘要。
+        setError(`部分服饰导入失败（${failed.length} 套），原因见列表；再次确认导入只会重试未成功的套。`);
+      }
       onChanged?.();
     } finally {
       // 过期操作不能清掉当前角色的忙碌状态。
@@ -210,7 +250,7 @@ export function AppearancePanel({ roleId, currentOutfitId, canWrite = true, onCh
     try {
       const form = new FormData();
       form.append('sprite', file, file.name);
-      await apiUpload(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits/${encodeURIComponent(selected)}/sprites`, form);
+      await guardWrite(() => apiUpload(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits/${encodeURIComponent(selected)}/sprites`, form));
       if (isStale(token)) return;
       setNotice(`已添加差分「${file.name.replace(/\.[^.]+$/, '')}」`);
       await load(token);
@@ -237,11 +277,12 @@ export function AppearancePanel({ roleId, currentOutfitId, canWrite = true, onCh
     const path = `/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits/${encodeURIComponent(outfitId)}`;
     setBusy(true); setNotice(''); setError('');
     try {
-      if (operation === 'rename') await api(path, { method: 'PATCH', body: { name: rename.trim() } });
-      else if (operation === 'home' && file) { const body = new FormData(); body.append('home', file, file.name); await apiUpload(`${path}/home`, body); }
-      else if (operation === 'outfit') await api(path, { method: 'DELETE' });
-      else if (operation === 'sprite' && assetId) await api(`${path}/sprites/${encodeURIComponent(assetId)}`, { method: 'DELETE' });
-      else return;
+      await guardWrite(async () => {
+        if (operation === 'rename') await api(path, { method: 'PATCH', body: { name: rename.trim() } });
+        else if (operation === 'home' && file) { const body = new FormData(); body.append('home', file, file.name); await apiUpload(`${path}/home`, body); }
+        else if (operation === 'outfit') await api(path, { method: 'DELETE' });
+        else if (operation === 'sprite' && assetId) await api(`${path}/sprites/${encodeURIComponent(assetId)}`, { method: 'DELETE' });
+      });
       if (isStale(token)) return;
       setConfirm(null);
       setNotice(operation === 'rename' ? '服饰已改名。' : operation === 'home' ? '主页立绘已更新，历史句段保留原图。' : operation === 'outfit' ? '服饰已删除，历史引用的素材会保留。' : '差分已删除，历史引用的素材会保留。');
@@ -302,6 +343,7 @@ export function AppearancePanel({ roleId, currentOutfitId, canWrite = true, onCh
                 {mergeTargets.map(other => <option key={other.id} value={other.id}>{other.name}</option>)}
               </Select> : null}
               {plan.notes.length > 0 ? <small className="nd-import-notes">{plan.notes.join('；')}</small> : null}
+              {importFailures[plan.id] ? <small className="nd-import-error" role="alert">上次导入失败：{importFailures[plan.id]}</small> : null}
               {plan.mergedFrom !== undefined && plan.mergedFrom.length > 0
                 ? <button type="button" className="nd-import-undo" onClick={() => undoMerge(plan.id)}>撤销归并</button>
                 : null}
@@ -311,9 +353,10 @@ export function AppearancePanel({ roleId, currentOutfitId, canWrite = true, onCh
       </ul>
       <div className="nd-appearance-actions">
         <Button variant="primary" disabled={busy || !canWrite || summary.ready === 0} onClick={() => void confirmImport()}>
-          {busy ? '正在导入…' : `确认导入 ${summary.ready} 套`}
+          {busy ? '正在导入…' : `${pausedWrite ? '暂停并导入' : '确认导入'} ${summary.ready} 套`}
         </Button>
         <Button disabled={busy} onClick={cancelScan}>取消</Button>
+        {pausedWrite ? <small className="nd-appearance-hint">导入时会先暂停角色。</small> : null}
       </div>
     </section> : null}
 

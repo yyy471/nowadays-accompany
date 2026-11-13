@@ -19,6 +19,14 @@ export function applySegmentAnnotations(
 ): SegmentView[];
 export function sceneView(task: SceneTaskView, segmentsByMessage: Map<string, SegmentView[]>, roleId: string): PerfScene;
 export function groupSegments(segments: SegmentView[]): Map<string, SegmentView[]>;
+export function isSubmissionConfirmed(
+  record: { submissionId: string } | null | undefined,
+  messages: readonly MessageView[]
+): boolean;
+export function shouldClearRecoveredDraft(
+  record: { value: string; edited: boolean } | null | undefined,
+  confirmedContent: string
+): boolean;
 export function parseTime(value: string | number): number;
 export function lastRowOf(rows: PerfRow[]): PerfRow | null;
 export function spriteForRow(rows: PerfRow[], current: PerfRow | null): string | null;

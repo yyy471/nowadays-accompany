@@ -15,6 +15,7 @@ export interface HomePageProps {
   locked?: boolean;
   onRetry: () => Promise<void>;
   onGoWorkbench: () => void;
+  onCreateRole?: () => void;
 }
 
 function ReadingGroup({ index, children }: { index: 0 | 1 | 2; children: ReactNode }) {
@@ -22,7 +23,7 @@ function ReadingGroup({ index, children }: { index: 0 | 1 | 2; children: ReactNo
 }
 
 /** 首页只承载主题与查看关系，不在此读取策略、绑定或修改账号。 */
-export function HomePage({ accounts, selectedAccountId, outfitHomeUrl, outfitName, loading, error, locked, onRetry, onGoWorkbench }: HomePageProps) {
+export function HomePage({ accounts, selectedAccountId, outfitHomeUrl, outfitName, loading, error, locked, onRetry, onGoWorkbench, onCreateRole }: HomePageProps) {
   const { preset } = useThemePreset();
   const night = preset === 'nightwave';
   const account = accounts?.accounts.find(item => item.accountId === selectedAccountId);
@@ -71,7 +72,7 @@ export function HomePage({ accounts, selectedAccountId, outfitHomeUrl, outfitNam
           </> : <p className="home-welcome">{night ? '晚风已经到站，留一盏灯给自己。' : '新的一天，为日常留一个位置。'}</p>}
         </ReadingGroup>
         <ReadingGroup index={2}>
-          <div className="home-primary-actions"><Button variant="entry" onClick={onGoWorkbench} disabled={locked}>查看关系</Button></div>
+          <div className="home-primary-actions">{!loading && accounts && accounts.accounts.length === 0 && onCreateRole ? <Button variant="entry" onClick={onCreateRole} disabled={locked}>创建角色</Button> : null}<Button variant="entry" onClick={onGoWorkbench} disabled={locked}>查看关系</Button></div>
         </ReadingGroup>
       </div>
     </section>

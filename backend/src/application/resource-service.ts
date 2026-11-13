@@ -8,6 +8,7 @@ import {
   ResourceCredentialStaleError,
   ResourceInUseError,
   ResourceKindMismatchError,
+  ResourceMaintenanceError,
   type ResourceReferenceDetail,
 } from "../domain/errors.js";
 import {
@@ -27,6 +28,7 @@ import type {
 import type { RoleStorage } from "../storage/role-storage.js";
 import { runWithDecisionCommit } from "../storage/transaction-group.js";
 import type { CredentialSummary, CredentialResolver } from "./credential-resolver.js";
+import type { ModelBindingResolver } from "./model-binding-resolver.js";
 import {
   summarizeModelTest,
   type ModelTestSummary,
@@ -83,9 +85,36 @@ export interface RoleBindingsView {
 
 const REDACTED_VALUE = "***";
 
+export interface ResourceImpactRole {
+  roleId: string;
+  displayName: string;
+  usages: Array<"chat" | "memory" | "task">;
+  taskIds: string[];
+  state: string;
+  running: boolean;
+}
+
+export interface ResourceImpactView {
+  resourceId: string;
+  kind: ResourceKind;
+  roles: ResourceImpactRole[];
+  /** 删除前会阻塞的角色／任务数量（与引用报告同一规则）。 */
+  blockingTasks: number;
+}
+
 export interface ResourceServiceOptions {
   credentialResolver: CredentialResolver;
+  /** 与运行时共用同一份模型解析规则（283 R04）。 */
+  bindings: ModelBindingResolver;
   now?: () => Date;
+  /** 读取角色活动状态；用于影响范围与维护前暂停。 */
+  activityOf?: (roleId: string) => { state: string; running: boolean };
+  /** 暂停实际依赖目标的角色并等待后端确认停止（278 §2）。 */
+  pauseRoles?: (roleIds: readonly string[]) => Promise<{ pausedRoleIds: string[] }>;
+  /** 维护结束或绑定变化后唤醒原待处理工作（R02）。 */
+  wakePendingWork?: (roleId?: string) => void;
+  /** 目标服务上仍在途的后台调用角色；维护等待要覆盖已停止角色（283 §6 R01）。 */
+  externalInflightRoleIds?: (resourceId: string) => string[];
 }
 
 const capabilityKind: Record<BindingCapability, ResourceKind> = {
@@ -97,7 +126,25 @@ const capabilityKind: Record<BindingCapability, ResourceKind> = {
 
 export class ResourceService {
   private readonly credentials: CredentialResolver;
+  private readonly bindings: ModelBindingResolver;
   private readonly now: () => Date;
+  private readonly activityOf: (roleId: string) => { state: string; running: boolean };
+  readonly pauseRoles: ((roleIds: readonly string[]) => Promise<{ pausedRoleIds: string[] }>) | null;
+  /** 正在维护的资源：相关绑定变更、恢复活动与调用领取需要等待。 */
+  private readonly maintenanceResources = new Set<string>();
+  /** 等待维护结束的后台调用（标注、过场图规划）；结束后统一唤醒（278 §2.1）。 */
+  private readonly maintenanceWaiters = new Set<{
+    resourceId: string;
+    resolve: () => void;
+  }>();
+  private readonly wakePendingWork: (roleId?: string) => void;
+  private readonly externalInflightRoleIds: (resourceId: string) => string[];
+  /** 已领取的模型调用（标注、规划），按实际服务登记（283 §13 R01）。 */
+  private readonly inflightClaims = new Map<
+    number,
+    { roleId: string; resourceId: string }
+  >();
+  private inflightClaimSeq = 0;
 
   constructor(
     private readonly appStore: AppStore,
@@ -105,7 +152,12 @@ export class ResourceService {
     options: ResourceServiceOptions,
   ) {
     this.credentials = options.credentialResolver;
+    this.bindings = options.bindings;
     this.now = options.now ?? (() => new Date());
+    this.activityOf = options.activityOf ?? (() => ({ state: "stopped", running: false }));
+    this.pauseRoles = options.pauseRoles ?? null;
+    this.wakePendingWork = options.wakePendingWork ?? (() => undefined);
+    this.externalInflightRoleIds = options.externalInflightRoleIds ?? (() => []);
   }
 
   create(input: CreateResourceInput): ResourceView {
@@ -144,7 +196,57 @@ export class ResourceService {
       .map((record) => this.toView(record));
   }
 
+  /**
+   * 修改前的本地校验（283 R05）：所有可预判的错误都在暂停角色之前报出，
+   * 避免「角色已经停止、保存却被拒绝」的半成品状态。update() 会用同一份
+   * 规则再校验一次，防止校验与写入之间状态变化。
+   */
+  validateUpdate(resourceId: string, input: UpdateResourceInput): void {
+    this.prepareUpdate(resourceId, input);
+  }
+
   update(resourceId: string, input: UpdateResourceInput): ResourceView {
+    const { current, config, replacingSecret, nextConfig } =
+      this.prepareUpdate(resourceId, input);
+    const now = this.now().toISOString();
+    this.appStore.db.transaction(() => {
+      this.appStore.updateResource({
+        resourceId,
+        ...(input.name === undefined ? {} : { name: input.name }),
+        ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
+        ...(config === undefined ? {} : { config }),
+      });
+      if (replacingSecret !== undefined) {
+        this.credentials.setSecret(resourceId, replacingSecret, now);
+      } else if (input.secret === null) {
+        this.credentials.clearSecret(resourceId);
+      }
+      if (
+        current.kind === "model" &&
+        (nextConfig.protocol !== current.config.protocol ||
+          nextConfig.baseUrl !== current.config.baseUrl)
+      ) {
+        // 地址或协议变了，旧测试结果不再对应当前服务。
+        this.appStore.deleteModelTestCalls(resourceId);
+      }
+    })();
+    // 模型服务的启用、连接或凭据变化都可能让原先等待的消息重新可调度（R02）。
+    if (current.kind === "model") {
+      this.wakePendingWork();
+    }
+    return this.view(resourceId);
+  }
+
+  /** update() 与 validateUpdate() 共用的校验与归一化，不写存储。 */
+  private prepareUpdate(
+    resourceId: string,
+    input: UpdateResourceInput,
+  ): {
+    current: ResourceRecord;
+    config: Record<string, unknown> | undefined;
+    replacingSecret: string | undefined;
+    nextConfig: Record<string, unknown>;
+  } {
     const current = this.appStore.getResource(resourceId);
     const config =
       input.config === undefined
@@ -155,18 +257,27 @@ export class ResourceService {
               ? mergeRedactedMcpEnv(current.config, input.config)
               : input.config,
           );
-    // 全局关闭与 MCP／Skill 修改要避开角色选择与未结束任务链（DL-148、DL-71／73）。
-    if (input.enabled === false && current.enabled) {
-      this.assertNotInUse(resourceId, "DISABLE");
-    } else if (current.kind !== "model") {
-      this.assertNotInUse(resourceId, "UPDATE");
+    // MCP／Skill：单独切换启用状态立即生效（新任务不再选择，旧任务继续，278 §3）；
+    // 同时修改运行配置或名称时按占用检查整笔处理。
+    if (current.kind !== "model") {
+      const nameChanged = input.name !== undefined && input.name !== current.name;
+      const configChanged =
+        config !== undefined &&
+        JSON.stringify(config) !== JSON.stringify(current.config);
+      const onlyToggle =
+        input.enabled !== undefined &&
+        input.secret === undefined &&
+        !nameChanged &&
+        !configChanged;
+      if (!onlyToggle) {
+        this.assertNotInUse(resourceId, "UPDATE");
+      }
     }
     const replacingSecret =
       typeof input.secret === "string" ? input.secret : undefined;
     if (replacingSecret !== undefined) {
       this.assertSecretAllowed(current.kind, config ?? current.config);
     }
-    const now = this.now().toISOString();
     const nextConfig = config ?? current.config;
     const keepsStoredSecret =
       input.secret === undefined &&
@@ -195,28 +306,7 @@ export class ResourceService {
         }
       }
     }
-    this.appStore.db.transaction(() => {
-      this.appStore.updateResource({
-        resourceId,
-        ...(input.name === undefined ? {} : { name: input.name }),
-        ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
-        ...(config === undefined ? {} : { config }),
-      });
-      if (replacingSecret !== undefined) {
-        this.credentials.setSecret(resourceId, replacingSecret, now);
-      } else if (input.secret === null) {
-        this.credentials.clearSecret(resourceId);
-      }
-      if (
-        current.kind === "model" &&
-        (nextConfig.protocol !== current.config.protocol ||
-          nextConfig.baseUrl !== current.config.baseUrl)
-      ) {
-        // 地址或协议变了，旧测试结果不再对应当前服务。
-        this.appStore.deleteModelTestCalls(resourceId);
-      }
-    })();
-    return this.view(resourceId);
+    return { current, config, replacingSecret, nextConfig };
   }
 
   listBindings(roleId: string): RoleBindingRecord[] {
@@ -235,7 +325,146 @@ export class ResourceService {
   }
 
   /**
-   * 整表替换绑定。`expectedRevision` 可选：页面并行编辑时带上读取到的
+   * 进入目标服务的维护窗口（283 R01）。
+   *
+   * 维护期间：新增启用绑定、恢复仍依赖该服务的角色、以及新执行领取调用
+   * 都会被拒绝或暂缓，避免它们抢在写入前加入。同一服务不允许并发维护。
+   */
+  beginMaintenance(resourceId: string): void {
+    if (this.maintenanceResources.has(resourceId)) {
+      throw new ResourceMaintenanceError(resourceId, "UPDATE");
+    }
+    this.maintenanceResources.add(resourceId);
+  }
+
+  /** 操作结束（成功、失败或取消）后释放维护窗口并唤醒可运行的工作。 */
+  endMaintenance(resourceId: string): void {
+    if (!this.maintenanceResources.delete(resourceId)) {
+      return;
+    }
+    for (const waiter of [...this.maintenanceWaiters]) {
+      if (waiter.resourceId === resourceId) waiter.resolve();
+    }
+    this.wakePendingWork();
+  }
+
+  isUnderMaintenance(resourceId: string): boolean {
+    return this.maintenanceResources.has(resourceId);
+  }
+
+  /**
+   * 领取一次模型调用：维护检查与在途登记在同一个同步步骤完成，
+   * 避免检查之后、登记之前被新的维护窗口插入（283 §13 R01）。
+   * 未被接纳时调用方应等待维护结束再重试。
+   */
+  claimModelCall(
+    roleId: string,
+    resourceId: string,
+  ): { admitted: boolean; release: () => void } {
+    if (this.maintenanceResources.has(resourceId)) {
+      return { admitted: false, release: () => undefined };
+    }
+    const token = ++this.inflightClaimSeq;
+    this.inflightClaims.set(token, { roleId, resourceId });
+    return {
+      admitted: true,
+      release: () => {
+        this.inflightClaims.delete(token);
+      },
+    };
+  }
+
+  /** 目标服务的在途角色：外部（记忆、对话执行）与已领取的后台调用合并。 */
+  inflightRoleIds(resourceId: string): string[] {
+    const roles = new Set(this.externalInflightRoleIds(resourceId));
+    for (const entry of this.inflightClaims.values()) {
+      if (entry.resourceId === resourceId) roles.add(entry.roleId);
+    }
+    return [...roles].sort();
+  }
+
+  /**
+   * 等待该角色已领取的后台调用真正结算（283 §15 R03）。
+   * 取消只结束外层等待；这里等到领取释放，删除才能在模型收尾后移除角色。
+   * 超时返回 false，由删除流程返回可重试的失败并保留角色。
+   */
+  async waitForRoleInflightIdle(
+    roleId: string,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (this.hasClaimForRole(roleId)) {
+      if (Date.now() >= deadline) {
+        return false;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return true;
+  }
+
+  private hasClaimForRole(roleId: string): boolean {
+    for (const entry of this.inflightClaims.values()) {
+      if (entry.roleId === roleId) return true;
+    }
+    return false;
+  }
+
+  /**
+   * 后台调用在维护窗口内的领取协调（278 §2.1）：
+   * 目标服务维护中时等待结束；调用方醒来后要重新解析绑定，使用已保存配置。
+   * 中止信号只会让等待提前返回，真正的请求仍由调用方的信号处理。
+   */
+  waitForMaintenanceEnd(
+    resourceId: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (!this.maintenanceResources.has(resourceId)) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      const waiter = { resourceId, resolve: () => undefined as void };
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        this.maintenanceWaiters.delete(waiter);
+        signal?.removeEventListener("abort", finish);
+        resolve();
+      };
+      waiter.resolve = finish;
+      this.maintenanceWaiters.add(waiter);
+      if (signal !== undefined) {
+        if (signal.aborted) {
+          finish();
+          return;
+        }
+        signal.addEventListener("abort", finish, { once: true });
+      }
+    });
+  }
+
+  /**
+   * 恢复活动前的维护检查：按运行时实际解析的对话与记忆目标判断
+   * （283 §13 R04）。失效或停用的独立记忆绑定会回退到对话模型，
+   * 不应因为它指向维护中的服务而阻止恢复。
+   * 旧任务链的续行按任务在调度入口暂缓，也不阻止恢复。
+   */
+  assertResumeAllowed(roleId: string): void {
+    if (this.maintenanceResources.size === 0) {
+      return;
+    }
+    const targets = this.bindings.usageTargets(roleId);
+    for (const resourceId of [
+      targets.chatResourceId,
+      targets.memoryResourceId,
+    ]) {
+      if (resourceId !== null && this.maintenanceResources.has(resourceId)) {
+        throw new ResourceMaintenanceError(resourceId, "RESUME");
+      }
+    }
+  }
+
+  /** 整表替换绑定。`expectedRevision` 可选：页面并行编辑时带上读取到的
    * revision，过期就返回 409，避免两个页面互相覆盖其他能力的绑定。
    */
   replaceBindings(
@@ -250,10 +479,141 @@ export class ResourceService {
       throw new BindingRevisionConflictError(roleId, expectedRevision, actual);
     }
     const normalized = this.validateBindings(bindings);
+    // 维护中的服务不接受新增的启用绑定：先保存绑定再恢复角色会抢在
+    // 模型写入之前加入新依赖（283 R01）。
+    if (this.maintenanceResources.size > 0) {
+      const alreadyEnabled = new Set(
+        current
+          .filter((binding) => binding.enabled)
+          .map((binding) => binding.resourceId),
+      );
+      for (const binding of normalized) {
+        if (
+          binding.enabled &&
+          !alreadyEnabled.has(binding.resourceId) &&
+          this.maintenanceResources.has(binding.resourceId)
+        ) {
+          throw new ResourceMaintenanceError(binding.resourceId, "BINDINGS");
+        }
+      }
+    }
     const items = this.access.withStore(roleId, (storage) =>
       storage.business.replaceRoleBindings(roleId, normalized),
     );
+    this.wakePendingWork(roleId);
     return { items, revision: revisionOf(items) };
+  }
+
+  /**
+   * 影响范围（278 §2、283 R04）：与运行时使用同一份模型解析规则。
+   * 全局停用且无续用的资源不再被列为依赖；独立记忆模型不可用时按回退
+   * 到对话模型计入实际目标；只有旧任务依赖时只记任务用途。
+   */
+  impact(resourceId: string): ResourceImpactView {
+    const resource = this.appStore.getResource(resourceId);
+    const roles: ResourceImpactRole[] = [];
+    let blockingTasks = 0;
+    for (const index of this.appStore.listRoleIndexes()) {
+      if (index.initStatus !== "ready") continue;
+      const targets = this.bindings.usageTargets(index.roleId);
+      const taskIds = this.access.withStore(index.roleId, (storage) =>
+        storage.business
+          .listOpenResourceContinuations(resourceId)
+          .map((task) => task.taskId),
+      );
+      const usages = new Set<"chat" | "memory" | "task">();
+      if (targets.chatResourceId === resourceId) usages.add("chat");
+      if (targets.memoryResourceId === resourceId) usages.add("memory");
+      if (taskIds.length > 0) usages.add("task");
+      if (usages.size === 0) continue;
+      if (usages.has("task")) blockingTasks += taskIds.length;
+      const activity = this.activityOf(index.roleId);
+      roles.push({
+        roleId: index.roleId,
+        displayName: index.initPayload?.displayName ?? index.roleId,
+        usages: [...usages],
+        taskIds,
+        state: activity.state,
+        running: activity.running,
+      });
+    }
+    return {
+      resourceId,
+      kind: resource.kind,
+      roles,
+      blockingTasks,
+    };
+  }
+
+  /**
+   * 维护计划：模型连接参数或密钥变化时，返回需要暂停的依赖角色。
+   * 只暂停对话／记忆实际解析到该服务的角色；只有旧任务依赖时不暂停角色，
+   * 由调度在任务领取与续行入口按任务暂缓（283 R04）。只改名或只切换
+   * 启用状态不需要暂停。
+   */
+  maintenancePlan(
+    resourceId: string,
+    input: UpdateResourceInput,
+  ): {
+    connectionChanged: boolean;
+    pauseRoleIds: string[];
+    /** 已停止但仍在目标服务上有在途后台调用：只等待，不加入恢复名单。 */
+    waitRoleIds: string[];
+  } {
+    const current = this.appStore.getResource(resourceId);
+    if (current.kind !== "model") {
+      return { connectionChanged: false, pauseRoleIds: [], waitRoleIds: [] };
+    }
+    const nextConfig =
+      input.config === undefined
+        ? current.config
+        : parseResourceConfig("model", input.config);
+    const connectionChanged =
+      String(nextConfig.protocol) !== String(current.config.protocol) ||
+      String(nextConfig.baseUrl) !== String(current.config.baseUrl) ||
+      nextConfig.credentialRef !== current.config.credentialRef ||
+      input.secret !== undefined;
+    if (!connectionChanged) {
+      return { connectionChanged: false, pauseRoleIds: [], waitRoleIds: [] };
+    }
+    const roles = this.impact(resourceId).roles;
+    const pauseRoleIds = roles
+      .filter(
+        (role) =>
+          role.state !== "stopped" &&
+          (role.usages.includes("chat") || role.usages.includes("memory")),
+      )
+      .map((role) => role.roleId);
+    // 等待直接依据目标服务的在途调用，不跟当前影响范围取交集：
+    // 服务停用或角色改绑后旧调用仍属于该服务（283 §7 R01）。
+    // 已停止角色只等待，不进入恢复名单。
+    const waitRoleIds = [...new Set(this.inflightRoleIds(resourceId))].sort();
+    return { connectionChanged: true, pauseRoleIds, waitRoleIds };
+  }
+
+  /**
+   * 等待已停止角色在目标服务上的在途后台调用结算（283 §6 R01）。
+   * 返回超时后仍在途的角色；这些角色不加入本次维护的恢复名单。
+   */
+  async waitForInflightIdle(
+    resourceId: string,
+    roleIds: readonly string[],
+    timeoutMs: number,
+  ): Promise<string[]> {
+    if (roleIds.length === 0) {
+      return [];
+    }
+    const deadline = Date.now() + timeoutMs;
+    let busy = this.inflightRoleIds(resourceId).filter((roleId) =>
+      roleIds.includes(roleId),
+    );
+    while (busy.length > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      busy = this.inflightRoleIds(resourceId).filter((roleId) =>
+        roleIds.includes(roleId),
+      );
+    }
+    return busy;
   }
 
   /**
@@ -292,26 +652,40 @@ export class ResourceService {
         }
       });
     }
+    // 目标服务上仍有在途模型调用：即使绑定已改走或任务已终结，删除也要等结算
+    // （283 §8 R01）。等待名单直接按目标服务判断，不受当前影响范围影响。
+    for (const roleId of this.inflightRoleIds(resourceId)) {
+      references.push({
+        roleId,
+        capability: null,
+        bindingEnabled: null,
+        reason: "INFLIGHT_CALL",
+      });
+    }
     const bindings = references.filter(
       (item) => item.reason === "ROLE_BINDING",
     );
     const chains = references.filter((item) => item.reason === "TASK_CHAIN");
+    const inflight = references.filter(
+      (item) => item.reason === "INFLIGHT_CALL",
+    );
     const scoped = resource.kind === "mcp" || resource.kind === "skill";
     const enabledBinding = bindings.some(
       (item) => item.bindingEnabled === true,
     );
     // MCP／Skill：启用中的角色开关或未结束任务链都拦修改与全局关闭；
-    // 模型服务的修改由「所有角色已停止」守卫负责。
+    // 模型服务的修改由维护协调负责。
     const canUpdate = scoped ? !enabledBinding && chains.length === 0 : true;
     return {
       resourceId,
       kind: resource.kind,
       references,
       canUpdate,
-      canDisable: canUpdate,
-      // 删除：启用中的角色开关与未结束任务链拦删除；关闭的绑定不拦（236 §8），
-      // 删除时由 remove() 一并清理，避免留下指向已删资源的绑定行。
-      canDelete: !enabledBinding && chains.length === 0,
+      // 全局停用立即阻止新任务，原任务按 DL-71／73 继续（278 §3）。
+      canDisable: true,
+      // 删除：启用中的角色开关、未结束任务链与在途调用都拦删除（236 §8、283 §8）。
+      canDelete:
+        !enabledBinding && chains.length === 0 && inflight.length === 0,
     };
   }
 

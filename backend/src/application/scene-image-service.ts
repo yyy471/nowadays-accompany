@@ -54,6 +54,8 @@ export interface SceneImageServiceOptions {
   generationTimeoutMs?: number;
   /** 图片完整解码；单独注入便于验证关闭覆盖解码等待。 */
   imageInspector?: typeof inspectImage;
+  /** 角色删除收尾期间拒绝新任务（283 §14 R03）。 */
+  isRoleDeleting?: (roleId: string) => boolean;
 }
 
 export interface RequestSceneImageInput {
@@ -77,6 +79,7 @@ export class SceneImageService {
   private readonly generator: SceneImageGeneratorPort;
   private readonly generationTimeoutOverride: number | null;
   private readonly inspect: typeof inspectImage;
+  private readonly isRoleDeleting: (roleId: string) => boolean;
   private readonly inFlight = new Map<string, Set<Promise<void>>>();
   private readonly controllers = new Set<AbortController>();
   private readonly controllerRoles = new Map<AbortController, string>();
@@ -93,6 +96,7 @@ export class SceneImageService {
     this.generator = options.generator ?? new FakeSceneImageGenerator();
     this.generationTimeoutOverride = options.generationTimeoutMs ?? null;
     this.inspect = options.imageInspector ?? inspectImage;
+    this.isRoleDeleting = options.isRoleDeleting ?? (() => false);
   }
 
   /**
@@ -105,6 +109,15 @@ export class SceneImageService {
     messageId: string,
     input: RequestSceneImageInput,
   ): SceneImageRequestResult {
+    // 删除正在收尾：不再接收新任务，已接收的任务按原规则结算或取消。
+    if (this.isRoleDeleting(roleId)) {
+      throw new AppError(
+        409,
+        "ROLE_DELETING",
+        "角色正在删除，不能再生成过场图",
+        { roleId },
+      );
+    }
     // 接收任务时就固定当前生图配置，规划期间修改模型或锚点不影响本次任务。
     const config = this.generator.lock?.(roleId) ?? null;
     const result = this.roleAccess.withStore(roleId, (storage) => {

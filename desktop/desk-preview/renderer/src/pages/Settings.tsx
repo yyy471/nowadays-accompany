@@ -11,6 +11,7 @@ import { ImagePanel } from '../components/image/ImagePanel';
 import { ModelNamePicker } from '../components/model/ModelNamePicker';
 import { useModelProbe, type ModelProbeTarget } from '../components/model/use-model-probe';
 import { clearModelCache, providerCacheKey, writeModelCache } from '../components/model/model-cache.js';
+import { mergeBindingDrafts } from '../components/model/binding-merge.js';
 import type { ConfigDraftState } from '../components/config-draft';
 import { useThemePreset } from '../ui/presets';
 import { ConfigThemeTransition } from '../ui/config-theme-transition';
@@ -25,15 +26,25 @@ type Draft = { name: string; definition: string; revision: number; payload: Reco
 const roleSections: Array<[RoleSection, string, string]> = [['profile', '设定', '关于这个人'], ['look', '外观', '立绘与服饰'], ['models', '模型', '对话与演出'], ['ext', '扩展', '工具与知识'], ['quota', '自主额度', '属于自己的时间'], ['done', '完成度', '慢慢补全']];
 const settingSections: Array<[SettingsSection, string, string]> = [['model', '模型', '服务与连接'], ['mcp', 'MCP', '工具服务'], ['skill', 'Skill', '方法与知识'], ['roles', '角色状态', '活动与停止'], ['local', '本机', '此设备的偏好']];
 const errorText = (e: unknown) => e instanceof Error ? e.message : String(e);
+/** 从保存失败的结构化详情里取出本次已暂停的角色（283 R05）。 */
+const pausedRoleIdsOf = (e: unknown): string[] => {
+  if (!(e instanceof ApiError)) return [];
+  const details = e.details;
+  if (details === null || typeof details !== 'object') return [];
+  const maintenance = (details as { maintenance?: unknown }).maintenance;
+  if (maintenance === null || typeof maintenance !== 'object') return [];
+  const ids = (maintenance as { pausedRoleIds?: unknown }).pausedRoleIds;
+  return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [];
+};
 const activityText = (a?: Activity) => !a ? '状态未获取' : a.state === 'active' ? (a.running ? '运行中' : '已启用') : a.state === 'stopping' ? '正在停止' : '已停止';
 
 type ModelPart = 'chat' | 'memory' | 'voice' | 'image';
 type RoleDirty = { profile: boolean; models: boolean; voice: boolean; image: boolean; ext: boolean; quota: boolean };
 type RoleEditorState = { dirty: RoleDirty; busy: boolean; discard: () => void };
-type Props = { page: string; roles: RoleListItem[]; currentId: string; roleListError: string; onRoleDeleted: (id: string) => void; onSelectCompanion: (id: string) => void; onRefresh: () => Promise<void>; onNavigate: (page: string) => void };
+type Props = { page: string; roles: RoleListItem[]; currentId: string; roleListError: string; onRoleDeleted: (id: string) => void; onSelectCompanion: (id: string) => void; onRefresh: () => Promise<void>; onNavigate: (page: string) => void; workspaceRequest?: { kind: 'section'; roleId: string; section: RoleSection; key: number } | { kind: 'create'; key: number } | null; onStartConversation?: (roleId: string) => void };
 
 /** 两页常驻以保留跨页草稿；编辑对象绝不隐式改变陪伴对象。 */
-export function SettingsWorkspace({ page, roles, currentId, roleListError, onRoleDeleted, onSelectCompanion, onRefresh, onNavigate }: Props) {
+export function SettingsWorkspace({ page, roles, currentId, roleListError, onRoleDeleted, onSelectCompanion, onRefresh, onNavigate, workspaceRequest, onStartConversation }: Props) {
   const motion = useMotionPolicy();
   const { preset } = useThemePreset();
   const [editId, setEditId] = useState('');
@@ -97,6 +108,19 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
     if (!roles.some(role => role.roleId === editId)) setEditId(roles.find(role => role.roleId === currentId)?.roleId || roles[0]?.roleId || '');
   }, [roles, currentId, editId]);
   useEffect(() => { if (editId) setVisited(previous => previous.includes(editId) ? previous : [...previous, editId]); }, [editId]);
+  useEffect(() => {
+    if (!workspaceRequest || page !== 'role-config') return;
+    if (workspaceRequest.kind === 'create') {
+      setShowRoles(true);
+      setCreating(true);
+      return;
+    }
+    if (!roles.some(role => role.roleId === workspaceRequest.roleId)) return;
+    setEditId(workspaceRequest.roleId);
+    setRoleSection(workspaceRequest.section);
+    if (workspaceRequest.section === 'models') setModelPart('chat');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceRequest?.key, page, roles]);
   useEffect(() => { if (pendingRole) pendingPrompt.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus(); }, [pendingRole]);
   useEffect(() => {
     if (!roleActive && !settingsActive) return;
@@ -215,9 +239,9 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
         <div className="config-leaf-body" ref={contentRef}>
           {roleListError && <p role="alert" className="config-delete-notice">角色列表同步失败：{roleListError} <button type="button" onClick={() => void onRefresh()}>重试读取角色列表</button></p>}
           {deleteNotice && roleActive && <p role="status" className="config-delete-notice">{deleteNotice}</p>}
-          {visited.filter(id => roles.some(role => role.roleId === id)).map(id => <RoleEditor key={id} roleId={id} roleCount={roles.length} active={roleActive && editId === id} activity={activityError ? undefined : activities.find(item => item.roleId === id)} section={roleSection} modelPart={modelPart} setModelPart={setModelPart} draft={drafts[id]} setDraft={draft => setDrafts(previous => ({ ...previous, [id]: draft }))} resources={resources} removedResources={removedResources} resourceError={resourceError} onEditorState={updateEditorState} onOpenSettings={openSettings} onPreviewOutfit={outfit => setStagePreview(outfit.home ? { roleId: id, assetId: outfit.home.assetId } : null)} onPreviewAsset={assetId => setStagePreview({ roleId: id, assetId })} onClearPreview={() => setStagePreview(previous => previous?.roleId === id ? null : previous)} onDeleted={async (roleId, keepHistory, filesRemoved) => { onRoleDeleted(roleId); setStagePreview(previous => previous?.roleId === roleId ? null : previous); setDeleteNotice(keepHistory ? '角色已移除，记忆与对话数据保留在本机目录。' : filesRemoved ? '角色及其本机数据已删除。' : '角色已移除，部分文件尚待清理，后端将继续处理。'); await onRefresh(); setDrafts(previous => { const next = { ...previous }; delete next[roleId]; return next; }); setRefreshVersion(v => v + 1); }} onRefresh={async () => { await onRefresh(); setRefreshVersion(v => v + 1); }} />)}
+          {visited.filter(id => roles.some(role => role.roleId === id)).map(id => <RoleEditor key={id} roleId={id} roleCount={roles.length} active={roleActive && editId === id} activity={activityError ? undefined : activities.find(item => item.roleId === id)} section={roleSection} modelPart={modelPart} setModelPart={setModelPart} draft={drafts[id]} setDraft={draft => setDrafts(previous => ({ ...previous, [id]: draft }))} resources={resources} removedResources={removedResources} resourceError={resourceError} onEditorState={updateEditorState} onOpenSettings={openSettings} onStartConversation={onStartConversation} onPreviewOutfit={outfit => setStagePreview(outfit.home ? { roleId: id, assetId: outfit.home.assetId } : null)} onPreviewAsset={assetId => setStagePreview({ roleId: id, assetId })} onClearPreview={() => setStagePreview(previous => previous?.roleId === id ? null : previous)} onDeleted={async (roleId, keepHistory, filesRemoved) => { onRoleDeleted(roleId); setStagePreview(previous => previous?.roleId === roleId ? null : previous); setDeleteNotice(keepHistory ? '角色已移除，记忆与对话数据保留在本机目录。' : filesRemoved ? '角色及其本机数据已删除。' : '角色已移除，部分文件尚待清理，后端将继续处理。'); await onRefresh(); setDrafts(previous => { const next = { ...previous }; delete next[roleId]; return next; }); setRefreshVersion(v => v + 1); }} onRefresh={async () => { await onRefresh(); setRefreshVersion(v => v + 1); }} />)}
           {roleActive && !editId && <p>还没有角色，请先创建角色。</p>}
-          {visitedResources.map(id => { const resource = resources.find(item => item.resourceId === id); if (!resource) return null; const visible = settingsActive && id === selectedResource && resource.kind === settingsSection && newExtension !== resource.kind && !(settingsSection === 'model' && (newModel || modelKind === 'image' || modelKind === 'voice')); return <ResourceDetail key={id} resource={resource} active={visible} canWrite={activityReady && roles.every(role => activities.find(item => item.roleId === role.roleId)?.state === 'stopped')} onRemoved={resourceId => setRemovedResources(previous => previous.includes(resourceId) ? previous : [...previous, resourceId])} onUpdated={() => setRefreshVersion(v => v + 1)} />; })}
+          {visitedResources.map(id => { const resource = resources.find(item => item.resourceId === id); if (!resource) return null; const visible = settingsActive && id === selectedResource && resource.kind === settingsSection && newExtension !== resource.kind && !(settingsSection === 'model' && (newModel || modelKind === 'image' || modelKind === 'voice')); return <ResourceDetail key={id} resource={resource} active={visible} canWrite={true} onRemoved={resourceId => setRemovedResources(previous => previous.includes(resourceId) ? previous : [...previous, resourceId])} onUpdated={() => setRefreshVersion(v => v + 1)} />; })}
           {(['mcp', 'skill'] as const).map(kind => <ExtensionCreate key={kind} kind={kind} active={settingsActive && settingsSection === kind && newExtension === kind} onCancel={() => setNewExtension(null)} onCreated={resource => { setResources(previous => [...previous, resource]); setRefreshVersion(v => v + 1); if (viewRef.current.settingsActive && viewRef.current.settingsSection === kind && viewRef.current.newExtension === kind) { setSelectedResource(resource.resourceId); setNewExtension(null); } }}/>) }
           {settingsActive && (settingsSection === 'mcp' || settingsSection === 'skill' || settingsSection === 'model' && (modelKind === 'chat' || modelKind === 'memory') && !newModel) && !filtered.length && <div className="config-prose"><ConfigHeading number="01" label="资源" english="RESOURCES" title="选择一项资源" description="从左页选择已保存的资源。"/></div>}
           {settingsActive && settingsSection === 'model' && modelKind === 'image' && <ImageServiceDetail key={selectedResource} service={imageServices.find(item => item.serviceId === selectedResource)} />}
@@ -278,13 +302,59 @@ function RolePortrait({ roleId, version = 0, previewAssetId, cycle }: { roleId: 
   return <div className="config-portrait">{url ? <><img src={url} alt="角色立绘"/>{previousUrl && <img className="config-portrait-old" src={previousUrl} alt="" aria-hidden="true"/>}</> : <span>还没有配置立绘</span>}</div>;
 }
 
-function RoleEditor({ roleId, roleCount, active, activity, section, modelPart, setModelPart, draft, setDraft, resources, removedResources, resourceError, onEditorState, onOpenSettings, onPreviewOutfit, onPreviewAsset, onClearPreview, onDeleted, onRefresh }: { roleId: string; roleCount: number; active: boolean; activity?: Activity; section: RoleSection; modelPart: ModelPart; setModelPart: (part: ModelPart) => void; draft?: Draft; setDraft: (draft: Draft) => void; resources: Resource[]; removedResources: string[]; resourceError: string; onEditorState: (roleId: string, state: RoleEditorState | null) => void; onOpenSettings: (section: SettingsSection) => void; onPreviewOutfit: (outfit: Outfit) => void; onPreviewAsset: (assetId: string) => void; onClearPreview: () => void; onDeleted: (roleId: string, keepHistory: boolean, filesRemoved: boolean) => Promise<void>; onRefresh: () => Promise<void> }) {
+function RoleEditor({ roleId, roleCount, active, activity, section, modelPart, setModelPart, draft, setDraft, resources, removedResources, resourceError, onEditorState, onOpenSettings, onStartConversation, onPreviewOutfit, onPreviewAsset, onClearPreview, onDeleted, onRefresh }: { roleId: string; roleCount: number; active: boolean; activity?: Activity; section: RoleSection; modelPart: ModelPart; setModelPart: (part: ModelPart) => void; draft?: Draft; setDraft: (draft: Draft) => void; resources: Resource[]; removedResources: string[]; resourceError: string; onEditorState: (roleId: string, state: RoleEditorState | null) => void; onOpenSettings: (section: SettingsSection) => void; onStartConversation?: (roleId: string) => void; onPreviewOutfit: (outfit: Outfit) => void; onPreviewAsset: (assetId: string) => void; onClearPreview: () => void; onDeleted: (roleId: string, keepHistory: boolean, filesRemoved: boolean) => Promise<void>; onRefresh: () => Promise<void> }) {
   const [voiceDraft, setVoiceDraft] = useState<ConfigDraftState | null>(null);
   const [imageDraft, setImageDraft] = useState<ConfigDraftState | null>(null);
   const [detailError, setDetailError] = useState('');
   const [savedProfile, setSavedProfile] = useState<Draft | undefined>(draft);
   const [saveBusy, setSaveBusy] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
+  // 278 §1：应用内先暂停角色，后端确认 stopped 后再提交这次操作。
+  const [pausedForWrite, setPausedForWrite] = useState(false);
+  const [pauseNote, setPauseNote] = useState('');
+  const ensureRoleStopped = async (): Promise<boolean> => {
+    if (!activity) { setPauseNote('角色状态未获取，请稍后重试。'); return false; }
+    if (activity.state === 'stopped') return true;
+    try {
+      setPauseNote('正在暂停角色…');
+      if (activity.state !== 'stopping') {
+        await api(`/v1/roles/${encodeURIComponent(roleId)}/activity/stop`, { method: 'POST' });
+      }
+      const deadline = Date.now() + 20_000;
+      while (Date.now() < deadline) {
+        const view = await api<{ activity: Activity }>(`/v1/roles/${encodeURIComponent(roleId)}/activity`);
+        if (view.activity.state === 'stopped') {
+          setPausedForWrite(true);
+          setPauseNote('角色已暂停。保存完成后可按需继续活动。');
+          await onRefresh();
+          return true;
+        }
+        await new Promise(resolve => window.setTimeout(resolve, 250));
+      }
+      setPauseNote('角色尚未确认停止，请稍后重试。');
+      return false;
+    } catch (e) {
+      setPauseNote(`暂停角色失败：${errorText(e)}`);
+      return false;
+    }
+  };
+  // 供外观、语音、生图面板复用：写入前先暂停角色，失败则拒绝本次写入。
+  const guardAction = async <T,>(action: () => Promise<T>): Promise<T> => {
+    if (!(await ensureRoleStopped())) {
+      throw new Error('角色尚未确认停止，请稍后重试。');
+    }
+    return action();
+  };
+  const resumeAfterWrite = async () => {
+    try {
+      await api(`/v1/roles/${encodeURIComponent(roleId)}/activity/resume`, { method: 'POST' });
+      setPausedForWrite(false);
+      setPauseNote('角色已继续活动。');
+      await onRefresh();
+    } catch (e) {
+      setPauseNote(`继续活动失败：${errorText(e)}`);
+    }
+  };
   const [bindings, setBindings] = useState<Binding[]>([]);
   const [bindingLoaded, setBindingLoaded] = useState(false);
   const [bindingRevision, setBindingRevision] = useState('');
@@ -359,9 +429,10 @@ function RoleEditor({ roleId, roleCount, active, activity, section, modelPart, s
   useEffect(() => { let live = true; api<RoleStateResponse>(`/v1/roles/${encodeURIComponent(roleId)}/state`).then(result => { if (live) setOutfitId(typeof result.state.outfitId === 'string' ? result.state.outfitId : ''); }).catch(() => { if (live) setOutfitId(''); }); return () => { live = false; }; }, [roleId, lookVersion]);
   const extensions = bindings.filter(item => item.capability === 'mcp' || item.capability === 'skill');
   const saveProfile = async () => {
-    if (!draft || saveBusy || activity?.state !== 'stopped' || !draft.name.trim() || !draft.definition.trim()) return;
+    if (!draft || saveBusy || !draft.name.trim() || !draft.definition.trim()) return;
     setSaveBusy(true); setDetailError(''); setSaveMessage('');
     try {
+      if (!(await ensureRoleStopped())) return;
       const saved = await api<{ definitionRevision: number; updatedAt: string }>(`/v1/roles/${encodeURIComponent(roleId)}/definition`, { method: 'PATCH', body: { displayName: draft.name.trim(), definition: { text: draft.definition.trim(), payload: draft.payload }, expectedRevision: draft.revision } });
       const next = { name: draft.name.trim(), definition: draft.definition.trim(), payload: draft.payload, revision: saved.definitionRevision };
       setSavedProfile(next); setDraft(next);
@@ -369,25 +440,51 @@ function RoleEditor({ roleId, roleCount, active, activity, section, modelPart, s
     } catch (e) { setDetailError(errorText(e)); } finally { setSaveBusy(false); }
   };
   const saveBindings = async (scope: 'models' | 'ext') => {
-    if (bindingLock.current || activity?.state !== 'stopped' || !bindingRevision) return;
+    if (bindingLock.current || !bindingRevision) return;
     if (scope === 'models' && ((modelDraft.chatResource && !modelDraft.chatModel.trim()) || (modelDraft.memoryResource && !modelDraft.memoryModel.trim()))) { setBindingError('已选择的模型服务需要填写模型 ID。'); return; }
     bindingLock.current = true; setBindingBusy(true); setBindingError(''); setBindingNotice('');
+    const asInput = (item: Binding) => ({ capability: item.capability, resourceId: item.resourceId, enabled: item.enabled, ...(item.modelName ? { modelName: item.modelName } : {}) });
+    const previous = bindings.filter(item => scope === 'models' ? item.capability !== 'chat_model' && item.capability !== 'memory_model' : item.capability !== 'mcp' && item.capability !== 'skill').map(asInput);
+    const rawNext = scope === 'models' ? [
+      ...(modelDraft.chatResource ? [{ capability: 'chat_model' as const, resourceId: modelDraft.chatResource, modelName: modelDraft.chatModel.trim(), enabled: bindings.find(item => item.capability === 'chat_model' && item.resourceId === modelDraft.chatResource)?.enabled ?? true }] : []),
+      ...(modelDraft.memoryResource ? [{ capability: 'memory_model' as const, resourceId: modelDraft.memoryResource, modelName: modelDraft.memoryModel.trim(), enabled: bindings.find(item => item.capability === 'memory_model' && item.resourceId === modelDraft.memoryResource)?.enabled ?? true }] : []),
+    ] : [
+      ...bindings.filter(item => (item.capability === 'mcp' || item.capability === 'skill') && !resources.some(resource => resource.resourceId === item.resourceId)).map(asInput),
+      ...resources.filter(item => (item.kind === 'mcp' || item.kind === 'skill') && (extensionDraft[item.resourceId] || bindings.some(binding => binding.resourceId === item.resourceId && binding.capability === item.kind))).map(item => ({ capability: item.kind, resourceId: item.resourceId, enabled: !!extensionDraft[item.resourceId] })),
+    ];
+    const next: Binding[] = rawNext.map(item => ({
+      capability: item.capability as Binding['capability'],
+      resourceId: item.resourceId,
+      modelName: ('modelName' in item ? (item.modelName as string | undefined) ?? null : null),
+      enabled: item.enabled,
+    }));
     try {
-      const asInput = (item: Binding) => ({ capability: item.capability, resourceId: item.resourceId, enabled: item.enabled, ...(item.modelName ? { modelName: item.modelName } : {}) });
-      const previous = bindings.filter(item => scope === 'models' ? item.capability !== 'chat_model' && item.capability !== 'memory_model' : item.capability !== 'mcp' && item.capability !== 'skill').map(asInput);
-      const next = scope === 'models' ? [
-        ...(modelDraft.chatResource ? [{ capability: 'chat_model', resourceId: modelDraft.chatResource, modelName: modelDraft.chatModel.trim(), enabled: bindings.find(item => item.capability === 'chat_model' && item.resourceId === modelDraft.chatResource)?.enabled ?? true }] : []),
-        ...(modelDraft.memoryResource ? [{ capability: 'memory_model', resourceId: modelDraft.memoryResource, modelName: modelDraft.memoryModel.trim(), enabled: bindings.find(item => item.capability === 'memory_model' && item.resourceId === modelDraft.memoryResource)?.enabled ?? true }] : []),
-      ] : [
-        ...bindings.filter(item => (item.capability === 'mcp' || item.capability === 'skill') && !resources.some(resource => resource.resourceId === item.resourceId)).map(asInput),
-        ...resources.filter(item => (item.kind === 'mcp' || item.kind === 'skill') && (extensionDraft[item.resourceId] || bindings.some(binding => binding.resourceId === item.resourceId && binding.capability === item.kind))).map(item => ({ capability: item.kind, resourceId: item.resourceId, enabled: !!extensionDraft[item.resourceId] })),
-      ];
+      if (!(await ensureRoleStopped())) return;
       const result = await api<{ items: Binding[]; revision: string }>(`/v1/roles/${encodeURIComponent(roleId)}/bindings`, { method: 'PUT', body: { bindings: [...previous, ...next], expectedRevision: bindingRevision } });
       setBindings(result.items); setBindingRevision(result.revision); setBindingNotice(scope === 'models' ? '模型选择已保存。' : '扩展选择已保存。');
     } catch (e) {
       if (e instanceof ApiError && e.code === 'BINDING_REVISION_CONFLICT') {
-        setBindingRevision('');
-        setBindingError('绑定已被其他操作修改。请重新读取绑定后检查草稿，再保存。');
+        // 字段级合并：服务端变化与本次草稿修改不重叠时自动合并并重试一次。
+        try {
+          const latest = await api<{ items: Binding[]; revision: string }>(`/v1/roles/${encodeURIComponent(roleId)}/bindings`);
+          const { items: mergedItems, conflicts } = mergeBindingDrafts({ base: bindings, draft: next, latest: latest.items, scope });
+          if (conflicts.length > 0) {
+            // 同一用途被两边改成不同目标：保留草稿，要求重新读取后再确认。
+            setBindingRevision('');
+            const labels = conflicts.map(key => scope === 'models'
+              ? ({ chat_model: '对话模型', memory_model: '记忆模型' } as Record<string, string>)[key] ?? key
+              : resources.find(item => item.resourceId === key.slice(key.indexOf(':') + 1))?.name ?? key);
+            setBindingError(`绑定冲突：${labels.join('、')}。请重新读取绑定后检查草稿，再保存。`);
+          } else {
+            const retried = await api<{ items: Binding[]; revision: string }>(`/v1/roles/${encodeURIComponent(roleId)}/bindings`, { method: 'PUT', body: { bindings: mergedItems.map(item => asInput(item as Binding)), expectedRevision: latest.revision } });
+            setBindings(retried.items); setBindingRevision(retried.revision); setBindingNotice('已与最新绑定自动合并并保存。');
+          }
+        } catch (retryError) {
+          if (retryError instanceof ApiError && retryError.code === 'BINDING_REVISION_CONFLICT') {
+            setBindingRevision('');
+            setBindingError('绑定仍在被其他操作修改。请重新读取绑定后检查草稿，再保存。');
+          } else setBindingError(errorText(retryError));
+        }
       } else setBindingError(errorText(e));
     } finally { bindingLock.current = false; setBindingBusy(false); }
   };
@@ -405,9 +502,10 @@ function RoleEditor({ roleId, roleCount, active, activity, section, modelPart, s
     finally { bindingLock.current = false; setBindingBusy(false); }
   };
   const saveBudget = async () => {
-    if (budgetBusy || activity?.state !== 'stopped' || !Number.isInteger(budgetDraft.dailyLimit) || budgetDraft.dailyLimit < 1 || budgetDraft.dailyLimit > 1_000_000) return;
+    if (budgetBusy || !Number.isInteger(budgetDraft.dailyLimit) || budgetDraft.dailyLimit < 1 || budgetDraft.dailyLimit > 1_000_000) return;
     setBudgetBusy(true); setBudgetError(''); setBudgetNotice('');
-    try { const result = await api<NonNullable<typeof budget>>(`/v1/roles/${encodeURIComponent(roleId)}/autonomy/budget`, { method: 'PUT', body: budgetDraft }); setBudget(result); setBudgetDraft({ dailyLimit: result.dailyLimit, unlimited: result.unlimited }); setBudgetNotice('自主额度已保存。'); }
+    try {
+      if (!(await ensureRoleStopped())) return; const result = await api<NonNullable<typeof budget>>(`/v1/roles/${encodeURIComponent(roleId)}/autonomy/budget`, { method: 'PUT', body: budgetDraft }); setBudget(result); setBudgetDraft({ dailyLimit: result.dailyLimit, unlimited: result.unlimited }); setBudgetNotice('自主额度已保存。'); }
     catch (e) { setBudgetError(errorText(e)); } finally { setBudgetBusy(false); }
   };
   const savedChat = bindings.find(item => item.capability === 'chat_model');
@@ -429,7 +527,11 @@ function RoleEditor({ roleId, roleCount, active, activity, section, modelPart, s
   }, [roleId, onEditorState, dirtyProfile, dirtyModels, dirtyExt, dirtyQuota, saveBusy, bindingBusy, bindingRevision, budgetBusy, savedProfile, bindings, budget, voiceDraft, imageDraft]);
   useEffect(() => () => onEditorState(roleId, null), [roleId, onEditorState]);
   const list = (items: Binding[]) => items.length ? items.map(item => <div className="config-row" key={`${item.capability}-${item.resourceId}`}><span><strong>{resources.find(resource => resource.resourceId === item.resourceId)?.name || item.resourceId}</strong><small>{item.capability}{item.modelName ? ` · ${item.modelName}` : ''}</small></span><span>{item.enabled ? '角色已开启' : '角色已关闭'}</span></div>) : <p className="config-muted">暂无绑定。</p>;
-  const statusNote = activity?.state !== 'stopped' && <div className="config-active-note"><span>◉</span><p><b>{draft?.name || '角色'}{activity?.state === 'stopping' ? '正在停止' : activity ? '启用中' : '状态未获取'}</b>　可以先修改草稿；保存前需要在「设置 · 角色状态」确认停止。</p><button type="button" onClick={() => onOpenSettings('roles')}>去角色状态</button></div>;
+  const writeLabel = (text: string) => activity?.state === 'stopped' ? text : '暂停并保存';
+  const pausedNote = pausedForWrite && activity?.state === 'stopped' && <div className="config-active-note"><span>◉</span><p><b>{draft?.name || '角色'}已暂停</b>　本次操作已完成或正在保存，可按需继续活动。</p><button type="button" onClick={() => void resumeAfterWrite()}>继续活动</button></div>;
+  const statusNote = (activity?.state !== 'stopped'
+    ? <div className="config-active-note"><span>◉</span><p><b>{draft?.name || '角色'}{activity?.state === 'stopping' ? '正在停止' : activity ? '启用中' : '状态未获取'}</b>　可以先修改草稿；保存时会先暂停角色，后端确认后再提交这次操作。</p><button type="button" onClick={() => onOpenSettings('roles')}>去角色状态</button></div>
+    : pausedNote) || (pauseNote ? <p role="status" className="config-muted">{pauseNote}</p> : null);
   const footer = document.getElementById('config-leaf-actions');
   const selectedModel = (id: string) => resources.find(item => item.resourceId === id)?.name || (id ? '资源不可用' : '未选择');
   const modelOptions = resources.filter(item => item.kind === 'model');
@@ -442,9 +544,9 @@ function RoleEditor({ roleId, roleCount, active, activity, section, modelPart, s
       {statusNote}{detailError && <p role="alert">{detailError}</p>}{saveMessage && <p role="status">{saveMessage}</p>}
       {draft && <><div className="config-ledger"><div className="config-ledger-label"><b>显示名</b><small>对话、主页与日记里的称呼</small></div><div><Input aria-label="显示名" disabled={saveBusy} value={draft.name} maxLength={200} onChange={event => setDraft({ ...draft, name: event.target.value })}/></div></div>
       <div className="config-ledger"><div className="config-ledger-label"><b>人设</b><small>她是谁、怎么说话、在意什么<br/>{draft.definition.length} 字</small></div><div><Textarea aria-label="角色设定" className="config-ruled" disabled={saveBusy} rows={8} value={draft.definition} onChange={event => setDraft({ ...draft, definition: event.target.value })}/></div></div>
-      <RoleDeletion roleId={roleId} roleName={draft.name} roleCount={roleCount} stopped={activity?.state === 'stopped'} onDeleted={onDeleted}/></>}
+      <RoleDeletion roleId={roleId} roleName={draft.name} roleCount={roleCount} activityState={activity?.state} onPaused={() => setPausedForWrite(true)} onStatusRefresh={onRefresh} onDeleted={onDeleted}/></>}
     </div>
-    <div hidden={section !== 'look'} className="config-prose"><ConfigHeading number="02" label="外观" english="WARDROBE" title="衣柜" description="服饰的主页立绘与对话差分。点开一套服饰查看素材。"/>{statusNote}{loaded.look && <AppearancePanel roleId={roleId} currentOutfitId={outfitId} canWrite={activity?.state === 'stopped'} onPreview={onPreviewOutfit} onPreviewAsset={onPreviewAsset} onChanged={() => { onClearPreview(); setLookVersion(v => v + 1); void onRefresh(); }}/>}</div>
+    <div hidden={section !== 'look'} className="config-prose"><ConfigHeading number="02" label="外观" english="WARDROBE" title="衣柜" description="服饰的主页立绘与对话差分。点开一套服饰查看素材。"/>{statusNote}{loaded.look && <AppearancePanel roleId={roleId} currentOutfitId={outfitId} canWrite={!!activity} guardWrite={guardAction} pausedWrite={activity?.state !== 'stopped'} onPreview={onPreviewOutfit} onPreviewAsset={onPreviewAsset} onChanged={() => { onClearPreview(); setLookVersion(v => v + 1); void onRefresh(); }}/>}</div>
     <div hidden={section !== 'models'} className="config-prose"><ConfigHeading number="03" label="模型" english="MODELS" title="模型" description="模型列表和连接测试在设置里；这里配置角色使用的模型和演出。"/>{statusNote}{bindingAlert}
       <div className="config-model-head"><span>用途</span><span>所选模型</span><span>已保存</span><span>当前状态</span></div>
       {([['chat','对话'],['memory','记忆整理'],['image','生图'],['voice','语音']] as const).map(([id,label]) => <div className="config-model-row" key={id}>
@@ -452,43 +554,70 @@ function RoleEditor({ roleId, roleCount, active, activity, section, modelPart, s
         <div hidden={modelPart !== id} className="config-model-details">
           {id === 'chat' && bindingLoaded && <><Field label="对话模型：从设置里已保存的模型中选择"><Select disabled={bindingBusy} value={modelDraft.chatResource} onChange={event => { setModelDraft(previous => ({ ...previous, chatResource: event.target.value, chatModel: '' })); chatProbe.reset(); }}><option value="">未选择</option>{modelOptions.map(item => <option value={item.resourceId} key={item.resourceId}>{item.name}{item.enabled ? '' : '（全局已停用）'}</option>)}</Select></Field>{modelDraft.chatResource ? <ModelNamePicker value={modelDraft.chatModel} onChange={value => setModelDraft(previous => ({ ...previous, chatModel: value }))} models={chatProbe.models} listBusy={chatProbe.listBusy} listError={chatProbe.listError} listLoaded={chatProbe.listLoaded} testBusy={chatProbe.testBusy} testNote={chatProbe.testModel === modelDraft.chatModel ? chatProbe.testNote : ''} onRefresh={() => void chatProbe.refresh({ kind: 'saved', resourceId: modelDraft.chatResource, cacheKey: chatKey })} onTest={() => void chatProbe.test({ kind: 'saved', resourceId: modelDraft.chatResource, cacheKey: chatKey }, modelDraft.chatModel.trim())} testDisabled={!modelDraft.chatModel.trim()} disabled={bindingBusy}/> : <p className="config-muted">未选择对话模型；保存后角色无法开始对话。</p>}</>}
           {id === 'memory' && bindingLoaded && <><Field label="记忆模型"><Select disabled={bindingBusy} value={modelDraft.memoryResource} onChange={event => { setModelDraft(previous => ({ ...previous, memoryResource: event.target.value, memoryModel: '' })); memoryProbe.reset(); }}><option value="">跟随对话模型</option>{modelOptions.map(item => <option value={item.resourceId} key={item.resourceId}>{item.name}{item.enabled ? '' : '（全局已停用）'}</option>)}</Select></Field>{modelDraft.memoryResource ? <ModelNamePicker value={modelDraft.memoryModel} onChange={value => setModelDraft(previous => ({ ...previous, memoryModel: value }))} models={memoryProbe.models} listBusy={memoryProbe.listBusy} listError={memoryProbe.listError} listLoaded={memoryProbe.listLoaded} testBusy={memoryProbe.testBusy} testNote={memoryProbe.testModel === modelDraft.memoryModel ? memoryProbe.testNote : ''} onRefresh={() => void memoryProbe.refresh({ kind: 'saved', resourceId: modelDraft.memoryResource, cacheKey: memoryKey })} onTest={() => void memoryProbe.test({ kind: 'saved', resourceId: modelDraft.memoryResource, cacheKey: memoryKey }, modelDraft.memoryModel.trim())} testDisabled={!modelDraft.memoryModel.trim()} disabled={bindingBusy}/> : <p className="config-muted">跟随对话模型：运行时继承已绑定的对话模型。</p>}</>}
-          {(id === 'chat' || id === 'memory') && <><button type="button" onClick={() => onOpenSettings('model')}>在设置中查看模型 →</button>{bindingNotice && <p role="status">{bindingNotice}</p>}<Button disabled={bindingBusy || !bindingRevision || !!resourceError || activity?.state !== 'stopped'} onClick={() => void saveBindings('models')}>保存模型选择</Button></>}
-          {id === 'voice' && loaded.voice && <VoicePanel roleId={roleId} active={active && section === 'models' && modelPart === 'voice'} onDraftStateChange={setVoiceDraft} onChanged={() => { void onRefresh(); }}/>} {id === 'image' && loaded.image && <ImagePanel roleId={roleId} onDraftStateChange={setImageDraft} onChanged={() => { void onRefresh(); }}/>}
+          {(id === 'chat' || id === 'memory') && <><button type="button" onClick={() => onOpenSettings('model')}>在设置中查看模型 →</button>{id === 'chat' && savedChat?.enabled && savedChat.modelName && onStartConversation ? <Button variant="primary" onClick={() => { void (async () => { if (activity?.state !== 'active') { try { await api(`/v1/roles/${encodeURIComponent(roleId)}/activity/resume`, { method: 'POST' }); await onRefresh(); } catch { /* 状态由原页提示 */ } } onStartConversation(roleId); })(); }}>{activity?.state === 'stopped' ? '开始对话（先恢复活动）' : '开始对话'}</Button> : null}{bindingNotice && <p role="status">{bindingNotice}</p>}<Button disabled={bindingBusy || !bindingRevision || !!resourceError} onClick={() => void saveBindings('models')}>{writeLabel('保存模型选择')}</Button></>}
+          {id === 'voice' && loaded.voice && <VoicePanel roleId={roleId} active={active && section === 'models' && modelPart === 'voice'} guardWrite={guardAction} pausedWrite={activity?.state !== 'stopped'} onDraftStateChange={setVoiceDraft} onChanged={() => { void onRefresh(); }}/>} {id === 'image' && loaded.image && <ImagePanel roleId={roleId} guardWrite={guardAction} pausedWrite={activity?.state !== 'stopped'} onDraftStateChange={setImageDraft} onChanged={() => { void onRefresh(); }}/>}
         </div></div>)}
     </div>
-    <div hidden={section !== 'ext'} className="config-prose"><ConfigHeading number="04" label="扩展" english="EXTENSIONS" title="扩展" description="设置里的 MCP 与 Skill 在这里按角色开启或关闭。"/>{statusNote}{bindingAlert}{(['mcp','skill'] as const).map(kind => <div className="config-ledger" key={kind}><div className="config-ledger-label"><b>{kind === 'mcp' ? 'MCP' : 'Skill'}</b><small>{resources.filter(item => item.kind === kind).length} 项</small></div><div>{resources.filter(item => item.kind === kind).map(item => <label className="config-row" key={item.resourceId}><span><strong>{item.name}</strong><small>{item.enabled ? '全局已启用' : '全局已停用'}</small></span><span><input type="checkbox" disabled={bindingBusy || !bindingLoaded} checked={extensionDraft[item.resourceId] || false} onChange={event => setExtensionDraft(previous => ({ ...previous, [item.resourceId]: event.target.checked }))}/> 角色开启</span></label>)}{!resources.some(item => item.kind === kind) && <p className="config-muted">暂无{kind === 'mcp' ? ' MCP' : ' Skill'}。</p>}</div></div>)}{!bindingLoaded && list(extensions)}{bindingNotice && <p role="status">{bindingNotice}</p>}<Button disabled={bindingBusy || !bindingRevision || !!resourceError || activity?.state !== 'stopped'} onClick={() => void saveBindings('ext')}>保存扩展</Button><button type="button" className="config-text-button" onClick={() => onOpenSettings('mcp')}>在设置中管理 →</button></div>
-    <div hidden={section !== 'quota'} className="config-prose"><ConfigHeading number="05" label="自主额度" english="QUOTA" title="自主额度" description="角色后台活动所消耗的点数。"/>{statusNote}{budgetError && <p role="alert">{budgetError}</p>}{budget ? <><div className="config-ledger"><div className="config-ledger-label"><b>今日</b><small>{budget.localDate}</small></div><div><div className="config-quota-number">{budget.usedPoints} <small>/ {budget.unlimited ? '不限' : budget.dailyLimit} 点</small></div><div className="config-quota-track"><span style={{ width: budget.unlimited ? '0%' : `${Math.min(100, budget.dailyLimit ? budget.usedPoints / budget.dailyLimit * 100 : 0)}%` }}/></div></div></div><div className="config-ledger"><div className="config-ledger-label"><b>每日额度</b><small>角色自主活动</small></div><div><div className="config-quota-input"><Input type="number" min={1} max={1000000} disabled={budgetBusy || budgetDraft.unlimited} value={budgetDraft.dailyLimit} aria-label="每日额度" onChange={event => setBudgetDraft({ ...budgetDraft, dailyLimit: Number(event.target.value) })}/><label><input type="checkbox" disabled={budgetBusy} checked={budgetDraft.unlimited} onChange={event => setBudgetDraft({ ...budgetDraft, unlimited: event.target.checked })}/> 不限制</label></div><p className="config-muted">保存前需要后端确认角色已停止。</p><Button disabled={budgetBusy || activity?.state !== 'stopped' || !Number.isInteger(budgetDraft.dailyLimit) || budgetDraft.dailyLimit < 1 || budgetDraft.dailyLimit > 1_000_000} onClick={() => void saveBudget()}>保存额度</Button>{budgetNotice && <p role="status">{budgetNotice}</p>}</div></div></> : !budgetError && <p>正在读取额度…</p>}</div>
+    <div hidden={section !== 'ext'} className="config-prose"><ConfigHeading number="04" label="扩展" english="EXTENSIONS" title="扩展" description="设置里的 MCP 与 Skill 在这里按角色开启或关闭。"/>{statusNote}{bindingAlert}{(['mcp','skill'] as const).map(kind => <div className="config-ledger" key={kind}><div className="config-ledger-label"><b>{kind === 'mcp' ? 'MCP' : 'Skill'}</b><small>{resources.filter(item => item.kind === kind).length} 项</small></div><div>{resources.filter(item => item.kind === kind).map(item => <label className="config-row" key={item.resourceId}><span><strong>{item.name}</strong><small>{item.enabled ? '全局已启用' : '全局已停用'}</small></span><span><input type="checkbox" disabled={bindingBusy || !bindingLoaded} checked={extensionDraft[item.resourceId] || false} onChange={event => setExtensionDraft(previous => ({ ...previous, [item.resourceId]: event.target.checked }))}/> 角色开启</span></label>)}{!resources.some(item => item.kind === kind) && <p className="config-muted">暂无{kind === 'mcp' ? ' MCP' : ' Skill'}。</p>}</div></div>)}{!bindingLoaded && list(extensions)}{bindingNotice && <p role="status">{bindingNotice}</p>}<Button disabled={bindingBusy || !bindingRevision || !!resourceError} onClick={() => void saveBindings('ext')}>{writeLabel('保存扩展')}</Button><button type="button" className="config-text-button" onClick={() => onOpenSettings('mcp')}>在设置中管理 →</button></div>
+    <div hidden={section !== 'quota'} className="config-prose"><ConfigHeading number="05" label="自主额度" english="QUOTA" title="自主额度" description="角色后台活动所消耗的点数。"/>{statusNote}{budgetError && <p role="alert">{budgetError}</p>}{budget ? <><div className="config-ledger"><div className="config-ledger-label"><b>今日</b><small>{budget.localDate}</small></div><div><div className="config-quota-number">{budget.usedPoints} <small>/ {budget.unlimited ? '不限' : budget.dailyLimit} 点</small></div><div className="config-quota-track"><span style={{ width: budget.unlimited ? '0%' : `${Math.min(100, budget.dailyLimit ? budget.usedPoints / budget.dailyLimit * 100 : 0)}%` }}/></div></div></div><div className="config-ledger"><div className="config-ledger-label"><b>每日额度</b><small>角色自主活动</small></div><div><div className="config-quota-input"><Input type="number" min={1} max={1000000} disabled={budgetBusy || budgetDraft.unlimited} value={budgetDraft.dailyLimit} aria-label="每日额度" onChange={event => setBudgetDraft({ ...budgetDraft, dailyLimit: Number(event.target.value) })}/><label><input type="checkbox" disabled={budgetBusy} checked={budgetDraft.unlimited} onChange={event => setBudgetDraft({ ...budgetDraft, unlimited: event.target.checked })}/> 不限制</label></div><p className="config-muted">保存时会先暂停角色并由后端确认停止。</p><Button disabled={budgetBusy || !Number.isInteger(budgetDraft.dailyLimit) || budgetDraft.dailyLimit < 1 || budgetDraft.dailyLimit > 1_000_000} onClick={() => void saveBudget()}>{writeLabel('保存额度')}</Button>{budgetNotice && <p role="status">{budgetNotice}</p>}</div></div></> : !budgetError && <p>正在读取额度…</p>}</div>
     <div hidden={section !== 'done'} className="config-prose"><ConfigHeading number="06" label="完成度" english="CHECKLIST" title="完成度" description="按已保存的配置查看当前状态；必需项仍待确认。"/>{[['设定',savedProfile?.definition ? '已保存' : '尚未读取'],['对话模型',bindings.some(item => item.capability === 'chat_model' && item.enabled) ? '已绑定' : '未绑定'],['记忆整理',bindings.some(item => item.capability === 'memory_model' && item.enabled) ? '已绑定' : '跟随对话模型'],['角色状态',activityText(activity)]].map(([label,value],i) => <div className="config-check-row" key={label}><small>{String(i+1).padStart(2,'0')}</small><b>{label}</b><i/><span>{value}</span></div>)}</div>
-  </div>{active && section === 'profile' && draft && footer && createPortal(<>{dirtyProfile && <Button disabled={saveBusy} onClick={() => { if (savedProfile) setDraft(savedProfile); }}>放弃</Button>}<Button disabled={saveBusy || activity?.state !== 'stopped' || !draft.name.trim() || !draft.definition.trim()} onClick={() => void saveProfile()}>保存设定</Button></>, footer)}</>;
+  </div>{active && section === 'profile' && draft && footer && createPortal(<>{dirtyProfile && <Button disabled={saveBusy} onClick={() => { if (savedProfile) setDraft(savedProfile); }}>放弃</Button>}<Button disabled={saveBusy || !draft.name.trim() || !draft.definition.trim()} onClick={() => void saveProfile()}>{writeLabel('保存设定')}</Button></>, footer)}</>;
 }
 
 function ConfigHeading({ number, label, english, title, description }: { number: string; label: string; english: string; title: string; description: string }) {
   return <header className="config-section-heading"><small><i>{number}</i> {label} · {english}</small><h2>{title}</h2><p>{description}</p></header>;
 }
 
-function RoleDeletion({ roleId, roleName, roleCount, stopped, onDeleted }: { roleId: string; roleName: string; roleCount: number; stopped: boolean; onDeleted: (roleId: string, keepHistory: boolean, filesRemoved: boolean) => Promise<void> }) {
+function RoleDeletion({ roleId, roleName, roleCount, activityState, onPaused, onStatusRefresh, onDeleted }: { roleId: string; roleName: string; roleCount: number; activityState?: 'active' | 'stopping' | 'stopped'; onPaused: () => void; onStatusRefresh: () => Promise<void>; onDeleted: (roleId: string, keepHistory: boolean, filesRemoved: boolean) => Promise<void> }) {
+  const stopped = activityState === 'stopped';
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement | null>(null);
   const [choice, setChoice] = useState<'keep' | 'remove' | ''>('');
   const [busy, setBusy] = useState(false);
+  const [step, setStep] = useState<'idle' | 'pausing' | 'deleting'>('idle');
   const [error, setError] = useState('');
+  // 278 §1.4：删除前按当前活动状态暂停角色，后端确认停止后再执行删除。
+  const ensureStopped = async () => {
+    if (stopped) return;
+    if (activityState !== 'stopping') {
+      await api(`/v1/roles/${encodeURIComponent(roleId)}/activity/stop`, { method: 'POST' });
+    }
+    const deadline = Date.now() + 20_000;
+    while (Date.now() < deadline) {
+      const view = await api<{ activity: { state: string } }>(`/v1/roles/${encodeURIComponent(roleId)}/activity`);
+      if (view.activity.state === 'stopped') {
+        onPaused();
+        await onStatusRefresh();
+        return;
+      }
+      await new Promise(resolve => window.setTimeout(resolve, 250));
+    }
+    throw new Error('角色尚未确认停止，请稍后重试。');
+  };
   const remove = async () => {
-    if (busy || !choice || !stopped || roleCount < 2) return;
+    if (busy || !choice || roleCount < 2) return;
     const keepHistory = choice === 'keep';
     setBusy(true); setError('');
     try {
+      setStep('pausing');
+      await ensureStopped();
+      setStep('deleting');
       const result = await api<{ roleId: string; keepHistory: boolean; filesRemoved: boolean }>(`/v1/roles/${encodeURIComponent(roleId)}?keepHistory=${keepHistory ? '1' : '0'}`, { method: 'DELETE' });
       await onDeleted(result.roleId, result.keepHistory, result.filesRemoved);
-    } catch (reason) { setError(errorText(reason)); } finally { setBusy(false); }
+    } catch (reason) {
+      setError(errorText(reason));
+      // 暂停成功但删除失败时，刷新实际状态并在原处提供继续活动。
+      try { await onStatusRefresh(); } catch { /* 状态由下次读取刷新 */ }
+    } finally { setBusy(false); setStep('idle'); }
   };
   return <div className="config-ledger"><div className="config-ledger-label"><b>删除角色</b></div><div>
-    <Button disabled={!stopped || roleCount < 2 || busy} onClick={event => { trigger.current = event.currentTarget; setOpen(true); setChoice(''); setError(''); }}>删除角色</Button>
-    {roleCount < 2 ? <small className="config-inline-hint">至少保留一个角色。</small> : !stopped ? <small className="config-inline-hint">请先在角色状态中停止该角色。</small> : null}
+    <Button disabled={roleCount < 2 || busy} onClick={event => { trigger.current = event.currentTarget; setOpen(true); setChoice(''); setError(''); }}>{stopped ? '删除角色' : '暂停并删除角色'}</Button>
+    {roleCount < 2 ? <small className="config-inline-hint">至少保留一个角色。</small> : !stopped ? <small className="config-inline-hint">{activityState === 'stopping' ? '角色正在停止，确认删除会等它停稳。' : '删除前会先暂停角色，后端确认停止后再执行。'}</small> : null}
     {open && <fieldset className="config-delete-options"><legend>删除「{roleName}」</legend><p>请选择记忆、对话和角色目录的处理方式：</p>
       <label><input type="radio" name={`delete-${roleId}`} checked={choice === 'keep'} disabled={busy} onChange={() => setChoice('keep')}/> 保留本机数据（移除角色，保留目录；应用内无法读取已删除角色）</label>
       <label><input type="radio" name={`delete-${roleId}`} checked={choice === 'remove'} disabled={busy} onChange={() => setChoice('remove')}/> 一并删除本机数据（包括记忆、对话、工作区与素材副本）</label>
       <p>原始素材文件不会被删除。</p>{error && <p role="alert">{error}</p>}
-      <div className="config-actions"><Button disabled={!choice || busy || !stopped || roleCount < 2} onClick={() => void remove()}>{busy ? '正在删除…' : '确认删除'}</Button><button type="button" disabled={busy} onClick={() => { setOpen(false); requestAnimationFrame(() => trigger.current?.focus()); }}>取消</button></div>
+      <div className="config-actions"><Button disabled={!choice || busy || roleCount < 2} onClick={() => void remove()}>{busy ? (step === 'pausing' ? '正在暂停角色…' : '正在删除…') : stopped ? '确认删除' : '暂停并删除角色'}</Button><button type="button" disabled={busy} onClick={() => { setOpen(false); requestAnimationFrame(() => trigger.current?.focus()); }}>取消</button></div>
     </fieldset>}
   </div></div>;
 }
@@ -502,12 +631,25 @@ function ResourceDetail({ resource, active, canWrite, onRemoved, onUpdated }: { 
   const [draftUrl, setDraftUrl] = useState(String(resource.config.baseUrl || ''));
   const [keyMode, setKeyMode] = useState<'keep' | 'replace' | 'clear'>('keep');
   const [secret, setSecret] = useState('');
+  const [impact, setImpact] = useState<ResourceImpact | null>(null);
+  const [impactError, setImpactError] = useState('');
+  const [pausedRoleIds, setPausedRoleIds] = useState<string[]>([]);
+  const [impactVersion, setImpactVersion] = useState(0);
   const savedProtocol = String(resource.config.protocol || 'openai-chat');
   const savedBaseUrl = String(resource.config.baseUrl || '');
   const savedKey = providerCacheKey(resource);
   const probe = useModelProbe(`${savedKey}|${keyMode}|${draftProtocol}|${draftUrl}|${secret}`, { onSavedList: onUpdated, onSavedTest: onUpdated });
   const live = useRef(true);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+  useEffect(() => {
+    if (!active || resource.kind !== 'model') return;
+    let alive = true;
+    setImpactError('');
+    api<ResourceImpact>(`/v1/resources/${encodeURIComponent(resource.resourceId)}/impact`)
+      .then(value => { if (alive) setImpact(value); })
+      .catch(reason => { if (alive) { setImpact(null); setImpactError(errorText(reason)); } });
+    return () => { alive = false; };
+  }, [active, resource.resourceId, impactVersion]);
   // 未保存的修改用草稿探测；保留密钥时按资源解析（后端核对协议与 origin）。
   const probeTarget = (): ModelProbeTarget => {
     const base = { protocol: draftProtocol, baseUrl: draftUrl.trim() };
@@ -527,28 +669,93 @@ function ResourceDetail({ resource, active, canWrite, onRemoved, onUpdated }: { 
     try {
       const config: Record<string, unknown> = { ...resource.config, protocol: draftProtocol, baseUrl: draftUrl.trim() };
       if (keyMode !== 'keep') delete config.credentialRef;
-      const result = await api<Resource>(`/v1/resources/${encodeURIComponent(resource.resourceId)}`, { method: 'PATCH', body: { name: draftName.trim(), config, ...(keyMode === 'replace' ? { secret } : keyMode === 'clear' ? { secret: null } : {}) } });
+      const result = await api<Resource & { maintenance?: { connectionChanged: boolean; pausedRoleIds: string[] } }>(`/v1/resources/${encodeURIComponent(resource.resourceId)}`, { method: 'PATCH', body: { name: draftName.trim(), config, ...(keyMode === 'replace' ? { secret } : keyMode === 'clear' ? { secret: null } : {}) } });
       if (!live.current) return;
+      setPausedRoleIds(result.maintenance?.pausedRoleIds ?? []);
+      setImpactVersion(value => value + 1);
       const resultKey = providerCacheKey(result);
       if (keyMode !== 'keep') clearModelCache(resultKey);
       if (carriedModels !== null) writeModelCache(resultKey, carriedModels);
       setDraftName(result.name); setDraftProtocol(String(result.config.protocol || '')); setDraftUrl(String(result.config.baseUrl || '')); setKeyMode('keep'); setSecret(''); probe.reset(); setMessage('模型服务已保存。'); onUpdated();
-    } catch (e) { if (live.current) setMessage(errorText(e)); } finally { if (live.current) setBusy(false); }
+    } catch (e) { if (live.current) {
+      // 停止后保存失败：后端在错误详情里带回本次暂停的角色（283 R05）。
+      const paused = pausedRoleIdsOf(e);
+      if (paused.length > 0) { setPausedRoleIds(paused); setImpactVersion(value => value + 1); }
+      setMessage(paused.length > 0
+        ? `${errorText(e)}（本次已暂停相关角色，完成后可在下方继续活动）`
+        : errorText(e));
+    } } finally { if (live.current) setBusy(false); }
   };
+  const resumePaused = async () => {
+    const names: string[] = [];
+    for (const roleId of pausedRoleIds) {
+      try {
+        await api(`/v1/roles/${encodeURIComponent(roleId)}/activity/resume`, { method: 'POST' });
+        names.push(impact?.roles.find(item => item.roleId === roleId)?.displayName ?? roleId);
+      } catch (reason) { setMessage(`继续活动失败：${errorText(reason)}`); }
+    }
+    setPausedRoleIds([]);
+    setImpactVersion(value => value + 1);
+    if (names.length > 0) setMessage(`已继续本次活动暂停的角色：${names.join('、')}。`);
+    onUpdated();
+  };
+  const connectionDirty = keyMode !== 'keep' || draftProtocol !== savedProtocol || draftUrl.trim() !== savedBaseUrl;
+  const usageLabel = (usage: 'chat' | 'memory' | 'task') => usage === 'chat' ? '对话' : usage === 'memory' ? '记忆整理' : '未结束任务';
   const subtitle = resource.kind === 'model' ? '角色在配置页选择已保存的模型服务。' : resource.kind === 'mcp' ? '本地 MCP 服务，在角色配置的扩展中开启。' : '本地 Skill 目录，在角色配置的扩展中开启。';
   return <div hidden={!active} className="config-prose"><ConfigHeading number={resource.kind === 'model' ? '01' : resource.kind === 'mcp' ? '02' : '03'} label={resource.kind === 'model' ? '模型 · 对话' : resource.kind === 'mcp' ? 'MCP' : 'Skill'} english="" title={resource.name} description={subtitle}/>
     <div className="config-ledger"><div className="config-ledger-label"><b>状态</b><small>全局</small></div><div>{resource.enabled ? '已启用' : '已停用'}</div></div>
     {resource.kind === 'model' ? <><div className="config-ledger"><div className="config-ledger-label"><b>名称</b><small>模型服务</small></div><div><Input disabled={busy} aria-label="模型服务名称" value={draftName} onChange={event => setDraftName(event.target.value)}/></div></div>
       <div className="config-ledger"><div className="config-ledger-label"><b>连接</b><small>协议与地址</small></div><div className="config-connection"><Field label="协议"><Select disabled={busy} value={draftProtocol} onChange={event => { setDraftProtocol(event.target.value); probe.reset(); }}><option value="openai-chat">OpenAI Chat Completions</option><option value="openai-responses">OpenAI Responses</option><option value="anthropic-messages">Anthropic Messages</option></Select></Field><Field label="服务地址"><Input disabled={busy} value={draftUrl} onChange={event => { setDraftUrl(event.target.value); probe.reset(); }}/></Field></div></div>
       <div className="config-ledger"><div className="config-ledger-label"><b>密钥</b><small>只写</small></div><div><p>密钥状态：{resource.credential?.status || '未知'}；密钥原文不会显示。</p><div className="config-subtabs" role="group" aria-label="密钥操作">{([['keep','保留'],['replace','替换'],['clear','清除']] as const).map(([id,label]) => <button key={id} type="button" disabled={busy} aria-pressed={keyMode === id} onClick={() => { setKeyMode(id); setSecret(''); probe.reset(); }}>{label}</button>)}</div>{keyMode === 'replace' && <Field label="新密钥"><Input type="password" autoComplete="off" disabled={busy} value={secret} onChange={event => { setSecret(event.target.value); probe.reset(); }}/></Field>}</div></div>
-      <div className="config-ledger"><div className="config-ledger-label"><b>模型</b><small>获取或手填</small></div><div><ModelNamePicker value={model} onChange={setModel} models={probe.models} listBusy={probe.listBusy} listError={probe.listError} listLoaded={probe.listLoaded} testBusy={probe.testBusy} testNote={probe.testModel === model ? probe.testNote : ''} onRefresh={() => { if (draftUrl.trim()) void probe.refresh(probeTarget()); }} onTest={() => { if (draftUrl.trim() && model.trim()) void probe.test(probeTarget(), model.trim()); }} testDisabled={!model.trim() || !draftUrl.trim()} disabled={busy}/><p>最近测试：{!resource.lastTest ? '尚未测试' : resource.lastTest.stale ? '配置已改变，请重新测试' : resource.lastTest.ok ? `成功 · ${resource.lastTest.modelName}` : `失败 · ${resource.lastTest.modelName}`}</p>{keyMode === 'keep' && <p className="config-muted">保留已保存密钥时，只有同协议、同站点的地址可复用；换站点请改用新密钥或先清除。</p>}</div></div><div className="config-ledger"><div className="config-ledger-label"><b>保存</b></div><div><Button disabled={busy || !canWrite || !draftName.trim() || !draftUrl.trim() || (keyMode === 'replace' && !secret)} onClick={() => void save()}>保存模型服务</Button>{!canWrite && <p className="config-muted">修改前需要在角色状态中确认所有角色已停止。</p>}</div></div>{message && <p role="status">{message}</p>}<ModelManagement resource={resource} active={active} canWrite={canWrite} onRemoved={onRemoved} onUpdated={onUpdated}/></> : <>
+      <div className="config-ledger"><div className="config-ledger-label"><b>模型</b><small>获取或手填</small></div><div><ModelNamePicker value={model} onChange={setModel} models={probe.models} listBusy={probe.listBusy} listError={probe.listError} listLoaded={probe.listLoaded} testBusy={probe.testBusy} testNote={probe.testModel === model ? probe.testNote : ''} onRefresh={() => { if (draftUrl.trim()) void probe.refresh(probeTarget()); }} onTest={() => { if (draftUrl.trim() && model.trim()) void probe.test(probeTarget(), model.trim()); }} testDisabled={!model.trim() || !draftUrl.trim()} disabled={busy}/><p>最近测试：{!resource.lastTest ? '尚未测试' : resource.lastTest.stale ? '配置已改变，请重新测试' : resource.lastTest.ok ? `成功 · ${resource.lastTest.modelName}` : `失败 · ${resource.lastTest.modelName}`}</p>{keyMode === 'keep' && <p className="config-muted">保留已保存密钥时，只有同协议、同站点的地址可复用；换站点请改用新密钥或先清除。</p>}</div></div><div className="config-ledger"><div className="config-ledger-label"><b>影响范围</b><small>实际依赖</small></div><div>{impactError ? <p role="alert">影响范围读取失败：{impactError} <button type="button" onClick={() => setImpactVersion(value => value + 1)}>重试</button></p> : !impact ? <p className="config-muted">正在读取影响范围…</p> : (impact?.roles.length ?? 0) === 0 ? <p className="config-muted">当前没有角色或未结束任务依赖这个服务。</p> : <ul>{(impact?.roles ?? []).map(item => <li key={item.roleId}>{item.displayName} · {item.usages.map(usageLabel).join(' / ')} · {item.state === 'active' ? '启用中' : item.state === 'stopping' ? '正在停止' : '已停止'}{item.taskIds.length > 0 ? ` · ${item.taskIds.length} 个未结束任务` : ''}</li>)}</ul>}{connectionDirty && (impact?.roles ?? []).some(item => item.state !== 'stopped') ? <p className="config-muted">保存连接参数或密钥时会先暂停启用中的依赖角色，其他角色可继续。</p> : null}</div></div><div className="config-ledger"><div className="config-ledger-label"><b>保存</b></div><div><Button disabled={busy || !draftName.trim() || !draftUrl.trim() || (keyMode === 'replace' && !secret)} onClick={() => void save()}>{connectionDirty && impact !== null && (impact?.roles ?? []).some(item => item.state !== 'stopped') ? '暂停相关角色并保存' : '保存模型服务'}</Button></div></div>{pausedRoleIds.length > 0 && <p role="status">已暂停 {pausedRoleIds.map(id => impact?.roles.find(item => item.roleId === id)?.displayName ?? id).join('、')}。 <button type="button" onClick={() => void resumePaused()}>继续本次活动暂停的角色</button></p>}{message && <p role="status">{message}</p>}<ModelManagement resource={resource} active={active} canWrite={canWrite} onRemoved={onRemoved} onUpdated={onUpdated}/></> : <>
       {resource.kind === 'mcp' && <><div className="config-ledger"><div className="config-ledger-label"><b>启动命令</b><small>stdio</small></div><div><code>{String(resource.config.command || '')} {Array.isArray(resource.config.args) ? resource.config.args.join(' ') : ''}</code></div></div><div className="config-ledger"><div className="config-ledger-label"><b>环境变量</b></div><div><code>{Object.keys((resource.config.env || {}) as Record<string, unknown>).join('、') || '没有设置环境变量'}</code></div></div></>}
       {resource.kind === 'skill' && <div className="config-ledger"><div className="config-ledger-label"><b>来源目录</b></div><div><code>{String(resource.config.sourcePath || '')}</code></div></div>}
       <ExtensionManagement resource={resource} active={active} onRemoved={onRemoved} onUpdated={onUpdated}/>
     </>}</div>;
 }
 
-type ResourceReferences = { references: Array<{ roleId: string; reason: 'ROLE_BINDING' | 'TASK_CHAIN'; bindingEnabled: boolean | null; taskId?: string }>; canUpdate: boolean; canDisable: boolean; canDelete: boolean };
+type ResourceReferences = { references: Array<{ roleId: string; reason: 'ROLE_BINDING' | 'TASK_CHAIN' | 'INFLIGHT_CALL'; bindingEnabled: boolean | null; taskId?: string }>; canUpdate: boolean; canDisable: boolean; canDelete: boolean };
+type ResourceImpact = { roles: Array<{ roleId: string; displayName: string; usages: Array<'chat' | 'memory' | 'task'>; taskIds: string[]; state: string; running: boolean }>; blockingTasks: number };
+
+/** 资源详情中的任务终结：只结束指定任务的后续执行（278 §3）。 */
+async function finishTaskForResource(roleId: string, taskId: string): Promise<void> {
+  await api(`/v1/roles/${encodeURIComponent(roleId)}/tasks/${encodeURIComponent(taskId)}/finish`, {
+    method: 'POST',
+    body: { status: 'completed', endReason: '用户在资源详情中结束任务' },
+  });
+}
+
+/** 关闭某角色对目标资源的绑定：需要时先暂停该角色，写入后恢复本次暂停。 */
+async function closeRoleResourceBinding(roleId: string, resourceId: string): Promise<void> {
+  const before = await api<{ activity: { state: string } }>(`/v1/roles/${encodeURIComponent(roleId)}/activity`);
+  let paused = false;
+  if (before.activity.state !== 'stopped') {
+    if (before.activity.state === 'active') {
+      await api(`/v1/roles/${encodeURIComponent(roleId)}/activity/stop`, { method: 'POST' });
+    }
+    const deadline = Date.now() + 20_000;
+    while (Date.now() < deadline) {
+      const view = await api<{ activity: { state: string } }>(`/v1/roles/${encodeURIComponent(roleId)}/activity`);
+      if (view.activity.state === 'stopped') { paused = true; break; }
+      await new Promise(resolve => window.setTimeout(resolve, 250));
+    }
+    if (!paused) throw new Error(`角色 ${roleId} 尚未确认停止，请稍后重试。`);
+  }
+  const current = await api<{ items: Binding[]; revision: string }>(`/v1/roles/${encodeURIComponent(roleId)}/bindings`);
+  const next = current.items.map(item => ({
+    capability: item.capability,
+    resourceId: item.resourceId,
+    enabled: item.resourceId === resourceId ? false : item.enabled,
+    ...(item.modelName ? { modelName: item.modelName } : {}),
+  }));
+  await api(`/v1/roles/${encodeURIComponent(roleId)}/bindings`, {
+    method: 'PUT',
+    body: { bindings: next, expectedRevision: current.revision },
+  });
+  if (paused) {
+    await api(`/v1/roles/${encodeURIComponent(roleId)}/activity/resume`, { method: 'POST' });
+  }
+}
 
 function ModelManagement({ resource, active, canWrite, onRemoved, onUpdated }: { resource: Resource; active: boolean; canWrite: boolean; onRemoved: (id: string) => void; onUpdated: () => void }) {
   const [report, setReport] = useState<ResourceReferences | null>(null);
@@ -556,12 +763,68 @@ function ModelManagement({ resource, active, canWrite, onRemoved, onUpdated }: {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState(false);
+  const [closingBindings, setClosingBindings] = useState(false);
+  const endTask = async (roleId: string, taskId: string) => {
+    if (!window.confirm(`结束任务 ${taskId}？后续步骤不再执行，已发出的调用按原任务结算。`)) return;
+    try {
+      await finishTaskForResource(roleId, taskId);
+      setVersion(value => value + 1); onUpdated();
+    } catch (reason) { setError(errorText(reason)); }
+  };
+  const closeBinding = async (roleId: string) => {
+    if (closingBindings) return;
+    setClosingBindings(true); setError('');
+    try {
+      await closeRoleResourceBinding(roleId, resource.resourceId);
+      setVersion(value => value + 1); onUpdated();
+    } catch (reason) { setError(errorText(reason)); }
+    finally { setClosingBindings(false); }
+  };
+  const closeAllBindings = async () => {
+    const roleIds = [...new Set((report?.references ?? []).filter(item => item.reason === 'ROLE_BINDING' && item.bindingEnabled === true).map(item => item.roleId))];
+    if (roleIds.length === 0 || closingBindings) return;
+    setClosingBindings(true); setError('');
+    const failures: string[] = [];
+    for (const roleId of roleIds) {
+      try { await closeRoleResourceBinding(roleId, resource.resourceId); }
+      catch (reason) { failures.push(`${roleId}：${errorText(reason)}`); }
+    }
+    if (failures.length > 0) setError(failures.join('；'));
+    setVersion(value => value + 1); onUpdated();
+    setClosingBindings(false);
+  };
+  // 轮询请求互不取消：慢响应仍可应用；切换资源或卸载后旧响应全部丢弃（283 §10 R01）。
+  const referenceQuery = useRef({ token: 0, seq: 0, applied: 0, mounted: true });
+  useEffect(() => {
+    referenceQuery.current.mounted = true;
+    return () => { referenceQuery.current.mounted = false; };
+  }, []);
+  useEffect(() => {
+    referenceQuery.current.token += 1;
+    referenceQuery.current.applied = 0;
+  }, [active, resource.resourceId]);
   useEffect(() => {
     if (!active) return;
-    let live = true; setReport(null); setError('');
-    api<ResourceReferences>(`/v1/resources/${encodeURIComponent(resource.resourceId)}/references`).then(value => { if (live) setReport(value); }).catch(reason => { if (live) setError(errorText(reason)); });
-    return () => { live = false; };
+    // 刷新时保留上一份占用报告，避免在途轮询造成「正在读取」闪烁。
+    const query = referenceQuery.current;
+    const token = query.token;
+    const seq = ++query.seq;
+    const apply = (action: () => void) => {
+      if (!query.mounted || query.token !== token || seq < query.applied) return;
+      query.applied = seq;
+      action();
+    };
+    api<ResourceReferences>(`/v1/resources/${encodeURIComponent(resource.resourceId)}/references`)
+      .then(value => apply(() => { setReport(value); setError(''); }))
+      .catch(reason => apply(() => setError(errorText(reason))));
   }, [active, resource.resourceId, version]);
+  const hasInflight = !!report?.references.some(item => item.reason === 'INFLIGHT_CALL');
+  useEffect(() => {
+    // 在途调用结算后占用会自动解除；详情保持打开时轮询刷新（283 §9 R01）。
+    if (!active || !hasInflight) return;
+    const timer = window.setInterval(() => setVersion(value => value + 1), 3000);
+    return () => window.clearInterval(timer);
+  }, [active, hasInflight, resource.resourceId]);
   const change = async (remove: boolean) => {
     if (busy || !canWrite || !report || (remove && !report.canDelete) || (!remove && resource.enabled && !report.canDisable)) return;
     setBusy(true); setError('');
@@ -572,8 +835,9 @@ function ModelManagement({ resource, active, canWrite, onRemoved, onUpdated }: {
   };
   return <div className="config-ledger"><div className="config-ledger-label"><b>管理</b><small>全局模型服务</small></div><div>
     {!canWrite && <p>修改或删除模型前，需要所有角色停止。</p>}
-    {report && report.references.length > 0 && <ul>{report.references.map((item, index) => <li key={`${item.roleId}-${item.taskId || index}`}>{item.roleId} · {item.reason === 'TASK_CHAIN' ? '任务仍在使用' : item.bindingEnabled ? '角色已选择并启用' : '角色已选择但关闭'}</li>)}</ul>}
-    {report && !report.canDelete && <p>有角色或任务正在使用，请先解除占用。</p>}
+    {report && report.references.length > 0 && <ul>{report.references.map((item, index) => <li key={`${item.roleId}-${item.taskId || index}`}>{item.roleId} · {item.reason === 'TASK_CHAIN' ? '任务仍在使用' : item.reason === 'INFLIGHT_CALL' ? '后台调用进行中，稍后重试' : item.bindingEnabled ? '角色已选择并启用' : '角色已选择但关闭'}{item.reason === 'TASK_CHAIN' && item.taskId ? <> <button type="button" disabled={busy} onClick={() => void endTask(item.roleId, item.taskId!)}>结束任务</button></> : null}{item.reason === 'ROLE_BINDING' && item.bindingEnabled ? <> <button type="button" disabled={busy || closingBindings} onClick={() => void closeBinding(item.roleId)}>关闭该角色绑定</button></> : null}</li>)}</ul>}
+    {report && report.references.some(item => item.reason === 'ROLE_BINDING' && item.bindingEnabled) ? <button type="button" disabled={busy || closingBindings} onClick={() => void closeAllBindings()}>{closingBindings ? '正在关闭绑定…' : '关闭全部启用绑定'}</button> : null}
+    {report && !report.canDelete && <p>有角色、任务或后台调用正在使用，请先解除占用。 <button type="button" disabled={busy} onClick={() => setVersion(value => value + 1)}>重新检查占用</button></p>}
     {error && <p role="alert">{error} <button type="button" onClick={() => setVersion(value => value + 1)}>重试</button></p>}
     <div className="config-actions"><Button disabled={busy || !canWrite || !report || (resource.enabled && !report.canDisable)} onClick={() => void change(false)}>{resource.enabled ? '全局停用' : '全局启用'}</Button><Button disabled={busy || !canWrite || !report?.canDelete} onClick={() => setConfirm(true)}>删除模型服务</Button></div>
     {confirm && <div role="alert"><p>删除「{resource.name}」及其保存的密钥？此操作无法撤销。</p><Button disabled={busy || !canWrite || !report?.canDelete} onClick={() => void change(true)}>确认删除模型</Button> <button type="button" disabled={busy} onClick={() => setConfirm(false)}>取消</button></div>}
@@ -622,6 +886,36 @@ function ExtensionManagement({ resource, active, onRemoved, onUpdated }: { resou
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [version, setVersion] = useState(0);
+  const [closingBindings, setClosingBindings] = useState(false);
+  const endTask = async (roleId: string, taskId: string) => {
+    if (!window.confirm(`结束任务 ${taskId}？后续步骤不再执行，已发出的调用按原任务结算。`)) return;
+    try {
+      await finishTaskForResource(roleId, taskId);
+      setVersion(value => value + 1); onUpdated();
+    } catch (reason) { setMessage(errorText(reason)); }
+  };
+  const closeBinding = async (roleId: string) => {
+    if (closingBindings) return;
+    setClosingBindings(true); setMessage('');
+    try {
+      await closeRoleResourceBinding(roleId, resource.resourceId);
+      setVersion(value => value + 1); onUpdated();
+    } catch (reason) { setMessage(errorText(reason)); }
+    finally { setClosingBindings(false); }
+  };
+  const closeAllBindings = async () => {
+    const roleIds = [...new Set((report?.references ?? []).filter(item => item.reason === 'ROLE_BINDING' && item.bindingEnabled === true).map(item => item.roleId))];
+    if (roleIds.length === 0 || closingBindings) return;
+    setClosingBindings(true); setMessage('');
+    const failures: string[] = [];
+    for (const roleId of roleIds) {
+      try { await closeRoleResourceBinding(roleId, resource.resourceId); }
+      catch (reason) { failures.push(`${roleId}：${errorText(reason)}`); }
+    }
+    if (failures.length > 0) setMessage(failures.join('；'));
+    setVersion(value => value + 1); onUpdated();
+    setClosingBindings(false);
+  };
   useEffect(() => {
     if (!active) return;
     let live = true; setReport(null); setReportError('');
@@ -654,7 +948,7 @@ function ExtensionManagement({ resource, active, onRemoved, onUpdated }: { resou
     finally { setBusy(false); }
   };
   return <div className="config-ledger"><div className="config-ledger-label"><b>管理</b><small>资源与占用</small></div><div>
-    {reportError ? <p role="alert">无法读取占用情况：{reportError} <button type="button" onClick={() => setVersion(value => value + 1)}>重试</button></p> : !report ? <p>正在读取占用情况…</p> : <>{report.references.length > 0 ? <ul>{report.references.map((item, index) => <li key={`${item.roleId}-${item.reason}-${item.taskId || index}`}>{item.roleId} · {item.reason === 'TASK_CHAIN' ? `任务仍在使用${item.taskId ? `（${item.taskId}）` : ''}` : item.bindingEnabled ? '角色已开启' : '角色已关闭'}</li>)}</ul> : <p className="config-muted">当前没有角色或任务引用。</p>}{!report.canUpdate && <p className="config-muted">角色已开启或任务仍在使用，请先关闭角色开关并等待任务结束。</p>}</>}
+    {reportError ? <p role="alert">无法读取占用情况：{reportError} <button type="button" onClick={() => setVersion(value => value + 1)}>重试</button></p> : !report ? <p>正在读取占用情况…</p> : <>{report.references.length > 0 ? <ul>{report.references.map((item, index) => <li key={`${item.roleId}-${item.reason}-${item.taskId || index}`}>{item.roleId} · {item.reason === 'TASK_CHAIN' ? `任务仍在使用${item.taskId ? `（${item.taskId}）` : ''}` : item.reason === 'INFLIGHT_CALL' ? '后台调用进行中，稍后重试' : item.bindingEnabled ? '角色已开启' : '角色已关闭'}{item.reason === 'TASK_CHAIN' && item.taskId ? <> <button type="button" disabled={busy} onClick={() => void endTask(item.roleId, item.taskId!)}>结束任务</button></> : null}{item.reason === 'ROLE_BINDING' && item.bindingEnabled ? <> <button type="button" disabled={busy || closingBindings} onClick={() => void closeBinding(item.roleId)}>关闭该角色绑定</button></> : null}</li>)}</ul> : <p className="config-muted">当前没有角色或任务引用。</p>}{report.references.some(item => item.reason === 'ROLE_BINDING' && item.bindingEnabled) ? <button type="button" disabled={busy || closingBindings} onClick={() => void closeAllBindings()}>{closingBindings ? '正在关闭绑定…' : '关闭全部启用绑定'}</button> : null}{!report.canUpdate && <p className="config-muted">角色已开启或任务仍在使用，请先关闭角色开关并等待任务结束。</p>}</>}
     <div className="config-actions"><Button disabled={busy || !report?.canUpdate} onClick={() => setEditing(value => !value)}>{editing ? '收起编辑' : '编辑'}</Button><Button disabled={busy || !report || (resource.enabled && !report.canDisable)} onClick={() => void run(resource.enabled ? 'disable' : 'enable')}>{resource.enabled ? '全局停用' : '全局启用'}</Button><Button disabled={busy || !report?.canDelete} onClick={() => setConfirmDelete(true)}>删除</Button></div>
     {editing && <div><Field label="名称"><Input value={name} disabled={busy} onChange={event => setName(event.target.value)}/></Field>{resource.kind === 'mcp' ? <><Field label="启动命令"><Input value={command} disabled={busy} onChange={event => setCommand(event.target.value)}/></Field><Field label="启动参数" hint="每行一个参数。"><Textarea rows={3} value={args} disabled={busy} onChange={event => setArgs(event.target.value)}/></Field><Field label="环境变量" hint="JSON 对象；*** 表示保留原值。"><Textarea rows={4} value={env} disabled={busy} onChange={event => setEnv(event.target.value)}/></Field></> : <Field label="来源目录"><Input value={sourcePath} disabled={busy} onChange={event => setSourcePath(event.target.value)}/></Field>}<Button disabled={busy || !report?.canUpdate} onClick={() => void run('save')}>保存资源</Button></div>}
     {confirmDelete && <div role="alert"><p>删除「{resource.name}」及其已关闭的角色绑定？</p><Button disabled={busy || !report?.canDelete} onClick={() => void run('delete')}>确认删除</Button> <button type="button" onClick={() => setConfirmDelete(false)}>取消</button></div>}

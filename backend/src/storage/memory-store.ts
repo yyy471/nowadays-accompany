@@ -246,10 +246,11 @@ export class MemoryStore {
     windowId: string | null;
     taskId: string | null;
     createdAt: string;
+    batchId: string | null;
   }> {
     const rows = this.db
       .prepare(
-        `SELECT trigger_id, kind, window_id, task_id, created_at
+        `SELECT trigger_id, kind, window_id, task_id, created_at, batch_id
          FROM memory_triggers
          WHERE role_id = ? AND consumed_at IS NULL
          ORDER BY created_at ASC, trigger_id ASC`,
@@ -260,6 +261,7 @@ export class MemoryStore {
         window_id: string | null;
         task_id: string | null;
         created_at: string;
+        batch_id: string | null;
       }>;
     return rows.map((row) => ({
       triggerId: row.trigger_id,
@@ -267,6 +269,7 @@ export class MemoryStore {
       windowId: row.window_id,
       taskId: row.task_id,
       createdAt: row.created_at,
+      batchId: row.batch_id,
     }));
   }
 
@@ -305,6 +308,64 @@ export class MemoryStore {
       )
       .get(roleId, taskId) as { count: number };
     return row.count;
+  }
+
+  /** 列出已结束且仍有待整理工具证据、但缺少未消费 task_end 触发的任务。 */
+  listFinishedTasksNeedingTrigger(roleId: string): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT t.task_id
+         FROM tasks t
+         WHERE t.role_id = ?
+           AND t.status IN ('completed', 'failed')
+           AND EXISTS (
+             SELECT 1
+             FROM evidence_records er
+             JOIN evidence_processing ep ON ep.evidence_id = er.evidence_id
+             WHERE er.role_id = t.role_id
+               AND er.task_id = t.task_id
+               AND ep.status = 'pending'
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM memory_triggers mt
+             WHERE mt.role_id = t.role_id
+               AND mt.kind = 'task_end'
+               AND mt.task_id = t.task_id
+               AND mt.consumed_at IS NULL
+           )
+         ORDER BY t.updated_at ASC, t.task_id ASC`,
+      )
+      .all(roleId) as Array<{ task_id: string }>;
+    return rows.map((row) => row.task_id);
+  }
+
+  /** 从已持久化任务与工具证据逐项对账补写缺失的 task_end 触发；单项失败不影响其余任务（283 §21/§22）。 */
+  reconcileFinishedTaskTriggers(
+    roleId: string,
+    now?: string,
+  ): { inserted: number; failedTaskIds: string[] } {
+    const taskIds = this.listFinishedTasksNeedingTrigger(roleId);
+    let inserted = 0;
+    const failedTaskIds: string[] = [];
+    for (const taskId of taskIds) {
+      try {
+        const result = this.db.transaction(() =>
+          this.enqueueTrigger({
+            roleId,
+            kind: "task_end",
+            taskId,
+            ...(now === undefined ? {} : { now }),
+          }),
+        )();
+        if (!result.duplicate) {
+          inserted += 1;
+        }
+      } catch {
+        failedTaskIds.push(taskId);
+      }
+    }
+    return { inserted, failedTaskIds };
   }
 
   nextFailedRetryAt(roleId: string): string | null {
@@ -357,6 +418,13 @@ export class MemoryStore {
       if (maintenanceRequested) {
         return this.startMaintenanceBatch(input, now, false);
       }
+      if (input.includeDeferred === true) {
+        // 手动整理领取时固定本轮延后证据；本轮再次 defer 的证据不会被重复领取。
+        this.db.prepare(`UPDATE evidence_processing SET status = 'pending'
+          WHERE status = 'deferred' AND evidence_id IN
+            (SELECT evidence_id FROM evidence_records WHERE role_id = ?)`)
+          .run(input.roleId);
+      }
       const rows = this.db
         .prepare(
           `SELECT er.*, ep.status AS processing_status, ep.next_retry_at,
@@ -371,8 +439,11 @@ export class MemoryStore {
                  ep.status = 'deferred'
                  AND (
                    ? = 1
-                   OR (SELECT MAX(x.role_sequence) FROM evidence_records x
+                   OR ((SELECT MAX(x.role_sequence) FROM evidence_records x
                        WHERE x.role_id = er.role_id) > ep.deferred_after_sequence
+                       AND NOT EXISTS (SELECT 1 FROM memory_triggers mt
+                         WHERE mt.role_id = er.role_id AND mt.kind = 'manual'
+                           AND mt.consumed_at IS NULL AND mt.batch_id IS NOT NULL))
                  )
                )
              )
@@ -385,7 +456,15 @@ export class MemoryStore {
         if (input.includeRefinement !== true) {
           return null;
         }
-        return this.startMaintenanceBatch(input, now, true);
+        const maintenance = this.startMaintenanceBatch(input, now, true);
+        if (maintenance === null) {
+          // 在同一事务中确认没有可处理证据或精炼候选，结算空触发，避免定时器无限重试。
+          this.db.prepare(
+            `UPDATE memory_triggers SET consumed_at = ?
+             WHERE role_id = ? AND consumed_at IS NULL`,
+          ).run(now, input.roleId);
+        }
+        return maintenance;
       }
       const windowKey = rows[0]?.window_id ?? "";
       const grouped = rows.filter(
@@ -456,9 +535,12 @@ export class MemoryStore {
         .prepare(
           `UPDATE memory_triggers
            SET consumed_at = ?, batch_id = ?
-           WHERE role_id = ? AND consumed_at IS NULL`,
+           WHERE role_id = ? AND consumed_at IS NULL AND kind <> 'manual'`,
         )
         .run(now, batchId, input.roleId);
+      this.db.prepare(`UPDATE memory_triggers SET batch_id = ?
+        WHERE role_id = ? AND kind = 'manual' AND consumed_at IS NULL AND batch_id IS NULL`)
+        .run(batchId, input.roleId);
       const batch = this.getBatch(input.roleId, batchId);
       return { batch, evidence, maintenance: false };
     })();

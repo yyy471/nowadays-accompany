@@ -96,6 +96,44 @@ export class ModelBindingResolver {
     return memory ?? this.resolve(roleId, "chat_model");
   }
 
+  /**
+   * 实际使用目标（278 §2、283 R04）：与运行时解析共用同一份规则。
+   * 对话取启用且资源可用的对话绑定；记忆先取可用的独立记忆绑定，
+   * 不可用时回退到对话模型。返回 null 表示当前没有可用目标。
+   */
+  usageTargets(roleId: string): {
+    chatResourceId: string | null;
+    memoryResourceId: string | null;
+  } {
+    const chat = this.safeResourceId(roleId, "chat_model");
+    const memory = this.safeResourceId(roleId, "memory_model");
+    return { chatResourceId: chat, memoryResourceId: memory ?? chat };
+  }
+
+  /** 原任务链固定的对话模型目标；旧任务可能早于当前绑定变化（278 §2.1）。 */
+  taskChatResourceId(roleId: string, taskId: string): string | null {
+    try {
+      return this.resolveChatForTask(roleId, taskId)?.resourceId ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  chatResourceId(roleId: string): string | null {
+    return this.safeResourceId(roleId, "chat_model");
+  }
+
+  private safeResourceId(
+    roleId: string,
+    capability: "chat_model" | "memory_model",
+  ): string | null {
+    try {
+      return this.tryResolve(roleId, capability)?.resourceId ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   refresh(binding: ResolvedModelBinding, roleId: string): ResolvedModelBinding {
     let latest: ResolvedModelBinding | null = null;
     try {

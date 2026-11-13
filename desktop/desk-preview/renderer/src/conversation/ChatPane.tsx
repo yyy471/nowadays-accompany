@@ -27,6 +27,8 @@ export function ChatPane({
   onDraftChange,
   recoveredDraft,
   onRecoveredDraftApplied,
+  clearDraft,
+  onClearDraftApplied,
   onDraftFocusHandled,
   onScrollFollow,
   onLatest,
@@ -38,6 +40,11 @@ export function ChatPane({
   onGenerateScene,
   onOpenScene,
   notice,
+  waitReason,
+  roleStopped,
+  onResumeRole,
+  onConfigureModel,
+  onRetryWaiting,
 }: {
   snapshot: ConversationSnapshot;
   playingId: number | null;
@@ -51,6 +58,10 @@ export function ChatPane({
   onDraftChange: (value: string) => void;
   recoveredDraft: { value: string; sequence: number } | null;
   onRecoveredDraftApplied: () => void;
+  /** 快照确认原提交已入库且草稿未被编辑：清空输入区（283 §9 R02）。 */
+  clearDraft: number | null;
+  /** 清空信号已消费：父页面据此丢弃它，切回窗口时不重放（283 §10 R02）。 */
+  onClearDraftApplied: () => void;
   onDraftFocusHandled: () => void;
   onScrollFollow: (follow: boolean) => void;
   onLatest: () => void;
@@ -63,6 +74,13 @@ export function ChatPane({
   onOpenScene: (scene: PerfScene) => void;
   /** 衣柜与当前穿着的提示，例如未选择服饰或服饰没有差分。 */
   notice?: string | null;
+  /** 已收下但未安排回复的原因；显示等待原因与恢复入口。 */
+  waitReason: string | null;
+  /** 页面已知角色处于停止状态；发送被拒绝时也会进入同一恢复入口。 */
+  roleStopped: boolean;
+  onResumeRole: () => void;
+  onConfigureModel: () => void;
+  onRetryWaiting: () => void;
 }) {
   const policy = useMotionPolicy();
   const scroller = useRef<HTMLDivElement>(null);
@@ -73,6 +91,7 @@ export function ChatPane({
   const olderAnchor = useRef<{ height: number; top: number } | null>(null);
   const [draftValue, setDraftValue] = useState(initialDraft);
   const recoveredSequence = useRef(0);
+  const confirmedSequence = useRef(0);
   const followRef = useRef(follow);
   followRef.current = follow;
   const advancing = snapshot.activeId !== null;
@@ -83,6 +102,16 @@ export function ChatPane({
     setDraftValue(recoveredDraft.value);
     onRecoveredDraftApplied();
   }, [recoveredDraft, onRecoveredDraftApplied]);
+
+  useEffect(() => {
+    if (!clearDraft || clearDraft <= confirmedSequence.current) return;
+    confirmedSequence.current = clearDraft;
+    setDraftValue('');
+    window.requestAnimationFrame(() => {
+      if (draft.current) resizeDraft(draft.current);
+    });
+    onClearDraftApplied();
+  }, [clearDraft, onClearDraftApplied]);
 
   const scenesByAnchor = new Map<string, PerfScene[]>();
   const anchors = new Set(snapshot.messages.filter(row => row.role === 'assistant' && row.segmentId).map(row => JSON.stringify([row.messageId, row.segmentId])));
@@ -200,6 +229,8 @@ export function ChatPane({
   };
 
   let lastDay = '';
+  // 已停止、等待恢复或发送被拒绝都提供同一处恢复入口（283 §4 R07）。
+  const stoppedNotice = roleStopped || waitReason === 'ROLE_STOPPED' || snapshot.roleRejected;
   return <div className="dialogue-chat">
     <div className="dialogue-messages-wrap">
     <div className="dialogue-messages" ref={scroller} onScroll={onScroll}
@@ -266,6 +297,22 @@ export function ChatPane({
     </button>
     </div>
     <div className="dialogue-zone">
+      {waitReason || roleStopped || snapshot.roleRejected ? <div className="dialogue-wait-notice" role="status">
+        <span>{waitReason === 'MODEL_MISSING'
+          ? '消息已接收，但还没有可用的对话模型。'
+          : waitReason === 'ROLE_STOPPED'
+            ? '消息已接收。角色已停止，恢复活动后会继续处理。'
+            : waitReason === 'WINDOW_BLOCKED'
+              ? '消息已接收；这个窗口当前无法继续。'
+              : waitReason
+                ? '消息已接收，正在等待处理。'
+                : snapshot.roleRejected
+                  ? '角色已停止，消息还没有发送。恢复活动后请再发送一次。'
+                  : '角色已停止，恢复活动后即可继续对话。'}</span>
+        {stoppedNotice ? <button type="button" onClick={onResumeRole}>恢复活动</button> : null}
+        {waitReason === 'MODEL_MISSING' ? <button type="button" onClick={onConfigureModel}>配置对话模型</button> : null}
+        {waitReason ? <button type="button" onClick={onRetryWaiting}>重试</button> : null}
+      </div> : null}
       {notice ? <p className="dialogue-outfit-notice" role="status">{notice}</p> : null}
       {advancing ? null : <form className="dialogue-composer" onSubmit={submit}>
             <div className="dialogue-writing">

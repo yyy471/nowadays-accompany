@@ -2,26 +2,31 @@
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string | null;
+  /** 后端结构化详情，例如本次维护实际暂停的角色。 */
+  readonly details: unknown;
 
-  constructor(message: string, status: number, code: string | null) {
+  constructor(message: string, status: number, code: string | null, details?: unknown) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
 async function readError(response: Response): Promise<ApiError> {
   let message = `请求失败（${response.status}）`;
   let code: string | null = null;
+  let details: unknown;
   try {
-    const body = await response.json() as { error?: { message?: string; code?: string } };
+    const body = await response.json() as { error?: { message?: string; code?: string; details?: unknown } };
     if (body.error?.message) message = body.error.message;
     if (body.error?.code) code = body.error.code;
+    details = body.error?.details;
   } catch {
     // 非 JSON 错误沿用状态码提示。
   }
-  return new ApiError(message, response.status, code);
+  return new ApiError(message, response.status, code, details);
 }
 
 export async function api<T>(path: string, options: { method?: string; body?: unknown; signal?: AbortSignal } = {}): Promise<T> {

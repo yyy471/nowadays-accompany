@@ -68,3 +68,8 @@ export function planOutfitImport(
 export function summarizeOutfitPlan(
   plans: readonly AppearanceImportPlan[]
 ): AppearancePlanSummary;
+
+export function markImportedPlans(
+  plans: readonly AppearanceImportPlan[],
+  importedIds: Record<string, boolean>
+): AppearanceImportPlan[];
