@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { z } from "zod";
+import type { UploadedAudio } from "../domain/voice.js";
 import {
   voiceCapabilitiesSchema,
   voiceLanguageCodeSchema,
@@ -113,10 +114,16 @@ export function registerVoiceRoutes(
     "PUT",
     "/v1/roles/:roleId/voice",
     async ({ request, params }): Promise<RouteResponse> => {
-      const body = parseBody(saveVoiceSchema, await readJsonBody(request));
+      const { body, referenceFile } = await readJsonOrMultipartVoice(
+        request,
+        saveVoiceSchema,
+      );
       return {
         status: 200,
-        body: services.voice.saveVoice(params.roleId ?? "", body),
+        body: services.voice.saveVoice(params.roleId ?? "", {
+          ...body,
+          ...(referenceFile === undefined ? {} : { referenceFile }),
+        }),
       };
     },
   );
@@ -197,11 +204,19 @@ export function registerVoiceRoutes(
     "POST",
     "/v1/roles/:roleId/voice/preview",
     async ({ request, response, params }): Promise<RouteResponse> => {
-      const body = parseBody(previewVoiceSchema, await readJsonBody(request));
+      const { body, referenceFile } = await readJsonOrMultipartVoice(
+        request,
+        previewVoiceSchema,
+      );
       const { text, emotion, config, ...flat } = body;
       const audio = await services.voice.preview(
         params.roleId ?? "",
-        { text, ...(config ?? flat), ...(emotion === undefined ? {} : { emotion }) },
+        {
+          text,
+          ...(config ?? flat),
+          ...(emotion === undefined ? {} : { emotion }),
+          ...(referenceFile === undefined ? {} : { referenceFile }),
+        },
         abortSignalFor(request, response),
       );
       return {
@@ -246,4 +261,52 @@ function abortSignalFor(
   request.once("aborted", abort);
   response.once("close", abort);
   return controller.signal;
+}
+
+async function readJsonOrMultipartVoice<T>(
+  request: IncomingMessage,
+  schema: z.ZodType<T>,
+): Promise<{ body: T; referenceFile?: UploadedAudio }> {
+  const contentType = request.headers["content-type"] ?? "";
+  if (contentType.toLowerCase().startsWith("multipart/form-data")) {
+    const form = await readMultipartForm(request);
+    const files = form.files.get("file") ?? [];
+    if (files.length > 1) {
+      throw new HttpError(
+        400,
+        "VOICE_REFERENCE_FILE_REQUIRED",
+        "最多只能附带一个参考音频文件",
+      );
+    }
+    const rawPayload = form.fields.get("payload");
+    if (rawPayload === undefined) {
+      throw new HttpError(
+        400,
+        "INVALID_REQUEST",
+        "multipart 请求必须提供 payload 字段",
+      );
+    }
+    let parsedJson: unknown;
+    try {
+      parsedJson = JSON.parse(rawPayload);
+    } catch {
+      throw new HttpError(400, "INVALID_JSON", "payload 必须是合法 JSON");
+    }
+    const body = parseBody(schema, parsedJson);
+    const file = files[0];
+    return {
+      body,
+      ...(file === undefined
+        ? {}
+        : {
+            referenceFile: {
+              fileName: file.fileName,
+              data: file.data,
+            },
+          }),
+    };
+  }
+  return {
+    body: parseBody(schema, await readJsonBody(request)),
+  };
 }

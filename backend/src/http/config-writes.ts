@@ -29,6 +29,7 @@ export const ROLE_CONFIG_WRITES: ReadonlySet<string> = new Set([
 /** 全局服务写入：所有角色都须已停止。探测、试听、样图等只读动作不受限。 */
 export const GLOBAL_CONFIG_WRITES: ReadonlySet<string> = new Set([
   "PATCH /v1/image-services/:serviceId",
+  "DELETE /v1/image-services/:serviceId",
 ]);
 
 /**

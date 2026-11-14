@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
@@ -89,11 +90,13 @@ export interface SaveVoiceInput {
   language?: VoiceLanguage | undefined;
   speed?: number | undefined;
   emoAlpha?: number | undefined;
+  referenceFile?: UploadedAudio | undefined;
 }
 
 export interface VoicePreviewInput extends VoiceOverrides {
   emotion?: string;
   text: string;
+  referenceFile?: UploadedAudio | undefined;
 }
 
 /** 参考音频列表项：只给配置页需要的字段，不暴露角色目录内的相对路径。 */
@@ -174,6 +177,17 @@ export class VoiceService {
 
   saveVoice(roleId: string, input: SaveVoiceInput): { voice: VoiceConfigView } {
     const baseUrl = normalizeBaseUrl(input.baseUrl);
+    const audioMeta =
+      input.referenceFile === undefined
+        ? null
+        : validateUploadedAudio(input.referenceFile);
+    if (audioMeta !== null && input.voiceSource?.kind === "preset") {
+      throw new AppError(
+        400,
+        "INVALID_REQUEST",
+        "上传参考音频时不能同时选择预置音色",
+      );
+    }
     return this.roleAccess.withStore(roleId, (storage) => {
       const store = new VoiceStore(storage.business.db, roleId);
       const existing = store.getSettings();
@@ -198,7 +212,27 @@ export class VoiceService {
         input.speed,
       );
 
-      let source = savedSource(input, existing, protocol, serviceChanged);
+      const pendingAssetId = audioMeta === null ? null : randomUUID();
+      const saveInput: SaveVoiceInput =
+        pendingAssetId === null
+          ? input
+          : {
+              ...input,
+              voiceSource: {
+                kind: "reference",
+                referenceAssetId: pendingAssetId,
+                ...(input.voiceSource?.kind === "reference" &&
+                input.voiceSource.referenceMode !== undefined
+                  ? { referenceMode: input.voiceSource.referenceMode }
+                  : {}),
+                ...(input.voiceSource?.kind === "reference" &&
+                input.voiceSource.referenceText !== undefined
+                  ? { referenceText: input.voiceSource.referenceText }
+                  : {}),
+              },
+            };
+
+      let source = savedSource(saveInput, existing, protocol, serviceChanged);
       const shortcutAvailable =
         !serviceChanged &&
         (existing === null ||
@@ -211,14 +245,17 @@ export class VoiceService {
         shortcutAvailable,
       );
       assertSourceSupported(source, protocol, capabilities);
-      const reference =
-        source.kind === "reference" && source.referenceAssetId !== null
+      const existingReference =
+        audioMeta === null &&
+        source.kind === "reference" &&
+        source.referenceAssetId !== null
           ? store.getReference(source.referenceAssetId)
           : null;
       if (
+        audioMeta === null &&
         source.kind === "reference" &&
         source.referenceAssetId !== null &&
-        reference === null
+        existingReference === null
       ) {
         throw new AppError(
           404,
@@ -227,7 +264,8 @@ export class VoiceService {
           { assetId: source.referenceAssetId },
         );
       }
-      const settings = store.saveSettings({
+
+      const settingsPayload = {
         protocol,
         baseUrl,
         voiceSource: source,
@@ -250,8 +288,33 @@ export class VoiceService {
         ),
         emoAlpha: normalizeEmoAlpha(input.emoAlpha ?? existing?.emoAlpha),
         now: this.now().toISOString(),
-      });
-      return { voice: toView(settings, reference) };
+      };
+
+      if (audioMeta === null || pendingAssetId === null || input.referenceFile === undefined) {
+        const settings = store.saveSettings(settingsPayload);
+        return { voice: toView(settings, existingReference) };
+      }
+
+      const relativePath = `voice/${pendingAssetId}${audioMeta.extension}`;
+      const absolutePath = path.join(storage.paths.roleDir, relativePath);
+      fs.mkdirSync(storage.paths.voiceDir, { recursive: true });
+      fs.writeFileSync(absolutePath, input.referenceFile.data, { flag: "wx" });
+      try {
+        return storage.business.db.transaction(() => {
+          const reference = store.addReference({
+            assetId: pendingAssetId,
+            fileName: audioMeta.fileName,
+            mediaType: audioMeta.mediaType,
+            relativePath,
+            createdAt: settingsPayload.now,
+          });
+          const settings = store.saveSettings(settingsPayload);
+          return { voice: toView(settings, reference) };
+        })();
+      } catch (error) {
+        fs.rmSync(absolutePath, { force: true });
+        throw error;
+      }
     });
   }
 
@@ -259,26 +322,10 @@ export class VoiceService {
     roleId: string,
     audio: UploadedAudio,
   ): { reference: VoiceReferenceRecord } {
-    if (audio.data.length === 0) {
-      throw new AppError(400, "AUDIO_FILE_EMPTY", "参考音频不能为空");
-    }
-    if (audio.data.length > MAX_AUDIO_BYTES) {
-      throw new AppError(413, "AUDIO_TOO_LARGE", "参考音频超过 32 MiB 上限");
-    }
-    const inspected = inspectAudio(audio.data);
-    if (inspected === null) {
-      throw new AppError(
-        400,
-        "AUDIO_FORMAT_UNSUPPORTED",
-        "参考音频需为 WAV、MP3、FLAC 或 OGG",
-        { fileName: audio.fileName },
-      );
-    }
+    const meta = validateUploadedAudio(audio);
     return this.roleAccess.withStore(roleId, (storage) => {
       const assetId = randomUUID();
-      const fileName =
-        path.basename(audio.fileName).trim() || `reference${inspected.extension}`;
-      const relativePath = `voice/${assetId}${inspected.extension}`;
+      const relativePath = `voice/${assetId}${meta.extension}`;
       const absolutePath = path.join(storage.paths.roleDir, relativePath);
       fs.mkdirSync(storage.paths.voiceDir, { recursive: true });
       fs.writeFileSync(absolutePath, audio.data, { flag: "wx" });
@@ -288,8 +335,8 @@ export class VoiceService {
           roleId,
         ).addReference({
           assetId,
-          fileName,
-          mediaType: inspected.mediaType,
+          fileName: meta.fileName,
+          mediaType: meta.mediaType,
           relativePath,
           createdAt: this.now().toISOString(),
         });
@@ -385,10 +432,31 @@ export class VoiceService {
     signal?: AbortSignal,
   ): Promise<SynthesizedAudio> {
     const text = normalizePreviewText(input.text);
-    const resolved = this.roleAccess.withStore(roleId, (storage) =>
-      resolveVoice(storage.paths, storage.business.db, roleId, input),
+    const temporaryAudio =
+      input.referenceFile === undefined
+        ? undefined
+        : {
+            audio: input.referenceFile,
+            ...validateUploadedAudio(input.referenceFile),
+          };
+    const { resolved, tempDir } = this.roleAccess.withStore(
+      roleId,
+      (storage) =>
+        resolvePreviewVoice(
+          storage.paths,
+          storage.business.db,
+          roleId,
+          input,
+          temporaryAudio,
+        ),
     );
-    return this.synthesize(resolved, text, signal, input.emotion);
+    try {
+      return await this.synthesize(resolved, text, signal, input.emotion);
+    } finally {
+      if (tempDir !== undefined) {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }
   }
 
   async synthesizeSegment(
@@ -470,12 +538,45 @@ export class VoiceService {
   }
 }
 
-function resolveVoice(
+interface TemporaryAudioMeta {
+  audio: UploadedAudio;
+  fileName: string;
+  extension: string;
+  mediaType: string;
+}
+
+function validateUploadedAudio(audio: UploadedAudio): {
+  fileName: string;
+  extension: string;
+  mediaType: string;
+} {
+  if (audio.data.length === 0) {
+    throw new AppError(400, "AUDIO_FILE_EMPTY", "参考音频不能为空");
+  }
+  if (audio.data.length > MAX_AUDIO_BYTES) {
+    throw new AppError(413, "AUDIO_TOO_LARGE", "参考音频超过 32 MiB 上限");
+  }
+  const inspected = inspectAudio(audio.data);
+  if (inspected === null) {
+    throw new AppError(
+      400,
+      "AUDIO_FORMAT_UNSUPPORTED",
+      "参考音频需为 WAV、MP3、FLAC 或 OGG",
+      { fileName: audio.fileName },
+    );
+  }
+  const fileName =
+    path.basename(audio.fileName).trim() || `reference${inspected.extension}`;
+  return { fileName, ...inspected };
+}
+
+function resolvePreviewVoice(
   paths: RolePaths,
   db: Database.Database,
   roleId: string,
   input: VoiceOverrides,
-): ResolvedVoice {
+  temporaryAudio?: TemporaryAudioMeta,
+): { resolved: ResolvedVoice; tempDir?: string } {
   const store = new VoiceStore(db, roleId);
   const settings = store.getSettings();
   const protocol = input.protocol ?? settings?.protocol ?? "indextts";
@@ -506,18 +607,45 @@ function resolveVoice(
     settings !== null &&
     (settings.baseUrl !== baseUrl || settings.protocol !== protocol);
   const source = resolveSource(input, settings, protocol, serviceChanged);
-  if (protocol === "indextts") {
-    return resolveLegacyVoice(store, paths, baseUrl, source, input, settings);
+  if (temporaryAudio !== undefined && source.kind === "preset") {
+    throw new AppError(
+      400,
+      "INVALID_REQUEST",
+      "试听预置音色时不能附带临时参考音频",
+    );
   }
-  return resolveUnifiedVoice(
-    store,
-    paths,
-    baseUrl,
-    source,
-    input,
-    settings,
-    capabilities,
-  );
+  if (protocol === "indextts") {
+    return resolveLegacyVoice(
+      store,
+      paths,
+      baseUrl,
+      source,
+      input,
+      settings,
+      temporaryAudio,
+    );
+  }
+  return {
+    resolved: resolveUnifiedVoice(
+      store,
+      paths,
+      baseUrl,
+      source,
+      input,
+      settings,
+      capabilities,
+      temporaryAudio,
+    ),
+  };
+}
+
+function resolveVoice(
+  paths: RolePaths,
+  db: Database.Database,
+  roleId: string,
+  input: VoiceOverrides,
+): ResolvedVoice {
+  return resolvePreviewVoice(paths, db, roleId, input).resolved;
 }
 
 function resolveLegacyVoice(
@@ -527,13 +655,39 @@ function resolveLegacyVoice(
   source: VoiceSource,
   input: VoiceOverrides,
   settings: VoiceSettingsRecord | null,
-): ResolvedLegacyVoice {
+  temporaryAudio?: TemporaryAudioMeta,
+): { resolved: ResolvedLegacyVoice; tempDir?: string } {
   if (source.kind === "preset") {
     throw new AppError(
       400,
       "VOICE_SOURCE_UNSUPPORTED",
       "IndexTTS 旧协议只支持参考音频音色",
     );
+  }
+  const language = normalizeLegacyLanguage(input.language ?? settings?.language);
+  const speed = normalizeLegacySpeed(input.speed ?? settings?.speed);
+  const emoAlpha = normalizeEmoAlpha(input.emoAlpha ?? settings?.emoAlpha);
+  if (temporaryAudio !== undefined) {
+    // IndexTTS 通过本地路径读取参考音频：只在系统临时目录落地并由调用方 finally 清理，不进 roleDir。
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nowadays-voice-preview-"),
+    );
+    const referencePath = path.join(
+      tempDir,
+      `reference${temporaryAudio.extension}`,
+    );
+    fs.writeFileSync(referencePath, temporaryAudio.audio.data);
+    return {
+      resolved: {
+        protocol: "indextts",
+        baseUrl,
+        referencePath,
+        language,
+        speed,
+        emoAlpha,
+      },
+      tempDir,
+    };
   }
   if (source.referenceAssetId === null) {
     throw new AppError(400, "VOICE_REFERENCE_REQUIRED", "尚未导入参考音色");
@@ -545,12 +699,14 @@ function resolveLegacyVoice(
     });
   }
   return {
-    protocol: "indextts",
-    baseUrl,
-    referencePath: resolveReferencePath(paths, reference),
-    language: normalizeLegacyLanguage(input.language ?? settings?.language),
-    speed: normalizeLegacySpeed(input.speed ?? settings?.speed),
-    emoAlpha: normalizeEmoAlpha(input.emoAlpha ?? settings?.emoAlpha),
+    resolved: {
+      protocol: "indextts",
+      baseUrl,
+      referencePath: resolveReferencePath(paths, reference),
+      language,
+      speed,
+      emoAlpha,
+    },
   };
 }
 
@@ -562,6 +718,7 @@ function resolveUnifiedVoice(
   input: VoiceOverrides,
   settings: VoiceSettingsRecord | null,
   capabilities: VoiceCapabilities | null,
+  temporaryAudio?: TemporaryAudioMeta,
 ): ResolvedUnifiedVoice {
   const language = resolveUnifiedLanguage(
     capabilities,
@@ -596,16 +753,24 @@ function resolveUnifiedVoice(
       speed,
     };
   }
-  if (source.referenceAssetId === null) {
+  if (temporaryAudio === undefined && source.referenceAssetId === null) {
     throw new AppError(400, "VOICE_REFERENCE_REQUIRED", "尚未导入参考音色");
   }
-  const reference = store.getReference(source.referenceAssetId);
-  if (reference === null) {
+  const reference =
+    temporaryAudio === undefined && source.referenceAssetId !== null
+      ? store.getReference(source.referenceAssetId)
+      : null;
+  if (
+    temporaryAudio === undefined &&
+    source.referenceAssetId !== null &&
+    reference === null
+  ) {
     throw new AppError(404, "VOICE_REFERENCE_NOT_FOUND", "参考音频不存在", {
       assetId: source.referenceAssetId,
     });
   }
-  const referencePath = resolveReferencePath(paths, reference);
+  const referencePath =
+    reference === null ? null : resolveReferencePath(paths, reference);
   let mode = source.referenceMode;
   let modeDefinition: { requiresReferenceText: boolean } | null = null;
   if (capabilities !== null) {
@@ -656,15 +821,33 @@ function resolveUnifiedVoice(
       "当前参考模式需要录音原文",
     );
   }
+  if (temporaryAudio !== undefined) {
+    return {
+      protocol: "nowadays-tts-v1",
+      baseUrl,
+      source: {
+        kind: "reference",
+        reference: {
+          mode,
+          text: referenceText,
+          fileName: temporaryAudio.fileName,
+          mediaType: temporaryAudio.mediaType,
+          data: temporaryAudio.audio.data,
+        },
+      },
+      language,
+      speed,
+    };
+  }
   let data: Buffer;
   try {
-    data = fs.readFileSync(referencePath);
+    data = fs.readFileSync(referencePath!);
   } catch {
     throw new AppError(
       404,
       "VOICE_REFERENCE_FILE_MISSING",
       "参考音频文件缺失",
-      { assetId: reference.assetId },
+      { assetId: reference!.assetId },
     );
   }
   return {
@@ -675,8 +858,8 @@ function resolveUnifiedVoice(
       reference: {
         mode,
         text: referenceText,
-        fileName: reference.fileName,
-        mediaType: reference.mediaType,
+        fileName: reference!.fileName,
+        mediaType: reference!.mediaType,
         data,
       },
     },

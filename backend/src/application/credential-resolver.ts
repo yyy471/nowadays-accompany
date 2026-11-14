@@ -80,6 +80,11 @@ export class CredentialResolver {
     return resolveCredential(this.appRoot, reference);
   }
 
+  /** 只按外部引用解析凭据（不读 SecretStore），供草稿探测验证未保存引用。 */
+  resolveReference(reference?: string): string | undefined {
+    return resolveCredential(this.appRoot, reference);
+  }
+
   summary(resourceId: string, reference?: string): CredentialSummary {
     const state = this.inspect(resourceId, reference);
     if (state.kind === "stored") {

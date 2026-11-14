@@ -9,8 +9,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const assert = require('node:assert/strict');
+const { resolveElectronExecutable } = require('./electron-executable.cjs');
 
-const root = process.cwd();
+const root = path.resolve(__dirname, '../../..');
 const results = path.join(root, 'backend', 'test-results', 'theme-transition');
 fs.mkdirSync(results, { recursive: true });
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'theme-transition-'));
@@ -120,7 +121,7 @@ async function run() {
     NOWADAYS_APP_ROOT: path.join(temp, 'data')
   };
   delete env.ELECTRON_RUN_AS_NODE;
-  proc = spawn(path.join(root, 'node_modules/electron/dist/electron.exe'), [
+  proc = spawn(resolveElectronExecutable({ repoRoot: root }), [
     '--no-sandbox', '--remote-debugging-port=0', `--user-data-dir=${path.join(temp, 'chrome')}`,
     path.join(root, 'desktop/desk-preview')
   ], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });

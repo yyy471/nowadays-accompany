@@ -6,11 +6,19 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const assert = require('node:assert/strict');
-const root = process.cwd();
-const { PNG } = require(path.join(root, 'node_modules/pngjs'));
+const { resolveElectronExecutable } = require('./electron-executable.cjs');
+const root = path.resolve(__dirname, '../../..');
+const { PNG } = require(require.resolve('pngjs', { paths: [path.resolve(__dirname, '..'), root, path.join(root, 'backend')] }));
 const out = path.join(root, 'test-results/settings-workspace');
 fs.mkdirSync(out, { recursive: true });
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'settings-workspace-'));
+const sampleWavPath = path.join(temp, 'sample.wav');
+const wavHeader = Buffer.alloc(48);
+wavHeader.write('RIFF', 0); wavHeader.writeUInt32LE(40, 4); wavHeader.write('WAVEfmt ', 8);
+wavHeader.writeUInt32LE(16, 16); wavHeader.writeUInt16LE(1, 20); wavHeader.writeUInt16LE(1, 22);
+wavHeader.writeUInt32LE(16000, 24); wavHeader.writeUInt32LE(32000, 28); wavHeader.writeUInt16LE(2, 32);
+wavHeader.writeUInt16LE(16, 34); wavHeader.write('data', 36); wavHeader.writeUInt32LE(4, 40);
+fs.writeFileSync(sampleWavPath, wavHeader);
 const roles = ['甲', '乙'].map((name, i) => ({ roleId: i ? 'b' : 'a', displayName: `${name}角色`, status: 'ready' }));
 const resources = [{ resourceId: 'm1', kind: 'model', name: '测试模型', enabled: true, config: { protocol: 'openai-chat', baseUrl: 'http://127.0.0.1:1234' }, credential: { status: 'missing' }, lastTest: null }, { resourceId: 'x1', kind: 'mcp', name: '文件工具', enabled: true, config: { command: 'node', args: [], env: {} } }];
 const roleStates = { a: 'active', b: 'active', c: 'active' };
@@ -22,12 +30,23 @@ const wardrobes = Object.fromEntries(['a','b','c'].map(id => [id, [
   { outfitId: 'outfit-1', roleId: id, name: '测试立绘', description: null, home: { assetId: 'home-1' }, sprites: [{ assetId: 'sprite-1', displayName: '微笑' }] },
   { outfitId: 'outfit-2', roleId: id, name: '另一套', description: null, home: { assetId: 'home-2' }, sprites: [] },
 ]]));
+const imageServices = [];
+let nextImageServiceId = 1;
+const sceneImages = {};
+const imageServiceProbes = [];
+const imagePreviews = [];
+const voices = {};
+const voiceReferences = { a: [], b: [], c: [] };
+let voiceUploadCalled = false;
+const voicePreviewRequests = [];
+const voicePutRequests = [];
 const roleDeletes = [];
 let savedModelBody;
 let nextModelId = 2;
 let nextExtId = 2;
 const modelPatches = [];
 const requests = [];
+const readRaw = (req, fn) => { const chunks = []; req.on('data', chunk => chunks.push(chunk)); req.on('end', () => fn(Buffer.concat(chunks))); };
 const json = (res, body, status = 200) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
@@ -58,10 +77,102 @@ const server = http.createServer((req, res) => {
   if (p.endsWith('/bindings')) return json(res, { items: bindings[role?.roleId] || [], revision: String(revisions[role?.roleId] || 1) });
   if (p.endsWith('/autonomy/budget') && req.method === 'PUT') { let body = ''; req.on('data', chunk => body += chunk); return req.on('end', () => { if (roleStates[role.roleId] !== 'stopped') return json(res, { error: { message: '角色尚未停止' } }, 409); budgets[role.roleId] = { ...budgets[role.roleId], ...JSON.parse(body) }; json(res, budgets[role.roleId]); }); }
   if (p.endsWith('/autonomy/budget')) return json(res, budgets[role?.roleId] || budgets.a);
-  if (p.endsWith('/voice/references')) return json(res, { items: [] });
-  if (p.endsWith('/voice')) return json(res, { voice: null });
-  if (p.endsWith('/scene-image')) return json(res, { settings: null, service: null, configured: false });
-  if (p === '/v1/image-services') return json(res, { items: [] });
+  if (p.endsWith('/voice/references') && req.method === 'POST') { req.resume(); voiceUploadCalled = true; return json(res, { assetId: 'unexpected-upload' }, 201); }
+  if (p.endsWith('/voice/references')) return json(res, { items: voiceReferences[role?.roleId] || [] });
+  if (p.endsWith('/voice/probe') && req.method === 'POST') {
+    let body = ''; req.on('data', c => body += c);
+    return req.on('end', () => {
+      const data = JSON.parse(body || '{}');
+      json(res, { probe: { protocol: 'nowadays-tts-v1', service: 'mock-tts', model: 'v2', ready: true, capabilities: { referenceModes: [{ id: 'zero_shot', label: '零样本', requiresReferenceText: true }, { id: 'cross_language', label: '跨语种', requiresReferenceText: false }], presetVoices: false, languages: ['zh', 'en'], speed: { min: 0.5, max: 2 } }, voices: null, baseUrl: data.baseUrl } });
+    });
+  }
+  if (p.endsWith('/voice/preview') && req.method === 'POST') {
+    return readRaw(req, raw => {
+      const text = raw.toString('utf8');
+      voicePreviewRequests.push({ contentType: req.headers['content-type'] || '', hasPayload: text.includes('name="payload"'), hasFile: text.includes('filename="sample.wav"'), rawText: text });
+      res.writeHead(200, { 'content-type': 'audio/wav' }); res.end(wavHeader);
+    });
+  }
+  if (p.endsWith('/voice') && req.method === 'PUT' && role) {
+    return readRaw(req, raw => {
+      const text = raw.toString('utf8');
+      const ct = req.headers['content-type'] || '';
+      const m = /name="payload"\r\n\r\n([\s\S]*?)\r\n--/.exec(text);
+      const data = m ? JSON.parse(m[1]) : JSON.parse(text);
+      const hasFile = text.includes('filename="sample.wav"');
+      voicePutRequests.push({ contentType: ct, hasFile, data });
+      let ref = null;
+      if (hasFile) {
+        ref = { assetId: `ref-${voiceReferences[role.roleId].length + 1}`, fileName: 'sample.wav', mediaType: 'audio/wav', createdAt: '2026-11-14T00:00:00Z' };
+        voiceReferences[role.roleId] = [{ ...ref, inUse: true }];
+      }
+      voices[role.roleId] = {
+        engine: data.protocol || 'nowadays-tts-v1', protocol: data.protocol || 'nowadays-tts-v1', baseUrl: data.baseUrl,
+        voiceSource: { kind: 'reference', referenceAssetId: ref ? ref.assetId : (data.referenceAssetId || null), referenceMode: data.referenceMode || 'cross_language', referenceText: data.referenceText || null },
+        reference: ref, capabilities: { referenceModes: [{ id: 'zero_shot', label: '零样本', requiresReferenceText: true }, { id: 'cross_language', label: '跨语种', requiresReferenceText: false }], presetVoices: false, languages: ['zh', 'en'], speed: { min: 0.5, max: 2 } },
+        enabled: true, language: data.language || 'zh', speed: data.speed || 1, emoAlpha: data.emoAlpha || 1, createdAt: '2026-11-14T00:00:00Z', updatedAt: '2026-11-14T00:00:00Z',
+      };
+      json(res, { voice: voices[role.roleId] });
+    });
+  }
+  if (p.endsWith('/voice')) return json(res, { voice: voices[role?.roleId] || null });
+  if (p.endsWith('/scene-image/probe') && req.method === 'POST') {
+    let body = ''; req.on('data', c => body += c);
+    return req.on('end', () => json(res, { probe: { ok: true, baseUrl: 'http://127.0.0.1:8188', workflowReady: true, models: ['moss-v1.safetensors', 'moss-v2.safetensors'], missingNodes: [], elapsedMs: 4 } }));
+  }
+  if (p.endsWith('/scene-image/preview') && req.method === 'POST') {
+    let body = ''; req.on('data', c => body += c);
+    return req.on('end', () => {
+      const data = JSON.parse(body); imagePreviews.push(data);
+      const pngBytes = fs.readFileSync(path.join(root, 'desktop/desk-preview/renderer/src/assets/themes/xiacheng/character.png'));
+      json(res, { width: 512, height: 512, prompt: data.prompt || data.settings.basePrompt, mediaType: 'image/png', dataBase64: pngBytes.toString('base64') });
+    });
+  }
+  if (p.endsWith('/scene-image') && req.method === 'PUT' && role) {
+    let body = ''; req.on('data', c => body += c);
+    return req.on('end', () => {
+      const data = JSON.parse(body);
+      const svc = imageServices.find(item => item.serviceId === data.serviceId) || null;
+      sceneImages[role.roleId] = { settings: { ...data, roleId: role.roleId }, service: svc, configured: true };
+      json(res, sceneImages[role.roleId]);
+    });
+  }
+  if (p.endsWith('/scene-image')) return json(res, sceneImages[role?.roleId] || { settings: null, service: null, configured: false });
+  if (p === '/v1/image-services/probe' && req.method === 'POST') {
+    let body = ''; req.on('data', c => body += c);
+    return req.on('end', () => {
+      const data = JSON.parse(body || '{}'); imageServiceProbes.push(data);
+      json(res, { probe: { ok: true, baseUrl: data.baseUrl || 'http://127.0.0.1:8188', workflowReady: true, models: ['moss-v1.safetensors', 'moss-v2.safetensors'], missingNodes: [], elapsedMs: 5 } });
+    });
+  }
+  const imgServiceMatch = /^\/v1\/image-services\/([^/]+)$/.exec(p);
+  if (imgServiceMatch) {
+    const svc = imageServices.find(item => item.serviceId === imgServiceMatch[1]);
+    if (!svc) return json(res, { error: { message: '生图服务不存在' } }, 404);
+    if (roles.some(item => roleStates[item.roleId] !== 'stopped')) return json(res, { error: { code: 'ROLES_NOT_STOPPED', message: '角色尚未全部停止' } }, 409);
+    if (req.method === 'PATCH') {
+      let body = ''; req.on('data', c => body += c);
+      return req.on('end', () => {
+        const data = JSON.parse(body);
+        if (typeof data.name === 'string') svc.name = data.name;
+        if (typeof data.enabled === 'boolean') svc.enabled = data.enabled;
+        if (data.config) svc.config = { ...svc.config, ...data.config };
+        if (data.secret === null) svc.credential = { status: 'missing' };
+        else if (typeof data.secret === 'string') { svc.config.credentialRef = 'cred-img'; svc.credential = { status: 'stored' }; }
+        json(res, { service: svc });
+      });
+    }
+    if (req.method === 'DELETE') { imageServices.splice(imageServices.indexOf(svc), 1); return json(res, { deleted: true, serviceId: svc.serviceId }); }
+  }
+  if (p === '/v1/image-services' && req.method === 'POST') {
+    let body = ''; req.on('data', c => body += c);
+    return req.on('end', () => {
+      const data = JSON.parse(body);
+      const created = { serviceId: `img-${nextImageServiceId++}`, name: data.name, enabled: data.enabled ?? true, config: { protocol: 'comfyui', baseUrl: data.config.baseUrl, ...(data.config.timeoutMs ? { timeoutMs: data.config.timeoutMs } : {}), ...(data.secret ? { credentialRef: 'cred-img' } : {}) }, credential: { status: data.secret ? 'stored' : 'missing' } };
+      imageServices.push(created); json(res, { service: created }, 201);
+    });
+  }
+  if (p === '/v1/image-services') return json(res, { items: imageServices });
   const resourceMatch = /^\/v1\/resources\/([xm]\d+)(\/references)?$/.exec(p);
   if (resourceMatch) {
     const resource = resources.find(item => item.resourceId === resourceMatch[1]);
@@ -90,7 +201,7 @@ function compareRect(a, b, rect) { let changed = 0, checked = 0; for (let y = Ma
 async function run() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const env = { ...process.env, NOWADAYS_BACKEND_URL: `http://127.0.0.1:${server.address().port}`, NOWADAYS_APP_ROOT: path.join(temp, 'data') }; delete env.ELECTRON_RUN_AS_NODE;
-  proc = spawn(path.join(root, 'node_modules/electron/dist/electron.exe'), ['--no-sandbox', '--remote-debugging-port=0', `--user-data-dir=${path.join(temp, 'profile')}`, path.join(root, 'desktop/desk-preview')], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  proc = spawn(resolveElectronExecutable({ repoRoot: root }), ['--no-sandbox', '--remote-debugging-port=0', `--user-data-dir=${path.join(temp, 'profile')}`, path.join(root, 'desktop/desk-preview')], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   proc.stdout.on('data', x => logs += x); proc.stderr.on('data', x => logs += x);
   let port; await until(() => port = /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)/.exec(logs)?.[1]);
   let target; await until(async () => target = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(item => item.url.startsWith('desk://bundle/')));
@@ -208,6 +319,7 @@ async function run() {
   await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='甲角色'"));
   await ev("document.querySelector('.config-switch-role').click()");
   await until(() => ev("!!document.querySelector('.config-poster-hit')"));
+  assert.equal(await ev("[...document.querySelectorAll('.config-poster')].find(x=>x.textContent.includes('乙角色'))?.querySelector('.config-poster-dirty')?.textContent"), '未保存');
   await ev("[...document.querySelectorAll('.config-poster-hit')].find(x=>x.textContent.includes('乙角色')).click()");
   await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"/models/MOSS-Image-Base\"]')?.value==='/models/draft'"));
   assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"http://127.0.0.1:8000\"]')?.value"), 'http://127.0.0.1:8020');
@@ -219,6 +331,7 @@ async function run() {
   await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='甲角色'"));
   await ev("document.querySelector('.config-switch-role').click()");
   await until(() => ev("!!document.querySelector('.config-poster-hit')"));
+  assert.equal(await ev("[...document.querySelectorAll('.config-poster')].find(x=>x.textContent.includes('乙角色'))?.querySelector('.config-poster-dirty')?.textContent"), undefined);
   await ev("[...document.querySelectorAll('.config-poster-hit')].find(x=>x.textContent.includes('乙角色')).click()");
   await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"/models/MOSS-Image-Base\"]')?.value===''"));
   assert.notEqual(await ev("document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"http://127.0.0.1:8000\"]')?.value"), 'http://127.0.0.1:8020');
@@ -301,18 +414,87 @@ async function run() {
   await until(() => ev("document.querySelector('.config-leaf').innerText.includes('临时方法') && document.querySelector('.config-leaf').innerText.includes('当前没有角色或任务引用')"));
   assert.equal(resources.find(item => item.resourceId === 'x3').config.sourcePath, 'C:/fixture/skill');
   await ev("[...document.querySelectorAll('.config-tabs button')].find(x=>x.textContent.includes('模型')).click()");
+  assert.deepEqual(await ev("[...document.querySelectorAll('.config-kind-tabs button')].map(x=>x.textContent)"), ['模型', '生图'], '设置模型页只保留模型与生图两项');
+  await ev("[...document.querySelectorAll('.config-kind-tabs button')].find(x=>x.textContent==='生图').click()");
+  await until(() => ev("!!document.querySelector('.config-index button.config-index-new') && document.querySelector('.config-index').textContent.includes('添加生图服务')"));
+  await ev("document.querySelector('.config-index button.config-index-new').click()");
+  await until(() => ev("document.querySelector('.config-leaf').innerText.includes('添加生图服务')"));
+  await ev("(()=>{const p=document.querySelector('.config-leaf-body > .config-prose:not([hidden])');const set=(e,v)=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,v);e.dispatchEvent(new Event('input',{bubbles:true}));};const inputs=p.querySelectorAll('input');set(inputs[0],'本机测试生图');set(inputs[1],'http://127.0.0.1:8188');set(inputs[2],'secret-img');set(inputs[3],'15000');})()");
+  await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='测试连接').click()");
+  await until(() => imageServiceProbes.length === 1 && ev("document.querySelector('.config-leaf').innerText.includes('moss-v1.safetensors')"));
+  await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='保存生图服务').click()");
+  await until(() => imageServices.length === 1 && ev("document.querySelector('.config-leaf').innerText.includes('本机测试生图')"));
+  assert.equal(imageServices[0].config.timeoutMs, 15000);
+  await ev("(()=>{const e=document.querySelector('.config-leaf-body > .config-prose:not([hidden]) input[aria-label=生图服务名称]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'默认 ComfyUI');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
+  await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='替换').click()");
+  await ev("(()=>{const e=document.querySelector('.config-leaf-body > .config-prose:not([hidden]) input[type=password]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'img-secret-2');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
+  await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='保存生图服务').click()");
+  await until(() => imageServices[0].name === '默认 ComfyUI');
+  await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='全局停用').click()");
+  await until(() => imageServices[0].enabled === false);
+  await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='全局启用').click()");
+  await until(() => imageServices[0].enabled === true);
   for (const [width,height] of [[1440,840],[720,540]]) { await cmd('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false }); await delay(250); assert.equal(await ev('document.documentElement.scrollWidth<=innerWidth+1'), true, `${width} 横向溢出`); const bounds = await ev("(()=>{const a=document.querySelector('.config-book').getBoundingClientRect(),b=document.querySelector('.config-leaf-foot').getBoundingClientRect(),c=document.querySelector('.ui-page-dock').getBoundingClientRect();return {bookBottom:a.bottom,footBottom:b.bottom,dockBottom:c.bottom,height:innerHeight}})()"); assert.ok(bounds.footBottom<=bounds.bookBottom+1 && bounds.dockBottom<=bounds.height+1, JSON.stringify({width,bounds})); await shot(`settings-${width}.png`); }
   await ev("[...document.querySelectorAll('.ui-theme-switcher button')].find(x=>x.textContent.includes('晚风电台')).click()");
   await until(() => ev("document.querySelector('.studio-shell').dataset.uiPreset==='nightwave'")); await delay(500); await shot('settings-night-720.png');
+  await cmd('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
   await ev("document.querySelector('.config-return-footer').click()");
   await until(() => ev("document.querySelector('.studio-shell').dataset.page==='role-config'"));
   assert.equal(await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].some(x=>x.textContent.includes('新建模型服务'))"), false, '角色页不再提供新建模型服务入口');
   assert.equal(bindings.b.find(item => item.capability === 'chat_model').resourceId, 'm1', '模型绑定保持不变');
+  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-model-toggle')].find(x=>x.textContent.includes('生图')).click()");
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image-service-row select')?.value==='img-1'"));
+  await ev("(()=>{const e=document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"/models/MOSS-Image-Base\"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'draft-model');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
+  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent.includes('生成参数与服饰锚点')).click()");
+  await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"例如：米色风衣，深色长裤\"]')"));
+  await ev("(()=>{const e=document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"例如：米色风衣，深色长裤\"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'风衣草稿');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
+  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent.includes('在设置中管理')).click()");
+  await until(() => ev("document.querySelector('.studio-shell').dataset.page==='settings' && document.querySelector('.config-kind-tabs button[aria-pressed=\"true\"]')?.textContent==='生图'"));
+  await ev("document.querySelector('.config-index button.config-index-new').click()");
+  await until(() => ev("document.querySelector('.config-leaf').innerText.includes('添加生图服务')"));
+  await ev("(()=>{const p=document.querySelector('.config-leaf-body > .config-prose:not([hidden])');const set=(e,v)=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,v);e.dispatchEvent(new Event('input',{bubbles:true}));};const inputs=p.querySelectorAll('input');set(inputs[0],'备用生图');set(inputs[1],'http://127.0.0.1:8189');})()");
+  await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='保存生图服务').click()");
+  await until(() => imageServices.length === 2 && ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].some(x=>x.textContent==='删除生图服务')"));
+  await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='删除生图服务').click()");
+  await until(() => ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].some(x=>x.textContent==='确认删除')"));
+  await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='确认删除').click()");
+  await until(() => imageServices.length === 1);
+  await ev("document.querySelector('.config-return-footer').click()");
+  await until(() => ev("document.querySelector('.studio-shell').dataset.page==='role-config'"));
+  assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"/models/MOSS-Image-Base\"]')?.value"), 'draft-model', '跳转设置管理后应保留角色生图草稿');
+  assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"例如：米色风衣，深色长裤\"]')?.value"), '风衣草稿');
+  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='测试连接').click()");
+  await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image-models button')].some(x=>x.textContent==='moss-v2.safetensors')"));
+  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image-models button')].find(x=>x.textContent==='moss-v2.safetensors').click()");
+  assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"/models/MOSS-Image-Base\"]')?.value"), 'moss-v2.safetensors');
+  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='测试生图').click()");
+  await until(() => imagePreviews.length === 1 && ev("(() => { const img = document.querySelector('.config-role-editor:not([hidden]) .nd-image-figure img'); return !!(img && img.complete && img.naturalWidth > 0); })()"));
+  assert.equal(imagePreviews[0].settings.modelPath, 'moss-v2.safetensors');
+  assert.equal(sceneImages.b, undefined, '草稿测试生图不应写入已保存配置');
+  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='保存配置').click()");
+  await until(() => !!sceneImages.b);
+  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-model-toggle')].find(x=>x.textContent.includes('语音')).click()");
+  await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-voice input[placeholder=\"http://127.0.0.1:8000\"]')"));
+  await ev("(()=>{const e=document.querySelector('.config-role-editor:not([hidden]) .nd-voice input[placeholder=\"http://127.0.0.1:8000\"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'http://127.0.0.1:8880');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
+  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-voice button')].find(x=>x.textContent==='测试连接').click()");
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-voice-probe')?.textContent.includes('mock-tts')"));
+  await ev("(()=>{const s=[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-voice select')].find(x=>[...x.options].some(o=>o.value==='cross_language'));Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(s,'cross_language');s.dispatchEvent(new Event('change',{bubbles:true}));})()");
+  const docVoice = await cmd('DOM.getDocument');
+  const voiceFileInput = await cmd('DOM.querySelector', { nodeId: docVoice.root.nodeId, selector: '.config-role-editor:not([hidden]) .nd-voice input[type=file]' });
+  await cmd('DOM.setFileInputFiles', { nodeId: voiceFileInput.nodeId, files: [sampleWavPath] });
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-voice')?.innerText.includes('待上传：sample.wav')"));
+  assert.equal(voiceUploadCalled, false, '选择参考音频后只暂存待上传，不得提前上传');
+  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-voice button')].find(x=>x.textContent==='生成试听').click()");
+  await until(() => voicePreviewRequests.length === 1);
+  assert.ok(voicePreviewRequests[0].contentType.includes('multipart/form-data') && voicePreviewRequests[0].hasPayload && voicePreviewRequests[0].hasFile, '待上传录音试听应发送 multipart FormData');
+  assert.equal(voiceUploadCalled, false);
+  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-voice button')].find(x=>x.textContent==='保存声音配置').click()");
+  await until(() => voicePutRequests.length === 1 && ev("document.querySelector('.config-role-editor:not([hidden]) .nd-voice-references')?.innerText.includes('sample.wav')"));
+  assert.ok(voicePutRequests[0].contentType.includes('multipart/form-data') && voicePutRequests[0].hasFile);
+  assert.equal(voiceUploadCalled, false);
   await ev("document.querySelector('.config-switch-role').click()");
   await until(() => ev("!!document.querySelector('.config-create-role')"));
   await ev("document.querySelector('.config-create-role').click()");
-  await until(() => ev("!!document.querySelector('.config-dirty-prompt')"));
-  await ev("[...document.querySelectorAll('.config-dirty-prompt button')].find(x=>x.textContent.includes('放弃改动')).click()");
   await until(() => ev("!!document.querySelector('.config-dialog textarea')"));
   await ev("(()=>{const d=document.querySelector('.config-dialog');const input=d.querySelector('input');const area=d.querySelector('textarea');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'丙角色');input.dispatchEvent(new Event('input',{bubbles:true}));Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(area,'丙的设定');area.dispatchEvent(new Event('input',{bubbles:true}));})()");
   await ev("[...document.querySelectorAll('.config-dialog button')].find(x=>x.textContent==='创建角色').click()");
@@ -337,7 +519,7 @@ async function run() {
   await until(() => roleDeletes.some(item => item.roleId === 'a' && item.choice === '0'));
   await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='丙角色' && document.querySelector('#config-footer-right').textContent.includes('丙角色')"));
   assert.ok(await ev("document.querySelector('.config-delete-notice')?.textContent.includes('尚待清理')"));
-  await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].find(x=>x.textContent==='删除角色')?.disabled"));
-  assert.deepEqual(errors, []); assert.ok(requests.includes('DELETE /v1/resources/x2')); console.log(JSON.stringify({ editIsolation: true, crossPageDraft: true, roleDraft: true, voiceImageDraft: true, activityStop: true, profileSave: true, outfitManagement: true, roleDeleteBothPaths: true, bindingPreservation: true, quotaSave: true, roleCreation: true, modelCreation: true, modelList: true, modelTest: true, extensionManagement: true, night: true, visibleBounds, widths: [1280,1440,720], errors }, null, 2));
+  await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].find(x=>x.textContent.includes('删除角色'))?.disabled"));
+  assert.deepEqual(errors, []); assert.ok(requests.includes('DELETE /v1/resources/x2')); console.log(JSON.stringify({ editIsolation: true, crossPageDraft: true, roleDraft: true, voiceImageDraft: true, activityStop: true, profileSave: true, outfitManagement: true, roleDeleteBothPaths: true, bindingPreservation: true, quotaSave: true, settingsTwoTabs: true, imageServiceCrudAndProbe: true, roleImageDraftProbeAndPreview: true, voiceStagingPreviewAndSave: true, roleCreation: true, modelCreation: true, modelList: true, modelTest: true, extensionManagement: true, night: true, visibleBounds, widths: [1280,1440,720], errors }, null, 2));
 }
 run().catch(error => { console.error(error, logs.slice(-1200)); process.exitCode = 1; }).finally(async () => { try { if (ws?.readyState === 1) { ws.send(JSON.stringify({ id: 99999, method: 'Browser.close' })); ws.close(); } } catch {} await delay(500); if (proc && proc.exitCode === null) proc.kill(); server.close(); try { if (path.dirname(path.resolve(temp)) === path.resolve(os.tmpdir()) && path.basename(temp).startsWith('settings-workspace-')) fs.rmSync(temp, { recursive: true, force: true }); } catch {} });

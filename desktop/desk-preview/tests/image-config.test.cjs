@@ -164,6 +164,73 @@ test("describeImageFailure 优先用已知错误码的说明", async () => {
     describeImageFailure("IMAGE_GENERATION_TIMEOUT", "raw"),
     "出图超时。首次加载模型可能较慢，可以调大等待上限。"
   );
+  assert.equal(
+    describeImageFailure("ROLES_NOT_STOPPED", "raw"),
+    "还有角色处于活动状态，请先暂停相关角色后再修改全局生图服务。"
+  );
   assert.equal(describeImageFailure("SOMETHING_NEW", "服务返回 500"), "服务返回 500");
   assert.equal(describeImageFailure(null, ""), "操作失败，请重试。");
+});
+
+test("toSceneImagePreviewPayload 与 toImageServiceProbePayload 构造草稿请求载荷", async () => {
+  const {
+    createImageForm,
+    toSceneImagePreviewPayload,
+    toImageServiceProbePayload,
+  } = await load();
+  const form = createImageForm(saved);
+  form.modelPath = "  /models/MOSS-Draft  ";
+  form.width = 512;
+  const preview = toSceneImagePreviewPayload(form, {
+    prompt: "  雨夜咖啡馆  ",
+    outfitId: "  outfit-1  ",
+  });
+  assert.equal(preview.prompt, "雨夜咖啡馆");
+  assert.equal(preview.outfitId, "outfit-1");
+  assert.equal(preview.settings.modelPath, "/models/MOSS-Draft");
+  assert.equal(preview.settings.width, 512);
+
+  const probeNew = toImageServiceProbePayload({
+    baseUrl: " http://127.0.0.1:8188 ",
+    secret: "draft-token",
+    timeoutMs: 30000,
+  });
+  assert.deepEqual(probeNew, {
+    config: {
+      protocol: "comfyui",
+      baseUrl: "http://127.0.0.1:8188",
+      timeoutMs: 30000,
+    },
+    secret: "draft-token",
+  });
+});
+
+test("imageServiceSnapshotKey 随启用状态、连接参数或修改代次变化而失配", async () => {
+  const { imageServiceSnapshotKey, describeImageFailure } = await load();
+  const base = {
+    serviceId: "svc-1",
+    enabled: true,
+    updatedAt: "2026-11-14T10:00:00.000Z",
+    config: { protocol: "comfyui", baseUrl: "http://127.0.0.1:8188", timeoutMs: 30000 },
+    credential: { status: "unset", reference: null },
+  };
+  const key0 = imageServiceSnapshotKey(base, 0);
+  assert.equal(imageServiceSnapshotKey(null), "");
+  assert.notEqual(key0, "");
+  assert.equal(key0, imageServiceSnapshotKey({ ...base }, 0));
+  assert.notEqual(key0, imageServiceSnapshotKey({ ...base, enabled: false }, 0));
+  assert.notEqual(
+    key0,
+    imageServiceSnapshotKey({ ...base, config: { ...base.config, baseUrl: "http://127.0.0.1:8189" } }, 0),
+  );
+  assert.notEqual(
+    key0,
+    imageServiceSnapshotKey({ ...base, config: { ...base.config, timeoutMs: 60000 } }, 0),
+  );
+  assert.notEqual(
+    key0,
+    imageServiceSnapshotKey({ ...base, credential: { status: "inline", reference: null } }, 0),
+  );
+  assert.notEqual(key0, imageServiceSnapshotKey(base, 1));
+  assert.equal(describeImageFailure("OUTFIT_NOT_FOUND", ""), "当前选择的服饰不存在，刷新后重试。");
 });

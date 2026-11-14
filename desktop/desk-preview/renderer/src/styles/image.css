@@ -1,7 +1,7 @@
 .nd-image { display: flex; flex-direction: column; gap: 12px; }
-.nd-image-service-row { display: flex; align-items: center; gap: 8px; }
-.nd-image-service-row select { flex: 1 1 auto; min-width: 0; }
-.nd-image-new-service { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--nd-semantic-radius-action); background: var(--panel-2); }
+.nd-image-service-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.nd-image-service-row select { flex: 1 1 200px; min-width: 0; }
+.nd-image-models { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
 .nd-image-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
 .nd-image-outfits { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--nd-semantic-radius-action); background: var(--panel); }
 .nd-image-actions { display: flex; align-items: center; gap: 8px; }

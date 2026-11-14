@@ -516,10 +516,14 @@ export class ResourceService {
     for (const index of this.appStore.listRoleIndexes()) {
       if (index.initStatus !== "ready") continue;
       const targets = this.bindings.usageTargets(index.roleId);
-      const taskIds = this.access.withStore(index.roleId, (storage) =>
-        storage.business
-          .listOpenResourceContinuations(resourceId)
-          .map((task) => task.taskId),
+      const { displayName, taskIds } = this.access.withStore(
+        index.roleId,
+        (storage) => ({
+          displayName: storage.business.getRole(index.roleId).displayName,
+          taskIds: storage.business
+            .listOpenResourceContinuations(resourceId)
+            .map((task) => task.taskId),
+        }),
       );
       const usages = new Set<"chat" | "memory" | "task">();
       if (targets.chatResourceId === resourceId) usages.add("chat");
@@ -530,7 +534,7 @@ export class ResourceService {
       const activity = this.activityOf(index.roleId);
       roles.push({
         roleId: index.roleId,
-        displayName: index.initPayload?.displayName ?? index.roleId,
+        displayName,
         usages: [...usages],
         taskIds,
         state: activity.state,

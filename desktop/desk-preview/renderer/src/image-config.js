@@ -57,6 +57,40 @@ export function toImagePayload(form) {
   };
 }
 
+/** 构造草稿生图预览载荷：使用未保存的表单草稿，不修改已保存角色配置。 */
+export function toSceneImagePreviewPayload(form, options = {}) {
+  const prompt = String(options.prompt ?? "").trim();
+  const outfitId = String(options.outfitId ?? "").trim();
+  return {
+    prompt,
+    ...(outfitId.length > 0 ? { outfitId } : {}),
+    settings: toImagePayload(form),
+  };
+}
+
+/** 构造生图服务连接探测草稿载荷（Settings 或面板新建服务共用）。 */
+export function toImageServiceProbePayload(input = {}) {
+  const serviceId = String(input.serviceId ?? "").trim();
+  const baseUrl = String(input.baseUrl ?? "").trim();
+  const credentialRef = String(input.credentialRef ?? "").trim();
+  const secret = String(input.secret ?? "");
+  const timeoutMs =
+    typeof input.timeoutMs === "number" && Number.isFinite(input.timeoutMs)
+      ? Math.round(input.timeoutMs)
+      : undefined;
+  return {
+    ...(serviceId.length > 0 ? { serviceId } : {}),
+    config: {
+      protocol: "comfyui",
+      baseUrl,
+      ...(credentialRef.length > 0 ? { credentialRef } : {}),
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    },
+    ...(secret.length > 0 ? { secret } : {}),
+    ...(input.workflow ? { workflow: input.workflow } : {}),
+  };
+}
+
 export function withOutfitPrompt(form, outfitId, text) {
   return {
     ...form,
@@ -149,10 +183,32 @@ const FAILURE_TEXT = {
   IMAGE_GENERATION_TIMEOUT: "出图超时。首次加载模型可能较慢，可以调大等待上限。",
   IMAGE_GENERATION_FAILED: "出图失败，详情见服务端日志。",
   SCENE_IMAGE_NOT_CONFIGURED: "还没有配置生图服务。",
+  INVALID_SCENE_IMAGE_SETTINGS: "生图参数不合法，请检查模型目录和生成参数。",
   INVALID_IMAGE_SERVICE_CONFIG: "生图服务配置不完整，检查地址。",
-  RESOURCE_CREDENTIAL_STALE: "换了服务地址，需要重新填写密钥。",
+  RESOURCE_CREDENTIAL_STALE: "换了服务地址，需要重新填写密钥或切换为无密钥。",
   RESOURCE_CREDENTIAL_CONFLICT: "直填密钥与引用只能二选一。",
+  ROLES_NOT_STOPPED: "还有角色处于活动状态，请先暂停相关角色后再修改全局生图服务。",
+  OUTFIT_NOT_FOUND: "当前选择的服饰不存在，刷新后重试。",
 };
+
+/** 生成服务状态与连接配置的快照键，用于跨页返回或刷新时判定探测/预览是否已过期。 */
+export function imageServiceSnapshotKey(service, epoch = 0) {
+  if (service === null || service === undefined) return "";
+  const config = service.config ?? {};
+  const credential = service.credential ?? {};
+  return JSON.stringify([
+    service.serviceId ?? "",
+    Boolean(service.enabled),
+    config.protocol ?? "comfyui",
+    config.baseUrl ?? "",
+    config.timeoutMs ?? null,
+    config.credentialRef ?? "",
+    credential.status ?? "",
+    credential.reference ?? "",
+    service.updatedAt ?? "",
+    Number.isFinite(Number(epoch)) ? Number(epoch) : 0,
+  ]);
+}
 
 export function describeImageFailure(code, message) {
   const known = code === null || code === undefined ? null : FAILURE_TEXT[code];

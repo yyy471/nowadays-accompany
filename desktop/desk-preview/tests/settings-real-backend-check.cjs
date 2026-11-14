@@ -5,7 +5,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
-const root = process.cwd();
+const { resolveElectronExecutable } = require('./electron-executable.cjs');
+const root = path.resolve(__dirname, '../../..');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'nowadays-ui-real-'));
 const node = path.join(root, 'prototypes/p0/.runtime/node-v24.22.2-win-x64/node.exe');
 const imagePath = path.join(root, 'desktop/desk-preview/renderer/src/assets/themes/xiacheng/character.png');
@@ -36,7 +37,7 @@ async function run() {
     await request(`/v1/roles/${a.roleId}/appearance/outfits`, { method: 'POST', body: form });
   }
   const env = { ...process.env, NOWADAYS_BACKEND_URL: base, NOWADAYS_APP_ROOT: path.join(temp, 'desktop') }; delete env.ELECTRON_RUN_AS_NODE;
-  electron = spawn(path.join(root, 'node_modules/electron/dist/electron.exe'), ['--no-sandbox', '--remote-debugging-port=0', `--user-data-dir=${path.join(temp, 'profile')}`, path.join(root, 'desktop/desk-preview')], { env, windowsHide: true });
+  electron = spawn(resolveElectronExecutable({ repoRoot: root }), ['--no-sandbox', '--remote-debugging-port=0', `--user-data-dir=${path.join(temp, 'profile')}`, path.join(root, 'desktop/desk-preview')], { env, windowsHide: true });
   electron.stdout.on('data', data => electronLog += data); electron.stderr.on('data', data => electronLog += data);
   const debugPort = await until(() => /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)/.exec(electronLog)?.[1]);
   const target = await until(async () => (await (await fetch(`http://127.0.0.1:${debugPort}/json/list`)).json()).find(item => item.url.startsWith('desk://bundle/')));

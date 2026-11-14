@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, apiBinary, apiUpload } from '../../api';
+import { api, apiBinary } from '../../api';
 import { Button, Field, Input, LoadingNote, Select, Textarea } from '../../ui';
 import type { ConfigDraftState } from '../config-draft';
 import {
@@ -14,6 +14,7 @@ import {
   summarizeProbe,
   toVoicePayload,
   validateVoiceForm,
+  withPendingReferenceAudio,
   withReferenceAudio,
   withVoiceService,
   type VoiceConfigView,
@@ -21,6 +22,8 @@ import {
   type VoiceProbeResult,
   type VoiceReferenceItem,
 } from '../../voice-config.js';
+
+const MAX_REFERENCE_AUDIO_BYTES = 32 * 1024 * 1024;
 
 type Props = {
   guardWrite?: <T>(action: () => Promise<T>) => Promise<T>;
@@ -47,6 +50,7 @@ export function VoicePanel({
   const draftCallback = useRef(onDraftStateChange);
   draftCallback.current = onDraftStateChange;
   const [references, setReferences] = useState<VoiceReferenceItem[]>([]);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [probe, setProbe] = useState<VoiceProbeResult | null>(null);
   const [probeSource, setProbeSource] = useState<{ baseUrl: string; protocol: string } | null>(null);
   const [probeBusy, setProbeBusy] = useState(false);
@@ -121,17 +125,21 @@ export function VoicePanel({
       const { capabilities: _capabilities, ...fields } = value;
       return JSON.stringify(fields);
     };
+    const stagedPending =
+      pendingFile !== null && (form.protocol === 'indextts' || form.sourceKind === 'reference');
     draftCallback.current?.({
-      dirty: savedForm !== null && comparable(form) !== comparable(savedForm),
+      dirty: stagedPending || (savedForm !== null && comparable(form) !== comparable(savedForm)),
       busy: busy || toggleBusy || probeBusy,
       discard: () => {
         if (savedForm) setForm(savedForm);
+        setPendingFile(null);
+        if (fileInput.current) fileInput.current.value = '';
         previewToken.current += 1;
         stopPreview(); setPreviewBusy(false);
         setProbe(null); setProbeSource(null); setError(''); setNotice('');
       },
     });
-  }, [form, savedForm, busy, toggleBusy, probeBusy]);
+  }, [form, savedForm, pendingFile, busy, toggleBusy, probeBusy]);
 
   useEffect(() => {
     if (!active) {
@@ -143,6 +151,8 @@ export function VoicePanel({
   useEffect(() => {
     let active = true;
     setConfig(null); setForm(createVoiceForm(null)); setSavedForm(null); setReferences([]);
+    setPendingFile(null);
+    if (fileInput.current) fileInput.current.value = '';
     setProbe(null); setProbeSource(null); setNotice(''); setError('');
     setProbeBusy(false); setPreviewBusy(false); setBusy(false); setToggleBusy(false);
     setLoading(true); setPlaying(false);
@@ -238,19 +248,39 @@ export function VoicePanel({
     if (text.length === 0) { setError('试听文本不能为空。'); return; }
     const token = roleToken.current;
     const preview = previewToken.current;
-    const issues = validateVoiceForm(form, { capabilities: activeCapabilities });
+    const stagedFile =
+      pendingFile !== null && (form.protocol === 'indextts' || form.sourceKind === 'reference')
+        ? pendingFile
+        : null;
+    const hasPendingReference = stagedFile !== null;
+    const issues = validateVoiceForm(form, { capabilities: activeCapabilities, hasPendingReference });
     if (issues.length > 0) { setError(issues.map(item => item.message).join('；')); return; }
     setPreviewBusy(true); setError(''); setNotice('');
     try {
+      const payload = {
+        text,
+        ...toVoicePayload(form, { capabilities: activeCapabilities, hasPendingReference }),
+      };
+      let body: unknown = payload;
+      if (stagedFile !== null) {
+        const formData = new FormData();
+        formData.append('payload', JSON.stringify(payload));
+        formData.append('file', stagedFile, stagedFile.name);
+        body = formData;
+      }
       const blob = await apiBinary(`/v1/roles/${encodeURIComponent(roleId)}/voice/preview`, {
         method: 'POST',
-        body: { text, ...toVoicePayload(form, { capabilities: activeCapabilities }) },
+        body,
       });
       // 切到别的角色后不再播放上一段试听。
       if (isStale(token) || preview !== previewToken.current) return;
       if (blob.size === 0) { setError('试听返回了空音频。'); return; }
       playBlob(blob);
-      setNotice('已按当前表单生成试听，正在播放。');
+      setNotice(
+        stagedFile !== null
+          ? `已用待上传录音「${stagedFile.name}」生成临时试听（尚未写入目录），正在播放。`
+          : '已按当前表单生成试听，正在播放。',
+      );
     } catch (reason) {
       if (isStale(token) || preview !== previewToken.current) return;
       setError(failureText(reason));
@@ -259,35 +289,25 @@ export function VoicePanel({
     }
   };
 
-  const uploadReference = async (files: FileList | null) => {
+  const selectPendingReference = (files: FileList | null) => {
     const file = files?.[0];
+    if (fileInput.current) fileInput.current.value = '';
     if (!file || busy) return;
-    const token = roleToken.current;
-    setBusy(true); setError(''); setNotice('');
-    try {
-      const body = new FormData();
-      body.append('file', file, file.name);
-      // 参考录音属于受活动保护的写入：先暂停角色，后端确认后再上传（283 R08）。
-      const result = await guardWrite(() => apiUpload<{ reference: { assetId: string; fileName: string } }>(
-        `/v1/roles/${encodeURIComponent(roleId)}/voice/reference`,
-        body,
-      ));
-      if (isStale(token)) return;
-      // 新录音不能沿用上一段录音的参考文本。
-      setForm(previous => ({ ...withReferenceAudio(previous, result.reference.assetId), sourceKind: 'reference' }));
-      await refreshReferences(token);
-      if (isStale(token)) return;
-      setNotice(`已上传参考音频「${result.reference.fileName}」，保存后生效。`);
-    } catch (reason) {
-      if (isStale(token)) return;
-      setError(failureText(reason));
-    } finally {
-      // 过期操作不能清掉当前角色的忙碌状态。
-      if (!isStale(token)) {
-        setBusy(false);
-        if (fileInput.current) fileInput.current.value = '';
-      }
-    }
+    setError('');
+    if (file.size === 0) { setError('参考音频不能为空。'); return; }
+    if (file.size > MAX_REFERENCE_AUDIO_BYTES) { setError('参考音频超过 32 MiB 上限。'); return; }
+    setPendingFile(file);
+    // 选定新音频必须清空上一段录音遗留的参考文本，但不提前写盘。
+    setForm(previous => withPendingReferenceAudio(previous));
+    setNotice(`已暂存待上传录音「${file.name}」，可直接生成试听，点保存后正式写入角色目录。`);
+  };
+
+  const clearPendingReference = () => {
+    if (pendingFile === null || busy) return;
+    setPendingFile(null);
+    if (fileInput.current) fileInput.current.value = '';
+    patch({ referenceText: '' });
+    setNotice('已取消待上传录音。');
   };
 
   const removeReference = async (item: VoiceReferenceItem) => {
@@ -320,19 +340,34 @@ export function VoicePanel({
   const save = async () => {
     // 保存与启停互斥：任一进行中都不接受另一个，避免旧快照覆盖已确认的启用状态。
     if (inFlight.current !== null || busy || toggleBusy) return;
-    const issues = validateVoiceForm(form, { capabilities: activeCapabilities });
+    const stagedFile =
+      pendingFile !== null && (form.protocol === 'indextts' || form.sourceKind === 'reference')
+        ? pendingFile
+        : null;
+    const hasPendingReference = stagedFile !== null;
+    const issues = validateVoiceForm(form, { capabilities: activeCapabilities, hasPendingReference });
     if (issues.length > 0) { setError(issues.map(item => item.message).join('；')); return; }
     const lock = acquire('save');
     const token = roleToken.current;
     const configSeq = stateSeq.current;
     setBusy(true); setError(''); setNotice('');
     try {
+      const payload = toVoicePayload(form, { capabilities: activeCapabilities, hasPendingReference });
+      let body: unknown = payload;
+      if (stagedFile !== null) {
+        const formData = new FormData();
+        formData.append('payload', JSON.stringify(payload));
+        formData.append('file', stagedFile, stagedFile.name);
+        body = formData;
+      }
       const result = await guardWrite(() => api<{ voice: VoiceConfigView }>(`/v1/roles/${encodeURIComponent(roleId)}/voice`, {
         method: 'PUT',
-        body: toVoicePayload(form, { capabilities: activeCapabilities }),
+        body,
       }));
       if (isStale(token)) return;
       if (stateSeq.current === configSeq) setConfig(result.voice);
+      setPendingFile(null);
+      if (fileInput.current) fileInput.current.value = '';
       const saved = createVoiceForm(result.voice);
       setForm(saved); setSavedForm(saved);
       setProbe(null);
@@ -453,9 +488,12 @@ export function VoicePanel({
         </Select>
         : <Input value={form.voiceId} placeholder="音色 ID" disabled={busy} onChange={event => patch({ voiceId: event.target.value })} />}
     </Field> : <>
-      <Field label="参考音频" hint="使用中的参考音频不能删除，先切换到其他音色。换录音会清空参考文本。">
-        <Select value={form.referenceAssetId} disabled={busy} onChange={event => setForm(previous => withReferenceAudio(previous, event.target.value))}>
-          <option value="">请选择参考音频</option>
+      <Field label="参考音频" hint="选定新录音先暂存在表单中，可先试听；点击「保存声音配置」后才写入角色目录。使用中的参考音频不能删除。">
+        <Select value={form.referenceAssetId} disabled={busy} onChange={event => {
+          setPendingFile(null);
+          setForm(previous => withReferenceAudio(previous, event.target.value));
+        }}>
+          <option value="">{pendingFile ? `待上传：${pendingFile.name}` : '请选择参考音频'}</option>
           {references.map(item => <option key={item.assetId} value={item.assetId}>{item.fileName}{item.inUse ? '（使用中）' : ''}</option>)}
           {form.referenceAssetId.length > 0 && !references.some(item => item.assetId === form.referenceAssetId)
             ? <option value={form.referenceAssetId}>已选音频（列表里没有）</option>
@@ -463,10 +501,14 @@ export function VoicePanel({
         </Select>
       </Field>
       <div className="nd-appearance-actions">
-        <input ref={fileInput} type="file" accept="audio/wav,audio/mpeg,audio/flac,audio/ogg" className="nd-visually-hidden" onChange={event => void uploadReference(event.target.files)} />
-        <Button disabled={busy} onClick={() => fileInput.current?.click()}>上传参考音频</Button>
-        <small className="nd-voice-note">支持 WAV、MP3、FLAC、OGG，单个不超过 32 MiB。</small>
+        <input ref={fileInput} type="file" accept="audio/wav,audio/mpeg,audio/flac,audio/ogg" className="nd-visually-hidden" onChange={event => selectPendingReference(event.target.files)} />
+        <Button disabled={busy} onClick={() => fileInput.current?.click()}>选择参考音频</Button>
+        {pendingFile && <Button variant="ghost" size="sm" disabled={busy} onClick={clearPendingReference}>取消待上传</Button>}
+        <small className="nd-voice-note">支持 WAV、MP3、FLAC、OGG，单个不超过 32 MiB；保存后正式上传。</small>
       </div>
+      {pendingFile && <div className="nd-voice-probe" role="status">
+        <small>待上传：{pendingFile.name}（{(pendingFile.size / 1024).toFixed(1)} KiB）· 点击「保存声音配置」后正式写入</small>
+      </div>}
       {references.length > 0 ? <ul className="nd-voice-references">
         {references.map(item => <li key={item.assetId}>
           <span>{item.fileName}{item.inUse ? <em>使用中</em> : null}</span>

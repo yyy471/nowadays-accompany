@@ -785,3 +785,40 @@ test("duration factor and audio inspection keep their boundaries", () => {
   ]);
   assert.equal(isPcmWav(oddMetadata), true);
 });
+
+test("indextts temporary preview cleans up temporary file without touching roleDir", async () => {
+  const fake = await startFakeTts();
+  const fixture = createFixture([]);
+  try {
+    const port = await listen(fixture.app.server, 0, "127.0.0.1");
+    const paths = rolePaths(fixture.app.config.dataRoot, fixture.roleId);
+    const previewForm = new FormData();
+    previewForm.append(
+      "payload",
+      JSON.stringify({
+        text: "旧协议临时录音试听。",
+        baseUrl: fake.baseUrl,
+        protocol: "indextts",
+        voiceSource: { kind: "reference", referenceAssetId: null },
+      }),
+    );
+    previewForm.append(
+      "file",
+      new Blob([WAV_AUDIO], { type: "audio/wav" }),
+      "legacy-temp.wav",
+    );
+    const preview = await configFetch(
+      `http://127.0.0.1:${port}/v1/roles/${fixture.roleId}/voice/preview`,
+      { method: "POST", body: previewForm },
+    );
+    assert.equal(preview.status, 200);
+    assert.equal(fake.requests.length, 1);
+    const tempPath = fake.requests[0]!.spk_audio_path;
+    assert.equal(tempPath.startsWith(paths.roleDir), false);
+    assert.equal(fs.existsSync(tempPath), false, "试听完成后应立即删除临时目录与文件");
+    assert.deepEqual(fs.readdirSync(paths.voiceDir), []);
+  } finally {
+    await fixture.close();
+    await fake.close();
+  }
+});

@@ -419,3 +419,36 @@ test("换服务后预置音色与参考模式失效，参考音频保留", async
   assert.equal(renamed.referenceMode, "same_language", "改其他字段不影响参考模式");
   assert.deepEqual(renamed.capabilities, capabilities, "改其他字段不动能力声明");
 });
+
+test("暂存待上传参考音频时保留参考文本并通过校验，且切换即清空旧原文", async () => {
+  const {
+    createVoiceForm,
+    toVoicePayload,
+    validateVoiceForm,
+    withPendingReferenceAudio
+  } = await load();
+  const baseForm = {
+    ...createVoiceForm(referenceConfig),
+    referenceText: "旧录音的参考文本"
+  };
+  const staged = withPendingReferenceAudio(baseForm);
+  assert.equal(staged.sourceKind, "reference");
+  assert.equal(staged.referenceAssetId, "");
+  assert.equal(staged.referenceText, "", "暂存新本地录音必须清空旧参考文本");
+
+  const withText = { ...staged, referenceMode: "cross_language", referenceText: "新待上传录音原文" };
+  assert.deepEqual(
+    validateVoiceForm(withText, { capabilities, hasPendingReference: true }),
+    []
+  );
+  const payload = toVoicePayload(withText, {
+    capabilities,
+    hasPendingReference: true
+  });
+  assert.deepEqual(payload.voiceSource, {
+    kind: "reference",
+    referenceAssetId: null,
+    referenceMode: "cross_language",
+    referenceText: "新待上传录音原文"
+  });
+});

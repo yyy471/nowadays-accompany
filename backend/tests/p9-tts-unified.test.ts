@@ -2205,6 +2205,214 @@ test("unified language codes and speed ranges follow the service declaration", a
   }
 });
 
+test("temporary reference preview writes zero assets, and atomic multipart save preserves prior config on failure", { timeout: 30_000 }, async () => {
+  const fake = await startFakeUnifiedTts();
+  const fixture = createFixture([]);
+  try {
+    const port = await listen(fixture.app.server, 0, "127.0.0.1");
+    const base = roleBase(fixture, port);
+    const paths = rolePaths(fixture.app.config.dataRoot, fixture.roleId);
+
+    // 1. 试听尚未上传的参考录音：使用临时音频，不写入 voice_assets 或磁盘目录。
+    const previewForm = new FormData();
+    previewForm.append(
+      "payload",
+      JSON.stringify({
+        text: "临时参考音频试听。",
+        baseUrl: fake.baseUrl,
+        protocol: "nowadays-tts-v1",
+        capabilities: CAPABILITIES,
+        voiceSource: {
+          kind: "reference",
+          referenceAssetId: null,
+          referenceMode: "clone-text",
+          referenceText: "这是临时音频原文。",
+        },
+        language: "zh",
+        speed: 1,
+      }),
+    );
+    previewForm.append(
+      "file",
+      new Blob([WAV_AUDIO], { type: "audio/wav" }),
+      "unsaved-clip.wav",
+    );
+    const preview = await configFetch(`${base}/voice/preview`, {
+      method: "POST",
+      body: previewForm,
+    });
+    assert.equal(preview.status, 200);
+    assert.equal(fake.requests.at(-1)?.audio?.fileName, "unsaved-clip.wav");
+    assert.equal(fake.requests.at(-1)?.referenceMode, "clone-text");
+    assert.equal(fake.requests.at(-1)?.referenceText, "这是临时音频原文。");
+
+    const refsAfterPreview = await (
+      await configFetch(`${base}/voice/references`)
+    ).json() as { items: unknown[] };
+    assert.deepEqual(refsAfterPreview.items, []);
+    assert.deepEqual(fs.readdirSync(paths.voiceDir), []);
+
+    // 2. 合成失败或音频格式非法时也不产生正式参考音频资产。
+    fake.setMode("error");
+    const errForm = new FormData();
+    errForm.append(
+      "payload",
+      JSON.stringify({
+        text: "失败时也不应留下资产。",
+        baseUrl: fake.baseUrl,
+        protocol: "nowadays-tts-v1",
+        capabilities: CAPABILITIES,
+        voiceSource: {
+          kind: "reference",
+          referenceAssetId: null,
+          referenceMode: "clone",
+        },
+      }),
+    );
+    errForm.append(
+      "file",
+      new Blob([WAV_AUDIO], { type: "audio/wav" }),
+      "fail-clip.wav",
+    );
+    const failedPreview = await configFetch(`${base}/voice/preview`, {
+      method: "POST",
+      body: errForm,
+    });
+    assert.equal(failedPreview.status, 502);
+    const refsAfterFail = await (
+      await configFetch(`${base}/voice/references`)
+    ).json() as { items: unknown[] };
+    assert.deepEqual(refsAfterFail.items, []);
+    assert.deepEqual(fs.readdirSync(paths.voiceDir), []);
+
+    const badAudioForm = new FormData();
+    badAudioForm.append(
+      "payload",
+      JSON.stringify({
+        text: "坏音频应被拒绝。",
+        baseUrl: fake.baseUrl,
+        protocol: "nowadays-tts-v1",
+        capabilities: CAPABILITIES,
+        voiceSource: {
+          kind: "reference",
+          referenceAssetId: null,
+          referenceMode: "clone",
+        },
+      }),
+    );
+    badAudioForm.append(
+      "file",
+      new Blob([Buffer.from("not-audio")], { type: "audio/wav" }),
+      "bad.wav",
+    );
+    const badAudio = await configFetch(`${base}/voice/preview`, {
+      method: "POST",
+      body: badAudioForm,
+    });
+    assert.equal(badAudio.status, 400);
+    assert.equal(await errorCode(badAudio), "AUDIO_FORMAT_UNSUPPORTED");
+
+    // 3. 先保存一份有效配置；后续原子保存失败时，原配置必须继续可用。
+    fake.setMode("ok");
+    const initialSave = await saveVoice(base, {
+      baseUrl: fake.baseUrl,
+      protocol: "nowadays-tts-v1",
+      capabilities: CAPABILITIES,
+      voiceSource: { kind: "preset", voiceId: "speaker-01" },
+      language: "zh",
+      speed: 1,
+    });
+    assert.equal(initialSave.status, 200);
+
+    const failedAtomicForm = new FormData();
+    failedAtomicForm.append(
+      "payload",
+      JSON.stringify({
+        baseUrl: fake.baseUrl,
+        protocol: "nowadays-tts-v1",
+        capabilities: CAPABILITIES,
+        voiceSource: {
+          kind: "reference",
+          referenceMode: "clone",
+        },
+        language: "fr",
+        speed: 1,
+      }),
+    );
+    failedAtomicForm.append(
+      "file",
+      new Blob([WAV_AUDIO], { type: "audio/wav" }),
+      "rejected-save.wav",
+    );
+    const failedAtomicSave = await configFetch(`${base}/voice`, {
+      method: "PUT",
+      body: failedAtomicForm,
+    });
+    assert.equal(failedAtomicSave.status, 400);
+    assert.equal(await errorCode(failedAtomicSave), "VOICE_LANGUAGE_UNSUPPORTED");
+
+    const refsAfterRejectedSave = await (
+      await configFetch(`${base}/voice/references`)
+    ).json() as { items: unknown[] };
+    assert.deepEqual(refsAfterRejectedSave.items, []);
+    assert.deepEqual(fs.readdirSync(paths.voiceDir), []);
+    const savedStillOk = await configFetch(`${base}/voice/preview`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "失败保存后旧配置仍能试听。" }),
+    });
+    assert.equal(savedStillOk.status, 200);
+
+    // 4. 一次动作原子保存参考录音与配置：写入一次资产并生效。
+    const atomicForm = new FormData();
+    atomicForm.append(
+      "payload",
+      JSON.stringify({
+        baseUrl: fake.baseUrl,
+        protocol: "nowadays-tts-v1",
+        capabilities: CAPABILITIES,
+        voiceSource: {
+          kind: "reference",
+          referenceMode: "clone-text",
+          referenceText: "正式保存的原文。",
+        },
+        language: "zh",
+        speed: 1.2,
+      }),
+    );
+    atomicForm.append(
+      "file",
+      new Blob([WAV_AUDIO], { type: "audio/wav" }),
+      "saved-clip.wav",
+    );
+    const atomicSaved = await configFetch(`${base}/voice`, {
+      method: "PUT",
+      body: atomicForm,
+    });
+    assert.equal(atomicSaved.status, 200);
+    const atomicBody = (await atomicSaved.json()) as {
+      voice: {
+        reference: { assetId: string; fileName: string } | null;
+        voiceSource: { kind: string; referenceAssetId?: string };
+      };
+    };
+    assert.equal(atomicBody.voice.reference?.fileName, "saved-clip.wav");
+    assert.equal(
+      atomicBody.voice.voiceSource.referenceAssetId,
+      atomicBody.voice.reference?.assetId,
+    );
+
+    const refsAfterSave = await (
+      await configFetch(`${base}/voice/references`)
+    ).json() as { items: Array<{ assetId: string }> };
+    assert.equal(refsAfterSave.items.length, 1);
+    assert.equal(refsAfterSave.items[0]?.assetId, atomicBody.voice.reference?.assetId);
+  } finally {
+    await fixture.close();
+    await fake.close();
+  }
+});
+
 /** 把业务库还原到 V16（去掉 V17 的外观软删除与句段立绘快照），用于复现旧库迁移。 */
 function stripAppearanceV17(db: Database.Database): void {
   db.exec("DROP INDEX IF EXISTS idx_outfits_role_name");

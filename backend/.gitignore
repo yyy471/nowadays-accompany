@@ -1,5 +1,6 @@
 node_modules/
 data/
 .nowadays/
+.nowadays-desktop/
 test-results/
 dist/

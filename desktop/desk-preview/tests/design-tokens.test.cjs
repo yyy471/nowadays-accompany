@@ -2,13 +2,14 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const { execFileSync } = require('node:child_process');
 
 const scripts = path.resolve(__dirname, '../../scripts');
 const rendererDir = path.resolve(__dirname, '../renderer');
 // 检查脚本依赖 renderer 的 devDependency postcss；未安装依赖时跳过（与 CI 的 npm ci 流程一致）。
 const hasPostcss = fs.existsSync(path.join(rendererDir, 'node_modules/postcss'));
-const load = () => import(path.join(scripts, 'check-design-tokens.mjs'));
+const load = () => import(pathToFileURL(path.join(scripts, 'check-design-tokens.mjs')).href);
 const rulesOf = result => result.errors.map(item => item.rule).sort();
 
 test('令牌产物与 tokens.json 同步', () => {

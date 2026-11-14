@@ -9,31 +9,67 @@ export type SceneImageModelType = (typeof SCENE_IMAGE_MODEL_TYPES)[number];
 
 const promptSchema = z.string().trim().max(2000);
 
+/** 草稿预览与正式保存共用的字段定义（无默认值，便于部分覆盖合并）。 */
+export const sceneImageSettingsCandidateShape = {
+  serviceId: z.string().trim().min(1).max(100),
+  modelType: z.enum(SCENE_IMAGE_MODEL_TYPES),
+  /** MOSS-Image 的本地模型目录，写入工作流加载节点的 model_path。 */
+  modelPath: z.string().trim().min(1).max(2000),
+  /** 角色基础锚点提示词：脸型、发型、发色、瞳色等跨场景特征。 */
+  basePrompt: promptSchema,
+  negativePrompt: promptSchema,
+  /** 按服饰记录的锚点提示词，键为 outfitId。 */
+  outfitPrompts: z.record(
+    z.string().max(200),
+    z.string().trim().max(1000),
+  ),
+  width: z.number().int().min(256).max(2048).multipleOf(16),
+  height: z.number().int().min(256).max(2048).multipleOf(16),
+  steps: z.number().int().min(1).max(150),
+  cfg: z.number().min(0).max(30),
+  sampler: z.string().trim().min(1).max(100),
+  scheduler: z.string().trim().min(1).max(100),
+  /** null 表示每次随机，便于同一句台词得到不同画面。 */
+  seed: z.number().int().min(0).max(2_147_483_647).nullable(),
+  /** 自定义工作流（ComfyUI API 格式）；null 用内置 MOSS-Image 模板。 */
+  workflow: z.record(z.string(), z.unknown()).nullable(),
+  /** 输出节点 id；null 时自动找 SaveImage。 */
+  outputNodeId: z.string().trim().max(100).nullable(),
+} as const;
+
+export const SCENE_IMAGE_CANDIDATE_KEYS = [
+  "serviceId",
+  "modelType",
+  "modelPath",
+  "basePrompt",
+  "negativePrompt",
+  "outfitPrompts",
+  "width",
+  "height",
+  "steps",
+  "cfg",
+  "sampler",
+  "scheduler",
+  "seed",
+  "workflow",
+  "outputNodeId",
+] as const;
+
 export const sceneImageSettingsSchema = z
   .object({
-    serviceId: z.string().trim().min(1).max(100),
-    modelType: z.enum(SCENE_IMAGE_MODEL_TYPES),
-    /** MOSS-Image 的本地模型目录，写入工作流加载节点的 model_path。 */
-    modelPath: z.string().trim().min(1).max(2000),
-    /** 角色基础锚点提示词：脸型、发型、发色、瞳色等跨场景特征。 */
+    ...sceneImageSettingsCandidateShape,
     basePrompt: promptSchema.default(""),
     negativePrompt: promptSchema.default(""),
-    /** 按服饰记录的锚点提示词，键为 outfitId。 */
-    outfitPrompts: z
-      .record(z.string().max(200), z.string().trim().max(1000))
-      .default({}),
-    width: z.number().int().min(256).max(2048).multipleOf(16).default(1024),
-    height: z.number().int().min(256).max(2048).multipleOf(16).default(1024),
-    steps: z.number().int().min(1).max(150).default(50),
-    cfg: z.number().min(0).max(30).default(3),
-    sampler: z.string().trim().min(1).max(100).default("euler"),
-    scheduler: z.string().trim().min(1).max(100).default("sgm_uniform"),
-    /** null 表示每次随机，便于同一句台词得到不同画面。 */
-    seed: z.number().int().min(0).max(2_147_483_647).nullable().default(null),
-    /** 自定义工作流（ComfyUI API 格式）；null 用内置 MOSS-Image 模板。 */
-    workflow: z.record(z.string(), z.unknown()).nullable().default(null),
-    /** 输出节点 id；null 时自动找 SaveImage。 */
-    outputNodeId: z.string().trim().max(100).nullable().default(null),
+    outfitPrompts: sceneImageSettingsCandidateShape.outfitPrompts.default({}),
+    width: sceneImageSettingsCandidateShape.width.default(1024),
+    height: sceneImageSettingsCandidateShape.height.default(1024),
+    steps: sceneImageSettingsCandidateShape.steps.default(50),
+    cfg: sceneImageSettingsCandidateShape.cfg.default(3),
+    sampler: sceneImageSettingsCandidateShape.sampler.default("euler"),
+    scheduler: sceneImageSettingsCandidateShape.scheduler.default("sgm_uniform"),
+    seed: sceneImageSettingsCandidateShape.seed.default(null),
+    workflow: sceneImageSettingsCandidateShape.workflow.default(null),
+    outputNodeId: sceneImageSettingsCandidateShape.outputNodeId.default(null),
   })
   .strict();
 

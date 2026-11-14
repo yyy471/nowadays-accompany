@@ -5,11 +5,23 @@ import type { RouteResponse } from "./errors.js";
 import { parseBody } from "./validation.js";
 import {
   createImageServiceSchema,
+  probeImageServiceSchema,
   sceneImagePreviewBodySchema,
   sceneImageProbeBodySchema,
   sceneImageSettingsBodySchema,
   updateImageServiceSchema,
 } from "./schemas.js";
+import type { SceneImageSettingsInput } from "../domain/scene-image-settings.js";
+
+function compactDraft(
+  source: Record<string, unknown>,
+): Partial<SceneImageSettingsInput> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value !== undefined) result[key] = value;
+  }
+  return result as Partial<SceneImageSettingsInput>;
+}
 
 export function registerImageServiceRoutes(
   router: Router,
@@ -59,6 +71,32 @@ export function registerImageServiceRoutes(
   );
 
   router.add(
+    "DELETE",
+    "/v1/image-services/:serviceId",
+    ({ params }): RouteResponse => ({
+      status: 200,
+      body: services.imageServices.delete(params.serviceId ?? ""),
+    }),
+  );
+
+  router.add(
+    "POST",
+    "/v1/image-services/probe",
+    async ({ request }): Promise<RouteResponse> => {
+      const body = parseBody(probeImageServiceSchema, await readJsonBody(request));
+      return {
+        status: 200,
+        body: await services.imageServices.probeDraft({
+          ...(body.serviceId === undefined ? {} : { serviceId: body.serviceId }),
+          config: body.config,
+          ...(body.secret === undefined ? {} : { secret: body.secret }),
+          ...(body.workflow === undefined ? {} : { workflow: body.workflow }),
+        }),
+      };
+    },
+  );
+
+  router.add(
     "POST",
     "/v1/image-services/:serviceId/probe",
     async ({ params }): Promise<RouteResponse> => ({
@@ -100,6 +138,19 @@ export function registerImageServiceRoutes(
         status: 200,
         body: await services.sceneImageSettings.probe(params.roleId ?? "", {
           ...(body.serviceId === undefined ? {} : { serviceId: body.serviceId }),
+          ...(body.serviceDraft === undefined
+            ? {}
+            : {
+                serviceDraft: {
+                  ...(body.serviceDraft.serviceId === undefined
+                    ? {}
+                    : { serviceId: body.serviceDraft.serviceId }),
+                  config: body.serviceDraft.config,
+                  ...(body.serviceDraft.secret === undefined
+                    ? {}
+                    : { secret: body.serviceDraft.secret }),
+                },
+              }),
           ...(body.workflow === undefined ? {} : { workflow: body.workflow }),
         }),
       };
@@ -114,11 +165,32 @@ export function registerImageServiceRoutes(
         sceneImagePreviewBodySchema,
         await readJsonBody(request),
       );
+      const { prompt, outfitId, serviceDraft, settings, ...flat } = body;
+      const draft =
+        settings !== undefined
+          ? compactDraft(settings)
+          : Object.values(flat).some((value) => value !== undefined)
+            ? compactDraft(flat)
+            : undefined;
       return {
         status: 200,
         body: await services.sceneImageSettings.preview(params.roleId ?? "", {
-          ...(body.prompt === undefined ? {} : { prompt: body.prompt }),
-          ...(body.outfitId === undefined ? {} : { outfitId: body.outfitId }),
+          ...(prompt === undefined ? {} : { prompt }),
+          ...(outfitId === undefined ? {} : { outfitId }),
+          ...(serviceDraft === undefined
+            ? {}
+            : {
+                serviceDraft: {
+                  ...(serviceDraft.serviceId === undefined
+                    ? {}
+                    : { serviceId: serviceDraft.serviceId }),
+                  config: serviceDraft.config,
+                  ...(serviceDraft.secret === undefined
+                    ? {}
+                    : { secret: serviceDraft.secret }),
+                },
+              }),
+          ...(draft === undefined ? {} : { draft }),
         }),
       };
     },

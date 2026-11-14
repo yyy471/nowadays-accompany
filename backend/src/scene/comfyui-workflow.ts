@@ -1,3 +1,5 @@
+import { ImageWorkflowInvalidError } from "../domain/errors.js";
+
 /**
  * ComfyUI 工作流（API 格式）与参数打补丁。
  *
@@ -126,6 +128,27 @@ export function parseComfyWorkflow(value: unknown): ComfyWorkflow {
   }
   if (Object.keys(workflow).length === 0) {
     throw new Error("工作流没有任何节点");
+  }
+  return workflow;
+}
+
+/** 校验自定义工作流并在指定输出节点时确认节点存在。 */
+export function validateComfyWorkflow(
+  value: Record<string, unknown>,
+  outputNodeId: string | null = null,
+): ComfyWorkflow {
+  let workflow: ComfyWorkflow;
+  try {
+    workflow = parseComfyWorkflow(value);
+  } catch (error) {
+    throw new ImageWorkflowInvalidError(
+      error instanceof Error ? error.message : "工作流结构不正确",
+    );
+  }
+  if (outputNodeId !== null && workflow[outputNodeId] === undefined) {
+    throw new ImageWorkflowInvalidError("输出节点不在工作流里", {
+      outputNodeId,
+    });
   }
   return workflow;
 }

@@ -1,6 +1,6 @@
 # P0 技术小样
 
-本目录是[后端开发文档 165](../../devDoc/165-backend-development-guide.md) 对应的 P0 可运行小样，验证“离线模型 → 工具调用 → 结果先保存 → 暂停/重启恢复 → 正式提交”的最小链路。
+本目录是[后端开发文档 165](../../devDoc/archive/01-backend-prototype/165-backend-development-guide.md) 对应的 P0 可运行小样，验证“离线模型 → 工具调用 → 结果先保存 → 暂停/重启恢复 → 正式提交”的最小链路。
 
 它只覆盖 P0，不是 P1 的正式角色管理、P2 的完整记忆/Agent 回复或正式 HTTP API。
 
@@ -127,8 +127,8 @@ reviews/                 # 复核探针（原 5 场景、强杀恢复、L01 报�
 
 ## 证据
 
-实现方自验记录见 [devDoc/166](../../devDoc/166-p0-implementation-record.md)。[独立复核记录](../../devDoc/167-p0-independent-review.md)保留首轮发现的 4 类问题和修正后通过证据：独立重跑类型检查、`p0:all` 的 37 项检查及原复核探针 5 个场景全部通过，新增真实强杀恢复 4 个场景通过。P0-01～P0-05 完成（小样范围），P1 尚未开始。
+实现方自验记录见 [devDoc/166](../../devDoc/archive/01-backend-prototype/166-p0-implementation-record.md)。[独立复核记录](../../devDoc/archive/01-backend-prototype/167-p0-independent-review.md)保留首轮发现的 4 类问题和修正后通过证据：独立重跑类型检查、`p0:all` 的 37 项检查及原复核探针 5 个场景全部通过，新增真实强杀恢复 4 个场景通过。P0-01～P0-05 完成（小样范围），P1 尚未开始。
 
-[168 第 9 节](../../devDoc/168-p0-followup-fix-list.md) 记录 L01、L03、L06 修正后的独立复核：类型检查、38 项回归、原探针 5 个场景、真实强杀 4 个场景、L01 报告归属 6 项及专项 2 项全部通过。新增 `reviews/20261103-followup-review.ts` 验证清理失败与版本保持；P1 开发准备见[169](../../devDoc/169-p1-role-storage-development-guide.md)。
+[168 第 9 节](../../devDoc/archive/01-backend-prototype/168-p0-followup-fix-list.md) 记录 L01、L03、L06 修正后的独立复核：类型检查、38 项回归、原探针 5 个场景、真实强杀 4 个场景、L01 报告归属 6 项及专项 2 项全部通过。新增 `reviews/20261103-followup-review.ts` 验证清理失败与版本保持；P1 开发准备见[169](../../devDoc/archive/01-backend-prototype/169-p1-role-storage-development-guide.md)。
 
 原复核探针 `reviews/20261103-review.ts` 以输出的 `contractPassed` 判定契约，退出码 0 仅表示采集结束。真实强杀探针为 `reviews/20261103-crash-review.ts`，失败时断言退出非零；运行命令及产物位置见 167。L01 报告归属探针为 `reviews/20261103-l01-report.ts`，覆盖报告缺失、归属不符、无 runId、不可解析及清理删除；报告写入 `test-results/l01-report-ownership/`。

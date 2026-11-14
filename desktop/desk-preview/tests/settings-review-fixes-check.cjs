@@ -5,9 +5,10 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
-const root = process.cwd();
+const { resolveElectronExecutable } = require('./electron-executable.cjs');
+const root = path.resolve(__dirname, '../../..');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'nowadays-ui-real-'));
-const node = path.join(root, 'prototypes/p0/.runtime/node-v24.22.2-win-x64/node.exe');
+const node = process.execPath;
 const imagePath = path.join(root, 'desktop/desk-preview/renderer/src/assets/themes/xiacheng/character.png');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(fn) { let last; for (const start = Date.now(); Date.now() - start < 25000;) { try { const value = await fn(); if (value) return value; } catch (error) { last = error; } await delay(100); } throw Error(`等待超时: ${last || ''}`); }
@@ -41,7 +42,7 @@ async function run() {
     await request(`/v1/roles/${a.roleId}/appearance/outfits`, { method: 'POST', body: form });
   }
   const env = { ...process.env, NOWADAYS_BACKEND_URL: base, NOWADAYS_APP_ROOT: path.join(temp, 'desktop') }; delete env.ELECTRON_RUN_AS_NODE;
-  electron = spawn(path.join(root, 'node_modules/electron/dist/electron.exe'), ['--no-sandbox', '--remote-debugging-port=0', `--user-data-dir=${path.join(temp, 'profile')}`, path.join(root, 'desktop/desk-preview')], { env, windowsHide: true });
+  electron = spawn(resolveElectronExecutable({ repoRoot: root }), ['--no-sandbox', '--remote-debugging-port=0', `--user-data-dir=${path.join(temp, 'profile')}`, path.join(root, 'desktop/desk-preview')], { env, windowsHide: true });
   electron.stdout.on('data', data => electronLog += data); electron.stderr.on('data', data => electronLog += data);
   const debugPort = await until(() => /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)/.exec(electronLog)?.[1]);
   const target = await until(async () => (await (await fetch(`http://127.0.0.1:${debugPort}/json/list`)).json()).find(item => item.url.startsWith('desk://bundle/')));
@@ -79,15 +80,6 @@ async function run() {
   await tab('模型');
   const modelInput = editor + ' .config-model-details:not([hidden]) input[type=text]';
   await until(() => ev(`document.querySelector(${JSON.stringify(modelInput)})?.value === 'saved-model'`));
-  await ev(`(()=>{const input=document.querySelector(${JSON.stringify(modelInput)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'unsaved-model');input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
-  const bindingBefore = await request(bindingPath);
-  await request(bindingPath, put({
-    expectedRevision: bindingBefore.revision,
-    bindings: [
-      { capability: 'chat_model', resourceId: model.resourceId, modelName: 'saved-model', enabled: true },
-      { capability: 'mcp', resourceId: mcp.resourceId, enabled: true },
-    ],
-  }));
   await ev(`(() => {
     window.reviewBindingWrites=[];
     const original=window.fetch;
@@ -99,10 +91,38 @@ async function run() {
       return response;
     };
   })()`);
+
+  // 1) 非重叠冲突：页面修改模型为 unsaved-model，同时服务端仅新增 mcp；应自动字段级合并并一次重提保存（[409, 200]）。
+  await ev(`(()=>{const input=document.querySelector(${JSON.stringify(modelInput)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'unsaved-model');input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  const bindingBefore = await request(bindingPath);
+  await request(bindingPath, put({
+    expectedRevision: bindingBefore.revision,
+    bindings: [
+      { capability: 'chat_model', resourceId: model.resourceId, modelName: 'saved-model', enabled: true },
+      { capability: 'mcp', resourceId: mcp.resourceId, enabled: true },
+    ],
+  }));
   await ev(`${button('保存模型选择')}.click()`);
-  await until(() => ev(`window.reviewBindingWrites.length===1 && !!${button('重试读取绑定')}`));
-  assert.equal(await ev(`${button('保存模型选择')}.disabled`), true, '冲突后不能重复提交旧版本');
-  assert.equal(await ev(`document.querySelector(${JSON.stringify(modelInput)}).value`), 'unsaved-model');
+  await until(() => ev("window.reviewBindingWrites.length===2 && document.querySelector('.config-role-editor:not([hidden])')?.innerText.includes('已与最新绑定自动合并并保存')"));
+  const afterAutoModel = await request(bindingPath);
+  assert.deepEqual(await ev('window.reviewBindingWrites.slice(0,2).map(item=>item.status)'), [409, 200]);
+  assert.equal(afterAutoModel.items.find(item => item.capability === 'chat_model')?.modelName, 'unsaved-model');
+  assert.equal(afterAutoModel.items.find(item => item.capability === 'mcp')?.enabled, true);
+
+  // 2) 同用途重叠冲突：页面修改模型为 local-conflict-model，同时服务端也把 chat_model 改成 server-conflict-model；
+  // 应阻断自动重提并要求点击「重试读取绑定」（先注入一次 503，再二次读取成功且保留用户草稿），随后保存成功。
+  await ev(`(()=>{const input=document.querySelector(${JSON.stringify(modelInput)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'local-conflict-model');input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await request(bindingPath, put({
+    expectedRevision: afterAutoModel.revision,
+    bindings: [
+      { capability: 'chat_model', resourceId: model.resourceId, modelName: 'server-conflict-model', enabled: true },
+      { capability: 'mcp', resourceId: mcp.resourceId, enabled: true },
+    ],
+  }));
+  await ev(`${button('保存模型选择')}.click()`);
+  await until(() => ev(`window.reviewBindingWrites.length===3 && !!${button('重试读取绑定')}`));
+  assert.equal(await ev(`${button('保存模型选择')}.disabled`), true, '同用途冲突后不能重复提交旧版本');
+  assert.equal(await ev(`document.querySelector(${JSON.stringify(modelInput)}).value`), 'local-conflict-model');
   await ev(`(() => {
     const original=window.fetch; window.reviewBindingReadFailed=false;
     window.fetch=function(input, options) {
@@ -118,18 +138,18 @@ async function run() {
   assert.equal(await ev(`${button('保存模型选择')}.disabled`), true, '重读失败后仍不能提交');
   await ev(`${button('重试读取绑定')}.click()`);
   await until(() => ev(`!!${button('保存模型选择')} && !${button('保存模型选择')}.disabled`));
-  assert.equal(await ev(`document.querySelector(${JSON.stringify(modelInput)}).value`), 'unsaved-model');
+  assert.equal(await ev(`document.querySelector(${JSON.stringify(modelInput)}).value`), 'local-conflict-model');
   await ev(`${button('保存模型选择')}.click()`);
-  await until(() => ev('window.reviewBindingWrites.length===2'));
+  await until(() => ev('window.reviewBindingWrites.length===4'));
   const writes = await ev('window.reviewBindingWrites');
   const bindingAfter = await request(bindingPath);
-  assert.deepEqual(writes.map(item => item.status), [409, 200]);
-  assert.notEqual(writes[0].revision, writes[1].revision);
-  assert.equal(bindingAfter.items.find(item => item.capability === 'chat_model')?.modelName, 'unsaved-model');
+  assert.deepEqual(writes.slice(2, 4).map(item => item.status), [409, 200]);
+  assert.notEqual(writes[2].revision, writes[3].revision);
+  assert.equal(bindingAfter.items.find(item => item.capability === 'chat_model')?.modelName, 'local-conflict-model');
   assert.equal(bindingAfter.items.find(item => item.capability === 'mcp')?.resourceId, mcp.resourceId);
-  console.log('BINDING_CONFLICT', JSON.stringify({ writes: writes.map(item => item.status), draftSaved:true, latestMcpPreserved:true, readRetry:true }));
+  console.log('BINDING_CONFLICT', JSON.stringify({ writes: writes.map(item => item.status), autoMergedModel: true, overlapConflictRecovered: true, latestMcpPreserved: true, readRetry: true }));
 
-  // 扩展草稿发生冲突时，同样要保留草稿并合并另一客户端更新过的模型。
+  // 3) 扩展非重叠冲突：扩展取消勾选 mcp，同时服务端把 chat_model 改成 external-model；应自动合并保留 external-model 并关闭 mcp（[409, 200]）。
   await tab('扩展');
   await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .config-prose:not([hidden]) input[type=checkbox]')?.checked"));
   await ev("document.querySelector('.config-role-editor:not([hidden]) .config-prose:not([hidden]) input[type=checkbox]').click()");
@@ -139,13 +159,9 @@ async function run() {
     { capability: 'mcp', resourceId: mcp.resourceId, enabled: true },
   ] }));
   await ev(`${button('保存扩展')}.click()`);
-  await until(() => ev(`window.reviewBindingWrites.length===3 && !!${button('重试读取绑定')}`));
-  await ev(`${button('重试读取绑定')}.click()`);
-  await until(() => ev(`!!${button('保存扩展')} && !${button('保存扩展')}.disabled`));
-  assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden]) .config-prose:not([hidden]) input[type=checkbox]').checked"), false);
-  await ev(`${button('保存扩展')}.click()`);
-  await until(() => ev('window.reviewBindingWrites.length===4'));
+  await until(() => ev("window.reviewBindingWrites.length===6 && document.querySelector('.config-role-editor:not([hidden])')?.innerText.includes('已与最新绑定自动合并并保存')"));
   const finalBinding = await request(bindingPath);
+  assert.deepEqual(await ev('window.reviewBindingWrites.slice(4,6).map(item=>item.status)'), [409, 200]);
   assert.equal(finalBinding.items.find(item => item.capability === 'chat_model')?.modelName, 'external-model');
   assert.equal(finalBinding.items.find(item => item.capability === 'mcp')?.enabled, false);
   await tab('模型');

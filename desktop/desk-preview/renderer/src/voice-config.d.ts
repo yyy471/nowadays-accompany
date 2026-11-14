@@ -116,7 +116,7 @@ export function createVoiceForm(config?: VoiceConfigView | null): VoiceForm;
 
 export function toVoicePayload(
   form: VoiceForm,
-  options?: { capabilities?: VoiceCapabilities | null }
+  options?: { capabilities?: VoiceCapabilities | null; hasPendingReference?: boolean }
 ): Record<string, unknown>;
 
 export function withReferenceAudio(
@@ -124,9 +124,11 @@ export function withReferenceAudio(
   assetId: string | null | undefined
 ): VoiceForm;
 
+export function withPendingReferenceAudio(form: VoiceForm): VoiceForm;
+
 export function validateVoiceForm(
   form: VoiceForm,
-  options?: { capabilities?: VoiceCapabilities | null }
+  options?: { capabilities?: VoiceCapabilities | null; hasPendingReference?: boolean }
 ): VoiceFormIssue[];
 
 export function summarizeProbe(probe?: VoiceProbeResult | null): VoiceProbeSummary | null;

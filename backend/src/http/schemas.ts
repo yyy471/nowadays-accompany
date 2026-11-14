@@ -11,7 +11,11 @@ import {
 } from "../domain/model.js";
 import { resourceKindSchema } from "../domain/resource.js";
 import { imageServiceConfigSchema } from "../domain/image-service.js";
-import { sceneImageSettingsSchema } from "../domain/scene-image-settings.js";
+import {
+  SCENE_IMAGE_CANDIDATE_KEYS,
+  sceneImageSettingsCandidateShape,
+  sceneImageSettingsSchema,
+} from "../domain/scene-image-settings.js";
 
 const recordSchema = z.record(z.string(), z.unknown());
 
@@ -158,21 +162,72 @@ export const updateImageServiceSchema = z
   })
   .strict();
 
+export const imageServiceDraftSchema = z
+  .object({
+    serviceId: z.string().trim().min(1).max(100).optional(),
+    config: imageServiceConfigSchema,
+    secret: secretSchema.optional(),
+  })
+  .strict();
+
+export const probeImageServiceSchema = imageServiceDraftSchema
+  .extend({
+    workflow: z.record(z.string(), z.unknown()).nullable().optional(),
+  })
+  .strict();
+
 export const sceneImageSettingsBodySchema = sceneImageSettingsSchema;
 
 export const sceneImageProbeBodySchema = z
   .object({
     serviceId: z.string().trim().min(1).max(100).optional(),
+    serviceDraft: imageServiceDraftSchema.optional(),
     workflow: z.record(z.string(), z.unknown()).nullable().optional(),
   })
+  .strict()
+  .refine(
+    (value) => !(value.serviceId !== undefined && value.serviceDraft !== undefined),
+    { message: "serviceId 与 serviceDraft 不能同时提供" },
+  );
+
+const sceneImageCandidatePartialSchema = z
+  .object(sceneImageSettingsCandidateShape)
+  .partial()
   .strict();
 
 export const sceneImagePreviewBodySchema = z
   .object({
     prompt: z.string().trim().max(2000).optional(),
     outfitId: z.string().trim().max(200).nullable().optional(),
+    serviceDraft: imageServiceDraftSchema.optional(),
+    settings: sceneImageCandidatePartialSchema.optional(),
+    ...sceneImageCandidatePartialSchema.shape,
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (
+      value.settings !== undefined &&
+      SCENE_IMAGE_CANDIDATE_KEYS.some((key) => value[key] !== undefined)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["settings"],
+        message: "settings 不能与平铺候选字段同时使用",
+      });
+    }
+    const candidateServiceId = value.settings?.serviceId ?? value.serviceId;
+    if (
+      candidateServiceId !== undefined &&
+      value.serviceDraft?.serviceId !== undefined &&
+      candidateServiceId !== value.serviceDraft.serviceId
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["serviceDraft"],
+        message: "serviceId 与 serviceDraft.serviceId 不一致",
+      });
+    }
+  });
 
 export const taskFinishBodySchema = z
   .object({

@@ -64,8 +64,40 @@ export const IMAGE_MODEL_TYPE_LABEL: string;
 
 export function createImageForm(settings: ImageSettingsView | null | undefined): ImageForm;
 export function toImagePayload(form: ImageForm): ImageSettingsView;
+export function toSceneImagePreviewPayload(
+  form: ImageForm,
+  options?: { prompt?: string; outfitId?: string | null },
+): { prompt: string; outfitId?: string; settings: ImageSettingsView };
+export function toImageServiceProbePayload(input: {
+  serviceId?: string;
+  baseUrl: string;
+  credentialRef?: string;
+  secret?: string;
+  timeoutMs?: number;
+  workflow?: Record<string, unknown> | null;
+}): {
+  serviceId?: string;
+  config: { protocol: "comfyui"; baseUrl: string; credentialRef?: string; timeoutMs?: number };
+  secret?: string;
+  workflow?: Record<string, unknown>;
+};
 export function withOutfitPrompt(form: ImageForm, outfitId: string, text: string): ImageForm;
 export function validateImageForm(form: ImageForm): ImageFormIssue[];
 export function describeImageSummary(view: ImageSettingsViewPayload | null | undefined): string;
 export function summarizeImageProbe(probe: ImageProbe | null | undefined): string;
+export function imageServiceSnapshotKey(
+  service: {
+    serviceId?: string;
+    enabled?: boolean;
+    updatedAt?: string;
+    config?: {
+      protocol?: string;
+      baseUrl?: string;
+      credentialRef?: string;
+      timeoutMs?: number;
+    };
+    credential?: { status?: string; reference?: string | null };
+  } | null | undefined,
+  epoch?: number,
+): string;
 export function describeImageFailure(code: string | null, message: string): string;

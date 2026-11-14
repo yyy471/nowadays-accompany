@@ -171,6 +171,41 @@ test("HTTP and CLI expose input state, executions and task completion", { timeou
       error: { code: string };
     };
     assert.equal(invalidBody.error.code, "INPUT_STATE_INVALID");
+    const malformedTyping = await fetch(
+      `${roleBase}/windows/${fixture.windowId}/input-state`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ clientId: "   ", typing: true }),
+      },
+    );
+    assert.equal(malformedTyping.status, 400);
+    const malformedBody = (await malformedTyping.json()) as {
+      error: { code: string };
+    };
+    assert.equal(malformedBody.error.code, "INVALID_REQUEST");
+    const nonBoolTyping = await fetch(
+      `${roleBase}/windows/${fixture.windowId}/input-state`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ clientId: "client-http", typing: "yes" }),
+      },
+    );
+    assert.equal(nonBoolTyping.status, 400);
+    const nonBoolBody = (await nonBoolTyping.json()) as {
+      error: { code: string };
+    };
+    assert.equal(nonBoolBody.error.code, "INVALID_REQUEST");
+    const invalidClear = await fetch(
+      `${roleBase}/windows/${fixture.windowId}/input-state`,
+      { method: "DELETE" },
+    );
+    assert.equal(invalidClear.status, 400);
+    const invalidClearBody = (await invalidClear.json()) as {
+      error: { code: string };
+    };
+    assert.equal(invalidClearBody.error.code, "INPUT_STATE_INVALID");
 
     const task = withStorage(fixture, (storage) =>
       storage.business.createTask({

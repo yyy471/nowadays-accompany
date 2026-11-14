@@ -8,8 +8,9 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const { resolveElectronExecutable } = require('./electron-executable.cjs');
 
-const root = process.cwd();
+const root = path.resolve(__dirname, '../../..');
 const results = path.join(root, 'backend', 'test-results', 'review-234');
 fs.mkdirSync(results, { recursive: true });
 const temp = fs.mkdtempSync(path.join(results, 'profile-'));
@@ -69,7 +70,7 @@ async function run() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const env = { ...process.env, NOWADAYS_BACKEND_URL: `http://127.0.0.1:${server.address().port}`, NOWADAYS_APP_ROOT: path.join(temp, 'data') };
   delete env.ELECTRON_RUN_AS_NODE;
-  proc = spawn(path.join(root, 'node_modules/electron/dist/electron.exe'), ['--no-sandbox', '--remote-debugging-port=0', `--user-data-dir=${profile}`, path.join(root, 'desktop/desk-preview')], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  proc = spawn(resolveElectronExecutable({ repoRoot: root }), ['--no-sandbox', '--remote-debugging-port=0', `--user-data-dir=${profile}`, path.join(root, 'desktop/desk-preview')], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   proc.stdout.on('data', chunk => logs += chunk); proc.stderr.on('data', chunk => logs += chunk);
   const port = await until(() => /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)/.exec(logs)?.[1]);
   const target = await until(async () => (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(item => item.url.startsWith('desk://bundle/')));

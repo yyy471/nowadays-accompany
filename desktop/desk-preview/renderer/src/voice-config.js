@@ -79,15 +79,16 @@ export function toVoicePayload(form, options = {}) {
   }
   // 旧 IndexTTS 只有参考音频一种音色来源，不发送参考模式与参考文本。
   if (form.protocol === "indextts" || form.sourceKind === "reference") {
-    const referenceAssetId = form.referenceAssetId || null;
+    const hasPending = Boolean(options.hasPendingReference);
+    const referenceAssetId = hasPending ? null : form.referenceAssetId || null;
     payload.voiceSource = {
       kind: "reference",
       referenceAssetId,
       referenceMode:
         form.protocol === "indextts" ? null : form.referenceMode || null,
-      // 没有录音时不能留下孤立文本：后端会把它当成另一段素材的原文。
+      // 没有录音（含待上传临时录音时除外）不能留下孤立文本。
       referenceText:
-        form.protocol === "indextts" || referenceAssetId === null
+        form.protocol === "indextts" || (!hasPending && referenceAssetId === null)
           ? null
           : form.referenceText.trim() || null
     };
@@ -98,8 +99,8 @@ export function toVoicePayload(form, options = {}) {
 }
 
 /**
- * 切换参考录音时清空参考文本：旧文本对应的是上一段录音，
- * 继续提交会让新录音配上旧原文。
+ * 切换参考录音（包括暂存新本地音频）时清空参考文本：
+ * 旧文本对应的是上一段录音，继续提交会让新录音配上旧原文。
  *
  * @param {VoiceForm} form
  * @param {string | null | undefined} assetId
@@ -114,10 +115,25 @@ export function withReferenceAudio(form, assetId) {
 }
 
 /**
+ * 暂存待上传的本地参考音频时切换为参考音频模式、清掉旧引用并清空旧参考文本。
+ *
+ * @param {VoiceForm} form
+ * @returns {VoiceForm}
+ */
+export function withPendingReferenceAudio(form) {
+  return {
+    ...form,
+    sourceKind: "reference",
+    referenceAssetId: "",
+    referenceText: ""
+  };
+}
+
+/**
  * 按后端与探测声明的能力校验表单，返回全部问题而不是第一条。
  *
  * @param {VoiceForm} form
- * @param {{ capabilities?: VoiceCapabilities | null }} [options]
+ * @param {{ capabilities?: VoiceCapabilities | null, hasPendingReference?: boolean }} [options]
  * @returns {VoiceFormIssue[]}
  */
 export function validateVoiceForm(form, options = {}) {
@@ -137,9 +153,9 @@ export function validateVoiceForm(form, options = {}) {
     if (form.voiceId.trim().length === 0) {
       issues.push(issue("voiceId", "VOICE_ID_REQUIRED", "预置音色需要选择或填写音色 ID"));
     }
-  } else if (form.referenceAssetId.length === 0) {
+  } else if (!options.hasPendingReference && form.referenceAssetId.length === 0) {
     issues.push(
-      issue("referenceAssetId", "REFERENCE_REQUIRED", "参考音频音色需要先上传一段参考音频")
+      issue("referenceAssetId", "REFERENCE_REQUIRED", "参考音频音色需要先选择或上传一段参考音频")
     );
   }
 

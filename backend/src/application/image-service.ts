@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  ImageServiceNotFoundError,
   InvalidImageServiceConfigError,
   ResourceCredentialConflictError,
   ResourceCredentialStaleError,
@@ -15,7 +16,11 @@ import {
 import { ImageServiceStore } from "../storage/image-service-store.js";
 import type { AppStore } from "../storage/app-store.js";
 import { ComfyUiClient } from "../scene/comfyui-client.js";
-import { defaultComfyWorkflow } from "../scene/comfyui-workflow.js";
+import {
+  defaultComfyWorkflow,
+  validateComfyWorkflow,
+  type ComfyWorkflow,
+} from "../scene/comfyui-workflow.js";
 import type { CredentialResolver } from "./credential-resolver.js";
 
 export interface ImageServiceServiceOptions {
@@ -39,6 +44,16 @@ export interface UpdateImageServiceInput {
   config?: unknown;
   /** undefined 保留、null 清除、字符串替换。 */
   secret?: string | null | undefined;
+}
+
+export interface ImageServiceDraftInput {
+  serviceId?: string | undefined;
+  config: unknown;
+  secret?: string | undefined;
+}
+
+export interface ProbeDraftImageServiceInput extends ImageServiceDraftInput {
+  workflow?: Record<string, unknown> | null | undefined;
 }
 
 const DEFAULT_PROBE_TIMEOUT_MS = 20_000;
@@ -140,9 +155,95 @@ export class ImageServiceService {
     return this.get(serviceId);
   }
 
+  delete(serviceId: string): { serviceId: string; deleted: true } {
+    let removed = false;
+    this.appStore.db.transaction(() => {
+      this.store.get(serviceId);
+      this.credentials.clearSecret(serviceId);
+      removed = this.store.delete(serviceId);
+    })();
+    if (!removed) {
+      throw new ImageServiceNotFoundError(serviceId);
+    }
+    return { serviceId, deleted: true };
+  }
+
+  /**
+   * 临时解析候选连接（草稿探测／草稿测试生图），不写入库表。
+   * 复用已保存密钥或旧引用时严格核对协议与 origin，防止把凭据发给未确认新站点。
+   */
+  resolveDraftConnection(input: ImageServiceDraftInput): {
+    record: ImageServiceRecord;
+    token: string | undefined;
+  } {
+    const config = this.parseConfig(input.config);
+    if (input.secret !== undefined && config.credentialRef !== undefined) {
+      throw new ResourceCredentialConflictError();
+    }
+    const saved =
+      input.serviceId === undefined ? null : this.store.get(input.serviceId);
+    let token: string | undefined;
+    if (input.secret !== undefined) {
+      token = input.secret;
+    } else if (config.credentialRef !== undefined) {
+      if (saved !== null && config.credentialRef === saved.config.credentialRef) {
+        const from = imageServiceSiteIdentity(saved.config);
+        const to = imageServiceSiteIdentity(config);
+        if (from !== to) {
+          throw new ResourceCredentialStaleError({ from, to });
+        }
+      }
+      token = this.credentials.resolveReference(config.credentialRef);
+    } else if (saved !== null) {
+      const from = imageServiceSiteIdentity(saved.config);
+      const to = imageServiceSiteIdentity(config);
+      const keepsCredential =
+        this.credentials.hasStoredSecret(saved.serviceId) ||
+        saved.config.credentialRef !== undefined;
+      if (from !== to && keepsCredential) {
+        throw new ResourceCredentialStaleError({ from, to });
+      }
+      token = this.credentials.resolve(
+        saved.serviceId,
+        saved.config.credentialRef,
+      );
+    }
+    const now = this.now().toISOString();
+    return {
+      record: {
+        serviceId: saved?.serviceId ?? "__draft__",
+        name: saved?.name ?? "草稿生图服务",
+        enabled: saved?.enabled ?? true,
+        config,
+        createdAt: saved?.createdAt ?? now,
+        updatedAt: now,
+      },
+      token,
+    };
+  }
+
   /** 探测已保存的服务：节点清单决定内置工作流能否直接跑。 */
   async probe(serviceId: string): Promise<ImageServiceProbeResult> {
     const connection = this.resolveConnection(serviceId);
+    return this.probeConnection(connection, defaultComfyWorkflow());
+  }
+
+  /** 探测未保存的草稿生图服务连接，不修改已保存服务记录与密钥。 */
+  async probeDraft(
+    input: ProbeDraftImageServiceInput,
+  ): Promise<ImageServiceProbeResult> {
+    const connection = this.resolveDraftConnection(input);
+    const workflow =
+      input.workflow === undefined || input.workflow === null
+        ? defaultComfyWorkflow()
+        : validateComfyWorkflow(input.workflow);
+    return this.probeConnection(connection, workflow);
+  }
+
+  async probeConnection(
+    connection: { record: ImageServiceRecord; token: string | undefined },
+    workflow: ComfyWorkflow,
+  ): Promise<ImageServiceProbeResult> {
     const started = Date.now();
     const client = new ComfyUiClient({
       baseUrl: connection.record.config.baseUrl,
@@ -150,7 +251,7 @@ export class ImageServiceService {
       requestTimeoutMs: this.probeTimeoutMs,
       generationTimeoutMs: this.probeTimeoutMs,
     });
-    const probe = await client.probe(defaultComfyWorkflow());
+    const probe = await client.probe(workflow);
     return { probe, elapsedMs: Date.now() - started };
   }
 

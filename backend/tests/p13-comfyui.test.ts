@@ -95,7 +95,8 @@ async function startFakeComfy(): Promise<FakeComfy> {
       body,
       authorization: request.headers.authorization ?? null,
     });
-    const url = request.url ?? "";
+    const rawUrl = request.url ?? "";
+    const url = rawUrl.replace(/^\/custom(?=\/|$)/, "") || "/";
 
     if (request.method === "GET" && url === "/system_stats") {
       if (state.statsStatus !== 200) {
@@ -299,6 +300,18 @@ function settingsBody(context: Context, overrides: Record<string, unknown> = {})
   };
 }
 
+async function createTestOutfit(
+  context: Context,
+  name: string,
+  roleId = context.fixture.roleId,
+): Promise<string> {
+  const outfit = await context.fixture.app.services.appearance.importOutfit(
+    roleId,
+    { name },
+  );
+  return outfit.outfitId;
+}
+
 test("the built-in workflow is a MOSS-Image graph that can be patched by class type", () => {
   const workflow = defaultComfyWorkflow();
   assert.deepEqual(requiredNodeTypes(workflow), [
@@ -435,12 +448,18 @@ test("preview composes the anchor prompts and returns a decodable image", { time
   const context = await setup();
   try {
     const roleBase = `/v1/roles/${context.fixture.roleId}/scene-image`;
-    const saved = await api(context.base, "PUT", roleBase, settingsBody(context));
+    const outfitId = await createTestOutfit(context, "风衣");
+    const saved = await api(
+      context.base,
+      "PUT",
+      roleBase,
+      settingsBody(context, { outfitPrompts: { [outfitId]: "米色风衣" } }),
+    );
     assert.equal(saved.status, 200);
 
     const preview = await api(context.base, "POST", `${roleBase}/preview`, {
       prompt: "雨夜街头，远处有霓虹",
-      outfitId: "outfit-1",
+      outfitId,
     });
     assert.equal(preview.status, 200);
     const result = preview.body as {
@@ -1051,6 +1070,295 @@ test("rotating the token on the same site keeps generation working", { timeout: 
       (request) => request.url === "/prompt",
     );
     assert.equal(prompts.at(-1)?.authorization, "Bearer token-b");
+  } finally {
+    await context.close();
+  }
+});
+
+test("draft image service probe checks origin credentials and supports delete", { timeout: 30_000 }, async () => {
+  const siteB = await startFakeComfy();
+  const context = await setup({}, { secret: "token-a" });
+  try {
+    const draftNew = await api(context.base, "POST", "/v1/image-services/probe", {
+      config: { protocol: "comfyui", baseUrl: siteB.baseUrl },
+      secret: "draft-token",
+    });
+    assert.equal(draftNew.status, 200);
+    assert.equal((draftNew.body.probe as { workflowReady: boolean }).workflowReady, true);
+    assert.equal(siteB.requests.at(-1)?.authorization, "Bearer draft-token");
+
+    // 冲突凭据（secret + credentialRef）在探针入口即拒绝。
+    const conflict = await api(context.base, "POST", "/v1/image-services/probe", {
+      config: {
+        protocol: "comfyui",
+        baseUrl: siteB.baseUrl,
+        credentialRef: "env:TEST_COMFY_KEY",
+      },
+      secret: "draft-token",
+    });
+    assert.equal(conflict.status, 400);
+    assert.equal(
+      (conflict.body.error as { code: string }).code,
+      "RESOURCE_CREDENTIAL_CONFLICT",
+    );
+
+    // 同站点改路径时允许复用已保存密钥，不会泄露明文。
+    const sameOrigin = await api(context.base, "POST", "/v1/image-services/probe", {
+      serviceId: context.serviceId,
+      config: { protocol: "comfyui", baseUrl: `${context.comfy.baseUrl}/custom` },
+    });
+    assert.equal(sameOrigin.status, 200);
+    assert.equal(context.comfy.requests.at(-1)?.authorization, "Bearer token-a");
+
+    // 换站点但仍尝试复用旧服务凭据时必须拒绝（RESOURCE_CREDENTIAL_STALE）。
+    const stale = await api(context.base, "POST", "/v1/image-services/probe", {
+      serviceId: context.serviceId,
+      config: { protocol: "comfyui", baseUrl: siteB.baseUrl },
+    });
+    assert.equal(stale.status, 400);
+    assert.equal(
+      (stale.body.error as { code: string }).code,
+      "RESOURCE_CREDENTIAL_STALE",
+    );
+
+    // 删除生图服务要求停止态并清掉记录（由 configFetch 走停止-操作-恢复流程）。
+    const deleted = await api(
+      context.base,
+      "DELETE",
+      `/v1/image-services/${context.serviceId}`,
+    );
+    assert.equal(deleted.status, 200);
+    assert.equal(deleted.body.deleted, true);
+    const listed = await api(context.base, "GET", "/v1/image-services");
+    assert.deepEqual(listed.body.items, []);
+  } finally {
+    await context.close();
+    await siteB.close();
+  }
+});
+
+test("draft scene image probe and preview use draft settings without overwriting saved config", { timeout: 40_000 }, async () => {
+  const siteB = await startFakeComfy();
+  const context = await setup({}, { secret: "token-a" });
+  try {
+    const roleBase = `/v1/roles/${context.fixture.roleId}/scene-image`;
+    const customWorkflow = defaultComfyWorkflow();
+    customWorkflow["4"]!.inputs.width = 512;
+
+    // 未保存角色配置时即可用草稿探测与测试生图，且不写入正式库表。
+    const probeRes = await api(context.base, "POST", `${roleBase}/probe`, {
+      serviceDraft: {
+        config: { protocol: "comfyui", baseUrl: siteB.baseUrl },
+        secret: "draft-b",
+      },
+      workflow: customWorkflow,
+    });
+    assert.equal(probeRes.status, 200);
+    assert.equal(siteB.requests.at(-1)?.authorization, "Bearer draft-b");
+
+    const draftOutfitId = await createTestOutfit(context, "学院外套");
+    const savedOutfitId = await createTestOutfit(context, "风衣");
+
+    const draftOnlyPreview = await api(context.base, "POST", `${roleBase}/preview`, {
+      serviceDraft: {
+        serviceId: context.serviceId,
+        config: { protocol: "comfyui", baseUrl: `${context.comfy.baseUrl}` },
+      },
+      modelPath: "/models/MOSS-Draft-V1",
+      basePrompt: "银发草稿",
+      negativePrompt: "水印",
+      outfitPrompts: { [draftOutfitId]: "学院外套" },
+      width: 512,
+      height: 512,
+      steps: 12,
+      cfg: 4,
+      sampler: "euler",
+      scheduler: "sgm_uniform",
+      seed: 99,
+      prompt: "图书馆夕阳",
+      outfitId: draftOutfitId,
+    });
+    assert.equal(draftOnlyPreview.status, 200);
+    assert.equal(
+      draftOnlyPreview.body.prompt,
+      "银发草稿，学院外套，图书馆夕阳",
+    );
+    const draftSubmitted = context.comfy.workflows.at(-1) as Record<
+      string,
+      { inputs: Record<string, unknown> }
+    >;
+    assert.equal(draftSubmitted["1"]?.inputs.model_path, "/models/MOSS-Draft-V1");
+    assert.equal(draftSubmitted["3"]?.inputs.text, "水印");
+    assert.equal(draftSubmitted["4"]?.inputs.width, 512);
+    assert.equal(draftSubmitted["7"]?.inputs.steps, 12);
+    assert.equal(draftSubmitted["7"]?.inputs.seed, 99);
+
+    // 确认草稿预览从未写入角色生图配置。
+    const afterDraft = await api(context.base, "GET", roleBase);
+    assert.equal(afterDraft.body.configured, false);
+    assert.equal(afterDraft.body.settings, null);
+
+    // 写入正式配置 A，再用草稿 B 覆盖预览：预览走 B，正式保存与后台任务仍走 A。
+    const saved = await api(
+      context.base,
+      "PUT",
+      roleBase,
+      settingsBody(context, { outfitPrompts: { [savedOutfitId]: "米色风衣" } }),
+    );
+    assert.equal(saved.status, 200);
+
+    const overridePreview = await api(context.base, "POST", `${roleBase}/preview`, {
+      settings: {
+        modelPath: "/models/MOSS-Draft-Override",
+        basePrompt: "临时短发",
+        width: 512,
+      },
+      prompt: "夜间散步",
+      outfitId: savedOutfitId,
+    });
+    assert.equal(overridePreview.status, 200);
+    assert.equal(
+      overridePreview.body.prompt,
+      "临时短发，米色风衣，夜间散步",
+    );
+    const overrideSubmitted = context.comfy.workflows.at(-1) as Record<
+      string,
+      { inputs: Record<string, unknown> }
+    >;
+    assert.equal(
+      overrideSubmitted["1"]?.inputs.model_path,
+      "/models/MOSS-Draft-Override",
+    );
+    assert.equal(overrideSubmitted["4"]?.inputs.width, 512);
+    assert.equal(overrideSubmitted["4"]?.inputs.height, 1024);
+
+    // 确认已保存配置 A 纹丝未动，且跨站点凭据复用被拦下。
+    const savedCheck = await api(context.base, "GET", roleBase);
+    assert.equal(
+      (savedCheck.body.settings as { modelPath: string; basePrompt: string }).modelPath,
+      "/models/MOSS-Image-Base",
+    );
+    assert.equal(
+      (savedCheck.body.settings as { basePrompt: string }).basePrompt,
+      "银灰长发，琥珀色眼睛",
+    );
+
+    const stalePreview = await api(context.base, "POST", `${roleBase}/preview`, {
+      serviceDraft: {
+        serviceId: context.serviceId,
+        config: { protocol: "comfyui", baseUrl: siteB.baseUrl },
+      },
+      prompt: "跨站点拒绝",
+    });
+    assert.equal(stalePreview.status, 400);
+    assert.equal(
+      (stalePreview.body.error as { code: string }).code,
+      "RESOURCE_CREDENTIAL_STALE",
+    );
+
+    const badWorkflow = await api(context.base, "POST", `${roleBase}/preview`, {
+      workflow: customWorkflow,
+      outputNodeId: "999",
+    });
+    assert.equal(badWorkflow.status, 400);
+    assert.equal(
+      (badWorkflow.body.error as { code: string }).code,
+      "IMAGE_WORKFLOW_INVALID",
+    );
+  } finally {
+    await context.close();
+    await siteB.close();
+  }
+});
+
+test("preview validates outfitId ownership and active status before calling ComfyUI", { timeout: 30_000 }, async () => {
+  const context = await setup();
+  try {
+    const roleId = context.fixture.roleId;
+    const roleBase = `/v1/roles/${roleId}/scene-image`;
+    const ownOutfitId = await createTestOutfit(context, "常服");
+    const deletableOutfitId = await createTestOutfit(context, "旧裙");
+    const otherRole = context.fixture.app.services.roles.createRole({
+      displayName: "他人",
+      definition: { text: "另一个角色。" },
+    });
+    const otherOutfitId = await createTestOutfit(
+      context,
+      "他人服饰",
+      otherRole.roleId,
+    );
+
+    const saved = await api(
+      context.base,
+      "PUT",
+      roleBase,
+      settingsBody(context, {
+        outfitPrompts: {
+          [ownOutfitId]: "白色衬衫",
+          [deletableOutfitId]: "格子裙",
+          [otherOutfitId]: "越权服饰",
+          "nonexistent-outfit-id": "虚构提示词",
+        },
+      }),
+    );
+    assert.equal(saved.status, 200);
+    assert.equal(context.comfy.workflows.length, 0);
+
+    // 1. 当前角色有效服饰 / 未指定 / null / 空串均放行。
+    const ownRes = await api(context.base, "POST", `${roleBase}/preview`, {
+      prompt: "午后书房",
+      outfitId: ownOutfitId,
+    });
+    assert.equal(ownRes.status, 200);
+    assert.equal(ownRes.body.prompt, "银灰长发，琥珀色眼睛，白色衬衫，午后书房");
+
+    const omittedRes = await api(context.base, "POST", `${roleBase}/preview`, {
+      prompt: "无服饰键",
+    });
+    assert.equal(omittedRes.status, 200);
+
+    const nullRes = await api(context.base, "POST", `${roleBase}/preview`, {
+      prompt: "空值服饰",
+      outfitId: null,
+    });
+    assert.equal(nullRes.status, 200);
+
+    const emptyRes = await api(context.base, "POST", `${roleBase}/preview`, {
+      prompt: "空串服饰",
+      outfitId: "",
+    });
+    assert.equal(emptyRes.status, 200);
+    assert.equal(context.comfy.workflows.length, 4);
+
+    // 2. 他人角色服饰 ID（包括草稿覆盖 outfitPrompts）在生图前被拒绝，ComfyUI 收到 0 次新请求。
+    const foreignRes = await api(context.base, "POST", `${roleBase}/preview`, {
+      prompt: "越权测试",
+      outfitId: otherOutfitId,
+      draft: undefined,
+      settings: { outfitPrompts: { [otherOutfitId]: "恶意草稿服饰" } },
+    });
+    assert.equal(foreignRes.status, 404);
+    assert.equal((foreignRes.body.error as { code: string }).code, "OUTFIT_NOT_FOUND");
+    assert.equal(context.comfy.workflows.length, 4);
+
+    // 3. 当前角色已删除服饰在生图前被拒绝。
+    context.fixture.app.services.appearance.deleteOutfit(roleId, deletableOutfitId);
+    const deletedRes = await api(context.base, "POST", `${roleBase}/preview`, {
+      prompt: "已删服饰测试",
+      outfitId: deletableOutfitId,
+    });
+    assert.equal(deletedRes.status, 404);
+    assert.equal((deletedRes.body.error as { code: string }).code, "OUTFIT_NOT_FOUND");
+    assert.equal(context.comfy.workflows.length, 4);
+
+    // 4. 不存在服饰 ID 在生图前被拒绝。
+    const missingRes = await api(context.base, "POST", `${roleBase}/preview`, {
+      prompt: "不存在服饰测试",
+      outfitId: "nonexistent-outfit-id",
+    });
+    assert.equal(missingRes.status, 404);
+    assert.equal((missingRes.body.error as { code: string }).code, "OUTFIT_NOT_FOUND");
+    assert.equal(context.comfy.workflows.length, 4);
   } finally {
     await context.close();
   }
