@@ -24,11 +24,19 @@ import {
 import { clearModelCache, providerCacheKey, writeModelCache } from '../components/model/model-cache.js';
 import { mergeBindingDrafts } from '../components/model/binding-merge.js';
 import type { ConfigDraftState } from '../components/config-draft';
+import { ImageModelPicker } from '../components/image/ImageModelPicker';
+import {
+  clearImageModelCache,
+  imageServiceCacheKey,
+  writeImageModelCache,
+} from '../components/image/image-cache.js';
+import {
+  useImageProbe,
+  type ImageProbeTarget,
+} from '../components/image/use-image-probe';
 import {
   describeImageFailure,
-  summarizeImageProbe,
-  toImageServiceProbePayload,
-  type ImageProbeResult,
+  savedImageModelOf,
 } from '../image-config.js';
 import { useThemePreset } from '../ui/presets';
 import { ConfigThemeTransition } from '../ui/config-theme-transition';
@@ -46,7 +54,7 @@ type ImageService = {
   name: string;
   enabled: boolean;
   updatedAt?: string;
-  config: { protocol?: 'comfyui'; baseUrl: string; credentialRef?: string; timeoutMs?: number };
+  config: { protocol?: 'comfyui'; baseUrl: string; modelName?: string; credentialRef?: string; timeoutMs?: number };
   credential: { status: string; reference?: string | null; resolvable?: boolean };
 };
 type Binding = { capability: string; resourceId: string; modelName: string | null; enabled: boolean };
@@ -322,7 +330,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
       </figure></aside> : <aside className="config-index"><div className="config-index-heading">
         {settingsSection === 'model' && <div className="config-kind-tabs" role="group" aria-label="模型分类">{([['model','模型'],['image','生图']] as const).map(([id,label]) => <button key={id} type="button" aria-pressed={modelKind === id} onClick={() => { setModelKind(id); setNewModel(false); setNewImageService(false); }}>{label}</button>)}</div>}
         <small>{settingsSection === 'model' ? ({model:'模型服务',image:'生图服务'} as const)[modelKind] : settingSections.find(item => item[0] === settingsSection)?.[1]} · {settingsSection === 'model' && modelKind === 'image' ? imageServices.length : filtered.length} 项</small></div>
-        {settingsSection === 'roles' ? null : settingsSection === 'local' ? <><button type="button" className="config-index-item" data-selected="true"><strong>外观与动效</strong><small>本机动效偏好</small></button><button type="button" className="config-index-item" onClick={() => document.getElementById('config-local-connection')?.scrollIntoView({block:'nearest'})}><strong>版本与连接</strong><small>后端状态</small></button></> : settingsSection === 'model' && modelKind === 'image' ? <>{imageServiceError && <p role="alert">{imageServiceError}</p>}{imageServices.map((item,index) => <button className="config-index-item" type="button" key={item.serviceId} onClick={() => { setSelectedResource(item.serviceId); setNewImageService(false); }} data-selected={!newImageService && selectedResource === item.serviceId}><small>{String(index+1).padStart(2,'0')}</small><strong>{item.name}</strong><small>{item.config.baseUrl} · {item.enabled ? '已启用' : '已停用'}</small></button>)}{!imageServiceError && !imageServices.length && <p className="config-muted">还没有生图服务。</p>}<button type="button" className="config-index-new" onClick={() => setNewImageService(true)}>＋ 添加生图服务</button></> : <>{resourceError && <p role="alert">{resourceError}</p>}{filtered.map((item,index) => { const itemModel = item.kind === 'model' ? savedModelNameOf(item) : ''; const sub = typeof item.config.baseUrl === 'string' ? (itemModel ? `${itemModel} · ${item.config.baseUrl}` : item.config.baseUrl) : item.kind.toUpperCase(); return <button className="config-index-item" type="button" key={item.resourceId} onClick={() => { setSelectedResource(item.resourceId); setNewModel(false); setNewExtension(null); }} data-selected={!newModel && newExtension !== item.kind && selectedResource === item.resourceId}><small>{String(index+1).padStart(2,'0')}</small><strong>{item.name}</strong><small>{sub}</small><small>{item.enabled ? '已启用' : '已停用'}{item.lastTest ? item.lastTest.stale ? ' · 测试已过期' : item.lastTest.ok ? ' · 测试通过' : ' · 测试失败' : ''}</small></button>; })}{!resourceError && !filtered.length && <p className="config-muted">还没有已保存的资源。</p>}{settingsSection === 'model' && <button type="button" className="config-index-new" onClick={() => setNewModel(true)}>＋ 添加模型服务</button>}{(settingsSection === 'mcp' || settingsSection === 'skill') && <button type="button" className="config-index-new" onClick={() => setNewExtension(settingsSection)}>＋ 添加 {settingsSection === 'mcp' ? 'MCP' : 'Skill'}</button>}</>}
+        {settingsSection === 'roles' ? null : settingsSection === 'local' ? <><button type="button" className="config-index-item" data-selected="true"><strong>外观与动效</strong><small>本机动效偏好</small></button><button type="button" className="config-index-item" onClick={() => document.getElementById('config-local-connection')?.scrollIntoView({block:'nearest'})}><strong>版本与连接</strong><small>后端状态</small></button></> : settingsSection === 'model' && modelKind === 'image' ? <>{imageServiceError && <p role="alert">{imageServiceError}</p>}{imageServices.map((item,index) => { const itemModel = savedImageModelOf(item); const sub = itemModel ? `${itemModel} · ${item.config.baseUrl}` : item.config.baseUrl; return <button className="config-index-item" type="button" key={item.serviceId} onClick={() => { setSelectedResource(item.serviceId); setNewImageService(false); }} data-selected={!newImageService && selectedResource === item.serviceId}><small>{String(index+1).padStart(2,'0')}</small><strong>{item.name}</strong><small>{sub}</small><small>{item.enabled ? '已启用' : '已停用'}</small></button>; })}{!imageServiceError && !imageServices.length && <p className="config-muted">还没有生图服务。</p>}<button type="button" className="config-index-new" onClick={() => setNewImageService(true)}>＋ 添加生图服务</button></> : <>{resourceError && <p role="alert">{resourceError}</p>}{filtered.map((item,index) => { const itemModel = item.kind === 'model' ? savedModelNameOf(item) : ''; const sub = typeof item.config.baseUrl === 'string' ? (itemModel ? `${itemModel} · ${item.config.baseUrl}` : item.config.baseUrl) : item.kind.toUpperCase(); return <button className="config-index-item" type="button" key={item.resourceId} onClick={() => { setSelectedResource(item.resourceId); setNewModel(false); setNewExtension(null); }} data-selected={!newModel && newExtension !== item.kind && selectedResource === item.resourceId}><small>{String(index+1).padStart(2,'0')}</small><strong>{item.name}</strong><small>{sub}</small><small>{item.enabled ? '已启用' : '已停用'}{item.lastTest ? item.lastTest.stale ? ' · 测试已过期' : item.lastTest.ok ? ' · 测试通过' : ' · 测试失败' : ''}</small></button>; })}{!resourceError && !filtered.length && <p className="config-muted">还没有已保存的资源。</p>}{settingsSection === 'model' && <button type="button" className="config-index-new" onClick={() => setNewModel(true)}>＋ 添加模型服务</button>}{(settingsSection === 'mcp' || settingsSection === 'skill') && <button type="button" className="config-index-new" onClick={() => setNewExtension(settingsSection)}>＋ 添加 {settingsSection === 'mcp' ? 'MCP' : 'Skill'}</button>}</>}
       </aside>}
       <nav className="config-tabs" aria-label={roleActive ? '角色配置分区' : '设置分区'}>{(roleActive ? roleSections : settingSections).map(([id, title], index) => <button key={id} type="button" aria-current={(roleActive ? roleSection : settingsSection) === id ? 'page' : undefined} onClick={() => changeSection(id)}><small>{String(index + 1).padStart(2, '0')}</small><strong>{id === 'quota' ? '额度' : id === 'done' ? '完成' : id === 'roles' ? '角色' : title}</strong>{roleActive && (dirtyScopes?.[id as keyof RoleDirty] || (id === 'models' && (dirtyScopes?.voice || dirtyScopes?.image))) && <i className="config-tab-led" aria-label="有未保存草稿"/>}</button>)}</nav>
       <section className="config-leaf">{roleActive && dirtyNames.length > 0 && <div className="config-dirty-ribbon" aria-label={`${dirtyNames.length} 处未保存`}>{dirtyNames.length}</div>}<header className="config-leaf-head"><div className="config-crumb">{roleActive ? <>角色配置 <i>/</i> {chosen?.displayName || '选择角色'} <i>/</i> <b>{sectionTitle}</b></> : <>设置 <i>/</i> <b>{sectionTitle}</b> <button type="button" className="config-return-link" onClick={() => onNavigate('role-config')}>返回角色配置</button></>}</div><span className="config-folio">{roleActive ? `档案 ${String(Math.max(0, roles.findIndex(role => role.roleId === editId)) + 1).padStart(2, '0')} / ` : '设置 · '}第 {sectionNumber} 页</span></header>
@@ -1208,11 +1216,12 @@ function ImageServiceCreate({ onCancel, onCreated }: { onCancel: () => void; onC
   const [baseUrl, setBaseUrl] = useState('http://127.0.0.1:8188');
   const [secret, setSecret] = useState('');
   const [timeoutText, setTimeoutText] = useState('');
-  const [probeBusy, setProbeBusy] = useState(false);
-  const [probeResult, setProbeResult] = useState<ImageProbeResult | null>(null);
+  const [modelName, setModelName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const probe = useImageProbe(`new-image|${baseUrl}|${secret}|${timeoutText}`, {
+    onBeforeProbe: () => setError(''),
+  });
   const live = useRef(true);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
 
@@ -1224,31 +1233,31 @@ function ImageServiceCreate({ onCancel, onCreated }: { onCancel: () => void; onC
     return value;
   };
 
-  const probe = async () => {
-    if (probeBusy || !baseUrl.trim()) return;
+  const draftProbeTarget = (): ImageProbeTarget | null => {
+    if (!baseUrl.trim()) return null;
     const timeoutMs = parseTimeoutMs();
-    if (timeoutMs === null) { setError('等待上限需为 5000～900000 之间的整数毫秒。'); return; }
-    setProbeBusy(true); setError(''); setNotice(''); setProbeResult(null);
-    try {
-      const result = await api<ImageProbeResult>('/v1/image-services/probe', {
-        method: 'POST',
-        body: toImageServiceProbePayload({ baseUrl, secret, timeoutMs }),
-      });
-      if (!live.current) return;
-      setProbeResult(result);
-      setNotice(summarizeImageProbe(result.probe));
-    } catch (reason) {
-      if (live.current) setError(imageErrorText(reason));
-    } finally {
-      if (live.current) setProbeBusy(false);
+    if (timeoutMs === null) {
+      setError('等待上限需为 5000～900000 之间的整数毫秒。');
+      return null;
     }
+    return {
+      kind: 'draft',
+      config: {
+        baseUrl,
+        secret,
+        timeoutMs,
+        ...(modelName.trim() ? { modelName: modelName.trim() } : {}),
+      },
+    };
   };
 
   const create = async () => {
     if (busy || !name.trim() || !baseUrl.trim()) return;
     const timeoutMs = parseTimeoutMs();
     if (timeoutMs === null) { setError('等待上限需为 5000～900000 之间的整数毫秒。'); return; }
-    setBusy(true); setError(''); setNotice('');
+    const carriedModels = probe.listLoaded ? [...probe.models] : null;
+    const trimmedModel = modelName.trim();
+    setBusy(true); setError('');
     try {
       const result = await api<{ service: ImageService }>('/v1/image-services', {
         method: 'POST',
@@ -1257,12 +1266,16 @@ function ImageServiceCreate({ onCancel, onCreated }: { onCancel: () => void; onC
           config: {
             protocol: 'comfyui',
             baseUrl: baseUrl.trim(),
+            ...(trimmedModel ? { modelName: trimmedModel } : {}),
             ...(timeoutMs === undefined ? {} : { timeoutMs }),
           },
           ...(secret.trim() ? { secret: secret.trim() } : {}),
         },
       });
       if (!live.current) return;
+      if (carriedModels !== null) {
+        writeImageModelCache(imageServiceCacheKey(result.service), carriedModels);
+      }
       onCreated(result.service);
     } catch (reason) {
       if (live.current) setError(imageErrorText(reason));
@@ -1272,16 +1285,27 @@ function ImageServiceCreate({ onCancel, onCreated }: { onCancel: () => void; onC
   };
 
   return <div className="config-prose">
-    <ConfigHeading number="＋" label="模型 · 生图" english="NEW IMAGE SERVICE" title="添加生图服务" description="全局维护 ComfyUI 连接与凭据；创建后可在角色配置中选择模型与工作流。" />
+    <ConfigHeading number="＋" label="模型 · 生图" english="NEW IMAGE SERVICE" title="添加生图服务" description="全局维护 ComfyUI 连接、凭据与默认模型；读取列表后可在角色配置中直接选用。" />
     <Field label="名称"><Input value={name} maxLength={200} disabled={busy} onChange={event => setName(event.target.value)} /></Field>
-    <Field label="服务地址" hint="ComfyUI 默认 http://127.0.0.1:8188。"><Input value={baseUrl} disabled={busy} onChange={event => { setBaseUrl(event.target.value); setProbeResult(null); }} /></Field>
-    <Field label="令牌（可选）" hint="仅反向代理要求认证时填写；保存后不会回显。"><Input type="password" autoComplete="off" value={secret} disabled={busy} onChange={event => { setSecret(event.target.value); setProbeResult(null); }} /></Field>
+    <Field label="服务地址" hint="ComfyUI 默认 http://127.0.0.1:8188。"><Input value={baseUrl} disabled={busy} onChange={event => { setBaseUrl(event.target.value); probe.reset(); }} /></Field>
+    <Field label="令牌（可选）" hint="仅反向代理要求认证时填写；保存后不会回显。"><Input type="password" autoComplete="off" value={secret} disabled={busy} onChange={event => { setSecret(event.target.value); probe.reset(); }} /></Field>
     <Field label="生成等待上限（毫秒，可选）" hint="5000～900000，留空使用服务端默认值。"><Input type="number" min={5000} max={900000} value={timeoutText} disabled={busy} onChange={event => setTimeoutText(event.target.value)} /></Field>
-    {notice && <p role="status">{notice}</p>}
-    {probeResult && probeResult.probe.models.length > 0 && <p className="config-muted">可用模型：{probeResult.probe.models.join('、')}</p>}
+    <ImageModelPicker
+      label="默认模型（可选）"
+      hint="点击下方「读取模型列表」或「测试连接」获取 ComfyUI 模型后选择，也可手填；创建后角色配置会默认选用。"
+      value={modelName}
+      onChange={setModelName}
+      models={probe.models}
+      listBusy={probe.listBusy}
+      testBusy={probe.testBusy}
+      notice={probe.notice}
+      onRefresh={() => { const target = draftProbeTarget(); if (target) void probe.refresh(target); }}
+      onTest={() => { const target = draftProbeTarget(); if (target) void probe.test(target, modelName); }}
+      probeDisabled={!baseUrl.trim()}
+      disabled={busy}
+    />
     {error && <p role="alert">{error}</p>}
     <div className="config-actions">
-      <Button variant="ghost" disabled={probeBusy || busy || !baseUrl.trim()} onClick={() => void probe()}>{probeBusy ? '正在测试…' : '测试连接'}</Button>
       <Button disabled={busy || !name.trim() || !baseUrl.trim()} onClick={() => void create()}>{busy ? '正在保存…' : '保存生图服务'}</Button>
       <button type="button" disabled={busy} onClick={onCancel}>返回目录</button>
     </div>
@@ -1303,24 +1327,20 @@ function ImageServiceDetail({
 }) {
   const [draftName, setDraftName] = useState(service?.name ?? '');
   const [draftUrl, setDraftUrl] = useState(service?.config.baseUrl ?? '');
+  const [modelName, setModelName] = useState(() => savedImageModelOf(service));
   const [timeoutText, setTimeoutText] = useState(
     typeof service?.config.timeoutMs === 'number' ? String(service.config.timeoutMs) : '',
   );
   const [keyMode, setKeyMode] = useState<'keep' | 'replace' | 'clear'>('keep');
   const [secret, setSecret] = useState('');
-  const [probeBusy, setProbeBusy] = useState(false);
-  const [probeResult, setProbeResult] = useState<ImageProbeResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [pausedRoleIds, setPausedRoleIds] = useState<string[]>([]);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const live = useRef(true);
-  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
-
-  if (!service) return <div className="config-prose"><ConfigHeading number="01" label="模型 · 生图" english="IMAGE" title="生图服务" description="选择或添加一个生图服务；角色的提示词与工作流在角色配置中管理。"/></div>;
-
-  const hasActiveRoles = activities.some(item => item.state !== 'stopped');
+  const savedKey = service ? imageServiceCacheKey(service) : '';
+  const secretProbeKey = keyMode === 'replace' ? `replace:${secret}` : keyMode;
+  const savedTimeout = typeof service?.config.timeoutMs === 'number' ? service.config.timeoutMs : undefined;
   const parseTimeoutMs = (): number | undefined | null => {
     const trimmed = timeoutText.trim();
     if (!trimmed) return undefined;
@@ -1328,31 +1348,53 @@ function ImageServiceDetail({
     if (!Number.isInteger(value) || value < 5000 || value > 900000) return null;
     return value;
   };
+  const currentTimeout = parseTimeoutMs();
+  const matchesSaved =
+    Boolean(service) &&
+    keyMode === 'keep' &&
+    draftUrl.trim() === service!.config.baseUrl &&
+    currentTimeout === savedTimeout;
+  const probe = useImageProbe(
+    matchesSaved ? savedKey : `${savedKey}|draft|${secretProbeKey}|${draftUrl}|${timeoutText}`,
+    {
+      shared: matchesSaved,
+      onBeforeProbe: () => { setError(''); setMessage(''); },
+    },
+  );
+  const live = useRef(true);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+  useEffect(() => () => { probe.clearLog(); }, [probe.clearLog]);
 
-  const probe = async () => {
-    if (probeBusy || !draftUrl.trim()) return;
+  if (!service) return <div className="config-prose"><ConfigHeading number="01" label="模型 · 生图" english="IMAGE" title="生图服务" description="选择或添加一个生图服务；角色的提示词与工作流在角色配置中管理。"/></div>;
+
+  const hasActiveRoles = activities.some(item => item.state !== 'stopped');
+
+  const probeTarget = (): ImageProbeTarget | null => {
+    if (!draftUrl.trim()) return null;
     const timeoutMs = parseTimeoutMs();
-    if (timeoutMs === null) { setError('等待上限需为 5000～900000 之间的整数毫秒。'); return; }
-    setProbeBusy(true); setError(''); setMessage(''); setProbeResult(null);
-    try {
-      const result = await api<ImageProbeResult>('/v1/image-services/probe', {
-        method: 'POST',
-        body: toImageServiceProbePayload({
-          serviceId: keyMode === 'keep' ? service.serviceId : undefined,
-          baseUrl: draftUrl,
-          credentialRef: keyMode === 'keep' ? service.config.credentialRef : undefined,
-          secret: keyMode === 'replace' ? secret : undefined,
-          timeoutMs,
-        }),
-      });
-      if (!live.current) return;
-      setProbeResult(result);
-      setMessage(summarizeImageProbe(result.probe));
-    } catch (reason) {
-      if (live.current) setError(imageErrorText(reason));
-    } finally {
-      if (live.current) setProbeBusy(false);
+    if (timeoutMs === null) {
+      setError('等待上限需为 5000～900000 之间的整数毫秒。');
+      return null;
     }
+    if (keyMode === 'replace' && !secret.trim()) {
+      setError('请填写新令牌后再测试连接。');
+      return null;
+    }
+    if (matchesSaved) {
+      return { kind: 'savedService', serviceId: service.serviceId, cacheKey: savedKey };
+    }
+    return {
+      kind: 'draft',
+      config: {
+        ...(keyMode === 'keep'
+          ? { serviceId: service.serviceId, credentialRef: service.config.credentialRef }
+          : {}),
+        baseUrl: draftUrl,
+        ...(modelName.trim() ? { modelName: modelName.trim() } : {}),
+        ...(keyMode === 'replace' ? { secret } : {}),
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      },
+    };
   };
 
   const ensurePaused = async (): Promise<string[] | null> => {
@@ -1390,6 +1432,8 @@ function ImageServiceDetail({
       setError(describeImageFailure('RESOURCE_CREDENTIAL_STALE', ''));
       return;
     }
+    const carriedModels = probe.listLoaded ? [...probe.models] : null;
+    const trimmedModel = modelName.trim();
     setBusy(true); setError(''); setMessage('');
     try {
       const paused = await ensurePaused();
@@ -1397,6 +1441,7 @@ function ImageServiceDetail({
       const config: Record<string, unknown> = {
         protocol: 'comfyui',
         baseUrl: draftUrl.trim(),
+        ...(trimmedModel ? { modelName: trimmedModel } : {}),
         ...(keyMode === 'keep' && service.config.credentialRef ? { credentialRef: service.config.credentialRef } : {}),
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       };
@@ -1409,11 +1454,17 @@ function ImageServiceDetail({
         },
       });
       if (!live.current) return;
+      const nextKey = imageServiceCacheKey(result.service);
+      if (keyMode !== 'keep' || nextKey !== savedKey) clearImageModelCache(savedKey);
+      if (keyMode !== 'keep') clearImageModelCache(nextKey);
+      if (carriedModels !== null) writeImageModelCache(nextKey, carriedModels);
       setDraftName(result.service.name);
       setDraftUrl(result.service.config.baseUrl);
+      setModelName(savedImageModelOf(result.service));
       setTimeoutText(typeof result.service.config.timeoutMs === 'number' ? String(result.service.config.timeoutMs) : '');
       setKeyMode('keep');
       setSecret('');
+      probe.clearLog();
       setMessage('生图服务已保存。');
       onUpdated(service.serviceId);
     } catch (reason) {
@@ -1433,6 +1484,8 @@ function ImageServiceDetail({
         method: 'PATCH',
         body: { enabled: !service.enabled },
       });
+      if (service.enabled) clearImageModelCache(savedKey);
+      probe.clearLog();
       if (!live.current) return;
       setMessage(service.enabled ? '生图服务已全局停用。' : '生图服务已全局启用。');
       onUpdated(service.serviceId);
@@ -1450,6 +1503,7 @@ function ImageServiceDetail({
       const paused = await ensurePaused();
       if (paused === null) return;
       await api(`/v1/image-services/${encodeURIComponent(service.serviceId)}`, { method: 'DELETE' });
+      clearImageModelCache(savedKey);
       for (const roleId of paused) {
         try { await api(`/v1/roles/${encodeURIComponent(roleId)}/activity/resume`, { method: 'POST' }); } catch { /* 删除成功后尽力恢复，其余角色可在状态页恢复 */ }
       }
@@ -1479,13 +1533,15 @@ function ImageServiceDetail({
     onUpdated();
   };
 
+  const probeDisabled = !draftUrl.trim() || (keyMode === 'replace' && !secret.trim());
+
   return <div className="config-prose">
-    <ConfigHeading number="01" label="模型 · 生图" english="IMAGE" title={service.name} description="全局维护 ComfyUI 服务地址与凭据；角色提示词与工作流在角色配置中管理。" />
+    <ConfigHeading number="01" label="模型 · 生图" english="IMAGE" title={service.name} description="全局维护 ComfyUI 地址、凭据与默认模型；角色配置默认继承此处所选模型，也可按角色覆盖。" />
     <div className="config-ledger"><div className="config-ledger-label"><b>状态</b><small>全局</small></div><div>{service.enabled ? '已启用' : '已停用'}</div></div>
     <div className="config-ledger"><div className="config-ledger-label"><b>名称</b><small>生图服务</small></div><div><Input aria-label="生图服务名称" disabled={busy} value={draftName} maxLength={200} onChange={event => setDraftName(event.target.value)} /></div></div>
-    <div className="config-ledger"><div className="config-ledger-label"><b>连接</b><small>地址与超时</small></div><div className="config-connection"><Field label="服务地址"><Input disabled={busy} value={draftUrl} onChange={event => { setDraftUrl(event.target.value); setProbeResult(null); }} /></Field><Field label="等待上限（毫秒）" hint="5000～900000，留空为默认"><Input type="number" min={5000} max={900000} disabled={busy} value={timeoutText} onChange={event => setTimeoutText(event.target.value)} /></Field></div></div>
-    <div className="config-ledger"><div className="config-ledger-label"><b>密钥</b><small>只写</small></div><div><p>密钥状态：{service.credential.status || '未知'}；密钥原文不会显示。</p><div className="config-subtabs" role="group" aria-label="生图密钥操作">{([['keep', '保留'], ['replace', '替换'], ['clear', '清除']] as const).map(([id, label]) => <button key={id} type="button" disabled={busy} aria-pressed={keyMode === id} onClick={() => { setKeyMode(id); setSecret(''); setProbeResult(null); }}>{label}</button>)}</div>{keyMode === 'replace' && <Field label="新令牌"><Input type="password" autoComplete="off" disabled={busy} value={secret} onChange={event => { setSecret(event.target.value); setProbeResult(null); }} /></Field>}{keyMode === 'keep' && <p className="config-muted">保留已保存密钥时，仅同站点同端口可复用；更换站点请改为替换或先清除密钥。</p>}</div></div>
-    <div className="config-ledger"><div className="config-ledger-label"><b>测试</b><small>按当前表单</small></div><div><Button variant="ghost" disabled={probeBusy || busy || !draftUrl.trim() || (keyMode === 'replace' && !secret.trim())} onClick={() => void probe()}>{probeBusy ? '正在测试…' : '测试连接'}</Button>{probeResult && probeResult.probe.models.length > 0 && <p className="config-muted">探测到模型：{probeResult.probe.models.join('、')}</p>}</div></div>
+    <div className="config-ledger"><div className="config-ledger-label"><b>连接</b><small>地址与超时</small></div><div className="config-connection"><Field label="服务地址"><Input disabled={busy} value={draftUrl} onChange={event => { setDraftUrl(event.target.value); probe.clearLog(); }} /></Field><Field label="等待上限（毫秒）" hint="5000～900000，留空为默认"><Input type="number" min={5000} max={900000} disabled={busy} value={timeoutText} onChange={event => setTimeoutText(event.target.value)} /></Field></div></div>
+    <div className="config-ledger"><div className="config-ledger-label"><b>密钥</b><small>只写</small></div><div><p>密钥状态：{service.credential.status || '未知'}；密钥原文不会显示。</p><div className="config-subtabs" role="group" aria-label="生图密钥操作">{([['keep', '保留'], ['replace', '替换'], ['clear', '清除']] as const).map(([id, label]) => <button key={id} type="button" disabled={busy} aria-pressed={keyMode === id} onClick={() => { setKeyMode(id); setSecret(''); probe.clearLog(); }}>{label}</button>)}</div>{keyMode === 'replace' && <Field label="新令牌"><Input type="password" autoComplete="off" disabled={busy} value={secret} onChange={event => { setSecret(event.target.value); probe.clearLog(); }} /></Field>}{keyMode === 'keep' && <p className="config-muted">保留已保存密钥时，仅同站点同端口可复用；更换站点请改为替换或先清除密钥。</p>}</div></div>
+    <div className="config-ledger"><div className="config-ledger-label"><b>默认模型</b><small>与连接测试</small></div><div><ImageModelPicker label="默认生图模型" hint="可从探测列表选择或在需要时手填；保存后角色配置默认使用此模型。" value={modelName} onChange={setModelName} models={probe.models} listBusy={probe.listBusy} testBusy={probe.testBusy} notice={probe.notice} onRefresh={() => { const target = probeTarget(); if (target) void probe.refresh(target); }} onTest={() => { const target = probeTarget(); if (target) void probe.test(target, modelName); }} probeDisabled={probeDisabled} disabled={busy} /></div></div>
     <div className="config-ledger"><div className="config-ledger-label"><b>管理</b><small>修改前需全员停止</small></div><div>
       {hasActiveRoles && <p className="config-muted">当前有启用中的角色；保存、启停或删除时会先暂停活跃角色，完成后可一键继续。</p>}
       <div className="config-actions">

@@ -21,10 +21,10 @@ export function createImageForm(settings) {
     outfitPrompts: { ...(source.outfitPrompts ?? {}) },
     width: source.width ?? 1024,
     height: source.height ?? 1024,
-    steps: source.steps ?? 50,
-    cfg: source.cfg ?? 3,
-    sampler: source.sampler ?? "euler",
-    scheduler: source.scheduler ?? "sgm_uniform",
+    steps: source.steps ?? 25,
+    cfg: source.cfg ?? 2.5,
+    sampler: source.sampler ?? "er_sde",
+    scheduler: source.scheduler ?? "simple",
     seed: source.seed ?? null,
     workflow: source.workflow ?? null,
     outputNodeId: source.outputNodeId ?? null,
@@ -68,10 +68,17 @@ export function toSceneImagePreviewPayload(form, options = {}) {
   };
 }
 
+/** 读取全局变量中的默认生图模型名（未配置则返回空串）。 */
+export function savedImageModelOf(service) {
+  const modelName = service?.config?.modelName;
+  return typeof modelName === "string" ? modelName.trim() : "";
+}
+
 /** 构造生图服务连接探测草稿载荷（Settings 或面板新建服务共用）。 */
 export function toImageServiceProbePayload(input = {}) {
   const serviceId = String(input.serviceId ?? "").trim();
   const baseUrl = String(input.baseUrl ?? "").trim();
+  const modelName = String(input.modelName ?? "").trim();
   const credentialRef = String(input.credentialRef ?? "").trim();
   const secret = String(input.secret ?? "");
   const timeoutMs =
@@ -83,6 +90,7 @@ export function toImageServiceProbePayload(input = {}) {
     config: {
       protocol: "comfyui",
       baseUrl,
+      ...(modelName.length > 0 ? { modelName } : {}),
       ...(credentialRef.length > 0 ? { credentialRef } : {}),
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     },
@@ -174,6 +182,40 @@ export function summarizeImageProbe(probe) {
   return `工作流就绪 · ${version} · 探测到 ${models} 个可用模型`;
 }
 
+/**
+ * 生图服务测试连接文案与级别；若指定了当前模型名且默认工作流可用，会校验是否出现在探测列表中。
+ * @returns {{ role: "status" | "alert", text: string }}
+ */
+export function evaluateImageConnectionTest(probe, targetModel = "", elapsedMs = 0, hasCustomWorkflow = false) {
+  if (probe === null || probe === undefined || !probe.reachable) {
+    return { role: "alert", text: "测试失败：连不上服务。" };
+  }
+  if (!probe.workflowReady) {
+    const missing = (probe.missingNodes ?? []).join("、");
+    return { role: "alert", text: `工作流还缺节点：${missing}` };
+  }
+  const version = probe.comfyuiVersion ? `ComfyUI ${probe.comfyuiVersion}` : "ComfyUI";
+  const models = Array.isArray(probe.models) ? probe.models : [];
+  const ms = Math.max(0, Math.round(Number(elapsedMs ?? 0)));
+  const model = String(targetModel ?? "").trim();
+  if (model.length > 0 && models.length > 0 && !models.includes(model) && !hasCustomWorkflow) {
+    return {
+      role: "alert",
+      text: `工作流就绪 · ${version} · ${ms} ms，但探测列表中未找到「${model}」`,
+    };
+  }
+  if (model.length > 0 && models.includes(model)) {
+    return {
+      role: "status",
+      text: `测试通过 · ${version} · 已确认模型「${model}」· ${ms} ms`,
+    };
+  }
+  return {
+    role: "status",
+    text: `测试通过 · 工作流就绪 · ${version} · 探测到 ${models.length} 个模型 · ${ms} ms`,
+  };
+}
+
 const FAILURE_TEXT = {
   IMAGE_SERVICE_NOT_FOUND: "生图服务不存在，请重新选择。",
   IMAGE_SERVICE_DISABLED: "生图服务已停用，启用后再试。",
@@ -183,6 +225,11 @@ const FAILURE_TEXT = {
   IMAGE_GENERATION_TIMEOUT: "出图超时。首次加载模型可能较慢，可以调大等待上限。",
   IMAGE_GENERATION_FAILED: "出图失败，详情见服务端日志。",
   SCENE_IMAGE_NOT_CONFIGURED: "还没有配置生图服务。",
+  SCENE_IMAGE_ANCHOR_IMAGE_REQUIRED: "还没有可用的角色锚点图片，请先在外观中导入立绘或点击旁边的参考图上传。",
+  SCENE_IMAGE_CHAT_MODEL_REQUIRED: "当前角色还没有绑定并启用对话模型，请先在「模型 -> 对话」中配置并保存。",
+  SCENE_IMAGE_ANCHOR_CANCELED: "已取消生成锚点提示词。",
+  MULTIPLE_ANCHOR_IMAGES: "一次只能上传一张参考图片。",
+  MODEL_REQUEST_FAILED: "对话模型生成提示词失败，请检查对话模型可用性后重试。",
   INVALID_SCENE_IMAGE_SETTINGS: "生图参数不合法，请检查模型目录和生成参数。",
   INVALID_IMAGE_SERVICE_CONFIG: "生图服务配置不完整，检查地址。",
   RESOURCE_CREDENTIAL_STALE: "换了服务地址，需要重新填写密钥或切换为无密钥。",
@@ -201,6 +248,7 @@ export function imageServiceSnapshotKey(service, epoch = 0) {
     Boolean(service.enabled),
     config.protocol ?? "comfyui",
     config.baseUrl ?? "",
+    config.modelName ?? "",
     config.timeoutMs ?? null,
     config.credentialRef ?? "",
     credential.status ?? "",

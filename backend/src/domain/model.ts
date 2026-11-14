@@ -45,8 +45,18 @@ export interface ModelContinuation {
   items: Record<string, unknown>[];
 }
 
+/** 随用户消息附带的底座图片载荷；供对话模型生成生图锚点提示词等多模态调用使用。 */
+export interface ModelImageAttachment {
+  mediaType: string;
+  dataBase64: string;
+}
+
 export type ModelMessage =
-  | { role: "user"; content: string }
+  | {
+      role: "user";
+      content: string;
+      images?: readonly ModelImageAttachment[];
+    }
   | {
       role: "assistant";
       content: string;

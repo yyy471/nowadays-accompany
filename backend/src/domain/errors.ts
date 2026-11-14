@@ -724,6 +724,24 @@ export class SceneImageNotConfiguredError extends AppError {
   }
 }
 
+/** 角色外观与上传中都没有可用锚点图，无法交由对话模型生成锚点提示词。 */
+export class SceneImageAnchorImageRequiredError extends AppError {
+  constructor(
+    message = "还没有可用的角色锚点图片，请先在外观中导入服饰图片或上传一张参考图",
+  ) {
+    super(400, "SCENE_IMAGE_ANCHOR_IMAGE_REQUIRED", message);
+  }
+}
+
+/** 生成锚点提示词需要角色先绑定并启用对话模型。 */
+export class SceneImageChatModelRequiredError extends AppError {
+  constructor(
+    message = "当前角色还没有绑定并启用对话模型，请先在「模型 -> 对话」中配置",
+  ) {
+    super(409, "SCENE_IMAGE_CHAT_MODEL_REQUIRED", message);
+  }
+}
+
 /** DL-148：配置写入前必须由后端确认角色活动已停止，拒绝时带出可定位的状态。 */
 export class RoleNotStoppedError extends AppError {
   constructor(details: {

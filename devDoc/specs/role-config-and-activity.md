@@ -90,7 +90,7 @@
   - `GET /v1/roles/:roleId/autonomy`、`GET /v1/roles/:roleId/autonomy/budget`
   - `GET /v1/roles/:roleId/voice`、`GET /v1/roles/:roleId/voice/references`、`POST /v1/roles/:roleId/voice/probe`、`POST /v1/roles/:roleId/voice/preview`
   - `GET /v1/image-services`、`POST /v1/image-services`、`POST /v1/image-services/probe`、`POST /v1/image-services/:serviceId/probe`
-  - `GET /v1/roles/:roleId/scene-image`、`POST /v1/roles/:roleId/scene-image/probe`、`POST /v1/roles/:roleId/scene-image/preview`（注：`292-R07` 校验服饰属于当前角色且未删除，见第 5 节）。
+  - `GET /v1/roles/:roleId/scene-image`、`POST /v1/roles/:roleId/scene-image/probe`、`POST /v1/roles/:roleId/scene-image/preview`、`POST /v1/roles/:roleId/scene-image/anchor-prompts`（注：`292-R07` 校验服饰属于当前角色且未删除，见第 5 节）。
 
 ### 2.4 数据归属与凭据脱敏规则
 

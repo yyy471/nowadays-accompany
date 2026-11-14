@@ -1,16 +1,18 @@
 import type { Router } from "./router.js";
 import type { ApiServices } from "./routes.js";
-import { readJsonBody } from "./body.js";
-import type { RouteResponse } from "./errors.js";
+import { readJsonBody, readMultipartForm } from "./body.js";
+import { HttpError, type RouteResponse } from "./errors.js";
 import { parseBody } from "./validation.js";
 import {
   createImageServiceSchema,
   probeImageServiceSchema,
+  sceneImageAnchorPromptBodySchema,
   sceneImagePreviewBodySchema,
   sceneImageProbeBodySchema,
   sceneImageSettingsBodySchema,
   updateImageServiceSchema,
 } from "./schemas.js";
+import type { UploadedImage } from "../domain/appearance.js";
 import type { SceneImageSettingsInput } from "../domain/scene-image-settings.js";
 
 function compactDraft(
@@ -195,4 +197,87 @@ export function registerImageServiceRoutes(
       };
     },
   );
+
+  router.add(
+    "POST",
+    "/v1/roles/:roleId/scene-image/anchor-prompts",
+    async ({ request, params }): Promise<RouteResponse> => {
+      const { body, uploadedImage } = await readAnchorPromptRequest(request);
+      return {
+        status: 200,
+        body: await services.sceneImageSettings.generateAnchorPrompt(
+          params.roleId ?? "",
+          {
+            target: body.target,
+            ...(body.outfitId === undefined ? {} : { outfitId: body.outfitId }),
+            ...(body.previousPrompt === undefined
+              ? {}
+              : { previousPrompt: body.previousPrompt }),
+            ...(uploadedImage === undefined ? {} : { uploadedImage }),
+          },
+        ),
+      };
+    },
+  );
+}
+
+async function readAnchorPromptRequest(request: Parameters<typeof readJsonBody>[0]): Promise<{
+  body: {
+    target: "base" | "outfit";
+    outfitId?: string | undefined;
+    previousPrompt?: string | undefined;
+  };
+  uploadedImage?: UploadedImage;
+}> {
+  const contentType = request.headers["content-type"];
+  if (
+    typeof contentType === "string" &&
+    contentType.toLowerCase().startsWith("multipart/form-data")
+  ) {
+    const form = await readMultipartForm(request);
+    const files = form.files.get("image") ?? [];
+    if (files.length > 1) {
+      throw new HttpError(
+        400,
+        "MULTIPLE_ANCHOR_IMAGES",
+        "一次只能上传一张参考图片",
+      );
+    }
+    let rawPayload: unknown;
+    const payloadText = form.fields.get("payload");
+    if (payloadText !== undefined) {
+      try {
+        rawPayload = JSON.parse(payloadText) as unknown;
+      } catch {
+        throw new HttpError(400, "INVALID_JSON", "payload 字段不是有效 JSON");
+      }
+    } else {
+      const target = form.fields.get("target");
+      const outfitId = form.fields.get("outfitId");
+      const previousPrompt = form.fields.get("previousPrompt");
+      rawPayload = {
+        ...(target === undefined ? {} : { target }),
+        ...(outfitId === undefined || outfitId === "" ? {} : { outfitId }),
+        ...(previousPrompt === undefined ? {} : { previousPrompt }),
+      };
+    }
+    const body = parseBody(sceneImageAnchorPromptBodySchema, rawPayload);
+    const imageFile = files[0];
+    return {
+      body,
+      ...(imageFile === undefined
+        ? {}
+        : {
+            uploadedImage: {
+              fileName: imageFile.fileName,
+              data: imageFile.data,
+            },
+          }),
+    };
+  }
+  const body = parseBody(
+    sceneImageAnchorPromptBodySchema,
+    await readJsonBody(request),
+  );
+  return { body };
 }

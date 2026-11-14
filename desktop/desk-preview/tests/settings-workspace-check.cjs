@@ -35,6 +35,7 @@ let nextImageServiceId = 1;
 const sceneImages = {};
 const imageServiceProbes = [];
 const imagePreviews = [];
+const anchorPromptCalls = [];
 const voices = {};
 const voiceReferences = { a: [], b: [], c: [] };
 let voiceUploadCalled = false;
@@ -119,7 +120,47 @@ const server = http.createServer((req, res) => {
   if (p.endsWith('/voice')) return json(res, { voice: voices[role?.roleId] || null });
   if (p.endsWith('/scene-image/probe') && req.method === 'POST') {
     let body = ''; req.on('data', c => body += c);
-    return req.on('end', () => json(res, { probe: { ok: true, baseUrl: 'http://127.0.0.1:8188', workflowReady: true, models: ['moss-v1.safetensors', 'moss-v2.safetensors'], missingNodes: [], elapsedMs: 4 } }));
+    return req.on('end', () => json(res, { probe: { reachable: true, comfyuiVersion: '0.3.60', workflowReady: true, models: ['moss-v1.safetensors', 'moss-v2.safetensors'], missingNodes: [] }, elapsedMs: 4 }));
+  }
+  if (p.endsWith('/scene-image/anchor-prompts') && req.method === 'POST' && role) {
+    return readRaw(req, raw => {
+      const ct = req.headers['content-type'] || '';
+      const text = raw.toString('utf8');
+      let data;
+      let hasUpload = false;
+      if (ct.includes('multipart/form-data')) {
+        const m = /name="payload"\r\n\r\n([\s\S]*?)\r\n--/.exec(text);
+        data = m ? JSON.parse(m[1]) : {};
+        hasUpload = text.includes('name="image"');
+      } else {
+        data = JSON.parse(text || '{}');
+      }
+      anchorPromptCalls.push({ roleId: role.roleId, target: data.target, outfitId: data.outfitId || null, previousPrompt: data.previousPrompt || null, hasUpload });
+      if (data.target === 'base') {
+        const prompt = hasUpload
+          ? '参考图提炼：黑发杏眼，柔和眉眼'
+          : data.previousPrompt
+            ? '精修基础特征，银发琥珀瞳'
+            : '初版基础特征，银发碧眼';
+        return json(res, {
+          target: 'base',
+          outfitId: null,
+          prompt,
+          source: hasUpload
+            ? { kind: 'uploaded', fileName: 'character.png', outfitId: null, outfitName: null }
+            : { kind: 'outfit_asset', fileName: 'home.png', outfitId: data.outfitId || wardrobes[role.roleId]?.[0]?.outfitId || null, outfitName: wardrobes[role.roleId]?.[0]?.name || '另一套' },
+        });
+      }
+      const matchedOutfit = (wardrobes[role.roleId] || []).find(item => item.outfitId === data.outfitId) || null;
+      return json(res, {
+        target: 'outfit',
+        outfitId: data.outfitId || null,
+        prompt: data.previousPrompt ? '精修服饰：米色长款风衣，黑色短靴' : '米色风衣，深色长裤',
+        source: hasUpload
+          ? { kind: 'uploaded', fileName: 'character.png', outfitId: matchedOutfit?.outfitId || null, outfitName: matchedOutfit?.name || null }
+          : { kind: 'outfit_asset', fileName: 'home.png', outfitId: matchedOutfit?.outfitId || null, outfitName: matchedOutfit?.name || null },
+      });
+    });
   }
   if (p.endsWith('/scene-image/preview') && req.method === 'POST') {
     let body = ''; req.on('data', c => body += c);
@@ -143,8 +184,15 @@ const server = http.createServer((req, res) => {
     let body = ''; req.on('data', c => body += c);
     return req.on('end', () => {
       const data = JSON.parse(body || '{}'); imageServiceProbes.push(data);
-      json(res, { probe: { ok: true, baseUrl: data.baseUrl || 'http://127.0.0.1:8188', workflowReady: true, models: ['moss-v1.safetensors', 'moss-v2.safetensors'], missingNodes: [], elapsedMs: 5 } });
+      json(res, { probe: { reachable: true, comfyuiVersion: '0.3.60', workflowReady: true, models: ['moss-v1.safetensors', 'moss-v2.safetensors'], missingNodes: [] }, elapsedMs: 5 });
     });
+  }
+  const imgProbeMatch = /^\/v1\/image-services\/([^/]+)\/probe$/.exec(p);
+  if (imgProbeMatch && req.method === 'POST') {
+    const svc = imageServices.find(item => item.serviceId === imgProbeMatch[1]);
+    if (!svc) return json(res, { error: { message: '生图服务不存在' } }, 404);
+    imageServiceProbes.push({ serviceId: svc.serviceId });
+    return json(res, { probe: { reachable: true, comfyuiVersion: '0.3.60', workflowReady: true, models: ['moss-v1.safetensors', 'moss-v2.safetensors'], missingNodes: [] }, elapsedMs: 6 });
   }
   const imgServiceMatch = /^\/v1\/image-services\/([^/]+)$/.exec(p);
   if (imgServiceMatch) {
@@ -157,7 +205,7 @@ const server = http.createServer((req, res) => {
         const data = JSON.parse(body);
         if (typeof data.name === 'string') svc.name = data.name;
         if (typeof data.enabled === 'boolean') svc.enabled = data.enabled;
-        if (data.config) svc.config = { ...svc.config, ...data.config };
+        if (data.config) svc.config = { ...data.config };
         if (data.secret === null) svc.credential = { status: 'missing' };
         else if (typeof data.secret === 'string') { svc.config.credentialRef = 'cred-img'; svc.credential = { status: 'stored' }; }
         json(res, { service: svc });
@@ -169,7 +217,7 @@ const server = http.createServer((req, res) => {
     let body = ''; req.on('data', c => body += c);
     return req.on('end', () => {
       const data = JSON.parse(body);
-      const created = { serviceId: `img-${nextImageServiceId++}`, name: data.name, enabled: data.enabled ?? true, config: { protocol: 'comfyui', baseUrl: data.config.baseUrl, ...(data.config.timeoutMs ? { timeoutMs: data.config.timeoutMs } : {}), ...(data.secret ? { credentialRef: 'cred-img' } : {}) }, credential: { status: data.secret ? 'stored' : 'missing' } };
+      const created = { serviceId: `img-${nextImageServiceId++}`, name: data.name, enabled: data.enabled ?? true, config: { protocol: 'comfyui', baseUrl: data.config.baseUrl, ...(data.config.modelName ? { modelName: data.config.modelName } : {}), ...(data.config.timeoutMs ? { timeoutMs: data.config.timeoutMs } : {}), ...(data.secret ? { credentialRef: 'cred-img' } : {}) }, credential: { status: data.secret ? 'stored' : 'missing' } };
       imageServices.push(created); json(res, { service: created }, 201);
     });
   }
@@ -311,8 +359,8 @@ async function run() {
   await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"http://127.0.0.1:8000\"]')"));
   await ev("(()=>{const e=document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"http://127.0.0.1:8000\"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'http://127.0.0.1:8020');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-model-toggle')].find(x=>x.textContent.includes('生图')).click()");
-  await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"/models/MOSS-Image-Base\"]')"));
-  await ev("(()=>{const e=document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"/models/MOSS-Image-Base\"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'/models/draft');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
+  await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"moss_image_sft_int8_convrot.safetensors\"]')"));
+  await ev("(()=>{const e=document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"moss_image_sft_int8_convrot.safetensors\"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'/models/draft');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
   await until(() => ev("document.querySelector('.config-leaf-foot').textContent.includes('语音') && document.querySelector('.config-leaf-foot').textContent.includes('生图')"));
   await ev("document.querySelector('.config-switch-role').click()");
   await until(() => ev("!!document.querySelector('.config-poster-hit')"));
@@ -324,7 +372,7 @@ async function run() {
   await until(() => ev("!!document.querySelector('.config-poster-hit')"));
   assert.equal(await ev("[...document.querySelectorAll('.config-poster')].find(x=>x.textContent.includes('乙角色'))?.querySelector('.config-poster-dirty')?.textContent"), '未保存');
   await ev("[...document.querySelectorAll('.config-poster-hit')].find(x=>x.textContent.includes('乙角色')).click()");
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"/models/MOSS-Image-Base\"]')?.value==='/models/draft'"));
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"moss_image_sft_int8_convrot.safetensors\"]')?.value==='/models/draft'"));
   assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"http://127.0.0.1:8000\"]')?.value"), 'http://127.0.0.1:8020');
   await ev("document.querySelector('.config-switch-role').click()");
   await until(() => ev("!!document.querySelector('.config-poster-hit')"));
@@ -336,7 +384,7 @@ async function run() {
   await until(() => ev("!!document.querySelector('.config-poster-hit')"));
   assert.equal(await ev("[...document.querySelectorAll('.config-poster')].find(x=>x.textContent.includes('乙角色'))?.querySelector('.config-poster-dirty')?.textContent"), undefined);
   await ev("[...document.querySelectorAll('.config-poster-hit')].find(x=>x.textContent.includes('乙角色')).click()");
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"/models/MOSS-Image-Base\"]')?.value===''"));
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"moss_image_sft_int8_convrot.safetensors\"]')?.value===''"));
   assert.notEqual(await ev("document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"http://127.0.0.1:8000\"]')?.value"), 'http://127.0.0.1:8020');
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-model-toggle')].find(x=>x.textContent.includes('对话')).click()");
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].find(x=>x.textContent.includes('在设置中查看模型')).click()");
@@ -431,23 +479,46 @@ async function run() {
   await ev("document.querySelector('.config-index button.config-index-new').click()");
   await until(() => ev("document.querySelector('.config-leaf').innerText.includes('添加生图服务')"));
   await ev("(()=>{const p=document.querySelector('.config-leaf-body > .config-prose:not([hidden])');const set=(e,v)=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,v);e.dispatchEvent(new Event('input',{bubbles:true}));};const inputs=p.querySelectorAll('input');set(inputs[0],'本机测试生图');set(inputs[1],'http://127.0.0.1:8188');set(inputs[2],'secret-img');set(inputs[3],'15000');})()");
+  await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='读取模型列表').click()");
+  await until(() => imageServiceProbes.length === 1 && ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) .nd-model-picker ~ .config-actions ~ [role=status]')?.textContent.includes('已读取 2 个模型')"));
+  await ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) input[role=combobox]').focus()");
+  await until(() => ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) .nd-model-options [role=option]')].length === 2"));
+  await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) .nd-model-options [role=option] button')].find(x=>x.textContent==='moss-v1.safetensors').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}))");
+  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) input[role=combobox]')?.value==='moss-v1.safetensors'"));
   await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='测试连接').click()");
-  await until(() => imageServiceProbes.length === 1 && ev("document.querySelector('.config-leaf').innerText.includes('moss-v1.safetensors')"));
+  await until(() => imageServiceProbes.length === 2 && ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) .nd-model-picker ~ .config-actions ~ [role=status]')?.textContent.includes('moss-v1.safetensors')"));
+  assert.equal(await ev("document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) [role=status], .config-leaf-body > .config-prose:not([hidden]) [role=alert]').length"), 1, '设置生图探测日志只保留最新一条相互覆盖');
   await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='保存生图服务').click()");
-  await until(() => imageServices.length === 1 && ev("document.querySelector('.config-leaf').innerText.includes('本机测试生图')"));
+  await until(() => imageServices.length === 1 && ev("document.querySelector('.config-leaf').innerText.includes('本机测试生图') && document.querySelector('.config-index').innerText.includes('moss-v1.safetensors')"));
   assert.equal(imageServices[0].config.timeoutMs, 15000);
+  assert.equal(imageServices[0].config.modelName, 'moss-v1.safetensors');
   await ev("(()=>{const e=document.querySelector('.config-leaf-body > .config-prose:not([hidden]) input[aria-label=生图服务名称]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'默认 ComfyUI');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
   await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='替换').click()");
   await ev("(()=>{const e=document.querySelector('.config-leaf-body > .config-prose:not([hidden]) input[type=password]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'img-secret-2');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
+  await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='读取模型列表').click()");
+  await until(() => imageServiceProbes.length === 3 && ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) .nd-model-picker ~ .config-actions ~ [role=status]')?.textContent.includes('已读取 2 个模型')"));
   await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='保存生图服务').click()");
   await until(() => imageServices[0].name === '默认 ComfyUI');
+  await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='测试连接').click()");
+  await until(() => imageServiceProbes.length === 4 && ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) .nd-model-picker ~ .config-actions ~ [role=status]')?.textContent.includes('已确认模型「moss-v1.safetensors」')"));
+  await ev("[...document.querySelectorAll('.config-kind-tabs button')].find(x=>x.textContent==='模型').click()");
+  await until(() => ev("document.querySelector('.config-kind-tabs button[aria-pressed=\"true\"]')?.textContent==='模型'"));
+  await ev("[...document.querySelectorAll('.config-kind-tabs button')].find(x=>x.textContent==='生图').click()");
+  await until(() => ev("document.querySelector('.config-kind-tabs button[aria-pressed=\"true\"]')?.textContent==='生图' && !!document.querySelector('.config-leaf-body > .config-prose:not([hidden]) input[aria-label=生图服务名称]')"));
+  assert.equal(await ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) .nd-model-picker ~ .config-actions ~ [role=status]')"), null, '切换标签后生图测试日志不应保留');
   await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='全局停用').click()");
   await until(() => imageServices[0].enabled === false);
+  await ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) input[role=combobox]').focus()");
+  assert.equal(await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) .nd-model-options [role=option]')].length"), 0, '停用生图服务应清空旧候选缓存');
   await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='全局启用').click()");
   await until(() => imageServices[0].enabled === true);
+  await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='读取模型列表').click()");
+  await until(() => imageServiceProbes.length === 5 && ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) .nd-model-picker ~ .config-actions ~ [role=status]')?.textContent.includes('已读取 2 个模型')"));
   for (const [width,height] of [[1440,840],[720,540]]) { await cmd('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false }); await delay(250); assert.equal(await ev('document.documentElement.scrollWidth<=innerWidth+1'), true, `${width} 横向溢出`); const bounds = await ev("(()=>{const a=document.querySelector('.config-book').getBoundingClientRect(),b=document.querySelector('.config-leaf-foot').getBoundingClientRect(),c=document.querySelector('.ui-page-dock').getBoundingClientRect();return {bookBottom:a.bottom,footBottom:b.bottom,dockBottom:c.bottom,height:innerHeight}})()"); assert.ok(bounds.footBottom<=bounds.bookBottom+1 && bounds.dockBottom<=bounds.height+1, JSON.stringify({width,bounds})); await shot(`settings-${width}.png`); }
   await ev("[...document.querySelectorAll('.ui-theme-switcher button')].find(x=>x.textContent.includes('晚风电台')).click()");
   await until(() => ev("document.querySelector('.studio-shell').dataset.uiPreset==='nightwave'")); await delay(500); await shot('settings-night-720.png');
+  await ev("[...document.querySelectorAll('.ui-theme-switcher button')].find(x=>x.textContent.includes('白昼来信')).click()");
+  await until(() => ev("document.querySelector('.studio-shell').dataset.uiPreset==='daylight'"));
   await cmd('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
   await ev("document.querySelector('.config-return-footer').click()");
   await until(() => ev("document.querySelector('.studio-shell').dataset.page==='role-config'"));
@@ -455,9 +526,14 @@ async function run() {
   assert.equal(bindings.b.find(item => item.capability === 'chat_model').resourceId, 'm1', '模型绑定保持不变');
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-model-toggle')].find(x=>x.textContent.includes('生图')).click()");
   await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image-service-row select')?.value==='img-1'"));
-  await ev("(()=>{const e=document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"/models/MOSS-Image-Base\"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'draft-model');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
-  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent.includes('生成参数与服饰锚点')).click()");
-  await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"例如：米色风衣，深色长裤\"]')"));
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"moss_image_sft_int8_convrot.safetensors\"]')?.value==='moss-v1.safetensors'"));
+  assert.ok(await ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-image-outfits input[placeholder=\"例如：米色风衣，深色长裤\"]')"), '服饰锚点提示词应直接展开可见');
+  await ev("(()=>{const el=document.querySelector('.config-role-editor:not([hidden]) .nd-image input[role=combobox]');el.focus();el.click();})()");
+  await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image .nd-model-options [role=option]')].length === 2"));
+  await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image input[role=combobox]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+  await ev("(()=>{const e=document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"moss_image_sft_int8_convrot.safetensors\"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'draft-model');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
+  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent.includes('生成参数')).click()");
+  await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-image input[placeholder=\"nsfw, worst quality, bad anatomy, watermark, jpeg artifact\"]')"));
   await ev("(()=>{const e=document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"例如：米色风衣，深色长裤\"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'风衣草稿');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent.includes('在设置中管理')).click()");
   await until(() => ev("document.querySelector('.studio-shell').dataset.page==='settings' && document.querySelector('.config-kind-tabs button[aria-pressed=\"true\"]')?.textContent==='生图'"));
@@ -465,25 +541,76 @@ async function run() {
   await until(() => ev("document.querySelector('.config-leaf').innerText.includes('添加生图服务')"));
   await ev("(()=>{const p=document.querySelector('.config-leaf-body > .config-prose:not([hidden])');const set=(e,v)=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,v);e.dispatchEvent(new Event('input',{bubbles:true}));};const inputs=p.querySelectorAll('input');set(inputs[0],'备用生图');set(inputs[1],'http://127.0.0.1:8189');})()");
   await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='保存生图服务').click()");
-  await until(() => imageServices.length === 2 && ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].some(x=>x.textContent==='删除生图服务')"));
+  await until(() => imageServices.length === 2 && ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) h2')?.textContent==='备用生图' && [...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].some(x=>x.textContent==='删除生图服务')"));
   await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='删除生图服务').click()");
-  await until(() => ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].some(x=>x.textContent==='确认删除')"));
-  await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='确认删除').click()");
+  await until(() => ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].some(x=>x.textContent==='确认删除'||x.textContent==='暂停并删除')")).catch(async e => {
+    console.error('DIAG delete confirm:', await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].map(x=>x.textContent)"));
+    throw e;
+  });
+  await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='确认删除'||x.textContent==='暂停并删除').click()");
   await until(() => imageServices.length === 1);
   await ev("document.querySelector('.config-return-footer').click()");
   await until(() => ev("document.querySelector('.studio-shell').dataset.page==='role-config'"));
-  assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"/models/MOSS-Image-Base\"]')?.value"), 'draft-model', '跳转设置管理后应保留角色生图草稿');
+  assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"moss_image_sft_int8_convrot.safetensors\"]')?.value"), 'draft-model', '跳转设置管理后应保留角色生图草稿');
   assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"例如：米色风衣，深色长裤\"]')?.value"), '风衣草稿');
+  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='读取模型列表').click()");
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image .nd-model-picker ~ .config-actions ~ [role=status]')?.textContent.includes('已读取 2 个模型')"));
+  await ev("(()=>{const el=document.querySelector('.config-role-editor:not([hidden]) .nd-image input[role=combobox]');el.focus();el.click();})()");
+  await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image .nd-model-options [role=option]')].some(x=>x.textContent==='moss-v2.safetensors')"));
+  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image .nd-model-options [role=option] button')].find(x=>x.textContent==='moss-v2.safetensors').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}))");
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image input[role=combobox]')?.value==='moss-v2.safetensors'"));
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='测试连接').click()");
-  await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image-models button')].some(x=>x.textContent==='moss-v2.safetensors')"));
-  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image-models button')].find(x=>x.textContent==='moss-v2.safetensors').click()");
-  assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"/models/MOSS-Image-Base\"]')?.value"), 'moss-v2.safetensors');
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image .nd-model-picker ~ .config-actions ~ [role=status]')?.textContent.includes('已确认模型「moss-v2.safetensors」')"));
+  await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image button[aria-label=\"用对话模型生成基础锚点提示词\"]').click()");
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image textarea[aria-label=\"基础锚点提示词\"]')?.value==='初版基础特征，银发碧眼'"));
+  await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image button[aria-label=\"用对话模型生成基础锚点提示词\"]').click()");
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image textarea[aria-label=\"基础锚点提示词\"]')?.value==='精修基础特征，银发琥珀瞳'"));
+  assert.equal(anchorPromptCalls.at(-1).previousPrompt, '初版基础特征，银发碧眼', '重新生成应携带上一次草稿供对话模型优化');
+  await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image button[aria-label=\"用对话模型生成「另一套」服饰提示词\"]').click()");
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image-outfits input[placeholder=\"例如：米色风衣，深色长裤\"]')?.value==='精修服饰：米色长款风衣，黑色短靴'"));
+  assert.equal(anchorPromptCalls.at(-1).previousPrompt, '风衣草稿', '已有服饰草稿时点击重生成也应携带上一次内容');
+  await ev("(()=>{const el=document.querySelector('.config-role-editor:not([hidden]) .nd-image input[type=file]');el.click=()=>{};})()");
+  await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image button[aria-label=\"上传参考图生成基础锚点提示词\"]').click()");
+  const docImg = await cmd('DOM.getDocument');
+  const anchorUpload = await cmd('DOM.querySelector', { nodeId: docImg.root.nodeId, selector: '.config-role-editor:not([hidden]) .nd-image input[type=file]' });
+  await cmd('DOM.setFileInputFiles', { nodeId: anchorUpload.nodeId, files: [path.join(root, 'desktop/desk-preview/renderer/src/assets/themes/xiacheng/character.png')] });
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image textarea[aria-label=\"基础锚点提示词\"]')?.value==='参考图提炼：黑发杏眼，柔和眉眼'"));
+  await ev("delete document.querySelector('.config-role-editor:not([hidden]) .nd-image input[type=file]').click");
+  assert.equal(anchorPromptCalls.at(-1).hasUpload, true);
+  assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"moss_image_sft_int8_convrot.safetensors\"]')?.value"), 'moss-v2.safetensors');
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='测试生图').click()");
   await until(() => imagePreviews.length === 1 && ev("(() => { const img = document.querySelector('.config-role-editor:not([hidden]) .nd-image-figure img'); return !!(img && img.complete && img.naturalWidth > 0); })()"));
   assert.equal(imagePreviews[0].settings.modelPath, 'moss-v2.safetensors');
   assert.equal(sceneImages.b, undefined, '草稿测试生图不应写入已保存配置');
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='保存配置').click()");
   await until(() => !!sceneImages.b);
+  for (const [width, height] of [[1280, 800], [1440, 840], [720, 540]]) {
+    await cmd('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+    await delay(250);
+    assert.equal(await ev('document.documentElement.scrollWidth<=innerWidth+1'), true, `role-image ${width} 横向溢出`);
+    await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image')?.scrollIntoView({block:'start'})");
+    await delay(120);
+    await shot(`image-${width}.png`);
+    if (width === 1280 || width === 720) {
+      await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image-outfits')?.scrollIntoView({block:'center'})");
+      await delay(120);
+      await shot(`image-outfits-${width}.png`);
+      await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image-preview')?.scrollIntoView({block:'end'})");
+      await delay(120);
+      await shot(`image-preview-${width}.png`);
+    }
+  }
+  await ev("[...document.querySelectorAll('.ui-theme-switcher button')].find(x=>x.textContent.includes('晚风电台')).click()");
+  await until(() => ev("document.querySelector('.studio-shell').dataset.uiPreset==='nightwave'"));
+  await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image-outfits')?.scrollIntoView({block:'center'})");
+  await delay(500);
+  await shot('image-outfits-night-720.png');
+  await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image')?.scrollIntoView({block:'start'})");
+  await delay(250);
+  await shot('image-night-720.png');
+  await ev("[...document.querySelectorAll('.ui-theme-switcher button')].find(x=>x.textContent.includes('白昼来信')).click()");
+  await until(() => ev("document.querySelector('.studio-shell').dataset.uiPreset==='daylight'"));
+  await cmd('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-model-toggle')].find(x=>x.textContent.includes('语音')).click()");
   await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-voice input[placeholder=\"http://127.0.0.1:8000\"]')"));
   await ev("(()=>{const e=document.querySelector('.config-role-editor:not([hidden]) .nd-voice input[placeholder=\"http://127.0.0.1:8000\"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'http://127.0.0.1:8880');e.dispatchEvent(new Event('input',{bubbles:true}));})()");

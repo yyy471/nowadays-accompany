@@ -34,10 +34,10 @@ test("createImageForm 用默认值填补未配置的角色", async () => {
   assert.equal(form.modelType, "text2img");
   assert.equal(form.width, 1024);
   assert.equal(form.height, 1024);
-  assert.equal(form.steps, 50);
-  assert.equal(form.cfg, 3);
-  assert.equal(form.sampler, "euler");
-  assert.equal(form.scheduler, "sgm_uniform");
+  assert.equal(form.steps, 25);
+  assert.equal(form.cfg, 2.5);
+  assert.equal(form.sampler, "er_sde");
+  assert.equal(form.scheduler, "simple");
   assert.equal(form.seed, null);
   assert.deepEqual(form.outfitPrompts, {});
   assert.equal(form.workflow, null);
@@ -232,5 +232,84 @@ test("imageServiceSnapshotKey 随启用状态、连接参数或修改代次变�
     imageServiceSnapshotKey({ ...base, credential: { status: "inline", reference: null } }, 0),
   );
   assert.notEqual(key0, imageServiceSnapshotKey(base, 1));
+  assert.notEqual(
+    key0,
+    imageServiceSnapshotKey(
+      { ...base, config: { ...base.config, modelName: "moss-v1.safetensors" } },
+      0,
+    ),
+  );
   assert.equal(describeImageFailure("OUTFIT_NOT_FOUND", ""), "当前选择的服饰不存在，刷新后重试。");
+  assert.equal(
+    describeImageFailure("SCENE_IMAGE_ANCHOR_IMAGE_REQUIRED", ""),
+    "还没有可用的角色锚点图片，请先在外观中导入立绘或点击旁边的参考图上传。",
+  );
+  assert.equal(
+    describeImageFailure("SCENE_IMAGE_CHAT_MODEL_REQUIRED", ""),
+    "当前角色还没有绑定并启用对话模型，请先在「模型 -> 对话」中配置并保存。",
+  );
+});
+
+test("savedImageModelOf、toImageServiceProbePayload 与 evaluateImageConnectionTest 支持默认模型校验", async () => {
+  const {
+    savedImageModelOf,
+    toImageServiceProbePayload,
+    evaluateImageConnectionTest,
+  } = await load();
+
+  assert.equal(savedImageModelOf(null), "");
+  assert.equal(savedImageModelOf({ config: { modelName: "  moss_image.safetensors  " } }), "moss_image.safetensors");
+
+  const payload = toImageServiceProbePayload({
+    serviceId: "svc-1",
+    baseUrl: "http://127.0.0.1:8188",
+    modelName: " moss_image.safetensors ",
+  });
+  assert.deepEqual(payload, {
+    serviceId: "svc-1",
+    config: {
+      protocol: "comfyui",
+      baseUrl: "http://127.0.0.1:8188",
+      modelName: "moss_image.safetensors",
+    },
+  });
+
+  assert.deepEqual(evaluateImageConnectionTest({ reachable: false }, "", 12), {
+    role: "alert",
+    text: "测试失败：连不上服务。",
+  });
+  assert.deepEqual(
+    evaluateImageConnectionTest(
+      { reachable: true, workflowReady: false, missingNodes: ["CheckpointLoaderSimple"], models: [] },
+      "",
+      15,
+    ),
+    {
+      role: "alert",
+      text: "工作流还缺节点：CheckpointLoaderSimple",
+    },
+  );
+  const twoModelsProbe = {
+    reachable: true,
+    comfyuiVersion: "0.3.60",
+    workflowReady: true,
+    missingNodes: [],
+    models: ["moss-v1.safetensors", "moss-v2.safetensors"],
+  };
+  assert.deepEqual(evaluateImageConnectionTest(twoModelsProbe, "", 18), {
+    role: "status",
+    text: "测试通过 · 工作流就绪 · ComfyUI 0.3.60 · 探测到 2 个模型 · 18 ms",
+  });
+  assert.deepEqual(evaluateImageConnectionTest(twoModelsProbe, "moss-v2.safetensors", 19), {
+    role: "status",
+    text: "测试通过 · ComfyUI 0.3.60 · 已确认模型「moss-v2.safetensors」· 19 ms",
+  });
+  assert.deepEqual(evaluateImageConnectionTest(twoModelsProbe, "missing-model.safetensors", 20), {
+    role: "alert",
+    text: "工作流就绪 · ComfyUI 0.3.60 · 20 ms，但探测列表中未找到「missing-model.safetensors」",
+  });
+  assert.deepEqual(evaluateImageConnectionTest(twoModelsProbe, "custom-node-model", 21, true), {
+    role: "status",
+    text: "测试通过 · 工作流就绪 · ComfyUI 0.3.60 · 探测到 2 个模型 · 21 ms",
+  });
 });

@@ -1,6 +1,6 @@
 # TTS 与生图服务接入规范
 
-> **状态**：现行规范 · **适用范围**：`backend/src/{tts,scene,http,application,domain,storage}` 与 `desktop/desk-preview/renderer/src/{components/voice,components/image,voice-config.js,image-config.js,pages/Settings.tsx}`  
+> **状态**：现行规范 · **适用范围**：`backend/src/{tts,scene,model,http,application,domain,storage}` 与 `desktop/desk-preview/renderer/src/{components/voice,components/image,voice-config.js,image-config.js,pages/Settings.tsx}`  
 > **覆盖关系**：整合 [218](../archive/03-appearance-and-performance/218-tts-implementation-record.md)～[222](../archive/03-appearance-and-performance/222-tts-unified-independent-review.md)、[243](../archive/04-role-settings-and-media/243-voice-settings-desktop.md)、[246](../archive/04-role-settings-and-media/246-role-voice-toggle.md)、[247](../archive/04-role-settings-and-media/247-role-voice-toggle-independent-review.md)、[248](../archive/04-role-settings-and-media/248-comfyui-adaptation.md)、[250](../archive/04-role-settings-and-media/250-comfyui-independent-review.md)、[251](../archive/04-role-settings-and-media/251-comfyui-review-fixes.md) 与 [292 §6～§7](../archive/06-workflow-simplification/292-278-remaining-deletion-maintenance.md#6-生图草稿探测语音暂存试听与设置导航收敛) 的语音与生图接入现行规则。角色活动写锁见 [角色配置与活动守卫规范](role-config-and-activity.md)，过场图任务与按句播报消费见 [对话演出、输入状态、SSE 与过场图规范](conversation-performance-and-scene-images.md)，待办与复核总表见 [STATUS.md](../STATUS.md)。
 
 ---
@@ -35,7 +35,7 @@
 
 ### 2.1 应用 HTTP 路由
 
-语音与生图路由分别注册于 [voice-routes.ts](../../backend/src/http/voice-routes.ts#L100-L253) 与 [image-service-routes.ts](../../backend/src/http/image-service-routes.ts#L26-L198)，其中标记「角色守卫」与「全局守卫」的写路由受 [config-writes.ts](../../backend/src/http/config-writes.ts#L10-L33) 约束：
+语音与生图路由分别注册于 [voice-routes.ts](../../backend/src/http/voice-routes.ts) 与 [image-service-routes.ts](../../backend/src/http/image-service-routes.ts)，其中标记「角色守卫」与「全局守卫」的写路由受 [config-writes.ts](../../backend/src/http/config-writes.ts#L10-L33) 约束：
 
 | 方法与路径 | 守卫／请求形态 | 主要入参与成功响应 | 典型业务／校验错误码 |
 | --- | --- | --- | --- |
@@ -49,15 +49,16 @@
 | `POST /v1/roles/:roleId/voice/preview` | 无写锁；JSON 或 multipart | 接收 `text`、`emotion?` 与互斥的 `config?`/平铺字段；返回 `audio/wav`（`no-store`） | `400 VOICE_PREVIEW_TEXT_*`/`VOICE_REFERENCE_TEXT_REQUIRED`、`502/503/504 TTS_*` |
 | `POST /v1/roles/:roleId/windows/:windowId/segments/:segmentId/speech` | 无写锁；可选 JSON `{ emotion? }` | 按已保存配置合成 `speech` 句段并返回 `audio/wav` | `409 VOICE_DISABLED`、`400 VOICE_SEGMENT_NOT_SPEAKABLE`/`VOICE_SEGMENT_EMPTY`、`409 TTS_VOICE_UNAVAILABLE` |
 | `GET /v1/image-services` | 无写锁 | `{ items: ImageServiceView[] }`；凭据只返回 `credential: { status, reference, resolvable }` | — |
-| `POST /v1/image-services` | 无写锁；JSON | `{ name, enabled?, config, secret? }`，返回 `201 { service }` | `400 INVALID_IMAGE_SERVICE_CONFIG`、`409 RESOURCE_CREDENTIAL_CONFLICT` |
+| `POST /v1/image-services` | 无写锁；JSON | `{ name, enabled?, config, secret? }`（`config.modelName?` 为可选默认模型名），返回 `201 { service }` | `400 INVALID_IMAGE_SERVICE_CONFIG`、`409 RESOURCE_CREDENTIAL_CONFLICT` |
 | `PATCH /v1/image-services/:serviceId` | **全局守卫**；JSON | `{ name?, enabled?, config?, secret? }`（`secret: null` 清除、`undefined` 保留） | `409 ROLES_NOT_STOPPED`/`RESOURCE_CREDENTIAL_CONFLICT`/`RESOURCE_CREDENTIAL_STALE`、`404 IMAGE_SERVICE_NOT_FOUND` |
 | `DELETE /v1/image-services/:serviceId` | **全局守卫** | 删除服务及密钥，返回 `{ serviceId, deleted: true }` | `409 ROLES_NOT_STOPPED`、`404 IMAGE_SERVICE_NOT_FOUND` |
 | `POST /v1/image-services/probe` | 无写锁；JSON | `{ serviceId?, config, secret?, workflow? }`（草稿探测，不落库） | `409 RESOURCE_CREDENTIAL_STALE`、`401 IMAGE_SERVICE_AUTH_FAILED`、`502 IMAGE_SERVICE_UNAVAILABLE` |
 | `POST /v1/image-services/:serviceId/probe` | 无写锁 | 探测已保存服务与内置 MOSS-Image 工作流节点齐全度 | `404 IMAGE_SERVICE_NOT_FOUND`、`502 IMAGE_SERVICE_UNAVAILABLE` |
-| `GET /v1/roles/:roleId/scene-image` | 无写锁 | 返回 `{ settings, service, configured }`（只读取基本服务展示字段，不解析凭据） | `404 ROLE_NOT_FOUND` |
+| `GET /v1/roles/:roleId/scene-image` | 无写锁 | 返回 `{ settings, service, configured }`（`service` 含 `modelName?` 展示字段，不解析凭据） | `404 ROLE_NOT_FOUND` |
 | `PUT /v1/roles/:roleId/scene-image` | **角色守卫**；JSON | 保存 `sceneImageSettingsSchema` 校验后的角色生图配置 | `404 IMAGE_SERVICE_NOT_FOUND`、`409 IMAGE_SERVICE_DISABLED`、`400 IMAGE_WORKFLOW_INVALID` |
 | `POST /v1/roles/:roleId/scene-image/probe` | 无写锁；JSON | `{ serviceId?, serviceDraft?, workflow? }`（`serviceId` 与 `serviceDraft` 互斥） | `409 SCENE_IMAGE_NOT_CONFIGURED`、`400 IMAGE_WORKFLOW_INVALID` |
 | `POST /v1/roles/:roleId/scene-image/preview` | 无写锁；JSON | `{ prompt?, outfitId?, serviceDraft?, settings?\|平铺草稿 }`；返回 `dataBase64` 样图（不入历史） | `400 IMAGE_WORKFLOW_INVALID`（含样图超 8 MiB）、`409 SCENE_IMAGE_NOT_CONFIGURED`/`IMAGE_SERVICE_DISABLED` |
+| `POST /v1/roles/:roleId/scene-image/anchor-prompts` | 无写锁；JSON 或 `multipart/form-data`（`payload`+可选图片 `image`） | 调用角色已绑定且启用的 `chat_model` 视觉能力提炼 `base` 或指定 `outfitId` 的锚点提示词，支持传 `previousPrompt` 反复重生成；返回 `{ target, outfitId, prompt, source }` | `400 SCENE_IMAGE_ANCHOR_IMAGE_REQUIRED`/`IMAGE_DECODE_FAILED`/`MULTIPLE_ANCHOR_IMAGES`、`404 OUTFIT_NOT_FOUND`、`409 SCENE_IMAGE_CHAT_MODEL_REQUIRED`/`RESOURCE_MAINTENANCE`、`502 MODEL_REQUEST_FAILED` |
 
 ### 2.2 外部上游协议规范
 
@@ -75,10 +76,10 @@
 
 | 存储位置 | 表／目录 | 关键字段与保留规则 |
 | --- | --- | --- |
-| `<app-root>/data/app.sqlite`（全局库） | `image_services`（V4，[schema.ts](../../backend/src/storage/schema.ts#L112-L123)） | `service_id`、`name`、`enabled`、`config_json`（`{ protocol: "comfyui", baseUrl, credentialRef?, timeoutMs? }`）；密钥存共享 `resource_secrets` |
+| `<app-root>/data/app.sqlite`（全局库） | `image_services`（V4，[schema.ts](../../backend/src/storage/schema.ts#L112-L123)） | `service_id`、`name`、`enabled`、`config_json`（`{ protocol: "comfyui", baseUrl, modelName?, credentialRef?, timeoutMs? }`）；密钥存共享 `resource_secrets` |
 | `.../roles/<roleId>/business.sqlite`（角色业务库） | `voice_assets`（V9，[schema.ts](../../backend/src/storage/schema.ts#L1320-L1330)） | 受管参考音频元数据（支持 WAV/MP3/FLAC/OGG，单文件上限 **32 MiB**），物理路径落在 `<roleDir>/voice/<assetId>.<ext>` |
 | `.../roles/<roleId>/business.sqlite`（角色业务库） | `role_voice_settings`（V9→V14，[schema.ts](../../backend/src/storage/schema.ts#L1332-L1375)） | 主键 `role_id` 仅存一份配置；含 `protocol`、`voice_source`、`reference_asset_id`、`reference_mode`、`reference_text`、`preset_voice_id`、`capabilities_json`、`reference_mode_confirmed`（V12 回填修复）、`enabled`（V14 新增默认 1，`saveSettings` UPSERT 刻意跳过以保留停用态） |
-| `.../roles/<roleId>/business.sqlite`（角色业务库） | `role_scene_image_settings`（V15，[schema.ts](../../backend/src/storage/schema.ts#L1477-L1495)） | 主键 `role_id`：绑定全局 `service_id`、`model_type='text2img'`、`model_path`、`base_prompt`、`negative_prompt`、`outfit_prompts_json`、`width`/`height`（`256..2048` 步长 16，默认 `1024`）、`steps`（`1..150`，默认 `50`）、`cfg`（`0..30`，默认 `3`）、`sampler`（默认 `euler`）、`scheduler`（默认 `sgm_uniform`）、`seed`（`0..2147483647\|null`）、`workflow_json`、`output_node_id` |
+| `.../roles/<roleId>/business.sqlite`（角色业务库） | `role_scene_image_settings`（V15，[schema.ts](../../backend/src/storage/schema.ts#L1477-L1495)） | 主键 `role_id`：绑定全局 `service_id`、`model_type='text2img'`、`model_path`、`base_prompt`、`negative_prompt`、`outfit_prompts_json`、`width`/`height`（`256..2048` 步长 16，默认 `1024`）、`steps`（`1..150`，默认 `25`）、`cfg`（`0..30`，默认 `2.5`）、`sampler`（默认 `er_sde`）、`scheduler`（默认 `simple`）、`seed`（`0..2147483647\|null`）、`workflow_json`、`output_node_id` |
 
 ---
 
@@ -102,14 +103,20 @@
 1. **凭据二选一与跨站点防护**（[image-service.ts](../../backend/src/application/image-service.ts#L113-L223) · [imageServiceSiteIdentity](../../backend/src/domain/image-service.ts#L59-L67)）：
    - 直填明文 `secret` 与 `config.credentialRef`（`env:`/`file:`）不能共存（`409 RESOURCE_CREDENTIAL_CONFLICT`）；仅保存环境变量／文件引用时可读写配置页，待真正探测或生图时再通过 `resolveConnection` 解析。
    - 当 `protocol` 与 `URL.origin` 发生变化（跨站点修改）而沿用已存储密钥或原 `credentialRef` 时，无论正式 `PATCH /v1/image-services/:id` 还是草稿 `resolveDraftConnection` 均拒绝并抛出 `409 RESOURCE_CREDENTIAL_STALE`，防止把凭据发送给新地址。
-2. **先校验后停机的前端顺序**（[Settings.tsx](../../desktop/desk-preview/renderer/src/pages/Settings.tsx#L1131-L1265) · `292 §7.1`）：
+2. **先校验后停机的前端顺序与统一模型选取**（[Settings.tsx](../../desktop/desk-preview/renderer/src/pages/Settings.tsx#L1214-L1547) · [ImageModelPicker.tsx](../../desktop/desk-preview/renderer/src/components/image/ImageModelPicker.tsx) · [use-image-probe.ts](../../desktop/desk-preview/renderer/src/components/image/use-image-probe.ts) · [image-cache.js](../../desktop/desk-preview/renderer/src/components/image/image-cache.js) · `292 §7.1`）：
    - `ImageServiceDetail.save()` 必须在调用 `stopActiveRolesForGlobalWrite` 前先行校验地址格式（`http:`/`https:`）及跨站点换密确认，避免合法拒绝前误停全部活跃角色。
+   - 全局设置页（创建/详情）与角色配置页共用 `ImageModelPicker`、`useImageProbe` 与按服务密钥代次隔离的 `image-cache.js` 缓存（与文本模型 `ModelNamePicker` / `useModelProbe` 对齐）：`读取模型列表` 与 `测试连接` 的状态日志在当前页相互覆盖、切页或切换服务即清零；在全局生图服务可选保存 `config.modelName` 后，角色配置切换或初选该服务时自动带入默认模型，同时允许从已探测候选下拉选择或手填覆盖。
    - 全局探测与角色草稿探测／测试出图均只读不写库；`ImagePanel` 不保留重复的内联「新建生图服务」表单，新建／修改统一跳设置页并在返回时经 `serviceRefreshVersion` 与 `serviceEpochs` 同步服务列表与失效缓存（`292-R05` 已通过独立复核；`292-R06` 原跨页场景通过后已于 [292 §9](../archive/06-workflow-simplification/292-278-remaining-deletion-maintenance.md#9-283-28-补修复核跟进与文档勘误自验292-r06-在途编辑292-r08-干净隔离环境与-doc-r01r04) 补修在途编辑阻塞，复核结论见第 5.1 节）。
+
+3. **对话模型视觉提炼基础与服饰锚点提示词**（[scene-image-settings.ts](../../backend/src/application/scene-image-settings.ts) · [model.ts](../../backend/src/domain/model.ts) · [protocols.ts](../../backend/src/model/protocols.ts) · [google-gemini.ts](../../backend/src/model/google-gemini.ts) · [ImagePanel.tsx](../../desktop/desk-preview/renderer/src/components/image/ImagePanel.tsx)）：
+   - `ModelMessage`（`role: "user"`）支持可选多模态附件 `images: ModelImageAttachment[]`，在 `openai-chat`（`image_url` Data URI）、`openai-responses`（`input_image`）、`anthropic-messages`（`base64` `image`）与 `google-gemini`（`inlineData`）协议适配层统一序列化。
+   - `POST /v1/roles/:roleId/scene-image/anchor-prompts` 按角色绑定的活跃对话模型（通过 `ModelBindingResolver` + `claim` / 维护锁保护）读取角色外观立绘（`target: "base"` 优先当前服饰主页立绘，其次任一主页立绘或差分；`target: "outfit"` 读取对应 `outfitId` 主页立绘或首张差分）或用户上传的单张参考图（上限 32 MiB，支持 PNG/JPEG/WebP），生成并清洗一行中文全角逗号分隔提示词；支持传入草稿中已有的 `previousPrompt` 供用户多次点击重生成并立刻在同页配合「测试生图」验证效果，结果仅写入前端草稿直至点击保存。
+   - 角色配置「模型 -> 生图」面板直接展示「服饰锚点提示词」卡片区（含立绘缩略图与生成/重生成/传参考图按钮），并将负向提示词、尺寸、步数、CFG、采样器、调度器与种子收敛在「生成参数」折叠区中。
 
 ### 3.3 ComfyUI 工作流按节点类型打补丁与运行时回退策略
 
-1. **默认工作流与节点定位**（[comfyui-workflow.ts](../../backend/src/scene/comfyui-workflow.ts#L32-L234)）：
-   - 内置 9 节点 `MOSS_IMAGE_WORKFLOW` 采用官方推荐参数：`MOSSImageHFLoader`（`model_path: "MOSS-Image-Base"`）→ 双 `CLIPTextEncode` → `EmptyFlux2LatentImage`（`1024×1024`）→ `ModelSamplingSD3`（`shift: 5`）→ `SkipLayerGuidanceDiTSimple`（`single_layers: "22"`）→ `KSampler`（`steps: 50`、`cfg: 3`、`euler`、`sgm_uniform`、`denoise: 1`）→ `VAEDecode` → `SaveImage`。
+1. **默认工作流与节点定位**（[comfyui-workflow.ts](../../backend/src/scene/comfyui-workflow.ts#L27-L293)）：
+   - 内置 11 节点 `MOSS_IMAGE_WORKFLOW` 适配 ComfyUI 0.45+ 原生节点与 Spectrum 加速：`UNETLoader`（`unet_name: "moss_image_sft_int8_convrot.safetensors"`）+ `CLIPLoader`（`clip_name: "qwen3.5_9b_w4a8_gptq.safetensors"`, `type: "moss_image"`）+ `VAELoader`（`vae_name: "flux2-vae_small.safetensors"`）→ `SpectrumMOSSImageManual` → `SkipLayerGuidanceDiTSimple`（`single_layers: "22"`）→ 双 `CLIPTextEncode` → `EmptyFlux2LatentImage`（`1024×1024`）→ `KSampler`（`steps: 25`、`cfg: 2.5`、`er_sde`、`simple`、`denoise: 1`）→ `VAEDecode` → `SaveImage`。
    - `applyWorkflowParams` 深拷贝工作流后按 `class_type`（而非写死节点 id）匹配打补丁，且**只修改节点 `inputs` 中已存在的键**，防止把未知键塞给自定义工作流引起 ComfyUI 400 校验错误：加载器优先级 `MOSSImageHFLoader.model_path` > `MOSSImageUNETLoader.unet_name` > `CheckpointLoaderSimple.ckpt_name` > `UNETLoader.unet_name`；采样器兼容 `KSampler` / `KSamplerAdvanced`（`seed` / `noise_seed`），并沿 `positive` / `negative` 连线追踪写入对应 `CLIPTextEncode.text`；尺寸写入首个含 `width`、`height` 的 `Empty*` 潜空间节点；输出优先使用指定 `outputNodeId` 否则查找 `SaveImage`。
 2. **提示词拼装与快照隔离**（[comfyui-generator.ts](../../backend/src/scene/comfyui-generator.ts#L49-L259)）：
    - 全景／人物提示词按 `basePrompt → outfitPrompts[outfitId] → 场景描述` 过滤空串并以中文逗号拼接（`buildScenePrompt`）；当过场图 `layerMode === "background"` 时只保留场景描述，不注入人物与服饰锚点（`composeSceneImagePrompt`）。
@@ -171,15 +178,15 @@ npx -y node@24 desktop/desk-preview/tests/workflow-real-backend-chain-check.cjs
 ### 5.2 核心实现文件清单
 
 - **后端域模型、路由与输入验证**：
-  - [voice.ts](../../backend/src/domain/voice.ts) · [voice-capabilities.ts](../../backend/src/domain/voice-capabilities.ts) · [image-service.ts](../../backend/src/domain/image-service.ts) · [scene-image-settings.ts](../../backend/src/domain/scene-image-settings.ts) · [errors.ts](../../backend/src/domain/errors.ts)
+  - [voice.ts](../../backend/src/domain/voice.ts) · [voice-capabilities.ts](../../backend/src/domain/voice-capabilities.ts) · [image-service.ts](../../backend/src/domain/image-service.ts) · [scene-image-settings.ts](../../backend/src/domain/scene-image-settings.ts) · [model.ts](../../backend/src/domain/model.ts) · [errors.ts](../../backend/src/domain/errors.ts)
   - [voice-routes.ts](../../backend/src/http/voice-routes.ts) · [image-service-routes.ts](../../backend/src/http/image-service-routes.ts) · [config-writes.ts](../../backend/src/http/config-writes.ts) · [schemas.ts](../../backend/src/http/schemas.ts)
 - **后端应用、协议客户端与存储**：
   - [voice-service.ts](../../backend/src/application/voice-service.ts) · [image-service.ts](../../backend/src/application/image-service.ts) · [scene-image-settings.ts](../../backend/src/application/scene-image-settings.ts) · [audio-inspect.ts](../../backend/src/application/audio-inspect.ts)
   - [transport.ts](../../backend/src/tts/transport.ts) · [unified-tts-client.ts](../../backend/src/tts/unified-tts-client.ts) · [indextts-client.ts](../../backend/src/tts/indextts-client.ts)
-  - [comfyui-client.ts](../../backend/src/scene/comfyui-client.ts) · [comfyui-workflow.ts](../../backend/src/scene/comfyui-workflow.ts) · [comfyui-generator.ts](../../backend/src/scene/comfyui-generator.ts)
+  - [protocols.ts](../../backend/src/model/protocols.ts) · [google-gemini.ts](../../backend/src/model/google-gemini.ts) · [comfyui-client.ts](../../backend/src/scene/comfyui-client.ts) · [comfyui-workflow.ts](../../backend/src/scene/comfyui-workflow.ts) · [comfyui-generator.ts](../../backend/src/scene/comfyui-generator.ts)
   - [voice-store.ts](../../backend/src/storage/voice-store.ts) · [image-service-store.ts](../../backend/src/storage/image-service-store.ts) · [scene-image-settings-store.ts](../../backend/src/storage/scene-image-settings-store.ts) · [schema.ts](../../backend/src/storage/schema.ts)
 - **桌面前端渲染器与纯逻辑单测**：
-  - [VoicePanel.tsx](../../desktop/desk-preview/renderer/src/components/voice/VoicePanel.tsx) · [voice-config.js](../../desktop/desk-preview/renderer/src/voice-config.js) · [ImagePanel.tsx](../../desktop/desk-preview/renderer/src/components/image/ImagePanel.tsx) · [image-config.js](../../desktop/desk-preview/renderer/src/image-config.js) · [Settings.tsx](../../desktop/desk-preview/renderer/src/pages/Settings.tsx) · [use-segment-voice.ts](../../desktop/desk-preview/renderer/src/conversation/use-segment-voice.ts)
+  - [VoicePanel.tsx](../../desktop/desk-preview/renderer/src/components/voice/VoicePanel.tsx) · [voice-config.js](../../desktop/desk-preview/renderer/src/voice-config.js) · [ImagePanel.tsx](../../desktop/desk-preview/renderer/src/components/image/ImagePanel.tsx) · [ImageModelPicker.tsx](../../desktop/desk-preview/renderer/src/components/image/ImageModelPicker.tsx) · [use-image-probe.ts](../../desktop/desk-preview/renderer/src/components/image/use-image-probe.ts) · [image-cache.js](../../desktop/desk-preview/renderer/src/components/image/image-cache.js) · [image-config.js](../../desktop/desk-preview/renderer/src/image-config.js) · [Settings.tsx](../../desktop/desk-preview/renderer/src/pages/Settings.tsx) · [use-segment-voice.ts](../../desktop/desk-preview/renderer/src/conversation/use-segment-voice.ts)
   - [voice-config.test.cjs](../../desktop/desk-preview/tests/voice-config.test.cjs) · [image-config.test.cjs](../../desktop/desk-preview/tests/image-config.test.cjs) · [p8-voice.test.ts](../../backend/tests/p8-voice.test.ts) · [p9-tts-unified.test.ts](../../backend/tests/p9-tts-unified.test.ts) · [p13-comfyui.test.ts](../../backend/tests/p13-comfyui.test.ts)
 
 ### 5.3 归档与复核文档追溯

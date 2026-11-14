@@ -710,7 +710,19 @@ function toOpenAiChatMessage(message: ModelMessage): unknown {
           }),
     };
   }
-  return { role: "user", content: message.content };
+  if (!message.images?.length) {
+    return { role: "user", content: message.content };
+  }
+  return {
+    role: "user",
+    content: [
+      { type: "text", text: message.content },
+      ...message.images.map((image) => ({
+        type: "image_url",
+        image_url: { url: `data:${image.mediaType};base64,${image.dataBase64}` },
+      })),
+    ],
+  };
 }
 
 function toOpenAiResponsesInput(message: ModelMessage, modelName: string, baseUrl: string): unknown[] {
@@ -749,7 +761,13 @@ function toOpenAiResponsesInput(message: ModelMessage, modelName: string, baseUr
     {
       type: "message",
       role: "user",
-      content: [{ type: "input_text", text: message.content }],
+      content: [
+        { type: "input_text", text: message.content },
+        ...(message.images?.map((image) => ({
+          type: "input_image",
+          image_url: `data:${image.mediaType};base64,${image.dataBase64}`,
+        })) ?? []),
+      ],
     },
   ];
 }
@@ -797,7 +815,17 @@ function toAnthropicMessages(messages: readonly ModelMessage[], modelName: strin
     }
     items.push({
       role: "user",
-      content: [{ type: "text", text: message.content }],
+      content: [
+        ...(message.images?.map((image) => ({
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: image.mediaType,
+            data: image.dataBase64,
+          },
+        })) ?? []),
+        { type: "text", text: message.content },
+      ],
     });
   }
   return items;

@@ -460,7 +460,17 @@ function toGoogleGeminiContents(
 
   for (const message of messages) {
     if (message.role === "user") {
-      pushParts("user", [{ text: message.content }]);
+      const parts: Record<string, unknown>[] = [];
+      for (const image of message.images ?? []) {
+        parts.push({
+          inlineData: {
+            mimeType: image.mediaType,
+            data: image.dataBase64,
+          },
+        });
+      }
+      parts.push({ text: message.content });
+      pushParts("user", parts);
       continue;
     }
     if (message.role === "assistant") {

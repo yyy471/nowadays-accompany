@@ -63,10 +63,10 @@ export const sceneImageSettingsSchema = z
     outfitPrompts: sceneImageSettingsCandidateShape.outfitPrompts.default({}),
     width: sceneImageSettingsCandidateShape.width.default(1024),
     height: sceneImageSettingsCandidateShape.height.default(1024),
-    steps: sceneImageSettingsCandidateShape.steps.default(50),
-    cfg: sceneImageSettingsCandidateShape.cfg.default(3),
-    sampler: sceneImageSettingsCandidateShape.sampler.default("euler"),
-    scheduler: sceneImageSettingsCandidateShape.scheduler.default("sgm_uniform"),
+    steps: sceneImageSettingsCandidateShape.steps.default(25),
+    cfg: sceneImageSettingsCandidateShape.cfg.default(2.5),
+    sampler: sceneImageSettingsCandidateShape.sampler.default("er_sde"),
+    scheduler: sceneImageSettingsCandidateShape.scheduler.default("simple"),
     seed: sceneImageSettingsCandidateShape.seed.default(null),
     workflow: sceneImageSettingsCandidateShape.workflow.default(null),
     outputNodeId: sceneImageSettingsCandidateShape.outputNodeId.default(null),
@@ -100,4 +100,18 @@ export interface SceneImagePreviewResult {
   /** 测试样图只在配置流程里看，不写入过场图历史。 */
   dataBase64: string;
   prompt: string;
+}
+
+export type AnchorPromptTarget = "base" | "outfit";
+
+export interface SceneImageAnchorPromptResult {
+  target: AnchorPromptTarget;
+  outfitId: string | null;
+  prompt: string;
+  source: {
+    kind: "uploaded" | "outfit_asset";
+    fileName: string;
+    outfitId: string | null;
+    outfitName: string | null;
+  };
 }

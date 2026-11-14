@@ -25,72 +25,100 @@ const LOADER_INPUTS: ReadonlyArray<readonly [string, string]> = [
 ];
 
 /**
- * 首版默认工作流：MOSS-Image 官方推荐参数（50 steps、CFG 3、Shift 5、
- * 负分支跳层 22、Euler + sgm_uniform、1024×1024）。
- * 官方示例在 comfyui/moss-image/example_workflows/moss-image-api.json。
+ * ComfyUI 0.45+ 原生 MOSS-Image + Spectrum 文生图工作流：
+ * UNET(INT8/FP8/BF16) + Qwen3.5 9B CLIP(type=moss_image) + Flux2 VAE，
+ * 配 SpectrumMOSSImageManual 加速、SLG 负分支跳层 22 与 ER-SDE 25 步采样（1024×1024）。
  */
 const MOSS_IMAGE_WORKFLOW: ComfyWorkflow = {
   "1": {
-    class_type: "MOSSImageHFLoader",
+    class_type: "UNETLoader",
     inputs: {
-      model_path: "MOSS-Image-Base",
+      unet_name: "moss_image_sft_int8_convrot.safetensors",
       weight_dtype: "default",
-      text_device: "default",
     },
-    _meta: { title: "MOSS-Image HF Loader" },
+    _meta: { title: "MOSS-Image UNET Loader" },
   },
   "2": {
-    class_type: "CLIPTextEncode",
-    inputs: { text: "", clip: ["1", 1] },
-    _meta: { title: "正向提示词" },
+    class_type: "CLIPLoader",
+    inputs: {
+      clip_name: "qwen3.5_9b_w4a8_gptq.safetensors",
+      type: "moss_image",
+      device: "default",
+    },
+    _meta: { title: "MOSS-Image CLIP Loader" },
   },
   "3": {
-    class_type: "CLIPTextEncode",
-    inputs: { text: "", clip: ["1", 1] },
-    _meta: { title: "负向提示词" },
+    class_type: "VAELoader",
+    inputs: {
+      vae_name: "flux2-vae_small.safetensors",
+    },
+    _meta: { title: "MOSS-Image VAE Loader" },
   },
   "4": {
+    class_type: "CLIPTextEncode",
+    inputs: { text: "", clip: ["2", 0] },
+    _meta: { title: "正向提示词" },
+  },
+  "5": {
+    class_type: "CLIPTextEncode",
+    inputs: { text: "", clip: ["2", 0] },
+    _meta: { title: "负向提示词" },
+  },
+  "6": {
     class_type: "EmptyFlux2LatentImage",
     inputs: { width: 1024, height: 1024, batch_size: 1 },
   },
-  "5": {
-    class_type: "ModelSamplingSD3",
-    inputs: { shift: 5, model: ["1", 0] },
+  "7": {
+    class_type: "SpectrumMOSSImageManual",
+    inputs: {
+      model: ["1", 0],
+      warmup_steps: 8,
+      tail_actual_steps: 1,
+      window_size: 2,
+      flex_window: 0.75,
+      max_consecutive_forecasts: 2,
+      history_points: 8,
+      chebyshev_degree: 4,
+      ridge_lambda: 0.1,
+      blend_weight: 0.5,
+      cache_device: "main_device",
+      force_actual_on_control: true,
+      debug: false,
+      warn_unverified_sampler: true,
+    },
   },
-  "6": {
+  "8": {
     class_type: "SkipLayerGuidanceDiTSimple",
     inputs: {
-      model: ["5", 0],
-      positive: ["2", 0],
-      negative: ["3", 0],
+      model: ["7", 0],
       double_layers: "",
       single_layers: "22",
       start_percent: 0,
       end_percent: 1,
     },
   },
-  "7": {
+  "9": {
     class_type: "KSampler",
     inputs: {
-      model: ["6", 0],
-      positive: ["2", 0],
-      negative: ["3", 0],
-      latent_image: ["4", 0],
+      model: ["8", 0],
+      positive: ["4", 0],
+      negative: ["5", 0],
+      latent_image: ["6", 0],
       seed: 42,
-      steps: 50,
-      cfg: 3,
-      sampler_name: "euler",
-      scheduler: "sgm_uniform",
+      steps: 25,
+      cfg: 2.5,
+      sampler_name: "er_sde",
+      scheduler: "simple",
       denoise: 1,
     },
   },
-  "8": {
+  "10": {
     class_type: "VAEDecode",
-    inputs: { samples: ["7", 0], vae: ["1", 2] },
+    inputs: { samples: ["9", 0], vae: ["3", 0] },
   },
-  "9": {
+  "11": {
     class_type: "SaveImage",
-    inputs: { images: ["8", 0], filename_prefix: "nowadays" },
+    inputs: { images: ["10", 0], filename_prefix: "nowadays" },
   },
 };
 

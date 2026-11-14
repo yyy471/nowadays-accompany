@@ -1335,6 +1335,87 @@ test("model service HTTP routes and CLI use the same adapter", async () => {
   }
 });
 
+test("openai-chat / openai-responses / anthropic-messages 在用户消息附带 images 时生成多模态输入", async () => {
+  const server = await startMockServer();
+  try {
+    const messages: ModelMessage[] = [
+      {
+        role: "user",
+        content: "提取角色与服装描述",
+        images: [{ mediaType: "image/webp", dataBase64: "V0VCUA==" }],
+      },
+      { role: "assistant", content: "好的" },
+      { role: "user", content: "只保留纯文本" },
+    ];
+
+    for (const protocol of [
+      "openai-chat",
+      "openai-responses",
+      "anthropic-messages",
+    ] as const) {
+      const adapter = new HttpModelAdapter(
+        { protocol, baseUrl: server.baseUrl },
+        "test-secret",
+      );
+      await collectWith(adapter, messages);
+    }
+
+    assert.equal(server.requests.length, 3);
+    const chatBody = server.requests[0]?.body as {
+      messages?: Array<{ role?: string; content?: unknown }>;
+    };
+    assert.deepEqual(chatBody.messages?.[1], {
+      role: "user",
+      content: [
+        { type: "text", text: "提取角色与服装描述" },
+        {
+          type: "image_url",
+          image_url: { url: "data:image/webp;base64,V0VCUA==" },
+        },
+      ],
+    });
+    assert.deepEqual(chatBody.messages?.[3], {
+      role: "user",
+      content: "只保留纯文本",
+    });
+
+    const responsesBody = server.requests[1]?.body as {
+      input?: Array<Record<string, unknown>>;
+    };
+    assert.deepEqual(responsesBody.input?.[0], {
+      type: "message",
+      role: "user",
+      content: [
+        { type: "input_text", text: "提取角色与服装描述" },
+        {
+          type: "input_image",
+          image_url: "data:image/webp;base64,V0VCUA==",
+        },
+      ],
+    });
+
+    const anthropicBody = server.requests[2]?.body as {
+      messages?: Array<{ role?: string; content?: unknown }>;
+    };
+    assert.deepEqual(anthropicBody.messages?.[0], {
+      role: "user",
+      content: [
+        {
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: "image/webp",
+            data: "V0VCUA==",
+          },
+        },
+        { type: "text", text: "提取角色与服装描述" },
+      ],
+    });
+  } finally {
+    await server.close();
+  }
+});
+
 async function runCli(baseUrl: string, args: readonly string[]): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const child = spawn(

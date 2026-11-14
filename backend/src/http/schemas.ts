@@ -229,6 +229,23 @@ export const sceneImagePreviewBodySchema = z
     }
   });
 
+export const sceneImageAnchorPromptBodySchema = z
+  .object({
+    target: z.enum(["base", "outfit"]),
+    outfitId: z.string().trim().min(1).max(200).optional(),
+    previousPrompt: z.string().trim().max(2000).optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.target === "outfit" && value.outfitId === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["outfitId"],
+        message: "target 为 outfit 时必须提供 outfitId",
+      });
+    }
+  });
+
 export const taskFinishBodySchema = z
   .object({
     status: z.enum(["completed", "failed"]),

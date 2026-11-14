@@ -982,3 +982,69 @@ test("SQLite 老库迁移（v7->v8 与 v17->v18）及 ModelService / 资源创�
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("google-gemini 在用户消息携带 images 时序列化为 inlineData 且不影响纯文本消息", async () => {
+  const server = await startHttpMock(() => ({
+    headers: { "content-type": "text/event-stream; charset=utf-8" },
+    body: sse({
+      candidates: [
+        {
+          content: {
+            role: "model",
+            parts: [{ text: "银灰长发，琥珀眼瞳" }],
+          },
+          finishReason: "STOP",
+        },
+      ],
+    }),
+  }));
+
+  try {
+    const adapter = new HttpModelAdapter(
+      {
+        protocol: "google-gemini",
+        baseUrl: `${server.baseUrl}/v1/publishers/google`,
+      },
+      "AQ.offline-multimodal-key",
+    );
+    const events = await collectEvents(adapter, [
+      {
+        role: "user",
+        content: "描述角色特征",
+        images: [{ mediaType: "image/png", dataBase64: "AQID" }],
+      },
+      { role: "assistant", content: "收到" },
+      { role: "user", content: "再精简一下" },
+    ]);
+
+    assert.equal(
+      events
+        .filter((e): e is Extract<ModelEvent, { type: "text_delta" }> => e.type === "text_delta")
+        .map((e) => e.text)
+        .join(""),
+      "银灰长发，琥珀眼瞳",
+    );
+    const wire = server.requests[0]?.jsonBody as {
+      contents?: Array<{ role?: string; parts?: Array<Record<string, unknown>> }>;
+    };
+    assert.deepEqual(wire.contents, [
+      {
+        role: "user",
+        parts: [
+          { inlineData: { mimeType: "image/png", data: "AQID" } },
+          { text: "描述角色特征" },
+        ],
+      },
+      {
+        role: "model",
+        parts: [{ text: "收到" }],
+      },
+      {
+        role: "user",
+        parts: [{ text: "再精简一下" }],
+      },
+    ]);
+  } finally {
+    await server.close();
+  }
+});

@@ -143,7 +143,25 @@ export function createBackendApp(
   const sceneImageSettings = new SceneImageSettingsService(
     roleAccess,
     imageServices,
-    { now },
+    {
+      now,
+      bindings,
+      appearance: appearanceService,
+      appRoot: config.appRoot,
+      credentialResolver: credentials,
+      ...(options.modelPortFactory === undefined
+        ? {}
+        : { modelFactory: options.modelPortFactory }),
+      maintenance: {
+        isUnder: (resourceId) => resourceService.isUnderMaintenance(resourceId),
+        wait: (resourceId, signal) =>
+          resourceService.waitForMaintenanceEnd(resourceId, signal),
+      },
+      claim: {
+        claim: (roleId, resourceId) =>
+          resourceService.claimModelCall(roleId, resourceId),
+      },
+    },
   );
   const memoryService = new MemoryQueryService(roleAccess, {
     now,

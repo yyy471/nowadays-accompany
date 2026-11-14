@@ -21,7 +21,9 @@ import {
 } from "../src/scene/comfyui-workflow.js";
 import {
   createFixture,
+  createFixtureWithModel,
   deferred,
+  ScriptedChatModel,
   type Deferred,
   type Fixture,
 } from "./p2-05-fixture.js";
@@ -111,14 +113,38 @@ async function startFakeComfy(): Promise<FakeComfy> {
     }
     if (request.method === "GET" && url === "/object_info") {
       const nodes: Record<string, unknown> = {
-        MOSSImageHFLoader: { input: { required: {} } },
+        UNETLoader: {
+          input: {
+            required: {
+              unet_name: [
+                [
+                  "moss_image_sft_int8_convrot.safetensors",
+                  "moss-image-base.safetensors",
+                ],
+              ],
+            },
+          },
+        },
+        CLIPLoader: {
+          input: {
+            required: {
+              clip_name: [["qwen3.5_9b_w4a8_gptq.safetensors"]],
+              type: [["moss_image"]],
+            },
+          },
+        },
+        VAELoader: {
+          input: { required: { vae_name: [["flux2-vae_small.safetensors"]] } },
+        },
         CLIPTextEncode: { input: { required: { text: ["STRING"] } } },
         EmptyFlux2LatentImage: { input: { required: {} } },
-        ModelSamplingSD3: { input: { required: {} } },
+        SpectrumMOSSImageManual: { input: { required: {} } },
         SkipLayerGuidanceDiTSimple: { input: { required: {} } },
         KSampler: { input: { required: {} } },
         VAEDecode: { input: { required: {} } },
         SaveImage: { input: { required: {} } },
+        MOSSImageHFLoader: { input: { required: {} } },
+        ModelSamplingSD3: { input: { required: {} } },
         CheckpointLoaderSimple: {
           input: { required: { ckpt_name: [["sd_xl_base_1.0.safetensors"]] } },
         },
@@ -173,7 +199,7 @@ async function startFakeComfy(): Promise<FakeComfy> {
         "prompt-1": {
           status: { status_str: "success", completed: true, messages: [] },
           outputs: {
-            "9": { images: [{ filename: "out-1.png", subfolder: "", type: "output" }] },
+            "11": { images: [{ filename: "out-1.png", subfolder: "", type: "output" }] },
           },
         },
       });
@@ -315,37 +341,45 @@ async function createTestOutfit(
 test("the built-in workflow is a MOSS-Image graph that can be patched by class type", () => {
   const workflow = defaultComfyWorkflow();
   assert.deepEqual(requiredNodeTypes(workflow), [
+    "CLIPLoader",
     "CLIPTextEncode",
     "EmptyFlux2LatentImage",
     "KSampler",
-    "MOSSImageHFLoader",
-    "ModelSamplingSD3",
     "SaveImage",
     "SkipLayerGuidanceDiTSimple",
+    "SpectrumMOSSImageManual",
+    "UNETLoader",
     "VAEDecode",
+    "VAELoader",
   ]);
   const patched = applyWorkflowParams(workflow, {
     prompt: "场景",
     negativePrompt: "模糊",
     width: 768,
     height: 1024,
-    steps: 40,
-    cfg: 3.5,
-    sampler: "euler",
-    scheduler: "sgm_uniform",
+    steps: 25,
+    cfg: 2.5,
+    sampler: "er_sde",
+    scheduler: "simple",
     seed: 11,
-    modelPath: "/models/MOSS-Image-Base",
+    modelPath: "moss_image_sft_int8_convrot.safetensors",
   });
-  assert.equal(patched.outputNodeId, "9");
-  assert.equal(patched.workflow["1"]?.inputs.model_path, "/models/MOSS-Image-Base");
-  assert.equal(patched.workflow["2"]?.inputs.text, "场景");
-  assert.equal(patched.workflow["3"]?.inputs.text, "模糊");
-  assert.equal(patched.workflow["4"]?.inputs.width, 768);
-  assert.equal(patched.workflow["4"]?.inputs.height, 1024);
-  assert.equal(patched.workflow["7"]?.inputs.seed, 11);
-  assert.equal(patched.workflow["7"]?.inputs.steps, 40);
+  assert.equal(patched.outputNodeId, "11");
+  assert.equal(
+    patched.workflow["1"]?.inputs.unet_name,
+    "moss_image_sft_int8_convrot.safetensors",
+  );
+  assert.equal(patched.workflow["4"]?.inputs.text, "场景");
+  assert.equal(patched.workflow["5"]?.inputs.text, "模糊");
+  assert.equal(patched.workflow["6"]?.inputs.width, 768);
+  assert.equal(patched.workflow["6"]?.inputs.height, 1024);
+  assert.equal(patched.workflow["9"]?.inputs.seed, 11);
+  assert.equal(patched.workflow["9"]?.inputs.steps, 25);
+  assert.equal(patched.workflow["9"]?.inputs.cfg, 2.5);
+  assert.equal(patched.workflow["9"]?.inputs.sampler_name, "er_sde");
+  assert.equal(patched.workflow["9"]?.inputs.scheduler, "simple");
   // 原模板不被改动，同一份配置可以重复使用。
-  assert.equal(workflow["2"]?.inputs.text, "");
+  assert.equal(workflow["4"]?.inputs.text, "");
 });
 
 test("probing a comfyui service reports missing nodes and available models", { timeout: 30_000 }, async () => {
@@ -368,7 +402,7 @@ test("probing a comfyui service reports missing nodes and available models", { t
     assert.equal(probe.comfyuiVersion, "0.3.60");
     assert.ok(probe.models.includes("moss-image-base.safetensors"));
 
-    context.comfy.missingNode = "MOSSImageHFLoader";
+    context.comfy.missingNode = "SpectrumMOSSImageManual";
     const missing = await api(
       context.base,
       "POST",
@@ -380,7 +414,7 @@ test("probing a comfyui service reports missing nodes and available models", { t
       missingNodes: string[];
     };
     assert.equal(broken.workflowReady, false);
-    assert.deepEqual(broken.missingNodes, ["MOSSImageHFLoader"]);
+    assert.deepEqual(broken.missingNodes, ["SpectrumMOSSImageManual"]);
   } finally {
     await context.close();
   }
@@ -483,13 +517,13 @@ test("preview composes the anchor prompts and returns a decodable image", { time
       string,
       { inputs: Record<string, unknown> }
     >;
-    assert.equal(submitted["1"]?.inputs.model_path, "/models/MOSS-Image-Base");
-    assert.equal(submitted["2"]?.inputs.text, result.prompt);
-    assert.equal(submitted["3"]?.inputs.text, "模糊");
-    assert.equal(submitted["4"]?.inputs.width, 768);
-    assert.equal(submitted["7"]?.inputs.seed, 7);
-    assert.equal(submitted["7"]?.inputs.steps, 40);
-    assert.equal(submitted["7"]?.inputs.cfg, 3.5);
+    assert.equal(submitted["1"]?.inputs.unet_name, "/models/MOSS-Image-Base");
+    assert.equal(submitted["4"]?.inputs.text, result.prompt);
+    assert.equal(submitted["5"]?.inputs.text, "模糊");
+    assert.equal(submitted["6"]?.inputs.width, 768);
+    assert.equal(submitted["9"]?.inputs.seed, 7);
+    assert.equal(submitted["9"]?.inputs.steps, 40);
+    assert.equal(submitted["9"]?.inputs.cfg, 3.5);
   } finally {
     await context.close();
   }
@@ -667,7 +701,7 @@ test("a background task sends only the planned environment prompt", { timeout: 6
       string,
       { inputs: Record<string, unknown> }
     >;
-    const prompt = String(submitted["2"]?.inputs.text ?? "");
+    const prompt = String(submitted["4"]?.inputs.text ?? "");
     assert.equal(prompt, "与对话氛围相符的环境背景，不出现人物。");
     assert.ok(!prompt.includes("银灰长发"));
     assert.ok(!prompt.includes("米色风衣"));
@@ -793,10 +827,10 @@ test("a task keeps the settings captured when it was accepted", { timeout: 60_00
       { inputs: Record<string, unknown> }
     >;
     assert.equal(
-      submitted["1"]?.inputs.model_path,
+      submitted["1"]?.inputs.unet_name,
       "/models/accepted.safetensors",
     );
-    const prompt = String(submitted["2"]?.inputs.text ?? "");
+    const prompt = String(submitted["4"]?.inputs.text ?? "");
     assert.ok(prompt.includes("接收时的锚点"));
     assert.ok(!prompt.includes("规划期间的新锚点"));
   } finally {
@@ -1187,11 +1221,11 @@ test("draft scene image probe and preview use draft settings without overwriting
       string,
       { inputs: Record<string, unknown> }
     >;
-    assert.equal(draftSubmitted["1"]?.inputs.model_path, "/models/MOSS-Draft-V1");
-    assert.equal(draftSubmitted["3"]?.inputs.text, "水印");
-    assert.equal(draftSubmitted["4"]?.inputs.width, 512);
-    assert.equal(draftSubmitted["7"]?.inputs.steps, 12);
-    assert.equal(draftSubmitted["7"]?.inputs.seed, 99);
+    assert.equal(draftSubmitted["1"]?.inputs.unet_name, "/models/MOSS-Draft-V1");
+    assert.equal(draftSubmitted["5"]?.inputs.text, "水印");
+    assert.equal(draftSubmitted["6"]?.inputs.width, 512);
+    assert.equal(draftSubmitted["9"]?.inputs.steps, 12);
+    assert.equal(draftSubmitted["9"]?.inputs.seed, 99);
 
     // 确认草稿预览从未写入角色生图配置。
     const afterDraft = await api(context.base, "GET", roleBase);
@@ -1226,11 +1260,11 @@ test("draft scene image probe and preview use draft settings without overwriting
       { inputs: Record<string, unknown> }
     >;
     assert.equal(
-      overrideSubmitted["1"]?.inputs.model_path,
+      overrideSubmitted["1"]?.inputs.unet_name,
       "/models/MOSS-Draft-Override",
     );
-    assert.equal(overrideSubmitted["4"]?.inputs.width, 512);
-    assert.equal(overrideSubmitted["4"]?.inputs.height, 1024);
+    assert.equal(overrideSubmitted["6"]?.inputs.width, 512);
+    assert.equal(overrideSubmitted["6"]?.inputs.height, 1024);
 
     // 确认已保存配置 A 纹丝未动，且跨站点凭据复用被拦下。
     const savedCheck = await api(context.base, "GET", roleBase);
@@ -1361,5 +1395,236 @@ test("preview validates outfitId ownership and active status before calling Comf
     assert.equal(context.comfy.workflows.length, 4);
   } finally {
     await context.close();
+  }
+});
+
+test("image service saves optional default modelName without disturbing stored credentials", async () => {
+  const context = await setup({}, { secret: "comfy-token-1" });
+  try {
+    const created = await api(context.base, "POST", "/v1/image-services", {
+      name: "双模型 ComfyUI",
+      config: {
+        protocol: "comfyui",
+        baseUrl: context.comfy.baseUrl,
+        modelName: "moss_image_sft_int8_convrot.safetensors",
+      },
+      secret: "comfy-token-2",
+    });
+    assert.equal(created.status, 201);
+    const service = created.body.service as {
+      serviceId: string;
+      config: { baseUrl: string; modelName?: string };
+      credential: { status: string };
+    };
+    assert.equal(
+      service.config.modelName,
+      "moss_image_sft_int8_convrot.safetensors",
+    );
+
+    const updated = await api(
+      context.base,
+      "PATCH",
+      `/v1/image-services/${service.serviceId}`,
+      {
+        config: {
+          protocol: "comfyui",
+          baseUrl: context.comfy.baseUrl,
+          modelName: "miaomiaoRealskin_anima11.safetensors",
+        },
+      },
+    );
+    assert.equal(updated.status, 200);
+    const updatedService = updated.body.service as typeof service;
+    assert.equal(
+      updatedService.config.modelName,
+      "miaomiaoRealskin_anima11.safetensors",
+    );
+    assert.equal(updatedService.credential.status, "stored");
+  } finally {
+    await context.close();
+  }
+});
+
+test("anchor-prompts invokes bound chat model with outfit or uploaded image and supports repeated regeneration", async () => {
+  const pngA = await sharp({
+    create: { width: 32, height: 32, channels: 3, background: { r: 220, g: 80, b: 80 } },
+  })
+    .png()
+    .toBuffer();
+  const pngB = await sharp({
+    create: { width: 24, height: 24, channels: 3, background: { r: 60, g: 120, b: 220 } },
+  })
+    .png()
+    .toBuffer();
+  const pngUpload = await sharp({
+    create: { width: 16, height: 16, channels: 3, background: { r: 40, g: 180, b: 90 } },
+  })
+    .png()
+    .toBuffer();
+
+  const chatModel = new ScriptedChatModel([
+    [
+      { type: "text_delta", text: "基础锚点提示词：银灰长发，琥珀色眼瞳，二次元厚涂" },
+      { type: "completed", stopReason: "stop" },
+    ],
+    [
+      { type: "text_delta", text: "```text\n银灰高马尾长发，温暖琥珀瞳色，细腻二次元厚涂\n```" },
+      { type: "completed", stopReason: "stop" },
+    ],
+    [
+      { type: "text_delta", text: "米色长款风衣，深色直筒长裤，棕色短靴" },
+      { type: "completed", stopReason: "stop" },
+    ],
+    [
+      { type: "text_delta", text: "红色羊绒披肩，白色荷叶领衬衫，黑色百褶长裙" },
+      { type: "completed", stopReason: "stop" },
+    ],
+  ]);
+
+  const fixture = createFixtureWithModel(chatModel, {
+    sceneImagePlanner: new FixedSceneImagePlanner(),
+  });
+  try {
+    const port = await listen(fixture.app.server, 0, "127.0.0.1");
+    const base = `http://127.0.0.1:${port}`;
+    const roleId = fixture.roleId;
+    const endpoint = `/v1/roles/${roleId}/scene-image/anchor-prompts`;
+
+    // 1. 尚无可用锚点图时明确返回 SCENE_IMAGE_ANCHOR_IMAGE_REQUIRED。
+    const noImg = await api(base, "POST", endpoint, { target: "base" });
+    assert.equal(noImg.status, 400);
+    assert.equal(
+      (noImg.body.error as { code: string }).code,
+      "SCENE_IMAGE_ANCHOR_IMAGE_REQUIRED",
+    );
+
+    // 2. 导入两套服饰，并把第二套设为当前穿搭，验证基础锚点优先使用当前服饰立绘。
+    const outfitDaily = await fixture.app.services.appearance.importOutfit(roleId, {
+      name: "日常",
+      home: { fileName: "daily.png", data: pngA },
+    });
+    const outfitCoat = await fixture.app.services.appearance.importOutfit(roleId, {
+      name: "秋日风衣",
+      description: "外出用长风衣",
+      sprites: [{ fileName: "coat-sprite.png", data: pngB }],
+    });
+    fixture.app.services.roles.setState(roleId, {
+      state: { outfitId: outfitCoat.outfitId },
+    });
+    // outfitDaily 有 home 而 outfitCoat 只有 sprite，因此基础锚点优先取有 home 立绘的服饰。
+    // 再给当前服饰补一张 home 立绘后应切到当前服饰。
+    await fixture.app.services.appearance.replaceHome(roleId, outfitCoat.outfitId, {
+      fileName: "coat-home.png",
+      data: pngB,
+    });
+
+    const firstBase = await api(base, "POST", endpoint, { target: "base" });
+    assert.equal(firstBase.status, 200);
+    assert.equal(firstBase.body.target, "base");
+    assert.equal(firstBase.body.prompt, "银灰长发，琥珀色眼瞳，二次元厚涂");
+    assert.deepEqual(firstBase.body.source, {
+      kind: "outfit_asset",
+      fileName: "coat-home.png",
+      outfitId: outfitCoat.outfitId,
+      outfitName: "秋日风衣",
+    });
+    assert.equal(
+      chatModel.requests[0]?.messages[0]?.role === "user"
+        ? chatModel.requests[0].messages[0].images?.[0]?.dataBase64
+        : undefined,
+      pngB.toString("base64"),
+    );
+
+    // 3. 再次调用传入 previousPrompt 触发重新生成，不写入持久配置。
+    const regenBase = await api(base, "POST", endpoint, {
+      target: "base",
+      previousPrompt: String(firstBase.body.prompt),
+    });
+    assert.equal(regenBase.status, 200);
+    assert.equal(
+      regenBase.body.prompt,
+      "银灰高马尾长发，温暖琥珀瞳色，细腻二次元厚涂",
+    );
+    assert.ok(
+      chatModel.requests[1]?.messages[0]?.role === "user" &&
+        chatModel.requests[1].messages[0].content.includes("银灰长发，琥珀色眼瞳"),
+    );
+
+    // 4. 指定服饰生成服饰锚点提示词，支持仅包含立绘（回退 sprite）的服饰；不存在服饰返回 404。
+    const missingOutfit = await api(base, "POST", endpoint, {
+      target: "outfit",
+      outfitId: "nonexistent-outfit-id",
+    });
+    assert.equal(missingOutfit.status, 404);
+    assert.equal(
+      (missingOutfit.body.error as { code: string }).code,
+      "OUTFIT_NOT_FOUND",
+    );
+
+    const outfitOnlySprite = await fixture.app.services.appearance.importOutfit(
+      roleId,
+      {
+        name: "备用立绘",
+        sprites: [{ fileName: "alt.png", data: pngA }],
+      },
+    );
+    const outfitPrompt = await api(base, "POST", endpoint, {
+      target: "outfit",
+      outfitId: outfitOnlySprite.outfitId,
+    });
+    assert.equal(outfitPrompt.status, 200);
+    assert.equal(outfitPrompt.body.outfitId, outfitOnlySprite.outfitId);
+    assert.equal(outfitPrompt.body.prompt, "米色长款风衣，深色直筒长裤，棕色短靴");
+    assert.equal(
+      (outfitPrompt.body.source as { fileName: string }).fileName,
+      "alt.png",
+    );
+
+    // 5. 手动上传一张临时参考图生成，不改衣柜内容也不改已保存的生图配置。
+    const form = new FormData();
+    form.append(
+      "payload",
+      JSON.stringify({ target: "outfit", outfitId: outfitDaily.outfitId }),
+    );
+    form.append(
+      "image",
+      new Blob([new Uint8Array(pngUpload)], { type: "image/png" }),
+      "manual-ref.png",
+    );
+    const uploadRes = await fetch(`${base}${endpoint}`, {
+      method: "POST",
+      body: form,
+    });
+    assert.equal(uploadRes.status, 200);
+    const uploadBody = (await uploadRes.json()) as {
+      prompt: string;
+      source: { kind: string; fileName: string; outfitId: string | null };
+    };
+    assert.equal(uploadBody.prompt, "红色羊绒披肩，白色荷叶领衬衫，黑色百褶长裙");
+    assert.equal(uploadBody.source.kind, "uploaded");
+    assert.equal(uploadBody.source.fileName, "manual-ref.png");
+    assert.equal(
+      chatModel.requests[3]?.messages[0]?.role === "user"
+        ? chatModel.requests[3].messages[0].images?.[0]?.dataBase64
+        : undefined,
+      pngUpload.toString("base64"),
+    );
+
+    // 6. 校验未配置对话模型时明确提示 SCENE_IMAGE_CHAT_MODEL_REQUIRED。
+    await api(base, "PUT", `/v1/roles/${roleId}/bindings`, { bindings: [] });
+    const missingChat = await api(base, "POST", endpoint, { target: "base" });
+    assert.equal(missingChat.status, 409);
+    assert.equal(
+      (missingChat.body.error as { code: string }).code,
+      "SCENE_IMAGE_CHAT_MODEL_REQUIRED",
+    );
+
+    // 7. 读取角色生图配置仍为空：生成锚点提示词仅更新前端草稿，不直接落库。
+    const savedAfter = await api(base, "GET", `/v1/roles/${roleId}/scene-image`);
+    assert.equal(savedAfter.status, 200);
+    assert.equal(savedAfter.body.configured, false);
+    assert.equal(savedAfter.body.settings, null);
+  } finally {
+    await fixture.close();
   }
 });

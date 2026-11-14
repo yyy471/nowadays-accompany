@@ -64,15 +64,36 @@ function startFakeOpenAi(name, modelIds) {
     }
     if (req.method === 'POST' && url === '/chat/completions') {
       const body = raw ? JSON.parse(raw) : {};
+      const userContent = body.messages?.[1]?.content;
       state.chatCalls.push({
         model: body.model,
         auth: req.headers.authorization || null,
         system: body.messages?.[0]?.content || '',
+        hasImage: Array.isArray(userContent) && userContent.some(part => part?.type === 'image_url'),
       });
       const sys = String(body.messages?.[0]?.content || '');
+      const userText = Array.isArray(userContent)
+        ? userContent.filter(part => part?.type === 'text').map(part => part.text || '').join('\n')
+        : String(userContent || '');
       let reply = '你好！\n（她轻轻放下茶杯，抬眼看过来）\n今天的风很轻呢。';
       if (sys.includes('pong')) {
         reply = 'pong';
+      } else if (sys.includes('角色一致性提示词助手')) {
+        assert.equal(
+          Array.isArray(userContent) && userContent.some(part => part?.type === 'image_url'),
+          true,
+          '生成基础锚点提示词时应向对话模型传入角色锚点图片',
+        );
+        reply = userText.includes('上一版提示词：')
+          ? '黑长直，琥珀瞳，柔和神情，日系厚涂'
+          : '黑长直，深棕瞳，日系厚涂质感';
+      } else if (sys.includes('服饰一致性提示词助手')) {
+        assert.equal(
+          Array.isArray(userContent) && userContent.some(part => part?.type === 'image_url'),
+          true,
+          '生成服饰锚点提示词时应向对话模型传入服饰立绘图片',
+        );
+        reply = '浅米针织开衫，深蓝百褶裙，白色棉袜';
       } else if (sys.includes('过场图规划器')) {
         const userJson = JSON.parse(String(body.messages?.[1]?.content || '{}'));
         const firstSeg = userJson.segments?.[0]?.segmentId;
@@ -238,14 +259,18 @@ function startFakeComfy(name, models) {
       }
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({
-        MOSSImageHFLoader: { input: { required: {} } },
+        UNETLoader: { input: { required: { unet_name: [models] } } },
+        CLIPLoader: { input: { required: { clip_name: [['qwen3.5_9b_w4a8_gptq.safetensors']], type: [['moss_image']] } } },
+        VAELoader: { input: { required: { vae_name: [['flux2-vae_small.safetensors']] } } },
         CLIPTextEncode: { input: { required: { text: ['STRING'] } } },
         EmptyFlux2LatentImage: { input: { required: {} } },
-        ModelSamplingSD3: { input: { required: {} } },
+        SpectrumMOSSImageManual: { input: { required: {} } },
         SkipLayerGuidanceDiTSimple: { input: { required: {} } },
         KSampler: { input: { required: {} } },
         VAEDecode: { input: { required: {} } },
         SaveImage: { input: { required: {} } },
+        MOSSImageHFLoader: { input: { required: {} } },
+        ModelSamplingSD3: { input: { required: {} } },
         CheckpointLoaderSimple: { input: { required: { ckpt_name: [[models[0]]] } } },
         MOSSImageUNETLoader: { input: { required: { unet_name: [models] } } },
       }));
@@ -271,7 +296,7 @@ function startFakeComfy(name, models) {
       res.end(JSON.stringify({
         [promptId]: {
           status: { status_str: 'success', completed: true, messages: [] },
-          outputs: { '9': { images: [{ filename: 'out.png', subfolder: '', type: 'output' }] } },
+          outputs: { '11': { images: [{ filename: 'out.png', subfolder: '', type: 'output' }] } },
         },
       }));
       return;
@@ -531,8 +556,7 @@ async function run() {
 
   // 现在修改 m1 的地址（切到 llmB）和密钥：必须出现「暂停相关角色并保存」，且仅暂停甲，乙继续保持 active！
   await setInput("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) .config-connection input')", llmB.baseUrl);
-  await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) [aria-label=\"密钥操作\"] button')].find(x=>x.textContent==='替换').click()");
-  await setInput("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) input[type=password]')", 'key-b2');
+  await setInput("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) input[aria-label=\"模型密钥\"]')", 'key-b2');
   await until(() => ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].some(x=>x.textContent==='暂停相关角色并保存')"), 'pause-related-btn');
   await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='暂停相关角色并保存').click()");
   await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden])')?.innerText.includes('已暂停 甲角色')"), 'paused-only-a');
@@ -594,8 +618,14 @@ async function run() {
   await setInput("document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) input')[1]", comfyA.baseUrl);
   await setInput("document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) input')[2]", 'img-secret-a');
   await setInput("document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) input')[3]", '15000');
+  await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='读取模型列表').click()");
+  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) .nd-model-picker ~ .config-actions ~ [role=status]')?.textContent.includes('已读取 2 个模型')"), 'probe-comfy-a-list');
+  await ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) input[role=combobox]').focus()");
+  await until(() => ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) .nd-model-options [role=option]')].length === 2"), 'comfy-a-two-options');
+  await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) .nd-model-options [role=option] button')].find(x=>x.textContent==='moss-image-base.safetensors').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}))");
+  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) input[role=combobox]')?.value==='moss-image-base.safetensors'"), 'comfy-a-picked-default');
   await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='测试连接').click()");
-  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden])')?.innerText.includes('moss-image-base.safetensors')"), 'probe-comfy-a');
+  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) .nd-model-picker ~ .config-actions ~ [role=status]')?.textContent.includes('moss-image-base.safetensors')"), 'probe-comfy-a');
   await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='保存生图服务').click()");
   await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) h2')?.textContent==='主生图'"), 'img-1-created-ui');
 
@@ -630,11 +660,27 @@ async function run() {
   const img2 = svcs.find(s => s.name === '备用生图');
   await until(() => ev(`(() => { const s = document.querySelector('.config-role-editor:not([hidden]) .nd-image-service-row select'); return !!s && s.value !== '' && [...s.options].some(o => o.value === '${img1.serviceId}'); })()`), 'auto-select-after-settings');
   await setSelect("document.querySelector('.config-role-editor:not([hidden]) .nd-image-service-row select')", img1.serviceId);
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image input[role=combobox]')?.value==='moss-image-base.safetensors'"), 'prefill-default-image-model');
+  await ev("(()=>{const el=document.querySelector('.config-role-editor:not([hidden]) .nd-image input[role=combobox]');el.focus();el.click();})()");
+  await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image .nd-model-options [role=option]')].some(x=>x.textContent==='moss-image-base.safetensors')"), 'shared-image-options');
+  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image .nd-model-options [role=option] button')].find(x=>x.textContent==='sd_xl_base_1.0.safetensors').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}))");
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image input[role=combobox]')?.value==='sd_xl_base_1.0.safetensors'"), 'pick-second-image-model');
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='测试连接').click()");
-  await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image-models button')].some(x=>x.textContent==='moss-image-base.safetensors')"));
-  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image-models button')].find(x=>x.textContent==='moss-image-base.safetensors').click()");
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image .nd-model-picker ~ .config-actions ~ [role=status]')?.textContent.includes('已确认模型「sd_xl_base_1.0.safetensors」')"), 'confirm-second-image-model');
+  await ev("(()=>{const el=document.querySelector('.config-role-editor:not([hidden]) .nd-image input[role=combobox]');el.focus();el.click();})()");
+  await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image .nd-model-options [role=option]')].some(x=>x.textContent==='moss-image-base.safetensors')"), 'reopen-image-options');
+  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image .nd-model-options [role=option] button')].find(x=>x.textContent==='moss-image-base.safetensors').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}))");
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image input[role=combobox]')?.value==='moss-image-base.safetensors'"), 'pick-first-image-model');
+  const llmBCallsBeforeAnchor = llmB.chatCalls.length;
+  await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image button[aria-label=\"用对话模型生成基础锚点提示词\"]').click()");
+  await until(() => llmB.chatCalls.length > llmBCallsBeforeAnchor && ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image textarea[aria-label=\"基础锚点提示词\"]')?.value==='黑长直，深棕瞳，日系厚涂质感'"), 'chat-model-base-anchor-1');
+  assert.equal(llmB.chatCalls.at(-1).hasImage, true);
+  await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image button[aria-label=\"用对话模型生成基础锚点提示词\"]').click()");
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image textarea[aria-label=\"基础锚点提示词\"]')?.value==='黑长直，琥珀瞳，柔和神情，日系厚涂'"), 'chat-model-base-anchor-2');
+  await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image button[aria-label=\"用对话模型生成「春装」服饰提示词\"]').click()");
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image-outfits input[placeholder=\"例如：米色风衣，深色长裤\"]')?.value==='浅米针织开衫，深蓝百褶裙，白色棉袜'"), 'chat-model-outfit-anchor');
   await setInput("document.querySelector('.config-role-editor:not([hidden]) .nd-image textarea')", '黑长直，深棕瞳，柔和神情');
-  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent.includes('生成参数与服饰锚点')).click()");
+  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent.includes('生成参数')).click()");
   await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-image input[placeholder=\"例如：米色风衣，深色长裤\"]')"));
   await setInput("document.querySelector('.config-role-editor:not([hidden]) .nd-image input[placeholder=\"例如：米色风衣，深色长裤\"]')", '米色风衣');
   await shot('role-image-1280.png');
@@ -655,7 +701,7 @@ async function run() {
   await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='乙角色'"));
   await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-image-service-row select')"));
   await setSelect("document.querySelector('.config-role-editor:not([hidden]) .nd-image-service-row select')", img2.serviceId);
-  await setInput("document.querySelector('.config-role-editor:not([hidden]) .nd-image input[placeholder=\"/models/MOSS-Image-Base\"]')", 'backup-image-model.safetensors');
+  await setInput("document.querySelector('.config-role-editor:not([hidden]) .nd-image input[placeholder=\"moss_image_sft_int8_convrot.safetensors\"]')", 'backup-image-model.safetensors');
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='暂停并保存配置').click()");
   await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image')?.innerText.includes('已保存生图配置') && document.querySelector('.config-role-editor:not([hidden])')?.innerText.includes('继续活动')"));
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].find(x=>x.textContent==='继续活动').click()");
@@ -699,14 +745,14 @@ async function run() {
   await delay(250);
   assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image-figure figcaption')?.textContent.includes('将被放弃的旧出图描述')"), false, '已有样图时在途编辑，旧响应不得覆盖样图');
 
-  // 1) 在乙角色探测备用生图（得到 backup-image-model.safetensors 芯片）并以最新草稿测试生图，验证草稿字段保留。
+  // 1) 在乙角色探测备用生图（得到 backup-image-model.safetensors 候选）并以最新草稿测试生图，验证草稿字段保留。
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='测试连接').click()");
-  await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image-models button')].some(x=>x.textContent==='backup-image-model.safetensors')"), 'r06-probe-before-disable');
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image .nd-model-picker ~ .config-actions ~ [role=status]')?.textContent.includes('已确认模型「backup-image-model.safetensors」')"), 'r06-probe-before-disable');
   const beforeStep1Prompts = comfyB.prompts.length;
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image-preview button')].find(x=>x.textContent==='测试生图').click()");
   await until(() => comfyB.prompts.length > beforeStep1Prompts && ev("(() => { const img = document.querySelector('.config-role-editor:not([hidden]) .nd-image-figure img'); const cap = document.querySelector('.config-role-editor:not([hidden]) .nd-image-figure figcaption')?.textContent || ''; const btn = document.querySelector('.config-role-editor:not([hidden]) .nd-image-preview button'); return !!(img && img.complete && img.naturalWidth > 0 && cap.includes('最终稳定新描述') && btn && !btn.disabled && btn.textContent === '测试生图'); })()"), 'r06-preview-before-disable');
 
-  // 2) 去设置停用备用生图再返回：旧探测芯片与预览图必须清除、草稿字段保留，且直接保存被拦下（不得暂停活跃角色乙）。
+  // 2) 去设置停用备用生图再返回：旧探测候选与预览图必须清除、草稿字段保留，且直接保存被拦下（不得暂停活跃角色乙）。
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent.includes('在设置中管理')).click()");
   await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings' && document.querySelector('.config-leaf-body > .config-prose:not([hidden]) h2')?.textContent==='备用生图'"));
   await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='暂停并停用').click()");
@@ -717,7 +763,8 @@ async function run() {
   await ev("document.querySelector('.config-return-footer').click()");
   await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='role-config'"));
   await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image')?.innerText.includes('当前所选生图服务已停用')"), 'r05-disabled-alert');
-  assert.equal(await ev("document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image-models button').length"), 0, '停用后旧候选模型芯片必须清除');
+  await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image input[role=combobox]').focus()");
+  assert.equal(await ev("document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image .nd-model-options [role=option]').length"), 0, '停用后旧候选模型必须清除');
   assert.equal(await ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-image-figure')"), false, '停用后旧测试样图必须清除');
   assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image textarea')?.value"), '银灰挑染，冷静眼神', '停用后返回不得丢失未保存生图草稿');
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='暂停并保存配置').click()");
@@ -725,7 +772,7 @@ async function run() {
   assert.equal((await request(`/v1/roles/${roleB.roleId}/activity`)).activity.state, 'active', '292-R05：停用生图服务保存失败前不得暂停角色乙');
 
   // 3) 重新启用备用生图，再完成一次探测并发起一条在途慢预览，然后去设置修改连接配置（timeoutMs）后释放：
-  // 已返回的探测芯片与在途晚到的测试样图都不得渲染或写回，草稿保留。
+  // 已返回的探测候选与在途晚到的测试样图都不得渲染或写回，草稿保留。
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent.includes('在设置中管理')).click()");
   await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings' && document.querySelector('.config-leaf-body > .config-prose:not([hidden]) h2')?.textContent==='备用生图'"));
   await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='暂停并启用').click()");
@@ -736,8 +783,8 @@ async function run() {
   await ev("document.querySelector('.config-return-footer').click()");
   await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='role-config'"));
 
-  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='测试连接').click()");
-  await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image-models button')].some(x=>x.textContent==='backup-image-model.safetensors')"), 'r06-probe-before-edit');
+  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='读取模型列表').click()");
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image .nd-model-picker ~ .config-actions ~ [role=status]')?.textContent.includes('已读取 1 个模型')"), 'r06-probe-before-edit');
   const slowPreview = comfyB.holdNextPrompt('r06-slow-preview-prompt');
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='测试生图').click()");
   await slowPreview.arrived;
@@ -753,18 +800,19 @@ async function run() {
   await delay(150);
   await ev("document.querySelector('.config-return-footer').click()");
   await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='role-config'"));
-  await until(() => ev("document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image-models button').length === 0 && !document.querySelector('.config-role-editor:not([hidden]) .nd-image-figure')"), 'r06-cleared-after-edit');
+  await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image input[role=combobox]').focus()");
+  await until(() => ev("document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image .nd-model-options [role=option]').length === 0 && !document.querySelector('.config-role-editor:not([hidden]) .nd-image-figure')"), 'r06-cleared-after-edit');
   await delay(200);
   assert.equal(await ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-image-figure')"), false, '连接修改后在途晚到测试样图不得写回渲染');
   assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image textarea')?.value"), '银灰挑染，冷静眼神', '修改连接配置返回后应保留生图草稿');
 
   // 4) 验证：一次已完成的探测 + 生图，以及一个尚未返回的在途慢探测，在设置删除备用生图后都不得残留或晚到写回。
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='测试连接').click()");
-  await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image-models button')].some(x=>x.textContent==='backup-image-model.safetensors')"), 'r06-probe-before-delete');
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image .nd-model-picker ~ .config-actions ~ [role=status]')?.textContent.includes('已确认模型「backup-image-model.safetensors」')"), 'r06-probe-before-delete');
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='测试生图').click()");
   await until(() => ev("(() => { const img = document.querySelector('.config-role-editor:not([hidden]) .nd-image-figure img'); return !!(img && img.complete && img.naturalWidth > 0); })()"), 'r06-preview-before-delete');
   const slowProbe = comfyB.holdNextObjectInfo('r06-slow-probe-object-info');
-  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='测试连接').click()");
+  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='读取模型列表').click()");
   await slowProbe.arrived;
 
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent.includes('在设置中管理')).click()");
@@ -780,7 +828,8 @@ async function run() {
   await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='role-config'"));
   await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image')?.innerText.includes('当前所选生图服务已不存在')"), 'bug3-missing-service-alert');
   await delay(250);
-  assert.equal(await ev("document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image-models button').length"), 0, '删除后旧芯片及在途晚到响应均不得存在');
+  await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image input[role=combobox]').focus()");
+  assert.equal(await ev("document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image .nd-model-options [role=option]').length"), 0, '删除后旧候选及在途晚到响应均不得存在');
   assert.equal(await ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-image-figure')"), false, '删除后旧样图必须清除');
   assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image textarea')?.value"), '银灰挑染，冷静眼神', '删除后应保留未保存生图草稿');
   assert.equal(await ev(`document.querySelector('.config-role-editor:not([hidden]) .nd-image-service-row select')?.value==='${img2.serviceId}'`), true, 'Bug3修复：不得静默改写已失效 serviceId');

@@ -12,6 +12,8 @@ export const imageServiceConfigSchema = z
   .object({
     protocol: z.literal("comfyui"),
     baseUrl: modelBaseUrlSchema,
+    /** 全局默认生图模型名（通常为 ComfyUI checkpoints 文件名）；未设置时需在角色配置里手动填写或探测选择。 */
+    modelName: z.string().trim().min(1).max(300).optional(),
     credentialRef: credentialRefSchema.optional(),
     /** 单次生成的整体等待上限；ComfyUI 首次加载大模型可能很慢。 */
     timeoutMs: z.number().int().min(5_000).max(900_000).optional(),
