@@ -45,6 +45,7 @@ let savedModelBody;
 let nextModelId = 2;
 let nextExtId = 2;
 const modelPatches = [];
+const savedSecrets = {};
 const requests = [];
 const readRaw = (req, fn) => { const chunks = []; req.on('data', chunk => chunks.push(chunk)); req.on('end', () => fn(Buffer.concat(chunks))); };
 const json = (res, body, status = 200) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
@@ -181,8 +182,10 @@ const server = http.createServer((req, res) => {
     if (req.method === 'PATCH' && resource.kind !== 'model') { let body = ''; req.on('data', chunk => body += chunk); return req.on('end', () => { const data = JSON.parse(body); Object.assign(resource, data); json(res, resource); }); }
     if (req.method === 'DELETE') { resources.splice(resources.indexOf(resource), 1); for (const id of Object.keys(bindings)) { const before = bindings[id].length; bindings[id] = bindings[id].filter(item => item.resourceId !== resource.resourceId); if (bindings[id].length !== before) revisions[id]++; } return json(res, { deleted: true }); }
   }
-  if (p === '/v1/resources/m1' && req.method === 'PATCH') { let body = ''; req.on('data', chunk => body += chunk); return req.on('end', () => { savedModelBody = JSON.parse(body); modelPatches.push(savedModelBody); if (roles.some(item => roleStates[item.roleId] !== 'stopped')) return json(res, { error: { message: '角色尚未全部停止' } }, 409); if (resources[0].credential.status === 'stored' && new URL(savedModelBody.config.baseUrl).origin !== new URL(resources[0].config.baseUrl).origin && savedModelBody.secret === undefined) return json(res, { error: { message: '服务地址已更换，请重新确认密钥', code: 'RESOURCE_CREDENTIAL_STALE' } }, 409); Object.assign(resources[0], { name: savedModelBody.name, config: savedModelBody.config, credential: { status: typeof savedModelBody.secret === 'string' ? 'stored' : savedModelBody.secret === null ? 'missing' : resources[0].credential.status } }); json(res, resources[0]); }); }
-  if (p === '/v1/resources' && req.method === 'POST') { let body = ''; req.on('data', chunk => body += chunk); return req.on('end', () => { const data = JSON.parse(body); const created = { resourceId: data.kind === 'model' ? `m${nextModelId++}` : `x${nextExtId++}`, kind: data.kind, name: data.name, enabled: true, config: data.config, credential: { status: data.secret ? 'stored' : 'missing' }, lastTest: null }; resources.push(created); json(res, created, 201); }); }
+  if (p === '/v1/resources/m1' && req.method === 'PATCH') { let body = ''; req.on('data', chunk => body += chunk); return req.on('end', () => { savedModelBody = JSON.parse(body); modelPatches.push(savedModelBody); if (roles.some(item => roleStates[item.roleId] !== 'stopped')) return json(res, { error: { message: '角色尚未全部停止' } }, 409); if (resources[0].credential.status === 'stored' && new URL(savedModelBody.config.baseUrl).origin !== new URL(resources[0].config.baseUrl).origin && savedModelBody.secret === undefined) return json(res, { error: { message: '服务地址已更换，请重新确认密钥', code: 'RESOURCE_CREDENTIAL_STALE' } }, 409); if (typeof savedModelBody.secret === 'string') savedSecrets.m1 = savedModelBody.secret; else if (savedModelBody.secret === null) delete savedSecrets.m1; Object.assign(resources[0], { name: savedModelBody.name, config: savedModelBody.config, credential: { status: typeof savedModelBody.secret === 'string' ? 'stored' : savedModelBody.secret === null ? 'missing' : resources[0].credential.status } }); json(res, resources[0]); }); }
+  const revealMatch = /^\/v1\/resources\/([^/]+)\/secret\/reveal$/.exec(p);
+  if (revealMatch && req.method === 'POST') { const target = resources.find(item => item.resourceId === revealMatch[1]); if (!target) return json(res, { error: { message: '资源不存在' } }, 404); const secret = savedSecrets[target.resourceId]; return json(res, secret ? { status: 'stored', secret } : { status: 'missing' }); }
+  if (p === '/v1/resources' && req.method === 'POST') { let body = ''; req.on('data', chunk => body += chunk); return req.on('end', () => { const data = JSON.parse(body); const resourceId = data.kind === 'model' ? `m${nextModelId++}` : `x${nextExtId++}`; if (typeof data.secret === 'string') savedSecrets[resourceId] = data.secret; const created = { resourceId, kind: data.kind, name: data.name, enabled: true, config: data.config, credential: { status: data.secret ? 'stored' : 'missing' }, lastTest: null }; resources.push(created); json(res, created, 201); }); }
   if (p === '/v1/resources') return json(res, { items: resources });
   if (p === '/v1/activities') return json(res, { items: roles.map(role => ({ roleId: role.roleId, state: roleStates[role.roleId], running: false, initStatus: 'ready' })) });
   if (p.endsWith('/models')) return json(res, { models: ['local-model'] });
@@ -341,9 +344,11 @@ async function run() {
   await ev("(()=>{const e=document.querySelector('.config-prose:not([hidden]) input[role=combobox]');e.focus();})()");
   await ev("[...document.querySelectorAll('.config-prose:not([hidden]) button')].find(x=>x.textContent.includes('读取模型列表')).click()");
   await until(() => ev("[...document.querySelectorAll('.config-prose:not([hidden]) [role=option]')].some(x=>x.textContent==='local-model')"));
+  await until(() => ev("document.querySelector('.config-prose:not([hidden])').innerText.includes('已读取 1 个模型')"));
   await ev("(()=>{const e=document.querySelector('.config-prose:not([hidden]) input[role=combobox]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'local-model');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
   await ev("[...document.querySelectorAll('.config-prose:not([hidden]) button')].find(x=>x.textContent.includes('测试连接')).click()");
   await until(() => ev("document.querySelector('.config-leaf').innerText.includes('测试通过')"));
+  assert.ok(!await ev("document.querySelector('.config-prose:not([hidden])').innerText.includes('已读取 1 个模型')"), '测试连接日志应覆盖读取模型列表日志');
   await shot('settings-1280.png');
   await ev("[...document.querySelectorAll('.config-tabs button')].find(x=>x.textContent.includes('角色')).click()");
   await until(() => ev("!!document.querySelector('.config-status-poster')"));
@@ -351,25 +356,31 @@ async function run() {
   await until(() => ev("[...document.querySelectorAll('.config-status-poster')].find(x=>x.textContent.includes('甲角色')).textContent.includes('已停止')"));
   await ev("[...document.querySelectorAll('.config-tabs button')].find(x=>x.textContent.includes('模型')).click()");
   await until(() => ev("!!document.querySelector('.config-prose:not([hidden]) input[aria-label=模型服务名称]')"));
+  assert.ok(!await ev("document.querySelector('.config-prose:not([hidden])').innerText.includes('测试通过 ·')"), '切走再切回后读取与测试点击日志应清空');
   await ev("(()=>{const e=document.querySelector('.config-prose:not([hidden]) input[aria-label=模型服务名称]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'模型待保存');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
   await ev("document.querySelector('.config-return-footer').click()");
   await until(() => ev("document.querySelector('.studio-shell').dataset.page==='role-config'"));
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].find(x=>x.textContent.includes('在设置中查看模型')).click()");
   await until(() => ev("document.querySelector('.config-prose:not([hidden]) input[aria-label=模型服务名称]')?.value==='模型待保存'"));
-  await ev("[...document.querySelectorAll('.config-prose:not([hidden]) button')].find(x=>x.textContent==='替换').click()");
-  await ev("(()=>{const e=document.querySelector('.config-prose:not([hidden]) input[type=password]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'secret-value');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
+  await ev("(()=>{const e=document.querySelector('.config-prose:not([hidden]) input[aria-label=模型密钥]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'secret-value');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
   await ev("[...document.querySelectorAll('.config-prose:not([hidden]) button')].find(x=>x.textContent==='保存模型服务'&&!x.disabled).click()");
   await until(() => modelPatches.length === 1);
   assert.equal(savedModelBody.secret, 'secret-value'); assert.equal(resources[0].name, '模型待保存');
   await until(() => ev("document.querySelector('input[aria-label=模型服务名称]').closest('.config-prose').innerText.includes('模型服务已保存')"));
+  await until(() => ev("document.querySelector('.config-prose:not([hidden]) input[aria-label=模型密钥]')?.type==='password' && document.querySelector('.config-prose:not([hidden]) input[aria-label=模型密钥]')?.value==='************'"));
+  await ev("document.querySelector('.config-prose:not([hidden]) .nd-secret-row button').click()");
+  await until(() => ev("document.querySelector('.config-prose:not([hidden]) input[aria-label=模型密钥]')?.type==='text' && document.querySelector('.config-prose:not([hidden]) input[aria-label=模型密钥]')?.value==='secret-value'"));
+  await ev("document.querySelector('.config-prose:not([hidden]) .nd-secret-row button').click()");
+  await until(() => ev("document.querySelector('.config-prose:not([hidden]) input[aria-label=模型密钥]')?.type==='password' && document.querySelector('.config-prose:not([hidden]) input[aria-label=模型密钥]')?.value==='************'"));
   await ev("(()=>{const e=document.querySelector('.config-prose:not([hidden]) input[aria-label=模型服务名称]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'模型保留密钥');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
   await ev("[...document.querySelectorAll('.config-prose:not([hidden]) button')].find(x=>x.textContent==='保存模型服务'&&!x.disabled).click()");
   await until(() => modelPatches.length === 2);
   assert.equal(Object.hasOwn(savedModelBody, 'secret'), false, '保留密钥时不应提交密钥');
   await ev("[...document.querySelectorAll('.config-index button')].find(x=>x.textContent.includes('添加模型服务')).click()");
-  await ev("(()=>{const p=[...document.querySelectorAll('.config-prose')].find(x=>!x.hidden&&x.textContent.includes('添加模型服务'));const set=(e,v)=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,v);e.dispatchEvent(new Event('input',{bubbles:true}));};set(p.querySelector('input[type=text]'),'新模型');set(p.querySelectorAll('input[type=text]')[1],'http://127.0.0.1:9000');set(p.querySelector('input[type=password]'),'secret');})()");
+  await ev("(()=>{const p=[...document.querySelectorAll('.config-prose')].find(x=>!x.hidden&&x.textContent.includes('添加模型服务'));const set=(e,v)=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,v);e.dispatchEvent(new Event('input',{bubbles:true}));};set(p.querySelector('input[type=text]'),'新模型');set(p.querySelectorAll('input[type=text]')[1],'http://127.0.0.1:9000');set(p.querySelector('input[type=password]'),'secret');set(p.querySelector('input[role=combobox]'),'gemini-2.5-flash');})()");
   await ev("[...document.querySelectorAll('.config-prose:not([hidden]) button')].find(x=>x.textContent.includes('保存模型服务')).click()");
   await until(() => ev("document.querySelector('.config-leaf').innerText.includes('新模型')"));
+  await until(() => ev("document.querySelector('.config-prose:not([hidden]) input[role=combobox]')?.value==='gemini-2.5-flash'"));
   assert.ok(!await ev("document.body.innerText.includes('secret')"), '密钥不应显示在页面中');
   await until(() => ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].some(x=>x.textContent==='删除模型服务'&&!x.disabled)"));
   await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='删除模型服务').click()");

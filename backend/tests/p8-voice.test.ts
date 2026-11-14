@@ -294,7 +294,7 @@ test("voice settings and reference audio persist with the current schema", async
     assert.deepEqual(tables, ["role_voice_settings", "voice_assets"]);
     assert.equal(
       withStorage(fixture, (storage) => storage.business.schemaVersion),
-      17,
+      18,
     );
   } finally {
     await fixture.close();

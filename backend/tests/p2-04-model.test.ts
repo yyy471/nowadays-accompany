@@ -85,6 +85,34 @@ async function startMockServer(): Promise<MockServer> {
       ]);
       return;
     }
+    if (
+      request.method === "POST" &&
+      request.url?.includes(":streamGenerateContent?alt=sse")
+    ) {
+      respondSse(response, [
+        sse({
+          candidates: [
+            {
+              content: {
+                role: "model",
+                parts: [
+                  { text: "你好" },
+                  {
+                    functionCall: {
+                      name: "workspace_read",
+                      args: { path: "note.md" },
+                    },
+                  },
+                ],
+              },
+              finishReason: "STOP",
+            },
+          ],
+          usageMetadata: { promptTokenCount: 6, candidatesTokenCount: 5 },
+        }),
+      ]);
+      return;
+    }
     respondJson(response, { error: "not found" }, 404);
   });
   server.listen(0, "127.0.0.1");
@@ -224,6 +252,9 @@ const ENDINGS: Record<ModelProtocol, string> = {
   "anthropic-messages":
     sse({ type: "message_delta", delta: { stop_reason: "end_turn" } }) +
     sse({ type: "message_stop" }),
+  "google-gemini": sse({
+    candidates: [{ finishReason: "STOP" }],
+  }),
 };
 
 function textDelta(protocol: ModelProtocol, text: string): string {
@@ -232,6 +263,11 @@ function textDelta(protocol: ModelProtocol, text: string): string {
   }
   if (protocol === "openai-responses") {
     return sse({ type: "response.output_text.delta", delta: text });
+  }
+  if (protocol === "google-gemini") {
+    return sse({
+      candidates: [{ content: { role: "model", parts: [{ text }] } }],
+    });
   }
   return sse({
     type: "content_block_delta",
@@ -306,6 +342,33 @@ function twoToolCalls(protocol: ModelProtocol): string {
     return (
       items.join("") +
       sse({ type: "response.completed", response: { status: "completed" } })
+    );
+  }
+  if (protocol === "google-gemini") {
+    return (
+      sse({
+        candidates: [
+          {
+            content: {
+              role: "model",
+              parts: [
+                {
+                  functionCall: {
+                    name: "workspace_read",
+                    args: { path: "a.md" },
+                  },
+                },
+                {
+                  functionCall: {
+                    name: "workspace_read",
+                    args: { path: "b.md" },
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      }) + ENDINGS["google-gemini"]
     );
   }
   return (
@@ -421,6 +484,42 @@ function assertToolHistory(
     );
     return;
   }
+  if (protocol === "google-gemini") {
+    const contents = wire.contents as Array<{
+      role: string;
+      parts: Array<Record<string, unknown>>;
+    }>;
+    const modelTurn = contents.find((turn) => turn.role === "model");
+    assert.ok(modelTurn);
+    const calls = modelTurn.parts
+      .map((part) => part.functionCall as { name: string; args: unknown } | undefined)
+      .filter((item): item is { name: string; args: unknown } => item !== undefined);
+    assert.deepEqual(
+      calls.map((call) => [call.name, call.args]),
+      [
+        ["workspace_read", { path: "a.md" }],
+        ["workspace_read", { path: "b.md" }],
+      ],
+    );
+    const toolTurn = contents.filter(
+      (turn) =>
+        turn.role === "user" &&
+        turn.parts.some((part) => part.functionResponse !== undefined),
+    );
+    assert.equal(toolTurn.length, 1);
+    const responses = toolTurn[0]!.parts.map(
+      (part) =>
+        part.functionResponse as { name: string; response: { output: string } },
+    );
+    assert.deepEqual(
+      responses.map((item) => [item.name, item.response.output]),
+      [
+        ["workspace_read", `result:${expectedCallIds[0]}`],
+        ["workspace_read", `result:${expectedCallIds[1]}`],
+      ],
+    );
+    return;
+  }
   const messages = wire.messages as Array<{
     role: string;
     content: Array<Record<string, unknown>>;
@@ -458,6 +557,7 @@ test("tool results continue the same model turn for all protocols", async () => 
     "openai-chat",
     "openai-responses",
     "anthropic-messages",
+    "google-gemini",
   ] as const) {
     const server = await startRawServer(({ index }) => ({
       body:
@@ -569,6 +669,7 @@ test("streams require a complete protocol terminal and mark explicit incompletes
     "openai-chat",
     "openai-responses",
     "anthropic-messages",
+    "google-gemini",
   ] as const) {
     const cases: Array<{
       body: string;
@@ -621,10 +722,12 @@ test("streams require a complete protocol terminal and mark explicit incompletes
           "data: [DONE]\n\n"
         : protocol === "openai-responses"
           ? sse({ type: "response.incomplete", response: { status: "incomplete" } })
-          : sse({
-              type: "message_delta",
-              delta: { stop_reason: "max_tokens" },
-            }) + sse({ type: "message_stop" });
+          : protocol === "google-gemini"
+            ? sse({ candidates: [{ finishReason: "MAX_TOKENS" }] })
+            : sse({
+                type: "message_delta",
+                delta: { stop_reason: "max_tokens" },
+              }) + sse({ type: "message_stop" });
     const incompleteServer = await startRawServer(() => ({
       body: textDelta(protocol, "partial") + incompleteBody,
     }));
@@ -649,8 +752,10 @@ test("streams require a complete protocol terminal and mark explicit incompletes
             "data: [DONE]\n\n"
         : protocol === "openai-responses"
           ? sse({ type: "response.completed", response: { status: "completed" } })
-          : sse({ type: "message_delta", delta: { stop_reason: "tool_use" } }) +
-            sse({ type: "message_stop" }),
+          : protocol === "google-gemini"
+            ? ENDINGS["google-gemini"]
+            : sse({ type: "message_delta", delta: { stop_reason: "tool_use" } }) +
+              sse({ type: "message_stop" }),
       "",
     );
     const toolServer = await startRawServer(() => ({ body: toolOnly }));
@@ -950,13 +1055,14 @@ test("connection tests use an internal output budget and accept explicit truncat
   }
 });
 
-test("three model protocols stream text, tool calls and usage", async () => {
+test("model protocols stream text, tool calls and usage", async () => {
   const server = await startMockServer();
   try {
     for (const protocol of [
       "openai-chat",
       "openai-responses",
       "anthropic-messages",
+      "google-gemini",
     ] as const) {
       const adapter = new HttpModelAdapter(
         { protocol, baseUrl: server.baseUrl },
@@ -981,13 +1087,17 @@ test("three model protocols stream text, tool calls and usage", async () => {
       assert.equal(
         server.requests.some(
           (request) =>
-            request.url?.endsWith(
-              protocol === "openai-chat"
-                ? "/chat/completions"
-                : protocol === "openai-responses"
-                  ? "/responses"
-                  : "/messages",
-            ) && (request.body as { stream?: boolean }).stream === true,
+            protocol === "google-gemini"
+              ? request.url?.endsWith(
+                  "/models/mock-model:streamGenerateContent?alt=sse",
+                )
+              : request.url?.endsWith(
+                  protocol === "openai-chat"
+                    ? "/chat/completions"
+                    : protocol === "openai-responses"
+                      ? "/responses"
+                      : "/messages",
+                ) && (request.body as { stream?: boolean }).stream === true,
         ),
         true,
       );

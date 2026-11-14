@@ -12,6 +12,13 @@ import type {
   ModelRequest,
   ModelServiceConfig,
 } from "../domain/model.js";
+import {
+  listGoogleModels,
+  mapGoogleErrorReason,
+  streamGoogleGemini,
+  type GoogleGeminiTransport,
+  type GoogleOAuthTokenCache,
+} from "./google-gemini.js";
 
 const DEFAULT_LIST_TIMEOUT_MS = 20_000;
 
@@ -22,6 +29,9 @@ export interface HttpModelAdapterOptions {
 
 export class HttpModelAdapter implements ModelPort {
   private readonly listTimeoutMs: number;
+  private readonly googleTokenCache: { current: GoogleOAuthTokenCache | undefined } = {
+    current: undefined,
+  };
 
   constructor(
     private readonly config: ModelServiceConfig,
@@ -32,6 +42,16 @@ export class HttpModelAdapter implements ModelPort {
   }
 
   async listModels(signal?: AbortSignal): Promise<string[]> {
+    if (this.config.protocol === "google-gemini") {
+      return listGoogleModels({
+        baseUrl: this.config.baseUrl,
+        credential: this.credential,
+        cacheRef: this.googleTokenCache,
+        transport: this.googleTransport(),
+        timeoutMs: this.listTimeoutMs,
+        ...(signal === undefined ? {} : { signal }),
+      });
+    }
     const headers = this.baseHeaders("application/json");
     const response = await this.request(
       endpoint(this.config.baseUrl, "/models"),
@@ -72,7 +92,25 @@ export class HttpModelAdapter implements ModelPort {
     if (this.config.protocol === "openai-responses") {
       return this.streamOpenAiResponses(request);
     }
+    if (this.config.protocol === "google-gemini") {
+      return streamGoogleGemini({
+        baseUrl: this.config.baseUrl,
+        credential: this.credential,
+        cacheRef: this.googleTokenCache,
+        request,
+        transport: this.googleTransport(),
+      });
+    }
     return this.streamAnthropic(request);
+  }
+
+  private googleTransport(): GoogleGeminiTransport {
+    return {
+      request: (url, init, options) => this.request(url, init, options),
+      readSse: (response) => readSse(response),
+      parseStreamJson,
+      continuationItems,
+    };
   }
 
   private async *streamOpenAiChat(
@@ -839,6 +877,10 @@ function safeUpstreamReason(status: number, body: string): string {
   const error = (value as { error?: unknown }).error;
   if (error === null || typeof error !== "object" || Array.isArray(error)) {
     return `http_${status}`;
+  }
+  const googleReason = mapGoogleErrorReason(error);
+  if (googleReason !== null) {
+    return googleReason;
   }
   for (const candidate of [
     (error as { code?: unknown }).code,

@@ -734,6 +734,15 @@ export function registerApiRoutes(
   );
 
   router.add(
+    "POST",
+    "/v1/resources/:resourceId/secret/reveal",
+    ({ params }): JsonResponse => ({
+      status: 200,
+      body: services.resources.revealSecret(params.resourceId ?? ""),
+    }),
+  );
+
+  router.add(
     "GET",
     "/v1/roles/:roleId/bindings",
     ({ params }): JsonResponse => ({

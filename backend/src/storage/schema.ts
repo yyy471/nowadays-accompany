@@ -8,8 +8,8 @@ import {
 } from "../domain/errors.js";
 import { backfillEvidence } from "./evidence.js";
 
-export const APP_SCHEMA_VERSION = 7;
-export const BUSINESS_SCHEMA_VERSION = 17;
+export const APP_SCHEMA_VERSION = 8;
+export const BUSINESS_SCHEMA_VERSION = 18;
 export const EXECUTION_SCHEMA_VERSION = 1;
 
 export const APP_TABLES = [
@@ -1530,6 +1530,46 @@ UPDATE message_segments
  WHERE home_asset_id IS NULL AND outfit_id IS NOT NULL;
 `;
 
+const BUSINESS_V18_SQL = `
+-- V18：model_calls 协议约束纳入 google-gemini（Google Gemini / Vertex AI 直连）。
+ALTER TABLE model_calls RENAME TO model_calls_v18_old;
+DROP INDEX IF EXISTS idx_model_calls_role_time;
+
+CREATE TABLE model_calls (
+  model_call_id TEXT PRIMARY KEY,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  execution_id TEXT REFERENCES executions(execution_id),
+  batch_id TEXT REFERENCES memory_batches(batch_id),
+  purpose TEXT NOT NULL CHECK (purpose IN (
+    'user_chat', 'user_task', 'memory_maintenance', 'autonomous', 'connection_test'
+  )),
+  resource_id TEXT,
+  model_name TEXT NOT NULL,
+  protocol TEXT NOT NULL CHECK (protocol IN (
+    'openai-chat', 'openai-responses', 'anthropic-messages', 'google-gemini'
+  )),
+  status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed', 'unknown')),
+  error_code TEXT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  usage_json TEXT,
+  raw_response_json TEXT
+);
+
+INSERT INTO model_calls
+  (model_call_id, role_id, execution_id, batch_id, purpose, resource_id,
+   model_name, protocol, status, error_code, started_at, finished_at,
+   usage_json, raw_response_json)
+SELECT model_call_id, role_id, execution_id, batch_id, purpose, resource_id,
+       model_name, protocol, status, error_code, started_at, finished_at,
+       usage_json, raw_response_json
+  FROM model_calls_v18_old;
+
+DROP TABLE model_calls_v18_old;
+CREATE INDEX IF NOT EXISTS idx_model_calls_role_time
+  ON model_calls (role_id, started_at);
+`;
+
 const APP_V6_SQL = `
 -- v6：删除资源时先在全局库同事务提交「资源删除 + 待清理记录」（RP-R05）。
 -- 角色业务库的残留绑定由启动恢复、删除重试和读侧过滤继续清理。
@@ -1548,6 +1588,38 @@ CREATE TABLE IF NOT EXISTS role_deletions (
 );
 `;
 
+const APP_V8_SQL = `
+-- v8：model_test_calls 协议约束纳入 google-gemini（Google Gemini / Vertex AI 直连）。
+ALTER TABLE model_test_calls RENAME TO model_test_calls_v8_old;
+DROP INDEX IF EXISTS idx_model_test_calls_resource;
+
+CREATE TABLE model_test_calls (
+  test_call_id TEXT PRIMARY KEY,
+  resource_id TEXT,
+  model_name TEXT NOT NULL,
+  protocol TEXT NOT NULL CHECK (protocol IN (
+    'openai-chat', 'openai-responses', 'anthropic-messages', 'google-gemini'
+  )),
+  status TEXT NOT NULL CHECK (status IN ('succeeded', 'failed')),
+  error_code TEXT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT NOT NULL,
+  usage_json TEXT,
+  config_fingerprint TEXT
+);
+
+INSERT INTO model_test_calls
+  (test_call_id, resource_id, model_name, protocol, status, error_code,
+   started_at, finished_at, usage_json, config_fingerprint)
+SELECT test_call_id, resource_id, model_name, protocol, status, error_code,
+       started_at, finished_at, usage_json, config_fingerprint
+  FROM model_test_calls_v8_old;
+
+DROP TABLE model_test_calls_v8_old;
+CREATE INDEX IF NOT EXISTS idx_model_test_calls_resource
+  ON model_test_calls (resource_id, finished_at);
+`;
+
 export function openAppDatabase(dbPath: string): OpenedDatabase {
   return openVersionedDatabase(
     dbPath,
@@ -1558,7 +1630,8 @@ export function openAppDatabase(dbPath: string): OpenedDatabase {
       APP_V4_SQL +
       APP_V5_SQL +
       APP_V6_SQL +
-      APP_V7_SQL,
+      APP_V7_SQL +
+      APP_V8_SQL,
     {
       1: (db) => db.exec(APP_V2_SQL),
       2: (db) => db.exec(APP_V3_SQL),
@@ -1566,6 +1639,7 @@ export function openAppDatabase(dbPath: string): OpenedDatabase {
       4: (db) => db.exec(APP_V5_SQL),
       5: (db) => db.exec(APP_V6_SQL),
       6: (db) => db.exec(APP_V7_SQL),
+      7: (db) => db.exec(APP_V8_SQL),
     },
     APP_TABLES,
     [],
@@ -1597,7 +1671,8 @@ export function openBusinessDatabase(
       BUSINESS_V14_SQL +
       BUSINESS_V15_SQL +
       BUSINESS_V16_SQL +
-      BUSINESS_V17_SQL,
+      BUSINESS_V17_SQL +
+      BUSINESS_V18_SQL,
     {
       1: (db) => {
         db.exec(BUSINESS_V2_SQL);
@@ -1618,6 +1693,7 @@ export function openBusinessDatabase(
       14: (db) => db.exec(BUSINESS_V15_SQL),
       15: (db) => db.exec(BUSINESS_V16_SQL),
       16: (db) => db.exec(BUSINESS_V17_SQL),
+      17: (db) => db.exec(BUSINESS_V18_SQL),
     },
     BUSINESS_TABLES,
     BUSINESS_INDEXES,

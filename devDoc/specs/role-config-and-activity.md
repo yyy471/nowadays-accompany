@@ -84,7 +84,7 @@
   - `GET /v1/resources`（可选 `?kind=model|mcp|skill`；CLI：`resource list`）、`GET /v1/resources/:resourceId`（CLI：`resource get`）
   - `GET /v1/resources/:resourceId/references`（CLI：`resource references`）：返回 `{ resourceId, kind, references, canUpdate, canDisable, canDelete }`；每条引用含 `reason: "ROLE_BINDING" | "TASK_CHAIN" | "INFLIGHT_CALL"`、`roleId`、`capability`、`bindingEnabled` 及可选 `taskId` / `taskStatus`。其中 `canDisable` 恒为 `true`，`canUpdate` 对 `mcp`/`skill` 为 `!enabledBinding && chains.length === 0`（对 `model` 为 `true`），`canDelete` 为 `!enabledBinding && chains.length === 0 && inflight.length === 0`。
   - `GET /v1/resources/:resourceId/impact`：按运行时同一模型解析规则返回 `{ resourceId, kind, roles: Array<{ roleId, displayName, usages: Array<"chat" | "memory" | "task">, taskIds, state, running }>, blockingTasks }`；全局停用且无续用的服务不计入依赖，独立记忆模型不可用时回退至对话模型计入实际目标，仅旧任务链依赖记为 `["task"]`。
-  - `POST /v1/model-services/models`、`POST /v1/model-services/test`、`POST /v1/resources/:resourceId/models`、`POST /v1/resources/:resourceId/model-test`（`{ model }`）。
+  - `POST /v1/model-services/models`、`POST /v1/model-services/test`、`POST /v1/resources/:resourceId/models`、`POST /v1/resources/:resourceId/model-test`（`{ model }`）、`POST /v1/resources/:resourceId/secret/reveal`（仅在用户在详情页主动点击「显示」时按需返回当前模型凭据原文或引用）。
 - **角色配置读取与草稿试听/测试**：
   - `GET /v1/roles/:roleId/bindings`（CLI：`binding get`，返回 `{ items, revision }`，读侧自动过滤 `resource_deletions` 待清理项）
   - `GET /v1/roles/:roleId/autonomy`、`GET /v1/roles/:roleId/autonomy/budget`
@@ -96,8 +96,8 @@
 
 - **App 中心库（`AppStore`）**：持有角色索引与 `initStatus`、角色活动三态与停止边界记录（`role_activity`）、全局资源与模型测试摘要（`protocol` 或 `baseUrl` 变动时清除旧 `lastTest`）、全局生图服务、加密凭据引用、两阶段删除待清理队列（`resource_deletions`、`role_deletions`）。
 - **角色独立库（`roles/<roleId>/`）**：持有角色设定与 `definitionRevision`、全表资源绑定（`role_bindings`）、自主额度与唤醒待办、对话与任务链/资源延续记录、外观软删除记录与素材引用、角色语音与场景生图配置；`keepHistory=1` 删除时只移出 App 索引与活动记录、保留角色目录，`keepHistory=0` 时加入 `role_deletions` 并删除 `roles/<roleId>` 目录，用户原始素材目录在任何情况下都不删除。
-- **凭据只写与脱敏**：
-  - `model` / `image-service` 密钥仅写不回显；视图返回凭据状态；直填 `secret` 与 `config.credentialRef` 不可并存（`409 RESOURCE_CREDENTIAL_CONFLICT`）；更换 `protocol` 或站点（`baseUrl` origin 变更）而试图沿用旧密钥或未变更的 `credentialRef` 会被拒绝（`409 RESOURCE_CREDENTIAL_STALE`）。
+- **凭据只写、按需显隐与脱敏**：
+  - `model` / `image-service` 常规创建、列表与详情视图均仅返回凭据状态不回显明文；模型资源详情支持在用户主动点击「显示」时通过 `POST /v1/resources/:resourceId/secret/reveal` 按需取回原文，默认仍以掩码文本形式编辑（未改则保留、清空则删除、改写则替换）；直填 `secret` 与 `config.credentialRef` 不可并存（`409 RESOURCE_CREDENTIAL_CONFLICT`）；更换 `protocol` 或站点（`baseUrl` origin 变更）而试图沿用旧密钥或未变更的 `credentialRef` 会被拒绝（`409 RESOURCE_CREDENTIAL_STALE`）。
   - `mcp` 资源 `config.env` 所有值统一脱敏返回 `***`；更新 `mcp` 时 `mergeRedactedMcpEnv` 将提交值仍为 `***` 的键保留库中原值。
 
 ### 2.5 关键 HTTP 状态码与错误码

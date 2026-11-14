@@ -108,7 +108,7 @@ try {
   assert.equal(revised.definitionRevision, 2);
   assert.equal((await cli(port, ["role", "get", "--role", roleId])).roleId, roleId);
   const models = [];
-  for (const file of ["model-anthropic.json", "model-openai-chat.json", "model-openai-responses.json"]) {
+  for (const file of ["model-anthropic.json", "model-openai-chat.json", "model-openai-responses.json", "model-google-gemini.json"]) {
     models.push(await cli(port, ["resource", "create", "--kind", "model", "--json", `@examples/${file}`]));
   }
   const workspace = path.join(appRoot, "data", "roles", roleId, "workspace");

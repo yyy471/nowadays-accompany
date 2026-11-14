@@ -1,12 +1,11 @@
 import { z } from "zod";
-import { modelBaseConfigSchema } from "./resource.js";
+import {
+  modelBaseConfigSchema,
+  modelProtocolSchema,
+  type ModelProtocol,
+} from "./resource.js";
 
-export const modelProtocolSchema = z.enum([
-  "openai-chat",
-  "openai-responses",
-  "anthropic-messages",
-]);
-export type ModelProtocol = z.infer<typeof modelProtocolSchema>;
+export { modelProtocolSchema, type ModelProtocol };
 
 export const modelServiceConfigSchema = modelBaseConfigSchema;
 export type ModelServiceConfig = z.infer<typeof modelServiceConfigSchema>;

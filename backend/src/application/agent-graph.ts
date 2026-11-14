@@ -22,6 +22,7 @@ import {
   type ModelContinuation,
   type ModelMessage,
   type ModelPort,
+  type ModelProtocol,
   type ModelToolCall,
   type ModelToolSpec,
 } from "../domain/model.js";
@@ -32,7 +33,7 @@ export interface AgentModelHandle {
   model: ModelPort;
   resourceId: string;
   modelName: string;
-  protocol: "openai-chat" | "openai-responses" | "anthropic-messages";
+  protocol: ModelProtocol;
 }
 
 export interface AgentToolReservation {

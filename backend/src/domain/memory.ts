@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ModelProtocol } from "./model.js";
 
 export const memoryTriggerKindSchema = z.enum([
   "message_threshold",
@@ -300,7 +301,7 @@ export interface MemoryModelPort {
 
 export interface MemoryModelInfo {
   modelName: string;
-  protocol: "openai-chat" | "openai-responses" | "anthropic-messages";
+  protocol: ModelProtocol;
 }
 
 export const DEFAULT_MEMORY_BUDGET_CHARS = 24_000;

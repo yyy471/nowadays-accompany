@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { api, ApiError } from '../../api';
-import { modelTestNote } from './model-picker.js';
+import { modelTestNote, type ProbeNotice } from './model-picker.js';
 import {
   getModelCacheEpoch,
   getModelCacheVersion,
@@ -81,8 +81,11 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
   const [testBusy, setTestBusy] = useState(false);
   const [testNote, setTestNote] = useState('');
   const [testModel, setTestModel] = useState('');
+  const [notice, setNotice] = useState<ProbeNotice | null>(null);
   const listGeneration = useRef(0);
   const testGeneration = useRef(0);
+  // 共享一条日志序号：后一次点击（读取列表或测试连接）或离开页面会覆盖前一次日志。
+  const clickLogSeq = useRef(0);
   // 共享页记住当前供应商的缓存代次；代次变化说明凭据已更换。
   const epochRef = useRef(0);
   const keyRef = useRef(key);
@@ -95,11 +98,13 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
   useEffect(() => {
     listGeneration.current += 1;
     testGeneration.current += 1;
+    clickLogSeq.current += 1;
     setListBusy(false);
     setTestBusy(false);
     setListError('');
     setTestNote('');
     setTestModel('');
+    setNotice(null);
     epochRef.current = getModelCacheEpoch(key);
     if (options.shared === true) {
       const cached = readModelCache(key);
@@ -119,9 +124,11 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
     const epoch = getModelCacheEpoch(key);
     if (epoch !== epochRef.current) {
       epochRef.current = epoch;
+      clickLogSeq.current += 1;
       setListError('');
       setTestNote('');
       setTestModel('');
+      setNotice(null);
     }
     const cached = readModelCache(key);
     if (cached !== null) {
@@ -135,20 +142,31 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cacheVersion, options.shared, key]);
 
+  const clearLog = useCallback(() => {
+    clickLogSeq.current += 1;
+    setListError('');
+    setTestNote('');
+    setTestModel('');
+    setNotice(null);
+  }, []);
+
   const reset = useCallback(() => {
     listGeneration.current += 1;
     testGeneration.current += 1;
+    clickLogSeq.current += 1;
     setModels([]);
     setListError('');
     setListLoaded(false);
     setTestNote('');
     setTestModel('');
+    setNotice(null);
     setListBusy(false);
     setTestBusy(false);
   }, []);
 
   const refresh = useCallback(async (target: ModelProbeTarget) => {
     const version = ++listGeneration.current;
+    const logSeq = ++clickLogSeq.current;
     const capturedKey = keyRef.current;
     // 换密钥会推进该供应商的缓存代次；晚到的旧候选不能写回或覆盖列表。
     const epoch =
@@ -157,6 +175,9 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
         : null;
     setListBusy(true);
     setListError('');
+    setTestNote('');
+    setTestModel('');
+    setNotice(null);
     try {
       const result =
         target.kind === 'draft'
@@ -180,6 +201,16 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
       const next = result.models ?? [];
       setModels(next);
       setListLoaded(true);
+      if (logSeq === clickLogSeq.current) {
+        setNotice({
+          source: 'list',
+          role: 'status',
+          text:
+            next.length === 0
+              ? '服务没有返回模型，可继续手填。'
+              : `已读取 ${next.length} 个模型，可展开选择或输入。`,
+        });
+      }
       if (target.kind === 'saved') {
         if (target.cacheKey !== undefined) writeModelCache(target.cacheKey, next);
         savedHooks.current.onSavedList?.();
@@ -187,7 +218,15 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
     } catch (error) {
       if (version !== listGeneration.current || capturedKey !== keyRef.current) return;
       if (staleAfterRotation(target, epoch)) return;
-      setListError(messageOf(error));
+      const msg = messageOf(error);
+      if (logSeq === clickLogSeq.current) {
+        setListError(msg);
+        setNotice({
+          source: 'list',
+          role: 'alert',
+          text: `读取失败：${msg}。可继续手填模型名称。`,
+        });
+      }
     } finally {
       if (version === listGeneration.current) setListBusy(false);
     }
@@ -195,14 +234,17 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
 
   const test = useCallback(async (target: ModelProbeTarget, model: string) => {
     const version = ++testGeneration.current;
+    const logSeq = ++clickLogSeq.current;
     const capturedKey = keyRef.current;
     const epoch =
       target.kind === 'saved' && target.cacheKey !== undefined
         ? getModelCacheEpoch(target.cacheKey)
         : null;
     setTestBusy(true);
+    setListError('');
     setTestNote('');
     setTestModel(model);
+    setNotice(null);
     try {
       const result =
         target.kind === 'draft'
@@ -216,12 +258,30 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
             );
       if (version !== testGeneration.current || capturedKey !== keyRef.current) return;
       if (staleAfterRotation(target, epoch)) return;
-      setTestNote(modelTestNote(result));
+      const note = modelTestNote(result);
+      if (logSeq === clickLogSeq.current) {
+        setTestNote(note);
+        setNotice({
+          source: 'test',
+          role: result.ok === true ? 'status' : 'alert',
+          text: note,
+          model,
+        });
+      }
       if (target.kind === 'saved') savedHooks.current.onSavedTest?.();
     } catch (error) {
       if (version !== testGeneration.current || capturedKey !== keyRef.current) return;
       if (staleAfterRotation(target, epoch)) return;
-      setTestNote(`测试失败：${messageOf(error)}`);
+      const note = `测试失败：${messageOf(error)}`;
+      if (logSeq === clickLogSeq.current) {
+        setTestNote(note);
+        setNotice({
+          source: 'test',
+          role: 'alert',
+          text: note,
+          model,
+        });
+      }
     } finally {
       if (version === testGeneration.current) setTestBusy(false);
     }
@@ -235,8 +295,10 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
     testBusy,
     testNote,
     testModel,
+    notice,
     refresh,
     test,
+    clearLog,
     reset,
   };
 }

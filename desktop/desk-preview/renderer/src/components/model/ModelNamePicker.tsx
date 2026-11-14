@@ -1,6 +1,6 @@
 import { useId, useMemo, useState, type KeyboardEvent } from 'react';
 import { Button, Field, Input } from '../../ui';
-import { filterModelNames } from './model-picker.js';
+import { filterModelNames, visibleProbeNotice, type ProbeNotice } from './model-picker.js';
 
 export interface ModelNamePickerProps {
   value: string;
@@ -14,6 +14,8 @@ export interface ModelNamePickerProps {
   testBusy: boolean;
   /** 调用方按当前模型名过滤后的测试结果。 */
   testNote: string;
+  /** 读取列表与测试连接共享的互斥点击日志（存在时优先于分散字段）。 */
+  notice?: ProbeNotice | null;
   disabled?: boolean;
   testDisabled?: boolean;
   label?: string;
@@ -37,6 +39,7 @@ export function ModelNamePicker({
   onTest,
   testBusy,
   testNote,
+  notice,
   disabled = false,
   testDisabled = false,
   label = '模型名称',
@@ -51,6 +54,29 @@ export function ModelNamePicker({
     () => filterModelNames(models, open ? query : value),
     [models, open, query, value],
   );
+  const activeNotice = useMemo<ProbeNotice | null>(() => {
+    if (notice !== undefined) {
+      return visibleProbeNotice(notice, value);
+    }
+    if (listError) {
+      return {
+        source: 'list',
+        role: 'alert',
+        text: `读取失败：${listError}。可继续手填模型名称。`,
+      };
+    }
+    if (testNote) {
+      return { source: 'test', role: 'status', text: testNote };
+    }
+    if (listLoaded && models.length === 0) {
+      return {
+        source: 'list',
+        role: 'status',
+        text: '服务没有返回模型，可继续手填。',
+      };
+    }
+    return null;
+  }, [notice, value, listError, testNote, listLoaded, models.length]);
 
   const choose = (name: string) => {
     onChange(name);
@@ -135,8 +161,6 @@ export function ModelNamePicker({
       <Button size="sm" disabled={disabled || listBusy} onClick={onRefresh}>{listBusy ? '正在读取…' : '读取模型列表'}</Button>
       <Button size="sm" disabled={disabled || testBusy || testDisabled} onClick={onTest}>{testBusy ? '正在测试…' : '测试连接'}</Button>
     </div>
-    {listError ? <p className="config-muted" role="alert">读取失败：{listError}。可继续手填模型名称。</p> : null}
-    {listLoaded && listError.length === 0 && models.length === 0 ? <p className="config-muted">服务没有返回模型，可继续手填。</p> : null}
-    {testNote ? <p className="config-muted" role="status">{testNote}</p> : null}
+    {activeNotice ? <p className="config-muted" role={activeNotice.role}>{activeNotice.text}</p> : null}
   </Field>;
 }

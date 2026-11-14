@@ -917,7 +917,7 @@ test("legacy voice rows stay readable as the reference source", async () => {
     }
     assert.equal(
       withStorage(fixture, (storage) => storage.business.schemaVersion),
-      17,
+      18,
     );
   } finally {
     await fixture.close();
@@ -1293,7 +1293,7 @@ test("v9 voice rows migrate to v12 without touching messages, segments or SSE cu
           .get() as { latest: number | null }
       ).latest,
     }));
-    assert.equal(countsAfter.schemaVersion, 17);
+    assert.equal(countsAfter.schemaVersion, 18);
     assert.equal(countsAfter.messages, countsBefore.messages);
     assert.equal(countsAfter.segments, countsBefore.segments);
     assert.equal(countsAfter.events, countsBefore.events);

@@ -984,7 +984,7 @@ test("an app database from v2 upgrades to v3 and keeps resources", { timeout: 30
 
   const reopened = new AppStore(config.appDatabasePath);
   try {
-    assert.equal(reopened.schemaVersion, 7);
+    assert.equal(reopened.schemaVersion, 8);
     assert.equal(reopened.getResource(resourceId).name, "旧版服务");
     const tables = reopened.db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
@@ -1250,6 +1250,168 @@ test("a reused credential reference is rejected when the service moves to anothe
     assert.equal(errorCode(blocked.body), "RESOURCE_CREDENTIAL_STALE");
   } finally {
     await app.app.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("model config persists optional modelName and reveal endpoint exposes secret only on explicit request", { timeout: 60_000 }, async () => {
+  const root = tempRoot();
+  const server = await startMockServer();
+  let app: Awaited<ReturnType<typeof startApp>> | undefined;
+  const previousEnv = process.env.NOWADAYS_P12_REVEAL_TEST;
+  process.env.NOWADAYS_P12_REVEAL_TEST = "env-secret-value";
+  try {
+    app = await startApp(root);
+    const created = await api(app.baseUrl, "POST", "/v1/resources", {
+      kind: "model",
+      name: "带默认模型",
+      config: {
+        protocol: "openai-chat",
+        baseUrl: server.baseUrl,
+        modelName: "mock-model",
+      },
+      secret: "sk-reveal-initial",
+    });
+    assert.equal(created.status, 201);
+    assert.equal(created.raw.includes("sk-reveal-initial"), false);
+    assert.equal(
+      (created.body.config as Record<string, unknown>).modelName,
+      "mock-model",
+    );
+    const resourceId = created.body.resourceId as string;
+
+    const fetched = await api(
+      app.baseUrl,
+      "GET",
+      `/v1/resources/${resourceId}`,
+    );
+    assert.equal(fetched.status, 200);
+    assert.equal(fetched.raw.includes("sk-reveal-initial"), false);
+    assert.equal(
+      (fetched.body.config as Record<string, unknown>).modelName,
+      "mock-model",
+    );
+
+    const revealed = await api(
+      app.baseUrl,
+      "POST",
+      `/v1/resources/${resourceId}/secret/reveal`,
+    );
+    assert.equal(revealed.status, 200);
+    assert.deepEqual(revealed.body, {
+      status: "stored",
+      secret: "sk-reveal-initial",
+    });
+
+    const updated = await api(
+      app.baseUrl,
+      "PATCH",
+      `/v1/resources/${resourceId}`,
+      {
+        config: {
+          protocol: "openai-chat",
+          baseUrl: server.baseUrl,
+          modelName: "mock-model-v2",
+        },
+        secret: "sk-reveal-updated",
+      },
+    );
+    assert.equal(updated.status, 200);
+    assert.equal(updated.raw.includes("sk-reveal-updated"), false);
+    assert.equal(
+      (updated.body.config as Record<string, unknown>).modelName,
+      "mock-model-v2",
+    );
+
+    const revealedUpdated = await api(
+      app.baseUrl,
+      "POST",
+      `/v1/resources/${resourceId}/secret/reveal`,
+    );
+    assert.equal(revealedUpdated.status, 200);
+    assert.deepEqual(revealedUpdated.body, {
+      status: "stored",
+      secret: "sk-reveal-updated",
+    });
+
+    const switchedToRef = await api(
+      app.baseUrl,
+      "PATCH",
+      `/v1/resources/${resourceId}`,
+      {
+        config: {
+          protocol: "openai-chat",
+          baseUrl: server.baseUrl,
+          credentialRef: "env:NOWADAYS_P12_REVEAL_TEST",
+        },
+        secret: null,
+      },
+    );
+    assert.equal(switchedToRef.status, 200);
+    const revealedRef = await api(
+      app.baseUrl,
+      "POST",
+      `/v1/resources/${resourceId}/secret/reveal`,
+    );
+    assert.equal(revealedRef.status, 200);
+    assert.deepEqual(revealedRef.body, {
+      status: "reference",
+      reference: "env:NOWADAYS_P12_REVEAL_TEST",
+      secret: "env-secret-value",
+    });
+
+    const cleared = await api(
+      app.baseUrl,
+      "PATCH",
+      `/v1/resources/${resourceId}`,
+      {
+        config: {
+          protocol: "openai-chat",
+          baseUrl: server.baseUrl,
+        },
+        secret: null,
+      },
+    );
+    assert.equal(cleared.status, 200);
+    const revealedMissing = await api(
+      app.baseUrl,
+      "POST",
+      `/v1/resources/${resourceId}/secret/reveal`,
+    );
+    assert.equal(revealedMissing.status, 200);
+    assert.deepEqual(revealedMissing.body, { status: "missing" });
+
+    const mcp = await api(app.baseUrl, "POST", "/v1/resources", {
+      kind: "mcp",
+      name: "非模型资源",
+      config: { command: "echo", args: [], env: {} },
+    });
+    assert.equal(mcp.status, 201);
+    const mcpReveal = await api(
+      app.baseUrl,
+      "POST",
+      `/v1/resources/${mcp.body.resourceId as string}/secret/reveal`,
+    );
+    assert.equal(mcpReveal.status, 400);
+    assert.equal(errorCode(mcpReveal.body), "RESOURCE_KIND_MISMATCH");
+
+    const notFoundReveal = await api(
+      app.baseUrl,
+      "POST",
+      "/v1/resources/missing-id/secret/reveal",
+    );
+    assert.equal(notFoundReveal.status, 404);
+    assert.equal(errorCode(notFoundReveal.body), "RESOURCE_NOT_FOUND");
+  } finally {
+    if (previousEnv === undefined) {
+      delete process.env.NOWADAYS_P12_REVEAL_TEST;
+    } else {
+      process.env.NOWADAYS_P12_REVEAL_TEST = previousEnv;
+    }
+    if (app !== undefined) {
+      await app.app.close();
+    }
+    await server.close();
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

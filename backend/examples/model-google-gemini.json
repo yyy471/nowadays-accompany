@@ -1,0 +1,9 @@
+{
+  "name": "Google Gemini 协议示例",
+  "enabled": true,
+  "config": {
+    "protocol": "google-gemini",
+    "baseUrl": "https://provider.example.invalid/v1/publishers/google",
+    "credentialRef": "env:NOWADAYS_MODEL_API_KEY"
+  }
+}

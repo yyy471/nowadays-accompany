@@ -27,6 +27,7 @@ import {
   WindowNotFoundError,
 } from "../domain/errors.js";
 import { registerMessageEvidence } from "./evidence.js";
+import type { ModelProtocol } from "../domain/model.js";
 import type {
   ExecutionRecord,
   ExecutionStatus,
@@ -1412,7 +1413,7 @@ export class ConversationStore {
     executionId: string;
     resourceId: string;
     modelName: string;
-    protocol: "openai-chat" | "openai-responses" | "anthropic-messages";
+    protocol: ModelProtocol;
     purpose?: "user_chat" | "user_task" | "memory_maintenance" | "autonomous" | "connection_test";
     counted?: boolean;
     now?: string;

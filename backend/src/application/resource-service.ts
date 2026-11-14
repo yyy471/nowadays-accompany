@@ -4,6 +4,7 @@ import {
   BindingRevisionConflictError,
   InvalidBindingError,
   InvalidResourceConfigError,
+  ModelCredentialUnavailableError,
   ResourceCredentialConflictError,
   ResourceCredentialStaleError,
   ResourceInUseError,
@@ -194,6 +195,41 @@ export class ResourceService {
     return this.appStore
       .listResources(kind)
       .map((record) => this.toView(record));
+  }
+
+  /**
+   * 仅在用户主动点击「显示」时读取当前模型服务的凭据原文或引用内容；
+   * 常规资源列表与详情接口仍保持只写不回显。
+   */
+  revealSecret(resourceId: string): {
+    status: "stored" | "reference" | "missing";
+    secret?: string;
+    reference?: string;
+  } {
+    const record = this.appStore.getResource(resourceId);
+    if (record.kind !== "model") {
+      throw new ResourceKindMismatchError(resourceId, "model", record.kind);
+    }
+    const parsed = modelConfigSchema.safeParse(record.config);
+    const reference = parsed.success ? parsed.data.credentialRef : undefined;
+    const state = this.credentials.inspect(resourceId, reference);
+    if (state.kind === "stored") {
+      return { status: "stored", secret: state.value };
+    }
+    if (state.kind === "unavailable") {
+      throw new ModelCredentialUnavailableError(
+        `stored:${resourceId}`,
+        "已保存的密钥在当前环境无法解密，请重新输入新密钥覆盖",
+      );
+    }
+    if (state.kind === "reference") {
+      return {
+        status: "reference",
+        reference: state.reference,
+        ...(state.value !== undefined ? { secret: state.value } : {}),
+      };
+    }
+    return { status: "missing" };
   }
 
   /**

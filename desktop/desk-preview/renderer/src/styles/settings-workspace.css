@@ -113,3 +113,10 @@ html[data-config-switching] .studio-shell *,html[data-config-switching] .studio-
 .nd-model-options li { margin: 0; }
 .nd-model-options button { display: block; width: 100%; min-height: 34px; padding: 6px 10px; border-radius: var(--nd-semantic-radius-action); text-align: left; font-size: 13px; color: var(--cfg-ink); }
 .nd-model-options button:hover, .nd-model-options button:focus-visible { background: var(--cfg-selection); }
+
+/* 密钥输入行：文本框占满可用宽度，最右侧固定显隐按钮 */
+.nd-secret-row { display: flex; align-items: center; gap: 8px; width: 100%; }
+.config-prose .config-ledger .nd-secret-row { max-width: 360px; }
+.config-prose .config-ledger .nd-secret-row .ui-input { flex: 1 1 auto; min-width: 0; max-width: none; }
+.nd-secret-row .ui-input { flex: 1 1 auto; min-width: 0; }
+.nd-secret-row .ui-button { flex: none; white-space: nowrap; }

@@ -4,6 +4,14 @@ import { InvalidResourceConfigError } from "./errors.js";
 export const resourceKindSchema = z.enum(["model", "mcp", "skill"]);
 export type ResourceKind = z.infer<typeof resourceKindSchema>;
 
+export const modelProtocolSchema = z.enum([
+  "openai-chat",
+  "openai-responses",
+  "anthropic-messages",
+  "google-gemini",
+]);
+export type ModelProtocol = z.infer<typeof modelProtocolSchema>;
+
 export const credentialRefSchema = z
   .string()
   .regex(
@@ -46,12 +54,10 @@ export function isModelBaseUrl(value: string): boolean {
 
 export const modelBaseConfigSchema = z
   .object({
-    protocol: z.enum([
-      "openai-chat",
-      "openai-responses",
-      "anthropic-messages",
-    ]),
+    protocol: modelProtocolSchema,
     baseUrl: modelBaseUrlSchema,
+    /** 默认模型名称（选填，供设置界面回显与角色默认预填）。 */
+    modelName: z.string().trim().min(1).max(200).optional(),
     credentialRef: credentialRefSchema.optional(),
     /** 可核实的模型容量声明（字符口径），供记忆整理按容量分批。 */
     maxInputChars: z.number().int().positive().max(10_000_000).optional(),
