@@ -47,13 +47,16 @@ devDoc/
 | --- | --- |
 | [项目文档、开发规范与修复验收组织优化方案](archive/07-documentation/documentation-optimization-plan.md) | 三类阅读入口、现行契约与验收清单；[第 7 节](archive/07-documentation/documentation-optimization-plan.md#7-导航与现行契约独立复核)记录导航验收与契约差异，[第 7.1 节](archive/07-documentation/documentation-optimization-plan.md#71-现行规范勘误独立复验)记录勘误复验 |
 
-### 06 · 项目操作链路简化与闭环复验（`archive/06-workflow-simplification/`，`277`–`306`）
+### 06 · 项目操作链路简化与闭环复验（`archive/06-workflow-simplification/`，`277`–`308`）
+
+> 新增专题指南（2026-11-16）：[308 从零启动、连接配置与页面体验评审指南](archive/06-workflow-simplification/308-startup-and-connection-flow-audit.md)（面向首次接触系统用户的极简启动/连接速查与页面操作优化评审入口）。
 
 <details>
-<summary>展开 06 专项 30 份文档索引（`277`–`306`）</summary>
+<summary>展开 06 专项 31 份文档索引（`277`–`308`）</summary>
 
 | 文档 | 定位与状态 |
 | --- | --- |
+| [308 从零启动、连接配置与页面体验评审指南](archive/06-workflow-simplification/308-startup-and-connection-flow-audit.md) | 2026-11-16 极简指南：开箱启动命令、模型/语音/生图/扩展连接速查与基础使用路径 |
 | [277 项目操作链路复核与待修改项](archive/06-workflow-simplification/277-project-workflow-simplification-audit.md) | 首用、角色活动、全局服务、资源占用、删除和失败恢复的走查建议；主体已由 278 与 280～306 完成实施与离线复验 |
 | [278 项目操作链路简化修复文档](archive/06-workflow-simplification/278-project-workflow-simplification-fix-plan.md) | 模型按实际依赖暂停、同页配置与资源维护、首次对话、草稿测试方案（`§6` 视觉规范已由 `specs/frontend-design-system.md` 取代；`§5` 已于 [292 §6](archive/06-workflow-simplification/292-278-remaining-deletion-maintenance.md#6-生图草稿探测语音暂存试听与设置导航收敛) 完成离线自验，独立复核与 `§4` 联调见 `STATUS.md`） |
 | [279 操作链路修复方案复核](archive/06-workflow-simplification/279-workflow-simplification-two-pass-review.md) | 三轮复核覆盖页面操作、前后端关联、并发与失败恢复，含端到端验收用例 |
