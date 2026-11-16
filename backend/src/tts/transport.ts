@@ -7,7 +7,7 @@ import {
 import { isPcmWav } from "../application/audio-inspect.js";
 import type { SynthesizedAudio } from "../domain/voice.js";
 
-export const DEFAULT_TTS_TIMEOUT_MS = 90_000;
+export const DEFAULT_TTS_TIMEOUT_MS = 180_000;
 export const MAX_TTS_AUDIO_BYTES = 16 * 1024 * 1024;
 export const MAX_ERROR_BODY_BYTES = 64 * 1024;
 

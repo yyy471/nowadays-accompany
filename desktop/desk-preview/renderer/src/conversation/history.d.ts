@@ -11,6 +11,7 @@ export interface PerfRow {
   sprite: string | null;
   outfitId?: string | null;
   homeAssetId?: string | null;
+  voiceEmotion?: string | null;
   status: 'completed' | 'interrupted' | 'failed';
   createdAt: number;
 }

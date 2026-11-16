@@ -52,7 +52,7 @@
 | `DELETE /v1/roles/:roleId/windows/:windowId/input-state` | `?clientId=`（必填） | `200 { cleared: true }` | `clientId` 缺失或为空返回 `400 INPUT_STATE_INVALID`；清理指定客户端状态并触发 `schedule` |
 | `GET /v1/roles/:roleId/windows/:windowId/events` | `?after=` 与／或 Header `Last-Event-ID`，可选 `?clientId=` | `200 text/event-stream` | 游标非法或非本窗口有效事件编号返回 `400 SSE_CURSOR_INVALID`；见 §2.4 重放与心跳 |
 | `GET /v1/roles/:roleId/executions/:executionId` | — | `200` 执行详情 | 不存在返回 `404 EXECUTION_NOT_FOUND` |
-| `POST /v1/roles/:roleId/windows/:windowId/segments/:segmentId/speech` | 可选 JSON：`{ emotion? }` | `200` 音频字节流（`cache-control: no-store`） | 空文本 `400 VOICE_SEGMENT_EMPTY`；角色语音停用 `409 VOICE_DISABLED`；未找到句段 `404 MESSAGE_SEGMENT_NOT_FOUND`；上游异常 `409 TTS_VOICE_UNAVAILABLE` / `502 TTS_SYNTHESIS_FAILED` / `503 TTS_SERVICE_UNAVAILABLE` / `504 TTS_TIMEOUT` |
+| `POST /v1/roles/:roleId/windows/:windowId/segments/:segmentId/speech` | 可选 JSON：`{ emotion? }` | `200` 音频字节流（`cache-control: no-store`） | 空文本 `400 VOICE_SEGMENT_EMPTY`；角色语音停用 `409 VOICE_DISABLED`；未找到句段 `404 MESSAGE_SEGMENT_NOT_FOUND`；缺省 `emotion` 时等待并消费 `segment.voice_emotion`（至多 `1800ms`）；上游异常 `409 TTS_VOICE_UNAVAILABLE` / `502 TTS_SYNTHESIS_FAILED` / `503 TTS_SERVICE_UNAVAILABLE` / `504 TTS_TIMEOUT` |
 
 ### 2.2 过场图任务与受管素材接口
 
@@ -68,7 +68,7 @@
 
 | 存储层级 | 具体载体 | 归属与生命周期说明 |
 | --- | --- | --- |
-| **每角色业务库**（`BUSINESS_SCHEMA_VERSION = 17`，见 [schema.ts](../../backend/src/storage/schema.ts#L12)） | `windows`、`messages`、`executions`、`message_segments`、`execution_stream_events`、`scene_image_tasks`、`scene_image_assets`、`model_calls` | 一轮回复在 `messages` 保持一条；`message_segments` 记录 `segment_id`、`ordinal`、`kind`（`speech` / `narration`）、字符起止偏移、`outfit_id`、`home_asset_id`、`sprite_asset_id`、`annotated_at`；`scene_image_tasks` 记录锚点消息／执行、`trigger_source`（`manual` / `auto`）、`layer_mode`、`start_segment_id`～`end_segment_id`、`attempt_no`、`config_json`（固定服务与锚点快照）；`scene_image_assets` 按 `task_id` 唯一索引约束每任务最多一张成图 |
+| **每角色业务库**（`BUSINESS_SCHEMA_VERSION = 20`，见 [schema.ts](../../backend/src/storage/schema.ts)） | `windows`、`messages`、`executions`、`message_segments`、`execution_stream_events`、`scene_image_tasks`、`scene_image_assets`、`model_calls` | 一轮回复在 `messages` 保持一条；`message_segments` 记录 `segment_id`、`ordinal`、`kind`（`speech` / `narration`）、字符起止偏移、`outfit_id`、`home_asset_id`、`sprite_asset_id`、`voice_emotion`（V19 新增，仅 `speech` 句段写入）、`annotated_at`；`scene_image_tasks` 记录锚点消息／执行、`trigger_source`（`manual` / `auto`）、`layer_mode`、`start_segment_id`～`end_segment_id`、`attempt_no`、`config_json`（固定服务与锚点快照）；`scene_image_assets` 按 `task_id` 唯一索引约束每任务最多一张成图 |
 | **每角色文件系统** | `<roleDir>/scene-images/<assetId>.<ext>` | 仅通过 `readAsset(roleId, assetId)` 校验路径与魔数读取，相对路径不通过 HTTP 暴露 |
 | **后端进程内存态** | `InputStateRegistry`（[input-state.ts](../../backend/src/application/input-state.ts#L12)）与 `blockedWindows` | 输入状态 1 秒自动过期，重启动清空，不持久化；执行异常写入 `blockedWindows` 直到该窗口收到新消息或用户显式重试（`283 R02`） |
 | **桌面渲染器内存与本地存储** | `useWindowSession` 会话状态与 `drafts`；`localStorage` | `drafts` 按 `${roleId}:${windowId}` 分键隔离；`nowadays-dialogue-voice` / `nowadays-dialogue-scene` 与 `nowadays-dialogue-dock`（见 [Conversation.tsx](../../desktop/desk-preview/renderer/src/pages/Conversation.tsx#L22-L27)）记录演出本地偏好；音频缓存（`MAX_CACHE = 48`）通过 `URL.createObjectURL` 驻留并在切换角色／窗口／卸载时释放 |
@@ -110,10 +110,10 @@
 - **句段切分规则**（[message-segments.ts](../../backend/src/domain/message-segments.ts)）：
   - 整行 `*...*`、`旁白：`、`【旁白】` 划为 `narration`；显式旁白内若出现引号台词或 `台词：` / `对白：` 再切出 `speech`；行内 `*动作*` 与台词拆分保留原文起止偏移；短句合并门槛为 `SHORT_SEGMENT_CHARS = 8`、`MAX_MERGED_CHARS = 30`。
   - 流式增量期间 `insertMessageSegments(..., partial=true)` 为已稳定段落提前发出 `message_segments`（`partial: true`）并保持 `segmentId`；终态提交或打断时对齐／替换未稳定末段。前端 `reconcileFinalSegments` 同步修正 `shown` 进度：若被缩短或末尾段已露出，则立即恢复输入框（`FE-R01` 闭环）。
-- **异步表情标注与计量边界**（[segment-annotation-service.ts](../../backend/src/application/segment-annotation-service.ts#L103-L315)）：
-  - 回复正式提交（或主动分享写入）之后异步派发；先校验消息未生成、存在未标注句段、有当前服饰且该服饰有至少 1 张 `sprites`。
+- **异步表情与语音情绪标注与计量边界**（[segment-annotation-service.ts](../../backend/src/application/segment-annotation-service.ts)）：
+  - 回复正式提交（或主动分享写入）之后异步派发；不再以「存在服饰或 `sprites`」为前提，只要存在未标注句段且需立绘标注或存在 `speech` 台词段即启动标注：无当前服饰／无可用差分时仍基于角色人设、前置对话历史（`listRecentContextBefore` 包含 `sender = 'user'` 的已接收消息及已结束／被打断助手消息）、当前引擎提示（`ttsEngine`）与相邻 `narration`/`speech` 语境生成精炼语音情绪指令 `voiceEmotion`；存在有效差分时在同一调用中联合输出 `spriteAssetId` 与 `voiceEmotion`。
   - 经 `resolveClaimedModelBinding` 协调模型维护窗口与在途占用，并**在扣点与 `model_calls` 登记前先完成适配器及凭据初始化**；因此 `file:` 凭据缺失或格式错误时 `model_calls` 与自主点数均不递增（`216 R03` 终版闭环）。
-  - 仅在模型调用返回合法 JSON 且通过本服饰 `sprites` 白名单校验后写回 `sprite_asset_id` 并推送 `segment_annotations`；任何解析异常或调用失败都只记录调用结局，**不影响已保存正文与句段展示**。
+  - 仅在模型调用返回合法 JSON 后按白名单校验 `spriteAssetId` 并清洗 `voiceEmotion`（非 `speech` 句段强制置 `null`）写回 `message_segments`，同时推送包含 `items[].voiceEmotion` 的 `segment_annotations` SSE 事件；任何解析异常或调用失败都只记录调用结局，**不影响已保存正文与句段展示**。
 - **立绘渲染与跨服饰回退链**（[ConversationStage.tsx](../../desktop/desk-preview/renderer/src/conversation/ConversationStage.tsx#L88-L115) 与 [270 §1](../archive/05-model-settings-and-dialogue/270-268-progress-dialogue-model-picker.md#L5-L12)）：
   - 差分选取由 `spriteForRow` 按 `spriteAssetId` 应用，不强制要求句段携带 `outfitId`；同一轮无标注句段沿用同轮前一个有效差分；每一段在提交时同时固化当轮 `outfitId` 与 `homeAssetId`。
   - 舞台角色图按严格降级链取首个未触发解码错误（`failedSources`）的源：`spriteAssetId` 差分图 -> 句段当轮快照 `segmentHomeUrl`（`homeAssetId`） -> 角色当前服饰主页图 `outfitUrl` -> 主题角色底图 `themeUrl`。双缓冲 `CrossfadeLayer` 仅在新图解码完成后切槽淡入。
@@ -123,8 +123,8 @@
 - **逐句推进与等待反馈**（[ChatPane.tsx](../../desktop/desk-preview/renderer/src/conversation/ChatPane.tsx#L177-L335)、[advance.js](../../desktop/desk-preview/renderer/src/conversation/advance.js)）：
   - 用户发送后立即清除当前 `wait` 与错误、聚焦消息滚动容器并隐藏输入框；收到首个可用句段即自动推进显示第一句；之后用户在消息区域点击（`shouldAdvanceFromClick`，避开按钮／链接／输入框／已选中文本）或按键 `Enter` / `Space`（`shouldAdvanceFromKey`，且已处理 `Shift+Enter` 换行与 IME `isComposing`/`keyCode === 229`）推进下一段；未到下一段时显示「正在组织回复…」或「下一句还在准备…」（`271 MR-05`）。
   - 一旦终态到达且末段展示完毕（含单句或失败空回复），立即还原输入框并归还草稿焦点（非历史查看态时）。
-- **语音播放、预取与停用处理**（[use-segment-voice.ts](../../desktop/desk-preview/renderer/src/conversation/use-segment-voice.ts)）：
-  - 播放键为 `[roleId, windowId, voiceRevision, segmentId, text]`（按 `roleId` 变化从 `GET .../voice` 刷新 `updatedAt` 版本，前端目前未传 `emotion` 字段，由服务端按文本推断）。
+- **语音播放、情绪联动与停用处理**（[use-segment-voice.ts](../../desktop/desk-preview/renderer/src/conversation/use-segment-voice.ts) · [voice-service.ts](../../backend/src/application/voice-service.ts)）：
+  - 前端随 `segment_annotations`（及快照）同步每句的 `voiceEmotion`；自动播报存在 **220 ms** 防抖，后端 `VoiceService` 在收到缺省 `emotion` 的 `/speech` 请求时对同轮在途异步标注额外等待有界障栅（至多 **1800 ms**），确保首句在标注未落盘前到达时仍可拿到 `voice_emotion`，超时则安全退回无情绪直合。
   - 仅自动播放已开启且当前处于实时跟随且历史面板未打开时的 `speech`（非 `action`）段；遇到 `action`（旁白）只取消 220 ms 自动播放防抖（`cancelPending`），**保留已经在播的上一句音频直到自然结束或遇到新台词**；新音频切换在 `onplaying` 触发后才停掉旧 `<audio>`（`FE-R02`）。
   - 预取 `current` 及后续最多 2 个可播句段；若后端返回 `409 VOICE_DISABLED`，自动播放与预取即刻静默跳过以省去重复报错，唯有用户手动点击小喇叭会清除停用标记并向服务端重查及 toast 提示。
 - **对象切换、恢复草稿与历史隔离**（[use-window-session.ts](../../desktop/desk-preview/renderer/src/conversation/use-window-session.ts)、[Conversation.tsx](../../desktop/desk-preview/renderer/src/pages/Conversation.tsx)）：

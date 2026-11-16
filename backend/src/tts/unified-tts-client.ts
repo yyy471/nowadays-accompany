@@ -41,11 +41,18 @@ export interface UnifiedTtsSynthesisInput {
   source: UnifiedTtsSource;
   language: VoiceLanguage | null;
   speed: number | null;
+  engine?: string;
   emotion?: string;
   signal?: AbortSignal;
 }
 
 const MAX_JSON_BODY_BYTES = 1024 * 1024;
+
+const voiceEngineStatusSchema = z.object({
+  ready: z.boolean(),
+  active: z.boolean(),
+  onDemand: z.boolean().optional(),
+});
 
 const healthSchema = z.object({
   protocol: z.literal("nowadays-tts-v1"),
@@ -53,8 +60,8 @@ const healthSchema = z.object({
   model: z.string().min(1).max(200),
   ready: z.boolean(),
   capabilities: voiceCapabilitiesSchema.safeExtend({
-    engines: z.record(z.string(), z.object({ ready: z.boolean(), active: z.boolean() })).optional(),
-    defaultEngine: z.string().min(1).optional(),
+    engines: z.record(z.string().min(1).max(64), voiceEngineStatusSchema).optional(),
+    defaultEngine: z.string().min(1).max(64).optional(),
   }),
 });
 
@@ -190,7 +197,12 @@ export class UnifiedTtsClient {
       throw new TtsProtocolInvalidError("健康响应不符合 nowadays-tts-v1 协议");
     }
     const { engines, defaultEngine, ...capabilities } = parsed.data.capabilities;
-    return { ...parsed.data, capabilities };
+    return {
+      ...parsed.data,
+      capabilities,
+      ...(engines === undefined ? {} : { engines }),
+      ...(defaultEngine === undefined ? {} : { defaultEngine }),
+    };
   }
 
   private async readVoices(
@@ -277,6 +289,9 @@ function buildForm(input: UnifiedTtsSynthesisInput): FormData {
   }
   if (input.speed !== null) {
     form.set("speed", String(input.speed));
+  }
+  if (input.engine !== undefined && input.engine.trim().length > 0) {
+    form.set("engine", input.engine.trim());
   }
   if (input.emotion !== undefined) {
     form.set("emotion", input.emotion);

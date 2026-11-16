@@ -3,7 +3,9 @@ import type { MessageSegmentRecord } from "../domain/conversation.js";
 import type { ModelPort, ModelRequest } from "../domain/model.js";
 import { isIncompleteCompletion } from "../domain/model.js";
 import type { MessageSegmentKind } from "../domain/message-segments.js";
+import type { VoiceProtocol, VoiceSettingsRecord } from "../domain/voice.js";
 import { AppearanceStore } from "../storage/appearance-store.js";
+import { VoiceStore } from "../storage/voice-store.js";
 import { AutonomyStore } from "../storage/autonomy-store.js";
 import { ConversationStore } from "../storage/conversation-store.js";
 import type { AutonomyService } from "./autonomy-service.js";
@@ -33,6 +35,14 @@ export interface SegmentAnnotationServiceOptions {
   claim?: {
     claim(roleId: string, resourceId: string): ModelCallClaim;
   } | null;
+  /** 解析角色关联的全局语音服务运行态，确保随服务默认引擎／停用状态同步。 */
+  resolveVoiceRuntime?: (
+    settings: VoiceSettingsRecord,
+  ) => {
+    protocol: VoiceProtocol;
+    enabled: boolean;
+    ttsEngine: string | null;
+  };
 }
 
 export interface SegmentAnnotationRequest {
@@ -63,14 +73,21 @@ export interface AnnotationSpriteInput {
 
 export interface AnnotationModelInput {
   displayName: string;
-  outfitName: string;
+  outfitName: string | null;
   segments: readonly AnnotationSegmentInput[];
   sprites: readonly AnnotationSpriteInput[];
+  rolePersona?: string;
+  recentTurns?: ReadonlyArray<{ sender: "user" | "assistant"; content: string }>;
+  voiceEmotion?: {
+    enabled: boolean;
+    ttsEngine: string | null;
+  } | null;
 }
 
 export interface SegmentAnnotationPick {
   segmentId: string;
-  spriteAssetId: string;
+  spriteAssetId: string | null;
+  voiceEmotion?: string | null;
 }
 
 /**
@@ -86,6 +103,10 @@ export class SegmentAnnotationService {
   private readonly claim:
     | { claim(roleId: string, resourceId: string): ModelCallClaim }
     | null;
+  private readonly resolveVoiceRuntime:
+    | SegmentAnnotationServiceOptions["resolveVoiceRuntime"]
+    | undefined;
+  private readonly activeMessages = new Map<string, Set<Promise<number>>>();
 
   constructor(
     private readonly access: RoleAccess,
@@ -98,9 +119,50 @@ export class SegmentAnnotationService {
     this.autonomy = options.autonomy ?? null;
     this.maintenance = options.maintenance ?? null;
     this.claim = options.claim ?? null;
+    this.resolveVoiceRuntime = options.resolveVoiceRuntime;
   }
 
-  async annotate(input: SegmentAnnotationRequest): Promise<number> {
+  /** 若指定消息的句段标注仍在执行，最多等待 timeoutMs 让语音首句拿到情绪指令。 */
+  async awaitMessage(
+    messageId: string,
+    timeoutMs: number = 1800,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (signal?.aborted) {
+      return;
+    }
+    const active = this.activeMessages.get(messageId);
+    if (active === undefined || active.size === 0 || timeoutMs <= 0) {
+      return;
+    }
+    const done = Promise.allSettled([...active]).then(() => undefined);
+    await waitWithTimeoutAndAbort(done, timeoutMs, signal);
+  }
+
+  annotate(input: SegmentAnnotationRequest): Promise<number> {
+    let tasks = this.activeMessages.get(input.messageId);
+    if (tasks === undefined) {
+      tasks = new Set();
+      this.activeMessages.set(input.messageId, tasks);
+    }
+    let settled = false;
+    const task = this.runAnnotate(input).finally(() => {
+      settled = true;
+      const current = this.activeMessages.get(input.messageId);
+      current?.delete(task);
+      if (current !== undefined && current.size === 0) {
+        this.activeMessages.delete(input.messageId);
+      }
+    });
+    if (!settled) {
+      tasks.add(task);
+    } else if (tasks.size === 0) {
+      this.activeMessages.delete(input.messageId);
+    }
+    return task;
+  }
+
+  private async runAnnotate(input: SegmentAnnotationRequest): Promise<number> {
     const prepared = this.prepare(input);
     if (prepared === null) {
       return 0;
@@ -177,13 +239,23 @@ export class SegmentAnnotationService {
     }
     const prompt = buildSegmentAnnotationPrompt({
       displayName: prepared.displayName,
-      outfitName: prepared.outfit.name,
+      outfitName: prepared.outfit?.name ?? null,
       segments: prepared.segments,
-      sprites: prepared.outfit.sprites.map((sprite) => ({
+      sprites: (prepared.outfit?.sprites ?? []).map((sprite) => ({
         spriteAssetId: sprite.assetId,
         displayName: sprite.displayName,
         fileName: sprite.fileName,
       })),
+      ...(prepared.hasVoiceEmotion
+        ? {
+            rolePersona: prepared.rolePersona,
+            recentTurns: prepared.recentTurns,
+            voiceEmotion: {
+              enabled: true,
+              ttsEngine: prepared.ttsEngine,
+            },
+          }
+        : {}),
     });
     const modelRequest: ModelRequest = {
       modelName: binding.modelName,
@@ -246,8 +318,17 @@ export class SegmentAnnotationService {
     const picks = parseSegmentAnnotationOutput(output, {
       segmentIds: new Set(prepared.segments.map((segment) => segment.segmentId)),
       spriteAssetIds: new Set(
-        prepared.outfit.sprites.map((sprite) => sprite.assetId),
+        (prepared.outfit?.sprites ?? []).map((sprite) => sprite.assetId),
       ),
+      ...(prepared.hasVoiceEmotion
+        ? {
+            speechSegmentIds: new Set(
+              prepared.segments
+                .filter((segment) => segment.kind === "speech")
+                .map((segment) => segment.segmentId),
+            ),
+          }
+        : {}),
     });
     if (picks.length === 0) {
       return 0;
@@ -265,7 +346,7 @@ export class SegmentAnnotationService {
         executionId: input.executionId,
         annotations: picks.map((pick) => ({
           ...pick,
-          outfitId: prepared.outfit.outfitId,
+          outfitId: prepared.outfit?.outfitId ?? null,
         })),
         now,
       }).length;
@@ -277,9 +358,13 @@ export class SegmentAnnotationService {
 
   private prepare(input: SegmentAnnotationRequest): {
     displayName: string;
-    outfit: OutfitRecord;
+    outfit: OutfitRecord | null;
     segments: AnnotationSegmentInput[];
     purpose: "user_chat" | "autonomous";
+    hasVoiceEmotion: boolean;
+    ttsEngine: string | null;
+    rolePersona: string;
+    recentTurns: Array<{ sender: "user" | "assistant"; content: string }>;
   } | null {
     return this.access.withStore(input.roleId, (storage) => {
       const store = new ConversationStore(
@@ -305,21 +390,53 @@ export class SegmentAnnotationService {
       const outfitId =
         storedOutfitId ??
         (input.outfitId === undefined ? stateOutfitId : input.outfitId);
-      if (outfitId === null) {
-        return null;
-      }
-      const outfit = new AppearanceStore(
+      const loadedOutfit =
+        outfitId === null
+          ? null
+          : new AppearanceStore(storage.business.db, input.roleId).getOutfit(
+              outfitId,
+            );
+      const outfit =
+        loadedOutfit !== null && loadedOutfit.sprites.length > 0
+          ? loadedOutfit
+          : null;
+      const voiceSettings = new VoiceStore(
         storage.business.db,
         input.roleId,
-      ).getOutfit(outfitId);
-      if (outfit === null || outfit.sprites.length === 0) {
+      ).getSettings();
+      const effectiveVoice =
+        voiceSettings === null
+          ? null
+          : this.resolveVoiceRuntime
+            ? this.resolveVoiceRuntime(voiceSettings)
+            : {
+                protocol: voiceSettings.protocol,
+                enabled: voiceSettings.enabled,
+                ttsEngine: voiceSettings.ttsEngine,
+              };
+      const hasVoiceEmotion =
+        effectiveVoice !== null &&
+        effectiveVoice.enabled &&
+        effectiveVoice.protocol === "nowadays-tts-v1" &&
+        pending.some((segment) => segment.kind === "speech");
+      if (outfit === null && !hasVoiceEmotion) {
         return null;
       }
+      const recentTurns = hasVoiceEmotion
+        ? store.listRecentContextBefore(input.windowId, input.messageId, 4).map((turn) => ({
+            sender: turn.sender,
+            content: truncateText(turn.content, 240),
+          }))
+        : [];
       return {
         displayName: role.displayName,
         outfit,
         segments: pending.map(mapPendingSegment),
         purpose: store.getExecutionPurpose(input.executionId),
+        hasVoiceEmotion,
+        ttsEngine: effectiveVoice?.ttsEngine ?? null,
+        rolePersona: hasVoiceEmotion ? truncateText(role.definitionText, 300) : "",
+        recentTurns,
       };
     });
   }
@@ -329,26 +446,72 @@ export function buildSegmentAnnotationPrompt(input: AnnotationModelInput): {
   system: string;
   user: string;
 } {
-  const system = [
-    `你是对话演出的立绘标注器，为角色「${input.displayName}」当前服饰「${input.outfitName}」的句段选择最合适的差分立绘。`,
+  const hasSprites = input.sprites.length > 0;
+  const hasVoice = input.voiceEmotion?.enabled === true;
+  if (!hasVoice) {
+    const system = [
+      `你是对话演出的立绘标注器，为角色「${input.displayName}」当前服饰「${input.outfitName ?? ""}」的句段选择最合适的差分立绘。`,
+      "只输出 JSON 对象，不要代码块和解释，格式：",
+      '{"segments":[{"segmentId":"...","spriteAssetId":"..."}]}',
+      "规则：",
+      "- 只能使用给出的 spriteAssetId，不要编造。",
+      "- 表情在句段开始时切换，并延续到下一次标注；不需要变化或无法判断的句段省略。",
+      "- 旁白通常省略，除非明确描述表情或动作。",
+      "- 只标注给出的句段。",
+    ].join("\n");
+    const user = JSON.stringify({
+      segments: input.segments.map((segment) => ({
+        segmentId: segment.segmentId,
+        ordinal: segment.ordinal,
+        kind: segment.kind,
+        text: segment.text,
+      })),
+      sprites: input.sprites,
+    });
+    return { system, user };
+  }
+
+  const formatExample = hasSprites
+    ? '{"segments":[{"segmentId":"...","spriteAssetId":"可选或null","voiceEmotion":"对白句段填写简短情绪语气"}]}'
+    : '{"segments":[{"segmentId":"...","voiceEmotion":"简短情绪语气"}]}';
+  const engineHint =
+    input.voiceEmotion?.ttsEngine === "indextts"
+      ? "- voiceEmotion 面向 IndexTTS 情感合成，优先使用凝练明确的中文情绪/神态词（如：温柔、开心、傲娇、撒娇、俏皮、委屈、难过、哭泣、紧张、害怕、兴奋、激动、惊喜、生气、愤怒、嫌弃、无奈、平静）或 2～6 字情绪短语。"
+      : "- voiceEmotion 面向自然语言语音指令（如 CosyVoice3），请结合说话动机输出 4～16 字中文语气与神态指示（如「温柔轻声哄人」「嘴硬傲娇带点羞涩」「轻快含笑打趣」「委屈低声强装平静」「惊喜扬眉」），兼顾音调轻重与气息感。";
+  const systemLines = [
+    `你是对话演出的配音与表演导演，为角色「${input.displayName}」${
+      hasSprites && input.outfitName ? `当前服饰「${input.outfitName}」` : ""
+    }的句段标注语音情绪指令${hasSprites ? "与差分立绘" : ""}。`,
     "只输出 JSON 对象，不要代码块和解释，格式：",
-    '{"segments":[{"segmentId":"...","spriteAssetId":"..."}]}',
+    formatExample,
     "规则：",
-    "- 只能使用给出的 spriteAssetId，不要编造。",
-    "- 表情在句段开始时切换，并延续到下一次标注；不需要变化或无法判断的句段省略。",
-    "- 旁白通常省略，除非明确描述表情或动作。",
-    "- 只标注给出的句段。",
-  ].join("\n");
-  const user = JSON.stringify({
+    "- 以对话真实感与戏剧张力为先，结合角色人设（rolePersona）、前文对话（recentTurns）、相邻旁白描写（narration）与台词潜台词判断每句台词的实际语气，不要千篇一律回落成平淡或温柔。",
+    "- voiceEmotion 仅对 kind=\"speech\" 的对白句段输出，kind=\"narration\" 旁白句段设为 null 或省略；多句对白请体现合理的情绪递进与起伏。",
+    engineHint,
+    ...(hasSprites
+      ? [
+          "- spriteAssetId 只能使用给出的列表或设为 null；表情在句段开始时切换，不需要切换可省略。",
+        ]
+      : []),
+    "- 只标注给出的句段，禁止修改原文。",
+  ];
+  const userPayload: Record<string, unknown> = {
+    ...(input.rolePersona ? { rolePersona: input.rolePersona } : {}),
+    ...(input.recentTurns && input.recentTurns.length > 0
+      ? { recentTurns: input.recentTurns }
+      : {}),
     segments: input.segments.map((segment) => ({
       segmentId: segment.segmentId,
       ordinal: segment.ordinal,
       kind: segment.kind,
       text: segment.text,
     })),
-    sprites: input.sprites,
-  });
-  return { system, user };
+    ...(hasSprites ? { sprites: input.sprites } : {}),
+  };
+  return {
+    system: systemLines.join("\n"),
+    user: JSON.stringify(userPayload),
+  };
 }
 
 export function parseSegmentAnnotationOutput(
@@ -356,6 +519,7 @@ export function parseSegmentAnnotationOutput(
   allowed: {
     segmentIds: ReadonlySet<string>;
     spriteAssetIds: ReadonlySet<string>;
+    speechSegmentIds?: ReadonlySet<string>;
   },
 ): SegmentAnnotationPick[] {
   const trimmed = text.trim();
@@ -379,6 +543,7 @@ export function parseSegmentAnnotationOutput(
   if (!Array.isArray(segments)) {
     return [];
   }
+  const allowVoice = allowed.speechSegmentIds !== undefined;
   const picks: SegmentAnnotationPick[] = [];
   const seen = new Set<string>();
   for (const item of segments) {
@@ -387,20 +552,96 @@ export function parseSegmentAnnotationOutput(
     }
     const record = item as Record<string, unknown>;
     const segmentId = record.segmentId;
-    const spriteAssetId = record.spriteAssetId;
     if (
       typeof segmentId !== "string" ||
-      typeof spriteAssetId !== "string" ||
       seen.has(segmentId) ||
-      !allowed.segmentIds.has(segmentId) ||
-      !allowed.spriteAssetIds.has(spriteAssetId)
+      !allowed.segmentIds.has(segmentId)
     ) {
       continue;
     }
+    const rawSprite = record.spriteAssetId;
+    const validSprite =
+      typeof rawSprite === "string" && allowed.spriteAssetIds.has(rawSprite)
+        ? rawSprite
+        : null;
+    if (!allowVoice) {
+      if (validSprite === null) {
+        continue;
+      }
+      seen.add(segmentId);
+      picks.push({ segmentId, spriteAssetId: validSprite });
+      continue;
+    }
+    const isSpeech = allowed.speechSegmentIds!.has(segmentId);
+    const voiceEmotion = isSpeech ? normalizeVoiceEmotion(record.voiceEmotion) : null;
+    if (validSprite === null && voiceEmotion === null) {
+      continue;
+    }
     seen.add(segmentId);
-    picks.push({ segmentId, spriteAssetId });
+    picks.push({
+      segmentId,
+      spriteAssetId: validSprite,
+      ...(voiceEmotion === null ? {} : { voiceEmotion }),
+    });
   }
   return picks;
+}
+
+function normalizeVoiceEmotion(raw: unknown): string | null {
+  if (typeof raw !== "string") {
+    return null;
+  }
+  const cleaned = raw
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/^["'「『【]+|["'」』】]+$/g, "")
+    .trim();
+  if (
+    cleaned.length === 0 ||
+    cleaned.toLowerCase() === "null" ||
+    cleaned.toLowerCase() === "none" ||
+    cleaned === "无"
+  ) {
+    return null;
+  }
+  return [...cleaned].slice(0, 40).join("");
+}
+
+function truncateText(text: string, maxChars: number): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  const chars = [...normalized];
+  return chars.length <= maxChars ? normalized : `${chars.slice(0, maxChars).join("")}…`;
+}
+
+async function waitWithTimeoutAndAbort(
+  promise: Promise<void>,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (signal?.aborted) {
+    return;
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  try {
+    await Promise.race([
+      promise,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+        if (signal !== undefined) {
+          onAbort = () => resolve();
+          signal.addEventListener("abort", onAbort, { once: true });
+        }
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+    if (signal !== undefined && onAbort !== undefined) {
+      signal.removeEventListener("abort", onAbort);
+    }
+  }
 }
 
 function mapPendingSegment(segment: MessageSegmentRecord): AnnotationSegmentInput {

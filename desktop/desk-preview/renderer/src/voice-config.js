@@ -13,8 +13,10 @@ const PROTOCOL_LABELS = {
 };
 
 const DEFAULT_FORM = {
+  serviceId: "",
   baseUrl: "",
   protocol: "nowadays-tts-v1",
+  ttsEngine: "",
   sourceKind: "reference",
   voiceId: "",
   referenceAssetId: "",
@@ -23,6 +25,11 @@ const DEFAULT_FORM = {
   language: "zh",
   speed: 1,
   emoAlpha: 1
+};
+
+const ENGINE_PREFIXES = {
+  cosyvoice: "cosy:",
+  indextts: "index:"
 };
 
 /**
@@ -36,8 +43,10 @@ export function createVoiceForm(config) {
   const source = config.voiceSource ?? { kind: "reference" };
   const isPreset = source.kind === "preset";
   return {
-    baseUrl: config.baseUrl ?? "",
-    protocol: config.protocol ?? "nowadays-tts-v1",
+    serviceId: config.serviceId ?? config.service?.serviceId ?? "",
+    baseUrl: config.baseUrl ?? config.service?.baseUrl ?? "",
+    protocol: config.protocol ?? config.service?.protocol ?? "nowadays-tts-v1",
+    ttsEngine: config.ttsEngine ?? "",
     sourceKind: isPreset ? "preset" : "reference",
     voiceId: isPreset ? source.voiceId ?? "" : "",
     referenceAssetId: isPreset ? "" : source.referenceAssetId ?? "",
@@ -55,20 +64,28 @@ export function createVoiceForm(config) {
  * 保存与试听共用的请求体。后端 saveVoiceSchema 是 strict，只允许约定字段。
  *
  * @param {VoiceForm} form
- * @param {{ capabilities?: VoiceCapabilities | null }} [options]
- *   校验时用的有效声明。地址来回改过之后表单里的声明可能已被清空，
- *   但解析出的有效声明仍然可用（例如改回原地址重新采用探测结果），
- *   请求必须与展示、校验使用同一份，否则会丢掉能力持久化。
+ * @param {{
+ *   capabilities?: VoiceCapabilities | null,
+ *   engines?: Record<string, VoiceEngineStatus> | null,
+ *   defaultEngine?: string | null,
+ *   hasPendingReference?: boolean,
+ *   clearEngine?: boolean
+ * }} [options]
  * @returns {Record<string, unknown>}
  */
 export function toVoicePayload(form, options = {}) {
   const payload = {
-    baseUrl: form.baseUrl.trim(),
-    protocol: form.protocol,
     language: form.language,
     speed: Number(form.speed),
     emoAlpha: Number(form.emoAlpha)
   };
+  const serviceId = String(form.serviceId ?? "").trim();
+  if (serviceId.length > 0) {
+    payload.serviceId = serviceId;
+  } else {
+    payload.baseUrl = form.baseUrl.trim();
+    payload.protocol = form.protocol;
+  }
   // 探测到的能力声明随请求提交：后端据此拒绝服务不支持的音色来源与参数，
   // 也会把它随配置保存下来，重新打开页面时不必再探测一次。
   // 能力未知时不带该字段，让后端沿用同地址已保存的声明。
@@ -76,6 +93,18 @@ export function toVoicePayload(form, options = {}) {
     options.capabilities !== undefined ? options.capabilities : form.capabilities;
   if (capabilities !== null && capabilities !== undefined) {
     payload.capabilities = capabilities;
+  }
+  const ttsEngine = form.protocol === "indextts" ? "" : String(form.ttsEngine ?? "").trim();
+  if (ttsEngine.length > 0) {
+    payload.ttsEngine = ttsEngine;
+  } else if (options.clearEngine && form.protocol !== "indextts") {
+    payload.ttsEngine = null;
+  }
+  if (options.engines !== null && options.engines !== undefined) {
+    payload.engines = options.engines;
+  }
+  if (typeof options.defaultEngine === "string" && options.defaultEngine.trim().length > 0) {
+    payload.defaultEngine = options.defaultEngine.trim();
   }
   // 旧 IndexTTS 只有参考音频一种音色来源，不发送参考模式与参考文本。
   if (form.protocol === "indextts" || form.sourceKind === "reference") {
@@ -138,13 +167,19 @@ export function withPendingReferenceAudio(form) {
  */
 export function validateVoiceForm(form, options = {}) {
   const issues = [];
-  const baseUrl = form.baseUrl.trim();
-  if (baseUrl.length === 0) {
-    issues.push(issue("baseUrl", "BASE_URL_REQUIRED", "音色服务地址不能为空"));
+  if (options.requireService) {
+    if (String(form.serviceId ?? "").trim().length === 0) {
+      issues.push(issue("serviceId", "VOICE_SERVICE_REQUIRED", "请先选择或添加语音服务"));
+    }
   } else {
-    const invalid = describeBaseUrlProblem(baseUrl);
-    if (invalid !== null) {
-      issues.push(issue("baseUrl", "BASE_URL_INVALID", invalid));
+    const baseUrl = form.baseUrl.trim();
+    if (baseUrl.length === 0) {
+      issues.push(issue("baseUrl", "BASE_URL_REQUIRED", "音色服务地址不能为空"));
+    } else {
+      const invalid = describeBaseUrlProblem(baseUrl);
+      if (invalid !== null) {
+        issues.push(issue("baseUrl", "BASE_URL_INVALID", invalid));
+      }
     }
   }
 
@@ -211,6 +246,19 @@ export function validateVoiceForm(form, options = {}) {
     }
   }
 
+  const ttsEngine = String(form.ttsEngine ?? "").trim();
+  if (
+    !isLegacy &&
+    options.engines !== null &&
+    options.engines !== undefined &&
+    ttsEngine.length > 0 &&
+    !Object.prototype.hasOwnProperty.call(options.engines, ttsEngine)
+  ) {
+    issues.push(
+      issue("ttsEngine", "ENGINE_UNSUPPORTED", "所选语音引擎不在当前服务声明的列表中")
+    );
+  }
+
   return issues;
 }
 
@@ -229,7 +277,9 @@ export function summarizeProbe(probe) {
     supportsPreset: Boolean(capabilities.presetVoices),
     referenceModes: capabilities.referenceModes ?? [],
     languages: capabilities.languages ?? [],
-    speed: capabilities.speed ?? null
+    speed: capabilities.speed ?? null,
+    engines: probe.engines ?? null,
+    defaultEngine: probe.defaultEngine ?? null
   };
 }
 
@@ -286,12 +336,28 @@ export function isProbeCurrent(source, form) {
 export function withVoiceService(form, patch) {
   const updated = { ...form, ...patch };
   const switched =
+    (patch.serviceId !== undefined && patch.serviceId !== form.serviceId) ||
     normalizeBaseUrl(updated.baseUrl) !== normalizeBaseUrl(form.baseUrl) ||
     updated.protocol !== form.protocol;
   if (!switched) {
     return updated;
   }
-  return { ...updated, voiceId: "", referenceMode: "", capabilities: null };
+  return { ...updated, ttsEngine: "", voiceId: "", referenceMode: "", capabilities: null };
+}
+
+function matchesSavedService(config, form) {
+  if (config === null || config === undefined) return false;
+  if (form.serviceId && config.serviceId) {
+    return (
+      config.serviceId === form.serviceId &&
+      normalizeBaseUrl(config.baseUrl) === normalizeBaseUrl(form.baseUrl) &&
+      config.protocol === form.protocol
+    );
+  }
+  return (
+    normalizeBaseUrl(config.baseUrl) === normalizeBaseUrl(form.baseUrl) &&
+    config.protocol === form.protocol
+  );
 }
 
 /**
@@ -315,14 +381,50 @@ export function resolveCapabilities(input) {
       return probed;
     }
   }
-  if (
-    config !== null && config !== undefined &&
-    normalizeBaseUrl(config.baseUrl) === normalizeBaseUrl(form.baseUrl) &&
-    config.protocol === form.protocol
-  ) {
+  if (matchesSavedService(config, form)) {
     return config.capabilities ?? null;
   }
   return null;
+}
+
+/**
+ * 解析当前生效的多引擎声明与默认引擎，来源优先级与 resolveCapabilities 一致。
+ */
+export function resolveEngines(input) {
+  const { config, form, probe, probeSource } = input;
+  if (form.protocol === "indextts") {
+    return { engines: null, defaultEngine: null };
+  }
+  if (probe !== null && probe !== undefined && isProbeCurrent(probeSource, form)) {
+    if (probe.engines !== undefined && probe.engines !== null) {
+      return { engines: probe.engines, defaultEngine: probe.defaultEngine ?? null };
+    }
+  }
+  if (matchesSavedService(config, form)) {
+    return {
+      engines: config.engines ?? null,
+      defaultEngine: config.defaultEngine ?? null
+    };
+  }
+  return { engines: null, defaultEngine: null };
+}
+
+/**
+ * 切换引擎时尽量同步映射同音色（例如 cosy:xxx <-> index:xxx），避免旧前缀误路由到原引擎。
+ */
+export function pickPresetVoiceForEngine(voices, voiceId, ttsEngine) {
+  const current = String(voiceId ?? "").trim();
+  const targetPrefix = ENGINE_PREFIXES[String(ttsEngine ?? "").trim()];
+  if (!targetPrefix || !current || !Array.isArray(voices)) {
+    return voiceId;
+  }
+  const colon = current.indexOf(":");
+  if (colon <= 0) {
+    return voiceId;
+  }
+  const suffix = current.slice(colon + 1);
+  const candidate = `${targetPrefix}${suffix}`;
+  return voices.some((voice) => voice?.id === candidate) ? candidate : voiceId;
 }
 
 /**
@@ -346,6 +448,16 @@ export function describeVoiceFailure(error) {
       return "当前服务未声明参考音频模式，不能使用参考音频音色，请改用预置音色。";
     case "VOICE_PRESET_UNSUPPORTED":
       return "当前服务未声明预置音色，请改用参考音频音色。";
+    case "VOICE_ENGINE_UNSUPPORTED":
+      return "所选语音引擎不在当前服务支持的列表中。";
+    case "VOICE_SERVICE_NOT_FOUND":
+      return "当前所选语音服务已不存在，请重新选择或前往设置新建。";
+    case "VOICE_SERVICE_DISABLED":
+      return "当前语音服务已停用，请先启用或更换服务。";
+    case "VOICE_PROBE_UNSUPPORTED":
+      return "旧 IndexTTS 协议没有能力探测接口，请在角色语音配置中用试听验证连接。";
+    case "INVALID_VOICE_SERVICE_CONFIG":
+      return "语音服务配置格式不正确，请检查名称、协议与地址。";
     case "VOICE_BASE_URL_REQUIRED":
     case "VOICE_BASE_URL_INVALID":
       return fallback;
@@ -359,6 +471,47 @@ export function describeVoiceFailure(error) {
 }
 
 /**
+ * 全局语音服务配置草稿校验（设置 -> 模型 -> 语音 创建与详情共用）。
+ *
+ * @param {{ name?: string, protocol?: VoiceProtocol, baseUrl?: string }} draft
+ * @returns {string | null}
+ */
+export function validateVoiceServiceDraft(draft) {
+  if (!String(draft?.name ?? "").trim()) {
+    return "语音服务名称不能为空。";
+  }
+  const baseUrl = String(draft?.baseUrl ?? "").trim();
+  if (!baseUrl) {
+    return "音色服务地址不能为空。";
+  }
+  const problem = describeBaseUrlProblem(baseUrl);
+  if (problem !== null) {
+    return problem;
+  }
+  if (draft?.protocol !== "nowadays-tts-v1" && draft?.protocol !== "indextts") {
+    return "不支持的语音服务协议。";
+  }
+  return null;
+}
+
+/**
+ * 构造全局语音服务的 config 请求体。
+ *
+ * @param {{ protocol: VoiceProtocol, baseUrl: string, defaultEngine?: string | null }} draft
+ * @returns {{ protocol: VoiceProtocol, baseUrl: string, defaultEngine?: string }}
+ */
+export function toVoiceServiceConfig(draft) {
+  const protocol = draft.protocol === "indextts" ? "indextts" : "nowadays-tts-v1";
+  const defaultEngine =
+    protocol === "indextts" ? "" : String(draft.defaultEngine ?? "").trim();
+  return {
+    protocol,
+    baseUrl: normalizeBaseUrl(draft.baseUrl),
+    ...(defaultEngine ? { defaultEngine } : {})
+  };
+}
+
+/**
  * 面板顶部的一行状态说明。
  *
  * @param {VoiceConfigView | null | undefined} config
@@ -369,12 +522,14 @@ export function describeVoiceSummary(config) {
     return "这个角色还没有保存声音配置。";
   }
   const protocol = PROTOCOL_LABELS[config.protocol] ?? config.protocol;
+  const serviceName = config.service?.name?.trim();
+  const prefix = serviceName ? `${serviceName} · ${protocol}` : protocol;
   const state = config.enabled === false ? "已停用 · " : "";
   if (config.voiceSource?.kind === "preset") {
-    return `${state}${protocol} · 预置音色 ${config.voiceSource.voiceId}`;
+    return `${state}${prefix} · 预置音色 ${config.voiceSource.voiceId}`;
   }
   const name = config.reference?.fileName ?? "参考音频缺失";
-  return `${state}${protocol} · 参考音频 ${name}`;
+  return `${state}${prefix} · 参考音频 ${name}`;
 }
 
 /**
@@ -414,6 +569,7 @@ function issue(field, code, message) {
  * @typedef {Object} VoiceForm
  * @property {string} baseUrl
  * @property {"nowadays-tts-v1" | "indextts"} protocol
+ * @property {string} ttsEngine
  * @property {"reference" | "preset"} sourceKind
  * @property {string} voiceId
  * @property {string} referenceAssetId

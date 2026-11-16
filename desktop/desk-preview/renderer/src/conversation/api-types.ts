@@ -34,6 +34,7 @@ export interface SegmentView {
   outfitId: string | null;
   homeAssetId: string | null;
   spriteAssetId: string | null;
+  voiceEmotion?: string | null;
   annotatedAt: string | null;
   createdAt: string;
 }
@@ -112,6 +113,9 @@ export interface WindowsResponse { items: WindowView[]; }
 export interface VoiceConfigView {
   engine: string;
   protocol: string;
+  ttsEngine?: string | null;
+  engines?: Record<string, { ready: boolean; active: boolean; onDemand?: boolean }>;
+  defaultEngine?: string;
   baseUrl: string;
   voiceSource: Record<string, unknown>;
   reference: Record<string, unknown> | null;

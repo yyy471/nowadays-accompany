@@ -70,6 +70,7 @@ export function rowsForMessage(message, segments, idFor) {
     sprite: segment.spriteAssetId ?? null,
     outfitId: segment.outfitId ?? null,
     homeAssetId: segment.homeAssetId ?? null,
+    ...(segment.voiceEmotion ? { voiceEmotion: segment.voiceEmotion } : {}),
     status: message.status === 'interrupted' && index === ordered.length - 1 ? 'interrupted' : 'completed',
     createdAt: parseTime(message.createdAt)
   }));
@@ -114,6 +115,9 @@ export function applySegmentAnnotations(segments, items, now = new Date().toISOS
       outfitId: item.outfitId ?? segment.outfitId,
       homeAssetId: item.homeAssetId ?? segment.homeAssetId,
       spriteAssetId: item.spriteAssetId ?? segment.spriteAssetId,
+      ...(item.voiceEmotion !== undefined || segment.voiceEmotion !== undefined
+        ? { voiceEmotion: item.voiceEmotion !== undefined ? item.voiceEmotion : segment.voiceEmotion }
+        : {}),
       annotatedAt: now
     };
   });

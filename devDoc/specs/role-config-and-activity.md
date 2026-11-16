@@ -11,7 +11,7 @@
 
 - **角色活动与配置写入守卫**：角色三态（`active` / `stopping` / `stopped`）、停启控制、写保护租约与读体二次校验、重启收敛与恢复重调度。
 - **角色配置读写与直接删除**：人设档案与修订号、自主额度、资源全表绑定与乐观锁合并、外观服饰/差分运维与回退、角色语音/场景生图配置写入，以及角色带历史选项删除（`keepHistory`）。
-- **全局资源与生图服务维护**：全局模型 / MCP / Skill 资源目录的创建、更新、凭据只写与换站重验、MCP 环境变量脱敏、占用报告（`references`）、依赖影响范围（`impact`）、模型维护窗口协调（`maintenance`）与两阶段删除；以及全局生图服务写删的全局守卫。
+- **全局资源与语音／生图服务维护**：全局模型 / MCP / Skill 资源目录的创建、更新、凭据只写与换站重验、MCP 环境变量脱敏、占用报告（`references`）、依赖影响范围（`impact`）、模型维护窗口协调（`maintenance`）与两阶段删除；以及全局语音／生图服务写删的全局守卫。
 - **桌面设置页与后台协调**：设置页（[Settings.tsx](../../desktop/desk-preview/renderer/src/pages/Settings.tsx)）的同页暂停保存/删除、并发绑定自动合并，以及句段标注/过场图规划的维护等待协调。
 - **不包含范围**（归入其他现行规范）：
   - 前端设计语言、字体/间距/颜色/动效令牌与 `ui/` 组件约定：统一见 [前端设计规范](frontend-design-system.md)。
@@ -27,6 +27,7 @@
 | [DL-147](../161-digital-life-direction-decisions.md#dl-147-设置页编辑角色与当前陪伴角色分离) | 设置页选中编辑对象与当前陪伴角色分离；保存、导入、试听结果归属发起时的 `roleId` | 桌面前端按调用时闭包 `roleId` 与请求令牌结算 |
 | [DL-148](../161-digital-life-direction-decisions.md#dl-148-配置修改直接删除与运行限制) | 改删角色前由后端确认已停止；「已请求停止」与「已停止」分离且以后端为准；模型维护按具体服务只暂停实际依赖目标；删角色由用户选保留或清理记忆与对话；恢复保留待办与自主额度 | **规范文本滞后注记**：`161` 正文仍写着「MCP/Skill 被占用时后端拒绝全局关闭」，实现已按 `278 §3` / `282 §2` 先行放行全局单独停用（`canDisable: true`），待统一修订 `161` 正文 |
 | [DL-149](../161-digital-life-direction-decisions.md#dl-149-角色语音只保留当前一份配置) | 每角色只保留一份语音配置；停用保留配置，新配置覆盖旧配置 | `PUT /v1/roles/:roleId/voice` 与 `/voice/enabled` |
+| [DL-152](../161-digital-life-direction-decisions.md#dl-152-全局管理语音服务角色从设置中选择服务并配置专属音色与试听) | 设置「模型 -> 语音」全局管理语音服务（协议、地址、可选默认引擎、启停与删除受全局守卫）；角色选服务配音色 | `/v1/voice-services*` 与 `PATCH/DELETE` 入 `GLOBAL_CONFIG_WRITES` |
 | [DL-151](../161-digital-life-direction-decisions.md#dl-151-删除不做归档) | 删除角色、外观或资源直接执行不做归档；受管外观副本按保留历史引用按需留存或清理；用户源目录始终保留 | 软删除服饰 + 无历史引用素材清理 + `role_deletions` / `resource_deletions` |
 
 ### 1.3 依赖规范
@@ -66,8 +67,8 @@
    - **外观衣柜**：
      - `POST /v1/roles/:roleId/appearance/outfits`、`PATCH /v1/roles/:roleId/appearance/outfits/:outfitId`、`POST /v1/roles/:roleId/appearance/outfits/:outfitId/home`、`DELETE /v1/roles/:roleId/appearance/outfits/:outfitId`、`POST /v1/roles/:roleId/appearance/outfits/:outfitId/sprites`、`DELETE /v1/roles/:roleId/appearance/outfits/:outfitId/sprites/:assetId`
 
-2. **全局生图服务写入（`GLOBAL_CONFIG_WRITES`，共 2 个路由，包装 `globalWrite`）**：
-   - `PATCH /v1/image-services/:serviceId`、`DELETE /v1/image-services/:serviceId`：全局写锁 `guardAll` + 读体后复验 `assertAllStopped`，要求全部角色均已处于 `stopped`。
+2. **全局语音／生图服务写入（`GLOBAL_CONFIG_WRITES`，共 4 个路由，包装 `globalWrite`）**：
+   - `PATCH /v1/voice-services/:serviceId`、`DELETE /v1/voice-services/:serviceId`、`PATCH /v1/image-services/:serviceId`、`DELETE /v1/image-services/:serviceId`：全局写锁 `guardAll` + 读体后复验 `assertAllStopped`，要求全部角色均已处于 `stopped`。
 
 3. **全局资源维护与删除（`RESOURCE_CONFIG_WRITES`，[routes.ts](../../backend/src/http/routes.ts#L103-L107) 不再挂载旧 `resourceWrite`，改为处理器与服务层分级处理）**：
    - `PATCH /v1/resources/:resourceId`（CLI：`resource update`）：`{ name?, enabled?, config?, secret?: string | null }`。
@@ -89,12 +90,13 @@
   - `GET /v1/roles/:roleId/bindings`（CLI：`binding get`，返回 `{ items, revision }`，读侧自动过滤 `resource_deletions` 待清理项）
   - `GET /v1/roles/:roleId/autonomy`、`GET /v1/roles/:roleId/autonomy/budget`
   - `GET /v1/roles/:roleId/voice`、`GET /v1/roles/:roleId/voice/references`、`POST /v1/roles/:roleId/voice/probe`、`POST /v1/roles/:roleId/voice/preview`
+  - `GET /v1/voice-services`、`POST /v1/voice-services`、`POST /v1/voice-services/probe`、`POST /v1/voice-services/:serviceId/probe`
   - `GET /v1/image-services`、`POST /v1/image-services`、`POST /v1/image-services/probe`、`POST /v1/image-services/:serviceId/probe`
   - `GET /v1/roles/:roleId/scene-image`、`POST /v1/roles/:roleId/scene-image/probe`、`POST /v1/roles/:roleId/scene-image/preview`、`POST /v1/roles/:roleId/scene-image/anchor-prompts`（注：`292-R07` 校验服饰属于当前角色且未删除，见第 5 节）。
 
 ### 2.4 数据归属与凭据脱敏规则
 
-- **App 中心库（`AppStore`）**：持有角色索引与 `initStatus`、角色活动三态与停止边界记录（`role_activity`）、全局资源与模型测试摘要（`protocol` 或 `baseUrl` 变动时清除旧 `lastTest`）、全局生图服务、加密凭据引用、两阶段删除待清理队列（`resource_deletions`、`role_deletions`）。
+- **App 中心库（`AppStore`）**：持有角色索引与 `initStatus`、角色活动三态与停止边界记录（`role_activity`）、全局资源与模型测试摘要（`protocol` 或 `baseUrl` 变动时清除旧 `lastTest`）、全局语音与生图服务、加密凭据引用、两阶段删除待清理队列（`resource_deletions`、`role_deletions`）。
 - **角色独立库（`roles/<roleId>/`）**：持有角色设定与 `definitionRevision`、全表资源绑定（`role_bindings`）、自主额度与唤醒待办、对话与任务链/资源延续记录、外观软删除记录与素材引用、角色语音与场景生图配置；`keepHistory=1` 删除时只移出 App 索引与活动记录、保留角色目录，`keepHistory=0` 时加入 `role_deletions` 并删除 `roles/<roleId>` 目录，用户原始素材目录在任何情况下都不删除。
 - **凭据只写、按需显隐与脱敏**：
   - `model` / `image-service` 常规创建、列表与详情视图均仅返回凭据状态不回显明文；模型资源详情支持在用户主动点击「显示」时通过 `POST /v1/resources/:resourceId/secret/reveal` 按需取回原文，默认仍以掩码文本形式编辑（未改则保留、清空则删除、改写则替换）；直填 `secret` 与 `config.credentialRef` 不可并存（`409 RESOURCE_CREDENTIAL_CONFLICT`）；更换 `protocol` 或站点（`baseUrl` origin 变更）而试图沿用旧密钥或未变更的 `credentialRef` 会被拒绝（`409 RESOURCE_CREDENTIAL_STALE`）。
@@ -169,7 +171,7 @@
 | 状态判定 | 维护唯一 `active`/`stopping`/`stopped` 状态、在途判断与维护窗口 | 不本地缓存假定可写；提交前拉取最新 `/v1/activities` 决定先暂停还是直接保存 |
 | 角色同页暂停与保存 | 提供 `/activity/stop`、`/activity`、配置 `PUT/PATCH/POST/DELETE` 与 `guardRole` | 人设、绑定、额度与 `AppearancePanel` / `VoicePanel` / `ImagePanel` 统一经 `ensureRoleStopped` / `guardAction` 请求停止并按 250ms 轮询至 `stopped`（20s 上限），写完后在原处提供 `继续活动` |
 | 模型服务变更与恢复 | `PATCH /v1/resources/:id` 协调依赖角色暂停并在成功响应或失败详情带回 `pausedRoleIds` | 在资源详情页展示 `/impact`；有活跃依赖时按钮文案切换为「暂停相关角色并保存」；失败保留草稿并根据 `pausedRoleIds` 提供「继续本次活动暂停的角色」 |
-| 全局生图服务改删 | `globalWrite` 要求全部角色 `stopped` | `stopActiveRolesForGlobalWrite` 逐一停下全部非 `stopped` 角色后再提交，删后尝试逐一恢复本次暂停角色 |
+| 全局语音／生图服务改删 | `globalWrite` 要求全部角色 `stopped` | `stopActiveRolesForGlobalWrite` 逐一停下全部非 `stopped` 角色后再提交，删后尝试逐一恢复本次暂停角色 |
 | 对象隔离与过期丢弃 | 按请求 URL 的 `roleId` 落库与加锁 | 捕获操作发起时的 `roleId`、`roleToken` 与请求序列号 `seq`（`AppearancePanel` / `VoicePanel` / `ImagePanel` / `useModelProbe`），切换编辑角色或页签后旧异步响应不污染新页面草稿（`DL-147`） |
 | 绑定并行并发合并 | `PUT /bindings` 校验 `expectedRevision`，过期抛 `409 BINDING_REVISION_CONFLICT` | 捕获冲突后自动拉取最新 `/bindings`，调用 [mergeBindingDrafts](../../desktop/desk-preview/renderer/src/components/model/binding-merge.js) 按范围字段级合并（`models` 按能力名、`ext` 按 `capability:resourceId`）；无互斥改动时带最新 `revision` 自动重提一次，有互斥冲突则清空 `bindingRevision`、保留草稿并提示重新读取确认 |
 
@@ -258,6 +260,6 @@ npx -y node@24 desktop/desk-preview/tests/workflow-real-backend-chain-check.cjs
 
 ### 5.4 核心实现索引
 
-- **后端路由、校验与守卫**：[config-writes.ts](../../backend/src/http/config-writes.ts) · [write-guard.ts](../../backend/src/http/write-guard.ts) · [role-activity-routes.ts](../../backend/src/http/role-activity-routes.ts) · [routes.ts](../../backend/src/http/routes.ts) · [router.ts](../../backend/src/http/router.ts) · [schemas.ts](../../backend/src/http/schemas.ts) · [image-service-routes.ts](../../backend/src/http/image-service-routes.ts) · [voice-routes.ts](../../backend/src/http/voice-routes.ts) · [appearance-routes.ts](../../backend/src/http/appearance-routes.ts) · [commands.ts](../../backend/src/cli/commands.ts)
-- **后端领域与协调服务**：[role-activity.ts](../../backend/src/domain/role-activity.ts) · [errors.ts](../../backend/src/domain/errors.ts) · [role-activity-service.ts](../../backend/src/application/role-activity-service.ts) · [role-deletion-service.ts](../../backend/src/application/role-deletion-service.ts) · [role-service.ts](../../backend/src/application/role-service.ts) · [resource-service.ts](../../backend/src/application/resource-service.ts) · [conversation-service.ts](../../backend/src/application/conversation-service.ts) · [appearance-service.ts](../../backend/src/application/appearance-service.ts) · [app.ts](../../backend/src/bootstrap/app.ts)
-- **桌面设置端**：[Settings.tsx](../../desktop/desk-preview/renderer/src/pages/Settings.tsx) · [binding-merge.js](../../desktop/desk-preview/renderer/src/components/model/binding-merge.js) · [use-model-probe.ts](../../desktop/desk-preview/renderer/src/components/model/use-model-probe.ts) · [ImagePanel.tsx](../../desktop/desk-preview/renderer/src/components/image/ImagePanel.tsx) · [VoicePanel.tsx](../../desktop/desk-preview/renderer/src/components/voice/VoicePanel.tsx) · [AppearancePanel.tsx](../../desktop/desk-preview/renderer/src/components/appearance/AppearancePanel.tsx)
+- **后端路由、校验与守卫**：[config-writes.ts](../../backend/src/http/config-writes.ts) · [write-guard.ts](../../backend/src/http/write-guard.ts) · [role-activity-routes.ts](../../backend/src/http/role-activity-routes.ts) · [routes.ts](../../backend/src/http/routes.ts) · [router.ts](../../backend/src/http/router.ts) · [schemas.ts](../../backend/src/http/schemas.ts) · [voice-service-routes.ts](../../backend/src/http/voice-service-routes.ts) · [image-service-routes.ts](../../backend/src/http/image-service-routes.ts) · [voice-routes.ts](../../backend/src/http/voice-routes.ts) · [appearance-routes.ts](../../backend/src/http/appearance-routes.ts) · [commands.ts](../../backend/src/cli/commands.ts)
+- **后端领域与协调服务**：[role-activity.ts](../../backend/src/domain/role-activity.ts) · [errors.ts](../../backend/src/domain/errors.ts) · [role-activity-service.ts](../../backend/src/application/role-activity-service.ts) · [role-deletion-service.ts](../../backend/src/application/role-deletion-service.ts) · [role-service.ts](../../backend/src/application/role-service.ts) · [resource-service.ts](../../backend/src/application/resource-service.ts) · [global-voice-service.ts](../../backend/src/application/global-voice-service.ts) · [conversation-service.ts](../../backend/src/application/conversation-service.ts) · [appearance-service.ts](../../backend/src/application/appearance-service.ts) · [app.ts](../../backend/src/bootstrap/app.ts)
+- **桌面设置端**：[Settings.tsx](../../desktop/desk-preview/renderer/src/pages/Settings.tsx) · [binding-merge.js](../../desktop/desk-preview/renderer/src/components/model/binding-merge.js) · [use-model-probe.ts](../../desktop/desk-preview/renderer/src/components/model/use-model-probe.ts) · [ImagePanel.tsx](../../desktop/desk-preview/renderer/src/components/image/ImagePanel.tsx) · [VoicePanel.tsx](../../desktop/desk-preview/renderer/src/components/voice/VoicePanel.tsx) · [VoiceServiceEditor.tsx](../../desktop/desk-preview/renderer/src/components/voice/VoiceServiceEditor.tsx) · [VoiceProbeView.tsx](../../desktop/desk-preview/renderer/src/components/voice/VoiceProbeView.tsx) · [use-voice-probe.ts](../../desktop/desk-preview/renderer/src/components/voice/use-voice-probe.ts) · [voice-cache.js](../../desktop/desk-preview/renderer/src/components/voice/voice-cache.js) · [AppearancePanel.tsx](../../desktop/desk-preview/renderer/src/components/appearance/AppearancePanel.tsx)

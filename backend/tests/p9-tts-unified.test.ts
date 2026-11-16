@@ -284,6 +284,7 @@ function downgradeVoiceSettingsToV10(fixture: Fixture): void {
     db.exec("ALTER TABLE role_voice_settings DROP COLUMN enabled");
     // v10 的过场图任务没有固定配置快照。
     db.exec("ALTER TABLE scene_image_tasks DROP COLUMN config_json");
+    stripVoiceV19(db);
     stripAppearanceV17(db);
   } finally {
     db.close();
@@ -317,6 +318,7 @@ function simulatePreviousV11Migration(fixture: Fixture): void {
     db.exec("ALTER TABLE role_voice_settings DROP COLUMN enabled");
     // v11 的过场图任务没有固定配置快照。
     db.exec("ALTER TABLE scene_image_tasks DROP COLUMN config_json");
+    stripVoiceV19(db);
     stripAppearanceV17(db);
   } finally {
     db.close();
@@ -917,7 +919,7 @@ test("legacy voice rows stay readable as the reference source", async () => {
     }
     assert.equal(
       withStorage(fixture, (storage) => storage.business.schemaVersion),
-      18,
+      20,
     );
   } finally {
     await fixture.close();
@@ -1217,6 +1219,7 @@ test("v9 voice rows migrate to v12 without touching messages, segments or SSE cu
       }
       // v9 的过场图任务表还没有固定配置快照。
       raw.exec("ALTER TABLE scene_image_tasks DROP COLUMN config_json");
+      stripVoiceV19(raw);
       stripAppearanceV17(raw);
     } finally {
       raw.close();
@@ -1293,7 +1296,7 @@ test("v9 voice rows migrate to v12 without touching messages, segments or SSE cu
           .get() as { latest: number | null }
       ).latest,
     }));
-    assert.equal(countsAfter.schemaVersion, 18);
+    assert.equal(countsAfter.schemaVersion, 20);
     assert.equal(countsAfter.messages, countsBefore.messages);
     assert.equal(countsAfter.segments, countsBefore.segments);
     assert.equal(countsAfter.events, countsBefore.events);
@@ -2420,4 +2423,13 @@ function stripAppearanceV17(db: Database.Database): void {
   db.exec("ALTER TABLE outfits DROP COLUMN deleted_at");
   db.exec("ALTER TABLE outfit_assets DROP COLUMN deleted_at");
   db.exec("ALTER TABLE message_segments DROP COLUMN home_asset_id");
+}
+
+/** 去掉 V19～V20 新增语音服务关联、引擎与情感列，避免旧库迁移测试重复建列。 */
+function stripVoiceV19(db: Database.Database): void {
+  db.exec("ALTER TABLE role_voice_settings DROP COLUMN service_id");
+  db.exec("ALTER TABLE role_voice_settings DROP COLUMN tts_engine");
+  db.exec("ALTER TABLE role_voice_settings DROP COLUMN engines_json");
+  db.exec("ALTER TABLE role_voice_settings DROP COLUMN default_engine");
+  db.exec("ALTER TABLE message_segments DROP COLUMN voice_emotion");
 }

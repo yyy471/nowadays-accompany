@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { UploadedAudio } from "../domain/voice.js";
 import {
   voiceCapabilitiesSchema,
+  voiceEnginesSchema,
   voiceLanguageCodeSchema,
 } from "../domain/voice-capabilities.js";
 import type { Router } from "./router.js";
@@ -12,6 +13,7 @@ import { HttpError, type RouteResponse } from "./errors.js";
 import { parseBody } from "./validation.js";
 
 const voiceProtocolSchema = z.enum(["indextts", "nowadays-tts-v1"]);
+const ttsEngineSchema = z.string().trim().min(1).max(64).nullable().optional();
 const voiceSpeedSchema = z.number().min(0.1).max(10);
 const emotionSchema = z.string().trim().min(1).max(100).optional();
 const speechSchema = z.object({ emotion: emotionSchema }).strict();
@@ -34,8 +36,12 @@ const voiceSourceSchema = z.discriminatedUnion("kind", [
 ]);
 
 const voiceCandidateShape = {
+  serviceId: z.string().trim().min(1).max(200).nullable().optional(),
   baseUrl: z.string().min(1).max(2000).optional(),
   protocol: voiceProtocolSchema.optional(),
+  ttsEngine: ttsEngineSchema,
+  engines: voiceEnginesSchema.nullable().optional(),
+  defaultEngine: ttsEngineSchema,
   voiceSource: voiceSourceSchema.optional(),
   referenceAssetId: z.string().min(1).max(200).nullable().optional(),
   capabilities: voiceCapabilitiesSchema.nullable().optional(),
@@ -47,8 +53,12 @@ const voiceCandidateShape = {
 const voiceCandidateSchema = z.object(voiceCandidateShape).strict();
 
 const flatCandidateKeys = [
+  "serviceId",
   "baseUrl",
   "protocol",
+  "ttsEngine",
+  "engines",
+  "defaultEngine",
   "voiceSource",
   "referenceAssetId",
   "capabilities",
@@ -60,9 +70,21 @@ const flatCandidateKeys = [
 const saveVoiceSchema = z
   .object({
     ...voiceCandidateShape,
-    baseUrl: z.string().min(1).max(2000),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    const hasServiceId =
+      typeof value.serviceId === "string" && value.serviceId.trim().length > 0;
+    const hasBaseUrl =
+      typeof value.baseUrl === "string" && value.baseUrl.length > 0;
+    if (!hasServiceId && !hasBaseUrl) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["serviceId"],
+        message: "必须选择全局语音服务或提供语音服务地址",
+      });
+    }
+  });
 
 const previewVoiceSchema = z
   .object({
@@ -87,9 +109,19 @@ const previewVoiceSchema = z
 
 const probeVoiceSchema = z
   .object({
-    baseUrl: z.string().min(1).max(2000),
+    serviceId: z.string().trim().min(1).max(200).optional(),
+    baseUrl: z.string().min(1).max(2000).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.serviceId === undefined && value.baseUrl === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["baseUrl"],
+        message: "需要提供 serviceId 或 baseUrl",
+      });
+    }
+  });
 
 const setVoiceEnabledSchema = z
   .object({
@@ -149,7 +181,7 @@ export function registerVoiceRoutes(
         status: 200,
         body: await services.voice.probe(
           params.roleId ?? "",
-          body.baseUrl,
+          body,
           abortSignalFor(request, response),
         ),
       };

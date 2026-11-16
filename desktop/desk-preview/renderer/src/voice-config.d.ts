@@ -45,9 +45,40 @@ export interface VoiceSourcePreset {
 
 export type VoiceSource = VoiceSourceReference | VoiceSourcePreset;
 
+export interface VoiceEngineStatus {
+  ready: boolean;
+  active: boolean;
+  onDemand?: boolean;
+}
+
+export interface VoiceServiceItem {
+  serviceId: string;
+  name: string;
+  enabled: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  config: {
+    protocol: VoiceProtocol;
+    baseUrl: string;
+    defaultEngine?: string;
+  };
+}
+
 export interface VoiceConfigView {
+  serviceId?: string | null;
+  service?: {
+    serviceId: string;
+    name: string;
+    enabled: boolean;
+    protocol: VoiceProtocol;
+    baseUrl: string;
+    defaultEngine?: string;
+  } | null;
   engine: VoiceProtocol;
   protocol: VoiceProtocol;
+  ttsEngine?: string | null;
+  engines?: Record<string, VoiceEngineStatus>;
+  defaultEngine?: string;
   baseUrl: string;
   voiceSource: VoiceSource;
   reference: VoiceReferenceRecord | null;
@@ -68,6 +99,8 @@ export interface VoiceProbeResult {
   ready: boolean;
   capabilities: VoiceCapabilities;
   voices: VoicePresetVoice[] | null;
+  engines?: Record<string, VoiceEngineStatus>;
+  defaultEngine?: string;
 }
 
 export interface VoiceReferenceItem {
@@ -79,8 +112,10 @@ export interface VoiceReferenceItem {
 }
 
 export interface VoiceForm {
+  serviceId: string;
   baseUrl: string;
   protocol: VoiceProtocol;
+  ttsEngine: string;
   sourceKind: "reference" | "preset";
   voiceId: string;
   referenceAssetId: string;
@@ -108,6 +143,8 @@ export interface VoiceProbeSummary {
   referenceModes: VoiceReferenceMode[];
   languages: string[];
   speed: VoiceSpeedRange | null;
+  engines: Record<string, VoiceEngineStatus> | null;
+  defaultEngine: string | null;
 }
 
 export const VOICE_PROTOCOLS: readonly VoiceProtocol[];
@@ -116,7 +153,13 @@ export function createVoiceForm(config?: VoiceConfigView | null): VoiceForm;
 
 export function toVoicePayload(
   form: VoiceForm,
-  options?: { capabilities?: VoiceCapabilities | null; hasPendingReference?: boolean }
+  options?: {
+    capabilities?: VoiceCapabilities | null;
+    engines?: Record<string, VoiceEngineStatus> | null;
+    defaultEngine?: string | null;
+    hasPendingReference?: boolean;
+    clearEngine?: boolean;
+  }
 ): Record<string, unknown>;
 
 export function withReferenceAudio(
@@ -128,7 +171,12 @@ export function withPendingReferenceAudio(form: VoiceForm): VoiceForm;
 
 export function validateVoiceForm(
   form: VoiceForm,
-  options?: { capabilities?: VoiceCapabilities | null; hasPendingReference?: boolean }
+  options?: {
+    capabilities?: VoiceCapabilities | null;
+    engines?: Record<string, VoiceEngineStatus> | null;
+    hasPendingReference?: boolean;
+    requireService?: boolean;
+  }
 ): VoiceFormIssue[];
 
 export function summarizeProbe(probe?: VoiceProbeResult | null): VoiceProbeSummary | null;
@@ -153,6 +201,47 @@ export function resolveCapabilities(input: {
   probe?: VoiceProbeResult | null;
   probeSource?: { baseUrl: string; protocol: string } | null;
 }): VoiceCapabilities | null;
+
+export function resolveEngines(input: {
+  config?: VoiceConfigView | null;
+  form: VoiceForm;
+  probe?: VoiceProbeResult | null;
+  probeSource?: { baseUrl: string; protocol: string } | null;
+}): {
+  engines: Record<string, VoiceEngineStatus> | null;
+  defaultEngine: string | null;
+};
+
+export function pickPresetVoiceForEngine(
+  voices: VoicePresetVoice[] | null | undefined,
+  voiceId: string,
+  ttsEngine: string
+): string;
+
+export function describeVoiceFailure(error?: {
+  code?: string | null;
+  message?: string;
+}): string;
+
+export function describeVoiceSummary(config?: VoiceConfigView | null): string;
+
+export function describeProtocolHint(form: VoiceForm): string;
+
+export function validateVoiceServiceDraft(draft: {
+  name?: string;
+  protocol?: VoiceProtocol | string;
+  baseUrl?: string;
+}): string | null;
+
+export function toVoiceServiceConfig(draft: {
+  protocol: VoiceProtocol;
+  baseUrl: string;
+  defaultEngine?: string | null;
+}): {
+  protocol: VoiceProtocol;
+  baseUrl: string;
+  defaultEngine?: string;
+};
 
 export function describeVoiceFailure(error?: { code?: string | null; message?: string }): string;
 

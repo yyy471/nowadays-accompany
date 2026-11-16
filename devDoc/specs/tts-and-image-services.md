@@ -9,13 +9,13 @@
 
 ### 1.1 适用范围
 
-1. **统一语音与旧 IndexTTS 接入**：`nowadays-tts-v1` 服务能力探测、预置／参考克隆双音源、旧 `indextts` 本机桥接兼容、角色单份语音配置保存与启停、受管参考音频资产与临时暂存试听。
+1. **全局语音服务与角色语音接入**：全局 `voice_services` CRUD 与探测、`nowadays-tts-v1` 服务能力探测、多引擎选择与预置／参考克隆双音源、旧 `indextts` 本机桥接兼容、角色单份语音配置保存与启停、受管参考音频资产与临时暂存试听。
 2. **全局生图服务管理（ComfyUI）**：全局 `image_services` CRUD、直填密钥或 `env:`／`file:` 引用与换站重验、连接与工作流节点探测（含草稿探测）。
 3. **角色文生图配置与推理生成**：`role_scene_image_settings` 参数校验、内置 MOSS-Image 默认工作流、自定义 ComfyUI 工作流按 `class_type` 打补丁、角色草稿探测／测试出图及过场图生成时的运行时解析边界。
 
 ### 1.2 边界分工（不在此处重复）
 
-- **角色停止三态、配置写入守卫与设置页导航骨架**：写接口前置活动检查（`ROLE_CONFIG_WRITES` / `GLOBAL_CONFIG_WRITES`）、停启与写前暂停交互、全局设置页两栏布局（`['模型', '生图']`）与跨角色草稿切换提示，统一见 [角色配置、全局资源与活动守卫规范](role-config-and-activity.md)。
+- **角色停止三态、配置写入守卫与设置页导航骨架**：写接口前置活动检查（`ROLE_CONFIG_WRITES` / `GLOBAL_CONFIG_WRITES`）、停启与写前暂停交互、全局设置页模型分类三栏布局（`['模型', '语音', '生图']`）与跨角色草稿切换提示，统一见 [角色配置、全局资源与活动守卫规范](role-config-and-activity.md)。
 - **对话句段消费与过场图任务调度**：按句切分、对话页 `POST /speech` 防抖与缓存、旁白跳过、`scene_image_tasks` 创建、历史服饰与图层消费边界，统一见 [对话演出、输入状态、SSE 与过场图规范](conversation-performance-and-scene-images.md)。
 - **桌面视觉令牌与组件样式约束**：见 [前端设计规范](frontend-design-system.md)。
 
@@ -25,9 +25,10 @@
 | --- | --- | --- |
 | [DL-139](../161-digital-life-direction-decisions.md#dl-139-首版-tts-采用-indextts) | 首版 TTS 引擎为 IndexTTS 本机 HTTP 桥接 | 保留 `protocol: "indextts"` 向后兼容 |
 | [DL-140](../161-digital-life-direction-decisions.md#dl-140-tts-统一接入音色克隆与预置音色) | 同一套界面随服务能力切换参考克隆与预置音色；试听与配置不写多余历史 | `nowadays-tts-v1` 协议按 `/health` 声明动态渲染与校验 |
-| [DL-143](../161-digital-life-direction-decisions.md#dl-143-统一语音桥接支持可选情绪指令) | 统一语音桥接支持可选情绪指令（`emotion` 不自动映射立绘差分名） | 接口与客户端保留可选 `emotion`，对话自动按句播报暂未传值 |
+| [DL-143](../161-digital-life-direction-decisions.md#dl-143-统一语音桥接支持可选情绪指令) | 统一语音桥接支持可选情绪指令（`emotion` 不自动映射立绘差分名） | 句段标注写入 `message_segments.voice_emotion`（仅 `speech`）；`/speech` 自动消费并等待标注障栅，`/preview` 与 `/speech` 均支持可选 `emotion` |
 | [DL-149](../161-digital-life-direction-decisions.md#dl-149-角色语音只保留当前一份配置) | 每个角色只保留当前一份语音配置；停用保留原配置，新配置直接覆盖 | `role_voice_settings` 主键 `role_id`；`PUT /voice` 不改 `enabled` |
 | [DL-150](../161-digital-life-direction-decisions.md#dl-150-生图首版适配-comfyui先测-moss-image) | 生图首版适配 ComfyUI，先测 MOSS-Image；按节点类型打参数补丁 | 仅支持 `modelType: "text2img"`；图生图与锚点上传作为后续能力单列（`CG-04` 按 [223](../archive/03-appearance-and-performance/223-conversation-performance-development-guide.md) 指过场图独立复核与真实生图适配） |
+| [DL-152](../161-digital-life-direction-decisions.md#dl-152-全局管理语音服务角色从设置中选择服务并配置专属音色与试听) | 设置「模型 -> 语音」全局管理语音服务；角色选择全局服务并配音色 | `app.sqlite`（APP V9）维护全局 `voice_services`；`role_voice_settings`（V20）增 `service_id` 且启动自动回填已有角色地址；保留直连 HTTP API 向后兼容 |
 
 ---
 
@@ -35,19 +36,24 @@
 
 ### 2.1 应用 HTTP 路由
 
-语音与生图路由分别注册于 [voice-routes.ts](../../backend/src/http/voice-routes.ts) 与 [image-service-routes.ts](../../backend/src/http/image-service-routes.ts)，其中标记「角色守卫」与「全局守卫」的写路由受 [config-writes.ts](../../backend/src/http/config-writes.ts#L10-L33) 约束：
+语音与生图路由分别注册于 [voice-service-routes.ts](../../backend/src/http/voice-service-routes.ts)、[voice-routes.ts](../../backend/src/http/voice-routes.ts) 与 [image-service-routes.ts](../../backend/src/http/image-service-routes.ts)，其中标记「角色守卫」与「全局守卫」的写路由受 [config-writes.ts](../../backend/src/http/config-writes.ts) 约束：
 
 | 方法与路径 | 守卫／请求形态 | 主要入参与成功响应 | 典型业务／校验错误码 |
 | --- | --- | --- | --- |
-| `GET /v1/roles/:roleId/voice` | 无写锁；JSON | 返回 `{ voice: VoiceConfigView \| null }`（含 `reference` 摘要） | `404 ROLE_NOT_FOUND` |
-| `PUT /v1/roles/:roleId/voice` | **角色守卫**；JSON 或 `multipart/form-data`（`payload`+单文件 `file`） | 覆盖保存 `baseUrl`/`protocol`/`voiceSource`/`capabilities`/`language`/`speed`/`emoAlpha`；保留原 `enabled` | `400 VOICE_BASE_URL_*`/`VOICE_SOURCE_*`/`VOICE_REFERENCE_MODE_*`、`409 ROLE_NOT_STOPPED`、`413 AUDIO_TOO_LARGE` |
+| `GET /v1/voice-services` | 无写锁 | `{ items: VoiceServiceView[] }` | — |
+| `POST /v1/voice-services` | 无写锁；JSON | `{ name, enabled?, config }`（`config: { protocol, baseUrl, defaultEngine? }`），返回 `201 { service }` | `400 INVALID_VOICE_SERVICE_CONFIG`、`400 VOICE_BASE_URL_INVALID` |
+| `PATCH /v1/voice-services/:serviceId` | **全局守卫**；JSON | `{ name?, enabled?, config? }` | `409 ROLES_NOT_STOPPED`、`404 VOICE_SERVICE_NOT_FOUND`、`400 INVALID_VOICE_SERVICE_CONFIG` |
+| `DELETE /v1/voice-services/:serviceId` | **全局守卫** | 删除全局语音服务（仅删全局表；角色已保存配置保留以供重选），返回 `{ serviceId, deleted: true }` | `409 ROLES_NOT_STOPPED`、`404 VOICE_SERVICE_NOT_FOUND` |
+| `POST /v1/voice-services/probe` · `POST /v1/voice-services/:serviceId/probe` | 无写锁；JSON | 探测 `nowadays-tts-v1` 全局草稿 `{ config: { protocol, baseUrl } }` 或已保存服务；拒绝旧 `indextts` | `400 VOICE_PROBE_UNSUPPORTED`/`VOICE_BASE_URL_INVALID`、`404 VOICE_SERVICE_NOT_FOUND`、`502 TTS_PROBE_FAILED` |
+| `GET /v1/roles/:roleId/voice` | 无写锁；JSON | 返回 `{ voice: VoiceConfigView \| null }`（含 `serviceId?`、`service?` 与 `reference` 摘要） | `404 ROLE_NOT_FOUND` |
+| `PUT /v1/roles/:roleId/voice` | **角色守卫**；JSON 或 `multipart/form-data`（`payload`+单文件 `file`） | 覆盖保存（推荐传 `serviceId`，亦兼容直连 `baseUrl`/`protocol`）+ `ttsEngine`/`voiceSource`/`capabilities`/`language`/`speed`/`emoAlpha`；保留原 `enabled` | `404 VOICE_SERVICE_NOT_FOUND`、`409 VOICE_SERVICE_DISABLED`、`400 VOICE_BASE_URL_*`/`VOICE_SOURCE_*`/`VOICE_REFERENCE_MODE_*`/`VOICE_ENGINE_UNSUPPORTED`、`409 ROLE_NOT_STOPPED`、`413 AUDIO_TOO_LARGE` |
 | `PUT /v1/roles/:roleId/voice/enabled` | **角色守卫**；JSON `{ enabled }` | 仅更新 `enabled`，保留全部已保存语音配置 | `400 VOICE_NOT_CONFIGURED`、`409 ROLE_NOT_STOPPED` |
-| `POST /v1/roles/:roleId/voice/probe` | 无写锁；JSON `{ baseUrl }` | 探测 `nowadays-tts-v1` 服务，返回 `{ probe }`（不落库） | `400 VOICE_BASE_URL_INVALID`、`502 TTS_PROBE_FAILED`/`TTS_PROTOCOL_INVALID` |
+| `POST /v1/roles/:roleId/voice/probe` | 无写锁；JSON `{ serviceId }` 或 `{ baseUrl }` | 探测 `nowadays-tts-v1` 服务，返回 `{ probe }`（含纯 `capabilities` 及可选 `engines`、`defaultEngine`，不落库） | `404 VOICE_SERVICE_NOT_FOUND`、`400 VOICE_PROBE_UNSUPPORTED`/`VOICE_BASE_URL_INVALID`、`502 TTS_PROBE_FAILED`/`TTS_PROTOCOL_INVALID` |
 | `POST /v1/roles/:roleId/voice/reference` | **角色守卫**；multipart `file` | 上传并注册受管参考音频，返回 `201 { reference }` | `400 VOICE_REFERENCE_FILE_REQUIRED`/`AUDIO_FORMAT_UNSUPPORTED`/`AUDIO_FILE_EMPTY`、`413 AUDIO_TOO_LARGE` |
 | `GET /v1/roles/:roleId/voice/references` | 无写锁 | 列出角色参考音频 `{ items }`，含 `inUse` 标记 | `404 ROLE_NOT_FOUND` |
 | `DELETE /v1/roles/:roleId/voice/references/:assetId` | **角色守卫** | 删记录并清理磁盘文件，返回 `{ deleted: true, fileRemoved }` | `409 VOICE_REFERENCE_IN_USE`、`404 VOICE_REFERENCE_NOT_FOUND` |
-| `POST /v1/roles/:roleId/voice/preview` | 无写锁；JSON 或 multipart | 接收 `text`、`emotion?` 与互斥的 `config?`/平铺字段；返回 `audio/wav`（`no-store`） | `400 VOICE_PREVIEW_TEXT_*`/`VOICE_REFERENCE_TEXT_REQUIRED`、`502/503/504 TTS_*` |
-| `POST /v1/roles/:roleId/windows/:windowId/segments/:segmentId/speech` | 无写锁；可选 JSON `{ emotion? }` | 按已保存配置合成 `speech` 句段并返回 `audio/wav` | `409 VOICE_DISABLED`、`400 VOICE_SEGMENT_NOT_SPEAKABLE`/`VOICE_SEGMENT_EMPTY`、`409 TTS_VOICE_UNAVAILABLE` |
+| `POST /v1/roles/:roleId/voice/preview` | 无写锁；JSON 或 multipart | 接收 `text`、`emotion?` 与互斥的 `config?`/平铺字段（含 `ttsEngine?`）；返回 `audio/wav`（`no-store`） | `400 VOICE_PREVIEW_TEXT_*`/`VOICE_REFERENCE_TEXT_REQUIRED`/`VOICE_ENGINE_UNSUPPORTED`、`502/503/504 TTS_*` |
+| `POST /v1/roles/:roleId/windows/:windowId/segments/:segmentId/speech` | 无写锁；可选 JSON `{ emotion? }` | 按已保存配置（优先请求 `emotion`，否则等待并读取 `segment.voice_emotion`）合成 `speech` 句段并返回 `audio/wav` | `409 VOICE_DISABLED`、`400 VOICE_SEGMENT_NOT_SPEAKABLE`/`VOICE_SEGMENT_EMPTY`、`409 TTS_VOICE_UNAVAILABLE` |
 | `GET /v1/image-services` | 无写锁 | `{ items: ImageServiceView[] }`；凭据只返回 `credential: { status, reference, resolvable }` | — |
 | `POST /v1/image-services` | 无写锁；JSON | `{ name, enabled?, config, secret? }`（`config.modelName?` 为可选默认模型名），返回 `201 { service }` | `400 INVALID_IMAGE_SERVICE_CONFIG`、`409 RESOURCE_CREDENTIAL_CONFLICT` |
 | `PATCH /v1/image-services/:serviceId` | **全局守卫**；JSON | `{ name?, enabled?, config?, secret? }`（`secret: null` 清除、`undefined` 保留） | `409 ROLES_NOT_STOPPED`/`RESOURCE_CREDENTIAL_CONFLICT`/`RESOURCE_CREDENTIAL_STALE`、`404 IMAGE_SERVICE_NOT_FOUND` |
@@ -62,10 +68,10 @@
 
 ### 2.2 外部上游协议规范
 
-1. **统一 TTS 协议 `nowadays-tts-v1`**（[unified-tts-client.ts](../../backend/src/tts/unified-tts-client.ts#L94-L285) · [voice-capabilities.ts](../../backend/src/domain/voice-capabilities.ts#L4-L70)）：
-   - `GET /health`：须返回 `protocol: "nowadays-tts-v1"`、`service`、`model`、`ready` 及 `capabilities`（`referenceModes` 最多 32 项、`presetVoices` 布尔、`languages` 最多 32 项 BCP-47 风格代码、`speed: { min, max } | null`，且非空区间必须落在 `0.1..10` 内并包含 `1.0`）。
-   - `GET /voices`：仅当 `ready === true && capabilities.presetVoices === true` 时请求，返回 `{ voices: [{ id, label }] }`。
-   - `POST /tts`（`multipart/form-data`，`redirect: "manual"`）：传 `text`（<= 1000 Unicode 码点）、`mode`（`reference` 或 `preset`）、参考模式下带 `reference_mode` + `reference_audio` + 可选 `reference_text`（当 `requiresReferenceText: true` 时必填），预置模式下带 `voice_id`，以及可选 `language`、`speed`、`emotion`。上游返回 404 且机器码为 `VOICE_NOT_FOUND` / `PRESET_VOICE_NOT_FOUND`（大小写两种约定）时映射为 `409 TTS_VOICE_UNAVAILABLE`；仅接受 `Content-Type` 为 `audio/wav|audio/x-wav|audio/wave` 的非空合法 PCM WAV（`isPcmWav`），响应上限 **16 MiB**，默认探测超时 **10 秒**、合成超时 **90 秒**（[transport.ts](../../backend/src/tts/transport.ts#L10-L92)）。
+1. **统一 TTS 协议 `nowadays-tts-v1`**（[unified-tts-client.ts](../../backend/src/tts/unified-tts-client.ts) · [voice-capabilities.ts](../../backend/src/domain/voice-capabilities.ts)）：
+   - `GET /health`：须返回 `protocol: "nowadays-tts-v1"`、`service`、`model`、`ready` 及严格 `capabilities`（`referenceModes` 最多 32 项、`presetVoices` 布尔、`languages` 最多 32 项 BCP-47 风格代码、`speed: { min, max } | null`，且非空区间必须落在 `0.1..10` 内并包含 `1.0`）；同时支持顶层可选 `engines`（各子引擎 `{ ready, active, onDemand }` 状态映射，独立于 `capabilities` 外以保持严格校验兼容）与 `defaultEngine`。
+   - `GET /voices`：当 `capabilities.presetVoices === true` 且 `ready === true` 或 `engines` 含按需引擎时请求，返回 `{ voices: [{ id, label }] }`（多引擎桥接支持带前缀如 `cosy:` / `index:` 的音色 ID）。
+   - `POST /tts`（`multipart/form-data`，`redirect: "manual"`）：传 `text`（<= 1000 Unicode 码点）、`mode`（`reference` 或 `preset`）、可选 `engine`（指定子引擎）、参考模式下带 `reference_mode` + `reference_audio` + 可选 `reference_text`（当 `requiresReferenceText: true` 时必填），预置模式下带 `voice_id`，以及可选 `language`、`speed`、`emotion`。上游返回 404 且机器码为 `VOICE_NOT_FOUND` / `PRESET_VOICE_NOT_FOUND`（大小写两种约定）时映射为 `409 TTS_VOICE_UNAVAILABLE`；仅接受 `Content-Type` 为 `audio/wav|audio/x-wav|audio/wave` 的非空合法 PCM WAV（`isPcmWav`），响应上限 **16 MiB**，默认探测超时 **10 秒**、合成超时 **180 秒**（兼容按需 GPU 引擎冷切换，见 [transport.ts](../../backend/src/tts/transport.ts)）。
 2. **旧 IndexTTS 协议 `indextts`**（[indextts-client.ts](../../backend/src/tts/indextts-client.ts#L27-L86)）：
    - 仅支持参考音频来源（禁止预置），`POST /tts` 发送 JSON：`{ text, lang, spk_audio_path, emo_audio_path: null, emo_vector: null, emo_alpha, duration_factor }`；限制 `lang ∈ {zh, en, ja, es, ar}`、`speed ∈ [0.5, 2]`（映射为 `duration_factor = clamp(1 / speed, 0.5, 2)`）、`emoAlpha ∈ [0, 1]`。`spk_audio_path` 要求本地绝对路径（对未保存临时试听，后端写入系统临时目录并在 `finally` 删除，见 [voice-service.ts](../../backend/src/application/voice-service.ts#L670-L691)）。
 3. **ComfyUI 协议 `comfyui`**（[comfyui-client.ts](../../backend/src/scene/comfyui-client.ts#L29-L350)）：
@@ -76,9 +82,10 @@
 
 | 存储位置 | 表／目录 | 关键字段与保留规则 |
 | --- | --- | --- |
-| `<app-root>/data/app.sqlite`（全局库） | `image_services`（V4，[schema.ts](../../backend/src/storage/schema.ts#L112-L123)） | `service_id`、`name`、`enabled`、`config_json`（`{ protocol: "comfyui", baseUrl, modelName?, credentialRef?, timeoutMs? }`）；密钥存共享 `resource_secrets` |
-| `.../roles/<roleId>/business.sqlite`（角色业务库） | `voice_assets`（V9，[schema.ts](../../backend/src/storage/schema.ts#L1320-L1330)） | 受管参考音频元数据（支持 WAV/MP3/FLAC/OGG，单文件上限 **32 MiB**），物理路径落在 `<roleDir>/voice/<assetId>.<ext>` |
-| `.../roles/<roleId>/business.sqlite`（角色业务库） | `role_voice_settings`（V9→V14，[schema.ts](../../backend/src/storage/schema.ts#L1332-L1375)） | 主键 `role_id` 仅存一份配置；含 `protocol`、`voice_source`、`reference_asset_id`、`reference_mode`、`reference_text`、`preset_voice_id`、`capabilities_json`、`reference_mode_confirmed`（V12 回填修复）、`enabled`（V14 新增默认 1，`saveSettings` UPSERT 刻意跳过以保留停用态） |
+| `<app-root>/data/app.sqlite`（全局库） | `voice_services`（APP V9，[schema.ts](../../backend/src/storage/schema.ts)） | `service_id`、`name`、`enabled`、`config_json`（`{ protocol: "nowadays-tts-v1" \| "indextts", baseUrl, defaultEngine? }`）；支持启动时从已有角色配置 `backfillFromRoles` 自动创建并关联 |
+| `<app-root>/data/app.sqlite`（全局库） | `image_services`（V4，[schema.ts](../../backend/src/storage/schema.ts)） | `service_id`、`name`、`enabled`、`config_json`（`{ protocol: "comfyui", baseUrl, modelName?, credentialRef?, timeoutMs? }`）；密钥存共享 `resource_secrets` |
+| `.../roles/<roleId>/business.sqlite`（角色业务库） | `voice_assets`（V9，[schema.ts](../../backend/src/storage/schema.ts)） | 受管参考音频元数据（支持 WAV/MP3/FLAC/OGG，单文件上限 **32 MiB**），物理路径落在 `<roleDir>/voice/<assetId>.<ext>` |
+| `.../roles/<roleId>/business.sqlite`（角色业务库） | `role_voice_settings`（V9→V20，[schema.ts](../../backend/src/storage/schema.ts)） | 主键 `role_id` 仅存一份配置；含 `service_id`（V20 新增，可空兼容直连与删后重选）、`protocol`、`base_url`、`voice_source`、`reference_asset_id`、`reference_mode`、`reference_text`、`preset_voice_id`、`capabilities_json`（严格保持纯净）、`tts_engine`、`engines_json`、`default_engine`（V19 新增多引擎持久化列）、`reference_mode_confirmed`（V12 回填修复）、`enabled`（V14 新增默认 1，`saveSettings` UPSERT 刻意跳过以保留停用态） |
 | `.../roles/<roleId>/business.sqlite`（角色业务库） | `role_scene_image_settings`（V15，[schema.ts](../../backend/src/storage/schema.ts#L1477-L1495)） | 主键 `role_id`：绑定全局 `service_id`、`model_type='text2img'`、`model_path`、`base_prompt`、`negative_prompt`、`outfit_prompts_json`、`width`/`height`（`256..2048` 步长 16，默认 `1024`）、`steps`（`1..150`，默认 `25`）、`cfg`（`0..30`，默认 `2.5`）、`sampler`（默认 `er_sde`）、`scheduler`（默认 `simple`）、`seed`（`0..2147483647\|null`）、`workflow_json`、`output_node_id` |
 
 ---
@@ -87,23 +94,31 @@
 
 ### 3.1 TTS 服务切换、能力确认与暂存试听
 
-1. **地址归一化与安全边界**（[normalizeBaseUrl](../../backend/src/application/voice-service.ts#L1278-L1304)）：仅允许 `http:`/`https:`，拒绝内嵌账号密码、查询串与 `#` 片段；`UnifiedTtsClient` 均使用 `redirect: "manual"`，任何 3xx 响应立即中止并报错。
-2. **切换服务／协议强制重选机制**（[voice-service.ts](../../backend/src/application/voice-service.ts#L195-L247)、[resolveSource](../../backend/src/application/voice-service.ts#L918-L1039)）：
+1. **地址归一化与安全边界**（[normalizeVoiceBaseUrl](../../backend/src/domain/voice.ts)）：仅允许 `http:`/`https:`，拒绝内嵌账号密码、查询串与 `#` 片段；`UnifiedTtsClient` 均使用 `redirect: "manual"`，任何 3xx 响应立即中止并报错。
+2. **切换服务／协议强制重选机制**（[voice-service.ts](../../backend/src/application/voice-service.ts)）：
    - 当保存或试听提交的 `baseUrl` 或 `protocol` 与已保存配置不同（`serviceChanged`）时，若原为 `preset` 则抛出 `400 VOICE_SOURCE_REQUIRED`；若原为 `reference` 则清空 `referenceMode` 并置 `referenceModeConfirmed = false`。
    - 仅当「同服务（`!serviceChanged`）且目标能力仅有 1 个参考模式且此前未处于待确认态」时才允许自动补选；换服务后连续仅改语速／语言仍会停在待确认态并被合成路径以 `VOICE_REFERENCE_MODE_REQUIRED` 拦截（V12 迁移同步回填修复老库状态）。
 3. **未保存参考录音的暂存试听与原子保存**（[VoicePanel.tsx](../../desktop/desk-preview/renderer/src/components/voice/VoicePanel.tsx#L246-L386) · `292 §6`）：
    - 选定本地音频后仅在前端保留 `'待上传'` 文件对象（清空上次录音残留的 `referenceText`），不预先调用 `POST /voice/reference`。
    - 点「生成试听」直接走 multipart 提交 `POST /voice/preview`，不写入 `voice_assets` 或修改 `role_voice_settings`；点「保存声音配置」走 multipart 提交 `PUT /voice`，后端在数据库事务外写盘、失败时清理文件（不留孤儿文件或半写入记录）。正在使用的音频禁止删除（`409 VOICE_REFERENCE_IN_USE`）。
-4. **单份语音启停与竞态隔离**（[VoicePanel.tsx](../../desktop/desk-preview/renderer/src/components/voice/VoicePanel.tsx#L340-L413) · [use-segment-voice.ts](../../desktop/desk-preview/renderer/src/conversation/use-segment-voice.ts)）：
+4. **单份语音启停与竞态隔离**（[VoicePanel.tsx](../../desktop/desk-preview/renderer/src/components/voice/VoicePanel.tsx) · [use-segment-voice.ts](../../desktop/desk-preview/renderer/src/conversation/use-segment-voice.ts)）：
    - 配置页通过 `inFlight` 互斥锁阻止保存与启停并发覆盖；`VOICE_DISABLED` 仅拦截按句对话合成，配置页试听始终可用。
    - 对话页 `useSegmentVoice` 收到首个 `VOICE_DISABLED` 后暂停后续自动播放与预取请求，同时保留用户手动点击某句重试的能力；切角色／切窗口时递增世代号与 `playToken`，丢弃晚到音频与错误提示。
+5. **多引擎选择、试听情绪与本地 WSL 桥接实测**（[voice-service.ts](../../backend/src/application/voice-service.ts) · [voice-config.js](../../desktop/desk-preview/renderer/src/voice-config.js) · [VoicePanel.tsx](../../desktop/desk-preview/renderer/src/components/voice/VoicePanel.tsx)）：
+   - `nowadays-tts-v1` 可同时声明多个后端引擎（`engines` 与 `defaultEngine`）；角色保存或试听提交不在 `engines` 内的 `ttsEngine` 会返回 `400 VOICE_ENGINE_UNSUPPORTED`，切换到不声明目标引擎的服务时清理已选引擎并引导重选。
+   - 配置页支持选择具体引擎、按所选引擎匹配并自动回退对应前缀预置音色（`cosy:` / `index:`），并在试听卡片提供可选 `emotion` 输入框随 `POST /voice/preview` 下发。
+   - **实机对比（本机 WSL `http://127.0.0.1:9890` 双引擎实测）**：`CosyVoice3-0.5B` 输出 `24000 Hz` 单声道 WAV，热态推理 `5.6–7.3 秒`，显存约 `5.0–5.3 GiB`，原生支持自由中文 `instruct2` 情绪指令，推荐为首版默认引擎；`IndexTTS-2.5` 输出 `22050 Hz` 单声道 WAV，热态推理更快（实测 `4.7 秒` / 约 `1.05 RTF`），但显存占用较高（约 `8.2 GiB`）且情绪由中文关键词映射到 8 维向量。两引擎按需冷切换约 `28.6–39.7 秒`（对应 WSL 宿主机外部脚本修改保留 `.bak-pre-emotion` 备份，独立于本仓库源码）。
+6. **全局语音服务目录、角色引用与跨页缓存共享**（[global-voice-service.ts](../../backend/src/application/global-voice-service.ts) · [voice-service.ts](../../backend/src/application/voice-service.ts) · [Settings.tsx](../../desktop/desk-preview/renderer/src/pages/Settings.tsx) · [VoiceServiceEditor.tsx](../../desktop/desk-preview/renderer/src/components/voice/VoiceServiceEditor.tsx) · [voice-cache.js](../../desktop/desk-preview/renderer/src/components/voice/voice-cache.js) · [use-voice-probe.ts](../../desktop/desk-preview/renderer/src/components/voice/use-voice-probe.ts)）：
+   - 全局「设置 -> 模型 -> 语音」统一维护语音服务的名称、接口协议、服务地址、可选默认引擎（`defaultEngine`）、在线连接探测及全局启用／停用／删除（停用与删除触发 `GLOBAL_CONFIG_WRITES` 前先止活全部角色）；启动时通过 `backfillFromRoles` 将既有角色已保存 `(protocol, baseUrl)` 自动归入 `voice_services` 并回填 `service_id`。
+   - 角色配置「模型 -> 语音」不保留手填地址／协议输入，改为下拉选择已配置语音服务，并提供「测试连接」与「在设置中管理 →／去设置添加 →」直达设置页；全局详情页改址／删改时通过 `serviceRefreshVersion` 与 `serviceEpochs` 通知角色页同步列表并按服务版本清除 `voice-cache.js` 缓存。
+   - 角色保存前在发起 `guardWrite` 停机前先校验服务选择及重查 `/v1/voice-services`，拦截已删除或全局停用的服务；当角色引擎选回「跟随服务默认」时通过显式 `clearEngine` 清空角色覆盖列（`tts_engine = NULL`），运行时（合成与后台情绪标注 `resolveVoiceRuntime`）实时校验全局服务启用状态并继承最新 `service.config.defaultEngine`。
 
 ### 3.2 生图服务凭据隔离与草稿探测
 
 1. **凭据二选一与跨站点防护**（[image-service.ts](../../backend/src/application/image-service.ts#L113-L223) · [imageServiceSiteIdentity](../../backend/src/domain/image-service.ts#L59-L67)）：
    - 直填明文 `secret` 与 `config.credentialRef`（`env:`/`file:`）不能共存（`409 RESOURCE_CREDENTIAL_CONFLICT`）；仅保存环境变量／文件引用时可读写配置页，待真正探测或生图时再通过 `resolveConnection` 解析。
    - 当 `protocol` 与 `URL.origin` 发生变化（跨站点修改）而沿用已存储密钥或原 `credentialRef` 时，无论正式 `PATCH /v1/image-services/:id` 还是草稿 `resolveDraftConnection` 均拒绝并抛出 `409 RESOURCE_CREDENTIAL_STALE`，防止把凭据发送给新地址。
-2. **先校验后停机的前端顺序与统一模型选取**（[Settings.tsx](../../desktop/desk-preview/renderer/src/pages/Settings.tsx#L1214-L1547) · [ImageModelPicker.tsx](../../desktop/desk-preview/renderer/src/components/image/ImageModelPicker.tsx) · [use-image-probe.ts](../../desktop/desk-preview/renderer/src/components/image/use-image-probe.ts) · [image-cache.js](../../desktop/desk-preview/renderer/src/components/image/image-cache.js) · `292 §7.1`）：
+2. **先校验后停机的前端顺序与统一模型选取**（[Settings.tsx](../../desktop/desk-preview/renderer/src/pages/Settings.tsx#L1237-L1581) · [ImageModelPicker.tsx](../../desktop/desk-preview/renderer/src/components/image/ImageModelPicker.tsx) · [use-image-probe.ts](../../desktop/desk-preview/renderer/src/components/image/use-image-probe.ts) · [image-cache.js](../../desktop/desk-preview/renderer/src/components/image/image-cache.js) · `292 §7.1`）：
    - `ImageServiceDetail.save()` 必须在调用 `stopActiveRolesForGlobalWrite` 前先行校验地址格式（`http:`/`https:`）及跨站点换密确认，避免合法拒绝前误停全部活跃角色。
    - 全局设置页（创建/详情）与角色配置页共用 `ImageModelPicker`、`useImageProbe` 与按服务密钥代次隔离的 `image-cache.js` 缓存（与文本模型 `ModelNamePicker` / `useModelProbe` 对齐）：`读取模型列表` 与 `测试连接` 的状态日志在当前页相互覆盖、切页或切换服务即清零；在全局生图服务可选保存 `config.modelName` 后，角色配置切换或初选该服务时自动带入默认模型，同时允许从已探测候选下拉选择或手填覆盖。
    - 全局探测与角色草稿探测／测试出图均只读不写库；`ImagePanel` 不保留重复的内联「新建生图服务」表单，新建／修改统一跳设置页并在返回时经 `serviceRefreshVersion` 与 `serviceEpochs` 同步服务列表与失效缓存（`292-R05` 已通过独立复核；`292-R06` 原跨页场景通过后已于 [292 §9](../archive/06-workflow-simplification/292-278-remaining-deletion-maintenance.md#9-283-28-补修复核跟进与文档勘误自验292-r06-在途编辑292-r08-干净隔离环境与-doc-r01r04) 补修在途编辑阻塞，复核结论见第 5.1 节）。
@@ -138,9 +153,10 @@
 3. **未配置真实生图服务失败策略**（[248 §10](../archive/04-role-settings-and-media/248-comfyui-adaptation.md#10-未完成与后续)）：正式发布前需按产品开关将 `ConfiguredSceneImageGenerator` 在无配置时的默认行为从「回退占位图」切换或可选切换为「提示先配置生图服务」。
 4. **多模型扩展工作流模板**：Flux / SDXL 等模型虽可通过自定义工作流 API JSON 接入，但尚无内置模板选择器。
 
-### 4.3 尚未实机验证（必须真实外部部署联调）
+### 4.3 已实机联调与尚未实机验证项
 
-- **真实 TTS 引擎**：真实 IndexTTS 2.5 与 `nowadays-tts-v1` 桥接下的中文／多语种长句、情绪参数（`emotion`/`emoAlpha`）、克隆参考音频首字延迟与设备输出播放效果。
+- **已在本机 WSL 联调（脚本级 E2E）**：通过后端 HTTP 路由与真实 WSL `nowadays-tts-v1` 桥接（`http://127.0.0.1:9890`）完成 `CosyVoice3-0.5B` 与 `IndexTTS-2.5` 的 `/voice/probe`、配置切换、带 `emotion` 试听与对话 `segment_annotations -> /speech` 双向切引擎合成实测（对话 LLM 采用测试脚手架响应；WSL 桥接与服务脚本改动位于宿主机目录并留有 `.bak-pre-emotion` 备份）。
+- **尚未实机验证（仍待补充）**：真实多语种长句、桌面 Electron 界面内真实扬声器播放试听与参考音频实时上传回归、真实多模态 LLM 对话流全栈串联。
 - **真实 ComfyUI + MOSS-Image**：本地大模型目录（`MOSS-Image-Base`）加载、显卡 VRAM 峰值与实际推理耗时、长等待取消是否真实清出 ComfyUI 队列、并发任务与 8 MiB／32 MiB 上限实测。
 
 ### 4.4 可执行验证命令
@@ -149,7 +165,7 @@
 # 1. 后端类型检查与语音／ComfyUI 定向单测（Node 24）
 cd backend
 npx -y node@24 ./node_modules/typescript/bin/tsc --noEmit
-npx -y node@24 --import tsx --test tests/p8-voice.test.ts tests/p9-tts-unified.test.ts tests/p13-comfyui.test.ts
+npx -y node@24 --import tsx --test tests/p8-voice.test.ts tests/p9-tts-unified.test.ts tests/p9-tts-engines-emotion.test.ts tests/p13-comfyui.test.ts
 npx -y node@24 scripts/accept-offline.mjs
 
 # 2. 桌面前端检查、构建与纯逻辑单测
@@ -157,7 +173,7 @@ cd desktop/desk-preview/renderer
 npm run check
 npm run build
 cd ..
-npx -y node@24 --test tests/voice-config.test.cjs tests/image-config.test.cjs
+npx -y node@24 --test tests/voice-config.test.cjs tests/voice-engines-emotion.test.cjs tests/image-config.test.cjs
 
 # 3. 真实本机后端 + Electron 设置／对话全链路检查（仓库根目录，外接假 TTS/ComfyUI 端点）
 npx -y node@24 desktop/desk-preview/tests/workflow-real-backend-chain-check.cjs
@@ -178,16 +194,16 @@ npx -y node@24 desktop/desk-preview/tests/workflow-real-backend-chain-check.cjs
 ### 5.2 核心实现文件清单
 
 - **后端域模型、路由与输入验证**：
-  - [voice.ts](../../backend/src/domain/voice.ts) · [voice-capabilities.ts](../../backend/src/domain/voice-capabilities.ts) · [image-service.ts](../../backend/src/domain/image-service.ts) · [scene-image-settings.ts](../../backend/src/domain/scene-image-settings.ts) · [model.ts](../../backend/src/domain/model.ts) · [errors.ts](../../backend/src/domain/errors.ts)
-  - [voice-routes.ts](../../backend/src/http/voice-routes.ts) · [image-service-routes.ts](../../backend/src/http/image-service-routes.ts) · [config-writes.ts](../../backend/src/http/config-writes.ts) · [schemas.ts](../../backend/src/http/schemas.ts)
+  - [voice.ts](../../backend/src/domain/voice.ts) · [voice-service.ts](../../backend/src/domain/voice-service.ts) · [voice-capabilities.ts](../../backend/src/domain/voice-capabilities.ts) · [image-service.ts](../../backend/src/domain/image-service.ts) · [scene-image-settings.ts](../../backend/src/domain/scene-image-settings.ts) · [model.ts](../../backend/src/domain/model.ts) · [errors.ts](../../backend/src/domain/errors.ts)
+  - [voice-routes.ts](../../backend/src/http/voice-routes.ts) · [voice-service-routes.ts](../../backend/src/http/voice-service-routes.ts) · [image-service-routes.ts](../../backend/src/http/image-service-routes.ts) · [config-writes.ts](../../backend/src/http/config-writes.ts) · [schemas.ts](../../backend/src/http/schemas.ts)
 - **后端应用、协议客户端与存储**：
-  - [voice-service.ts](../../backend/src/application/voice-service.ts) · [image-service.ts](../../backend/src/application/image-service.ts) · [scene-image-settings.ts](../../backend/src/application/scene-image-settings.ts) · [audio-inspect.ts](../../backend/src/application/audio-inspect.ts)
+  - [global-voice-service.ts](../../backend/src/application/global-voice-service.ts) · [voice-service.ts](../../backend/src/application/voice-service.ts) · [image-service.ts](../../backend/src/application/image-service.ts) · [scene-image-settings.ts](../../backend/src/application/scene-image-settings.ts) · [audio-inspect.ts](../../backend/src/application/audio-inspect.ts)
   - [transport.ts](../../backend/src/tts/transport.ts) · [unified-tts-client.ts](../../backend/src/tts/unified-tts-client.ts) · [indextts-client.ts](../../backend/src/tts/indextts-client.ts)
   - [protocols.ts](../../backend/src/model/protocols.ts) · [google-gemini.ts](../../backend/src/model/google-gemini.ts) · [comfyui-client.ts](../../backend/src/scene/comfyui-client.ts) · [comfyui-workflow.ts](../../backend/src/scene/comfyui-workflow.ts) · [comfyui-generator.ts](../../backend/src/scene/comfyui-generator.ts)
-  - [voice-store.ts](../../backend/src/storage/voice-store.ts) · [image-service-store.ts](../../backend/src/storage/image-service-store.ts) · [scene-image-settings-store.ts](../../backend/src/storage/scene-image-settings-store.ts) · [schema.ts](../../backend/src/storage/schema.ts)
+  - [voice-store.ts](../../backend/src/storage/voice-store.ts) · [voice-service-store.ts](../../backend/src/storage/voice-service-store.ts) · [image-service-store.ts](../../backend/src/storage/image-service-store.ts) · [scene-image-settings-store.ts](../../backend/src/storage/scene-image-settings-store.ts) · [schema.ts](../../backend/src/storage/schema.ts)
 - **桌面前端渲染器与纯逻辑单测**：
-  - [VoicePanel.tsx](../../desktop/desk-preview/renderer/src/components/voice/VoicePanel.tsx) · [voice-config.js](../../desktop/desk-preview/renderer/src/voice-config.js) · [ImagePanel.tsx](../../desktop/desk-preview/renderer/src/components/image/ImagePanel.tsx) · [ImageModelPicker.tsx](../../desktop/desk-preview/renderer/src/components/image/ImageModelPicker.tsx) · [use-image-probe.ts](../../desktop/desk-preview/renderer/src/components/image/use-image-probe.ts) · [image-cache.js](../../desktop/desk-preview/renderer/src/components/image/image-cache.js) · [image-config.js](../../desktop/desk-preview/renderer/src/image-config.js) · [Settings.tsx](../../desktop/desk-preview/renderer/src/pages/Settings.tsx) · [use-segment-voice.ts](../../desktop/desk-preview/renderer/src/conversation/use-segment-voice.ts)
-  - [voice-config.test.cjs](../../desktop/desk-preview/tests/voice-config.test.cjs) · [image-config.test.cjs](../../desktop/desk-preview/tests/image-config.test.cjs) · [p8-voice.test.ts](../../backend/tests/p8-voice.test.ts) · [p9-tts-unified.test.ts](../../backend/tests/p9-tts-unified.test.ts) · [p13-comfyui.test.ts](../../backend/tests/p13-comfyui.test.ts)
+  - [VoicePanel.tsx](../../desktop/desk-preview/renderer/src/components/voice/VoicePanel.tsx) · [VoiceServiceEditor.tsx](../../desktop/desk-preview/renderer/src/components/voice/VoiceServiceEditor.tsx) · [VoiceProbeView.tsx](../../desktop/desk-preview/renderer/src/components/voice/VoiceProbeView.tsx) · [use-voice-probe.ts](../../desktop/desk-preview/renderer/src/components/voice/use-voice-probe.ts) · [voice-cache.js](../../desktop/desk-preview/renderer/src/components/voice/voice-cache.js) · [voice-config.js](../../desktop/desk-preview/renderer/src/voice-config.js) · [ImagePanel.tsx](../../desktop/desk-preview/renderer/src/components/image/ImagePanel.tsx) · [ImageModelPicker.tsx](../../desktop/desk-preview/renderer/src/components/image/ImageModelPicker.tsx) · [use-image-probe.ts](../../desktop/desk-preview/renderer/src/components/image/use-image-probe.ts) · [image-cache.js](../../desktop/desk-preview/renderer/src/components/image/image-cache.js) · [image-config.js](../../desktop/desk-preview/renderer/src/image-config.js) · [Settings.tsx](../../desktop/desk-preview/renderer/src/pages/Settings.tsx) · [use-segment-voice.ts](../../desktop/desk-preview/renderer/src/conversation/use-segment-voice.ts)
+  - [voice-config.test.cjs](../../desktop/desk-preview/tests/voice-config.test.cjs) · [voice-engines-emotion.test.cjs](../../desktop/desk-preview/tests/voice-engines-emotion.test.cjs) · [image-config.test.cjs](../../desktop/desk-preview/tests/image-config.test.cjs) · [p8-voice.test.ts](../../backend/tests/p8-voice.test.ts) · [p9-tts-unified.test.ts](../../backend/tests/p9-tts-unified.test.ts) · [p9-tts-engines-emotion.test.ts](../../backend/tests/p9-tts-engines-emotion.test.ts) · [p13-comfyui.test.ts](../../backend/tests/p13-comfyui.test.ts)
 
 ### 5.3 归档与复核文档追溯
 

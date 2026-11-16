@@ -24,13 +24,18 @@ class SpeechRequestError extends Error {
   }
 }
 
-async function fetchSpeech(roleId: string, windowId: string, segmentId: string): Promise<Blob> {
+async function fetchSpeech(
+  roleId: string,
+  windowId: string,
+  segmentId: string,
+  emotion?: string | null,
+): Promise<Blob> {
   const response = await fetch(
     `/v1/roles/${encodeURIComponent(roleId)}/windows/${encodeURIComponent(windowId)}/segments/${encodeURIComponent(segmentId)}/speech`,
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: '{}'
+      body: JSON.stringify(emotion ? { emotion } : {})
     }
   );
   if (!response.ok) {
@@ -143,7 +148,7 @@ export function useSegmentVoice({ roleId, windowId, onToast }: { roleId: string;
     const win = windowRef.current;
     if (!role || !win) return Promise.resolve(null);
     const generation = cacheGeneration.current;
-    const task: Promise<string | null> = fetchSpeech(role, win, row.segmentId).then(blob => {
+    const task: Promise<string | null> = fetchSpeech(role, win, row.segmentId, row.voiceEmotion).then(blob => {
       if (promises.current.get(key) === task) promises.current.delete(key);
       if (cacheGeneration.current !== generation) return null;
       if (blob.size === 0) throw new Error('这段语音暂时是空的。');

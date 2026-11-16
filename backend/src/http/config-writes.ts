@@ -30,6 +30,8 @@ export const ROLE_CONFIG_WRITES: ReadonlySet<string> = new Set([
 export const GLOBAL_CONFIG_WRITES: ReadonlySet<string> = new Set([
   "PATCH /v1/image-services/:serviceId",
   "DELETE /v1/image-services/:serviceId",
+  "PATCH /v1/voice-services/:serviceId",
+  "DELETE /v1/voice-services/:serviceId",
 ]);
 
 /**

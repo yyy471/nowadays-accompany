@@ -697,6 +697,15 @@ function stripAppearanceV17(db: Database.Database): void {
   db.exec("ALTER TABLE message_segments DROP COLUMN home_asset_id");
 }
 
+/** 去掉 V19～V20 新增语音服务关联、引擎与情感列，避免旧库迁移测试重复建列。 */
+function stripVoiceV19(db: Database.Database): void {
+  db.exec("ALTER TABLE role_voice_settings DROP COLUMN service_id");
+  db.exec("ALTER TABLE role_voice_settings DROP COLUMN tts_engine");
+  db.exec("ALTER TABLE role_voice_settings DROP COLUMN engines_json");
+  db.exec("ALTER TABLE role_voice_settings DROP COLUMN default_engine");
+  db.exec("ALTER TABLE message_segments DROP COLUMN voice_emotion");
+}
+
 test("服饰改名与立绘替换保留旧句段的立绘指向", { timeout: 60_000 }, async () => {
   const model = new ScriptedChatModel([
     replyScript("今天穿这件。\n（她理了理裙摆）"),
@@ -1056,6 +1065,7 @@ test("旧库升级按句段服饰当时的主页立绘回填", { timeout: 60_000
       rolePaths(config.dataRoot, fixture.roleId).businessDatabasePath,
     );
     try {
+      stripVoiceV19(raw);
       stripAppearanceV17(raw);
       raw.pragma("user_version = 16");
     } finally {

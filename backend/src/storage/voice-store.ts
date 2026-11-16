@@ -1,8 +1,12 @@
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
-import { parseVoiceCapabilities } from "../domain/voice-capabilities.js";
+import {
+  parseVoiceCapabilities,
+  parseVoiceEngines,
+} from "../domain/voice-capabilities.js";
 import type {
   VoiceCapabilities,
+  VoiceEngineStatus,
   VoiceLanguage,
   VoiceProtocol,
   VoiceReferenceRecord,
@@ -12,8 +16,12 @@ import type {
 
 interface SettingsRow {
   role_id: string;
+  service_id: string | null;
   engine: string;
   protocol: string;
+  tts_engine: string | null;
+  engines_json: string | null;
+  default_engine: string | null;
   base_url: string;
   reference_asset_id: string | null;
   voice_source: string;
@@ -48,7 +56,11 @@ export interface NewVoiceReference {
 }
 
 export interface SaveVoiceSettingsInput {
+  serviceId: string | null;
   protocol: VoiceProtocol;
+  ttsEngine: string | null;
+  engines: Record<string, VoiceEngineStatus> | null;
+  defaultEngine: string | null;
   baseUrl: string;
   voiceSource: VoiceSource;
   language: VoiceLanguage;
@@ -78,14 +90,19 @@ export class VoiceStore {
     this.db
       .prepare(
         `INSERT INTO role_voice_settings
-           (role_id, engine, protocol, base_url, reference_asset_id,
-            voice_source, reference_mode, reference_text, preset_voice_id,
+           (role_id, service_id, engine, protocol, tts_engine, engines_json,
+            default_engine, base_url, reference_asset_id, voice_source,
+            reference_mode, reference_text, preset_voice_id,
             capabilities_json, reference_mode_confirmed, language, speed,
             emo_alpha, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(role_id) DO UPDATE SET
+           service_id = excluded.service_id,
            engine = excluded.engine,
            protocol = excluded.protocol,
+           tts_engine = excluded.tts_engine,
+           engines_json = excluded.engines_json,
+           default_engine = excluded.default_engine,
            base_url = excluded.base_url,
            reference_asset_id = excluded.reference_asset_id,
            voice_source = excluded.voice_source,
@@ -101,8 +118,12 @@ export class VoiceStore {
       )
       .run(
         this.roleId,
+        input.serviceId,
         input.protocol,
         input.protocol,
+        input.ttsEngine,
+        input.engines === null ? null : JSON.stringify(input.engines),
+        input.defaultEngine,
         input.baseUrl,
         reference?.referenceAssetId ?? null,
         input.voiceSource.kind,
@@ -122,6 +143,17 @@ export class VoiceStore {
         input.now,
       );
     return this.getSettings()!;
+  }
+
+  /** 启动期迁移：把尚未绑定全局服务的旧角色配置关联到全局语音服务，不改时间戳。 */
+  linkService(serviceId: string): void {
+    this.db
+      .prepare(
+        `UPDATE role_voice_settings
+            SET service_id = ?
+          WHERE role_id = ? AND service_id IS NULL`,
+      )
+      .run(serviceId, this.roleId);
   }
 
   /** 启用或停用这份配置；没有配置时返回 null，由调用方报错。 */
@@ -186,6 +218,7 @@ function mapSettings(row: SettingsRow): VoiceSettingsRecord {
   const protocol = normalizeProtocol(row.protocol);
   return {
     roleId: row.role_id,
+    serviceId: row.service_id ?? null,
     engine: normalizeProtocol(row.engine),
     protocol,
     baseUrl: row.base_url,
@@ -196,6 +229,9 @@ function mapSettings(row: SettingsRow): VoiceSettingsRecord {
     speed: row.speed,
     emoAlpha: row.emo_alpha,
     capabilities: parseVoiceCapabilities(row.capabilities_json),
+    ttsEngine: row.tts_engine,
+    engines: parseVoiceEngines(row.engines_json),
+    defaultEngine: row.default_engine,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

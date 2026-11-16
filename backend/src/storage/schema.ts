@@ -8,8 +8,8 @@ import {
 } from "../domain/errors.js";
 import { backfillEvidence } from "./evidence.js";
 
-export const APP_SCHEMA_VERSION = 8;
-export const BUSINESS_SCHEMA_VERSION = 18;
+export const APP_SCHEMA_VERSION = 9;
+export const BUSINESS_SCHEMA_VERSION = 20;
 export const EXECUTION_SCHEMA_VERSION = 1;
 
 export const APP_TABLES = [
@@ -20,6 +20,7 @@ export const APP_TABLES = [
   "model_test_calls",
   "resource_secrets",
   "image_services",
+  "voice_services",
   "role_activity",
 ] as const;
 export const BUSINESS_TABLES = [
@@ -709,7 +710,11 @@ const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
   {
     table: "role_voice_settings",
     columns: [
+      "service_id",
       "protocol",
+      "tts_engine",
+      "engines_json",
+      "default_engine",
       "voice_source",
       "reference_mode",
       "reference_text",
@@ -833,6 +838,7 @@ const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
       "outfit_id",
       "sprite_asset_id",
       "home_asset_id",
+      "voice_emotion",
       "annotated_at",
     ],
   },
@@ -1570,6 +1576,27 @@ CREATE INDEX IF NOT EXISTS idx_model_calls_role_time
   ON model_calls (role_id, started_at);
 `;
 
+const BUSINESS_V19_SQL = `
+-- V19：语音设置记录所选底层引擎与多引擎能力快照，句段记录语音情绪指令。
+ALTER TABLE role_voice_settings
+  ADD COLUMN tts_engine TEXT;
+
+ALTER TABLE role_voice_settings
+  ADD COLUMN engines_json TEXT;
+
+ALTER TABLE role_voice_settings
+  ADD COLUMN default_engine TEXT;
+
+ALTER TABLE message_segments
+  ADD COLUMN voice_emotion TEXT;
+`;
+
+const BUSINESS_V20_SQL = `
+-- v20：角色语音配置支持关联全局 voice_services 服务（DL-152），同时保留旧直填兼容。
+ALTER TABLE role_voice_settings
+  ADD COLUMN service_id TEXT;
+`;
+
 const APP_V6_SQL = `
 -- v6：删除资源时先在全局库同事务提交「资源删除 + 待清理记录」（RP-R05）。
 -- 角色业务库的残留绑定由启动恢复、删除重试和读侧过滤继续清理。
@@ -1620,6 +1647,22 @@ CREATE INDEX IF NOT EXISTS idx_model_test_calls_resource
   ON model_test_calls (resource_id, finished_at);
 `;
 
+const APP_V9_SQL = `
+-- v9：全局语音服务目录（DL-152）。在设置页统一管理地址、协议与默认引擎，
+-- 角色只选择服务并保留各自音色来源、参考音频与语速／情绪试听配置。
+CREATE TABLE IF NOT EXISTS voice_services (
+  service_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+  config_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_voice_services_enabled
+  ON voice_services (enabled, created_at);
+`;
+
 export function openAppDatabase(dbPath: string): OpenedDatabase {
   return openVersionedDatabase(
     dbPath,
@@ -1631,7 +1674,8 @@ export function openAppDatabase(dbPath: string): OpenedDatabase {
       APP_V5_SQL +
       APP_V6_SQL +
       APP_V7_SQL +
-      APP_V8_SQL,
+      APP_V8_SQL +
+      APP_V9_SQL,
     {
       1: (db) => db.exec(APP_V2_SQL),
       2: (db) => db.exec(APP_V3_SQL),
@@ -1640,6 +1684,7 @@ export function openAppDatabase(dbPath: string): OpenedDatabase {
       5: (db) => db.exec(APP_V6_SQL),
       6: (db) => db.exec(APP_V7_SQL),
       7: (db) => db.exec(APP_V8_SQL),
+      8: (db) => db.exec(APP_V9_SQL),
     },
     APP_TABLES,
     [],
@@ -1672,7 +1717,9 @@ export function openBusinessDatabase(
       BUSINESS_V15_SQL +
       BUSINESS_V16_SQL +
       BUSINESS_V17_SQL +
-      BUSINESS_V18_SQL,
+      BUSINESS_V18_SQL +
+      BUSINESS_V19_SQL +
+      BUSINESS_V20_SQL,
     {
       1: (db) => {
         db.exec(BUSINESS_V2_SQL);
@@ -1694,6 +1741,8 @@ export function openBusinessDatabase(
       15: (db) => db.exec(BUSINESS_V16_SQL),
       16: (db) => db.exec(BUSINESS_V17_SQL),
       17: (db) => db.exec(BUSINESS_V18_SQL),
+      18: (db) => db.exec(BUSINESS_V19_SQL),
+      19: (db) => db.exec(BUSINESS_V20_SQL),
     },
     BUSINESS_TABLES,
     BUSINESS_INDEXES,

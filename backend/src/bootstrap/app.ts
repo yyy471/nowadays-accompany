@@ -6,6 +6,7 @@ import {
 } from "../application/conversation-service.js";
 import { AutonomyService } from "../application/autonomy-service.js";
 import { AppearanceService } from "../application/appearance-service.js";
+import { GlobalVoiceService } from "../application/global-voice-service.js";
 import { VoiceService } from "../application/voice-service.js";
 import { ImageServiceService } from "../application/image-service.js";
 import { SceneImageSettingsService } from "../application/scene-image-settings.js";
@@ -135,7 +136,12 @@ export function createBackendApp(
   // 维护期间拒绝先恢复活动再领取调用（283 R01）。
   activity.setResumeGuard((roleId) => resourceService.assertResumeAllowed(roleId));
   const appearanceService = new AppearanceService(roleAccess);
-  const voiceService = new VoiceService(roleAccess, { now });
+  const voiceServices = new GlobalVoiceService(appStore, { now });
+  voiceServices.backfillFromRoles(roleAccess);
+  const voiceService = new VoiceService(roleAccess, {
+    now,
+    voiceServices,
+  });
   const imageServices = new ImageServiceService(appStore, {
     credentialResolver: credentials,
     now,
@@ -241,7 +247,33 @@ export function createBackendApp(
       // 后台句段标注的调用领取（283 §13 R01）。
       claimModelCall: (roleId, resourceId) =>
         resourceService.claimModelCall(roleId, resourceId),
+      resolveVoiceRuntime: (settings) => {
+        if (!settings.serviceId) {
+          return {
+            protocol: settings.protocol,
+            enabled: settings.enabled,
+            ttsEngine: settings.ttsEngine,
+          };
+        }
+        const linked = voiceServices.findRecord(settings.serviceId);
+        if (linked === null || !linked.enabled) {
+          return {
+            protocol: settings.protocol,
+            enabled: false,
+            ttsEngine: null,
+          };
+        }
+        return {
+          protocol: linked.config.protocol,
+          enabled: settings.enabled,
+          ttsEngine: settings.ttsEngine ?? linked.config.defaultEngine ?? null,
+        };
+      },
     },
+  );
+  // 首句合成遇到后台正在进行的句段情绪标注时短暂等待其落库，不抢在无情绪状态下先发合成。
+  voiceService.setAnnotationWaiter((messageId, timeoutMs, signal) =>
+    conversation.awaitMessageAnnotation(messageId, timeoutMs, signal),
   );
   // 模型恢复或维护结束后重新检查已有待处理窗口与任务续行（283 R02）。
   wakePendingWork = (roleId) => conversation.wakePendingWork(roleId);
@@ -380,6 +412,7 @@ export function createBackendApp(
     autonomy,
     appearance: appearanceService,
     voice: voiceService,
+    voiceServices,
     sceneImages,
     imageServices,
     sceneImageSettings,

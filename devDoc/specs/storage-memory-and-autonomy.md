@@ -44,9 +44,9 @@
 
 | 路径 | 职责与版本 | 关键约束 |
 | --- | --- | --- |
-| `<app-root>/data/app.sqlite` | 全局索引库（`APP_SCHEMA_VERSION = 7`，8 张表） | 存 `roles` 索引（`initializing`/`ready`/`failed`）、`resources`、`resource_secrets`、`model_test_calls`、`image_services`、`role_activity`、`resource_deletions`、`role_deletions` |
+| `<app-root>/data/app.sqlite` | 全局索引库（`APP_SCHEMA_VERSION = 9`，9 张表） | 存 `roles` 索引（`initializing`/`ready`/`failed`）、`resources`、`resource_secrets`、`model_test_calls`、`voice_services`、`image_services`、`role_activity`、`resource_deletions`、`role_deletions` |
 | `<app-root>/secrets/master.key` | 本地主密钥盒（AES-256-GCM `v1`） | [secret-cipher.ts](../../backend/src/security/secret-cipher.ts#L20-L100) `0o700` 目录／`0o600` 密钥文件，竞争写使用 `flag: "wx"` |
-| `.../roles/<roleId>/business.sqlite` | 角色业务库（`BUSINESS_SCHEMA_VERSION = 17`，45 张表） | 含核心会话（`roles`/`windows`/`messages`/`tasks`/`executions`/`task_notes`）、工具计量（`tool_calls`/`tool_results`/`call_metering`）、记忆（`evidence_*`/`memory_*`/`daily_summaries`/`diaries`/`memory_search_fts`）、自主（`autonomy_*`）及外观／语音／生图演出表（分归规范 #1～#3） |
+| `.../roles/<roleId>/business.sqlite` | 角色业务库（`BUSINESS_SCHEMA_VERSION = 20`，45 张表） | 含核心会话（`roles`/`windows`/`messages`/`tasks`/`executions`/`task_notes`）、工具计量（`tool_calls`/`tool_results`/`call_metering`）、记忆（`evidence_*`/`memory_*`/`daily_summaries`/`diaries`/`memory_search_fts`）、自主（`autonomy_*`）及外观／语音／生图演出表（分归规范 #1～#3） |
 | `.../roles/<roleId>/execution.sqlite` | 图检查点库（`EXECUTION_SCHEMA_VERSION = 1`） | `@langchain/langgraph-checkpoint-sqlite` 的 `SqliteSaver` 专用 |
 | `.../roles/<roleId>/workspace/` | 角色独立工作空间 | 本地 MCP 根目录；日记落盘 `diaries/YYYY-MM-DD/<diaryId>.md`；外观／语音／过场图分置同级 `appearance/`、`voice/`、`scene-images/` |
 

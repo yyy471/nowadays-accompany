@@ -32,6 +32,9 @@ const wardrobes = Object.fromEntries(['a','b','c'].map(id => [id, [
 ]]));
 const imageServices = [];
 let nextImageServiceId = 1;
+const voiceServices = [];
+let nextVoiceServiceId = 1;
+const voiceServiceProbes = [];
 const sceneImages = {};
 const imageServiceProbes = [];
 const imagePreviews = [];
@@ -95,12 +98,53 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { 'content-type': 'audio/wav' }); res.end(wavHeader);
     });
   }
+  if (p === '/v1/voice-services/probe' && req.method === 'POST') {
+    let body = ''; req.on('data', c => body += c);
+    return req.on('end', () => {
+      const data = JSON.parse(body || '{}'); voiceServiceProbes.push(data);
+      json(res, { probe: { protocol: 'nowadays-tts-v1', service: 'mock-tts', model: 'v2', ready: true, engines: { cosyvoice: { ready: true, active: true, onDemand: true }, indextts: { ready: false, active: false, onDemand: true } }, defaultEngine: 'cosyvoice', capabilities: { referenceModes: [{ id: 'zero_shot', label: '零样本', requiresReferenceText: true }, { id: 'cross_language', label: '跨语种', requiresReferenceText: false }], presetVoices: false, languages: ['zh', 'en'], speed: { min: 0.5, max: 2 } }, voices: null }, elapsedMs: 5 });
+    });
+  }
+  const voiceProbeMatch = /^\/v1\/voice-services\/([^/]+)\/probe$/.exec(p);
+  if (voiceProbeMatch && req.method === 'POST') {
+    const svc = voiceServices.find(item => item.serviceId === voiceProbeMatch[1]);
+    if (!svc) return json(res, { error: { code: 'VOICE_SERVICE_NOT_FOUND', message: '语音服务不存在' } }, 404);
+    voiceServiceProbes.push({ serviceId: svc.serviceId });
+    return json(res, { probe: { protocol: 'nowadays-tts-v1', service: 'mock-tts', model: 'v2', ready: true, engines: { cosyvoice: { ready: true, active: true, onDemand: true }, indextts: { ready: false, active: false, onDemand: true } }, defaultEngine: 'cosyvoice', capabilities: { referenceModes: [{ id: 'zero_shot', label: '零样本', requiresReferenceText: true }, { id: 'cross_language', label: '跨语种', requiresReferenceText: false }], presetVoices: false, languages: ['zh', 'en'], speed: { min: 0.5, max: 2 } }, voices: null }, elapsedMs: 6 });
+  }
+  const voiceServiceMatch = /^\/v1\/voice-services\/([^/]+)$/.exec(p);
+  if (voiceServiceMatch) {
+    const svc = voiceServices.find(item => item.serviceId === voiceServiceMatch[1]);
+    if (!svc) return json(res, { error: { code: 'VOICE_SERVICE_NOT_FOUND', message: '语音服务不存在' } }, 404);
+    if (roles.some(item => roleStates[item.roleId] !== 'stopped')) return json(res, { error: { code: 'ROLES_NOT_STOPPED', message: '角色尚未全部停止' } }, 409);
+    if (req.method === 'PATCH') {
+      let body = ''; req.on('data', c => body += c);
+      return req.on('end', () => {
+        const data = JSON.parse(body);
+        if (typeof data.name === 'string') svc.name = data.name;
+        if (typeof data.enabled === 'boolean') svc.enabled = data.enabled;
+        if (data.config) svc.config = { ...data.config };
+        json(res, { service: svc });
+      });
+    }
+    if (req.method === 'DELETE') { voiceServices.splice(voiceServices.indexOf(svc), 1); return json(res, { deleted: true, serviceId: svc.serviceId }); }
+  }
+  if (p === '/v1/voice-services' && req.method === 'POST') {
+    let body = ''; req.on('data', c => body += c);
+    return req.on('end', () => {
+      const data = JSON.parse(body);
+      const created = { serviceId: `voice-${nextVoiceServiceId++}`, name: data.name, enabled: data.enabled ?? true, config: { ...data.config }, createdAt: '2026-11-16T00:00:00Z', updatedAt: '2026-11-16T00:00:00Z' };
+      voiceServices.push(created); json(res, { service: created }, 201);
+    });
+  }
+  if (p === '/v1/voice-services') return json(res, { items: voiceServices });
   if (p.endsWith('/voice') && req.method === 'PUT' && role) {
     return readRaw(req, raw => {
       const text = raw.toString('utf8');
       const ct = req.headers['content-type'] || '';
       const m = /name="payload"\r\n\r\n([\s\S]*?)\r\n--/.exec(text);
       const data = m ? JSON.parse(m[1]) : JSON.parse(text);
+      const svc = data.serviceId ? voiceServices.find(item => item.serviceId === data.serviceId) || null : null;
       const hasFile = text.includes('filename="sample.wav"');
       voicePutRequests.push({ contentType: ct, hasFile, data });
       let ref = null;
@@ -109,7 +153,13 @@ const server = http.createServer((req, res) => {
         voiceReferences[role.roleId] = [{ ...ref, inUse: true }];
       }
       voices[role.roleId] = {
-        engine: data.protocol || 'nowadays-tts-v1', protocol: data.protocol || 'nowadays-tts-v1', baseUrl: data.baseUrl,
+        serviceId: svc ? svc.serviceId : null,
+        service: svc ? { serviceId: svc.serviceId, name: svc.name, enabled: svc.enabled, protocol: svc.config.protocol, baseUrl: svc.config.baseUrl, defaultEngine: svc.config.defaultEngine } : null,
+        engine: svc ? svc.config.protocol : (data.protocol || 'nowadays-tts-v1'),
+        protocol: svc ? svc.config.protocol : (data.protocol || 'nowadays-tts-v1'),
+        ttsEngine: data.ttsEngine || null,
+        defaultEngine: svc?.config.defaultEngine || null,
+        baseUrl: svc ? svc.config.baseUrl : data.baseUrl,
         voiceSource: { kind: 'reference', referenceAssetId: ref ? ref.assetId : (data.referenceAssetId || null), referenceMode: data.referenceMode || 'cross_language', referenceText: data.referenceText || null },
         reference: ref, capabilities: { referenceModes: [{ id: 'zero_shot', label: '零样本', requiresReferenceText: true }, { id: 'cross_language', label: '跨语种', requiresReferenceText: false }], presetVoices: false, languages: ['zh', 'en'], speed: { min: 0.5, max: 2 } },
         enabled: true, language: data.language || 'zh', speed: data.speed || 1, emoAlpha: data.emoAlpha || 1, createdAt: '2026-11-14T00:00:00Z', updatedAt: '2026-11-14T00:00:00Z',
@@ -356,8 +406,8 @@ async function run() {
   await until(() => budgets.b.dailyLimit === 350);
   await ev("[...document.querySelectorAll('.config-tabs button')].find(x=>x.textContent.includes('模型')).click()");
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-model-toggle')].find(x=>x.textContent.includes('语音')).click()");
-  await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"http://127.0.0.1:8000\"]')"));
-  await ev("(()=>{const e=document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"http://127.0.0.1:8000\"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'http://127.0.0.1:8020');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
+  await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) input[aria-label=\"语速\"]')"));
+  await ev("(()=>{const e=document.querySelector('.config-role-editor:not([hidden]) input[aria-label=\"语速\"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'1.25');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-model-toggle')].find(x=>x.textContent.includes('生图')).click()");
   await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"moss_image_sft_int8_convrot.safetensors\"]')"));
   await ev("(()=>{const e=document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"moss_image_sft_int8_convrot.safetensors\"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'/models/draft');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
@@ -372,8 +422,9 @@ async function run() {
   await until(() => ev("!!document.querySelector('.config-poster-hit')"));
   assert.equal(await ev("[...document.querySelectorAll('.config-poster')].find(x=>x.textContent.includes('乙角色'))?.querySelector('.config-poster-dirty')?.textContent"), '未保存');
   await ev("[...document.querySelectorAll('.config-poster-hit')].find(x=>x.textContent.includes('乙角色')).click()");
+  await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='乙角色'"));
   await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"moss_image_sft_int8_convrot.safetensors\"]')?.value==='/models/draft'"));
-  assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"http://127.0.0.1:8000\"]')?.value"), 'http://127.0.0.1:8020');
+  assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden]) input[aria-label=\"语速\"]')?.value"), '1.25');
   await ev("document.querySelector('.config-switch-role').click()");
   await until(() => ev("!!document.querySelector('.config-poster-hit')"));
   await ev("[...document.querySelectorAll('.config-poster-hit')].find(x=>x.textContent.includes('甲角色')).click()");
@@ -384,8 +435,9 @@ async function run() {
   await until(() => ev("!!document.querySelector('.config-poster-hit')"));
   assert.equal(await ev("[...document.querySelectorAll('.config-poster')].find(x=>x.textContent.includes('乙角色'))?.querySelector('.config-poster-dirty')?.textContent"), undefined);
   await ev("[...document.querySelectorAll('.config-poster-hit')].find(x=>x.textContent.includes('乙角色')).click()");
+  await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='乙角色'"));
   await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"moss_image_sft_int8_convrot.safetensors\"]')?.value===''"));
-  assert.notEqual(await ev("document.querySelector('.config-role-editor:not([hidden]) input[placeholder=\"http://127.0.0.1:8000\"]')?.value"), 'http://127.0.0.1:8020');
+  assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden]) input[aria-label=\"语速\"]')?.value"), '1');
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-model-toggle')].find(x=>x.textContent.includes('对话')).click()");
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].find(x=>x.textContent.includes('在设置中查看模型')).click()");
   await until(() => ev("document.querySelector('.config-leaf').innerText.includes('测试模型')"));
@@ -473,7 +525,23 @@ async function run() {
   await until(() => ev("document.querySelector('.config-leaf').innerText.includes('临时方法') && document.querySelector('.config-leaf').innerText.includes('当前没有角色或任务引用')"));
   assert.equal(resources.find(item => item.resourceId === 'x3').config.sourcePath, 'C:/fixture/skill');
   await ev("[...document.querySelectorAll('.config-tabs button')].find(x=>x.textContent.includes('模型')).click()");
-  assert.deepEqual(await ev("[...document.querySelectorAll('.config-kind-tabs button')].map(x=>x.textContent)"), ['模型', '生图'], '设置模型页只保留模型与生图两项');
+  assert.deepEqual(await ev("[...document.querySelectorAll('.config-kind-tabs button')].map(x=>x.textContent)"), ['模型', '语音', '生图'], '设置模型页包含模型、语音与生图三项');
+  await ev("[...document.querySelectorAll('.config-kind-tabs button')].find(x=>x.textContent==='语音').click()");
+  await until(() => ev("!!document.querySelector('.config-index button.config-index-new') && document.querySelector('.config-index').textContent.includes('添加语音服务')"));
+  await ev("document.querySelector('.config-index button.config-index-new').click()");
+  await until(() => ev("document.querySelector('.config-leaf').innerText.includes('添加语音服务')"));
+  await ev("(()=>{const p=document.querySelector('.config-leaf-body > .config-prose:not([hidden])');const set=(sel,v)=>{const e=p.querySelector(sel);Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,v);e.dispatchEvent(new Event('input',{bubbles:true}));};set('input[aria-label=语音服务名称]','本机测试语音');set('input[aria-label=语音服务地址]','http://127.0.0.1:8880');})()");
+  await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='测试连接').click()");
+  await until(() => voiceServiceProbes.length === 1 && ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) .nd-voice-probe')?.textContent.includes('mock-tts')"));
+  await ev("(()=>{const s=document.querySelector('.config-leaf-body > .config-prose:not([hidden]) select[aria-label=默认语音引擎]');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(s,'cosyvoice');s.dispatchEvent(new Event('change',{bubbles:true}));})()");
+  await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='保存语音服务').click()");
+  await until(() => voiceServices.length === 1 && ev("document.querySelector('.config-leaf').innerText.includes('本机测试语音') && document.querySelector('.config-index').innerText.includes('cosyvoice')"));
+  assert.equal(voiceServices[0].config.defaultEngine, 'cosyvoice');
+  await ev("[...document.querySelectorAll('.config-kind-tabs button')].find(x=>x.textContent==='模型').click()");
+  await until(() => ev("document.querySelector('.config-kind-tabs button[aria-pressed=\"true\"]')?.textContent==='模型'"));
+  await ev("[...document.querySelectorAll('.config-kind-tabs button')].find(x=>x.textContent==='语音').click()");
+  await until(() => ev("document.querySelector('.config-kind-tabs button[aria-pressed=\"true\"]')?.textContent==='语音'"));
+  assert.equal(await ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) [role=status]')"), null, '切换标签后语音测试日志不应保留');
   await ev("[...document.querySelectorAll('.config-kind-tabs button')].find(x=>x.textContent==='生图').click()");
   await until(() => ev("!!document.querySelector('.config-index button.config-index-new') && document.querySelector('.config-index').textContent.includes('添加生图服务')"));
   await ev("document.querySelector('.config-index button.config-index-new').click()");
@@ -612,9 +680,7 @@ async function run() {
   await until(() => ev("document.querySelector('.studio-shell').dataset.uiPreset==='daylight'"));
   await cmd('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-model-toggle')].find(x=>x.textContent.includes('语音')).click()");
-  await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-voice input[placeholder=\"http://127.0.0.1:8000\"]')"));
-  await ev("(()=>{const e=document.querySelector('.config-role-editor:not([hidden]) .nd-voice input[placeholder=\"http://127.0.0.1:8000\"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'http://127.0.0.1:8880');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
-  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-voice button')].find(x=>x.textContent==='测试连接').click()");
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-voice select[aria-label=\"语音服务\"]')?.value==='voice-1'"));
   await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-voice-probe')?.textContent.includes('mock-tts')"));
   await ev("(()=>{const s=[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-voice select')].find(x=>[...x.options].some(o=>o.value==='cross_language'));Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(s,'cross_language');s.dispatchEvent(new Event('change',{bubbles:true}));})()");
   const docVoice = await cmd('DOM.getDocument');
@@ -658,6 +724,6 @@ async function run() {
   await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='丙角色' && document.querySelector('#config-footer-right').textContent.includes('丙角色')"));
   assert.ok(await ev("document.querySelector('.config-delete-notice')?.textContent.includes('尚待清理')"));
   await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].find(x=>x.textContent.includes('删除角色'))?.disabled"));
-  assert.deepEqual(errors, []); assert.ok(requests.includes('DELETE /v1/resources/x2')); console.log(JSON.stringify({ editIsolation: true, crossPageDraft: true, roleDraft: true, voiceImageDraft: true, activityStop: true, profileSave: true, outfitManagement: true, roleDeleteBothPaths: true, bindingPreservation: true, quotaSave: true, settingsTwoTabs: true, imageServiceCrudAndProbe: true, roleImageDraftProbeAndPreview: true, voiceStagingPreviewAndSave: true, roleCreation: true, modelCreation: true, modelList: true, modelTest: true, extensionManagement: true, night: true, visibleBounds, widths: [1280,1440,720], errors }, null, 2));
+  assert.deepEqual(errors, []); assert.ok(requests.includes('DELETE /v1/resources/x2')); console.log(JSON.stringify({ editIsolation: true, crossPageDraft: true, roleDraft: true, voiceImageDraft: true, activityStop: true, profileSave: true, outfitManagement: true, roleDeleteBothPaths: true, bindingPreservation: true, quotaSave: true, settingsThreeTabs: true, voiceServiceCrudAndProbe: true, imageServiceCrudAndProbe: true, roleImageDraftProbeAndPreview: true, voiceStagingPreviewAndSave: true, roleCreation: true, modelCreation: true, modelList: true, modelTest: true, extensionManagement: true, night: true, visibleBounds, widths: [1280,1440,720], errors }, null, 2));
 }
 run().catch(error => { console.error(error, logs.slice(-1200)); process.exitCode = 1; }).finally(async () => { try { if (ws?.readyState === 1) { ws.send(JSON.stringify({ id: 99999, method: 'Browser.close' })); ws.close(); } } catch {} await delay(500); if (proc && proc.exitCode === null) proc.kill(); server.close(); try { if (path.dirname(path.resolve(temp)) === path.resolve(os.tmpdir()) && path.basename(temp).startsWith('settings-workspace-')) fs.rmSync(temp, { recursive: true, force: true }); } catch {} });

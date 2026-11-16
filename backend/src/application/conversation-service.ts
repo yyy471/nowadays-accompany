@@ -68,7 +68,10 @@ import type {
 } from "./model-binding-resolver.js";
 import type { ModelCallClaim } from "./model-maintenance.js";
 import type { RoleAccess } from "./role-access.js";
-import { SegmentAnnotationService } from "./segment-annotation-service.js";
+import {
+  SegmentAnnotationService,
+  type SegmentAnnotationServiceOptions,
+} from "./segment-annotation-service.js";
 
 export type ChatModelPortFactory = (binding: ResolvedModelBinding) => ModelPort;
 
@@ -100,6 +103,8 @@ export interface ConversationServiceOptions {
   claimModelCall?:
     | ((roleId: string, resourceId: string) => ModelCallClaim)
     | null;
+  /** 解析角色关联的全局语音服务运行态，传给后台句段标注。 */
+  resolveVoiceRuntime?: SegmentAnnotationServiceOptions["resolveVoiceRuntime"];
 }
 
 interface RunningExecution {
@@ -250,6 +255,9 @@ export class ConversationService {
           options.claimModelCall === null
             ? null
             : { claim: options.claimModelCall },
+        ...(options.resolveVoiceRuntime === undefined
+          ? {}
+          : { resolveVoiceRuntime: options.resolveVoiceRuntime }),
       },
     );
     this.inputStates = new InputStateRegistry({
@@ -366,6 +374,15 @@ export class ConversationService {
    * 删除角色前取消尚未领取的标注等待；已经发出的标注继续按原调用结算
    * （283 §13 R03）。
    */
+  /** 语音首句触发合成时若对应回复正在进行后台句段标注，短暂等待其落库后读取情绪指令。 */
+  awaitMessageAnnotation(
+    messageId: string,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    return this.segmentAnnotation.awaitMessage(messageId, timeoutMs, signal);
+  }
+
   cancelQueuedAnnotations(roleId: string): void {
     const waits = this.annotationWaitControllers.get(roleId);
     if (waits === undefined) {

@@ -88,6 +88,7 @@ interface SegmentRow {
   outfit_id: string | null;
   sprite_asset_id: string | null;
   home_asset_id: string | null;
+  voice_emotion: string | null;
   annotated_at: string | null;
   created_at: string;
 }
@@ -116,8 +117,9 @@ export interface CommitConversationInput {
 
 export interface SegmentAnnotationInput {
   segmentId: string;
-  outfitId: string;
-  spriteAssetId: string;
+  outfitId: string | null;
+  spriteAssetId: string | null;
+  voiceEmotion?: string | null;
 }
 
 export interface CommitConversationResult {
@@ -663,6 +665,40 @@ export class ConversationStore {
     };
   }
 
+  /** 读取指定回复之前的最近若干条已完成消息，供情绪与动作标注参考上下文。 */
+  listRecentContextBefore(
+    windowId: string,
+    messageId: string,
+    limit: number = 4,
+  ): Array<{ sender: "user" | "assistant"; content: string }> {
+    const target = this.db
+      .prepare(
+        `SELECT m.sequence
+           FROM messages m JOIN windows w ON w.window_id = m.window_id
+          WHERE m.message_id = ? AND m.window_id = ? AND w.role_id = ?`,
+      )
+      .get(messageId, windowId, this.roleId) as { sequence: number } | undefined;
+    if (!target) {
+      return [];
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT sender, content FROM (
+           SELECT m.sender, m.content, m.sequence
+             FROM messages m JOIN windows w ON w.window_id = m.window_id
+            WHERE m.window_id = ? AND w.role_id = ?
+              AND m.sequence < ? AND m.sender IN ('user', 'assistant')
+              AND (m.sender = 'user' OR m.status IN ('completed', 'interrupted'))
+            ORDER BY m.sequence DESC LIMIT ?
+         ) ORDER BY sequence ASC`,
+      )
+      .all(windowId, this.roleId, target.sequence, Math.max(1, limit)) as Array<{
+      sender: "user" | "assistant";
+      content: string;
+    }>;
+    return rows;
+  }
+
   applySegmentAnnotations(input: {
     messageId: string;
     windowId: string;
@@ -687,6 +723,7 @@ export class ConversationStore {
                     ORDER BY a.created_at DESC, a.rowid DESC
                     LIMIT 1)
                 ),
+                voice_emotion = COALESCE(voice_emotion, ?),
                 annotated_at = ?
           WHERE segment_id = ? AND message_id = ? AND window_id = ?
             AND annotated_at IS NULL`,
@@ -700,6 +737,7 @@ export class ConversationStore {
           annotation.spriteAssetId,
           annotation.outfitId,
           this.roleId,
+          annotation.voiceEmotion ?? null,
           now,
           annotation.segmentId,
           input.messageId,
@@ -722,6 +760,9 @@ export class ConversationStore {
               outfitId: segment.outfitId,
               spriteAssetId: segment.spriteAssetId,
               homeAssetId: segment.homeAssetId,
+              ...(segment.voiceEmotion === null
+                ? {}
+                : { voiceEmotion: segment.voiceEmotion }),
             })),
           },
           now,
@@ -2196,6 +2237,7 @@ function mapSegment(row: SegmentRow): MessageSegmentRecord {
     outfitId: row.outfit_id,
     spriteAssetId: row.sprite_asset_id,
     homeAssetId: row.home_asset_id,
+    voiceEmotion: row.voice_emotion,
     annotatedAt: row.annotated_at,
     createdAt: row.created_at,
   };

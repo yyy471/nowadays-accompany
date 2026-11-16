@@ -7,21 +7,28 @@ import {
   AppError,
   VoiceReferenceInUseError,
   VoiceReferenceNotFoundError,
+  VoiceServiceDisabledError,
+  VoiceServiceNotFoundError,
 } from "../domain/errors.js";
 import { VOICE_LANGUAGE_CODE_PATTERN } from "../domain/voice-capabilities.js";
 import {
   VOICE_LANGUAGES,
+  normalizeVoiceBaseUrl,
   type SynthesizedAudio,
   type UploadedAudio,
   type VoiceCapabilities,
   type VoiceConfigView,
+  type VoiceEngineStatus,
   type VoiceLanguage,
   type VoiceProbeResult,
   type VoiceProtocol,
   type VoiceReferenceRecord,
+  type VoiceServiceSummary,
   type VoiceSettingsRecord,
   type VoiceSource,
 } from "../domain/voice.js";
+import type { VoiceServiceRecord } from "../domain/voice-service.js";
+import type { GlobalVoiceService } from "./global-voice-service.js";
 import type { RolePaths } from "../bootstrap/config.js";
 import { ConversationStore } from "../storage/conversation-store.js";
 import { VoiceStore } from "../storage/voice-store.js";
@@ -52,6 +59,12 @@ export interface VoiceServiceOptions {
   now?: () => Date;
   timeoutMs?: number;
   probeTimeoutMs?: number;
+  voiceServices?: GlobalVoiceService | null;
+  awaitMessageAnnotation?: (
+    messageId: string,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+  ) => Promise<void>;
 }
 
 export interface VoiceSourceInputReference {
@@ -71,7 +84,11 @@ export type VoiceSourceInput =
   | VoiceSourceInputPreset;
 
 export interface VoiceOverrides {
+  serviceId?: string | null | undefined;
   protocol?: VoiceProtocol | undefined;
+  ttsEngine?: string | null | undefined;
+  engines?: Record<string, VoiceEngineStatus> | null | undefined;
+  defaultEngine?: string | null | undefined;
   baseUrl?: string | undefined;
   voiceSource?: VoiceSourceInput | undefined;
   referenceAssetId?: string | null | undefined;
@@ -82,8 +99,12 @@ export interface VoiceOverrides {
 }
 
 export interface SaveVoiceInput {
-  baseUrl: string;
+  serviceId?: string | null | undefined;
+  baseUrl?: string | undefined;
   protocol?: VoiceProtocol | undefined;
+  ttsEngine?: string | null | undefined;
+  engines?: Record<string, VoiceEngineStatus> | null | undefined;
+  defaultEngine?: string | null | undefined;
   voiceSource?: VoiceSourceInput | undefined;
   referenceAssetId?: string | null | undefined;
   capabilities?: VoiceCapabilities | null | undefined;
@@ -120,6 +141,7 @@ interface ResolvedLegacyVoice {
 interface ResolvedUnifiedVoice {
   protocol: "nowadays-tts-v1";
   baseUrl: string;
+  ttsEngine: string | null;
   source:
     | { kind: "reference"; reference: UnifiedTtsReferenceInput }
     | { kind: "preset"; voiceId: string };
@@ -127,12 +149,16 @@ interface ResolvedUnifiedVoice {
   speed: number | null;
 }
 
+const DEFAULT_ANNOTATION_WAIT_MS = 1800;
+
 type ResolvedVoice = ResolvedLegacyVoice | ResolvedUnifiedVoice;
 
 export class VoiceService {
   private readonly now: () => Date;
   private readonly timeoutMs: number;
   private readonly probeTimeoutMs: number;
+  private readonly voiceServices: GlobalVoiceService | null;
+  private awaitMessageAnnotation?: VoiceServiceOptions["awaitMessageAnnotation"];
 
   constructor(
     private readonly roleAccess: RoleAccess,
@@ -141,17 +167,30 @@ export class VoiceService {
     this.now = options.now ?? (() => new Date());
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TTS_TIMEOUT_MS;
     this.probeTimeoutMs = options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
+    this.voiceServices = options.voiceServices ?? null;
+    this.awaitMessageAnnotation = options.awaitMessageAnnotation;
+  }
+
+  /** 在启动期解除对话服务与语音服务之间的构造循环依赖。 */
+  setAnnotationWaiter(
+    waiter: VoiceServiceOptions["awaitMessageAnnotation"],
+  ): void {
+    this.awaitMessageAnnotation = waiter;
   }
 
   getVoice(roleId: string): { voice: VoiceConfigView | null } {
     return this.roleAccess.withStore(roleId, (storage) => {
       const store = new VoiceStore(storage.business.db, roleId);
       const settings = store.getSettings();
+      if (settings === null) {
+        return { voice: null };
+      }
+      const linked =
+        settings.serviceId && this.voiceServices
+          ? this.voiceServices.findRecord(settings.serviceId)
+          : null;
       return {
-        voice:
-          settings === null
-            ? null
-            : toView(settings, referenceOf(store, settings)),
+        voice: toView(settings, referenceOf(store, settings), linked),
       };
     });
   }
@@ -171,12 +210,15 @@ export class VoiceService {
           "尚未配置音色服务，无法启用或停用",
         );
       }
-      return { voice: toView(settings, referenceOf(store, settings)) };
+      const linked =
+        settings.serviceId && this.voiceServices
+          ? this.voiceServices.findRecord(settings.serviceId)
+          : null;
+      return { voice: toView(settings, referenceOf(store, settings), linked) };
     });
   }
 
   saveVoice(roleId: string, input: SaveVoiceInput): { voice: VoiceConfigView } {
-    const baseUrl = normalizeBaseUrl(input.baseUrl);
     const audioMeta =
       input.referenceFile === undefined
         ? null
@@ -191,20 +233,39 @@ export class VoiceService {
     return this.roleAccess.withStore(roleId, (storage) => {
       const store = new VoiceStore(storage.business.db, roleId);
       const existing = store.getSettings();
-      const protocol = input.protocol ?? existing?.protocol ?? "indextts";
+      const target = resolveSaveTarget(input, existing, this.voiceServices);
+      const { serviceId, linkedService, protocol, baseUrl } = target;
       const serviceChanged =
         existing !== null &&
-        (existing.baseUrl !== baseUrl || existing.protocol !== protocol);
+        ((serviceId !== null &&
+          existing.serviceId !== null &&
+          existing.serviceId !== serviceId) ||
+          existing.baseUrl !== baseUrl ||
+          existing.protocol !== protocol);
       const capabilities =
         protocol === "indextts"
           ? null
           : input.capabilities === undefined
             ? existing !== null &&
               existing.baseUrl === baseUrl &&
-              existing.protocol === protocol
+              existing.protocol === protocol &&
+              !serviceChanged
               ? existing.capabilities
               : null
             : input.capabilities;
+      const engineState = resolveUnifiedEngineState(
+        protocol,
+        input,
+        existing,
+        baseUrl,
+        serviceId !== null,
+      );
+      if (
+        engineState.defaultEngine === null &&
+        linkedService?.config.defaultEngine
+      ) {
+        engineState.defaultEngine = linkedService.config.defaultEngine;
+      }
       assertExplicitCapabilityParams(
         protocol,
         capabilities,
@@ -266,7 +327,11 @@ export class VoiceService {
       }
 
       const settingsPayload = {
+        serviceId,
         protocol,
+        ttsEngine: engineState.ttsEngine,
+        engines: engineState.engines,
+        defaultEngine: engineState.defaultEngine,
         baseUrl,
         voiceSource: source,
         capabilities,
@@ -292,7 +357,7 @@ export class VoiceService {
 
       if (audioMeta === null || pendingAssetId === null || input.referenceFile === undefined) {
         const settings = store.saveSettings(settingsPayload);
-        return { voice: toView(settings, existingReference) };
+        return { voice: toView(settings, existingReference, linkedService) };
       }
 
       const relativePath = `voice/${pendingAssetId}${audioMeta.extension}`;
@@ -309,7 +374,7 @@ export class VoiceService {
             createdAt: settingsPayload.now,
           });
           const settings = store.saveSettings(settingsPayload);
-          return { voice: toView(settings, reference) };
+          return { voice: toView(settings, reference, linkedService) };
         })();
       } catch (error) {
         fs.rmSync(absolutePath, { force: true });
@@ -414,11 +479,22 @@ export class VoiceService {
 
   async probe(
     roleId: string,
-    baseUrl: string,
+    target: string | { serviceId?: string | undefined; baseUrl?: string | undefined },
     signal?: AbortSignal,
   ): Promise<{ probe: VoiceProbeResult }> {
     this.roleAccess.requireReady(roleId);
-    const normalized = normalizeBaseUrl(baseUrl);
+    if (typeof target !== "string" && target.serviceId !== undefined) {
+      if (this.voiceServices === null) {
+        throw new VoiceServiceNotFoundError(target.serviceId);
+      }
+      const { probe } = await this.voiceServices.probeSaved(
+        target.serviceId,
+        signal,
+      );
+      return { probe };
+    }
+    const rawUrl = typeof target === "string" ? target : (target.baseUrl ?? "");
+    const normalized = normalizeVoiceBaseUrl(rawUrl);
     const probe = await new UnifiedTtsClient(
       normalized,
       this.probeTimeoutMs,
@@ -447,6 +523,7 @@ export class VoiceService {
           storage.business.db,
           roleId,
           input,
+          this.voiceServices,
           temporaryAudio,
         ),
     );
@@ -466,9 +543,43 @@ export class VoiceService {
     signal?: AbortSignal,
     emotion?: string,
   ): Promise<SynthesizedAudio> {
-    const { resolved, text } = this.roleAccess.withStore(roleId, (storage) => {
+    const first = this.resolveSegmentSpeech(roleId, windowId, segmentId, emotion);
+    if (first.waitForAnnotation && this.awaitMessageAnnotation !== undefined) {
+      await this.awaitMessageAnnotation(
+        first.messageId,
+        DEFAULT_ANNOTATION_WAIT_MS,
+        signal,
+      );
+      const settled = this.resolveSegmentSpeech(
+        roleId,
+        windowId,
+        segmentId,
+        emotion,
+      );
+      return this.synthesize(
+        settled.resolved,
+        settled.text,
+        signal,
+        settled.emotion,
+      );
+    }
+    return this.synthesize(first.resolved, first.text, signal, first.emotion);
+  }
+
+  private resolveSegmentSpeech(
+    roleId: string,
+    windowId: string,
+    segmentId: string,
+    explicitEmotion: string | undefined,
+  ): {
+    resolved: ResolvedVoice;
+    text: string;
+    emotion: string | undefined;
+    messageId: string;
+    waitForAnnotation: boolean;
+  } {
+    return this.roleAccess.withStore(roleId, (storage) => {
       const store = new VoiceStore(storage.business.db, roleId);
-      // 停用只阻止新的对话语音合成；试听属于配置验证，仍可进行。
       const segment = new ConversationStore(
         storage.business.db,
         roleId,
@@ -488,7 +599,8 @@ export class VoiceService {
         });
       }
       // 停用只阻止新的对话语音合成；试听属于配置验证，仍可进行。
-      if (store.getSettings()?.enabled === false) {
+      const settings = store.getSettings();
+      if (settings?.enabled === false) {
         throw new AppError(
           409,
           "VOICE_DISABLED",
@@ -496,12 +608,30 @@ export class VoiceService {
           { roleId },
         );
       }
+      const resolved = resolveVoice(
+        storage.paths,
+        storage.business.db,
+        roleId,
+        {},
+        this.voiceServices,
+      );
+      const normalizedExplicit = explicitEmotion?.trim() || undefined;
+      const resolvedEmotion =
+        normalizedExplicit ?? (segment.voiceEmotion?.trim() || undefined);
+      const waitForAnnotation =
+        resolved.protocol === "nowadays-tts-v1" &&
+        normalizedExplicit === undefined &&
+        segment.voiceEmotion === null &&
+        segment.annotatedAt === null &&
+        this.awaitMessageAnnotation !== undefined;
       return {
-        resolved: resolveVoice(storage.paths, storage.business.db, roleId, {}),
+        resolved,
         text: segmentText,
+        emotion: resolvedEmotion,
+        messageId: segment.messageId,
+        waitForAnnotation,
       };
     });
-    return this.synthesize(resolved, text, signal, emotion);
   }
 
   private synthesize(
@@ -532,6 +662,7 @@ export class VoiceService {
       source: resolved.source,
       language: resolved.language,
       speed: resolved.speed,
+      ...(resolved.ttsEngine === null ? {} : { engine: resolved.ttsEngine }),
       ...(emotion === undefined ? {} : { emotion }),
       ...(signal === undefined ? {} : { signal }),
     });
@@ -575,18 +706,13 @@ function resolvePreviewVoice(
   db: Database.Database,
   roleId: string,
   input: VoiceOverrides,
+  voiceServices: GlobalVoiceService | null,
   temporaryAudio?: TemporaryAudioMeta,
 ): { resolved: ResolvedVoice; tempDir?: string } {
   const store = new VoiceStore(db, roleId);
   const settings = store.getSettings();
-  const protocol = input.protocol ?? settings?.protocol ?? "indextts";
-  const baseUrl =
-    input.baseUrl === undefined
-      ? settings?.baseUrl
-      : normalizeBaseUrl(input.baseUrl);
-  if (baseUrl === undefined) {
-    throw new AppError(400, "VOICE_NOT_CONFIGURED", "尚未配置音色服务");
-  }
+  const connection = resolveRuntimeTarget(input, settings, voiceServices);
+  const { serviceId, protocol, baseUrl, globalDefaultEngine } = connection;
   const capabilities =
     protocol === "indextts"
       ? null
@@ -603,9 +729,20 @@ function resolvePreviewVoice(
     input.language,
     input.speed,
   );
+  const engineState = resolveUnifiedEngineState(
+    protocol,
+    input,
+    settings,
+    baseUrl,
+    serviceId !== null,
+  );
   const serviceChanged =
     settings !== null &&
-    (settings.baseUrl !== baseUrl || settings.protocol !== protocol);
+    ((serviceId !== null &&
+      settings.serviceId !== null &&
+      settings.serviceId !== serviceId) ||
+      settings.baseUrl !== baseUrl ||
+      settings.protocol !== protocol);
   const source = resolveSource(input, settings, protocol, serviceChanged);
   if (temporaryAudio !== undefined && source.kind === "preset") {
     throw new AppError(
@@ -625,6 +762,7 @@ function resolvePreviewVoice(
       temporaryAudio,
     );
   }
+  const effectiveEngine = engineState.ttsEngine ?? globalDefaultEngine ?? null;
   return {
     resolved: resolveUnifiedVoice(
       store,
@@ -634,6 +772,7 @@ function resolvePreviewVoice(
       input,
       settings,
       capabilities,
+      effectiveEngine,
       temporaryAudio,
     ),
   };
@@ -644,8 +783,9 @@ function resolveVoice(
   db: Database.Database,
   roleId: string,
   input: VoiceOverrides,
+  voiceServices: GlobalVoiceService | null,
 ): ResolvedVoice {
-  return resolvePreviewVoice(paths, db, roleId, input).resolved;
+  return resolvePreviewVoice(paths, db, roleId, input, voiceServices).resolved;
 }
 
 function resolveLegacyVoice(
@@ -718,6 +858,7 @@ function resolveUnifiedVoice(
   input: VoiceOverrides,
   settings: VoiceSettingsRecord | null,
   capabilities: VoiceCapabilities | null,
+  ttsEngine: string | null,
   temporaryAudio?: TemporaryAudioMeta,
 ): ResolvedUnifiedVoice {
   const language = resolveUnifiedLanguage(
@@ -748,6 +889,7 @@ function resolveUnifiedVoice(
     return {
       protocol: "nowadays-tts-v1",
       baseUrl,
+      ttsEngine,
       source: { kind: "preset", voiceId: source.voiceId },
       language,
       speed,
@@ -825,6 +967,7 @@ function resolveUnifiedVoice(
     return {
       protocol: "nowadays-tts-v1",
       baseUrl,
+      ttsEngine,
       source: {
         kind: "reference",
         reference: {
@@ -853,6 +996,7 @@ function resolveUnifiedVoice(
   return {
     protocol: "nowadays-tts-v1",
     baseUrl,
+    ttsEngine,
     source: {
       kind: "reference",
       reference: {
@@ -1146,6 +1290,176 @@ function assertExplicitCapabilityParams(
   }
 }
 
+function normalizeOptionalEngine(
+  value: string | null | undefined,
+): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed;
+}
+
+function resolveUnifiedEngineState(
+  protocol: VoiceProtocol,
+  input: Pick<VoiceOverrides, "ttsEngine" | "engines" | "defaultEngine">,
+  existing: VoiceSettingsRecord | null,
+  baseUrl: string,
+  linkedGlobalService: boolean,
+): {
+  ttsEngine: string | null;
+  engines: Record<string, VoiceEngineStatus> | null;
+  defaultEngine: string | null;
+} {
+  if (protocol === "indextts") {
+    return { ttsEngine: null, engines: null, defaultEngine: null };
+  }
+  const sameService =
+    existing !== null &&
+    existing.baseUrl === baseUrl &&
+    existing.protocol === protocol;
+  const engines =
+    input.engines !== undefined
+      ? input.engines
+      : sameService
+        ? existing.engines
+        : null;
+  const defaultEngine =
+    input.defaultEngine !== undefined
+      ? normalizeOptionalEngine(input.defaultEngine)
+      : sameService
+        ? existing.defaultEngine
+        : null;
+  // ttsEngine 显式传 null 时清空覆盖，回到「跟随服务默认」。
+  // 关联全局语音服务且首次保存未指定角色覆盖时同样留空，由运行时跟踪全局 defaultEngine。
+  const ttsEngine =
+    input.ttsEngine !== undefined
+      ? normalizeOptionalEngine(input.ttsEngine)
+      : sameService
+        ? existing.ttsEngine
+        : linkedGlobalService
+          ? null
+          : defaultEngine;
+  if (
+    ttsEngine !== null &&
+    engines !== null &&
+    !Object.prototype.hasOwnProperty.call(engines, ttsEngine)
+  ) {
+    throw new AppError(
+      400,
+      "VOICE_ENGINE_UNSUPPORTED",
+      "所选语音引擎不在服务声明的范围内",
+      { ttsEngine },
+    );
+  }
+  return { ttsEngine, engines, defaultEngine };
+}
+
+interface ResolvedVoiceTarget {
+  serviceId: string | null;
+  linkedService: VoiceServiceRecord | null;
+  protocol: VoiceProtocol;
+  baseUrl: string;
+  globalDefaultEngine: string | null;
+}
+
+function lookupGlobalVoiceService(
+  serviceId: string,
+  voiceServices: GlobalVoiceService | null,
+): VoiceServiceRecord {
+  const service = voiceServices?.findRecord(serviceId) ?? null;
+  if (service === null) {
+    throw new VoiceServiceNotFoundError(serviceId);
+  }
+  if (!service.enabled) {
+    throw new VoiceServiceDisabledError(serviceId);
+  }
+  return service;
+}
+
+function resolveSaveTarget(
+  input: SaveVoiceInput,
+  existing: VoiceSettingsRecord | null,
+  voiceServices: GlobalVoiceService | null,
+): ResolvedVoiceTarget {
+  if (input.serviceId !== undefined && input.serviceId !== null) {
+    const service = lookupGlobalVoiceService(input.serviceId, voiceServices);
+    return {
+      serviceId: service.serviceId,
+      linkedService: service,
+      protocol: service.config.protocol,
+      baseUrl: normalizeVoiceBaseUrl(service.config.baseUrl),
+      globalDefaultEngine:
+        service.config.protocol === "nowadays-tts-v1"
+          ? (service.config.defaultEngine ?? null)
+          : null,
+    };
+  }
+  if (input.baseUrl === undefined) {
+    throw new AppError(400, "VOICE_BASE_URL_REQUIRED", "音色服务地址不能为空");
+  }
+  return {
+    serviceId: null,
+    linkedService: null,
+    protocol: input.protocol ?? existing?.protocol ?? "indextts",
+    baseUrl: normalizeVoiceBaseUrl(input.baseUrl),
+    globalDefaultEngine: null,
+  };
+}
+
+function resolveRuntimeTarget(
+  input: VoiceOverrides,
+  settings: VoiceSettingsRecord | null,
+  voiceServices: GlobalVoiceService | null,
+): ResolvedVoiceTarget {
+  if (input.serviceId !== undefined && input.serviceId !== null) {
+    const service = lookupGlobalVoiceService(input.serviceId, voiceServices);
+    return {
+      serviceId: service.serviceId,
+      linkedService: service,
+      protocol: service.config.protocol,
+      baseUrl: normalizeVoiceBaseUrl(service.config.baseUrl),
+      globalDefaultEngine:
+        service.config.protocol === "nowadays-tts-v1"
+          ? (service.config.defaultEngine ?? null)
+          : null,
+    };
+  }
+  if (
+    input.serviceId !== null &&
+    input.baseUrl === undefined &&
+    settings !== null &&
+    settings.serviceId !== null &&
+    voiceServices !== null
+  ) {
+    const service = lookupGlobalVoiceService(settings.serviceId, voiceServices);
+    return {
+      serviceId: service.serviceId,
+      linkedService: service,
+      protocol: service.config.protocol,
+      baseUrl: normalizeVoiceBaseUrl(service.config.baseUrl),
+      globalDefaultEngine:
+        service.config.protocol === "nowadays-tts-v1"
+          ? (service.config.defaultEngine ?? null)
+          : null,
+    };
+  }
+  const baseUrl =
+    input.baseUrl === undefined
+      ? settings?.baseUrl
+      : normalizeVoiceBaseUrl(input.baseUrl);
+  if (baseUrl === undefined) {
+    throw new AppError(400, "VOICE_NOT_CONFIGURED", "尚未配置音色服务");
+  }
+  return {
+    serviceId: null,
+    linkedService: null,
+    protocol: input.protocol ?? settings?.protocol ?? "indextts",
+    baseUrl,
+    globalDefaultEngine: null,
+  };
+}
+
 function resolveSavedLanguage(
   protocol: VoiceProtocol,
   capabilities: VoiceCapabilities | null,
@@ -1229,14 +1543,44 @@ function resolveReferencePath(
   return target;
 }
 
+function toVoiceServiceSummary(
+  service: VoiceServiceRecord | null | undefined,
+): VoiceServiceSummary | null {
+  if (!service) {
+    return null;
+  }
+  return {
+    serviceId: service.serviceId,
+    name: service.name,
+    enabled: service.enabled,
+    protocol: service.config.protocol,
+    baseUrl: service.config.baseUrl,
+    ...(service.config.defaultEngine === undefined
+      ? {}
+      : { defaultEngine: service.config.defaultEngine }),
+  };
+}
+
 function toView(
   settings: VoiceSettingsRecord,
   reference: VoiceReferenceRecord | null,
+  linkedService?: VoiceServiceRecord | null,
 ): VoiceConfigView {
+  const defaultEngine =
+    linkedService?.config.defaultEngine ?? settings.defaultEngine;
   return {
-    engine: settings.engine,
-    protocol: settings.protocol,
-    baseUrl: settings.baseUrl,
+    ...(settings.serviceId === null ? {} : { serviceId: settings.serviceId }),
+    ...(settings.serviceId === null
+      ? {}
+      : { service: toVoiceServiceSummary(linkedService) }),
+    engine: linkedService ? linkedService.config.protocol : settings.engine,
+    protocol: linkedService ? linkedService.config.protocol : settings.protocol,
+    ttsEngine: settings.ttsEngine,
+    ...(settings.engines === null ? {} : { engines: settings.engines }),
+    ...(defaultEngine === null || defaultEngine === undefined
+      ? {}
+      : { defaultEngine }),
+    baseUrl: linkedService ? linkedService.config.baseUrl : settings.baseUrl,
     voiceSource: settings.voiceSource,
     reference,
     capabilities: settings.capabilities,
@@ -1273,34 +1617,6 @@ function resolveVoiceAssetPath(
     return null;
   }
   return target;
-}
-
-function normalizeBaseUrl(raw: string): string {
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) {
-    throw new AppError(400, "VOICE_BASE_URL_REQUIRED", "音色服务地址不能为空");
-  }
-  let url: URL;
-  try {
-    url = new URL(trimmed);
-  } catch {
-    throw new AppError(400, "VOICE_BASE_URL_INVALID", "音色服务地址格式不正确");
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new AppError(400, "VOICE_BASE_URL_INVALID", "音色服务地址需为 HTTP 或 HTTPS");
-  }
-  if (url.username !== "" || url.password !== "") {
-    throw new AppError(400, "VOICE_BASE_URL_INVALID", "音色服务地址不能包含账号信息");
-  }
-  if (url.href.includes("?") || url.href.includes("#")) {
-    throw new AppError(
-      400,
-      "VOICE_BASE_URL_INVALID",
-      "音色服务地址不能包含查询串或片段",
-    );
-  }
-  url.pathname = url.pathname.replace(/\/+$/, "");
-  return url.toString().replace(/\/$/, "");
 }
 
 function normalizePreviewText(raw: string): string {

@@ -15,3 +15,8 @@
 .nd-voice-toggle span { font-weight: 600; }
 .nd-voice-toggle small { color: var(--muted); font-size: 11px; }
 .nd-voice-toggle:has(input:disabled) { cursor: default; opacity: .7; }
+.nd-voice-service-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.nd-voice-service-row .ui-select,
+.nd-voice-service-row select { flex: 1 1 200px; min-width: 0; width: auto; }
+.nd-voice-service-row .ui-button { flex: none; white-space: nowrap; }
+.nd-voice-warn { color: var(--bad); }

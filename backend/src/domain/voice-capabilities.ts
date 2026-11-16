@@ -70,14 +70,50 @@ export const voiceCapabilitiesSchema = z
   });
 
 /** 解析健康接口或已保存的能力声明；无效内容返回 null。 */
+export const voiceEngineStatusSchema = z
+  .object({
+    ready: z.boolean(),
+    active: z.boolean(),
+    onDemand: z.boolean().optional(),
+  })
+  .strict();
+
+export const voiceEnginesSchema = z.record(
+  z.string().min(1).max(64),
+  voiceEngineStatusSchema,
+);
+
+const PARSE_FAILED = Symbol("parse-failed");
+
+function parseJsonInput(raw: unknown): unknown {
+  if (typeof raw !== "string") {
+    return raw;
+  }
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return PARSE_FAILED;
+  }
+}
+
+export function parseVoiceEngines(
+  raw: unknown,
+): Record<string, z.infer<typeof voiceEngineStatusSchema>> | null {
+  if (raw === null || raw === undefined) {
+    return null;
+  }
+  const value = parseJsonInput(raw);
+  if (value === PARSE_FAILED) {
+    return null;
+  }
+  const parsed = voiceEnginesSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
 export function parseVoiceCapabilities(raw: unknown): VoiceCapabilities | null {
-  let value = raw;
-  if (typeof raw === "string") {
-    try {
-      value = JSON.parse(raw) as unknown;
-    } catch {
-      return null;
-    }
+  const value = parseJsonInput(raw);
+  if (value === PARSE_FAILED) {
+    return null;
   }
   const parsed = voiceCapabilitiesSchema.safeParse(value);
   return parsed.success ? parsed.data : null;

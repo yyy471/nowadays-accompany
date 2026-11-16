@@ -575,6 +575,28 @@ export class TtsProtocolInvalidError extends AppError {
   }
 }
 
+export class InvalidVoiceServiceConfigError extends AppError {
+  constructor(details?: unknown) {
+    super(400, "INVALID_VOICE_SERVICE_CONFIG", "语音服务配置结构不正确", {
+      details,
+    });
+  }
+}
+
+export class VoiceServiceNotFoundError extends AppError {
+  constructor(serviceId: string) {
+    super(404, "VOICE_SERVICE_NOT_FOUND", "语音服务不存在", { serviceId });
+  }
+}
+
+export class VoiceServiceDisabledError extends AppError {
+  constructor(serviceId: string) {
+    super(409, "VOICE_SERVICE_DISABLED", "语音服务已停用，请先启用或换一个服务", {
+      serviceId,
+    });
+  }
+}
+
 export class SceneImageTaskNotFoundError extends AppError {
   constructor(windowId: string, taskId: string) {
     super(404, "SCENE_IMAGE_TASK_NOT_FOUND", "过场图任务不存在", {

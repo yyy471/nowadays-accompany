@@ -790,6 +790,8 @@ test("SQLite 老库迁移（v7->v8 与 v17->v18）及 ModelService / 资源创�
       INSERT INTO model_test_calls SELECT * FROM _tmp_old_test_calls;
       DROP TABLE _tmp_old_test_calls;
       CREATE INDEX idx_model_test_calls_resource ON model_test_calls (resource_id, finished_at);
+      DROP INDEX IF EXISTS idx_voice_services_enabled;
+      DROP TABLE IF EXISTS voice_services;
     `);
     rawApp.pragma("user_version = 7");
     rawApp.close();
@@ -817,6 +819,11 @@ test("SQLite 老库迁移（v7->v8 与 v17->v18）及 ModelService / 资源创�
       INSERT INTO model_calls SELECT * FROM _tmp_old_calls;
       DROP TABLE _tmp_old_calls;
       CREATE INDEX idx_model_calls_role_time ON model_calls (role_id, started_at);
+      ALTER TABLE role_voice_settings DROP COLUMN service_id;
+      ALTER TABLE role_voice_settings DROP COLUMN tts_engine;
+      ALTER TABLE role_voice_settings DROP COLUMN engines_json;
+      ALTER TABLE role_voice_settings DROP COLUMN default_engine;
+      ALTER TABLE message_segments DROP COLUMN voice_emotion;
     `);
     rawBiz.pragma("user_version = 17");
     rawBiz.close();
@@ -824,8 +831,8 @@ test("SQLite 老库迁移（v7->v8 与 v17->v18）及 ModelService / 资源创�
     const upgradedApp = new AppStore(migrateAppConfig.appDatabasePath);
     const upgradedBiz = new RoleStore(paths.businessDatabasePath, { create: false });
     try {
-      assert.equal(upgradedApp.schemaVersion, 8);
-      assert.equal(upgradedBiz.schemaVersion, 18);
+      assert.equal(upgradedApp.schemaVersion, 9);
+      assert.equal(upgradedBiz.schemaVersion, 20);
       const oldAppRow = upgradedApp.db
         .prepare("SELECT protocol FROM model_test_calls WHERE test_call_id = ?")
         .get(oldTestCallId) as { protocol: string } | undefined;

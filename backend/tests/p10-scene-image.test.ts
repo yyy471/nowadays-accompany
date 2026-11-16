@@ -511,7 +511,8 @@ test("a v12 role database migrates to v13 and keeps messages, segments and event
       raw.exec("DROP TABLE scene_image_tasks");
       // v12 的库里没有后加的语音启用标记，模拟旧库时一并去掉。
       raw.exec("ALTER TABLE role_voice_settings DROP COLUMN enabled");
-      // v12 的库里没有 V17 的外观软删除与句段立绘快照。
+      // v12 的库里没有 V17 的外观软删除与句段立绘快照，也没有 V19 的语音引擎与情感列。
+      stripVoiceV19(raw);
       stripAppearanceV17(raw);
       raw.pragma("user_version = 12");
     } finally {
@@ -536,7 +537,7 @@ test("a v12 role database migrates to v13 and keeps messages, segments and event
     assert.equal(migrated.cursor, beforeEvents);
     assert.equal(
       withStorageFor(config, role.roleId, (storage) => storage.business.schemaVersion),
-      18,
+      20,
     );
     const tables = withStorageFor(config, role.roleId, (storage) =>
       (
@@ -781,4 +782,13 @@ function stripAppearanceV17(db: Database.Database): void {
   db.exec("ALTER TABLE outfits DROP COLUMN deleted_at");
   db.exec("ALTER TABLE outfit_assets DROP COLUMN deleted_at");
   db.exec("ALTER TABLE message_segments DROP COLUMN home_asset_id");
+}
+
+/** 去掉 V19～V20 新增语音服务关联、引擎与情感列，避免旧库迁移测试重复建列。 */
+function stripVoiceV19(db: Database.Database): void {
+  db.exec("ALTER TABLE role_voice_settings DROP COLUMN service_id");
+  db.exec("ALTER TABLE role_voice_settings DROP COLUMN tts_engine");
+  db.exec("ALTER TABLE role_voice_settings DROP COLUMN engines_json");
+  db.exec("ALTER TABLE role_voice_settings DROP COLUMN default_engine");
+  db.exec("ALTER TABLE message_segments DROP COLUMN voice_emotion");
 }

@@ -448,7 +448,7 @@ async function run() {
   await until(() => ev("[...document.querySelectorAll('.ui-menu-item')].some(x=>x.textContent.includes('设置'))"), 'menu-settings');
   await ev("[...document.querySelectorAll('.ui-menu-item')].find(x=>x.textContent.includes('设置')).click()");
   await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings'"), 'page-settings');
-  assert.deepEqual(await ev("[...document.querySelectorAll('.config-kind-tabs button')].map(x=>x.textContent)"), ['模型', '生图']);
+  assert.deepEqual(await ev("[...document.querySelectorAll('.config-kind-tabs button')].map(x=>x.textContent)"), ['模型', '语音', '生图']);
 
   // 先切到「生图」，再回到角色「模型 -> 对话 -> 在设置中查看模型」，验证必须回到「模型」而非停在「生图」。
   await ev("[...document.querySelectorAll('.config-kind-tabs button')].find(x=>x.textContent==='生图').click()");
@@ -842,16 +842,26 @@ async function run() {
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].find(x=>x.textContent==='继续活动').click()");
   await until(async () => (await request(`/v1/roles/${roleB.roleId}/activity`)).activity.state === 'active');
 
-  // === 链路 6：切回甲角色测试语音暂存、试听、原子 multipart 保存、使用中不可删、停用/启用切换 ===
+  // === 链路 6：设置添加全局语音服务 -> 切回甲角色配置语音暂存、试听、原子 multipart 保存、使用中不可删、停用/启用切换 ===
   await ev("document.querySelector('.config-switch-role').click()");
   await until(() => ev("[...document.querySelectorAll('.config-poster-hit')].some(x=>x.textContent.includes('甲角色'))"));
   await ev("[...document.querySelectorAll('.config-poster-hit')].find(x=>x.textContent.includes('甲角色')).click()");
   await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='甲角色'"), 'switch-to-a-for-voice');
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-model-toggle')].find(x=>x.textContent.includes('语音')).click()");
-  await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-voice input[placeholder=\"http://127.0.0.1:8000\"]')"));
-  await setInput("document.querySelector('.config-role-editor:not([hidden]) .nd-voice input[placeholder=\"http://127.0.0.1:8000\"]')", tts.baseUrl);
-  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-voice button')].find(x=>x.textContent==='测试连接').click()");
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-voice-probe')?.textContent.includes('local-fake-tts')"), 'tts-probe');
+  await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-voice button')].some(x=>x.textContent.includes('去设置添加'))"), 'role-voice-open-settings');
+  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-voice button')].find(x=>x.textContent.includes('去设置添加')).click()");
+  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings' && document.querySelector('.config-kind-tabs button[aria-pressed=\"true\"]')?.textContent==='语音' && document.querySelector('.config-leaf').innerText.includes('添加语音服务')"), 'open-add-voice-service');
+  await setInput("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) input[aria-label=\"语音服务名称\"]')", '主本地语音');
+  await setInput("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) input[aria-label=\"语音服务地址\"]')", tts.baseUrl);
+  await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='测试连接').click()");
+  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) .nd-voice-probe')?.textContent.includes('local-fake-tts')"), 'global-tts-probe');
+  await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='保存语音服务').click()");
+  await until(async () => (await request('/v1/voice-services')).items.length === 1, 'global-tts-saved');
+  const voiceSvc = (await request('/v1/voice-services')).items[0];
+  await ev("document.querySelector('.config-return-footer').click()");
+  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='role-config'"), 'return-to-role-voice');
+  await until(() => ev(`document.querySelector('.config-role-editor:not([hidden]) .nd-voice select[aria-label="语音服务"]')?.value==='${voiceSvc.serviceId}'`), 'role-picked-voice-svc');
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-voice-probe')?.textContent.includes('local-fake-tts')"), 'tts-probe-carried');
 
   await setSelect(" [...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-voice select')].find(x=>[...x.options].some(o=>o.value==='cross_language'))", 'cross_language');
   const docVoice = await cmd('DOM.getDocument');

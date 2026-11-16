@@ -34,6 +34,7 @@ import type { SceneImageService } from "../application/scene-image-service.js";
 import type { ImageServiceService } from "../application/image-service.js";
 import type { SceneImageSettingsService } from "../application/scene-image-settings.js";
 import type { VoiceService } from "../application/voice-service.js";
+import type { GlobalVoiceService } from "../application/global-voice-service.js";
 import type { RoleActivityService } from "../application/role-activity-service.js";
 import type { RoleDeletionService } from "../application/role-deletion-service.js";
 import { registerRoleActivityRoutes } from "./role-activity-routes.js";
@@ -71,6 +72,7 @@ import { registerAppearanceRoutes } from "./appearance-routes.js";
 import { registerSceneImageRoutes } from "./scene-image-routes.js";
 import { registerImageServiceRoutes } from "./image-service-routes.js";
 import { registerVoiceRoutes } from "./voice-routes.js";
+import { registerVoiceServiceRoutes } from "./voice-service-routes.js";
 
 export interface ApiServices {
   roles: RoleService;
@@ -82,6 +84,7 @@ export interface ApiServices {
   autonomy: AutonomyService;
   appearance: AppearanceService;
   voice: VoiceService;
+  voiceServices: GlobalVoiceService;
   sceneImages: SceneImageService;
   imageServices: ImageServiceService;
   sceneImageSettings: SceneImageSettingsService;
@@ -972,6 +975,7 @@ export function registerApiRoutes(
 
   registerAppearanceRoutes(router, services);
   registerVoiceRoutes(router, services);
+  registerVoiceServiceRoutes(router, services);
   registerSceneImageRoutes(router, services);
   registerImageServiceRoutes(router, services);
 
