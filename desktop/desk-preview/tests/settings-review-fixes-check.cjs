@@ -73,6 +73,9 @@ async function run() {
   }
   const roleFocus = await cancelFocus('删除角色', '.config-delete-options');
   await tab('外观');
+  await until(() => ev(`!!document.querySelector(${JSON.stringify(editor + ' .nd-outfit-card')})`));
+  await ev(`document.querySelector(${JSON.stringify(editor + ' .nd-outfit-card')}).click()`);
+  await until(() => ev(`!!document.querySelector(${JSON.stringify(editor + ' .nd-outfit-manage')})`));
   const outfitFocus = await cancelFocus('删除服饰', '.nd-outfit-confirm');
   const spriteFocus = await cancelFocus('删除差分', '.nd-outfit-confirm');
   console.log('DELETE_CANCEL_FOCUS', JSON.stringify({ roleFocus, outfitFocus, spriteFocus }));

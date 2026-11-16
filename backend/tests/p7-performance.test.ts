@@ -1716,3 +1716,42 @@ test("annotation parser only accepts known segments and sprites", () => {
     [],
   );
 });
+
+test("SSE message_segments and message_completed include replySequence and replyCreatedAt", { timeout: 30_000 }, async () => {
+  const fixture = createFixture([reply("第一轮回答。单独作为一段。"), reply("第二轮回答。")]);
+  try {
+    submit(fixture, "第一轮问好");
+    await fixture.app.conversation.waitForIdle(fixture.roleId);
+    submit(fixture, "第二轮追问");
+    await fixture.app.conversation.waitForIdle(fixture.roleId);
+
+    const listed = fixture.app.services.messages.list(
+      fixture.roleId,
+      fixture.windowId,
+      0,
+      20,
+    );
+    const assistantMessages = listed.items.filter((item) => item.sender === "assistant");
+    assert.equal(assistantMessages.length, 2);
+
+    for (const assistant of assistantMessages) {
+      const events = executionEvents(fixture, messageExecutionId(fixture, assistant.messageId));
+      const segmentEvents = events.filter((event) => event.event_type === "message_segments");
+      const completedEvent = events.find((event) => event.event_type === "message_completed");
+      assert.ok(segmentEvents.length > 0);
+      assert.ok(completedEvent);
+      for (const item of [...segmentEvents, completedEvent]) {
+        const parsed = JSON.parse(item.payload_json) as {
+          replyMessageId?: string;
+          replySequence?: number;
+          replyCreatedAt?: string;
+        };
+        assert.equal(parsed.replyMessageId, assistant.messageId);
+        assert.equal(parsed.replySequence, assistant.sequence);
+        assert.equal(parsed.replyCreatedAt, assistant.createdAt);
+      }
+    }
+  } finally {
+    await fixture.close();
+  }
+});

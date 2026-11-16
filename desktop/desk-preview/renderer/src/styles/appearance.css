@@ -1,16 +1,16 @@
-/* ds-allow-file: ds/color=2 — color：彩色底上的纯白文字与强调金色，待并入 onSolid/强调令牌 */
+/* ds-allow-file: ds/color=1 — color：警告黄保留令牌回退，待并入语义令牌 */
 .ui-modal-panel.nd-appearance-modal { width: min(760px, 100%); }
 
 .nd-appearance { display: flex; flex-direction: column; gap: 14px; }
 .nd-appearance-hint { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
 .nd-appearance-hint code { padding: 1px 4px; border-radius: var(--nd-semantic-radius-chip); background: var(--panel-2); font-size: 12px; }
 .nd-appearance-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.nd-appearance-current { color: var(--accent-ink); font-size: 12px; }
 .nd-appearance-empty { margin: 0; color: var(--muted); font-size: 13px; }
 .nd-outfit-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; max-height: 46vh; margin: 0; padding: 0; overflow: auto; list-style: none; }
 .nd-outfit { position: relative; padding: 8px; border: 1px solid var(--line); border-radius: var(--nd-semantic-radius-field); background: var(--panel); }
 .nd-outfit.selected { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
-.nd-outfit.current::after { position: absolute; top: 6px; right: 8px; padding: 1px 6px; border-radius: var(--nd-semantic-radius-round); background: var(--accent); color: #fff; content: "当前穿着"; font-size: 10px; }
+.nd-outfit-manage-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.nd-outfit-manage-head button { padding: 4px 10px; border: 1px solid var(--line); border-radius: var(--nd-semantic-radius-action); background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; }
 .nd-outfit-card { display: flex; gap: 10px; width: 100%; padding: 0; border: 0; background: none; color: inherit; text-align: left; cursor: pointer; }
 .nd-outfit-thumb { display: grid; flex: none; place-items: center; width: 64px; height: 80px; overflow: hidden; border-radius: var(--nd-semantic-radius-action); background: var(--panel-2); color: var(--muted); font-size: 11px; }
 .nd-outfit-thumb img { width: 100%; height: 100%; object-fit: cover; }

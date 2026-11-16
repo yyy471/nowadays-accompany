@@ -137,5 +137,7 @@ export interface ModelTestResult {
   elapsedMs: number;
   /** 本次测试对应的配置与凭据版本；与当前配置不一致即视为过期。 */
   fingerprint: string;
+  /** 本次测试落库的记录标识；草稿测试后直接保存服务时用于安全关联（308 §4.5）。 */
+  testCallId?: string;
   error?: { code: string; message: string };
 }

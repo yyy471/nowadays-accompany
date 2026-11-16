@@ -87,6 +87,8 @@ export const createResourceSchema = z
     config: recordSchema,
     /** 只写的模型服务密钥，创建时与资源同一事务保存。 */
     secret: z.string().min(1).max(4000).optional(),
+    /** 新建前做过草稿连接测试时携带的记录编号，配置一致则绑定到新建资源。 */
+    draftTestCallId: z.uuid().optional(),
   })
   .strict();
 
@@ -99,6 +101,8 @@ export const updateResourceSchema = z
     secret: z
       .union([z.string().min(1).max(4000), z.null()])
       .optional(),
+    /** 编辑连接参数后做过草稿连接测试时携带的记录编号，配置一致则绑定到资源。 */
+    draftTestCallId: z.uuid().optional(),
   })
   .strict()
   .refine(

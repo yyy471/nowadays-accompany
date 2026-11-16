@@ -38,6 +38,7 @@ export function ConversationPage({
   currentOutfit,
   outfits,
   outfitHomeUrl,
+  appearanceLoading = false,
   loading,
   error,
   hideDock,
@@ -46,12 +47,14 @@ export function ConversationPage({
   onOpenRelations,
   onConfigureModel,
   onCreateRole,
+  onRoleStateChanged,
 }: {
   roles: RoleListItem[];
   currentId: string;
   currentOutfit: Outfit | null;
   outfits: Outfit[];
   outfitHomeUrl: string | null;
+  appearanceLoading?: boolean;
   loading: boolean;
   error: string;
   hideDock: boolean;
@@ -60,6 +63,7 @@ export function ConversationPage({
   onOpenRelations: () => void;
   onConfigureModel: () => void;
   onCreateRole: () => void;
+  onRoleStateChanged?: () => void;
 }) {
   const { preset } = useThemePreset();
   // 换光由本页接管：舞台光线 + 纸面逐行推进，不再退回整页天气动画。
@@ -261,6 +265,9 @@ export function ConversationPage({
     } else if (event.reason === 'connection' && event.message) {
       showToast(event.message);
     }
+    if (event.reason === 'terminal' || event.reason === 'annotation' || (wasAdvancing && next.activeId === null)) {
+      onRoleStateChanged?.();
+    }
     if (wasAdvancing && next.activeId === null && !historyOpenRef.current && followRef.current) {
       setRequestDraftFocus(value => value + 1);
     }
@@ -295,13 +302,16 @@ export function ConversationPage({
   const segmentHomeUrl = visibleStageRow?.role === 'assistant' && visibleStageRow.homeAssetId
     ? appearanceAssetUrl(currentId, visibleStageRow.homeAssetId)
     : null;
+  const hasOutfits = outfits.length > 0;
+  const awaitingInitialOutfit = !appearanceLoading && hasOutfits && currentOutfit === null;
   const sources: StageSources = useMemo(() => ({
     backgroundUrl: night ? nightScene : scene,
     segmentHomeUrl,
     outfitUrl: outfitHomeUrl,
-    themeUrl: night ? nightCharacter : character,
+    // 只有确认角色衣柜确实为空时才显示主题默认人物；已有服饰等待角色穿搭时不闪现主题图。
+    themeUrl: !appearanceLoading && !hasOutfits ? (night ? nightCharacter : character) : null,
     resolveSprite: (assetId: string) => appearanceAssetUrl(currentId, assetId)
-  }), [currentId, night, segmentHomeUrl, outfitHomeUrl]);
+  }), [currentId, night, segmentHomeUrl, outfitHomeUrl, appearanceLoading, hasOutfits]);
 
   const send = (text: string) => {
     if (!session.send(text)) return false;
@@ -317,6 +327,14 @@ export function ConversationPage({
     setHasNew(false);
     setScenePreview(null);
     session.advance();
+  };
+
+  const advanceAll = () => {
+    setHistoryLock(false);
+    setFollow(true);
+    setHasNew(false);
+    setScenePreview(null);
+    session.advanceAll();
   };
 
   const openScene = (sceneView: PerfScene) => {
@@ -410,7 +428,10 @@ export function ConversationPage({
     <div className="dialogue-page" data-theme={night ? 'night' : 'day'} data-motion={motion.reduced ? 'reduced' : 'full'}>
       <main className="dialogue-layout">
         <ConversationStage snapshot={snapshot} current={visibleStageRow} sources={sources}
-          visibleScene={visibleScene} live={stageLive} cue={cue} onDismiss={dismissScene} />
+          visibleScene={visibleScene} live={stageLive} cue={cue}
+          waitingOutfit={appearanceLoading || awaitingInitialOutfit}
+          waitingText={appearanceLoading ? '正在整理画面…' : `${roleName} 正在换装，即将赶来…`}
+          onDismiss={dismissScene} />
         <section className="dialogue-pane" aria-label={historyOpen ? '历史消息' : `与 ${roleName} 的对话`}>
         <div className="dialogue-pane-toolbar" inert={historyOpen} aria-hidden={historyOpen || undefined}>
           <div className="dialogue-pane-switches">
@@ -461,8 +482,8 @@ export function ConversationPage({
                   liveRowId={liveRowId} locatedRowId={locatedRow} dateNotice={dateNotice} requestDraftFocus={requestDraftFocus}
                   onDraftFocusHandled={() => setRequestDraftFocus(0)}
                   onScrollFollow={next => { setFollow(next); if (next) { setHasNew(false); setHistoryLock(false); } }}
-                  onLatest={onLatest} onSend={send} onTyping={session.noteTyping} onLoadOlder={() => void session.loadOlder()} onAdvance={advance}
-                  notice={outfits.length === 0 ? null : currentOutfit === null ? '当前未选择服饰' : currentOutfit.sprites.length === 0 ? '这套服饰没有对话表情，可先补一张差分' : null}
+                  onLatest={onLatest} onSend={send} onTyping={session.noteTyping} onLoadOlder={() => void session.loadOlder()} onAdvance={advance} onAdvanceAll={advanceAll}
+                  notice={currentOutfit && currentOutfit.sprites.length === 0 ? '这套服饰没有对话表情，可先补一张差分' : null}
                   waitReason={snapshot.waitReason}
                   roleStopped={roleActivity?.state === 'stopped'}
                   onResumeRole={resumeRole}

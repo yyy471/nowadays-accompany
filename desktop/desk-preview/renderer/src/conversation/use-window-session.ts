@@ -14,7 +14,7 @@ import type {
 import type { PerfRow } from './history.js';
 import type { PerformanceSnapshot, SceneLayerMode } from './performance.js';
 import { backendBaseUrl } from './backend-base';
-import { applySegmentAnnotations, createRowIdRegistry, groupSegments, isSubmissionConfirmed, lastRowOf, mergeSegments, messageStatusOf, newerSceneTask, reconcileFinalSegments, rowsForMessage, sceneView } from './window-model.js';
+import { applySegmentAnnotations, createRowIdRegistry, groupSegments, isSubmissionConfirmed, lastRowOf, mergeSegments, messageStatusOf, newerSceneTask, nextMessageSequence, reconcileFinalSegments, rowsForMessage, sceneView } from './window-model.js';
 import { createTypingState } from './typing-state.js';
 
 export type ConnectionState = 'connecting' | 'open' | 'retrying' | 'closed';
@@ -54,6 +54,8 @@ export interface ConversationSnapshot extends PerformanceSnapshot {
 interface PendingReply {
   executionId: string | null;
   replyMessageId: string | null;
+  replySequence: number | null;
+  replyCreatedAt: string | null;
   submittedMessageId: string | null;
   messageRecord: MessageView | null;
   segments: SegmentView[];
@@ -142,18 +144,20 @@ function rememberScene(current: SessionState, task: SceneTaskView): void {
   current.scenes.set(task.taskId, newerSceneTask(current.scenes.get(task.taskId), task));
 }
 
-function syntheticReplyRecord(pending: PendingReply): MessageView {
-  return pending.messageRecord ?? {
+function syntheticReplyRecord(pending: PendingReply, fallbackSequence: number): MessageView {
+  if (pending.messageRecord) return pending.messageRecord;
+  const createdAt = pending.replyCreatedAt ?? new Date(pending.startedAt).toISOString();
+  return {
     messageId: pending.replyMessageId ?? '',
     windowId: '',
     sender: 'assistant',
     content: '',
     sourcePlatform: 'nowadays',
     status: 'generating',
-    sequence: Number.MAX_SAFE_INTEGER,
+    sequence: pending.replySequence ?? fallbackSequence,
     submissionId: null,
-    createdAt: new Date(pending.startedAt).toISOString(),
-    updatedAt: new Date(pending.startedAt).toISOString()
+    createdAt,
+    updatedAt: createdAt
   };
 }
 
@@ -231,7 +235,7 @@ export function useWindowSession({
       const pending = current.pending;
       if (pending.replyMessageId !== null) {
         segmentsByMessage.set(pending.replyMessageId, pending.segments);
-        const record = syntheticReplyRecord(pending);
+        const record = syntheticReplyRecord(pending, nextMessageSequence(entries.map(item => item.record)));
         const effective: MessageView = {
           ...record,
           // 生成中的末段不提前显示「未说完」；终态在收尾写入保存消息时生效。
@@ -395,6 +399,8 @@ export function useWindowSession({
         current.pending = {
           executionId: activeReply.executionId,
           replyMessageId: message.messageId,
+          replySequence: message.sequence,
+          replyCreatedAt: message.createdAt,
           submittedMessageId: null,
           messageRecord: message,
           segments,
@@ -486,6 +492,12 @@ export function useWindowSession({
     if (pending.executionId === null) return null;
     if (executionId !== null && executionId !== pending.executionId) return null;
     if (replyMessageId !== null) pending.replyMessageId = replyMessageId;
+    if (typeof payload.replySequence === 'number' && Number.isFinite(payload.replySequence)) {
+      pending.replySequence = payload.replySequence;
+    }
+    if (typeof payload.replyCreatedAt === 'string' && payload.replyCreatedAt) {
+      pending.replyCreatedAt = payload.replyCreatedAt;
+    }
     return pending;
   }
 
@@ -547,7 +559,7 @@ export function useWindowSession({
             pending.segments = reconciled.segments;
             pending.shown = reconciled.shown;
             if (pending.shown > 0) {
-              const record = syntheticReplyRecord(pending);
+              const record = syntheticReplyRecord(pending, nextMessageSequence([...current.messages.values()].map(item => item.record)));
               current.current = lastRowOf(rowsForMessage({ ...record, status: 'generating' }, pending.segments.slice(0, pending.shown), rowIds.current!.id));
             } else {
               const previousRows = [...current.messages.values()].sort((a, b) => a.record.sequence - b.record.sequence)
@@ -558,7 +570,7 @@ export function useWindowSession({
           const added = pending.segments.length > before;
           if (pending.shown === 0 && pending.segments.length > 0) {
             pending.shown = 1;
-            const record = syntheticReplyRecord(pending);
+            const record = syntheticReplyRecord(pending, nextMessageSequence([...current.messages.values()].map(item => item.record)));
             const row = lastRowOf(rowsForMessage({ ...record, status: 'generating' }, pending.segments.slice(0, 1), rowIds.current!.id));
             if (row) current.current = row;
             if (pending.terminal !== null && pending.shown >= pending.segments.length) finalizePending();
@@ -678,7 +690,7 @@ export function useWindowSession({
     current.pending = null;
     if (pending.error) current.error = pending.error;
     if (pending.replyMessageId === null) return;
-    const record = syntheticReplyRecord(pending);
+    const record = syntheticReplyRecord(pending, nextMessageSequence([...current.messages.values()].map(item => item.record)));
     current.messages.set(pending.replyMessageId, {
       record: {
         ...record,
@@ -713,7 +725,7 @@ export function useWindowSession({
         content: segments.filter(segment => segment.kind === 'speech').map(segment => segment.text).join('\n\n'),
         sourcePlatform: 'nowadays',
         status,
-        sequence: Number.MAX_SAFE_INTEGER,
+        sequence: nextMessageSequence([...state.current.messages.values()].map(item => item.record)),
         submissionId: null,
         createdAt: segments[0].createdAt,
         updatedAt: segments[0].createdAt
@@ -734,6 +746,8 @@ export function useWindowSession({
     const pending: PendingReply = {
       executionId: null,
       replyMessageId: null,
+      replySequence: null,
+      replyCreatedAt: null,
       submittedMessageId: null,
       messageRecord: null,
       segments: [],
@@ -840,11 +854,24 @@ export function useWindowSession({
     const pending = state.current.pending;
     if (pending === null || pending.shown >= pending.segments.length) return false;
     pending.shown += 1;
-    const record = syntheticReplyRecord(pending);
+    const record = syntheticReplyRecord(pending, nextMessageSequence([...state.current.messages.values()].map(item => item.record)));
     const effective: MessageView = { ...record, status: 'generating' };
     const row = lastRowOf(rowsForMessage(effective, pending.segments.slice(0, pending.shown), rowIds.current!.id));
     if (row) state.current.current = row;
     if (pending.terminal !== null && pending.shown >= pending.segments.length) finalizePending();
+    emit({ reason: 'segment', row: row ?? undefined });
+    return true;
+  }, [emit]);
+
+  const advanceAll = useCallback((): boolean => {
+    const pending = state.current.pending;
+    if (pending === null || pending.shown >= pending.segments.length) return false;
+    pending.shown = pending.segments.length;
+    const record = syntheticReplyRecord(pending, nextMessageSequence([...state.current.messages.values()].map(item => item.record)));
+    const effective: MessageView = { ...record, status: 'generating' };
+    const row = lastRowOf(rowsForMessage(effective, pending.segments, rowIds.current!.id));
+    if (row) state.current.current = row;
+    if (pending.terminal !== null) finalizePending();
     emit({ reason: 'segment', row: row ?? undefined });
     return true;
   }, [emit]);
@@ -971,7 +998,7 @@ export function useWindowSession({
   }, [windows.length]);
 
   const noteTyping = useCallback(() => typing.current?.input(), []);
-  return { snapshot, windows, windowId, selectWindow, retry, send, retryWaiting, clearRejection, advance, requestScene, noteTyping, loadOlder, loadHistory, cancelHistory, ensureVisible };
+  return { snapshot, windows, windowId, selectWindow, retry, send, retryWaiting, clearRejection, advance, advanceAll, requestScene, noteTyping, loadOlder, loadHistory, cancelHistory, ensureVisible };
 }
 
 function mergeSceneTask(previous: SceneTaskView | undefined, payload: StreamEventView, windowId: string): SceneTaskView {

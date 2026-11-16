@@ -1415,3 +1415,108 @@ test("model config persists optional modelName and reveal endpoint exposes secre
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("draft test attaches lastTest on create and update when configuration matches", { timeout: 30_000 }, async () => {
+  const root = tempRoot();
+  const server = await startMockServer();
+  let app: Awaited<ReturnType<typeof startApp>> | undefined;
+  try {
+    app = await startApp(root);
+
+    const draftTested = await api(
+      app.baseUrl,
+      "POST",
+      "/v1/model-services/test",
+      {
+        protocol: "openai-chat",
+        baseUrl: server.baseUrl,
+        model: "mock-model",
+        secret: "sk-draft",
+      },
+    );
+    assert.equal(draftTested.status, 200);
+    assert.equal(draftTested.body.ok, true);
+    const draftTestCallId = draftTested.body.testCallId as string;
+    assert.ok(typeof draftTestCallId === "string" && draftTestCallId.length > 0);
+
+    const mismatched = await api(app.baseUrl, "POST", "/v1/resources", {
+      kind: "model",
+      name: "配置不一致不挂载",
+      config: {
+        protocol: "openai-chat",
+        baseUrl: server.baseUrl,
+        modelName: "other-model",
+      },
+      secret: "sk-draft",
+      draftTestCallId,
+    });
+    assert.equal(mismatched.status, 201);
+    assert.equal(mismatched.body.lastTest, null);
+
+    const matched = await api(app.baseUrl, "POST", "/v1/resources", {
+      kind: "model",
+      name: "新建即继承草稿测试",
+      config: {
+        protocol: "openai-chat",
+        baseUrl: server.baseUrl,
+        modelName: "mock-model",
+      },
+      secret: "sk-draft",
+      draftTestCallId,
+    });
+    assert.equal(matched.status, 201);
+    const matchedLastTest = matched.body.lastTest as {
+      ok: boolean;
+      status: string;
+      stale: boolean;
+      modelName: string;
+      protocol: string;
+      elapsedMs: number;
+      finishedAt: string;
+      errorCode: string | null;
+    } | null;
+    assert.ok(matchedLastTest !== null);
+    assert.equal(matchedLastTest.ok, true);
+    assert.equal(matchedLastTest.status, "succeeded");
+    assert.equal(matchedLastTest.stale, false);
+    assert.equal(matchedLastTest.modelName, "mock-model");
+    assert.equal(matchedLastTest.protocol, "openai-chat");
+    assert.equal(matchedLastTest.errorCode, null);
+    assert.equal(typeof matchedLastTest.elapsedMs, "number");
+    assert.equal(typeof matchedLastTest.finishedAt, "string");
+
+    const resourceId = matched.body.resourceId as string;
+    const secondDraftTest = await api(
+      app.baseUrl,
+      "POST",
+      "/v1/model-services/test",
+      {
+        protocol: "openai-chat",
+        baseUrl: server.baseUrl,
+        model: "mock-model",
+        secret: "sk-updated",
+      },
+    );
+    assert.equal(secondDraftTest.status, 200);
+    assert.equal(secondDraftTest.body.ok, true);
+
+    const updated = await api(
+      app.baseUrl,
+      "PATCH",
+      `/v1/resources/${resourceId}`,
+      {
+        secret: "sk-updated",
+        draftTestCallId: secondDraftTest.body.testCallId,
+      },
+    );
+    assert.equal(updated.status, 200);
+    assert.equal((updated.body.lastTest as { ok: boolean; stale: boolean }).ok, true);
+    assert.equal((updated.body.lastTest as { stale: boolean }).stale, false);
+  } finally {
+    if (app !== undefined) {
+      await app.app.close();
+    }
+    await server.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

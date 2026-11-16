@@ -92,16 +92,25 @@ export function VoicePanel({
   // 角色切换令牌：晚到的响应一律丢弃，避免写进另一个角色的页面状态。
   const roleToken = useRef(0);
   const previewToken = useRef(0);
+  const previewAbortRef = useRef<AbortController | null>(null);
+  const [previewElapsed, setPreviewElapsed] = useState(0);
   const lastRole = useRef(roleId);
   const lastActive = useRef(active);
   const initialServiceSync = useRef(true);
   if (lastActive.current !== active) {
     lastActive.current = active;
-    if (!active) previewToken.current += 1;
+    if (!active) {
+      previewToken.current += 1;
+      previewAbortRef.current?.abort();
+      previewAbortRef.current = null;
+    }
   }
   if (lastRole.current !== roleId) {
     lastRole.current = roleId;
     roleToken.current += 1;
+    previewToken.current += 1;
+    previewAbortRef.current?.abort();
+    previewAbortRef.current = null;
     // 换角色即放锁：旧请求已经作废，不该继续挡住新角色的保存与启停。
     inFlight.current = null;
   }
@@ -161,6 +170,8 @@ export function VoicePanel({
         setPendingFile(null);
         if (fileInput.current) fileInput.current.value = '';
         previewToken.current += 1;
+        previewAbortRef.current?.abort();
+        previewAbortRef.current = null;
         stopPreview();
         setPreviewBusy(false);
         voiceProbe.clearLog();
@@ -174,11 +185,29 @@ export function VoicePanel({
 
   useEffect(() => {
     if (!active) {
+      previewToken.current += 1;
+      previewAbortRef.current?.abort();
+      previewAbortRef.current = null;
       stopPreview();
       setPreviewBusy(false);
       voiceProbe.clearLog();
     }
   }, [active, voiceProbe.clearLog]);
+
+  useEffect(() => () => {
+    previewAbortRef.current?.abort();
+    previewAbortRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    if (!previewBusy) {
+      setPreviewElapsed(0);
+      return;
+    }
+    setPreviewElapsed(0);
+    const timer = window.setInterval(() => setPreviewElapsed(seconds => seconds + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [previewBusy]);
 
   useEffect(() => {
     let activeLoad = true;
@@ -407,6 +436,9 @@ export function VoicePanel({
       setError(issues.map(item => item.message).join('；'));
       return;
     }
+    const controller = new AbortController();
+    previewAbortRef.current?.abort();
+    previewAbortRef.current = controller;
     setPreviewBusy(true);
     setError('');
     setNotice('');
@@ -432,9 +464,10 @@ export function VoicePanel({
       const blob = await apiBinary(`/v1/roles/${encodeURIComponent(roleId)}/voice/preview`, {
         method: 'POST',
         body,
+        signal: controller.signal,
       });
-      // 切到别的角色后不再播放上一段试听。
-      if (isStale(token) || preview !== previewToken.current) return;
+      // 切到别的角色或已取消后不再播放上一段试听。
+      if (controller.signal.aborted || isStale(token) || preview !== previewToken.current) return;
       if (blob.size === 0) {
         setError('试听返回了空音频。');
         return;
@@ -446,11 +479,20 @@ export function VoicePanel({
           : '已按当前表单生成试听，正在播放。',
       );
     } catch (reason) {
-      if (isStale(token) || preview !== previewToken.current) return;
+      if (controller.signal.aborted || isStale(token) || preview !== previewToken.current) return;
       setError(failureText(reason));
     } finally {
+      if (previewAbortRef.current === controller) previewAbortRef.current = null;
       if (!isStale(token) && preview === previewToken.current) setPreviewBusy(false);
     }
+  };
+
+  const cancelPreview = () => {
+    previewToken.current += 1;
+    previewAbortRef.current?.abort();
+    previewAbortRef.current = null;
+    setPreviewBusy(false);
+    setNotice('已取消本次试听合成。');
   };
 
   const selectPendingReference = (files: FileList | null) => {
@@ -1028,8 +1070,9 @@ export function VoicePanel({
 
       <div className="nd-appearance-actions">
         <Button disabled={busy || previewBusy} onClick={() => void runPreview()}>
-          {previewBusy ? '正在合成…' : '生成试听'}
+          {previewBusy ? `正在合成（${previewElapsed}s）…` : '生成试听'}
         </Button>
+        {previewBusy && <Button variant="ghost" onClick={cancelPreview}>取消</Button>}
         <Button disabled={!playing} onClick={stopPreview}>
           停止播放
         </Button>

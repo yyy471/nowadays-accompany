@@ -197,3 +197,15 @@ export function spriteForRow(rows, current) {
     row.messageId === current.messageId && row.ordinal <= current.ordinal && row.outfitId === current.outfitId && row.sprite
   )?.sprite ?? null;
 }
+
+/** 计算下一条本地消息序号：取现有有限序号最大值加 1，避免 MAX_SAFE_INTEGER 导致后续真实消息倒序。 */
+export function nextMessageSequence(messages) {
+  let max = 0;
+  for (const item of messages) {
+    const seq = item && typeof item.sequence === 'number' ? item.sequence : 0;
+    if (Number.isFinite(seq) && seq < Number.MAX_SAFE_INTEGER && seq > max) {
+      max = seq;
+    }
+  }
+  return max + 1;
+}

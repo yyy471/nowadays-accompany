@@ -265,3 +265,26 @@ test("迟到的旧任务快照不会覆盖已完成的过场图", async () => {
   assert.equal(newerSceneTask(done, retry), retry);
   assert.equal(newerSceneTask(retry, done), retry);
 });
+
+test("nextMessageSequence 按有限最大序号顺延，避免首轮回放与第二轮用户消息倒序", async () => {
+  const { nextMessageSequence } = await load();
+  assert.equal(nextMessageSequence([]), 1);
+  assert.equal(nextMessageSequence([{ sequence: 1 }]), 2);
+  assert.equal(
+    nextMessageSequence([
+      { sequence: 1 },
+      { sequence: Number.MAX_SAFE_INTEGER },
+      { sequence: 3 }
+    ]),
+    4
+  );
+  const messages = [
+    { id: "u1", sequence: 1 },
+    { id: "a1", sequence: nextMessageSequence([{ sequence: 1 }]) },
+    { id: "u2", sequence: 3 }
+  ];
+  assert.deepEqual(
+    messages.slice().sort((left, right) => left.sequence - right.sequence).map(item => item.id),
+    ["u1", "a1", "u2"]
+  );
+});

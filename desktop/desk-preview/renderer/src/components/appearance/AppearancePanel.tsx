@@ -15,7 +15,6 @@ import {
 
 type Props = {
   roleId: string;
-  currentOutfitId?: string;
   canWrite?: boolean;
   onChanged?: () => void;
   onPreview?: (outfit: Outfit) => void;
@@ -40,13 +39,14 @@ const SKIP_REASON_LABELS: Record<string, string> = {
   UNRECOGNIZED: '无法归类',
 };
 
-export function AppearancePanel({ roleId, currentOutfitId, canWrite = true, onChanged, onPreview, onPreviewAsset, guardWrite = action => action(), pausedWrite = false }: Props) {
+export function AppearancePanel({ roleId, canWrite = true, onChanged, onPreview, onPreviewAsset, guardWrite = action => action(), pausedWrite = false }: Props) {
   const [items, setItems] = useState<Outfit[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState('');
+  const [uploadTarget, setUploadTarget] = useState('');
   const [rename, setRename] = useState('');
   const [confirm, setConfirm] = useState<{ kind: 'outfit' | 'sprite'; id: string; name: string } | null>(null);
   const confirmTrigger = useRef<HTMLButtonElement | null>(null);
@@ -80,7 +80,8 @@ export function AppearancePanel({ roleId, currentOutfitId, canWrite = true, onCh
       if (isStale(token)) return;
       setItems(result.items);
       setError('');
-      setSelected(previous => result.items.some(item => item.outfitId === previous) ? previous : (result.items[0]?.outfitId ?? ''));
+      setSelected(previous => result.items.some(item => item.outfitId === previous) ? previous : '');
+      setUploadTarget(previous => result.items.some(item => item.outfitId === previous) ? previous : (result.items[0]?.outfitId ?? ''));
     } catch (e) {
       if (isStale(token)) return;
       setError(e instanceof Error ? e.message : String(e));
@@ -91,12 +92,13 @@ export function AppearancePanel({ roleId, currentOutfitId, canWrite = true, onCh
 
   useEffect(() => {
     let active = true;
-    setItems([]); setSelected(''); setError(''); setNotice(''); setLoading(true); setBusy(false);
+    setItems([]); setSelected(''); setUploadTarget(''); setError(''); setNotice(''); setLoading(true); setBusy(false);
     setScan(null); setMerges({}); setRenames({}); setHomePicks({}); setImportFailures({}); setImportedIds({});
     void api<{ items: Outfit[] }>(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits`).then(result => {
       if (!active) return;
       setItems(result.items);
-      setSelected(result.items[0]?.outfitId ?? '');
+      setSelected('');
+      setUploadTarget(result.items[0]?.outfitId ?? '');
       setLoading(false);
     }).catch(e => {
       if (active) { setError(e instanceof Error ? e.message : String(e)); setLoading(false); }
@@ -244,13 +246,14 @@ export function AppearancePanel({ roleId, currentOutfitId, canWrite = true, onCh
   const uploadSprite = async (files: FileList | null) => {
     const file = files?.[0];
     if (!file || busy || !canWrite) return;
-    if (!selected) { setNotice('请先选择一套已有服饰。'); return; }
+    const targetId = uploadTarget || selected;
+    if (!targetId) { setNotice('请先选择一套已有服饰。'); return; }
     const token = roleToken.current;
     setBusy(true); setNotice(''); setError('');
     try {
       const form = new FormData();
       form.append('sprite', file, file.name);
-      await guardWrite(() => apiUpload(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits/${encodeURIComponent(selected)}/sprites`, form));
+      await guardWrite(() => apiUpload(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits/${encodeURIComponent(targetId)}/sprites`, form));
       if (isStale(token)) return;
       setNotice(`已添加差分「${file.name.replace(/\.[^.]+$/, '')}」`);
       await load(token);
@@ -305,7 +308,6 @@ export function AppearancePanel({ roleId, currentOutfitId, canWrite = true, onCh
     <div className="nd-appearance-actions">
       <input ref={folderInput} type="file" multiple {...folderAttributes} className="nd-visually-hidden" onChange={event => scanFolder(event.target.files)} />
       <Button disabled={busy || !canWrite} onClick={() => folderInput.current?.click()}>{scan === null ? '选择角色素材文件夹' : '重新选择'}</Button>
-      {currentOutfitId ? <span className="nd-appearance-current">当前穿着：{items.find(item => item.outfitId === currentOutfitId)?.name ?? '未知服饰'}</span> : null}
     </div>
 
     {scan !== null ? <section className="nd-import" aria-label="导入预览">
@@ -361,8 +363,8 @@ export function AppearancePanel({ roleId, currentOutfitId, canWrite = true, onCh
     </section> : null}
 
     {loading ? <LoadingNote label="正在读取衣柜…" /> : items.length === 0 ? <p className="nd-appearance-empty">这个角色还没有导入服饰。</p> : <ul className="nd-outfit-list">
-      {items.map(outfit => <li key={outfit.outfitId} className={'nd-outfit' + (outfit.outfitId === selected ? ' selected' : '') + (outfit.outfitId === currentOutfitId ? ' current' : '')}>
-        <button type="button" className="nd-outfit-card" aria-pressed={outfit.outfitId === selected} onClick={() => { setSelected(outfit.outfitId); onPreview?.(outfit); }}>
+      {items.map(outfit => <li key={outfit.outfitId} className={'nd-outfit' + (outfit.outfitId === selected ? ' selected' : '')}>
+        <button type="button" className="nd-outfit-card" aria-pressed={outfit.outfitId === selected} onClick={() => { setSelected(outfit.outfitId); setUploadTarget(outfit.outfitId); onPreview?.(outfit); }}>
           <span className="nd-outfit-thumb">{outfit.home ? <img src={appearanceAssetUrl(roleId, outfit.home.assetId)} alt="" /> : <span>无主页图</span>}</span>
           <span className="nd-outfit-meta"><b>{outfit.name}</b><small>{outfit.description ?? '未填写用途'} · {outfit.sprites.length} 张差分</small></span>
         </button>
@@ -370,7 +372,7 @@ export function AppearancePanel({ roleId, currentOutfitId, canWrite = true, onCh
       </li>)}
     </ul>}
     {selectedOutfit && <section className="nd-outfit-manage" aria-label="服饰管理">
-      <h3>{selectedOutfit.name}</h3>
+      <div className="nd-outfit-manage-head"><h3>素材管理 · {selectedOutfit.name}</h3><button type="button" onClick={() => setSelected('')}>收起</button></div>
       <Field label="服饰名称"><input value={rename} disabled={busy} maxLength={100} onChange={event => setRename(event.target.value)} /></Field>
       <div className="nd-appearance-actions"><Button disabled={busy || !canWrite || !rename.trim() || rename.trim() === selectedOutfit.name} onClick={() => void updateOutfit('rename')}>保存名称</Button>
         <input ref={homeInput} type="file" accept="image/png,image/jpeg,image/webp" className="nd-visually-hidden" onChange={event => { const file = event.target.files?.[0]; if (file) void updateOutfit('home', file); }}/>
@@ -382,11 +384,11 @@ export function AppearancePanel({ roleId, currentOutfitId, canWrite = true, onCh
       {confirm && <div role="alert" className="nd-outfit-confirm"><p>删除{confirm.kind === 'outfit' ? '服饰' : '差分'}「{confirm.name}」？历史消息引用的素材将保留。</p><Button disabled={busy || !canWrite} onClick={() => void updateOutfit(confirm.kind, undefined, confirm.id)}>确认删除</Button> <button type="button" disabled={busy} onClick={() => { setConfirm(null); requestAnimationFrame(() => confirmTrigger.current?.focus()); }}>取消</button></div>}
     </section>}
     <div className="nd-sprite-upload">
-      <Field label="补一张差分到已有服饰"><Select value={selected} disabled={busy || items.length === 0} onChange={event => setSelected(event.target.value)}>
+      <Field label="补一张差分到已有服饰"><Select value={uploadTarget} disabled={busy || items.length === 0} onChange={event => setUploadTarget(event.target.value)}>
         {items.length === 0 ? <option value="">暂无服饰</option> : items.map(outfit => <option key={outfit.outfitId} value={outfit.outfitId}>{outfit.name}</option>)}
       </Select></Field>
       <input ref={spriteInput} type="file" accept="image/png,image/jpeg,image/webp" className="nd-visually-hidden" onChange={event => void uploadSprite(event.target.files)} />
-      <Button disabled={busy || !canWrite || !selected} onClick={() => spriteInput.current?.click()}>上传差分图片</Button>
+      <Button disabled={busy || !canWrite || !uploadTarget} onClick={() => spriteInput.current?.click()}>上传差分图片</Button>
     </div>
     {notice ? <p className="nd-appearance-notice" role="status">{notice}</p> : null}
     {error ? <p className="nd-appearance-error" role="alert">{error}</p> : null}

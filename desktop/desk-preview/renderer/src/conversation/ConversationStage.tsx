@@ -69,6 +69,8 @@ export function ConversationStage({
   visibleScene,
   live,
   cue,
+  waitingOutfit = false,
+  waitingText,
   onDismiss,
 }: {
   snapshot: PerformanceSnapshot;
@@ -79,6 +81,9 @@ export function ConversationStage({
   live: boolean;
   /** 上一段为动作时点亮舞台提示。 */
   cue: boolean;
+  /** 角色已有衣柜但尚未选定首套服饰或外观仍在同步时，先只显示背景与过渡提示，避免闪现主题占位图。 */
+  waitingOutfit?: boolean;
+  waitingText?: string;
   onDismiss: () => void;
 }) {
   const policy = useMotionPolicy();
@@ -107,6 +112,10 @@ export function ConversationStage({
   return <section className="dialogue-stage" data-scene={visible?.mode ?? ''} aria-label="背景与角色独立的演出画布">
     <CrossfadeLayer className="dialogue-background" src={backgroundSrc} alt="" />
     <CrossfadeLayer className="dialogue-character" src={characterUrl} alt="角色立绘" onDecodeError={handleCharacterError} />
+    {waitingOutfit && characterUrl === null && !full ? <div className="dialogue-stage-arriving" role="status">
+      {!policy.reduced ? <span className="dialogue-waiting-dots" aria-hidden="true"><i /><i /><i /></span> : null}
+      <span>{waitingText || '角色正在换装，即将赶来…'}</span>
+    </div> : null}
     {full && sceneAsset ? <div className="dialogue-scene-full"><img src={sceneAsset} alt="过场图" /></div> : null}
     <div className="dialogue-stage-cue" aria-hidden="true" data-live={day ? 'cue' : ''} />
     <i className="dialogue-sun-beam" aria-hidden="true" />

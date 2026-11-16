@@ -36,4 +36,5 @@ export function shouldClearRecoveredDraft(
 export function parseTime(value: string | number): number;
 export function lastRowOf(rows: PerfRow[]): PerfRow | null;
 export function spriteForRow(rows: PerfRow[], current: PerfRow | null): string | null;
+export function nextMessageSequence(messages: Iterable<{ sequence: number }>): number;
 export function sceneAssetUrl(roleId: string, assetId: string): string;

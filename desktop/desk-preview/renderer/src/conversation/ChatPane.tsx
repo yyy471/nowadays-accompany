@@ -36,6 +36,7 @@ export function ChatPane({
   onTyping,
   onLoadOlder,
   onAdvance,
+  onAdvanceAll,
   onSpeaker,
   onGenerateScene,
   onOpenScene,
@@ -69,6 +70,7 @@ export function ChatPane({
   onTyping: () => void;
   onLoadOlder: () => void;
   onAdvance: () => void;
+  onAdvanceAll?: () => void;
   onSpeaker: (row: PerfRow) => void;
   onGenerateScene: (messageId: string) => void;
   onOpenScene: (scene: PerfScene) => void;
@@ -314,7 +316,21 @@ export function ChatPane({
         {waitReason ? <button type="button" onClick={onRetryWaiting}>重试</button> : null}
       </div> : null}
       {notice ? <p className="dialogue-outfit-notice" role="status">{notice}</p> : null}
-      {advancing ? null : <form className="dialogue-composer" onSubmit={submit}>
+      {advancing ? <div className="dialogue-advance-bar">
+        {snapshot.canAdvance && !snapshot.awaiting ? <>
+          <span className="dialogue-advance-meta">
+            <span>还有 {snapshot.upcoming?.length ?? 0} 句</span>
+            <small>点对话框、按 Enter 或点击右侧继续</small>
+          </span>
+          <div className="dialogue-advance-actions">
+            {onAdvanceAll && (snapshot.upcoming?.length ?? 0) > 1 ? <button type="button" className="dialogue-advance-secondary" onClick={onAdvanceAll}>全部展开</button> : null}
+            <button type="button" className="dialogue-advance-primary" onClick={onAdvance}>继续下一句</button>
+          </div>
+        </> : <span className="dialogue-advance-meta">
+          {!policy.reduced ? <span className="dialogue-waiting-dots" aria-hidden="true"><i /><i /><i /></span> : null}
+          <span>{waitingText || '正在组织回复…'}</span>
+        </span>}
+      </div> : <form className="dialogue-composer" onSubmit={submit}>
             <div className="dialogue-writing">
               <label className="sr-only" htmlFor="dialogue-draft">输入消息</label>
               <textarea ref={draft} id="dialogue-draft" rows={2} maxLength={2000} placeholder="想说什么，就慢慢说。"

@@ -31,6 +31,8 @@ import { runWithDecisionCommit } from "../storage/transaction-group.js";
 import type { CredentialSummary, CredentialResolver } from "./credential-resolver.js";
 import type { ModelBindingResolver } from "./model-binding-resolver.js";
 import {
+  fingerprintOf,
+  probeSalt,
   summarizeModelTest,
   type ModelTestSummary,
 } from "./model-service.js";
@@ -43,6 +45,7 @@ export interface CreateResourceInput {
   config: unknown;
   /** 只写的模型服务密钥；创建时与资源同一事务落库。 */
   secret?: string | undefined;
+  draftTestCallId?: string | undefined;
 }
 
 export interface UpdateResourceInput {
@@ -51,6 +54,7 @@ export interface UpdateResourceInput {
   config?: unknown;
   /** undefined 保留、null 清除、字符串替换。 */
   secret?: string | null | undefined;
+  draftTestCallId?: string | undefined;
 }
 
 export interface BindingInput {
@@ -179,6 +183,19 @@ export class ResourceService {
       if (input.secret !== undefined) {
         this.credentials.setSecret(resourceId, input.secret, now);
       }
+      if (input.kind === "model" && input.draftTestCallId !== undefined) {
+        this.attachDraftTestCall({
+          resourceId,
+          testCallId: input.draftTestCallId,
+          config,
+          expectedSalts: [
+            probeSalt({
+              ...(config as { protocol: "openai-chat" | "openai-responses" | "anthropic-messages" | "google-gemini"; baseUrl: string; credentialRef?: string }),
+              ...(input.secret === undefined ? {} : { secret: input.secret }),
+            }),
+          ],
+        });
+      }
     })();
     return this.view(resourceId);
   }
@@ -245,6 +262,21 @@ export class ResourceService {
     const { current, config, replacingSecret, nextConfig } =
       this.prepareUpdate(resourceId, input);
     const now = this.now().toISOString();
+    const priorSavedSalt =
+      current.kind === "model" &&
+      input.draftTestCallId !== undefined &&
+      replacingSecret === undefined &&
+      input.secret !== null
+        ? (() => {
+            const parsedPrev = modelConfigSchema.safeParse(current.config);
+            return parsedPrev.success
+              ? this.credentials.fingerprintSalt(
+                  resourceId,
+                  parsedPrev.data.credentialRef,
+                )
+              : null;
+          })()
+        : null;
     this.appStore.db.transaction(() => {
       this.appStore.updateResource({
         resourceId,
@@ -264,6 +296,31 @@ export class ResourceService {
       ) {
         // 地址或协议变了，旧测试结果不再对应当前服务。
         this.appStore.deleteModelTestCalls(resourceId);
+      }
+      if (current.kind === "model" && input.draftTestCallId !== undefined) {
+        const parsedNext = modelConfigSchema.safeParse(nextConfig);
+        if (parsedNext.success) {
+          const expectedSalts: string[] = [];
+          if (replacingSecret !== undefined) {
+            expectedSalts.push(
+              probeSalt({
+                ...parsedNext.data,
+                secret: replacingSecret,
+              }),
+            );
+          } else {
+            expectedSalts.push(probeSalt(parsedNext.data));
+            if (priorSavedSalt !== null) {
+              expectedSalts.push(priorSavedSalt);
+            }
+          }
+          this.attachDraftTestCall({
+            resourceId,
+            testCallId: input.draftTestCallId,
+            config: parsedNext.data,
+            expectedSalts,
+          });
+        }
       }
     })();
     // 模型服务的启用、连接或凭据变化都可能让原先等待的消息重新可调度（R02）。
@@ -845,6 +902,41 @@ export class ResourceService {
         storage.close();
       }
     }
+  }
+
+  /** 当草稿测试指纹与实际保存的配置及密钥一致时，把测试记录绑定到该资源。 */
+  private attachDraftTestCall(input: {
+    resourceId: string;
+    testCallId: string;
+    config: Record<string, unknown>;
+    expectedSalts: readonly string[];
+  }): void {
+    const parsed = modelConfigSchema.safeParse(input.config);
+    if (!parsed.success) return;
+    const record = this.appStore.getModelTestCall(input.testCallId);
+    if (record === null || record.resourceId !== null) return;
+    if (
+      parsed.data.modelName !== undefined &&
+      parsed.data.modelName !== record.modelName
+    ) {
+      return;
+    }
+    const matched = input.expectedSalts.some(
+      (salt) => record.configFingerprint === fingerprintOf(parsed.data, salt),
+    );
+    if (!matched) return;
+    const nextFingerprint = fingerprintOf(
+      parsed.data,
+      this.credentials.fingerprintSalt(
+        input.resourceId,
+        parsed.data.credentialRef,
+      ),
+    );
+    this.appStore.attachModelTestCall({
+      testCallId: input.testCallId,
+      resourceId: input.resourceId,
+      nextFingerprint,
+    });
   }
 
   private assertNotInUse(

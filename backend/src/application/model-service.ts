@@ -201,7 +201,7 @@ export class ModelService {
       }
     }
     const finishedAt = this.now();
-    this.appStore.saveModelTestCall({
+    const testCallId = this.appStore.saveModelTestCall({
       resourceId: input.resourceId,
       modelName: input.model,
       protocol: input.config.protocol,
@@ -217,12 +217,14 @@ export class ModelService {
         ok: true,
         elapsedMs: finishedAt.getTime() - startedMs,
         fingerprint: input.fingerprint,
+        testCallId,
       };
     }
     return {
       ok: false,
       elapsedMs: finishedAt.getTime() - startedMs,
       fingerprint: input.fingerprint,
+      testCallId,
       error: {
         code: errorCode ?? "MODEL_REQUEST_FAILED",
         message: errorMessage ?? "模型请求失败",
@@ -325,7 +327,8 @@ function serviceIdentity(config: ModelServiceConfig): string {
   }
 }
 
-function probeSalt(config: ModelServiceProbe): string {  if (config.secret !== undefined) {
+export function probeSalt(config: ModelServiceProbe): string {
+  if (config.secret !== undefined) {
     return `probe-secret:${createHash("sha256").update(config.secret).digest("hex").slice(0, 16)}`;
   }
   return config.credentialRef === undefined

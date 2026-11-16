@@ -105,6 +105,7 @@ export function ImagePanel({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewElapsed, setPreviewElapsed] = useState(0);
   const [anchorBusyKey, setAnchorBusyKey] = useState('');
   const [anchorNotes, setAnchorNotes] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState('');
@@ -117,6 +118,7 @@ export function ImagePanel({
   // 角色切换与草稿变更令牌：晚到的试生图与提示词生成响应不写回过时草稿或其他角色。
   const roleToken = useRef(0);
   const previewSeq = useRef(0);
+  const previewAbortRef = useRef<AbortController | null>(null);
   const anchorSeq = useRef(0);
   const anchorAbortRef = useRef<AbortController | null>(null);
   const lastRole = useRef(roleId);
@@ -124,6 +126,8 @@ export function ImagePanel({
     lastRole.current = roleId;
     roleToken.current += 1;
     previewSeq.current += 1;
+    previewAbortRef.current?.abort();
+    previewAbortRef.current = null;
     anchorSeq.current += 1;
     anchorAbortRef.current?.abort();
     anchorAbortRef.current = null;
@@ -165,6 +169,8 @@ export function ImagePanel({
 
   const invalidatePreview = (clearResult: boolean) => {
     previewSeq.current += 1;
+    previewAbortRef.current?.abort();
+    previewAbortRef.current = null;
     setPreviewBusy(false);
     if (clearResult) {
       setPreview(null);
@@ -211,9 +217,20 @@ export function ImagePanel({
     mounted.current = true;
     return () => {
       mounted.current = false;
+      previewAbortRef.current?.abort();
       anchorAbortRef.current?.abort();
     };
   }, []);
+
+  useEffect(() => {
+    if (!previewBusy) {
+      setPreviewElapsed(0);
+      return;
+    }
+    setPreviewElapsed(0);
+    const timer = window.setInterval(() => setPreviewElapsed(seconds => seconds + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [previewBusy]);
 
   useEffect(() => {
     const token = roleToken.current;
@@ -496,6 +513,9 @@ export function ImagePanel({
     const requestKey = snapshotKeyFor(targetServiceId);
     const token = roleToken.current;
     const seq = ++previewSeq.current;
+    const controller = new AbortController();
+    previewAbortRef.current?.abort();
+    previewAbortRef.current = controller;
     setPreviewBusy(true); setError(''); setNotice(''); setNoticeKind('');
     try {
       const result = await api<ImagePreview>(
@@ -506,9 +526,11 @@ export function ImagePanel({
             prompt: previewPrompt,
             outfitId: previewOutfitId,
           }),
+          signal: controller.signal,
         },
       );
       if (
+        controller.signal.aborted ||
         isStale(token) ||
         previewSeq.current !== seq ||
         !activeRef.current ||
@@ -522,6 +544,7 @@ export function ImagePanel({
       setNotice(`已用当前草稿生成测试样图（${result.width}×${result.height}），未改动已保存配置。`);
     } catch (reason) {
       if (
+        !controller.signal.aborted &&
         !isStale(token) &&
         previewSeq.current === seq &&
         activeRef.current &&
@@ -531,8 +554,18 @@ export function ImagePanel({
         setError(failureText(reason));
       }
     } finally {
+      if (previewAbortRef.current === controller) previewAbortRef.current = null;
       if (!isStale(token) && previewSeq.current === seq) setPreviewBusy(false);
     }
+  };
+
+  const cancelPreview = () => {
+    previewSeq.current += 1;
+    previewAbortRef.current?.abort();
+    previewAbortRef.current = null;
+    setPreviewBusy(false);
+    setNoticeKind('preview');
+    setNotice('已取消本次试生图。');
   };
 
   const missingSelectedService = form.serviceId !== '' && !selectedService;
@@ -777,7 +810,7 @@ export function ImagePanel({
             }}
           />
         </Field>
-        <Field label="带哪套服饰" hint="仅影响本次试生图拼接。">
+        <Field label="试生图参考服饰" hint="仅用于本次试生图拼接，不影响角色对话实际穿着。">
           <Select
             value={previewOutfitId}
             onChange={event => {
@@ -792,8 +825,9 @@ export function ImagePanel({
       </div>
       <div className="nd-image-actions">
         <Button variant="ghost" disabled={previewBusy} onClick={() => void runPreview()}>
-          {previewBusy ? '正在出图…' : '测试生图'}
+          {previewBusy ? `正在出图（${previewElapsed}s）…` : '测试生图'}
         </Button>
+        {previewBusy && <Button variant="ghost" onClick={cancelPreview}>取消</Button>}
         <Button disabled={busy} onClick={() => void save()}>
           {busy ? '正在保存…' : pausedWrite ? '暂停并保存配置' : '保存配置'}
         </Button>

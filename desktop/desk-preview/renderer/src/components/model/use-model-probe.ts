@@ -43,6 +43,7 @@ interface ModelListResult {
 interface ModelTestResult {
   ok?: boolean;
   elapsedMs?: number;
+  testCallId?: string;
   error?: { message?: string };
 }
 
@@ -81,6 +82,7 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
   const [testBusy, setTestBusy] = useState(false);
   const [testNote, setTestNote] = useState('');
   const [testModel, setTestModel] = useState('');
+  const [draftTestCallId, setDraftTestCallId] = useState<string | null>(null);
   const [notice, setNotice] = useState<ProbeNotice | null>(null);
   const listGeneration = useRef(0);
   const testGeneration = useRef(0);
@@ -104,6 +106,7 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
     setListError('');
     setTestNote('');
     setTestModel('');
+    setDraftTestCallId(null);
     setNotice(null);
     epochRef.current = getModelCacheEpoch(key);
     if (options.shared === true) {
@@ -147,6 +150,7 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
     setListError('');
     setTestNote('');
     setTestModel('');
+    setDraftTestCallId(null);
     setNotice(null);
   }, []);
 
@@ -159,6 +163,7 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
     setListLoaded(false);
     setTestNote('');
     setTestModel('');
+    setDraftTestCallId(null);
     setNotice(null);
     setListBusy(false);
     setTestBusy(false);
@@ -177,6 +182,7 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
     setListError('');
     setTestNote('');
     setTestModel('');
+    setDraftTestCallId(null);
     setNotice(null);
     try {
       const result =
@@ -224,7 +230,7 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
         setNotice({
           source: 'list',
           role: 'alert',
-          text: `读取失败：${msg}。可继续手填模型名称。`,
+          text: `读取失败：${msg}。部分兼容接口不开放模型列表属正常现象，可直接在上方手填模型名称后测试连接。`,
         });
       }
     } finally {
@@ -244,6 +250,7 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
     setListError('');
     setTestNote('');
     setTestModel(model);
+    setDraftTestCallId(null);
     setNotice(null);
     try {
       const result =
@@ -258,6 +265,9 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
             );
       if (version !== testGeneration.current || capturedKey !== keyRef.current) return;
       if (staleAfterRotation(target, epoch)) return;
+      if (target.kind === 'draft' && result.ok === true && typeof result.testCallId === 'string') {
+        setDraftTestCallId(result.testCallId);
+      }
       const note = modelTestNote(result);
       if (logSeq === clickLogSeq.current) {
         setTestNote(note);
@@ -295,6 +305,7 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
     testBusy,
     testNote,
     testModel,
+    draftTestCallId,
     notice,
     refresh,
     test,

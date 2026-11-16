@@ -358,11 +358,15 @@ async function run() {
   await until(() => ev("document.querySelector('.config-role-editor:not([hidden])').innerText.includes('角色设定已保存')"));
   assert.equal(definitions.b, '乙的未保存草稿');
   await ev("[...document.querySelectorAll('.config-tabs button')].find(x=>x.textContent.includes('外观')).click()");
+  await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-outfit-card')"));
+  assert.equal(await ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-outfit-manage')"), false, '进入外观时不默认自动选中服饰');
+  assert.equal(await ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-appearance-current')"), false, '设置页不再显示当前穿着标签');
+  await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-outfit-card').click()");
   await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-outfit-manage input:not([type=file])')"));
   await ev("(()=>{const e=document.querySelector('.config-role-editor:not([hidden]) .nd-outfit-manage input:not([type=file])');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'改名服饰');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-outfit-manage button')].find(x=>x.textContent==='保存名称').click()");
   await until(() => wardrobes.b[0].name === '改名服饰');
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-outfit-manage h3')?.textContent==='改名服饰'"));
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-outfit-manage h3')?.textContent?.includes('改名服饰')"));
   await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-sprite-preview').click()");
   await until(() => ev("document.querySelector('.config-stage .config-portrait img')?.getAttribute('src')?.includes('sprite-1')"));
   const doc = await cmd('DOM.getDocument');
@@ -377,6 +381,8 @@ async function run() {
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-outfit-manage button')].find(x=>x.textContent==='删除服饰').click()");
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-outfit-confirm button')].find(x=>x.textContent==='确认删除').click()");
   await until(() => wardrobes.b.length === 1);
+  await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-outfit-card')"));
+  await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-outfit-card').click()");
   await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-outfit-manage button')].find(x=>x.textContent==='删除服饰')?.disabled"));
   await ev("[...document.querySelectorAll('.config-tabs button')].find(x=>x.textContent.includes('设定')).click()");
   await ev("document.querySelector('.config-switch-role').click()");

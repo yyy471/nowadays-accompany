@@ -79,6 +79,7 @@
 .dialogue-scene-dismiss { position: absolute; z-index: 5; left: 10px; bottom: 10px; min-height: 34px; padding: 6px 12px; border: 1px solid var(--dlg-rule); border-radius: var(--nd-semantic-radius-action); background: var(--dlg-paper); color: var(--dlg-ink); font-size: 12px; box-shadow: var(--nd-semantic-shadow-rest); }
 .dialogue-scene-dismiss:hover { background: var(--dlg-selection); }
 .dialogue-stage-note { position: absolute; right: 10px; bottom: 10px; z-index: 5; padding: 5px 9px; border-radius: var(--nd-semantic-radius-action); background: color-mix(in srgb, var(--dlg-paper) 86%, transparent); color: var(--dlg-muted); font-size: 11px; pointer-events: none; backdrop-filter: blur(4px); }
+.dialogue-stage-arriving { position: absolute; left: 50%; bottom: 24px; translate: -50% 0; z-index: 2; display: inline-flex; align-items: center; gap: 10px; max-width: calc(100% - 32px); padding: 9px 16px; border: 1px solid var(--dlg-rule); border-radius: var(--nd-semantic-radius-field); background: color-mix(in srgb, var(--dlg-paper) 88%, transparent); color: var(--dlg-ink); font-size: 13px; line-height: 20px; box-shadow: var(--nd-semantic-shadow-rest); backdrop-filter: blur(6px); pointer-events: none; animation: dialogue-date-notice var(--nd-semantic-motion-linger) var(--nd-semantic-motion-ease-out) both; }
 
 /* ---------- Conversation pane ---------- */
 .dialogue-pane { position: relative; isolation: isolate; display: flex; flex-direction: column; min-height: 0; min-width: 0; border: 1px solid var(--dlg-rule); border-radius: var(--nd-semantic-radius-field); background: var(--dlg-paper); overflow: hidden; }
@@ -151,7 +152,15 @@
 .dialogue-waiting-dots i:nth-child(2) { animation-delay: var(--nd-semantic-motion-component-exit); }
 .dialogue-waiting-dots i:nth-child(3) { animation-delay: var(--nd-semantic-motion-page); }
 @keyframes dialogue-waiting-dot { 0%, 80%, 100% { opacity: 0.2; transform: translateY(0); } 40% { opacity: 0.9; transform: translateY(-2px); } }
-.dialogue-advance-hint { margin: 0 0 8px; padding-inline: 4px; color: var(--dlg-muted); font-size: 11px; line-height: 18px; opacity: 0.75; }
+.dialogue-advance-hint { margin: 0 0 8px; padding-inline: 4px; color: var(--dlg-muted); font-size: 12px; line-height: 18px; opacity: 0.9; }
+.dialogue-advance-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; min-height: 54px; padding: 9px 12px; border: 1px solid var(--dlg-rule); border-radius: var(--nd-semantic-radius-field); background: color-mix(in srgb, var(--dlg-canvas) 23%, var(--dlg-paper)); }
+.dialogue-advance-meta { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 13px; line-height: 20px; color: var(--dlg-ink); }
+.dialogue-advance-meta small { color: var(--dlg-muted); font-size: 12px; }
+.dialogue-advance-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex: none; }
+.dialogue-page .dialogue-advance-secondary { min-height: 36px; padding: 6px 12px; border: 1px solid var(--dlg-outline); border-radius: var(--nd-semantic-radius-action); background: var(--dlg-paper); color: var(--dlg-ink); font-size: 13px; }
+.dialogue-page .dialogue-advance-secondary:hover { background: var(--dlg-selection); }
+.dialogue-page .dialogue-advance-primary { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; padding: 6px 14px; border: 1px solid var(--dlg-commit); border-radius: var(--nd-semantic-radius-action); background: var(--dlg-commit); color: var(--nd-semantic-color-on-solid); font-size: 13px; font-weight: 600; }
+.dialogue-page .dialogue-advance-primary:hover { background: var(--nd-semantic-color-commit-hover); }
 .dialogue-outfit-notice { margin: 0 0 7px; color: var(--dlg-muted); font-size: 12px; line-height: 18px; }
 @media (prefers-reduced-motion: reduce) {
   .dialogue-waiting-dots i { animation: none; opacity: 0.6; }

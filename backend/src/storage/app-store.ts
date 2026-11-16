@@ -143,6 +143,34 @@ export class AppStore {
     return row === undefined ? null : mapModelTestCall(row);
   }
 
+  getModelTestCall(testCallId: string): ModelTestCallRecord | null {
+    const row = this.db
+      .prepare(
+        `SELECT test_call_id, resource_id, model_name, protocol, status,
+                error_code, config_fingerprint, started_at, finished_at
+           FROM model_test_calls
+          WHERE test_call_id = ?`,
+      )
+      .get(testCallId) as ModelTestCallRow | undefined;
+    return row === undefined ? null : mapModelTestCall(row);
+  }
+
+  /** 将未归属服务的草稿连接测试安全关联到刚保存/更新的资源（308 §4.5）。 */
+  attachModelTestCall(input: {
+    testCallId: string;
+    resourceId: string;
+    nextFingerprint: string;
+  }): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE model_test_calls
+            SET resource_id = ?, config_fingerprint = ?
+          WHERE test_call_id = ? AND resource_id IS NULL`,
+      )
+      .run(input.resourceId, input.nextFingerprint, input.testCallId);
+    return result.changes > 0;
+  }
+
   deleteModelTestCalls(resourceId: string): number {
     return this.db
       .prepare("DELETE FROM model_test_calls WHERE resource_id = ?")

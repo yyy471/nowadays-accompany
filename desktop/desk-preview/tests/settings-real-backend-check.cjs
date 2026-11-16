@@ -48,7 +48,9 @@ async function run() {
   await until(() => ev("[...document.querySelectorAll('.ui-menu-item')].some(x=>x.textContent.includes('角色配置'))")); await ev("[...document.querySelectorAll('.ui-menu-item')].find(x=>x.textContent.includes('角色配置')).click()");
   await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='联调甲'"));
   await ev("[...document.querySelectorAll('.config-tabs button')].find(x=>x.textContent.includes('外观')).click()");
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-outfit-manage h3')?.textContent==='春装'"));
+  await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-outfit-card')"));
+  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-outfit-card')].find(x=>x.textContent.includes('春装')).click()");
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-outfit-manage h3')?.textContent?.includes('春装')"));
   await ev("(()=>{const e=document.querySelector('.config-role-editor:not([hidden]) .nd-outfit-manage input:not([type=file])');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'春日');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-outfit-manage button')].find(x=>x.textContent==='保存名称').click()");
   await until(async () => (await request(`/v1/roles/${a.roleId}/appearance/outfits`)).items.some(item => item.name === '春日'));

@@ -62,7 +62,7 @@ export function ModelNamePicker({
       return {
         source: 'list',
         role: 'alert',
-        text: `读取失败：${listError}。可继续手填模型名称。`,
+        text: `读取失败：${listError}。部分兼容接口不开放模型列表属正常现象，请直接在上方手填模型名称后测试连接。`,
       };
     }
     if (testNote) {
@@ -72,7 +72,7 @@ export function ModelNamePicker({
       return {
         source: 'list',
         role: 'status',
-        text: '服务没有返回模型，可继续手填。',
+        text: '服务未返回模型列表（部分兼容接口属正常现象），请直接在上方手填模型名称后测试连接。',
       };
     }
     return null;
@@ -124,7 +124,7 @@ export function ModelNamePicker({
     }
   };
 
-  return <Field label={label} hint={hint ?? '选择或输入模型名称；列表读取失败时可直接手填。'}>
+  return <Field label={label} hint={hint ?? '选择或直接输入模型名称；接口未开放列表时，手填模型名即可测试与保存。'}>
     <div className="nd-model-picker">
       <Input
         value={value}

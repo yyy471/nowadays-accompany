@@ -14,7 +14,7 @@
 | 桌面关系藏页 & 对话页 | 关系藏页（EX-R01～R05）、桌面对话（FE-R01～R04）离线复验关闭；240 经用户确认；237～239 完成自验 | [231](archive/03-appearance-and-performance/231-conversation-desktop-independent-review.md#4-232-修复独立复验) · [234](archive/02-desktop-ui-and-relations/234-relations-exlibris-independent-review.md#4-235-第-7-节补修独立复验) · [237](archive/02-desktop-ui-and-relations/237-dialogue-theme-transition.md) · [240](archive/02-desktop-ui-and-relations/240-relations-header-removal.md) | 237～239 独立复核；真实服务语音播放与联调 |
 | 角色配置与设置（252／253） | 后端三包（RS-01、活动守卫、资源管理、外观删除历史）与前端第三包均通过离线复验 | [244](archive/04-role-settings-and-media/244-role-settings-independent-review.md#7-245-第-12-节补修独立复验) · [255](archive/04-role-settings-and-media/255-role-activity-independent-review.md#259-修复独立复验) · [258](archive/04-role-settings-and-media/258-resource-management-independent-review.md#259-第-8-节补修独立复验) · [263](archive/04-role-settings-and-media/263-role-appearance-deletion-independent-review.md#264-第-7-节补修独立复验) · [266](archive/04-role-settings-and-media/266-role-settings-frontend-independent-review.md#267-补修-cf-r05-独立复验) | 真实模型、语音、生图服务联调 |
 | 模型配置与对话修复（268） | MR-01～MR-05 离线复验关闭；292-R05～R07 独立复验通过，含跨页失效与在途编辑 | [271](archive/05-model-settings-and-dialogue/271-model-settings-and-dialogue-independent-review.md) · [283 §29](archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#29-292-第-9-节独立复验) | 真实 ComfyUI 联调 |
-| 操作链路简化（278） | 同页暂停保存、模型维护、删除与记忆整理通过既有离线复验；292-R06 和 R08 补修通过，两处启动目录均完成隔离 E2E；292-R09、settings-review-fixes-check.cjs 及顺带发现的自动合并跨页草稿同步修复已完成自验 | [278](archive/06-workflow-simplification/278-project-workflow-simplification-fix-plan.md) · [283 §29](archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#29-292-第-9-节独立复验) · [292 §10](archive/06-workflow-simplification/292-278-remaining-deletion-maintenance.md#10-283-29292-r09doc-r01-邻接契约与-settings-review-fixes-checkcjs-收口自验) | 292-R09 与 settings-review-fixes-check.cjs 更新／`Settings.tsx` 自动合并回写修复待独立复核；278 §4 与真实外部服务联调 |
+| 操作链路简化与首次体验修复（278 / 308） | 同页暂停保存、模型维护、删除与记忆整理通过既有离线复验；292-R09、settings-review-fixes-check 与 **308 §4 问题 #1～#6 及两项外观裁决**（[309](archive/06-workflow-simplification/309-308-startup-flow-fixes.md)）已完成实施自验与 Electron E2E（待独立复核） | [278](archive/06-workflow-simplification/278-project-workflow-simplification-fix-plan.md) · [283 §29](archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#29-292-第-9-节独立复验) · [308](archive/06-workflow-simplification/308-startup-and-connection-flow-audit.md) · [309](archive/06-workflow-simplification/309-308-startup-flow-fixes.md) | 292-R09 与 [309](archive/06-workflow-simplification/309-308-startup-flow-fixes.md) 待独立复核；308 §4 第 7 项通用引导文案优化与真实外部服务联调后置 |
 | 桌面前端设计系统与样式门禁 | 全站样式改用 `--nd-*` 令牌，`lint:styles` / `tokens:check` 与 `design-tokens.test.cjs`（Windows 路径已修）均通过 | [前端设计规范](specs/frontend-design-system.md) · [check-design-tokens.mjs](../desktop/scripts/check-design-tokens.mjs) | 历史样式豁免收敛（旧调板颜色、页面艺术色、纸感阴影、TS 耦合时长等，见规范第 12 节） |
 
 ## 2. 当前待推进事项（Backlog）
@@ -29,12 +29,12 @@
 
 - **后端正式测试与离线验收**：
   - `cd backend && npx -y node@24 ./node_modules/typescript/bin/tsc --noEmit`（通过）；
-  - `cd backend && npx -y node@24 --import tsx --test tests/*.test.ts`（**422／422** 通过，0 失败，0 跳过；含 [p9-tts-engines-emotion.test.ts](../backend/tests/p9-tts-engines-emotion.test.ts) **5** 项覆盖全局语音服务 CRUD／探测／全局守卫／角色绑定与运行态校验、及双引擎情绪标注）；
-  - `cd backend && npx -y node@24 scripts/accept-offline.mjs`（**21／21** 步，`realServiceCalls=0`，最新报告 `backend/test-results/p5-2026-11-16T02-16-36-482Z-ca9e34b1/summary.json`）。
+  - `cd backend && npx -y node@24 --import tsx --test --test-concurrency=8 tests/*.test.ts`（**424／424** 通过，0 失败，0 跳过；含 [p12-role-settings.test.ts](../backend/tests/p12-role-settings.test.ts) 草稿测试挂载与 [p7-performance.test.ts](../backend/tests/p7-performance.test.ts) SSE `replySequence` 用例）；
+  - `cd backend && npx -y node@24 scripts/accept-offline.mjs`（**21／21** 步，`realServiceCalls=0`，最新报告 `backend/test-results/p5-2026-11-16T03-58-22-917Z-d6aa0d00/summary.json`）。
 - **桌面端离线验证**：
-  - `cd desktop/desk-preview/renderer && npm run check`（`tokens:check` 最新 + `lint:styles` 22 个 CSS 零违规 + `tsc --noEmit` 通过）及 `npm run build`（126 模块）；
-  - `cd desktop/desk-preview && npx -y node@24 --test tests/*.test.cjs`（**135／135** 通过，0 失败，0 跳过；含 [voice-engines-emotion.test.cjs](../desktop/desk-preview/tests/voice-engines-emotion.test.cjs) **6** 项）；
-  - Electron E2E（本轮 `DL-152` 改动后重跑）：`settings-workspace-check.cjs`（`settingsThreeTabs: true`、`voiceServiceCrudAndProbe: true`、`voiceStagingPreviewAndSave: true`、`errors: []`）与 `workflow-real-backend-chain-check.cjs`（`voiceStagedZeroWritePreviewAtomicSave: true`、`dialogueChatVoiceSceneE2E: true`、`errors: []`）均退出 0（本地假后端／假 TTS 端点范围；其余前轮专项 E2E 见前序基线记录）。
+  - `cd desktop/desk-preview/renderer && npm run check`（`tokens:check` 最新 + `lint:styles` 22 个 CSS 零违规／豁免 388 + `tsc --noEmit` 通过）及 `npm run build`（126 模块）；
+  - `cd desktop/desk-preview && npx -y node@24 --test tests/*.test.cjs`（**136／136** 通过，0 失败，0 跳过；含 [conversation-window-model.test.cjs](../desktop/desk-preview/tests/conversation-window-model.test.cjs) `nextMessageSequence` 回归）；
+  - Electron E2E（本轮 `309` 改动后重跑）：[startup-flow-fixes-check.cjs](../desktop/desk-preview/tests/startup-flow-fixes-check.cjs)、`settings-workspace-check.cjs`、`settings-review-fixes-check.cjs`、`settings-real-backend-check.cjs`、`workflow-real-backend-chain-check.cjs`、`dialogue-layout-check.cjs`、`settings-auto-reload-check.cjs` 与 `settings-binding-recovery-check.cjs` 均退出 0（本地假后端／假模型／假 TTS 端点范围；详见 [309](archive/06-workflow-simplification/309-308-startup-flow-fixes.md)）。
 - **文档巡检**：仓库根目录执行 `node scripts/check-docs.mjs`。
 
 ## 4. 分支与历史归档目录
@@ -50,4 +50,4 @@
   - `archive/03-appearance-and-performance/`（`208`–`213`、`215`–`232`）：角色外观穿搭、对话演出、TTS／IndexTTS、过场图与桌面对话接入
   - `archive/04-role-settings-and-media/`（`236`、`241`–`267`）：角色配置、全局设置、活动守卫、资源占用删除、ComfyUI 与语音启停
   - `archive/05-model-settings-and-dialogue/`（`268`–`276`）：模型草稿探测、首次启动停止态与对话差分／选择器修复
-  - `archive/06-workflow-simplification/`（`277`–`306`）：操作链路简化方案与 283～306 复核补修全链
+  - `archive/06-workflow-simplification/`（`277`–`309`）：操作链路简化方案、283～306 复核补修全链与 308/309 首次体验修复

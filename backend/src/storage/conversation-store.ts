@@ -992,6 +992,8 @@ export class ConversationStore {
           payload: {
             executionId: input.executionId,
             replyMessageId: message.messageId,
+            replySequence: message.sequence,
+            replyCreatedAt: message.createdAt,
             proactive: true,
             segments,
           },
@@ -1010,6 +1012,8 @@ export class ConversationStore {
         payload: {
           executionId: input.executionId,
           replyMessageId: message.messageId,
+          replySequence: message.sequence,
+          replyCreatedAt: message.createdAt,
           proactive: true,
         },
         now,
@@ -1018,13 +1022,27 @@ export class ConversationStore {
     })();
   }
 
-  private generatingMessageId(executionId: string): string | null {
+  private generatingMessageMeta(
+    executionId: string,
+  ): { messageId: string; sequence: number; createdAt: string } | null {
     const row = this.db
       .prepare(
-        "SELECT message_id FROM messages WHERE execution_id = ? AND sender = 'assistant' AND status = 'generating' ORDER BY sequence ASC LIMIT 1",
+        "SELECT message_id, sequence, created_at FROM messages WHERE execution_id = ? AND sender = 'assistant' AND status = 'generating' ORDER BY sequence ASC LIMIT 1",
       )
-      .get(executionId) as { message_id: string } | undefined;
-    return row?.message_id ?? null;
+      .get(executionId) as
+      | { message_id: string; sequence: number; created_at: string }
+      | undefined;
+    return row === undefined
+      ? null
+      : {
+          messageId: row.message_id,
+          sequence: row.sequence,
+          createdAt: row.created_at,
+        };
+  }
+
+  private generatingMessageId(executionId: string): string | null {
+    return this.generatingMessageMeta(executionId)?.messageId ?? null;
   }
 
   appendMessageDelta(input: {
@@ -1036,15 +1054,20 @@ export class ConversationStore {
   }): ConversationStreamEvent {
     const now = input.now ?? new Date().toISOString();
     return this.db.transaction(() => {
-      let messageId = this.generatingMessageId(input.executionId);
-      if (input.text.length > 0 && messageId === null) {
-        messageId = this.insertAssistantMessage({
+      let messageMeta = this.generatingMessageMeta(input.executionId);
+      if (input.text.length > 0 && messageMeta === null) {
+        const inserted = this.insertAssistantMessage({
           windowId: input.windowId,
           content: "",
           status: "generating",
           executionId: input.executionId,
           now,
-        }).messageId;
+        });
+        messageMeta = {
+          messageId: inserted.messageId,
+          sequence: inserted.sequence,
+          createdAt: inserted.createdAt,
+        };
       }
       const event = this.appendStreamEventInternal({
         windowId: input.windowId,
@@ -1053,16 +1076,28 @@ export class ConversationStore {
         payload: { executionId: input.executionId, delta: input.text },
         now,
       });
-      if (messageId !== null && input.fullText !== undefined) {
+      if (messageMeta !== null && input.fullText !== undefined) {
         const segments = this.insertMessageSegments(
-          messageId, input.windowId, input.fullText, null, now, true,
+          messageMeta.messageId,
+          input.windowId,
+          input.fullText,
+          null,
+          now,
+          true,
         );
         if (segments.length > 0) {
           this.appendStreamEventInternal({
             windowId: input.windowId,
             executionId: input.executionId,
             type: "message_segments",
-            payload: { executionId: input.executionId, replyMessageId: messageId, partial: true, segments },
+            payload: {
+              executionId: input.executionId,
+              replyMessageId: messageMeta.messageId,
+              replySequence: messageMeta.sequence,
+              replyCreatedAt: messageMeta.createdAt,
+              partial: true,
+              segments,
+            },
             now,
           });
         }
@@ -1204,6 +1239,8 @@ export class ConversationStore {
           payload: {
             executionId: input.executionId,
             replyMessageId: replyMessage.messageId,
+            replySequence: replyMessage.sequence,
+            replyCreatedAt: replyMessage.createdAt,
             segments,
           },
           now,
@@ -1226,6 +1263,8 @@ export class ConversationStore {
         payload: {
           executionId: input.executionId,
           replyMessageId: replyMessage.messageId,
+          replySequence: replyMessage.sequence,
+          replyCreatedAt: replyMessage.createdAt,
           stateVersion: nextVersion,
           ...(round === null ? {} : { decisionRound: round }),
         },
@@ -1311,6 +1350,8 @@ export class ConversationStore {
               payload: {
                 executionId: input.executionId,
                 replyMessageId: replyMessage.messageId,
+                replySequence: replyMessage.sequence,
+                replyCreatedAt: replyMessage.createdAt,
                 interrupted: true,
                 segments,
               },
@@ -1325,6 +1366,8 @@ export class ConversationStore {
               payload: {
                 executionId: input.executionId,
                 replyMessageId: replyMessage.messageId,
+                replySequence: replyMessage.sequence,
+                replyCreatedAt: replyMessage.createdAt,
                 reason: input.reason,
               },
               now,
@@ -1893,6 +1936,7 @@ export class ConversationStore {
             roleId: this.roleId, messageIds: [messageId], executionId,
             ...(this.timeZone === undefined ? {} : { timeZone: this.timeZone }), now,
           });
+          const recoveredReply = this.getMessage(messageId);
           const windowId = this.getExecution(executionId).windowId;
           if (windowId !== null) {
             const segments = this.insertMessageSegments(
@@ -1904,15 +1948,33 @@ export class ConversationStore {
             );
             if (segments.length > 0) {
               this.appendStreamEventInternal({
-                windowId, executionId, type: "message_segments",
-                payload: { executionId, replyMessageId: messageId, interrupted: true, segments }, now,
+                windowId,
+                executionId,
+                type: "message_segments",
+                payload: {
+                  executionId,
+                  replyMessageId: messageId,
+                  replySequence: recoveredReply.sequence,
+                  replyCreatedAt: recoveredReply.createdAt,
+                  interrupted: true,
+                  segments,
+                },
+                now,
               });
             }
           }
           this.appendStreamEventInternal({
             windowId: this.getExecution(executionId).windowId,
-            executionId, type: "message_interrupted",
-            payload: { executionId, replyMessageId: messageId, reason: errorCode }, now,
+            executionId,
+            type: "message_interrupted",
+            payload: {
+              executionId,
+              replyMessageId: messageId,
+              replySequence: recoveredReply.sequence,
+              replyCreatedAt: recoveredReply.createdAt,
+              reason: errorCode,
+            },
+            now,
           });
         }
       }
