@@ -47,15 +47,16 @@ devDoc/
 | --- | --- |
 | [项目文档、开发规范与修复验收组织优化方案](archive/07-documentation/documentation-optimization-plan.md) | 三类阅读入口、现行契约与验收清单；[第 7 节](archive/07-documentation/documentation-optimization-plan.md#7-导航与现行契约独立复核)记录导航验收与契约差异，[第 7.1 节](archive/07-documentation/documentation-optimization-plan.md#71-现行规范勘误独立复验)记录勘误复验 |
 
-### 06 · 项目操作链路简化与闭环复验（`archive/06-workflow-simplification/`，`277`–`309`）
+### 06 · 项目操作链路简化与闭环复验（`archive/06-workflow-simplification/`，`277`–`310`）
 
 > 新增专题指南与修复（2026-11-16）：[308 从零启动、连接配置与页面体验评审指南](archive/06-workflow-simplification/308-startup-and-connection-flow-audit.md) 与 [309 问题 #1～#6 修复记录](archive/06-workflow-simplification/309-308-startup-flow-fixes.md)。
 
 <details>
-<summary>展开 06 专项 32 份文档索引（`277`–`309`）</summary>
+<summary>展开 06 专项文档索引（`277`–`310`）</summary>
 
 | 文档 | 定位与状态 |
 | --- | --- |
+| [310 夏澄默认助手首版开发文档](archive/06-workflow-simplification/310-default-assistant-development-guide.md) | 2026-11-16 复核定稿：内置初始化与人设分层、配置锁定与自添服饰、空态与冷启动选角页、15 轮切段续行／熔断／澄清接回／取消、分项 Token 统计、方案 A 管理工具清单与 MCP 扩展。待实施。 |
 | [309 308 问题 #1～#6 与外观显示修复记录](archive/06-workflow-simplification/309-308-startup-flow-fixes.md) | 2026-11-16 实施自验（待独立复核）：修复创建弹窗重开、两轮实时消息顺序、首次无服饰过渡、推进控制条、草稿测试继承与新建角色状态/预览取消 |
 | [308 从零启动、连接配置与页面体验评审指南](archive/06-workflow-simplification/308-startup-and-connection-flow-audit.md) | 2026-11-16 极简指南：开箱启动命令、模型/语音/生图/扩展连接速查与基础使用路径 |
 | [277 项目操作链路复核与待修改项](archive/06-workflow-simplification/277-project-workflow-simplification-audit.md) | 首用、角色活动、全局服务、资源占用、删除和失败恢复的走查建议；主体已由 278 与 280～306 完成实施与离线复验 |

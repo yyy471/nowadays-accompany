@@ -2,7 +2,7 @@
 
 > **现行规范入口**：本文所涉角色活动守卫、全局资源管理与角色删除现行契约已整合并入 [角色配置、全局资源与活动守卫规范](../../specs/role-config-and-activity.md)；下文保留原计划与验收边界历史记录。
 
-2026-11-11。从原双页计划拆出。本计划负责后端开发、接口交付与独立复核。[253 前端计划](253-role-config-settings-frontend-plan.md) 同步实施，按第 5 节分批交接接口。产品规则以 [161](../../161-digital-life-direction-decisions.md#dl-147-设置页编辑角色与当前陪伴角色分离) 和 [236 第 8 节](236-role-settings-backend-gap-review.md#8-已确认的配置操作规则) 为准。
+2026-11-11。从原双页计划拆出。本计划负责后端开发、接口交付与独立复核。[253 前端计划](253-role-config-settings-frontend-plan.md) 同步实施，按第 5 节分批交接接口。产品规则以 [161](../../161-digital-life-direction-decisions.md#dl-147-移除陪伴角色概念按角色查看和编辑) 和 [236 第 8 节](236-role-settings-backend-gap-review.md#8-已确认的配置操作规则) 为准。
 
 ## 1. 可复用的后端基线
 

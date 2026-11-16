@@ -2,7 +2,7 @@
 
 > **样式约束更新**：本文涉及页面样式、组件与动效的实现约束，统一以现行 [前端设计规范](../../specs/frontend-design-system.md)（原 `307`）为准。
 
-2026-11-11。原型基线为 `E:/tmp/testWorkSpace/switchboard/nowadays-config-demo/`，入口为 `index.html?page=role` 和 `index.html?page=settings`。两页与 [252 后端开发](252-role-config-settings-development-plan.md#5-后端验收与交接) 并行实施，已有接口可先接入，新增或待修接口按交接结果逐项联调。产品规则以 [161](../../161-digital-life-direction-decisions.md#dl-147-设置页编辑角色与当前陪伴角色分离) 为准。
+2026-11-11。原型基线为 `E:/tmp/testWorkSpace/switchboard/nowadays-config-demo/`，入口为 `index.html?page=role` 和 `index.html?page=settings`。两页与 [252 后端开发](252-role-config-settings-development-plan.md#5-后端验收与交接) 并行实施，已有接口可先接入，新增或待修接口按交接结果逐项联调。产品规则以 [161](../../161-digital-life-direction-decisions.md#dl-147-移除陪伴角色概念按角色查看和编辑) 为准。
 
 ## 1. 页面范围
 
