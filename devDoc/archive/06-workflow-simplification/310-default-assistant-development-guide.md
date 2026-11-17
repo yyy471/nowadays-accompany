@@ -198,3 +198,47 @@
 2. **R02 · 预置服饰稳定来源标识（`BUSINESS V22`）**：[schema.ts](../../../backend/src/storage/schema.ts#L12) 升级业务库至 V22，在 `outfits` 新增 `preset_key TEXT` 与局部唯一索引 `idx_outfits_role_preset_key`（[appearance.ts](../../../backend/src/domain/appearance.ts) · [appearance-store.ts](../../../backend/src/storage/appearance-store.ts)）；[preset-assistant.ts](../../../backend/src/application/preset-assistant.ts#L116) 优先按 `presetKey`（目录 slug，兼容 V21 遗留 `preset_key IS NULL` 回填）匹配已有预置服饰并排除自身后解决冲突命名，重复重启及修改预置显示名时沿用原 `outfitId` 且保留同名自定义服饰。
 3. **R03 · 后置解析工具参数异常保留已收到的 Token 用量**：[protocols.ts](../../../backend/src/model/protocols.ts) 中 `streamOpenAiChat`、`streamOpenAiResponses` 与 `streamAnthropic` 均将流结束后的 `parseToolArguments` 提前放入外层 `try ... catch` 块内执行（先完成全部工具参数 JSON 解析并暂存，任一参数无效时由 `catch` 在抛出 `MODEL_TOOL_ARGUMENTS_INVALID` 前优先发出已收到的 `usage` 事件，且不发出 `tool_call` 或 `completed`），配合 `AgentGraph` 将该轮消耗累计至任务失败调用与任务 `usage` 汇总。
 4. **自验证据**：新增 R01～R03 专项回归至 [p19-preset-assistant-pack1.test.ts](../../../backend/tests/p19-preset-assistant-pack1.test.ts)（共 12 项全部通过）；全量 `npx -y node@24 scripts/accept-offline.mjs` 21／21 步通过（`436/436` 正式测试、2 项交付测试、`process-smoke` 与 16 项独立脚本校验通过，`realServiceCalls = 0`，报告位于 `backend/test-results/p5-2026-11-17T02-25-43-104Z-e98155af/summary.json`）。
+
+### 8.2 包 1 补修独立复验（2026-11-17，R01～R03 通过）
+
+在 `9f10d5f`（工作树干净）上对 §8.1 补修做独立复验。**不采信作者用例作为结论依据**，改为复用 §8 的原始复现探针并补充场景，重新制造故障观测真实行为。**R01～R03 三项均已消除原失败现象，复验通过。**
+
+| 编号 | 独立复验方法 | 实测结果 |
+| --- | --- | --- |
+| R01 · 取消写入失败后状态分裂 | 离线模型停在输入中途，分别注入「任务终态写失败」与「取消事件写失败」触发器，观察取消请求、任务、执行与取消事件 | 两种故障下取消均抛错，且任务保持 `active`、执行保持 `running`、取消事件 0 条（整笔回滚生效，不再出现「执行 `failed`、任务 `active`」）；解除故障后重试一次即收敛为任务 `failed`／`endReason = USER_CANCELLED`、执行 `failed`、取消事件 1 条，且不再新派执行 |
+| R01 · 正常取消基线 | 无故障注入直接取消运行中任务 | 任务 `failed`、执行 `failed`、取消事件 1 条，收尾后不产生新执行 |
+| R02 · 同名自定义服饰重复导入 | 先建同名自定义「日常常服」，再放入官方 `default` 素材，连续重启 4 次 | 预置数量恒为 `1,1,1,1`（原为 `1,2,3`），`roleId` 不变，同名自定义服饰始终保留；另测「修改预置显示名后重启」仍沿用原 `outfitId` 且不新增预置 |
+| R03 · 无效工具参数丢失用量 | 本地 SSE 分别构造 Chat／Responses／Anthropic 三协议「已返回用量、工具参数为截断 JSON」 | 三协议均先吐出 `usage` 再抛 `MODEL_TOOL_ARGUMENTS_INVALID`，且不发出 `tool_call`／`completed`；Anthropic 归一化为 `inputTokens = 27`（20＋缓存读 5＋缓存写 2）、`cachedTokens = 5`、`outputTokens = 9` |
+| R03 · 失败调用计入任务汇总 | 真实适配器接入本地 SSE，走完整 AgentGraph 链路 | 任务 `failed`／`endReason = MODEL_TOOL_ARGUMENTS_INVALID`，`usage` 为 `input 27／output 9／total 36／callCount 1／missingUsageCalls 0`，`model_calls` 失败行保留 `usage_json` |
+
+**门禁结果**：`npm run typecheck` 通过；正式测试 `436/436` 通过；包 1 专项 `12/12` 通过；`node scripts/check-docs.mjs` 0 错误 0 警告；`BUSINESS_SCHEMA_VERSION = 22`、`APP_SCHEMA_VERSION = 10` 与 §8.1 一致。复验证据位于 `backend/test-results/310-pack1-recheck-20261117/`（`report-recheck.json`、`r02-rename.json`、`r07-timing.json`）。
+
+**门禁稳定性发现（非包 1 缺陷，需单独跟进）**：本次全量 `accept-offline.mjs` 为 20／21，失败步骤为 `p2-extended` 的 `R07-automatic-candidate-maintenance`（单独重跑 3 次失败 1 次）。该用例在 `waitForIdle` 后**固定等待 200ms** 即断言维护批次已启动，而实测批次出现时间为 **213～258ms**，余量仅 13～58ms，属阈值过紧的既有抖动：关闭本次新增的预置助手同步后延迟仍为 213～232ms，故与包 1 改动无关。建议将该断言改为轮询等待，未修复前不接受「21／21 全绿」作为稳定门禁结论。
+
+**本次复验范围**：仅包 1 后端、随仓预置素材与本地离线验收。桌面包、发布包运行、真实模型与第三方 MCP 联调不在本次范围。受环境限制未能构建父提交对照工作树（依赖目录链接创建被安全策略拦截），R07 与包 1 无关的判断基于「失败点在被改动代码之前」＋「关闭新功能后延迟不变」两项证据，而非父提交实测对照。
+
+### 8.3 门禁抖动修复（2026-11-17，自验通过，待独立复核）
+
+针对 §8.2 记录的门禁稳定性发现（非包 1 缺陷）完成修复，仅改离线验收探针等待方式，不触及任何产品代码。
+
+1. **修复点**：[20261104-p2-05-fix-recheck.ts](../../../backend/reviews/20261104-p2-05-fix-recheck.ts) 的 `R07-automatic-candidate-maintenance` 在 `waitForIdle` 后由固定 `await delay(200)` 改为轮询等待维护批次真正启动：`until(() => calls > 0 && listRefineCandidates(...).length > 0)`。轮询复用文件内既有 `until`（8s 上限、20ms 间隔），条件与下方 `observed` 断言完全一致；真正的功能失败由 `until` 的 8s 超时兜底并报 `PROBE_WAIT_TIMEOUT`，不再依赖固定阈值。
+2. **类型检查**：对修改后的 review 脚本按 `review-typecheck` 同等参数独立 `tsc --noEmit` 通过。
+3. **稳定性验证**：单脚本串行重复运行 10 次，`R07-automatic-candidate-maintenance` 全部 `contractPassed=true`（`modelCalls=1／candidates=1`），同批 5 个探针均通过；原「3 次失败 1 次」抖动不再复现。
+4. **全量门禁**：`npx -y node@24 scripts/accept-offline.mjs` **21／21 步通过**（原独立复验为 20／21），`sourceUnchanged=true`、`realServiceCalls=0`、正式测试 `436/436`，报告 `backend/test-results/p5-2026-11-17T09-35-03-680Z-3493805f/summary.json`；`node scripts/check-docs.mjs` 0 错误 0 警告。
+
+**性质说明**：本次为实施者自验稳定通过（结论已由 [§8.4](#84-门禁抖动修复独立复核2026-11-17通过) 独立复核通过）；依 §8.2 既有结论，该抖动与包 1 改动无关，修复只作用于离线验收脚本的等待策略，不改变被测系统行为。
+
+### 8.4 门禁抖动修复独立复核（2026-11-17，通过）
+
+对 §8.3 的修复做独立复核，不采信实施者自验结论，另行构造正反向验证。修复内容与 §8.3 一致（固定 `delay(200)` → `until` 轮询，条件与断言同源），**复核通过**。
+
+| 验证项 | 独立方法 | 结果 |
+| --- | --- | --- |
+| 抖动是否消除 | 连续独立运行 `p2-extended` 6 次（与实施者 10 次相互独立） | 6／6 全部通过，5 个探针均 `contractPassed = true`、退出码 0；单次耗时 10.9～11.7s（首跑 26.3s 为冷启动），未见耗时退化 |
+| 是否退化为「恒通过」 | 负向对照：`disableMemoryRuntime = true` 使维护批次永不启动，套用同一 `until` 轮询条件 | 8007ms 抛出 `PROBE_WAIT_TIMEOUT`、`calls = 0`；经既有 `probe()` 记为 `contractPassed = false`，脚本退出码为 1 —— 真实功能缺失仍会被判失败 |
+| 全量门禁 | 连续两次 `npx -y node@24 scripts/accept-offline.mjs` | 两次均 **21／21** 步通过（`436／436` 正式测试、`realServiceCalls = 0`），报告 `backend/test-results/p5-2026-11-17T09-45-07-695Z-e8ac6c1e/summary.json` 与 `…09-51-35-370Z-b4d0c743/summary.json` |
+| 改动面 | 读差异 | 仅 `backend/reviews/20261104-p2-05-fix-recheck.ts` 一处等待策略，不触及产品代码；`delay` 在 R01 探针仍有使用，无未使用符号 |
+
+证据目录：`backend/test-results/310-gate-fix-recheck-20261117/`（`run-1..6.log`、`negative-control.json`）。
+
+**遗留提示（不阻塞）**：轮询只保证维护批次「最终会发生」（上限 8s），不再校验启动及时性；若后续需守住延迟指标，应另加显式性能断言。同脚本 R01 的 `delay(150)` 仅作读取前稳定窗口、不参与断言，本次未改动。
