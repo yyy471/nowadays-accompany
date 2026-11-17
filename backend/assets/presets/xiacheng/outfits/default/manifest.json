@@ -1,0 +1,25 @@
+{
+  "name": "日常常服",
+  "description": "夏澄的系统预置日常常服：米白橙条纹短款外套搭配深蓝百褶半裙与运动鞋，温暖有朝气的日常穿搭。",
+  "spriteNames": {
+    "calm": "平静",
+    "smile": "温暖微笑",
+    "speaking": "活泼交谈",
+    "happy": "欣喜",
+    "thinking": "思考",
+    "curious": "好奇",
+    "worried": "担心",
+    "shy": "害羞",
+    "sad": "难过",
+    "tearful": "含泪",
+    "reserved": "轻微不悦",
+    "wave": "开心挥手",
+    "reach": "伸手邀请",
+    "listen": "倾听",
+    "chuckle": "闭眼轻笑",
+    "hair_tuck": "整理发丝",
+    "advise": "提出建议",
+    "sigh": "轻叹扶额",
+    "whisper": "低语"
+  }
+}

@@ -19,7 +19,8 @@ export type ConversationStreamType =
   | "message_interrupted"
   | "execution_superseded"
   | "execution_paused"
-  | "execution_failed";
+  | "execution_failed"
+  | "task_cancelled";
 
 export interface ConversationStreamEvent {
   streamEventId: number;

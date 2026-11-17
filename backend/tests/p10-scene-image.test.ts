@@ -537,7 +537,7 @@ test("a v12 role database migrates to v13 and keeps messages, segments and event
     assert.equal(migrated.cursor, beforeEvents);
     assert.equal(
       withStorageFor(config, role.roleId, (storage) => storage.business.schemaVersion),
-      20,
+      22,
     );
     const tables = withStorageFor(config, role.roleId, (storage) =>
       (
@@ -778,6 +778,7 @@ function withStorageFor<T>(
 /** 把业务库还原到 V16（去掉 V17 的外观软删除与句段立绘快照），用于复现旧库迁移。 */
 function stripAppearanceV17(db: Database.Database): void {
   db.exec("DROP INDEX IF EXISTS idx_outfits_role_name");
+  db.exec("DROP INDEX IF EXISTS idx_outfits_role_preset_key");
   db.exec("DROP INDEX IF EXISTS idx_outfit_assets_single_home");
   db.exec("ALTER TABLE outfits DROP COLUMN deleted_at");
   db.exec("ALTER TABLE outfit_assets DROP COLUMN deleted_at");

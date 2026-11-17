@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { rolePaths } from "../bootstrap/config.js";
 import {
+  BuiltinFieldLockedError,
   RoleInitializationError,
   WindowNotFoundError,
 } from "../domain/errors.js";
@@ -12,7 +13,10 @@ import { RoleAccess } from "./role-access.js";
 
 export interface RoleView {
   roleId: string;
+  isBuiltin: boolean;
+  builtinKey: string | null;
   displayName: string;
+  bio: string;
   definition: {
     text: string;
     payload: Record<string, unknown>;
@@ -26,7 +30,10 @@ export interface RoleView {
 
 export interface RoleListItemView {
   roleId: string;
+  isBuiltin: boolean;
+  builtinKey: string | null;
   displayName: string;
+  bio: string;
   status: "initializing" | "ready" | "failed";
   initError: string | null;
   defaultWindowId: string | null;
@@ -43,6 +50,11 @@ export interface CreateRoleInput {
     payload?: Record<string, unknown> | undefined;
   };
   state?: Record<string, unknown> | undefined;
+}
+
+export interface CreateRoleInternalOptions {
+  builtinKey?: string;
+  bioText?: string;
 }
 
 export class RoleService {
@@ -63,7 +75,10 @@ export class RoleService {
     );
   }
 
-  createRole(input: CreateRoleInput): RoleView {
+  createRole(
+    input: CreateRoleInput,
+    internal?: CreateRoleInternalOptions,
+  ): RoleView {
     const roleId = randomUUID();
     const initPayload: RoleInitPayload = {
       displayName: input.displayName,
@@ -72,10 +87,19 @@ export class RoleService {
         payload: input.definition.payload ?? {},
       },
       state: input.state ?? {},
+      ...(internal?.builtinKey === undefined
+        ? {}
+        : { builtinKey: internal.builtinKey }),
+      ...(internal?.bioText === undefined
+        ? {}
+        : { bioText: internal.bioText }),
     };
     this.appStore.createRoleIndex({
       roleId,
       relativeDir: `roles/${roleId}`,
+      ...(internal?.builtinKey === undefined
+        ? {}
+        : { builtinKey: internal.builtinKey }),
       initPayload,
     });
 
@@ -85,7 +109,13 @@ export class RoleService {
       storage = new RoleStorage(rolePaths(this.dataRoot, roleId));
       const created = storage.business.createRoleRecord({
         roleId,
+        ...(initPayload.builtinKey === undefined
+          ? {}
+          : { builtinKey: initPayload.builtinKey }),
         displayName: initPayload.displayName,
+        ...(initPayload.bioText === undefined
+          ? {}
+          : { bioText: initPayload.bioText }),
         definitionText: initPayload.definition.text,
         definitionPayload: initPayload.definition.payload,
         initialState: initPayload.state,
@@ -133,7 +163,15 @@ export class RoleService {
       } else {
         const created = storage.business.createRoleRecord({
           roleId,
+          ...(index.builtinKey !== null
+            ? { builtinKey: index.builtinKey }
+            : index.initPayload.builtinKey === undefined
+              ? {}
+              : { builtinKey: index.initPayload.builtinKey }),
           displayName: index.initPayload.displayName,
+          ...(index.initPayload.bioText === undefined
+            ? {}
+            : { bioText: index.initPayload.bioText }),
           definitionText: index.initPayload.definition.text,
           definitionPayload: index.initPayload.definition.payload,
           initialState: index.initPayload.state,
@@ -157,7 +195,10 @@ export class RoleService {
       if (index.initStatus !== "ready") {
         return {
           roleId: index.roleId,
+          isBuiltin: index.isBuiltin,
+          builtinKey: index.builtinKey,
           displayName: index.initPayload?.displayName ?? index.roleId,
+          bio: index.initPayload?.bioText ?? "",
           status: index.initStatus,
           initError: index.initError,
           defaultWindowId: null,
@@ -173,7 +214,10 @@ export class RoleService {
           const window = storage.business.getDefaultWindow(index.roleId);
           return {
             roleId: role.roleId,
+            isBuiltin: role.isBuiltin || index.isBuiltin,
+            builtinKey: role.builtinKey ?? index.builtinKey,
             displayName: role.displayName,
+            bio: role.bioText,
             status: "ready" as const,
             initError: null,
             defaultWindowId: window.windowId,
@@ -186,7 +230,10 @@ export class RoleService {
       } catch (error) {
         return {
           roleId: index.roleId,
+          isBuiltin: index.isBuiltin,
+          builtinKey: index.builtinKey,
           displayName: index.initPayload?.displayName ?? index.roleId,
+          bio: index.initPayload?.bioText ?? "",
           status: "failed" as const,
           initError: error instanceof Error ? error.message : String(error),
           defaultWindowId: null,
@@ -221,6 +268,15 @@ export class RoleService {
     },
   ): { definitionRevision: number; updatedAt: string } {
     return this.access.withStore(roleId, (storage) => {
+      const current = storage.business.getRole(roleId);
+      // DL-153：内置角色显示名锁定，传入不同值拒绝；同值或省略允许编辑设定正文。
+      if (
+        current.isBuiltin &&
+        input.displayName !== undefined &&
+        input.displayName.trim() !== current.displayName
+      ) {
+        throw new BuiltinFieldLockedError(roleId, "displayName");
+      }
       const updated = storage.business.updateDefinition({
         roleId,
         ...(input.displayName === undefined
@@ -299,7 +355,10 @@ export class RoleService {
 function toRoleView(role: RoleRecord, window: WindowRecord): RoleView {
   return {
     roleId: role.roleId,
+    isBuiltin: role.isBuiltin,
+    builtinKey: role.builtinKey,
     displayName: role.displayName,
+    bio: role.bioText,
     definition: role.definition,
     definitionRevision: role.definitionRevision,
     defaultWindowId: window.windowId,

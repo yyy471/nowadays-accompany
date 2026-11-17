@@ -761,10 +761,10 @@ export class MemoryService {
     const db = this.store.getDatabase();
     db.prepare(
       `INSERT INTO model_calls
-       (model_call_id, role_id, execution_id, batch_id, purpose, resource_id,
-        model_name, protocol, status, error_code, started_at, finished_at,
-        usage_json, raw_response_json)
-       VALUES (?, ?, NULL, ?, 'memory_maintenance', NULL, ?, ?, 'running', NULL, ?, NULL, NULL, NULL)`,
+       (model_call_id, role_id, execution_id, batch_id, task_id, call_kind,
+        purpose, resource_id, model_name, protocol, status, error_code,
+        started_at, finished_at, usage_json, raw_response_json)
+       VALUES (?, ?, NULL, ?, NULL, 'memory_maintenance', 'memory_maintenance', NULL, ?, ?, 'running', NULL, ?, NULL, NULL, NULL)`,
     ).run(
       callId,
       roleId,

@@ -11,6 +11,7 @@ import type {
   ModelPort,
   ModelRequest,
   ModelServiceConfig,
+  ModelUsage,
 } from "../domain/model.js";
 import {
   listGoogleModels,
@@ -154,71 +155,93 @@ export class HttpModelAdapter implements ModelPort {
     >();
     const rawResponse: unknown[] = [];
     let finishReason: string | null = null;
-    let usage: { inputTokens?: number; outputTokens?: number } | null = null;
+    let usage: ModelUsage | null = null;
     const sseState: SseState = { done: false };
-    for await (const payload of readSse(response, sseState)) {
-      const data = parseStreamJson(payload.data);
-      rawResponse.push(data);
-      const choices = data.choices as
-        | Array<{
-            delta?: {
-              content?: unknown;
-              tool_calls?: Array<{
-                index?: number;
-                id?: string;
-                function?: { name?: string; arguments?: string };
-              }>;
-            };
-            finish_reason?: string | null;
-          }>
-        | undefined;
-      const choice = choices?.[0];
-      const content = choice?.delta?.content;
-      if (typeof content === "string" && content.length > 0) {
-        yield { type: "text_delta", text: content };
+    let parsedTools: Array<{
+      callId: string;
+      name: string;
+      arguments: unknown;
+    }> = [];
+    try {
+      for await (const payload of readSse(response, sseState)) {
+        const data = parseStreamJson(payload.data);
+        rawResponse.push(data);
+        const choices = data.choices as
+          | Array<{
+              delta?: {
+                content?: unknown;
+                tool_calls?: Array<{
+                  index?: number;
+                  id?: string;
+                  function?: { name?: string; arguments?: string };
+                }>;
+              };
+              finish_reason?: string | null;
+            }>
+          | undefined;
+        const choice = choices?.[0];
+        const content = choice?.delta?.content;
+        if (typeof content === "string" && content.length > 0) {
+          yield { type: "text_delta", text: content };
+        }
+        for (const call of choice?.delta?.tool_calls ?? []) {
+          const index = call.index ?? toolBuffers.size;
+          const existing = toolBuffers.get(index) ?? {
+            callId: "",
+            name: "",
+            arguments: "",
+          };
+          existing.callId = call.id ?? existing.callId;
+          existing.name = call.function?.name ?? existing.name;
+          existing.arguments += call.function?.arguments ?? "";
+          toolBuffers.set(index, existing);
+        }
+        if (typeof choice?.finish_reason === "string") {
+          finishReason = choice.finish_reason;
+        }
+        const usageValue = data.usage as
+          | {
+              prompt_tokens?: number;
+              completion_tokens?: number;
+              cached_tokens?: number;
+              prompt_tokens_details?: { cached_tokens?: number };
+            }
+          | undefined;
+        const parsedUsage = normalizeUsage({
+          inputTokens: usageValue?.prompt_tokens,
+          cachedTokens:
+            usageValue?.prompt_tokens_details?.cached_tokens ??
+            usageValue?.cached_tokens,
+          outputTokens: usageValue?.completion_tokens,
+        });
+        if (parsedUsage !== null) {
+          usage = parsedUsage;
+        }
       }
-      for (const call of choice?.delta?.tool_calls ?? []) {
-        const index = call.index ?? toolBuffers.size;
-        const existing = toolBuffers.get(index) ?? {
-          callId: "",
-          name: "",
-          arguments: "",
-        };
-        existing.callId = call.id ?? existing.callId;
-        existing.name = call.function?.name ?? existing.name;
-        existing.arguments += call.function?.arguments ?? "";
-        toolBuffers.set(index, existing);
+      if (finishReason === null || !sseState.done) {
+        throw new ModelRequestFailedError("模型流提前结束，未收到完整终态", {
+          reason: "STREAM_TRUNCATED",
+        });
       }
-      if (typeof choice?.finish_reason === "string") {
-        finishReason = choice.finish_reason;
+      parsedTools = [...toolBuffers.entries()]
+        .sort((left, right) => left[0] - right[0])
+        .map(([index, call]) => ({
+          callId: call.callId || `tool-${index}`,
+          name: call.name,
+          arguments: parseToolArguments(call.name, call.arguments),
+        }));
+    } catch (error) {
+      if (usage !== null) {
+        yield { type: "usage", ...usage };
       }
-      const usageValue = data.usage as
-        | { prompt_tokens?: number; completion_tokens?: number }
-        | undefined;
-      if (usageValue) {
-        usage = {
-          ...(typeof usageValue.prompt_tokens === "number"
-            ? { inputTokens: usageValue.prompt_tokens }
-            : {}),
-          ...(typeof usageValue.completion_tokens === "number"
-            ? { outputTokens: usageValue.completion_tokens }
-            : {}),
-        };
-      }
+      throw error;
     }
-    if (finishReason === null || !sseState.done) {
-      throw new ModelRequestFailedError("模型流提前结束，未收到完整终态", {
-        reason: "STREAM_TRUNCATED",
-      });
-    }
-    for (const [index, call] of [...toolBuffers.entries()].sort(
-      (left, right) => left[0] - right[0],
-    )) {
+    for (const call of parsedTools) {
       yield {
         type: "tool_call",
-        callId: call.callId || `tool-${index}`,
+        callId: call.callId,
         name: call.name,
-        arguments: parseToolArguments(call.name, call.arguments),
+        arguments: call.arguments,
       };
     }
     if (usage) {
@@ -272,7 +295,7 @@ export class HttpModelAdapter implements ModelPort {
       { callId: string; name: string; arguments: string }
     >();
     const rawResponse: unknown[] = [];
-    let usage: { inputTokens?: number; outputTokens?: number } | null = null;
+    let usage: ModelUsage | null = null;
     let terminal:
       | {
           type: "completed" | "incomplete";
@@ -282,110 +305,144 @@ export class HttpModelAdapter implements ModelPort {
       | null = null;
     let outputItems: Record<string, unknown>[] | undefined;
     const finishedItems = new Map<number, Record<string, unknown>>();
-    for await (const payload of readSse(response)) {
-      const data = parseStreamJson(payload.data);
-      rawResponse.push(data);
-      const type = data.type as string | undefined;
-      if (type === "response.output_text.delta") {
-        if (typeof data.delta === "string") {
-          yield { type: "text_delta", text: data.delta };
-        }
-        continue;
-      }
-      if (type === "response.output_item.done" && isRecord(data.item)) {
-        const index = typeof data.output_index === "number" ? data.output_index : finishedItems.size;
-        finishedItems.set(index, data.item);
-        continue;
-      }
-      if (type === "response.output_item.added") {
-        const item = data.item as
-          | {
-              id?: string;
-              type?: string;
-              call_id?: string;
-              name?: string;
-              arguments?: string;
-            }
-          | undefined;
-        if (item?.type === "function_call") {
-          const key = item.id ?? item.call_id ?? "tool";
-          toolBuffers.set(key, {
-            callId: item.call_id ?? key,
-            name: item.name ?? "",
-            arguments: item.arguments ?? "",
-          });
-        }
-        continue;
-      }
-      if (
-        type === "response.function_call_arguments.delta" ||
-        type === "response.function_call_arguments.done"
-      ) {
-        const key = data.item_id as string | undefined;
-        if (!key) {
+    let parsedTools: Array<{
+      callId: string;
+      name: string;
+      arguments: unknown;
+    }> = [];
+    try {
+      for await (const payload of readSse(response)) {
+        const data = parseStreamJson(payload.data);
+        rawResponse.push(data);
+        const type = data.type as string | undefined;
+        if (type === "response.output_text.delta") {
+          if (typeof data.delta === "string") {
+            yield { type: "text_delta", text: data.delta };
+          }
           continue;
         }
-        const existing = toolBuffers.get(key) ?? {
-          callId: key,
-          name: "",
-          arguments: "",
-        };
-        if (typeof data.delta === "string") {
-          existing.arguments += data.delta;
+        if (type === "response.output_item.done" && isRecord(data.item)) {
+          const index =
+            typeof data.output_index === "number"
+              ? data.output_index
+              : finishedItems.size;
+          finishedItems.set(index, data.item);
+          continue;
         }
-        if (typeof data.arguments === "string") {
-          existing.arguments = data.arguments;
+        if (type === "response.output_item.added") {
+          const item = data.item as
+            | {
+                id?: string;
+                type?: string;
+                call_id?: string;
+                name?: string;
+                arguments?: string;
+              }
+            | undefined;
+          if (item?.type === "function_call") {
+            const key = item.id ?? item.call_id ?? "tool";
+            toolBuffers.set(key, {
+              callId: item.call_id ?? key,
+              name: item.name ?? "",
+              arguments: item.arguments ?? "",
+            });
+          }
+          continue;
         }
-        toolBuffers.set(key, existing);
-        continue;
-      }
-      if (type === "response.completed" || type === "response.incomplete") {
-        const body = data.response as
-          | {
-              status?: string;
-              stop_reason?: string;
-              usage?: { input_tokens?: number; output_tokens?: number };
-              output?: unknown[];
+        if (
+          type === "response.function_call_arguments.delta" ||
+          type === "response.function_call_arguments.done"
+        ) {
+          const key = data.item_id as string | undefined;
+          if (!key) {
+            continue;
+          }
+          const existing = toolBuffers.get(key) ?? {
+            callId: key,
+            name: "",
+            arguments: "",
+          };
+          if (typeof data.delta === "string") {
+            existing.arguments += data.delta;
+          }
+          if (typeof data.arguments === "string") {
+            existing.arguments = data.arguments;
+          }
+          toolBuffers.set(key, existing);
+          continue;
+        }
+        if (type === "response.completed" || type === "response.incomplete") {
+          const body = data.response as
+            | {
+                status?: string;
+                stop_reason?: string;
+                usage?: {
+                  input_tokens?: number;
+                  output_tokens?: number;
+                  input_tokens_details?: { cached_tokens?: number };
+                };
+                output?: unknown[];
+              }
+            | undefined;
+          usage = readUsage(body?.usage) ?? usage;
+          if (body?.status === "failed" || body?.status === "cancelled") {
+            throw new ModelRequestFailedError("模型请求失败", {
+              reason: "RESPONSE_FAILED",
+            });
+          }
+          if (Array.isArray(body?.output)) {
+            const output = body.output.filter(isRecord);
+            if (output.length > 0) {
+              outputItems = output;
             }
-          | undefined;
-        if (body?.status === "failed" || body?.status === "cancelled") {
+          }
+          terminal = {
+            type: type === "response.incomplete" ? "incomplete" : "completed",
+            ...(body?.status === undefined ? {} : { status: body.status }),
+            ...(body?.stop_reason === undefined
+              ? {}
+              : { stopReason: body.stop_reason }),
+          };
+          continue;
+        }
+        if (type === "response.failed" || type === "error") {
+          const body = data.response as
+            | {
+                usage?: {
+                  input_tokens?: number;
+                  output_tokens?: number;
+                  input_tokens_details?: { cached_tokens?: number };
+                };
+              }
+            | undefined;
+          usage = readUsage(body?.usage) ?? usage;
           throw new ModelRequestFailedError("模型请求失败", {
             reason: "RESPONSE_FAILED",
           });
         }
-        usage = readUsage(body?.usage);
-        if (Array.isArray(body?.output)) {
-          const output = body.output.filter(isRecord);
-          if (output.length > 0) {
-            outputItems = output;
-          }
-        }
-        terminal = {
-          type: type === "response.incomplete" ? "incomplete" : "completed",
-          ...(body?.status === undefined ? {} : { status: body.status }),
-          ...(body?.stop_reason === undefined
-            ? {}
-            : { stopReason: body.stop_reason }),
-        };
-        continue;
       }
-      if (type === "response.failed" || type === "error") {
-        throw new ModelRequestFailedError("模型请求失败", {
-          reason: "RESPONSE_FAILED",
+      if (terminal === null) {
+        throw new ModelRequestFailedError("模型流提前结束，未收到完整终态", {
+          reason: "STREAM_TRUNCATED",
         });
       }
+      parsedTools = [...toolBuffers.values()].map((call) => ({
+        callId: call.callId,
+        name: call.name,
+        arguments: parseToolArguments(call.name, call.arguments),
+      }));
+    } catch (error) {
+      if (usage !== null) {
+        yield { type: "usage", ...usage };
+      }
+      throw error;
     }
-    if (terminal === null) {
-      throw new ModelRequestFailedError("模型流提前结束，未收到完整终态", {
-        reason: "STREAM_TRUNCATED",
-      });
-    }
-    for (const call of toolBuffers.values()) {
+    for (const call of parsedTools) {
       yield {
         type: "tool_call",
         callId: call.callId,
         name: call.name,
-        arguments: parseToolArguments(call.name, call.arguments),
+        arguments: call.arguments,
       };
     }
     if (usage) {
@@ -448,134 +505,204 @@ export class HttpModelAdapter implements ModelPort {
       { callId: string; name: string; arguments: string; initial: unknown }
     >();
     const rawResponse: unknown[] = [];
-    let inputTokens: number | undefined;
+    let rawInputTokens: number | undefined;
+    let cacheReadTokens: number | undefined;
+    let cacheCreationTokens: number | undefined;
     let outputTokens: number | undefined;
     let stopReason: string | null = null;
     let sawMessageStop = false;
     const contentBlocks = new Map<number, Record<string, unknown>>();
-    for await (const payload of readSse(response)) {
-      const data = parseStreamJson(payload.data);
-      rawResponse.push(data);
-      const type = data.type as string | undefined;
-      if (type === "message_start") {
-        const usage = (data.message as { usage?: { input_tokens?: number } })
-          ?.usage;
-        inputTokens = usage?.input_tokens;
-        continue;
-      }
-      if (type === "content_block_start") {
-        const index = data.index as number | undefined;
-        const block = data.content_block as
-          | {
-              type?: string;
-              id?: string;
-              name?: string;
-              input?: unknown;
-            }
-          | undefined;
-        if (index !== undefined && isRecord(block)) {
-          contentBlocks.set(index, { ...block });
+    const buildAnthropicUsage = (): ModelUsage | null => {
+      const hasAnyInput =
+        rawInputTokens !== undefined ||
+        cacheReadTokens !== undefined ||
+        cacheCreationTokens !== undefined;
+      const inputTokens = hasAnyInput
+        ? (rawInputTokens ?? 0) +
+          (cacheReadTokens ?? 0) +
+          (cacheCreationTokens ?? 0)
+        : undefined;
+      return normalizeUsage({
+        inputTokens,
+        cachedTokens: cacheReadTokens,
+        outputTokens,
+        cacheCreationTokens,
+      });
+    };
+    let parsedTools: Array<{
+      index: number;
+      callId: string;
+      name: string;
+      arguments: unknown;
+    }> = [];
+    try {
+      for await (const payload of readSse(response)) {
+        const data = parseStreamJson(payload.data);
+        rawResponse.push(data);
+        const type = data.type as string | undefined;
+        if (type === "message_start") {
+          const messageUsage = (
+            data.message as
+              | {
+                  usage?: {
+                    input_tokens?: number;
+                    cache_read_input_tokens?: number;
+                    cache_creation_input_tokens?: number;
+                    output_tokens?: number;
+                  };
+                }
+              | undefined
+          )?.usage;
+          if (typeof messageUsage?.input_tokens === "number") {
+            rawInputTokens = messageUsage.input_tokens;
+          }
+          if (typeof messageUsage?.cache_read_input_tokens === "number") {
+            cacheReadTokens = messageUsage.cache_read_input_tokens;
+          }
+          if (typeof messageUsage?.cache_creation_input_tokens === "number") {
+            cacheCreationTokens = messageUsage.cache_creation_input_tokens;
+          }
+          if (typeof messageUsage?.output_tokens === "number") {
+            outputTokens = messageUsage.output_tokens;
+          }
+          continue;
         }
-        if (index !== undefined && block?.type === "tool_use") {
-          toolBuffers.set(index, {
-            callId: block.id ?? `tool-${index}`,
-            name: block.name ?? "",
-            arguments: "",
-            initial: block.input,
+        if (type === "content_block_start") {
+          const index = data.index as number | undefined;
+          const block = data.content_block as
+            | {
+                type?: string;
+                id?: string;
+                name?: string;
+                input?: unknown;
+              }
+            | undefined;
+          if (index !== undefined && isRecord(block)) {
+            contentBlocks.set(index, { ...block });
+          }
+          if (index !== undefined && block?.type === "tool_use") {
+            toolBuffers.set(index, {
+              callId: block.id ?? `tool-${index}`,
+              name: block.name ?? "",
+              arguments: "",
+              initial: block.input,
+            });
+          }
+          continue;
+        }
+        if (type === "content_block_delta") {
+          const index = data.index as number | undefined;
+          const delta = data.delta as
+            | {
+                type?: string;
+                text?: string;
+                partial_json?: string;
+                thinking?: string;
+                signature?: string;
+              }
+            | undefined;
+          const block = index === undefined ? undefined : contentBlocks.get(index);
+          if (block && delta) {
+            for (const [kind, field] of [
+              ["text_delta", "text"],
+              ["thinking_delta", "thinking"],
+              ["signature_delta", "signature"],
+            ] as const) {
+              if (delta.type === kind && typeof delta[field] === "string") {
+                block[field] = String(block[field] ?? "") + delta[field];
+              }
+            }
+          }
+          if (delta?.type === "text_delta" && typeof delta.text === "string") {
+            yield { type: "text_delta", text: delta.text };
+          }
+          if (
+            delta?.type === "input_json_delta" &&
+            typeof delta.partial_json === "string" &&
+            index !== undefined
+          ) {
+            const existing = toolBuffers.get(index);
+            if (existing) {
+              existing.arguments += delta.partial_json;
+            }
+          }
+          continue;
+        }
+        if (type === "message_delta") {
+          const delta = data.delta as
+            | { stop_reason?: string | null }
+            | undefined;
+          const deltaUsage = data.usage as
+            | {
+                input_tokens?: number;
+                cache_read_input_tokens?: number;
+                cache_creation_input_tokens?: number;
+                output_tokens?: number;
+              }
+            | undefined;
+          if (typeof delta?.stop_reason === "string") {
+            stopReason = delta.stop_reason;
+          }
+          if (typeof deltaUsage?.input_tokens === "number") {
+            rawInputTokens = deltaUsage.input_tokens;
+          }
+          if (typeof deltaUsage?.cache_read_input_tokens === "number") {
+            cacheReadTokens = deltaUsage.cache_read_input_tokens;
+          }
+          if (typeof deltaUsage?.cache_creation_input_tokens === "number") {
+            cacheCreationTokens = deltaUsage.cache_creation_input_tokens;
+          }
+          if (typeof deltaUsage?.output_tokens === "number") {
+            outputTokens = deltaUsage.output_tokens;
+          }
+          continue;
+        }
+        if (type === "message_stop") {
+          sawMessageStop = true;
+          continue;
+        }
+        if (type === "error") {
+          throw new ModelRequestFailedError("模型请求失败", {
+            reason: "MESSAGE_ERROR",
           });
         }
-        continue;
       }
-      if (type === "content_block_delta") {
-        const index = data.index as number | undefined;
-        const delta = data.delta as
-          | {
-              type?: string;
-              text?: string;
-              partial_json?: string;
-              thinking?: string;
-              signature?: string;
-            }
-          | undefined;
-        const block = index === undefined ? undefined : contentBlocks.get(index);
-        if (block && delta) {
-          for (const [kind, field] of [
-            ["text_delta", "text"],
-            ["thinking_delta", "thinking"],
-            ["signature_delta", "signature"],
-          ] as const) {
-            if (delta.type === kind && typeof delta[field] === "string") {
-              block[field] = String(block[field] ?? "") + delta[field];
-            }
-          }
-        }
-        if (delta?.type === "text_delta" && typeof delta.text === "string") {
-          yield { type: "text_delta", text: delta.text };
-        }
-        if (
-          delta?.type === "input_json_delta" &&
-          typeof delta.partial_json === "string" &&
-          index !== undefined
-        ) {
-          const existing = toolBuffers.get(index);
-          if (existing) {
-            existing.arguments += delta.partial_json;
-          }
-        }
-        continue;
-      }
-      if (type === "message_delta") {
-        const delta = data.delta as
-          | { stop_reason?: string | null }
-          | undefined;
-        const usage = data.usage as
-          | { output_tokens?: number }
-          | undefined;
-        if (typeof delta?.stop_reason === "string") {
-          stopReason = delta.stop_reason;
-        }
-        if (typeof usage?.output_tokens === "number") {
-          outputTokens = usage.output_tokens;
-        }
-        continue;
-      }
-      if (type === "message_stop") {
-        sawMessageStop = true;
-        continue;
-      }
-      if (type === "error") {
-        throw new ModelRequestFailedError("模型请求失败", {
-          reason: "MESSAGE_ERROR",
+      if (!sawMessageStop || stopReason === null) {
+        throw new ModelRequestFailedError("模型流提前结束，未收到完整终态", {
+          reason: "STREAM_TRUNCATED",
         });
       }
+      parsedTools = [...toolBuffers.entries()]
+        .sort((left, right) => left[0] - right[0])
+        .map(([index, call]) => ({
+          index,
+          callId: call.callId,
+          name: call.name,
+          arguments:
+            call.arguments.trim().length > 0
+              ? parseToolArguments(call.name, call.arguments)
+              : (call.initial ?? {}),
+        }));
+    } catch (error) {
+      const partialUsage = buildAnthropicUsage();
+      if (partialUsage !== null) {
+        yield { type: "usage", ...partialUsage };
+      }
+      throw error;
     }
-    if (!sawMessageStop || stopReason === null) {
-      throw new ModelRequestFailedError("模型流提前结束，未收到完整终态", {
-        reason: "STREAM_TRUNCATED",
-      });
-    }
-    for (const [index, call] of [...toolBuffers.entries()].sort(
-      (left, right) => left[0] - right[0],
-    )) {
-      const parsed =
-        call.arguments.trim().length > 0
-          ? parseToolArguments(call.name, call.arguments)
-          : (call.initial ?? {});
-      const block = contentBlocks.get(index);
-      if (block) block.input = parsed;
+    const anthropicUsage = buildAnthropicUsage();
+    for (const call of parsedTools) {
+      const block = contentBlocks.get(call.index);
+      if (block) block.input = call.arguments;
       yield {
         type: "tool_call",
         callId: call.callId,
         name: call.name,
-        arguments: parsed,
+        arguments: call.arguments,
       };
     }
-    if (inputTokens !== undefined || outputTokens !== undefined) {
-      yield {
-        type: "usage",
-        ...(inputTokens === undefined ? {} : { inputTokens }),
-        ...(outputTokens === undefined ? {} : { outputTokens }),
-      };
+    if (anthropicUsage !== null) {
+      yield { type: "usage", ...anthropicUsage };
     }
     const incomplete =
       stopReason === "max_tokens" || stopReason === "pause_turn";
@@ -935,22 +1062,59 @@ function parseToolArguments(name: string, raw: string): unknown {
   }
 }
 
+function normalizeUsage(input: {
+  inputTokens?: unknown;
+  cachedTokens?: unknown;
+  outputTokens?: unknown;
+  cacheCreationTokens?: unknown;
+}): ModelUsage | null {
+  const inputTokens = finiteNonNeg(input.inputTokens);
+  const rawCached = finiteNonNeg(input.cachedTokens);
+  const outputTokens = finiteNonNeg(input.outputTokens);
+  const cacheCreationTokens = finiteNonNeg(input.cacheCreationTokens);
+  if (
+    inputTokens === undefined &&
+    rawCached === undefined &&
+    outputTokens === undefined &&
+    cacheCreationTokens === undefined
+  ) {
+    return null;
+  }
+  const cachedTokens =
+    rawCached !== undefined && inputTokens !== undefined
+      ? Math.min(rawCached, inputTokens)
+      : rawCached;
+  return {
+    ...(inputTokens === undefined ? {} : { inputTokens }),
+    ...(cachedTokens === undefined ? {} : { cachedTokens }),
+    ...(outputTokens === undefined ? {} : { outputTokens }),
+    ...(cacheCreationTokens === undefined ? {} : { cacheCreationTokens }),
+  };
+}
+
+function finiteNonNeg(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : undefined;
+}
+
 function readUsage(
   usage:
-    | { input_tokens?: number; output_tokens?: number }
+    | {
+        input_tokens?: number;
+        output_tokens?: number;
+        input_tokens_details?: { cached_tokens?: number };
+      }
     | undefined,
-): { inputTokens?: number; outputTokens?: number } | null {
+): ModelUsage | null {
   if (!usage) {
     return null;
   }
-  return {
-    ...(typeof usage.input_tokens === "number"
-      ? { inputTokens: usage.input_tokens }
-      : {}),
-    ...(typeof usage.output_tokens === "number"
-      ? { outputTokens: usage.output_tokens }
-      : {}),
-  };
+  return normalizeUsage({
+    inputTokens: usage.input_tokens,
+    cachedTokens: usage.input_tokens_details?.cached_tokens,
+    outputTokens: usage.output_tokens,
+  });
 }
 
 interface SsePayload {

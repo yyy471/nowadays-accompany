@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import { rolePaths } from "../bootstrap/config.js";
-import { AppError } from "../domain/errors.js";
+import { AppError, BuiltinRoleProtectedError } from "../domain/errors.js";
 import type { AppStore } from "../storage/app-store.js";
 import type { RoleAccess } from "./role-access.js";
 
@@ -81,7 +81,10 @@ export class RoleDeletionService {
     if (this.appStore.isRoleDeletionPending(roleId)) {
       return this.finishCleanup(roleId);
     }
-    this.roleAccess.getIndex(roleId);
+    const index = this.roleAccess.getIndex(roleId);
+    if (index.builtinKey !== null) {
+      throw new BuiltinRoleProtectedError(roleId, index.builtinKey);
+    }
     if (this.appStore.listRoleIndexes().length <= 1) {
       throw this.lastRoleError(roleId);
     }
@@ -107,6 +110,10 @@ export class RoleDeletionService {
     // 运行时收尾期间可能有并发删除；「至少保留一个」在写事务里再复验一次，
     // 与移除索引同事务，避免两个请求各删一个后剩零个角色（AD-R01）。
     this.appStore.db.transaction(() => {
+      const current = this.appStore.getRoleIndex(roleId);
+      if (current !== null && current.builtinKey !== null) {
+        throw new BuiltinRoleProtectedError(roleId, current.builtinKey);
+      }
       if (this.appStore.listRoleIndexes().length <= 1) {
         throw this.lastRoleError(roleId);
       }

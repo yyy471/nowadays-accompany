@@ -125,3 +125,39 @@ export async function readJsonBody(
     throw new HttpError(400, "INVALID_JSON", "请求体不是有效 JSON");
   }
 }
+
+/** 读取可选 JSON 请求体：无正文时返回 `{}`；携带正文时按严格 JSON 校验。 */
+export async function readOptionalJsonBody(
+  request: IncomingMessage,
+): Promise<unknown> {
+  const contentType = request.headers["content-type"];
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.length;
+    if (size > MAX_BODY_BYTES) {
+      throw new HttpError(413, "PAYLOAD_TOO_LARGE", "请求体超过 1 MiB 上限");
+    }
+    chunks.push(buffer);
+  }
+  afterBodyRead(request);
+  if (size === 0) {
+    return {};
+  }
+  if (
+    typeof contentType !== "string" ||
+    !contentType.toLowerCase().startsWith("application/json")
+  ) {
+    throw new HttpError(
+      415,
+      "UNSUPPORTED_MEDIA_TYPE",
+      "请求必须使用 application/json",
+    );
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+  } catch {
+    throw new HttpError(400, "INVALID_JSON", "请求体不是有效 JSON");
+  }
+}

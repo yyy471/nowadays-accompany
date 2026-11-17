@@ -815,3 +815,37 @@ export class RoleActivityStoppedError extends AppError {
     });
   }
 }
+
+/** DL-153：系统预置默认助手受保护，不可删除。 */
+export class BuiltinRoleProtectedError extends AppError {
+  constructor(roleId: string, builtinKey: string) {
+    super(409, "BUILTIN_ROLE_PROTECTED", "系统预置默认助手不可删除", {
+      roleId,
+      builtinKey,
+    });
+  }
+}
+
+/** DL-153：系统预置默认助手的锁定字段（如显示名、只读介绍）不可修改。 */
+export class BuiltinFieldLockedError extends AppError {
+  constructor(roleId: string, field: string) {
+    super(
+      409,
+      "BUILTIN_FIELD_LOCKED",
+      `系统预置默认助手的字段「${field}」已锁定，不可修改`,
+      { roleId, field },
+    );
+  }
+}
+
+/** DL-153：系统预置外观与差分受保护，不可改名、替换或删除。 */
+export class PresetAppearanceLockedError extends AppError {
+  constructor(roleId: string, outfitId: string) {
+    super(
+      409,
+      "PRESET_APPEARANCE_LOCKED",
+      "系统预置外观与差分不可修改或删除，请新增自定义服饰",
+      { roleId, outfitId },
+    );
+  }
+}

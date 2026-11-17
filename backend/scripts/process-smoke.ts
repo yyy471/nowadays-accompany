@@ -103,7 +103,9 @@ try {
   const activityBefore = await cli(port, ["activity", "get", "--role", roleId]);
   assert.equal((activityBefore.activity as { state: string }).state, "stopped");
   const activities = await cli(port, ["activity", "list"]);
-  assert.equal((activities.items as unknown[]).length, 1);
+  const activityItems = activities.items as Array<{ roleId: string; state: string }>;
+  assert.equal(activityItems.length, 2);
+  assert.ok(activityItems.some((item) => item.roleId === roleId && item.state === "stopped"));
   const revised = await configCli(port, roleId, ["role", "update", "--role", roleId, "--definition", "修订设定后保持原身份", "--expected-revision", "1"]);
   assert.equal(revised.definitionRevision, 2);
   assert.equal((await cli(port, ["role", "get", "--role", roleId])).roleId, roleId);

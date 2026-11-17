@@ -1,0 +1,25 @@
+{
+  "name": "时序织梦",
+  "description": "夏澄的「时序织梦」礼服：金色「N」字发饰与领结、透纱金纹长袖搭配深蓝百褶短裙与黑色长袜。",
+  "spriteNames": {
+    "calm": "平静",
+    "smile": "温暖微笑",
+    "speaking": "说话讲解",
+    "happy": "开心",
+    "thinking": "思考",
+    "curious": "疑惑",
+    "worried": "担忧",
+    "shy": "害羞",
+    "sad": "难过",
+    "tearful": "含泪",
+    "reserved": "不悦",
+    "wave": "挥手",
+    "reach": "伸手邀请",
+    "listen": "倾听",
+    "chuckle": "闭眼轻笑",
+    "hair_tuck": "整理发丝",
+    "advise": "竖指建议",
+    "sigh": "轻叹扶额",
+    "whisper": "轻声说话"
+  }
+}

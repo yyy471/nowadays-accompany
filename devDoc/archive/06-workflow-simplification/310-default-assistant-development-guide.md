@@ -175,3 +175,26 @@
 | **Token 归一化与累计** | 离线四协议（含 OpenAI/Responses/Gemini/Anthropic 缓存字段与失败带 usage 场景）归集一致，`cachedTokens <= inputTokens`；跨段续行与暂停恢复累加到同一 `taskId`，后台记忆整理与句段标注**不计入**该统计；无 usage 时真实累计 `missingUsageCalls`。 |
 | **内部管理与 MCP** | 夏澄在对话中可查询全局与各角色状态／任务用量、自动停机并修改运行中的普通角色配置；请求修改夏澄自身配置、正在用的模型连接或需全员停机的语音/生图服务时，后端返回引导拒绝、夏澄明确说明引导去设置页；本地模拟搜索／桌面 MCP 完成工具发现、执行与慢工具转后台验收；打包产物可正确定位并初始化预置素材。 |
 | **全仓回归门禁** | 实施与复核均按约定通过：后端 `npm run typecheck`、`npm test`、`accept-offline.mjs`；桌面 `npm run check`、`npm run build`、`tests/*.test.cjs`；隔离 Electron E2E 与 `node scripts/check-docs.mjs`；真实外部模型与真实第三方 MCP 联调单独留证。 |
+
+## 8. 包 1 独立复核
+
+2026-11-17。在 `dev-front` 的 `dd2a8c0` 基础上复核包 1 实施工作树。**独立复核未通过，以下三个边界均已复现。**
+
+后端实际运行 `npm run accept:offline`，Node.js v24.22.2 下 21 步全部通过。433 项正式测试含包 1 的 9 项用例，另有 2 项交付回归。195 项验收清单文件的哈希一致，真实服务调用为 0。运行结果在 `backend/test-results/p5-2026-11-17T01-10-23-333Z-2ddf916d/summary.json`。补充用例与观测在 `backend/test-results/310-pack1-independent-20261117/probe.ts` 和同目录的 `report.json`。
+
+| 编号 | 独立复现与验收要求 |
+| --- | --- |
+| R01 · P2 · 取消写入失败后执行和任务状态分裂 | 在离线模型处理已启动的任务时，向 SQLite 注入任务终态写入错误。取消抛出错误，原执行已从 `running` 变为 `failed`，任务仍为 `active`，取消事件为 0。解除故障并让原执行收尾，调度器创建新执行，任务随后完成。取消请求应保证任务终态、执行终态、取消事件与内存调度一致。复验覆盖写任务终态失败、写取消事件失败及请求重试。 [取消流程](../../../backend/src/application/conversation-service.ts#L483) |
+| R02 · P2 · 同名自定义服饰导致预置重复导入 | 无素材启动后给夏澄新增自定义「日常常服」，随后放入名为「日常常服」的官方 `default` 素材。首次启动创建「日常常服（预置）」，之后两次启动各生成一套带后缀的新预置。三次启动预置数量为 1、2、3，角色编号始终相同。预置应按稳定来源标识匹配。复验需保留同名自定义服饰，重复启动及预置显示名修改时沿用已有预置服饰身份。 [预置服饰匹配](../../../backend/src/application/preset-assistant.ts#L120) |
+| R03 · P2 · 工具参数无效时丢掉已收到的 token 用量 | 本地 OpenAI Chat SSE 已返回输入 27、输出 9，并正常发送 `[DONE]`。工具参数为截断 JSON，适配器抛出 `MODEL_TOOL_ARGUMENTS_INVALID`，期间没有发出 `usage` 事件。解析在流异常处理块外执行，且先于最终用量事件。应保留已收到的用量，同时维持原解析错误及禁止派发无效调用的行为。复验覆盖 OpenAI Chat，并检查同样先解析工具参数再发用量的 Responses、Anthropic 路径和任务汇总。 [流结束后的工具解析](../../../backend/src/model/protocols.ts#L227) |
+
+本次复核仅覆盖包 1 后端、随仓预置素材和本地离线验收。桌面后续包、发布包运行、真实模型和第三方 MCP 联调另按对应工作包复验。
+
+### 8.1 包 1 复核缺口补修（2026-11-17，自验通过，待独立复验）
+
+针对第 8 节提出的 R01～R03 已完成修复并补充自动化回归用例，全部进入本地离线全量自验（尚待独立复验）：
+
+1. **R01 · 取消写入与内存状态原子收敛**：[ConversationService.cancelTask](../../../backend/src/application/conversation-service.ts#L483) 将 `interruptExecution`、`finishTask` 与 `appendStreamEvent("task_cancelled")` 合并至单笔 SQLite 事务内执行且不再吞掉执行中断写库异常；仅在事务成功提交后清理 `pendingContinuations` 并中止／摘除在途执行句柄，确保写入任务终态或取消事件失败时整笔回滚、重试与放行原执行均保持一致。
+2. **R02 · 预置服饰稳定来源标识（`BUSINESS V22`）**：[schema.ts](../../../backend/src/storage/schema.ts#L12) 升级业务库至 V22，在 `outfits` 新增 `preset_key TEXT` 与局部唯一索引 `idx_outfits_role_preset_key`（[appearance.ts](../../../backend/src/domain/appearance.ts) · [appearance-store.ts](../../../backend/src/storage/appearance-store.ts)）；[preset-assistant.ts](../../../backend/src/application/preset-assistant.ts#L116) 优先按 `presetKey`（目录 slug，兼容 V21 遗留 `preset_key IS NULL` 回填）匹配已有预置服饰并排除自身后解决冲突命名，重复重启及修改预置显示名时沿用原 `outfitId` 且保留同名自定义服饰。
+3. **R03 · 后置解析工具参数异常保留已收到的 Token 用量**：[protocols.ts](../../../backend/src/model/protocols.ts) 中 `streamOpenAiChat`、`streamOpenAiResponses` 与 `streamAnthropic` 均将流结束后的 `parseToolArguments` 提前放入外层 `try ... catch` 块内执行（先完成全部工具参数 JSON 解析并暂存，任一参数无效时由 `catch` 在抛出 `MODEL_TOOL_ARGUMENTS_INVALID` 前优先发出已收到的 `usage` 事件，且不发出 `tool_call` 或 `completed`），配合 `AgentGraph` 将该轮消耗累计至任务失败调用与任务 `usage` 汇总。
+4. **自验证据**：新增 R01～R03 专项回归至 [p19-preset-assistant-pack1.test.ts](../../../backend/tests/p19-preset-assistant-pack1.test.ts)（共 12 项全部通过）；全量 `npx -y node@24 scripts/accept-offline.mjs` 21／21 步通过（`436/436` 正式测试、2 项交付测试、`process-smoke` 与 16 项独立脚本校验通过，`realServiceCalls = 0`，报告位于 `backend/test-results/p5-2026-11-17T02-25-43-104Z-e98155af/summary.json`）。

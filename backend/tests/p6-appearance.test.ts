@@ -691,6 +691,7 @@ function withRoleDb<T>(fixture: Fixture, action: (db: Database.Database) => T): 
 /** 把业务库还原到 V16，用于复现旧库升级。 */
 function stripAppearanceV17(db: Database.Database): void {
   db.exec("DROP INDEX IF EXISTS idx_outfits_role_name");
+  db.exec("DROP INDEX IF EXISTS idx_outfits_role_preset_key");
   db.exec("DROP INDEX IF EXISTS idx_outfit_assets_single_home");
   db.exec("ALTER TABLE outfits DROP COLUMN deleted_at");
   db.exec("ALTER TABLE outfit_assets DROP COLUMN deleted_at");

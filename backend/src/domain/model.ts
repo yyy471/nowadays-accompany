@@ -85,6 +85,13 @@ export interface ModelRequest {
   signal?: AbortSignal;
 }
 
+export interface ModelUsage {
+  inputTokens?: number;
+  cachedTokens?: number;
+  outputTokens?: number;
+  cacheCreationTokens?: number;
+}
+
 export type ModelEvent =
   | { type: "text_delta"; text: string }
   | {
@@ -93,11 +100,9 @@ export type ModelEvent =
       name: string;
       arguments: unknown;
     }
-  | {
+  | ({
       type: "usage";
-      inputTokens?: number;
-      outputTokens?: number;
-    }
+    } & ModelUsage)
   | {
       type: "completed";
       stopReason: string;

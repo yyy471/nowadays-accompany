@@ -12,6 +12,8 @@ interface OutfitRow {
   role_id: string;
   name: string;
   description: string | null;
+  is_preset: number;
+  preset_key: string | null;
   deleted_at: string | null;
   created_at: string;
   updated_at: string;
@@ -26,6 +28,7 @@ interface AssetRow {
   display_name: string;
   media_type: string;
   relative_path: string;
+  is_preset: number;
   deleted_at: string | null;
   created_at: string;
 }
@@ -38,6 +41,7 @@ export interface NewAssetInput {
   displayName: string;
   mediaType: string;
   relativePath: string;
+  isPreset?: boolean;
   createdAt: string;
 }
 
@@ -115,6 +119,23 @@ export class AppearanceStore {
       : { outfitId: row.outfit_id, name: row.name };
   }
 
+  findByPresetKey(presetKey: string): OutfitRecord | null {
+    const row = this.db
+      .prepare(
+        "SELECT outfit_id FROM outfits WHERE role_id = ? AND preset_key = ? AND deleted_at IS NULL",
+      )
+      .get(this.roleId, presetKey) as { outfit_id: string } | undefined;
+    return row === undefined ? null : this.getOutfit(row.outfit_id);
+  }
+
+  setPresetKey(outfitId: string, presetKey: string): void {
+    this.db
+      .prepare(
+        "UPDATE outfits SET preset_key = ? WHERE outfit_id = ? AND role_id = ? AND deleted_at IS NULL",
+      )
+      .run(presetKey, outfitId, this.roleId);
+  }
+
   /** 当前可用服饰数量；excludeId 用于排除即将删除的一套。 */
   countActiveOutfits(excludeId?: string): number {
     const row = this.db
@@ -172,28 +193,41 @@ export class AppearanceStore {
   createOutfitWithAssets(input: {
     name: string;
     description: string | null;
+    isPreset?: boolean;
+    presetKey?: string | null;
     assets: readonly NewAssetInput[];
     now: string;
   }): OutfitRecord {
     const outfitId = randomUUID();
+    const isPreset = input.isPreset === true ? 1 : 0;
+    const presetKey = input.presetKey ?? null;
     try {
       this.db.transaction(() => {
         this.db
           .prepare(
             `INSERT INTO outfits
-               (outfit_id, role_id, name, description, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?)`,
+               (outfit_id, role_id, name, description, is_preset, preset_key, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             outfitId,
             this.roleId,
             input.name,
             input.description,
+            isPreset,
+            presetKey,
             input.now,
             input.now,
           );
         for (const asset of input.assets) {
-          this.insertAsset({ ...asset, outfitId }, input.now);
+          this.insertAsset(
+            {
+              ...asset,
+              outfitId,
+              isPreset: asset.isPreset ?? input.isPreset ?? false,
+            },
+            input.now,
+          );
         }
       })();
     } catch (error) {
@@ -275,7 +309,15 @@ export class AppearanceStore {
           .prepare("UPDATE outfit_assets SET deleted_at = ? WHERE asset_id = ?")
           .run(now, replaced.asset_id);
       }
-      this.insertAsset({ ...asset, outfitId, usage: "home" }, now);
+      this.insertAsset(
+        {
+          ...asset,
+          outfitId,
+          usage: "home",
+          isPreset: asset.isPreset ?? false,
+        },
+        now,
+      );
     })();
     const home = this.db
       .prepare(
@@ -318,6 +360,15 @@ export class AppearanceStore {
       .run(now, assetId, this.roleId);
   }
 
+  updateAssetDisplayName(assetId: string, displayName: string): void {
+    this.db
+      .prepare(
+        `UPDATE outfit_assets SET display_name = ?
+          WHERE asset_id = ? AND role_id = ? AND deleted_at IS NULL`,
+      )
+      .run(displayName, assetId, this.roleId);
+  }
+
   deleteAssetRow(assetId: string): void {
     this.db
       .prepare("DELETE FROM outfit_assets WHERE asset_id = ? AND role_id = ?")
@@ -349,8 +400,8 @@ export class AppearanceStore {
       .prepare(
         `INSERT INTO outfit_assets
            (asset_id, outfit_id, role_id, usage, file_name, display_name,
-            media_type, relative_path, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            media_type, relative_path, is_preset, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.assetId ?? randomUUID(),
@@ -361,6 +412,7 @@ export class AppearanceStore {
         input.displayName,
         input.mediaType,
         input.relativePath,
+        input.isPreset === true ? 1 : 0,
         now,
       );
   }
@@ -372,6 +424,8 @@ function mapOutfit(row: OutfitRow): Omit<OutfitRecord, "home" | "sprites"> {
     roleId: row.role_id,
     name: row.name,
     description: row.description,
+    isPreset: row.is_preset === 1,
+    presetKey: row.preset_key ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -387,6 +441,7 @@ function mapAsset(row: AssetRow): OutfitAssetRecord {
     displayName: row.display_name,
     mediaType: row.media_type,
     relativePath: row.relative_path,
+    isPreset: row.is_preset === 1,
     deletedAt: row.deleted_at,
     createdAt: row.created_at,
   };

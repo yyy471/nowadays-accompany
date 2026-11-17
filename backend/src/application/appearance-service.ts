@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { AppError } from "../domain/errors.js";
+import { AppError, PresetAppearanceLockedError } from "../domain/errors.js";
 import type {
   OutfitAssetRecord,
   OutfitRecord,
@@ -125,11 +125,7 @@ export class AppearanceService {
   ): Promise<OutfitAssetRecord> {
     return this.roleAccess.withStoreAsync(roleId, async (storage) => {
       const store = new AppearanceStore(storage.business.db, roleId);
-      if (store.getOutfit(outfitId) === null) {
-        throw new AppError(404, "OUTFIT_NOT_FOUND", "服饰不存在", {
-          outfitId,
-        });
-      }
+      requireEditableOutfit(store, roleId, outfitId);
       const written: string[] = [];
       try {
         const asset = await writeImage(
@@ -162,11 +158,7 @@ export class AppearanceService {
         : normalizeDescription(input.description);
     return this.roleAccess.withStoreAsync(roleId, async (storage) => {
       const store = new AppearanceStore(storage.business.db, roleId);
-      if (store.getOutfit(outfitId) === null) {
-        throw new AppError(404, "OUTFIT_NOT_FOUND", "服饰不存在", {
-          outfitId,
-        });
-      }
+      requireEditableOutfit(store, roleId, outfitId);
       return store.renameOutfit(
         outfitId,
         {
@@ -189,11 +181,7 @@ export class AppearanceService {
   ): Promise<OutfitAssetRecord> {
     return this.roleAccess.withStoreAsync(roleId, async (storage) => {
       const store = new AppearanceStore(storage.business.db, roleId);
-      if (store.getOutfit(outfitId) === null) {
-        throw new AppError(404, "OUTFIT_NOT_FOUND", "服饰不存在", {
-          outfitId,
-        });
-      }
+      requireEditableOutfit(store, roleId, outfitId);
       const written: string[] = [];
       try {
         const asset = await writeImage(storage.paths, image, "home", written);
@@ -219,11 +207,7 @@ export class AppearanceService {
   deleteOutfit(roleId: string, outfitId: string): AppearanceDeleteResult {
     return this.roleAccess.withStore(roleId, (storage) => {
       const store = new AppearanceStore(storage.business.db, roleId);
-      if (store.getOutfit(outfitId) === null) {
-        throw new AppError(404, "OUTFIT_NOT_FOUND", "服饰不存在", {
-          outfitId,
-        });
-      }
+      requireEditableOutfit(store, roleId, outfitId);
       if (store.countActiveOutfits(outfitId) === 0) {
         throw new AppError(
           409,
@@ -273,11 +257,7 @@ export class AppearanceService {
   ): SpriteDeleteResult {
     return this.roleAccess.withStore(roleId, (storage) => {
       const store = new AppearanceStore(storage.business.db, roleId);
-      if (store.getOutfit(outfitId) === null) {
-        throw new AppError(404, "OUTFIT_NOT_FOUND", "服饰不存在", {
-          outfitId,
-        });
-      }
+      requireEditableOutfit(store, roleId, outfitId);
       const asset = store.getAsset(assetId);
       if (
         asset === null ||
@@ -287,6 +267,9 @@ export class AppearanceService {
         throw new AppError(404, "ASSET_NOT_FOUND", "外观素材不存在", {
           assetId,
         });
+      }
+      if (asset.isPreset) {
+        throw new PresetAppearanceLockedError(roleId, outfitId);
       }
       if (asset.usage !== "sprite") {
         throw new AppError(
@@ -412,6 +395,23 @@ function removeAssetFile(paths: RolePaths, asset: OutfitAssetRecord): void {
   } catch {
     // 文件已缺失或暂不可删除：素材行已清理，残留文件不影响读取。
   }
+}
+
+function requireEditableOutfit(
+  store: AppearanceStore,
+  roleId: string,
+  outfitId: string,
+): OutfitRecord {
+  const outfit = store.getOutfit(outfitId);
+  if (outfit === null) {
+    throw new AppError(404, "OUTFIT_NOT_FOUND", "服饰不存在", {
+      outfitId,
+    });
+  }
+  if (outfit.isPreset) {
+    throw new PresetAppearanceLockedError(roleId, outfitId);
+  }
+  return outfit;
 }
 
 function normalizeName(raw: string): string {

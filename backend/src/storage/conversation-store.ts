@@ -27,12 +27,13 @@ import {
   WindowNotFoundError,
 } from "../domain/errors.js";
 import { registerMessageEvidence } from "./evidence.js";
-import type { ModelProtocol } from "../domain/model.js";
+import type { ModelProtocol, ModelUsage } from "../domain/model.js";
 import type {
   ExecutionRecord,
   ExecutionStatus,
   ExecutionTriggerType,
   MessageRecord,
+  ModelCallKind,
   TaskOrigin,
   ToolCallRecord,
   ToolResultRecord,
@@ -876,7 +877,10 @@ export class ConversationStore {
   }
 
   getRoleContext(): {
+    builtinKey: string | null;
+    isBuiltin: boolean;
     displayName: string;
+    bioText: string;
     definitionText: string;
     definitionPayload: Record<string, unknown>;
     state: Record<string, unknown>;
@@ -884,11 +888,13 @@ export class ConversationStore {
   } {
     const row = this.db
       .prepare(
-        "SELECT display_name, definition_text, definition_payload_json, state_json, state_version FROM roles WHERE role_id = ?",
+        "SELECT builtin_key, display_name, bio_text, definition_text, definition_payload_json, state_json, state_version FROM roles WHERE role_id = ?",
       )
       .get(this.roleId) as
       | {
+          builtin_key: string | null;
           display_name: string;
+          bio_text: string;
           definition_text: string;
           definition_payload_json: string;
           state_json: string;
@@ -899,7 +905,10 @@ export class ConversationStore {
       throw new ExecutionNotRunningError(this.roleId, "role_missing");
     }
     return {
+      builtinKey: row.builtin_key,
+      isBuiltin: row.builtin_key !== null,
       displayName: row.display_name,
+      bioText: row.bio_text,
       definitionText: row.definition_text,
       definitionPayload: parseJsonObject(row.definition_payload_json),
       state: parseJsonObject(row.state_json),
@@ -1498,26 +1507,31 @@ export class ConversationStore {
     resourceId: string;
     modelName: string;
     protocol: ModelProtocol;
+    taskId?: string | null;
+    callKind?: ModelCallKind;
     purpose?: "user_chat" | "user_task" | "memory_maintenance" | "autonomous" | "connection_test";
     counted?: boolean;
     now?: string;
   }): string {
     const now = input.now ?? new Date().toISOString();
     const purpose = input.purpose ?? "user_chat";
+    const callKind: ModelCallKind = input.callKind ?? "other";
     return this.db.transaction(() => {
       const modelCallId = randomUUID();
       this.db
         .prepare(
           `INSERT INTO model_calls
-             (model_call_id, role_id, execution_id, batch_id, purpose, resource_id,
-              model_name, protocol, status, error_code, started_at, finished_at,
-              usage_json, raw_response_json)
-           VALUES (?, ?, ?, NULL, ?, ?, ?, ?, 'running', NULL, ?, NULL, NULL, NULL)`,
+             (model_call_id, role_id, execution_id, batch_id, task_id, call_kind,
+              purpose, resource_id, model_name, protocol, status, error_code,
+              started_at, finished_at, usage_json, raw_response_json)
+           VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 'running', NULL, ?, NULL, NULL, NULL)`,
         )
         .run(
           modelCallId,
           this.roleId,
           input.executionId,
+          input.taskId ?? null,
+          callKind,
           purpose,
           input.resourceId,
           input.modelName,
@@ -1548,7 +1562,7 @@ export class ConversationStore {
     modelCallId: string;
     status: "succeeded" | "failed";
     errorCode: string | null;
-    usage?: { inputTokens?: number; outputTokens?: number } | null;
+    usage?: ModelUsage | null;
     rawResponse?: unknown;
     continuation?: unknown;
     wireCallIds?: Record<string, string>;

@@ -25,6 +25,7 @@ import { RoleService } from "../application/role-service.js";
 import { RolesNotStoppedError } from "../domain/errors.js";
 import { RoleActivityService } from "../application/role-activity-service.js";
 import { RoleDeletionService } from "../application/role-deletion-service.js";
+import { ensurePresetAssistant } from "../application/preset-assistant.js";
 import { AppError } from "../domain/errors.js";
 import {
   SceneImageService,
@@ -52,6 +53,7 @@ export interface BackendAppOptions {
   memoryModelFactory?: MemoryModelFactory;
   memoryIdleMs?: number;
   disableMemoryRuntime?: boolean;
+  disablePresetAssistant?: boolean;
   sceneImagePlanner?: SceneImageServiceOptions["planner"];
   sceneImageGenerator?: SceneImageServiceOptions["generator"];
   sceneImageGenerationTimeoutMs?: number;
@@ -421,6 +423,15 @@ export function createBackendApp(
   };
   let server: http.Server;
   try {
+    if (options.disablePresetAssistant !== true) {
+      ensurePresetAssistant({
+        appStore,
+        roleService,
+        dataRoot: config.dataRoot,
+        presetAssetsDir: config.presetAssetsDir,
+        now,
+      });
+    }
     server = createHttpServer({ version: "0.1.0", services });
   } catch (error) {
     appStore.close();

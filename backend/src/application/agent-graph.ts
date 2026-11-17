@@ -25,6 +25,7 @@ import {
   type ModelProtocol,
   type ModelToolCall,
   type ModelToolSpec,
+  type ModelUsage,
 } from "../domain/model.js";
 import type { ConversationStore } from "../storage/conversation-store.js";
 import type { RoleStore } from "../storage/role-store.js";
@@ -223,13 +224,15 @@ export class AgentGraphRunner {
       resourceId: current.resourceId,
       modelName: current.modelName,
       protocol: current.protocol,
+      taskId: state.taskId,
+      callKind: "primary_decision",
       purpose: this.deps.purpose ?? "user_chat",
       counted,
       now: this.deps.now().toISOString(),
     });
     let roundText = "";
     const calls: PendingToolCall[] = [];
-    let usage: { inputTokens?: number; outputTokens?: number } | null = null;
+    let usage: ModelUsage | null = null;
     let completed: {
       stopReason: string;
       incomplete?: boolean;
@@ -259,12 +262,19 @@ export class AgentGraphRunner {
         }
         if (event.type === "usage") {
           usage = {
+            ...(usage ?? {}),
             ...(event.inputTokens === undefined
               ? {}
               : { inputTokens: event.inputTokens }),
+            ...(event.cachedTokens === undefined
+              ? {}
+              : { cachedTokens: event.cachedTokens }),
             ...(event.outputTokens === undefined
               ? {}
               : { outputTokens: event.outputTokens }),
+            ...(event.cacheCreationTokens === undefined
+              ? {}
+              : { cacheCreationTokens: event.cacheCreationTokens }),
           };
           continue;
         }
@@ -309,6 +319,7 @@ export class AgentGraphRunner {
           error instanceof Error && "code" in error
             ? String((error as { code?: unknown }).code)
             : "MODEL_REQUEST_FAILED",
+        ...(usage === null ? {} : { usage }),
         now: this.deps.now().toISOString(),
       });
       throw error;

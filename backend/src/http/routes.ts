@@ -13,13 +13,14 @@ import type {
   PutStateBody,
   SubmitMessageBody,
   SummaryCorrectionBody,
+  TaskCancelBody,
   TaskFinishBody,
   AutonomyBudgetBody,
   AutonomyWakeBody,
   UpdateDefinitionBody,
   UpdateResourceBody,
 } from "./schemas.js";
-import { readJsonBody } from "./body.js";
+import { readJsonBody, readOptionalJsonBody } from "./body.js";
 import { HttpError, type JsonResponse } from "./errors.js";
 import type { Router } from "./router.js";
 import type { AppearanceService } from "../application/appearance-service.js";
@@ -61,6 +62,7 @@ import {
   resourceModelTestSchema,
   submitMessageSchema,
   summaryCorrectionBodySchema,
+  taskCancelBodySchema,
   taskFinishBodySchema,
   autonomyBudgetBodySchema,
   autonomyWakeBodySchema,
@@ -443,6 +445,25 @@ export function registerApiRoutes(
           taskId: params.taskId ?? "",
           status: body.status,
           endReason: body.endReason,
+        }),
+      };
+    },
+  );
+
+  router.add(
+    "POST",
+    "/v1/roles/:roleId/tasks/:taskId/cancel",
+    async ({ request, params }): Promise<JsonResponse> => {
+      const body = parseBody<TaskCancelBody>(
+        taskCancelBodySchema,
+        await readOptionalJsonBody(request),
+      );
+      return {
+        status: 200,
+        body: services.conversation.cancelTask({
+          roleId: params.roleId ?? "",
+          taskId: params.taskId ?? "",
+          ...(body.reason === undefined ? {} : { reason: body.reason }),
         }),
       };
     },

@@ -8,8 +8,8 @@ import {
 } from "../domain/errors.js";
 import { backfillEvidence } from "./evidence.js";
 
-export const APP_SCHEMA_VERSION = 9;
-export const BUSINESS_SCHEMA_VERSION = 20;
+export const APP_SCHEMA_VERSION = 10;
+export const BUSINESS_SCHEMA_VERSION = 22;
 export const EXECUTION_SCHEMA_VERSION = 1;
 
 export const APP_TABLES = [
@@ -679,6 +679,10 @@ interface RequiredColumns {
 
 const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
   {
+    table: "roles",
+    columns: ["builtin_key", "bio_text"],
+  },
+  {
     table: "messages",
     columns: [
       "execution_id",
@@ -692,7 +696,18 @@ const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
   },
   {
     table: "tasks",
-    columns: ["origin", "initiator_execution_id"],
+    columns: [
+      "origin",
+      "initiator_execution_id",
+      "continuable",
+      "wait_reason",
+      "consecutive_failures",
+      "consecutive_no_progress",
+    ],
+  },
+  {
+    table: "model_calls",
+    columns: ["task_id", "call_kind"],
   },
   {
     table: "evidence_records",
@@ -808,7 +823,15 @@ const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
   },
   {
     table: "outfits",
-    columns: ["outfit_id", "role_id", "name", "description", "deleted_at"],
+    columns: [
+      "outfit_id",
+      "role_id",
+      "name",
+      "description",
+      "is_preset",
+      "preset_key",
+      "deleted_at",
+    ],
   },
   {
     table: "outfit_assets",
@@ -821,6 +844,7 @@ const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
       "display_name",
       "media_type",
       "relative_path",
+      "is_preset",
       "deleted_at",
     ],
   },
@@ -1014,6 +1038,14 @@ const BUSINESS_INDEXES: readonly RequiredIndex[] = [
     predicate: "deleted_at IS NULL",
   },
   {
+    name: "idx_outfits_role_preset_key",
+    table: "outfits",
+    columns: ["role_id", "preset_key"],
+    unique: true,
+    partial: true,
+    predicate: "preset_key IS NOT NULL AND deleted_at IS NULL",
+  },
+  {
     name: "idx_outfit_assets_single_home",
     table: "outfit_assets",
     columns: ["outfit_id"],
@@ -1025,6 +1057,13 @@ const BUSINESS_INDEXES: readonly RequiredIndex[] = [
     name: "idx_outfit_assets_outfit",
     table: "outfit_assets",
     columns: ["outfit_id", "usage", "created_at"],
+    unique: false,
+    partial: false,
+  },
+  {
+    name: "idx_model_calls_task",
+    table: "model_calls",
+    columns: ["role_id", "task_id", "call_kind"],
     unique: false,
     partial: false,
   },
@@ -1597,6 +1636,164 @@ ALTER TABLE role_voice_settings
   ADD COLUMN service_id TEXT;
 `;
 
+const BUSINESS_V21_STREAM_SQL = `
+ALTER TABLE execution_stream_events RENAME TO execution_stream_events_v21_old;
+DROP INDEX IF EXISTS idx_execution_stream_window;
+DROP INDEX IF EXISTS idx_execution_stream_execution;
+
+CREATE TABLE execution_stream_events (
+  stream_event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  window_id TEXT REFERENCES windows(window_id),
+  execution_id TEXT NOT NULL REFERENCES executions(execution_id),
+  event_type TEXT NOT NULL CHECK (event_type IN (
+    'execution_started', 'message_delta', 'tool_started', 'tool_result_saved',
+    'tool_backgrounded', 'message_segments', 'segment_annotations',
+    'scene_image_task', 'message_completed', 'message_interrupted',
+    'execution_superseded', 'execution_paused', 'execution_failed',
+    'task_cancelled'
+  )),
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+INSERT INTO execution_stream_events
+  (stream_event_id, role_id, window_id, execution_id, event_type, payload_json, created_at)
+SELECT stream_event_id, role_id, window_id, execution_id, event_type, payload_json, created_at
+  FROM execution_stream_events_v21_old;
+
+DROP TABLE execution_stream_events_v21_old;
+
+CREATE INDEX idx_execution_stream_window
+  ON execution_stream_events (window_id, stream_event_id);
+CREATE INDEX idx_execution_stream_execution
+  ON execution_stream_events (execution_id, stream_event_id);
+`;
+
+const BUSINESS_V21_SQL = `
+-- v21：默认预置角色标识与展示介绍、预置外观保护、任务续行/熔断字段、任务级模型用量归属及 task_cancelled 流事件（DL-147 / DL-153～158）。
+ALTER TABLE roles ADD COLUMN builtin_key TEXT;
+ALTER TABLE roles ADD COLUMN bio_text TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE outfits ADD COLUMN is_preset INTEGER NOT NULL DEFAULT 0 CHECK (is_preset IN (0, 1));
+ALTER TABLE outfit_assets ADD COLUMN is_preset INTEGER NOT NULL DEFAULT 0 CHECK (is_preset IN (0, 1));
+
+ALTER TABLE tasks ADD COLUMN continuable INTEGER NOT NULL DEFAULT 0 CHECK (continuable IN (0, 1));
+ALTER TABLE tasks ADD COLUMN wait_reason TEXT;
+ALTER TABLE tasks ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failures >= 0);
+ALTER TABLE tasks ADD COLUMN consecutive_no_progress INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_no_progress >= 0);
+
+ALTER TABLE model_calls ADD COLUMN task_id TEXT REFERENCES tasks(task_id);
+ALTER TABLE model_calls ADD COLUMN call_kind TEXT NOT NULL DEFAULT 'other'
+  CHECK (call_kind IN ('primary_decision', 'segment_annotation', 'scene_plan', 'memory_maintenance', 'other'));
+
+CREATE INDEX IF NOT EXISTS idx_model_calls_task
+  ON model_calls (role_id, task_id, call_kind);
+${BUSINESS_V21_STREAM_SQL}
+`;
+
+function hasColumn(db: Database.Database, table: string, column: string): boolean {
+  const rows = db.pragma(`table_info("${table}")`) as Array<{ name: string }>;
+  return rows.some((row) => row.name === column);
+}
+
+function addColumnIfMissing(
+  db: Database.Database,
+  table: string,
+  column: string,
+  definitionSql: string,
+): void {
+  if (!hasColumn(db, table, column)) {
+    db.exec(`ALTER TABLE "${table}" ADD COLUMN "${column}" ${definitionSql};`);
+  }
+}
+
+function migrateAppV10(db: Database.Database): void {
+  addColumnIfMissing(db, "roles", "builtin_key", "TEXT");
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_app_roles_builtin_key
+      ON roles (builtin_key)
+      WHERE builtin_key IS NOT NULL;
+  `);
+}
+
+function migrateBusinessV21(db: Database.Database): void {
+  addColumnIfMissing(db, "roles", "builtin_key", "TEXT");
+  addColumnIfMissing(db, "roles", "bio_text", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(
+    db,
+    "outfits",
+    "is_preset",
+    "INTEGER NOT NULL DEFAULT 0 CHECK (is_preset IN (0, 1))",
+  );
+  addColumnIfMissing(
+    db,
+    "outfit_assets",
+    "is_preset",
+    "INTEGER NOT NULL DEFAULT 0 CHECK (is_preset IN (0, 1))",
+  );
+  addColumnIfMissing(
+    db,
+    "tasks",
+    "continuable",
+    "INTEGER NOT NULL DEFAULT 0 CHECK (continuable IN (0, 1))",
+  );
+  addColumnIfMissing(db, "tasks", "wait_reason", "TEXT");
+  addColumnIfMissing(
+    db,
+    "tasks",
+    "consecutive_failures",
+    "INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failures >= 0)",
+  );
+  addColumnIfMissing(
+    db,
+    "tasks",
+    "consecutive_no_progress",
+    "INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_no_progress >= 0)",
+  );
+  addColumnIfMissing(
+    db,
+    "model_calls",
+    "task_id",
+    "TEXT REFERENCES tasks(task_id)",
+  );
+  addColumnIfMissing(
+    db,
+    "model_calls",
+    "call_kind",
+    "TEXT NOT NULL DEFAULT 'other' CHECK (call_kind IN ('primary_decision', 'segment_annotation', 'scene_plan', 'memory_maintenance', 'other'))",
+  );
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_model_calls_task
+      ON model_calls (role_id, task_id, call_kind);
+  `);
+  const tableRow = db
+    .prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'execution_stream_events'",
+    )
+    .get() as { sql: string | null } | undefined;
+  if (!(tableRow?.sql ?? "").includes("task_cancelled")) {
+    db.exec(BUSINESS_V21_STREAM_SQL);
+  }
+}
+
+const BUSINESS_V22_SQL = `
+-- v22：预置服饰稳定来源标识（preset_key），避免与同名自定义服饰冲突时重复导入（310 §8 R02）。
+ALTER TABLE outfits ADD COLUMN preset_key TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_outfits_role_preset_key
+  ON outfits (role_id, preset_key)
+  WHERE preset_key IS NOT NULL AND deleted_at IS NULL;
+`;
+
+function migrateBusinessV22(db: Database.Database): void {
+  addColumnIfMissing(db, "outfits", "preset_key", "TEXT");
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_outfits_role_preset_key
+      ON outfits (role_id, preset_key)
+      WHERE preset_key IS NOT NULL AND deleted_at IS NULL;
+  `);
+}
+
 const APP_V6_SQL = `
 -- v6：删除资源时先在全局库同事务提交「资源删除 + 待清理记录」（RP-R05）。
 -- 角色业务库的残留绑定由启动恢复、删除重试和读侧过滤继续清理。
@@ -1663,6 +1860,33 @@ CREATE INDEX IF NOT EXISTS idx_voice_services_enabled
   ON voice_services (enabled, created_at);
 `;
 
+const APP_V10_SQL = `
+-- v10：全局角色索引增加内置角色标识，单实例唯一（DL-147 / DL-153）。
+ALTER TABLE roles ADD COLUMN builtin_key TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_app_roles_builtin_key
+  ON roles (builtin_key)
+  WHERE builtin_key IS NOT NULL;
+`;
+
+const APP_COLUMNS: readonly RequiredColumns[] = [
+  {
+    table: "roles",
+    columns: ["builtin_key"],
+  },
+];
+
+const APP_INDEXES: readonly RequiredIndex[] = [
+  {
+    name: "idx_app_roles_builtin_key",
+    table: "roles",
+    columns: ["builtin_key"],
+    unique: true,
+    partial: true,
+    predicate: "builtin_key IS NOT NULL",
+  },
+];
+
 export function openAppDatabase(dbPath: string): OpenedDatabase {
   return openVersionedDatabase(
     dbPath,
@@ -1675,7 +1899,8 @@ export function openAppDatabase(dbPath: string): OpenedDatabase {
       APP_V6_SQL +
       APP_V7_SQL +
       APP_V8_SQL +
-      APP_V9_SQL,
+      APP_V9_SQL +
+      APP_V10_SQL,
     {
       1: (db) => db.exec(APP_V2_SQL),
       2: (db) => db.exec(APP_V3_SQL),
@@ -1685,10 +1910,11 @@ export function openAppDatabase(dbPath: string): OpenedDatabase {
       6: (db) => db.exec(APP_V7_SQL),
       7: (db) => db.exec(APP_V8_SQL),
       8: (db) => db.exec(APP_V9_SQL),
+      9: migrateAppV10,
     },
     APP_TABLES,
-    [],
-    [],
+    APP_INDEXES,
+    APP_COLUMNS,
     { create: true },
   );
 }
@@ -1719,7 +1945,9 @@ export function openBusinessDatabase(
       BUSINESS_V17_SQL +
       BUSINESS_V18_SQL +
       BUSINESS_V19_SQL +
-      BUSINESS_V20_SQL,
+      BUSINESS_V20_SQL +
+      BUSINESS_V21_SQL +
+      BUSINESS_V22_SQL,
     {
       1: (db) => {
         db.exec(BUSINESS_V2_SQL);
@@ -1743,6 +1971,8 @@ export function openBusinessDatabase(
       17: (db) => db.exec(BUSINESS_V18_SQL),
       18: (db) => db.exec(BUSINESS_V19_SQL),
       19: (db) => db.exec(BUSINESS_V20_SQL),
+      20: migrateBusinessV21,
+      21: migrateBusinessV22,
     },
     BUSINESS_TABLES,
     BUSINESS_INDEXES,

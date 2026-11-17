@@ -257,6 +257,12 @@ export const taskFinishBodySchema = z
   })
   .strict();
 
+export const taskCancelBodySchema = z
+  .object({
+    reason: z.string().trim().min(1).max(2000).optional(),
+  })
+  .strict();
+
 export const autonomyBudgetBodySchema = z
   .object({
     dailyLimit: z.number().int().min(1).max(1_000_000).optional(),
@@ -303,5 +309,6 @@ export type ResourceModelTestBody = z.infer<typeof resourceModelTestSchema>;
 export type InputStateBody = z.infer<typeof inputStateBodySchema>;
 export type SceneImageRequestBody = z.infer<typeof sceneImageRequestSchema>;
 export type TaskFinishBody = z.infer<typeof taskFinishBodySchema>;
+export type TaskCancelBody = z.infer<typeof taskCancelBodySchema>;
 export type AutonomyBudgetBody = z.infer<typeof autonomyBudgetBodySchema>;
 export type AutonomyWakeBody = z.infer<typeof autonomyWakeBodySchema>;

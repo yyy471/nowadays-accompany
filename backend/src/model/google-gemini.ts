@@ -10,6 +10,7 @@ import type {
   ModelMessage,
   ModelProtocol,
   ModelRequest,
+  ModelUsage,
 } from "../domain/model.js";
 
 const DEFAULT_GOOGLE_OAUTH_TOKEN_URI = "https://oauth2.googleapis.com/token";
@@ -283,84 +284,116 @@ export async function* streamGoogleGemini(input: {
   let rawFinishReason: string | null = null;
   let promptBlockReason: string | null = null;
   let inputTokens: number | undefined;
+  let cachedTokens: number | undefined;
   let outputTokens: number | undefined;
+  const buildGeminiUsage = (): ModelUsage | null => {
+    if (
+      inputTokens === undefined &&
+      cachedTokens === undefined &&
+      outputTokens === undefined
+    ) {
+      return null;
+    }
+    const clampedCached =
+      cachedTokens !== undefined && inputTokens !== undefined
+        ? Math.min(cachedTokens, inputTokens)
+        : cachedTokens;
+    return {
+      ...(inputTokens === undefined ? {} : { inputTokens }),
+      ...(clampedCached === undefined ? {} : { cachedTokens: clampedCached }),
+      ...(outputTokens === undefined ? {} : { outputTokens }),
+    };
+  };
 
-  for await (const frame of transport.readSse(response)) {
-    const payload = transport.parseStreamJson(frame.data);
-    rawResponse.push(payload);
-    if (isPlainRecord(payload.error)) {
-      throw new ModelRequestFailedError("模型请求失败", {
-        reason: mapGoogleErrorReason(payload.error) ?? "MESSAGE_ERROR",
+  try {
+    for await (const frame of transport.readSse(response)) {
+      const payload = transport.parseStreamJson(frame.data);
+      rawResponse.push(payload);
+      if (isPlainRecord(payload.error)) {
+        throw new ModelRequestFailedError("模型请求失败", {
+          reason: mapGoogleErrorReason(payload.error) ?? "MESSAGE_ERROR",
+        });
+      }
+      const usage = readGeminiUsage(payload.usageMetadata);
+      if (usage.inputTokens !== undefined) {
+        inputTokens = usage.inputTokens;
+      }
+      if (usage.cachedTokens !== undefined) {
+        cachedTokens = usage.cachedTokens;
+      }
+      if (usage.outputTokens !== undefined) {
+        outputTokens = usage.outputTokens;
+      }
+      if (
+        isPlainRecord(payload.promptFeedback) &&
+        typeof payload.promptFeedback.blockReason === "string" &&
+        payload.promptFeedback.blockReason.length > 0
+      ) {
+        promptBlockReason = payload.promptFeedback.blockReason;
+      }
+      const candidates = Array.isArray(payload.candidates)
+        ? payload.candidates
+        : [];
+      const candidate = candidates[0];
+      if (!isPlainRecord(candidate)) {
+        continue;
+      }
+      const content = isPlainRecord(candidate.content) ? candidate.content : null;
+      const parts = Array.isArray(content?.parts) ? content.parts : [];
+      for (const part of parts) {
+        if (!isPlainRecord(part)) {
+          continue;
+        }
+        if (isPlainRecord(part.functionCall)) {
+          const fc = part.functionCall;
+          const name = typeof fc.name === "string" ? fc.name.trim() : "";
+          if (name.length === 0) {
+            throw new ModelToolArgumentsError("unknown");
+          }
+          const args = parseGeminiFunctionArgs(name, fc.args);
+          const wireId =
+            typeof fc.id === "string" && fc.id.length > 0 ? fc.id : undefined;
+          const callId = wireId ?? randomUUID();
+          toolCalls.push({ callId, name, arguments: args });
+          accumulatedParts.push(structuredClone(part));
+          continue;
+        }
+        if (typeof part.text === "string") {
+          // 思考链 part (`thought: true`) 不对外吐字，但保留在 continuation 里供后续原样回传。
+          if (part.thought !== true && part.text.length > 0) {
+            yield { type: "text_delta", text: part.text };
+          }
+          mergeGeminiTextPart(accumulatedParts, part);
+          continue;
+        }
+        if (typeof part.thoughtSignature === "string") {
+          accumulatedParts.push(structuredClone(part));
+        }
+      }
+      if (
+        typeof candidate.finishReason === "string" &&
+        candidate.finishReason.length > 0
+      ) {
+        rawFinishReason = candidate.finishReason;
+      }
+    }
+
+    if (rawFinishReason === null) {
+      if (promptBlockReason !== null) {
+        throw new ModelRequestFailedError("模型拒绝处理该输入", {
+          reason: "content_policy_violation",
+        });
+      }
+      throw new ModelRequestFailedError("模型流提前结束，未收到完整终态", {
+        reason: "STREAM_TRUNCATED",
       });
     }
-    const usage = readGeminiUsage(payload.usageMetadata);
-    if (usage.inputTokens !== undefined) {
-      inputTokens = usage.inputTokens;
+  } catch (error) {
+    const partialUsage = buildGeminiUsage();
+    if (partialUsage !== null) {
+      yield { type: "usage", ...partialUsage };
     }
-    if (usage.outputTokens !== undefined) {
-      outputTokens = usage.outputTokens;
-    }
-    if (
-      isPlainRecord(payload.promptFeedback) &&
-      typeof payload.promptFeedback.blockReason === "string" &&
-      payload.promptFeedback.blockReason.length > 0
-    ) {
-      promptBlockReason = payload.promptFeedback.blockReason;
-    }
-    const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
-    const candidate = candidates[0];
-    if (!isPlainRecord(candidate)) {
-      continue;
-    }
-    const content = isPlainRecord(candidate.content) ? candidate.content : null;
-    const parts = Array.isArray(content?.parts) ? content.parts : [];
-    for (const part of parts) {
-      if (!isPlainRecord(part)) {
-        continue;
-      }
-      if (isPlainRecord(part.functionCall)) {
-        const fc = part.functionCall;
-        const name = typeof fc.name === "string" ? fc.name.trim() : "";
-        if (name.length === 0) {
-          throw new ModelToolArgumentsError("unknown");
-        }
-        const args = parseGeminiFunctionArgs(name, fc.args);
-        const wireId =
-          typeof fc.id === "string" && fc.id.length > 0 ? fc.id : undefined;
-        const callId = wireId ?? randomUUID();
-        toolCalls.push({ callId, name, arguments: args });
-        accumulatedParts.push(structuredClone(part));
-        continue;
-      }
-      if (typeof part.text === "string") {
-        // 思考链 part (`thought: true`) 不对外吐字，但保留在 continuation 里供后续原样回传。
-        if (part.thought !== true && part.text.length > 0) {
-          yield { type: "text_delta", text: part.text };
-        }
-        mergeGeminiTextPart(accumulatedParts, part);
-        continue;
-      }
-      if (typeof part.thoughtSignature === "string") {
-        accumulatedParts.push(structuredClone(part));
-      }
-    }
-    if (
-      typeof candidate.finishReason === "string" &&
-      candidate.finishReason.length > 0
-    ) {
-      rawFinishReason = candidate.finishReason;
-    }
-  }
-
-  if (rawFinishReason === null) {
-    if (promptBlockReason !== null) {
-      throw new ModelRequestFailedError("模型拒绝处理该输入", {
-        reason: "content_policy_violation",
-      });
-    }
-    throw new ModelRequestFailedError("模型流提前结束，未收到完整终态", {
-      reason: "STREAM_TRUNCATED",
-    });
+    throw error;
   }
 
   for (const call of toolCalls) {
@@ -371,11 +404,11 @@ export async function* streamGoogleGemini(input: {
       arguments: call.arguments,
     };
   }
-  if (inputTokens !== undefined || outputTokens !== undefined) {
+  const finalUsage = buildGeminiUsage();
+  if (finalUsage !== null) {
     yield {
       type: "usage",
-      ...(inputTokens === undefined ? {} : { inputTokens }),
-      ...(outputTokens === undefined ? {} : { outputTokens }),
+      ...finalUsage,
     };
   }
 
@@ -623,21 +656,36 @@ function wrapGeminiToolResponse(content: string): Record<string, unknown> {
   return { output: content };
 }
 
-function readGeminiUsage(raw: unknown): {
-  inputTokens?: number;
-  outputTokens?: number;
-} {
+function readGeminiUsage(raw: unknown): ModelUsage {
   if (!isPlainRecord(raw)) {
     return {};
   }
   const inputTokens =
-    typeof raw.promptTokenCount === "number" ? raw.promptTokenCount : undefined;
+    typeof raw.promptTokenCount === "number" &&
+    Number.isFinite(raw.promptTokenCount) &&
+    raw.promptTokenCount >= 0
+      ? raw.promptTokenCount
+      : undefined;
+  const rawCached =
+    typeof raw.cachedContentTokenCount === "number" &&
+    Number.isFinite(raw.cachedContentTokenCount) &&
+    raw.cachedContentTokenCount >= 0
+      ? raw.cachedContentTokenCount
+      : undefined;
+  const cachedTokens =
+    rawCached !== undefined && inputTokens !== undefined
+      ? Math.min(rawCached, inputTokens)
+      : rawCached;
   const candidatesTokens =
-    typeof raw.candidatesTokenCount === "number"
+    typeof raw.candidatesTokenCount === "number" &&
+    Number.isFinite(raw.candidatesTokenCount) &&
+    raw.candidatesTokenCount >= 0
       ? raw.candidatesTokenCount
       : undefined;
   const thoughtsTokens =
-    typeof raw.thoughtsTokenCount === "number"
+    typeof raw.thoughtsTokenCount === "number" &&
+    Number.isFinite(raw.thoughtsTokenCount) &&
+    raw.thoughtsTokenCount >= 0
       ? raw.thoughtsTokenCount
       : undefined;
   const outputTokens =
@@ -646,6 +694,7 @@ function readGeminiUsage(raw: unknown): {
       : undefined;
   return {
     ...(inputTokens === undefined ? {} : { inputTokens }),
+    ...(cachedTokens === undefined ? {} : { cachedTokens }),
     ...(outputTokens === undefined ? {} : { outputTokens }),
   };
 }

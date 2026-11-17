@@ -430,6 +430,15 @@ async function runTask(
         },
       );
     }
+    case "cancel": {
+      const options = parseArgs(rest, ["role", "id", "reason"]);
+      const reason = options.get("reason");
+      return client.request(
+        "POST",
+        `/v1/roles/${encodeURIComponent(required(options, "role"))}/tasks/${encodeURIComponent(required(options, "id"))}/cancel`,
+        reason === undefined ? {} : { reason },
+      );
+    }
     default:
       throw new CliError("UNKNOWN_COMMAND", `未知任务命令 ${action ?? ""}`);
   }

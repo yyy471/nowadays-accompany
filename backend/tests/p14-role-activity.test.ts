@@ -104,7 +104,7 @@ async function waitUntil(
 }
 
 test("活动状态独立返回，空闲停止立即确认，写入保护与恢复闭环", async () => {
-  const fixture = createFixture([]);
+  const fixture = createFixture([], { disablePresetAssistant: true });
   try {
     const base = await start(fixture);
     const role = rolePath(fixture);

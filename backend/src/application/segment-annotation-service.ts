@@ -224,6 +224,7 @@ export class SegmentAnnotationService {
               resourceId: binding.resourceId,
               modelName: binding.modelName,
               protocol: binding.config.protocol,
+              callKind: "segment_annotation",
               purpose: prepared.purpose,
               counted,
               now: startedAt,

@@ -21,6 +21,7 @@ import {
   RoleStopRequestedError,
   SseCursorInvalidError,
   TaskEndedError,
+  TaskStateConflictError,
 } from "../domain/errors.js";
 import {
   ROLE_STOP_TASK_END_REASON,
@@ -473,6 +474,147 @@ export class ConversationService {
     this.releaseTaskResources(input.roleId, input.taskId);
     this.memoryRuntime?.notifyTaskFinished(input.roleId, input.taskId);
     return task;
+  }
+
+  /**
+   * 显式取消未完成的任务（进行中或已暂停）（DL-154 / DL-158）。
+   * 若任务正运行，先中止当前执行并中断待继续队列；保留已发出工具调用的后台结算责任（DL-103）。
+   */
+  cancelTask(input: {
+    roleId: string;
+    taskId: string;
+    reason?: string;
+  }): TaskRecord {
+    const reason = input.reason?.trim() || "USER_CANCELLED";
+    const now = this.now().toISOString();
+    const runningSnapshot = this.running.get(input.roleId);
+    const { task: finished, matchedRunning } = this.roleAccess.withStore(
+      input.roleId,
+      (storage) =>
+        storage.business.db.transaction(() => {
+          const current = storage.business.getTask(input.roleId, input.taskId);
+          if (current.status === "completed") {
+            throw new TaskStateConflictError(
+              current.taskId,
+              current.status,
+              "failed",
+            );
+          }
+          if (current.status === "failed") {
+            if (current.endReason === reason) {
+              return {
+                task: current,
+                matchedRunning: null as RunningExecution | null,
+              };
+            }
+            throw new TaskStateConflictError(
+              current.taskId,
+              current.status,
+              "failed",
+            );
+          }
+          const store = new ConversationStore(
+            storage.business.db,
+            input.roleId,
+            this.timeZone,
+          );
+          let matched: RunningExecution | null = null;
+          let eventExecutionId: string | null = null;
+          let eventWindowId: string | null = null;
+          if (runningSnapshot !== undefined && !runningSnapshot.superseded) {
+            const activeTask = store.getPrimaryExecutionTask(
+              runningSnapshot.executionId,
+            );
+            if (activeTask?.taskId === input.taskId) {
+              store.interruptExecution({
+                executionId: runningSnapshot.executionId,
+                partialText: runningSnapshot.partialText,
+                status: "failed",
+                reason,
+                errorCode: reason,
+                now,
+              });
+              matched = runningSnapshot;
+              eventExecutionId = runningSnapshot.executionId;
+              eventWindowId = runningSnapshot.windowId;
+            }
+          }
+          const task = storage.business.finishTask({
+            roleId: input.roleId,
+            taskId: input.taskId,
+            status: "failed",
+            endReason: reason,
+          });
+          if (eventExecutionId === null) {
+            const latest = storage.business.findLatestTaskExecutionWindow(
+              input.roleId,
+              input.taskId,
+            );
+            if (latest !== null) {
+              eventExecutionId = latest.executionId;
+              eventWindowId = latest.windowId;
+            }
+          }
+          if (eventExecutionId !== null && eventWindowId !== null) {
+            store.appendStreamEvent({
+              windowId: eventWindowId,
+              executionId: eventExecutionId,
+              type: "task_cancelled",
+              payload: {
+                taskId: input.taskId,
+                executionId: eventExecutionId,
+                windowId: eventWindowId,
+                endReason: reason,
+              },
+              now,
+            });
+          }
+          return { task, matchedRunning: matched };
+        })(),
+    );
+    // 只有持久化事务成功提交后，才清理内存续行队列并中止在途执行，避免写入失败导致状态分裂。
+    this.removePendingContinuation(input.roleId, input.taskId);
+    let abortedRunning = false;
+    if (matchedRunning !== null && !matchedRunning.superseded) {
+      matchedRunning.superseded = true;
+      matchedRunning.controller.abort();
+      if (this.running.get(input.roleId) === matchedRunning) {
+        this.running.delete(input.roleId);
+      }
+      this.detached.add(matchedRunning);
+      abortedRunning = true;
+    }
+    try {
+      this.autonomy?.cancelPendingBudgetResumes(
+        input.roleId,
+        input.taskId,
+        "TASK_ENDED",
+      );
+      const activity = this.autonomy?.getLatestActivityByTask(
+        input.roleId,
+        input.taskId,
+      );
+      if (
+        activity !== undefined &&
+        activity !== null &&
+        (activity.status === "running" || activity.status === "paused")
+      ) {
+        this.autonomy?.updateActivity(input.roleId, {
+          activityId: activity.activityId,
+          status: "failed",
+          summary: `任务已取消：${reason}`,
+        });
+      }
+    } catch {
+      // 取消辅助记录失败不影响主任务已取消状态。
+    }
+    this.closeTaskCatalogAfterSettled(input.taskId);
+    this.releaseTaskResources(input.roleId, input.taskId);
+    this.memoryRuntime?.notifyTaskFinished(input.roleId, input.taskId);
+    if (abortedRunning) {
+      void this.schedule(input.roleId);
+    }
+    return finished;
   }
 
   async waitForIdle(roleId: string, timeoutMs = 15_000): Promise<void> {
@@ -2875,12 +3017,22 @@ export class ConversationService {
     autonomy: { intent: string; resumed: boolean } | null;
     outfitBrief: OutfitBrief | null;
   }): string {
-    const lines = [
-      `你是角色「${input.roleContext.displayName}」，始终以该角色的身份、经历和当前状态回应。`,
-      "回复按自然句段换行。需要演出表情或动作时，用一行简短动作文字呈现，例如 *她轻轻点头*；动作和台词分行。",
-      "以下角色设定是长期身份依据：",
-      truncate(input.roleContext.definitionText, 12_000),
-    ];
+    const lines = input.roleContext.isBuiltin
+      ? [
+          `你是 Nowadays 系统的预置默认助手「${input.roleContext.displayName}」（${input.roleContext.builtinKey ?? "xiacheng"}），同时兼顾日常对话陪伴与严谨的办事执行能力。`,
+          "回复按自然句段换行。需要演出表情或动作时，用一行简短动作文字呈现，例如 *她轻轻点头*；动作和台词分行。",
+          "以下为系统核心能力与行为底座（优先于用户可编辑设定，不可被性格描述覆盖或削弱）：",
+          "1. 真实性原则：必须基于实际调用的工具结果、文件内容与系统状态如实汇报；未实际执行、未读取确认的结果不得编造，遇到阻塞、缺权或信息不足时明确说明现状。",
+          "2. 任务延续与安全边界：复杂任务按步骤清晰推进并记录阶段笔记；需要用户关键澄清或拍板时停下确认；不得绕过系统保护私自改写预置身份、官方外观或违禁配置。",
+          "以下用户可维护的角色设定用于塑造你的日常交流风格与人格表达：",
+          truncate(input.roleContext.definitionText, 12_000),
+        ]
+      : [
+          `你是角色「${input.roleContext.displayName}」，始终以该角色的身份、经历和当前状态回应。`,
+          "回复按自然句段换行。需要演出表情或动作时，用一行简短动作文字呈现，例如 *她轻轻点头*；动作和台词分行。",
+          "以下角色设定是长期身份依据：",
+          truncate(input.roleContext.definitionText, 12_000),
+        ];
     const payload = JSON.stringify(input.roleContext.definitionPayload);
     if (payload !== undefined && payload !== "{}") {
       lines.push(`设定附加信息：${truncate(payload, 4000)}`);

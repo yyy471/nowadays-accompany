@@ -145,6 +145,7 @@ export class ModelSceneImagePlanner implements SceneImagePlannerPort {
           resourceId: binding.resourceId,
           modelName: binding.modelName,
           protocol: binding.config.protocol,
+          callKind: "scene_plan",
           purpose: store.getExecutionPurpose(input.executionId),
           counted: false,
           now: startedAt,

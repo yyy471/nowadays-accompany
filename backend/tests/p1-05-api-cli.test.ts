@@ -256,7 +256,9 @@ test("independent CLI completes the P1 flow through the backend process", async 
     );
     assert.equal((activity.activity as { state: string }).state, "stopped");
     const activities = ok(await runCli(baseUrl, ["activity", "list"]));
-    assert.equal((activities.items as unknown[]).length, 1);
+    const activityItems = activities.items as Array<{ roleId: string; state: string }>;
+    assert.equal(activityItems.length, 2);
+    assert.equal(activityItems.find((item) => item.roleId === roleId)?.state, "stopped");
     // 新建角色默认已停止（268 §4）：显式开始活动后再走对话流程。
     ok(await runCli(baseUrl, ["activity", "resume", "--role", roleId]));
 

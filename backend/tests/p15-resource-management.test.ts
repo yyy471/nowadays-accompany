@@ -777,7 +777,7 @@ test("删除失败不会移除已处理的角色绑定", { timeout: 20_000 }, as
 
 for (const failAt of ["second-role-binding", "final-resource-delete"] as const) {
   test(`删除写入失败时回滚全部绑定（${failAt}）`, { timeout: 20_000 }, async () => {
-    const fixture = createFixture([]);
+    const fixture = createFixture([], { disablePresetAssistant: true });
     try {
       const base = await start(fixture);
       fixture.app.services.roles.createRole({
@@ -889,7 +889,7 @@ async function bindMcpToTwoRoles(
 }
 
 test("删除决策提交失败时保留原配置", { timeout: 20_000 }, async () => {
-  const fixture = createFixture([]);
+  const fixture = createFixture([], { disablePresetAssistant: true });
   try {
     const { base, resourceId, roleIds } = await bindMcpToTwoRoles(fixture);
     const route = `/v1/resources/${resourceId}`;
@@ -938,7 +938,7 @@ test("删除决策提交失败时保留原配置", { timeout: 20_000 }, async ()
 });
 
 test("删除决策提交后中断，重启继续清理残留绑定", { timeout: 20_000 }, async () => {
-  const fixture = createFixture([]);
+  const fixture = createFixture([], { disablePresetAssistant: true });
   const config = fixture.app.config;
   try {
     const { resourceId, roleIds } = await bindMcpToTwoRoles(fixture);
@@ -954,6 +954,7 @@ test("删除决策提交后中断，重启继续清理残留绑定", { timeout: 
 
     const app = createBackendApp(config, {
       disableMemoryRuntime: true,
+      disablePresetAssistant: true,
       modelPortFactory: () => fixture.model,
     });
     try {
@@ -981,7 +982,7 @@ test("删除决策提交后中断，重启继续清理残留绑定", { timeout: 
 });
 
 test("待清理状态下列表过滤残留绑定并可重试清理", { timeout: 20_000 }, async () => {
-  const fixture = createFixture([]);
+  const fixture = createFixture([], { disablePresetAssistant: true });
   try {
     const { base, resourceId, roleIds } = await bindMcpToTwoRoles(fixture);
     // 模拟决策已提交但角色库清理失败：资源已删、待清理记录存在、绑定残留。

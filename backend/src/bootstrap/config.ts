@@ -1,12 +1,19 @@
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const DEFAULT_PORT = 3210;
 export const LOOPBACK_HOST = "127.0.0.1";
+
+const DEFAULT_PRESET_ASSETS_DIR = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../assets/presets",
+);
 
 export interface BackendConfig {
   appRoot: string;
   dataRoot: string;
   appDatabasePath: string;
+  presetAssetsDir: string;
   port: number;
   host: typeof LOOPBACK_HOST;
 }
@@ -27,6 +34,7 @@ export function parseBackendConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): BackendConfig {
   let appRoot: string | undefined;
+  let presetAssetsDir: string | undefined;
   let port = DEFAULT_PORT;
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -37,6 +45,15 @@ export function parseBackendConfig(
         throw new Error("APP_ROOT_VALUE_REQUIRED");
       }
       appRoot = value;
+      index += 1;
+      continue;
+    }
+    if (arg === "--preset-assets-dir") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("PRESET_ASSETS_DIR_VALUE_REQUIRED");
+      }
+      presetAssetsDir = value;
       index += 1;
       continue;
     }
@@ -62,10 +79,14 @@ export function parseBackendConfig(
 
   const absoluteAppRoot = path.resolve(resolvedAppRoot);
   const dataRoot = path.join(absoluteAppRoot, "data");
+  const resolvedPresetAssetsDir = path.resolve(
+    presetAssetsDir ?? env.NOWADAYS_PRESET_ASSETS_DIR ?? DEFAULT_PRESET_ASSETS_DIR,
+  );
   return {
     appRoot: absoluteAppRoot,
     dataRoot,
     appDatabasePath: path.join(dataRoot, "app.sqlite"),
+    presetAssetsDir: resolvedPresetAssetsDir,
     port,
     host: LOOPBACK_HOST,
   };

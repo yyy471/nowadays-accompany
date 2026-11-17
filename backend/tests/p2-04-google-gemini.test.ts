@@ -797,42 +797,55 @@ test("SQLite 老库迁移（v7->v8 与 v17->v18）及 ModelService / 资源创�
     rawApp.close();
 
     const rawBiz = new Database(paths.businessDatabasePath);
-    rawBiz.exec(`
-      ALTER TABLE model_calls RENAME TO _tmp_old_calls;
-      DROP INDEX IF EXISTS idx_model_calls_role_time;
-      CREATE TABLE model_calls (
-        model_call_id TEXT PRIMARY KEY,
-        role_id TEXT NOT NULL REFERENCES roles(role_id),
-        execution_id TEXT REFERENCES executions(execution_id),
-        batch_id TEXT REFERENCES memory_batches(batch_id),
-        purpose TEXT NOT NULL CHECK (purpose IN ('user_chat', 'user_task', 'memory_maintenance', 'autonomous', 'connection_test')),
-        resource_id TEXT,
-        model_name TEXT NOT NULL,
-        protocol TEXT NOT NULL CHECK (protocol IN ('openai-chat', 'openai-responses', 'anthropic-messages')),
-        status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed', 'unknown')),
-        error_code TEXT,
-        started_at TEXT NOT NULL,
-        finished_at TEXT,
-        usage_json TEXT,
-        raw_response_json TEXT
-      );
-      INSERT INTO model_calls SELECT * FROM _tmp_old_calls;
-      DROP TABLE _tmp_old_calls;
-      CREATE INDEX idx_model_calls_role_time ON model_calls (role_id, started_at);
-      ALTER TABLE role_voice_settings DROP COLUMN service_id;
-      ALTER TABLE role_voice_settings DROP COLUMN tts_engine;
-      ALTER TABLE role_voice_settings DROP COLUMN engines_json;
-      ALTER TABLE role_voice_settings DROP COLUMN default_engine;
-      ALTER TABLE message_segments DROP COLUMN voice_emotion;
-    `);
-    rawBiz.pragma("user_version = 17");
-    rawBiz.close();
+    try {
+      rawBiz.exec(`
+        ALTER TABLE model_calls RENAME TO _tmp_old_calls;
+        DROP INDEX IF EXISTS idx_model_calls_role_time;
+        DROP INDEX IF EXISTS idx_model_calls_task;
+        CREATE TABLE model_calls (
+          model_call_id TEXT PRIMARY KEY,
+          role_id TEXT NOT NULL REFERENCES roles(role_id),
+          execution_id TEXT REFERENCES executions(execution_id),
+          batch_id TEXT REFERENCES memory_batches(batch_id),
+          purpose TEXT NOT NULL CHECK (purpose IN ('user_chat', 'user_task', 'memory_maintenance', 'autonomous', 'connection_test')),
+          resource_id TEXT,
+          model_name TEXT NOT NULL,
+          protocol TEXT NOT NULL CHECK (protocol IN ('openai-chat', 'openai-responses', 'anthropic-messages')),
+          status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed', 'unknown')),
+          error_code TEXT,
+          started_at TEXT NOT NULL,
+          finished_at TEXT,
+          usage_json TEXT,
+          raw_response_json TEXT
+        );
+        INSERT INTO model_calls (
+          model_call_id, role_id, execution_id, batch_id, purpose,
+          resource_id, model_name, protocol, status, error_code,
+          started_at, finished_at, usage_json, raw_response_json
+        )
+        SELECT
+          model_call_id, role_id, execution_id, batch_id, purpose,
+          resource_id, model_name, protocol, status, error_code,
+          started_at, finished_at, usage_json, raw_response_json
+        FROM _tmp_old_calls;
+        DROP TABLE _tmp_old_calls;
+        CREATE INDEX idx_model_calls_role_time ON model_calls (role_id, started_at);
+        ALTER TABLE role_voice_settings DROP COLUMN service_id;
+        ALTER TABLE role_voice_settings DROP COLUMN tts_engine;
+        ALTER TABLE role_voice_settings DROP COLUMN engines_json;
+        ALTER TABLE role_voice_settings DROP COLUMN default_engine;
+        ALTER TABLE message_segments DROP COLUMN voice_emotion;
+      `);
+      rawBiz.pragma("user_version = 17");
+    } finally {
+      rawBiz.close();
+    }
 
     const upgradedApp = new AppStore(migrateAppConfig.appDatabasePath);
     const upgradedBiz = new RoleStore(paths.businessDatabasePath, { create: false });
     try {
-      assert.equal(upgradedApp.schemaVersion, 9);
-      assert.equal(upgradedBiz.schemaVersion, 20);
+      assert.equal(upgradedApp.schemaVersion, 10);
+      assert.equal(upgradedBiz.schemaVersion, 22);
       const oldAppRow = upgradedApp.db
         .prepare("SELECT protocol FROM model_test_calls WHERE test_call_id = ?")
         .get(oldTestCallId) as { protocol: string } | undefined;
@@ -986,7 +999,12 @@ test("SQLite 老库迁移（v7->v8 与 v17->v18）及 ModelService / 资源创�
     }
   } finally {
     await server.close();
-    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(root, {
+      recursive: true,
+      force: true,
+      maxRetries: 20,
+      retryDelay: 50,
+    });
   }
 });
 

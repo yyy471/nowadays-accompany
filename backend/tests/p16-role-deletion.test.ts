@@ -60,7 +60,7 @@ function secondRole(fixture: Fixture, name: string): string {
 }
 
 test("保留记忆与对话数据：移除角色但保留角色目录", { timeout: 20_000 }, async () => {
-  const fixture = createFixture([]);
+  const fixture = createFixture([], { disablePresetAssistant: true });
   try {
     const base = await start(fixture);
     const roleId = secondRole(fixture, "保留角色");
@@ -102,7 +102,7 @@ test("保留记忆与对话数据：移除角色但保留角色目录", { timeou
 });
 
 test("一并删除：移除角色并清理角色目录", { timeout: 20_000 }, async () => {
-  const fixture = createFixture([]);
+  const fixture = createFixture([], { disablePresetAssistant: true });
   try {
     const base = await start(fixture);
     const roleId = secondRole(fixture, "清理角色");
@@ -124,7 +124,7 @@ test("一并删除：移除角色并清理角色目录", { timeout: 20_000 }, as
 });
 
 test("至少保留一个角色", { timeout: 20_000 }, async () => {
-  const fixture = createFixture([]);
+  const fixture = createFixture([], { disablePresetAssistant: true });
   try {
     const base = await start(fixture);
     const paths = rolePaths(fixture.app.config.dataRoot, fixture.roleId);
@@ -211,7 +211,7 @@ test("清理中断后可由删除重试或启动恢复收敛", { timeout: 30_000
 });
 
 test("并发删除不会删到零个角色", { timeout: 30_000 }, async () => {
-  const fixture = createFixture([]);
+  const fixture = createFixture([], { disablePresetAssistant: true });
   try {
     const base = await start(fixture);
     const second = secondRole(fixture, "并发角色");
@@ -240,7 +240,7 @@ test("并发删除不会删到零个角色", { timeout: 30_000 }, async () => {
 });
 
 test("清理记录写入失败不阻断已接受的删除", { timeout: 30_000 }, async () => {
-  const fixture = createFixture([]);
+  const fixture = createFixture([], { disablePresetAssistant: true });
   try {
     const base = await start(fixture);
     const roleId = secondRole(fixture, "收尾角色");
@@ -302,7 +302,7 @@ test("清理记录写入失败不阻断已接受的删除", { timeout: 30_000 },
 });
 
 test("角色删除等待在途配置写入结束后才执行", { timeout: 30_000 }, async () => {
-  const fixture = createFixture([]);
+  const fixture = createFixture([], { disablePresetAssistant: true });
   try {
     const base = await start(fixture);
     secondRole(fixture, "保底角色");

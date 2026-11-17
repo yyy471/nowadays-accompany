@@ -14,9 +14,9 @@ function tempRoot(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "nowadays-p1-03-"));
 }
 
-async function start(root: string) {
+async function start(root: string, options?: { disablePresetAssistant?: boolean }) {
   const config = parseBackendConfig(["--app-root", root, "--port", "0"]);
-  const app = createBackendApp(config);
+  const app = createBackendApp(config, options);
   const port = await listen(app.server, 0, config.host);
   return { app, baseUrl: `http://127.0.0.1:${port}` };
 }
@@ -352,7 +352,7 @@ test("GET /v1/roles lists empty, ready and failed roles (UI-PREP-01)", async () 
   const root = tempRoot();
   let app: ReturnType<typeof createBackendApp> | undefined;
   try {
-    const started = await start(root);
+    const started = await start(root, { disablePresetAssistant: true });
     app = started.app;
     const { baseUrl } = started;
 

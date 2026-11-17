@@ -17,11 +17,15 @@ export interface RoleInitPayload {
     payload: Record<string, unknown>;
   };
   state: Record<string, unknown>;
+  builtinKey?: string | null;
+  bioText?: string;
 }
 
 export interface RoleIndexRecord {
   roleId: string;
   relativeDir: string;
+  builtinKey: string | null;
+  isBuiltin: boolean;
   initStatus: RoleInitStatus;
   initError: string | null;
   initPayload: RoleInitPayload | null;
@@ -32,6 +36,7 @@ export interface RoleIndexRecord {
 interface RoleIndexRow {
   role_id: string;
   relative_dir: string;
+  builtin_key: string | null;
   init_status: RoleInitStatus;
   init_error: string | null;
   init_payload_json: string | null;
@@ -180,16 +185,19 @@ export class AppStore {
   createRoleIndex(input: {
     roleId: string;
     relativeDir: string;
+    builtinKey?: string | null;
     initPayload: RoleInitPayload;
   }): RoleIndexRecord {
     const now = new Date().toISOString();
+    const builtinKey = input.builtinKey ?? input.initPayload.builtinKey ?? null;
     this.db
       .prepare(
-        "INSERT INTO roles (role_id, relative_dir, init_status, init_error, init_payload_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO roles (role_id, relative_dir, builtin_key, init_status, init_error, init_payload_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         input.roleId,
         input.relativeDir,
+        builtinKey,
         "initializing",
         null,
         JSON.stringify(input.initPayload),
@@ -199,6 +207,8 @@ export class AppStore {
     return {
       roleId: input.roleId,
       relativeDir: input.relativeDir,
+      builtinKey,
+      isBuiltin: builtinKey !== null,
       initStatus: "initializing",
       initError: null,
       initPayload: input.initPayload,
@@ -210,16 +220,26 @@ export class AppStore {
   getRoleIndex(roleId: string): RoleIndexRecord | null {
     const row = this.db
       .prepare(
-        "SELECT role_id, relative_dir, init_status, init_error, init_payload_json, created_at, updated_at FROM roles WHERE role_id = ?",
+        "SELECT role_id, relative_dir, builtin_key, init_status, init_error, init_payload_json, created_at, updated_at FROM roles WHERE role_id = ?",
       )
       .get(roleId) as RoleIndexRow | undefined;
+    return row ? mapRoleIndex(row) : null;
+  }
+
+  /** 按系统内置角色标识查找（如 "xiacheng"）；找不到返回 null。 */
+  getRoleIndexByBuiltinKey(builtinKey: string): RoleIndexRecord | null {
+    const row = this.db
+      .prepare(
+        "SELECT role_id, relative_dir, builtin_key, init_status, init_error, init_payload_json, created_at, updated_at FROM roles WHERE builtin_key = ?",
+      )
+      .get(builtinKey) as RoleIndexRow | undefined;
     return row ? mapRoleIndex(row) : null;
   }
 
   listRoleIndexes(): RoleIndexRecord[] {
     const rows = this.db
       .prepare(
-        "SELECT role_id, relative_dir, init_status, init_error, init_payload_json, created_at, updated_at FROM roles ORDER BY created_at ASC, role_id ASC",
+        "SELECT role_id, relative_dir, builtin_key, init_status, init_error, init_payload_json, created_at, updated_at FROM roles ORDER BY created_at ASC, role_id ASC",
       )
       .all() as RoleIndexRow[];
     return rows.map(mapRoleIndex);
@@ -459,6 +479,8 @@ function mapRoleIndex(row: RoleIndexRow): RoleIndexRecord {
   return {
     roleId: row.role_id,
     relativeDir: row.relative_dir,
+    builtinKey: row.builtin_key,
+    isBuiltin: row.builtin_key !== null,
     initStatus: row.init_status,
     initError: row.init_error,
     initPayload:

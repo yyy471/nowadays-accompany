@@ -22,8 +22,16 @@ import {
   ToolResultNotFoundError,
   WindowNotFoundError,
 } from "../domain/errors.js";
+import type { ModelUsage } from "../domain/model.js";
 import { registerToolResultEvidence } from "./evidence.js";
 import { openBusinessDatabase } from "./schema.js";
+
+export type ModelCallKind =
+  | "primary_decision"
+  | "segment_annotation"
+  | "scene_plan"
+  | "memory_maintenance"
+  | "other";
 
 export interface RoleDefinition {
   text: string;
@@ -32,7 +40,10 @@ export interface RoleDefinition {
 
 export interface RoleRecord {
   roleId: string;
+  builtinKey: string | null;
+  isBuiltin: boolean;
   displayName: string;
+  bioText: string;
   definition: RoleDefinition;
   definitionRevision: number;
   state: Record<string, unknown>;
@@ -109,6 +120,15 @@ export type TaskStatus = "active" | "paused" | "completed" | "failed";
 
 export type TaskOrigin = "user" | "autonomous" | "memory";
 
+export interface TaskUsageSummary {
+  inputTokens: number;
+  cachedTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  callCount: number;
+  missingUsageCalls: number;
+}
+
 export interface TaskRecord {
   taskId: string;
   roleId: string;
@@ -117,6 +137,11 @@ export interface TaskRecord {
   endReason: string | null;
   origin: TaskOrigin;
   initiatorExecutionId: string | null;
+  continuable: boolean;
+  waitReason: string | null;
+  consecutiveFailures: number;
+  consecutiveNoProgress: number;
+  usage: TaskUsageSummary;
   createdAt: string;
   updatedAt: string;
 }
@@ -239,7 +264,9 @@ export interface TaskNoteRecord {
 
 interface RoleRow {
   role_id: string;
+  builtin_key: string | null;
   display_name: string;
+  bio_text: string;
   definition_text: string;
   definition_payload_json: string;
   definition_revision: number;
@@ -290,6 +317,10 @@ interface TaskRow {
   end_reason: string | null;
   origin: TaskOrigin;
   initiator_execution_id: string | null;
+  continuable: number;
+  wait_reason: string | null;
+  consecutive_failures: number;
+  consecutive_no_progress: number;
   created_at: string;
   updated_at: string;
 }
@@ -386,7 +417,9 @@ export class RoleStore {
 
   createRoleRecord(input: {
     roleId: string;
+    builtinKey?: string | null;
     displayName: string;
+    bioText?: string;
     definitionText: string;
     definitionPayload: Record<string, unknown>;
     initialState: Record<string, unknown>;
@@ -398,11 +431,13 @@ export class RoleStore {
       const now = new Date().toISOString();
       this.db
         .prepare(
-          "INSERT INTO roles (role_id, display_name, definition_text, definition_payload_json, definition_revision, state_json, state_version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO roles (role_id, builtin_key, display_name, bio_text, definition_text, definition_payload_json, definition_revision, state_json, state_version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .run(
           input.roleId,
+          input.builtinKey ?? null,
           input.displayName,
+          input.bioText ?? "",
           input.definitionText,
           JSON.stringify(input.definitionPayload),
           "1",
@@ -427,13 +462,39 @@ export class RoleStore {
   getRole(roleId: string): RoleRecord {
     const row = this.db
       .prepare(
-        "SELECT role_id, display_name, definition_text, definition_payload_json, definition_revision, state_json, state_version, created_at, updated_at FROM roles WHERE role_id = ?",
+        "SELECT role_id, builtin_key, display_name, bio_text, definition_text, definition_payload_json, definition_revision, state_json, state_version, created_at, updated_at FROM roles WHERE role_id = ?",
       )
       .get(roleId) as RoleRow | undefined;
     if (!row) {
       throw new RoleNotFoundError(roleId);
     }
     return mapRole(row);
+  }
+
+  /** 系统内部同步预置只读展示介绍（仅 builtin 角色启动初始化使用，不走定义改写接口）。 */
+  syncBuiltinRoleIdentity(input: {
+    roleId: string;
+    builtinKey: string;
+    bioText: string;
+  }): RoleRecord {
+    const current = this.getRole(input.roleId);
+    if (
+      current.builtinKey === input.builtinKey &&
+      current.bioText === input.bioText
+    ) {
+      return current;
+    }
+    this.db
+      .prepare(
+        "UPDATE roles SET builtin_key = ?, bio_text = ?, updated_at = ? WHERE role_id = ?",
+      )
+      .run(
+        input.builtinKey,
+        input.bioText,
+        new Date().toISOString(),
+        input.roleId,
+      );
+    return this.getRole(input.roleId);
   }
 
   getDefaultWindow(roleId: string): WindowRecord {
@@ -821,23 +882,103 @@ export class RoleStore {
   getTask(roleId: string, taskId: string): TaskRecord {
     const row = this.db
       .prepare(
-        "SELECT task_id, role_id, goal, status, end_reason, origin, initiator_execution_id, created_at, updated_at FROM tasks WHERE task_id = ? AND role_id = ?",
+        `SELECT task_id, role_id, goal, status, end_reason, origin, initiator_execution_id,
+                continuable, wait_reason, consecutive_failures, consecutive_no_progress,
+                created_at, updated_at
+           FROM tasks
+          WHERE task_id = ? AND role_id = ?`,
       )
       .get(taskId, roleId) as TaskRow | undefined;
     if (!row) {
       throw new TaskNotFoundError(taskId);
     }
-    return mapTask(row);
+    const usageByTask = this.readTaskUsageMap(roleId, taskId);
+    return mapTask(row, usageByTask.get(taskId) ?? emptyTaskUsage());
   }
 
   listTasks(roleId: string): TaskRecord[] {
     this.assertRole(roleId);
     const rows = this.db
       .prepare(
-        "SELECT task_id, role_id, goal, status, end_reason, origin, initiator_execution_id, created_at, updated_at FROM tasks WHERE role_id = ? ORDER BY created_at ASC, task_id ASC",
+        `SELECT task_id, role_id, goal, status, end_reason, origin, initiator_execution_id,
+                continuable, wait_reason, consecutive_failures, consecutive_no_progress,
+                created_at, updated_at
+           FROM tasks
+          WHERE role_id = ?
+          ORDER BY created_at ASC, task_id ASC`,
       )
       .all(roleId) as TaskRow[];
-    return rows.map(mapTask);
+    const usageByTask = this.readTaskUsageMap(roleId);
+    return rows.map((row) =>
+      mapTask(row, usageByTask.get(row.task_id) ?? emptyTaskUsage()),
+    );
+  }
+
+  /** 查询任务最近一次关联窗口的执行上下文，供显式取消暂停任务时写入流事件。 */
+  findLatestTaskExecutionWindow(
+    roleId: string,
+    taskId: string,
+  ): { executionId: string; windowId: string } | null {
+    const row = this.db
+      .prepare(
+        `SELECT e.execution_id, e.window_id
+           FROM execution_tasks et
+           JOIN executions e ON e.execution_id = et.execution_id
+          WHERE et.task_id = ? AND e.role_id = ? AND e.window_id IS NOT NULL
+          ORDER BY e.created_at DESC, e.rowid DESC
+          LIMIT 1`,
+      )
+      .get(taskId, roleId) as
+      | { execution_id: string; window_id: string }
+      | undefined;
+    if (!row) {
+      return null;
+    }
+    return { executionId: row.execution_id, windowId: row.window_id };
+  }
+
+  private readTaskUsageMap(
+    roleId: string,
+    taskId?: string,
+  ): Map<string, TaskUsageSummary> {
+    const rows = (
+      taskId === undefined
+        ? this.db
+            .prepare(
+              `SELECT task_id, usage_json
+                 FROM model_calls
+                WHERE role_id = ?
+                  AND task_id IS NOT NULL
+                  AND call_kind = 'primary_decision'
+                  AND purpose != 'memory_maintenance'
+                  AND status != 'running'`,
+            )
+            .all(roleId)
+        : this.db
+            .prepare(
+              `SELECT task_id, usage_json
+                 FROM model_calls
+                WHERE role_id = ?
+                  AND task_id = ?
+                  AND call_kind = 'primary_decision'
+                  AND purpose != 'memory_maintenance'
+                  AND status != 'running'`,
+            )
+            .all(roleId, taskId)
+    ) as Array<{ task_id: string; usage_json: string | null }>;
+    const map = new Map<string, TaskUsageSummary>();
+    for (const row of rows) {
+      let summary = map.get(row.task_id);
+      if (summary === undefined) {
+        summary = emptyTaskUsage();
+        map.set(row.task_id, summary);
+      }
+      accumulateTaskUsage(summary, row.usage_json);
+    }
+    for (const summary of map.values()) {
+      summary.totalTokens = summary.inputTokens + summary.outputTokens;
+    }
+    return map;
   }
 
   finishTask(input: {
@@ -863,7 +1004,7 @@ export class RoleStore {
       }
       this.db
         .prepare(
-          "UPDATE tasks SET status = ?, end_reason = ?, updated_at = ? WHERE task_id = ?",
+          "UPDATE tasks SET status = ?, end_reason = ?, continuable = 0, wait_reason = NULL, updated_at = ? WHERE task_id = ?",
         )
         .run(
           input.status,
@@ -1105,6 +1246,19 @@ export class RoleStore {
           "INSERT INTO execution_tasks (execution_id, task_id, relation, created_at) VALUES (?, ?, ?, ?)",
         )
         .run(input.executionId, input.taskId, input.relation, now);
+      // 首轮模型调用发生在首个工具创建任务之前，关联建立时把该次执行主决策模型调用一并归属到原任务。
+      if (input.relation === "initiates" || input.relation === "continues") {
+        this.db
+          .prepare(
+            `UPDATE model_calls
+                SET task_id = ?
+              WHERE role_id = ?
+                AND execution_id = ?
+                AND task_id IS NULL
+                AND call_kind = 'primary_decision'`,
+          )
+          .run(input.taskId, input.roleId, input.executionId);
+      }
       return {
         executionId: input.executionId,
         taskId: input.taskId,
@@ -1771,7 +1925,10 @@ export class RoleStore {
 function mapRole(row: RoleRow): RoleRecord {
   return {
     roleId: row.role_id,
+    builtinKey: row.builtin_key,
+    isBuiltin: row.builtin_key !== null,
     displayName: row.display_name,
+    bioText: row.bio_text,
     definition: {
       text: row.definition_text,
       payload: JSON.parse(row.definition_payload_json) as Record<
@@ -1825,7 +1982,60 @@ function mapRoleBinding(row: RoleBindingRow): RoleBindingRecord {
   };
 }
 
-function mapTask(row: TaskRow): TaskRecord {
+function emptyTaskUsage(): TaskUsageSummary {
+  return {
+    inputTokens: 0,
+    cachedTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    callCount: 0,
+    missingUsageCalls: 0,
+  };
+}
+
+function isFiniteNonNegativeNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function accumulateTaskUsage(
+  target: TaskUsageSummary,
+  usageJson: string | null,
+): void {
+  target.callCount += 1;
+  if (usageJson === null) {
+    target.missingUsageCalls += 1;
+    return;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(usageJson) as unknown;
+  } catch {
+    target.missingUsageCalls += 1;
+    return;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    target.missingUsageCalls += 1;
+    return;
+  }
+  const usage = parsed as ModelUsage;
+  const hasInput = isFiniteNonNegativeNumber(usage.inputTokens);
+  const hasOutput = isFiniteNonNegativeNumber(usage.outputTokens);
+  if (!hasInput && !hasOutput) {
+    target.missingUsageCalls += 1;
+    return;
+  }
+  const inputTokens = hasInput ? usage.inputTokens! : 0;
+  const outputTokens = hasOutput ? usage.outputTokens! : 0;
+  const rawCached = isFiniteNonNegativeNumber(usage.cachedTokens)
+    ? usage.cachedTokens!
+    : 0;
+  const cachedTokens = hasInput ? Math.min(rawCached, inputTokens) : rawCached;
+  target.inputTokens += inputTokens;
+  target.cachedTokens += cachedTokens;
+  target.outputTokens += outputTokens;
+}
+
+function mapTask(row: TaskRow, usage = emptyTaskUsage()): TaskRecord {
   return {
     taskId: row.task_id,
     roleId: row.role_id,
@@ -1834,6 +2044,11 @@ function mapTask(row: TaskRow): TaskRecord {
     endReason: row.end_reason,
     origin: row.origin,
     initiatorExecutionId: row.initiator_execution_id,
+    continuable: row.continuable === 1,
+    waitReason: row.wait_reason,
+    consecutiveFailures: row.consecutive_failures,
+    consecutiveNoProgress: row.consecutive_no_progress,
+    usage,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
