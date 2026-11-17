@@ -10,6 +10,7 @@ import {
 import type {
   AgentRound,
   AgentRunResult,
+  AgentSegmentStopKind,
   AgentTaskAction,
   AgentToolCallRecord,
   BackgroundToolSettlement,
@@ -77,7 +78,15 @@ export interface AgentGraphDeps {
   onToolBackgrounded?: () => void;
   /** 转后台时登记仍在执行的工具 promise，供空闲判断与退出时等待结算。 */
   registerBackgroundTool?: (settlement: Promise<void>, roleId: string) => void;
+  /** 本段即将收尾（轮次上限、显式续行、暂停或熔断）时通知服务调整系统提示。 */
+  onSegmentHalt?: (kind: AgentSegmentStopKind) => void;
 }
+
+/** 办事任务单段执行上限；达到后提交进度回复并自动切段续行（DL-154）。 */
+export const DEFAULT_MAX_TOOL_ROUNDS = 15;
+
+/** 同一工具／错误码连续失败达到该次数即熔断（DL-154）。 */
+export const CIRCUIT_FAILURE_THRESHOLD = 3;
 
 interface PendingToolCall {
   wireCallId: string;
@@ -99,6 +108,9 @@ interface AgentGraphValue {
   taskId: string | null;
   modelCallId: string | null;
   wireMapping: Record<string, string>;
+  stopKind: AgentSegmentStopKind | null;
+  successfulToolCalls: number;
+  progressNotes: number;
 }
 
 const AgentState = Annotation.Root({
@@ -145,6 +157,18 @@ const AgentState = Annotation.Root({
     reducer: (_previous, next) => next,
     default: () => ({}),
   }),
+  stopKind: Annotation<AgentSegmentStopKind | null>({
+    reducer: (_previous, next) => next,
+    default: () => null,
+  }),
+  successfulToolCalls: Annotation<number>({
+    reducer: (_previous, next) => next,
+    default: () => 0,
+  }),
+  progressNotes: Annotation<number>({
+    reducer: (_previous, next) => next,
+    default: () => 0,
+  }),
 });
 
 type AgentStateValue = typeof AgentState.State;
@@ -163,13 +187,15 @@ export class AgentGraphRunner {
   private readonly maxToolRounds: number;
   private readonly graph: ReturnType<typeof buildGraph>;
   private resuming = false;
+  /** 本次执行开始时的任务编号；用于判断轮次上限后能否续行。 */
+  private initialTaskId: string | null = null;
 
   constructor(
     private readonly deps: AgentGraphDeps,
     checkpointer: SqliteSaver,
   ) {
     this.toolMap = new Map(deps.tools.map((tool) => [tool.name, tool]));
-    this.maxToolRounds = deps.maxToolRounds ?? 8;
+    this.maxToolRounds = deps.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
     this.graph = buildGraph(this, checkpointer);
   }
 
@@ -182,6 +208,7 @@ export class AgentGraphRunner {
     resume?: boolean;
   }): Promise<AgentRunResult> {
     this.resuming = input.resume === true;
+    this.initialTaskId = input.taskId ?? null;
     const initialState: AgentGraphValue = {
       executionId: input.executionId,
       roleId: input.roleId,
@@ -196,12 +223,15 @@ export class AgentGraphRunner {
       taskId: input.taskId ?? null,
       modelCallId: null,
       wireMapping: {},
+      stopKind: null,
+      successfulToolCalls: 0,
+      progressNotes: 0,
     };
     const result = (await this.graph.invoke(
       input.resume === true ? (null as unknown as AgentGraphValue) : initialState,
       {
         configurable: { thread_id: input.executionId },
-        recursionLimit: this.maxToolRounds * 2 + 4,
+        recursionLimit: this.maxToolRounds * 2 + 6,
       },
     )) as AgentGraphValue;
     return {
@@ -210,10 +240,27 @@ export class AgentGraphRunner {
       rounds: result.rounds,
       taskId: result.taskId,
       taskAction: result.taskAction ?? null,
+      segment: {
+        stopKind: result.stopKind ?? null,
+        successfulToolCalls: result.successfulToolCalls ?? 0,
+        progressNotes: result.progressNotes ?? 0,
+      },
     };
   }
 
   async modelNode(state: AgentStateValue): Promise<Partial<AgentGraphValue>> {
+    return this.modelRound(state, true);
+  }
+
+  /** 收尾轮：工具清单照旧提供以保持上下文稳定，但返回的调用一律不派发。 */
+  async closingNode(state: AgentStateValue): Promise<Partial<AgentGraphValue>> {
+    return this.modelRound(state, false);
+  }
+
+  private async modelRound(
+    state: AgentStateValue,
+    allowTools: boolean,
+  ): Promise<Partial<AgentGraphValue>> {
     this.deps.checkStopBoundary?.();
     this.deps.checkRunning();
     this.checkTask(state.roleId, state.taskId);
@@ -244,6 +291,7 @@ export class AgentGraphRunner {
         modelName: current.modelName,
         system: this.deps.systemPrompt(),
         messages: state.messages,
+        // 收尾轮仍提供工具清单以保持模型上下文稳定，但返回的调用一律不派发。
         tools: this.toolSpecs(),
         signal: this.deps.signal,
       })) {
@@ -348,8 +396,32 @@ export class AgentGraphRunner {
         round: state.round + 1,
       };
     }
+    if (!allowTools) {
+      // 收尾轮模型仍想调用工具时不再派发：本轮只提交文字说明。
+      return {
+        messages: [...state.messages, { role: "assistant", content: roundText }],
+        text,
+        pendingCalls: [],
+        modelCallId: callId,
+        round: state.round + 1,
+      };
+    }
     if (state.round + 1 >= this.maxToolRounds) {
-      throw new ToolRoundLimitError(this.maxToolRounds);
+      // 办事任务达到单段上限：本轮已请求的调用在工具节点按「未派发」回填，
+      // 由收尾轮汇报已保存的进度；任务保持 active 交回服务排队续行（DL-154）。
+      // 无任务的普通对话仍按原失败语义处理。
+      if (state.taskId === null && this.initialTaskId === null) {
+        throw new ToolRoundLimitError(this.maxToolRounds);
+      }
+      this.deps.onSegmentHalt?.("round_limit");
+      return {
+        messages: [...state.messages, assistant],
+        text,
+        pendingCalls: calls,
+        modelCallId: callId,
+        round: state.round + 1,
+        stopKind: "round_limit",
+      };
     }
     return {
       messages: [...state.messages, assistant],
@@ -370,6 +442,9 @@ export class AgentGraphRunner {
     const mapping: Record<string, string> = { ...state.wireMapping };
     let taskId = state.taskId;
     let statePatch = state.statePatch;
+    let stopKind = state.stopKind;
+    let successfulToolCalls = state.successfulToolCalls;
+    let progressNotes = state.progressNotes;
     const pendingWireIds = new Set(
       state.pendingCalls.map((call) => call.wireCallId),
     );
@@ -399,6 +474,23 @@ export class AgentGraphRunner {
     for (const [index, call] of state.pendingCalls.entries()) {
       this.deps.checkRunning();
       this.checkTask(state.roleId, taskId);
+      if (stopKind !== null) {
+        // 本段已停止派发（暂停／续行／熔断／轮次上限）：同批剩余调用标为未派发，
+        // 仍需给出配对的工具结果消息，保持下一轮请求结构合法。
+        const outcome = failedOutcome(
+          skippedCode(stopKind),
+          "本段已停止派发，该调用未执行",
+        );
+        roundRecords.push({
+          wireCallId: call.wireCallId,
+          toolCallId: null,
+          name: call.name,
+          arguments: call.arguments,
+          result: outcome,
+        });
+        toolMessages.push(toolResultMessage(call, outcome));
+        continue;
+      }
       const tool = this.toolMap.get(call.name);
       if (!tool) {
         const outcome = failedOutcome(
@@ -439,6 +531,28 @@ export class AgentGraphRunner {
         const outcome = await this.executeInternal(tool, call, state, taskId, index, checkDispatch);
         if (tool.source === "task" && outcome.status === "success") {
           taskAction = taskActionFromArgs(call.name, call.arguments) ?? taskAction;
+          if (call.name === "task_progress") {
+            progressNotes += 1;
+          }
+          if (
+            call.name === "task_pause" ||
+            call.name === "task_continue" ||
+            call.name === "task_finish"
+          ) {
+            const note = asObject(call.arguments)?.note;
+            if (typeof note === "string" && note.trim().length > 0) {
+              progressNotes += 1;
+            }
+          }
+          if (call.name === "task_pause") {
+            // 立即停止派发同批后续工具，下一节点只允许产出澄清说明（DL-158）。
+            stopKind = "pause_requested";
+            this.deps.onSegmentHalt?.("pause_requested");
+          } else if (call.name === "task_continue") {
+            // 模型显式声明分段续行：本段收尾后由服务排队下一执行段（DL-154）。
+            stopKind = "continue_requested";
+            this.deps.onSegmentHalt?.("continue_requested");
+          }
         }
         roundRecords.push({
           wireCallId: call.wireCallId,
@@ -543,6 +657,15 @@ export class AgentGraphRunner {
         result: outcome,
       });
       toolMessages.push(toolResultMessage(resultCall, outcome));
+      if (!begun.duplicate && outcome.status === "success") {
+        successfulToolCalls += 1;
+      }
+      // 同一工具／错误码连续失败达到阈值即熔断，同批剩余调用不再派发（DL-154）。
+      const streak = this.failureStreak(state.roleId, taskId);
+      if (streak !== null && streak.count >= CIRCUIT_FAILURE_THRESHOLD) {
+        stopKind = "circuit_breaker";
+        this.deps.onSegmentHalt?.("circuit_breaker");
+      }
     }
     if (state.modelCallId !== null) {
       this.deps.store.attachWireCallIds(state.modelCallId, mapping);
@@ -583,7 +706,25 @@ export class AgentGraphRunner {
       taskAction,
       taskId,
       wireMapping: mapping,
+      stopKind,
+      successfulToolCalls,
+      progressNotes,
     };
+  }
+
+  /** 连续失败查询只影响熔断判定，存储异常时按「无连续失败」处理。 */
+  private failureStreak(
+    roleId: string,
+    taskId: string | null,
+  ): { count: number; toolName: string; code: string } | null {
+    if (taskId === null) {
+      return null;
+    }
+    try {
+      return this.deps.roleStore.taskToolFailureStreak(roleId, taskId);
+    } catch {
+      return null;
+    }
   }
 
   private checkTask(roleId: string, taskId: string | null): void {
@@ -1077,12 +1218,31 @@ function buildGraph(deps: AgentGraphRunner, checkpointer: SqliteSaver) {
   return new StateGraph(AgentState)
     .addNode("model", (state) => deps.modelNode(state))
     .addNode("tools", (state) => deps.toolsNode(state))
+    .addNode("closing", (state) => deps.closingNode(state))
     .addEdge(START, "model")
     .addConditionalEdges("model", (state) =>
       state.pendingCalls.length > 0 ? "tools" : END,
     )
-    .addEdge("tools", "model")
+    // 本段已决定停止派发时，工具节点之后只做一轮无工具的收尾说明就结束。
+    .addConditionalEdges("tools", (state) =>
+      state.stopKind !== null ? "closing" : "model",
+    )
+    .addEdge("closing", END)
     .compile({ checkpointer });
+}
+
+/** 未派发调用的诊断码：区分暂停、续行、熔断与轮次上限四种收尾原因。 */
+function skippedCode(kind: AgentSegmentStopKind): string {
+  switch (kind) {
+    case "pause_requested":
+      return "TOOL_SKIPPED_AFTER_PAUSE";
+    case "continue_requested":
+      return "TOOL_SKIPPED_AFTER_CONTINUE";
+    case "circuit_breaker":
+      return "TOOL_SKIPPED_AFTER_CIRCUIT_BREAKER";
+    case "round_limit":
+      return "TOOL_SKIPPED_AFTER_ROUND_LIMIT";
+  }
 }
 
 function toolResultMessage(

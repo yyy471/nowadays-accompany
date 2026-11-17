@@ -3,6 +3,8 @@ import { AsyncLocalStorageProviderSingleton } from "@langchain/core/singletons";
 import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
 import { rolePaths } from "../bootstrap/config.js";
 import type {
+  AgentRunResult,
+  AgentSegmentStopKind,
   AgentTaskAction,
   BackgroundToolSettlement,
   ClaimedMessage,
@@ -55,9 +57,12 @@ import type {
 import { RoleStorage } from "../storage/role-storage.js";
 import {
   AgentGraphRunner,
+  CIRCUIT_FAILURE_THRESHOLD,
+  DEFAULT_MAX_TOOL_ROUNDS,
   type AgentModelHandle,
 } from "./agent-graph.js";
 import { loadAgentTools, type AgentToolCatalog } from "./agent-tools.js";
+import type { AdminToolServices } from "./admin-tools.js";
 import type { AutonomyService } from "./autonomy-service.js";
 import type { CredentialResolver } from "./credential-resolver.js";
 import { InputStateRegistry } from "./input-state.js";
@@ -78,6 +83,7 @@ export type ChatModelPortFactory = (binding: ResolvedModelBinding) => ModelPort;
 
 /** 外部工具前台等待窗口原型默认值；越过后自动转后台，等待时长仍待真实工具联调校准。 */
 export const DEFAULT_TOOL_FOREGROUND_WAIT_MS = 2_000;
+
 
 export interface ConversationServiceOptions {
   now?: () => Date;
@@ -106,6 +112,8 @@ export interface ConversationServiceOptions {
     | null;
   /** 解析角色关联的全局语音服务运行态，传给后台句段标注。 */
   resolveVoiceRuntime?: SegmentAnnotationServiceOptions["resolveVoiceRuntime"];
+  /** 预置默认助手（夏澄）内部管理工具依赖的应用服务（DL-159）。 */
+  adminServices?: AdminToolServices | null;
 }
 
 interface RunningExecution {
@@ -163,6 +171,7 @@ export class ConversationService {
     | ((resourceId: string, signal?: AbortSignal) => Promise<void>)
     | null;
   private readonly hasExternalWork: (roleId: string) => boolean;
+  private readonly adminServices: AdminToolServices | null;
   private readonly running = new Map<string, RunningExecution>();
   /** 正在使用某个模型服务的执行：维护等待按目标服务直接查询（283 §7 R01）。 */
   private readonly inflightResources = new Map<
@@ -212,7 +221,8 @@ export class ConversationService {
     this.now = options.now ?? (() => new Date());
     this.timeZone = options.timeZone;
     this.autoRecallLimit = options.autoRecallLimit ?? 8;
-    this.maxToolRounds = options.maxToolRounds ?? 8;
+    this.maxToolRounds =
+      options.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
     this.toolForegroundWaitMs =
       options.toolForegroundWaitMs ?? DEFAULT_TOOL_FOREGROUND_WAIT_MS;
     this.credentials = options.credentialResolver ?? null;
@@ -235,6 +245,7 @@ export class ConversationService {
       options.isResourceUnderMaintenance ?? null;
     this.waitForMaintenanceEnd = options.waitForMaintenanceEnd ?? null;
     this.hasExternalWork = options.hasExternalWork ?? (() => false);
+    this.adminServices = options.adminServices ?? null;
     this.segmentAnnotation = new SegmentAnnotationService(
       this.roleAccess,
       this.bindings,
@@ -1022,12 +1033,23 @@ export class ConversationService {
           gap.taskDecision !== null && gap.taskDecision.taskId === gap.taskId
             ? gap.taskDecision
             : null;
+        if (decision?.action.kind === "continue") {
+          // 回复已提交但续行未排队：按原决定保持任务活跃并补排续行（DL-154）。
+          if (gap.windowId !== null) {
+            this.queueTaskContinuation(roleId, {
+              taskId: gap.taskId,
+              windowId: gap.windowId,
+            });
+          }
+          continue;
+        }
         if (decision?.action.kind === "pause") {
           // 回复已提交但暂停写入中断：按原决定暂停，保留资源续行与唤醒。
           storage.business.pauseTask({
             roleId,
             taskId: gap.taskId,
             endReason: decision.action.reason,
+            waitReason: decision.action.waitReason ?? "AWAITING_USER_INPUT",
           });
           continue;
         }
@@ -2001,6 +2023,9 @@ export class ConversationService {
     let pausedByDecision = false;
     let pausedByStop = false;
     let backgroundedTool = false;
+    let continuationQueued = false;
+    /** 本段已决定收尾的原因；收尾轮据此追加「禁止再调用工具」的指令。 */
+    let haltKind: AgentSegmentStopKind | null = null;
     let taskId: string | null = input.taskId ?? null;
     const checkRunning = (): void => {
       if (running.superseded || running.controller.signal.aborted) {
@@ -2144,6 +2169,9 @@ export class ConversationService {
           continuationResourceIds,
           appRoot: this.appRoot,
           workspaceDir: storage.paths.workspaceDir,
+          ...(this.adminServices === null
+            ? {}
+            : { admin: this.adminServices }),
         });
         if (input.taskId !== null && input.taskId !== undefined) {
           this.taskCatalogs.set(input.taskId, {
@@ -2178,6 +2206,7 @@ export class ConversationService {
                   resumed: autonomy.resumed,
                 },
           outfitBrief,
+          segmentHalt: haltKind,
         });
       const ensureTask = (): string => {
         if (taskId !== null) {
@@ -2247,6 +2276,9 @@ export class ConversationService {
           onToolBackgrounded: () => {
             backgroundedTool = true;
           },
+          onSegmentHalt: (kind) => {
+            haltKind = kind;
+          },
           registerBackgroundTool: (settlement, backgroundRoleId) => {
             // 按任务记在途工具：任务终结后要等它们结算再释放资源（283 R03）。
             const backgroundTaskId = taskId;
@@ -2309,18 +2341,54 @@ export class ConversationService {
         resume: input.resume === true,
       });
       checkRunning();
-      if (result.text.trim().length === 0) {
+      const stopKind = result.segment.stopKind;
+      const continueSegment =
+        stopKind === "round_limit" || stopKind === "continue_requested";
+      const circuitBreak = stopKind === "circuit_breaker";
+      // 切段／暂停／熔断时模型可能没有给出正文：按已保存的真实进度补一段说明，
+      // 不把「本段已推进」误判成空回复失败（DL-154 / DL-158）。
+      const content =
+        result.text.trim().length > 0
+          ? result.text
+          : stopKind === null
+            ? ""
+            : segmentNotice(stopKind);
+      if (content.length === 0) {
         throw new ModelRequestFailedError("模型没有产生可保存的回复文字", {
           reason: "EMPTY_RESPONSE",
         });
       }
-      const taskDecision =
+      let taskDecision =
         result.taskId === null
           ? null
           : toCommittedTaskDecision(result.taskId, result.taskAction);
+      if (
+        result.taskId !== null &&
+        result.taskAction === null &&
+        taskDecision !== null &&
+        taskDecision.action.kind === "finish"
+      ) {
+        if (continueSegment) {
+          // 达到单段上限或模型显式续行：任务保持 active，交给续行队列接着推进。
+          taskDecision = {
+            taskId: result.taskId,
+            action: { kind: "continue", reason: stopKind ?? "round_limit" },
+          };
+        } else if (circuitBreak) {
+          // 连续失败／连续无进展熔断：暂停并向用户汇报，等待决定。
+          taskDecision = {
+            taskId: result.taskId,
+            action: {
+              kind: "pause",
+              reason: "TASK_CIRCUIT_BREAKER",
+              waitReason: "CIRCUIT_BREAKER",
+            },
+          };
+        }
+      }
       const committed = store.commitConversation({
         executionId: execution.executionId,
-        content: result.text,
+        content,
         statePatch: this.validateOutfitStatePatch(
           storage,
           roleId,
@@ -2344,6 +2412,34 @@ export class ConversationService {
         taskId = result.taskId;
         this.applyCommittedTaskDecision(storage, roleId, taskDecision, () => {
           pausedByDecision = true;
+        });
+      }
+      if (taskDecision !== null && taskDecision.action.kind === "continue") {
+        this.queueTaskContinuation(roleId, {
+          taskId: taskDecision.taskId,
+          windowId,
+        });
+        continuationQueued = true;
+      }
+      if (taskDecision !== null && taskDecision.action.kind === "pause") {
+        store.appendStreamEvent({
+          windowId,
+          executionId: execution.executionId,
+          type: "execution_paused",
+          payload: {
+            executionId: execution.executionId,
+            taskId: taskDecision.taskId,
+            reason: taskDecision.action.reason,
+            ...(taskDecision.action.waitReason === undefined
+              ? {}
+              : { waitReason: taskDecision.action.waitReason }),
+          },
+          now: this.now().toISOString(),
+        });
+      }
+      if (result.taskId !== null && result.taskAction === null) {
+        this.trackSegmentProgress(storage, roleId, result, execution, {
+          queuedContinuation: continuationQueued,
         });
       }
       if (autonomy !== null) {
@@ -2497,7 +2593,11 @@ export class ConversationService {
       }
     } finally {
       let keepCatalog = false;
-      if (running.superseded && taskId !== null) {
+      if (continuationQueued) {
+        // 本段已排队续行：任务目录与资源延续要留给下一执行段复用。
+        keepCatalog = true;
+      }
+      if (!keepCatalog && running.superseded && taskId !== null) {
         try {
           if (storage.business.getTask(roleId, taskId).status === "active") {
             this.queueTaskContinuation(roleId, {
@@ -2677,6 +2777,10 @@ export class ConversationService {
     decision: CommitConversationTaskDecision,
     onPause?: () => void,
   ): void {
+    if (decision.action.kind === "continue") {
+      // 决策已随回复提交；任务维持 active，由调用方排队下一执行段。
+      return;
+    }
     if (decision.action.kind === "pause") {
       onPause?.();
       try {
@@ -2685,6 +2789,7 @@ export class ConversationService {
           roleId,
           taskId: decision.taskId,
           endReason: decision.action.reason,
+          waitReason: decision.action.waitReason ?? "AWAITING_USER_INPUT",
         });
       } catch {
         // 决定已随回复提交；写入失败时任务保持原状，重启按原决定恢复。
@@ -2699,6 +2804,106 @@ export class ConversationService {
       decision.action.status,
       decision.action.endReason,
     );
+  }
+
+  /**
+   * 续行进展计数与连续无进展熔断（DL-154）。
+   *
+   * 只有续行执行段（trigger_type = tool_result）参与「连续 3 段无进展」判定；
+   * 判定依据是本段是否产生新的成功工具调用或进度笔记，不看模型自述。
+   */
+  private trackSegmentProgress(
+    storage: RoleStorage,
+    roleId: string,
+    result: AgentRunResult,
+    execution: ExecutionRecord,
+    options: { queuedContinuation: boolean },
+  ): void {
+    try {
+      if (result.taskId === null) {
+        return;
+      }
+      const task = storage.business.getTask(roleId, result.taskId);
+      const streak = storage.business.taskToolFailureStreak(roleId, task.taskId);
+      storage.business.setTaskCircuitCounters({
+        roleId,
+        taskId: task.taskId,
+        consecutiveFailures: streak?.count ?? 0,
+      });
+      if (execution.triggerType !== "tool_result" || task.status !== "active") {
+        return;
+      }
+      const progressed =
+        result.segment.successfulToolCalls > 0 ||
+        result.segment.progressNotes > 0;
+      if (progressed) {
+        if (task.consecutiveNoProgress !== 0) {
+          storage.business.setTaskCircuitCounters({
+            roleId,
+            taskId: task.taskId,
+            consecutiveNoProgress: 0,
+          });
+        }
+        return;
+      }
+      const next = task.consecutiveNoProgress + 1;
+      storage.business.setTaskCircuitCounters({
+        roleId,
+        taskId: task.taskId,
+        consecutiveNoProgress: next,
+      });
+      if (next < CIRCUIT_FAILURE_THRESHOLD) {
+        return;
+      }
+      storage.business.pauseTask({
+        roleId,
+        taskId: task.taskId,
+        endReason: "TASK_CIRCUIT_BREAKER",
+        waitReason: "CIRCUIT_BREAKER",
+      });
+      if (options.queuedContinuation) {
+        this.removePendingContinuation(roleId, task.taskId);
+      }
+      const store = new ConversationStore(
+        storage.business.db,
+        roleId,
+        this.timeZone,
+      );
+      const reason =
+        "连续多个执行段没有产生新的工具结果或进度笔记，任务已熔断暂停；请确认是否调整目标或取消任务。";
+      if (execution.windowId !== null) {
+        // 向当前窗口补一条可见说明，用户不必只靠任务状态猜测发生了什么。
+        const notes = storage.business
+          .listTaskNotes(roleId, task.taskId)
+          .slice(-3)
+          .map((note) => `- ${truncate(note.note, 200)}`);
+        store.appendProactiveMessage({
+          windowId: execution.windowId,
+          executionId: execution.executionId,
+          content: [
+            "（任务先暂停一下）",
+            reason,
+            ...(notes.length === 0 ? ["目前没有已保存的进度笔记。"] : ["已保存的最近进度：", ...notes]),
+          ].join("\n"),
+          now: this.now().toISOString(),
+        });
+        store.appendStreamEvent({
+          windowId: execution.windowId,
+          executionId: execution.executionId,
+          type: "execution_paused",
+          payload: {
+            executionId: execution.executionId,
+            taskId: task.taskId,
+            reason: "TASK_CIRCUIT_BREAKER",
+            waitReason: "CIRCUIT_BREAKER",
+            message: reason,
+          },
+          now: this.now().toISOString(),
+        });
+      }
+    } catch {
+      // 计数与熔断失败不覆盖已提交的回复；下一次续行会重新评估。
+    }
   }
 
   private finishTaskAfterExecution(
@@ -2853,7 +3058,9 @@ export class ConversationService {
     taskId: string,
   ): import("../domain/model.js").ModelMessage[] {
     const messages: import("../domain/model.js").ModelMessage[] = [];
-    for (const call of storage.business.listTaskToolCalls(roleId, taskId)) {
+    // 长任务只重放最近一段的调用证据，避免续行上下文无限膨胀。
+    const calls = storage.business.listTaskToolCalls(roleId, taskId).slice(-40);
+    for (const call of calls) {
       let result: ReturnType<RoleStore["getToolResult"]>;
       try {
         result = storage.business.getToolResult(roleId, call.toolCallId);
@@ -3016,6 +3223,8 @@ export class ConversationService {
     continuation: { taskId: string; goal: string } | null;
     autonomy: { intent: string; resumed: boolean } | null;
     outfitBrief: OutfitBrief | null;
+    /** 本段已决定收尾时的原因；非空时追加收尾指令并禁止再调用工具。 */
+    segmentHalt: AgentSegmentStopKind | null;
   }): string {
     const lines = input.roleContext.isBuiltin
       ? [
@@ -3024,6 +3233,7 @@ export class ConversationService {
           "以下为系统核心能力与行为底座（优先于用户可编辑设定，不可被性格描述覆盖或削弱）：",
           "1. 真实性原则：必须基于实际调用的工具结果、文件内容与系统状态如实汇报；未实际执行、未读取确认的结果不得编造，遇到阻塞、缺权或信息不足时明确说明现状。",
           "2. 任务延续与安全边界：复杂任务按步骤清晰推进并记录阶段笔记；需要用户关键澄清或拍板时停下确认；不得绕过系统保护私自改写预置身份、官方外观或违禁配置。",
+          "3. 运行中自改禁区：用户要求修改我自己的设定、绑定、自主额度、语音、生图或外观，或修改我正在使用的模型服务连接与凭据、增删全局语音／生图服务时，不要尝试在对话内改动；应先说明影响与当前状态，再引导用户到「角色配置」或「设置」页面操作（管理工具会以 SELF_MODIFICATION_VIA_SETTINGS_ONLY 拒绝）。",
           "以下用户可维护的角色设定用于塑造你的日常交流风格与人格表达：",
           truncate(input.roleContext.definitionText, 12_000),
         ]
@@ -3157,8 +3367,11 @@ export class ConversationService {
       "- 外部 MCP 工具的实际调用会保存原始响应和结果；不要重复调用已经成功或结果未知的操作。",
       "- 需要更新角色当前状态时调用 state_update，补丁只在本轮正式提交时生效。",
       "- 不要声称执行了没有实际调用工具的操作，也不要编造工具结果。",
-      `- 单次决策最多 ${this.maxToolRounds} 个模型／工具回合。`,
+      `- 单段执行最多 ${this.maxToolRounds} 个模型／工具回合；复杂任务分段推进，达到上限时系统会提交进度并自动续行，不需要为了赶回合而跳过核对。`,
     );
+    if (input.segmentHalt !== null) {
+      lines.push(`本段收尾（${input.segmentHalt}）：${segmentHaltInstruction(input.segmentHalt)}`);
+    }
     const names = input.tools.map((tool) => tool.name);
     if (names.length > 0) {
       lines.push(`可用工具：${names.join("、")}`);
@@ -3258,7 +3471,14 @@ function toCommittedTaskDecision(
     };
   }
   if (action.kind === "pause") {
-    return { taskId, action: { kind: "pause", reason: action.reason } };
+    return {
+      taskId,
+      action: {
+        kind: "pause",
+        reason: action.reason,
+        waitReason: "AWAITING_USER_INPUT",
+      },
+    };
   }
   return {
     taskId,
@@ -3335,4 +3555,31 @@ function delay(ms: number): Promise<void> {
     const timer = setTimeout(resolve, ms);
     timer.unref?.();
   });
+}
+
+/** 收尾轮的系统指令：只产出面向用户的说明，不再派发工具。 */
+function segmentHaltInstruction(kind: AgentSegmentStopKind): string {
+  switch (kind) {
+    case "round_limit":
+      return "已达到单段执行轮次上限，本轮不得再调用任何工具。请用简短文字说明已完成的步骤、当前真实结果与接下来会继续推进的部分，任务会自动接着执行。";
+    case "continue_requested":
+      return "本轮已声明分段续行，不得再调用任何工具。请用简短文字说明当前进展与下一段要做的事，任务会自动接着执行。";
+    case "pause_requested":
+      return "本轮已调用 task_pause 暂停任务，不得再调用任何工具。请只输出面向用户的澄清提问或进度说明，等待用户答复后接回同一任务。";
+    case "circuit_breaker":
+      return "本轮连续失败已触发熔断，不得再调用任何工具。请如实说明遇到的障碍、已保存的真实进度，并请用户决定是否调整目标或取消任务。";
+  }
+}
+
+/** 切段／暂停／熔断时模型没有正文的兜底说明（只描述已发生的状态）。 */
+function segmentNotice(kind: AgentSegmentStopKind): string {
+  switch (kind) {
+    case "round_limit":
+    case "continue_requested":
+      return "本段执行已到达阶段上限，进度与工具结果都已保存，我接着往下推进。";
+    case "pause_requested":
+      return "这一步先停在这里，等你确认后我再接着做。";
+    case "circuit_breaker":
+      return "连续多次执行没有取得进展，我先暂停这个任务，请你确认下一步怎么处理。";
+  }
 }

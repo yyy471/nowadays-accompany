@@ -20,6 +20,8 @@ import { MemoryQueryService } from "./memory-query-service.js";
 import type { AutonomyService } from "./autonomy-service.js";
 import { McpToolClient, type McpToolInfo } from "../mcp/client.js";
 import { SkillLibrary } from "../skills/skill-library.js";
+import { createAdminTools, type AdminToolServices } from "./admin-tools.js";
+import { XIA_CHENG_BUILTIN_KEY } from "./preset-assistant.js";
 import type { AppStore } from "../storage/app-store.js";
 import { AppearanceStore } from "../storage/appearance-store.js";
 import type { RoleAccess } from "./role-access.js";
@@ -41,6 +43,8 @@ export interface LoadAgentToolsInput {
   continuationResourceIds?: readonly string[];
   appRoot: string;
   workspaceDir: string;
+  /** 预置默认助手（夏澄）专用：内部管理工具依赖的应用服务。 */
+  admin?: AdminToolServices | null;
 }
 
 const TOOL_RESULT_LIMIT = 8000;
@@ -63,9 +67,31 @@ export async function loadAgentTools(
     stateUpdateTool(input.roleId, input.roleAccess),
     taskProgressTool(input.roleId, input.roleAccess),
     taskPauseTool(input.roleId, input.roleAccess),
+    taskContinueTool(input.roleId, input.roleAccess),
     taskFinishTool(input.roleId, input.roleAccess),
     toolReconcileTool(input.roleId, input.roleAccess),
   ];
+  if (input.admin !== undefined && input.admin !== null) {
+    let builtinKey: string | null = null;
+    try {
+      const role = input.roleAccess.withStore(input.roleId, (storage) =>
+        storage.business.getRole(input.roleId),
+      );
+      builtinKey = role.isBuiltin ? role.builtinKey : null;
+    } catch {
+      // 角色档案读不到时不挂载管理工具，交由后续正常错误路径处理。
+      builtinKey = null;
+    }
+    if (builtinKey === XIA_CHENG_BUILTIN_KEY) {
+      // 只有内置默认助手挂载内部管理工具；普通角色看不到这些能力（DL-159）。
+      tools.push(
+        ...createAdminTools({
+          ...input.admin,
+          builtinRoleId: input.roleId,
+        }),
+      );
+    }
+  }
   if (input.autonomy !== null && input.autonomy !== undefined) {
     tools.push(autonomyScheduleTool(input.roleId, input.autonomy));
     if (input.allowAutonomyShare === true) {
@@ -1288,8 +1314,55 @@ function taskPauseTool(
   };
 }
 
-function taskFinishTool(
+/**
+ * 显式续行声明（DL-154）：本段先提交进度回复，任务保持 active，
+ * 后端沿原 taskId 自动排入下一执行段继续推进。
+ */
+function taskContinueTool(
   roleId: string,
+  roleAccess: RoleAccess,
+): ConversationTool {
+  return {
+    name: "task_continue",
+    source: "task",
+    description:
+      "声明本段先收尾、任务尚未完成并需要继续推进：后端会在提交本轮进度说明后沿同一任务自动排入下一执行段。适合步骤很多、本轮只想推进一段的情况；任务确实完成或失败时改用 task_finish。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        note: { type: "string", description: "可选：同时保存一条进度笔记" },
+      },
+    },
+    async execute(args, context) {
+      return runTool(async () => {
+        if (context.taskId === null) {
+          return failedOutcome(
+            "TASK_REQUIRED",
+            "当前没有活动任务，无法声明续行",
+          );
+        }
+        const taskId = context.taskId;
+        const note = stringArg(args, "note");
+        if (note !== null && note.length <= 2000) {
+          try {
+            roleAccess.withStore(roleId, (storage) =>
+              storage.business.appendTaskNote({ roleId, taskId, note }),
+            );
+          } catch {
+            // 笔记保存失败不改变续行意图。
+          }
+        }
+        return {
+          status: "success",
+          rawResponse: { taskId, kind: "continue" },
+          adaptedResult: { taskId, kind: "continue" },
+        };
+      });
+    },
+  };
+}
+
+function taskFinishTool(  roleId: string,
   roleAccess: RoleAccess,
 ): ConversationTool {
   return {

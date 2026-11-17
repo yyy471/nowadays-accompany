@@ -140,7 +140,8 @@ export type ConversationToolSource =
   | "mcp"
   | "state"
   | "autonomy"
-  | "task";
+  | "task"
+  | "admin";
 
 export interface ConversationToolContext {
   roleId: string;
@@ -217,12 +218,35 @@ export interface BackgroundToolSettlement {
   committed: boolean;
 }
 
+/**
+ * 单段执行的结束原因（DL-154 / DL-158）：
+ * - `round_limit`：达到单段模型／工具轮次上限，任务继续保持 active 并自动续行；
+ * - `continue_requested`：模型显式调用 task_continue 声明分段落续行；
+ * - `pause_requested`：模型调用 task_pause，本段停止派发并转为等待用户澄清；
+ * - `circuit_breaker`：同一工具／错误码连续失败或连续多段无进展，强制熔断暂停。
+ */
+export type AgentSegmentStopKind =
+  | "round_limit"
+  | "continue_requested"
+  | "pause_requested"
+  | "circuit_breaker";
+
+export interface AgentSegmentSummary {
+  /** 本段结束原因；正常回复为 null。 */
+  stopKind: AgentSegmentStopKind | null;
+  /** 本段成功结算的外部／记录型工具调用数（用于续行无进展熔断）。 */
+  successfulToolCalls: number;
+  /** 本段保存的进度笔记数（含 task_pause／task_finish 附带的笔记）。 */
+  progressNotes: number;
+}
+
 export interface AgentRunResult {
   text: string;
   statePatch: Record<string, unknown>;
   rounds: AgentRound[];
   taskId: string | null;
   taskAction: AgentTaskAction | null;
+  segment: AgentSegmentSummary;
 }
 
 export interface AgentGraphState {

@@ -242,3 +242,40 @@
 证据目录：`backend/test-results/310-gate-fix-recheck-20261117/`（`run-1..6.log`、`negative-control.json`）。
 
 **遗留提示（不阻塞）**：轮询只保证维护批次「最终会发生」（上限 8s），不再校验启动及时性；若后续需守住延迟指标，应另加显式性能断言。同脚本 R01 的 `delay(150)` 仅作读取前稳定窗口、不参与断言，本次未改动。
+
+## 9. 包 2 实施记录（2026-11-17，自验通过，待独立复核）
+
+按 §7.1 包 2 范围实施「续行、澄清与夏澄管理工具」，覆盖单段 15 轮自动切段、连续失败／无进展熔断、`task_pause` 图内即时停派、同窗回复接回原 `taskId`、方案 A 内部管理工具与 MCP 样例闭环。以下为实施者自验结论，独立复核另行留证。
+
+### 9.1 单段切段与续行（DL-154）
+
+1. **单段上限**：[agent-graph.ts](../../../backend/src/application/agent-graph.ts) 新增 `DEFAULT_MAX_TOOL_ROUNDS = 15`，[conversation-service.ts](../../../backend/src/application/conversation-service.ts) 默认沿用同一常量，仍可通过 `maxToolRounds` 覆盖。
+2. **自动切段**：图内达到单段上限时不再抛 `ToolRoundLimitError`（该异常仅保留给未建立任务的普通对话），而是标记 `stopKind = round_limit`、停止派发同批剩余调用，并进入**收尾节点**（提供工具清单但忽略任何新调用）产出进度说明；回复提交后任务维持 `active`，由 `queueTaskContinuation` 沿原 `taskId` 排入下一执行段。
+3. **显式续行**：新增内部工具 `task_continue`（[agent-tools.ts](../../../backend/src/application/agent-tools.ts)），语义为「本段收尾、任务未完成」，走同一条收尾与排队路径；`task_finish`／普通回复仍按原语义结束任务。
+4. **停派可见性**：同批未派发调用以 `TOOL_SKIPPED_AFTER_{PAUSE|CONTINUE|CIRCUIT_BREAKER|ROUND_LIMIT}` 回填配对工具消息，不写 `tool_calls`，避免被当作已执行。
+5. **续行上下文**：`buildContinuationToolMessages` 只重放最近 40 条已保存调用证据，防止长任务续行上下文无限膨胀。
+
+### 9.2 暂停、澄清恢复与熔断（DL-154 / DL-158）
+
+1. **`task_pause` 图内即时停派**：一旦该轮成功执行 `task_pause`，同一批后续调用不再派发，下一节点只输出面向用户的澄清／进度说明，回复提交后任务以 `paused` 落库并写入 `wait_reason = AWAITING_USER_INPUT`、`continuable = 1`。
+2. **同窗回复接回原任务**：[conversation-store.ts](../../../backend/src/storage/conversation-store.ts) `beginExecution` 优先查找同窗口 `paused` 且 `continuable = 1`、`wait_reason ∈ {AWAITING_USER_INPUT, CIRCUIT_BREAKER}` 的用户任务，自动 `paused -> active` 并以 `relation = continues` 关联，原目标、进度笔记、已保存调用与资源延续随上下文注入；角色停止与额度暂停的恢复路径不变。
+3. **连续失败熔断**：`RoleStore.taskToolFailureStreak` 按真实 `tool_results` 从新到旧统计「同一工具 + 同一错误码」的连续失败，`failed` 与 `unknown` 同样计入、成功或换错误码即中断；达到 `CIRCUIT_FAILURE_THRESHOLD = 3` 时标记 `circuit_breaker`，同批停派，任务暂停为 `TASK_CIRCUIT_BREAKER`。
+4. **连续无进展熔断**：每次续行段收尾按「本段是否有新的成功工具调用或进度笔记」累计 `consecutive_no_progress`，连续 3 段无进展即暂停为 `TASK_CIRCUIT_BREAKER`，并向当前窗口补一条可见说明（含最近进度笔记），不只依赖任务状态。
+5. **计数持久化**：`tasks.consecutive_failures` / `consecutive_no_progress` 由运行期回写（暂停中的任务仍可更新，终态不再改写），供任务查询与后续页面展示。
+6. **崩溃恢复**：`reconcileCommittedGaps` 新增 `continue` 决定处理：回复已提交但续行未排队时，启动后补排续行；暂停决定补写 `wait_reason`。
+
+### 9.3 夏澄内部管理工具与方案 A 守卫（DL-159）
+
+新增 [admin-tools.ts](../../../backend/src/application/admin-tools.ts)，仅在 `builtin_key = 'xiacheng'` 时由 `loadAgentTools` 挂载，直接调用应用服务（内部工具回执，不走 HTTP 自循环）：
+
+- **只读**：`app_roles_list`、`app_role_get`、`app_activities_list`、`app_role_records_query`（消息／任务含 `usage`／记忆／日记／额度／唤醒）、`app_resources_list`、`app_resource_inspect`、`app_media_services_list`；MCP `env` 与模型凭据保持脱敏，不返回明文。
+- **普通角色写**：`app_role_create`、`app_role_activity`、`app_role_update`、`app_role_bindings_set`（支持 `expectedRevision`）、`app_role_autonomy_set`；目标处于 `active`/`stopping` 时先 `requestStop` 并轮询等待 `stopped`（15s 上限，超时返回 `ROLE_STOP_TIMEOUT`），成功后按参数或原状态恢复。
+- **全局资源**：`app_resource_create`（模型／MCP／Skill／语音／生图）、`app_resource_toggle`（仅 MCP/Skill 开关）、`app_resource_update`（沿用 `maintenancePlan` + 暂停角色 + 维护窗口，返回 `pausedRoleIds`）、`app_resource_delete`、`app_model_test`。
+- **能力触发**：`app_role_memory_trigger`、`app_role_wake_manage`。
+- **自改红线**：修改夏澄自身设定／绑定／额度／启停、修改其正在使用的模型资源（按 `impact()` 判定含任务续用）、以及任何全局语音／生图服务的增删改，一律返回 `409 SELF_MODIFICATION_VIA_SETTINGS_ONLY` 并引导去设置页；夏澄系统底座（§1.3）同步补充该禁区说明。
+
+### 9.4 自验证据
+
+- 新增 [p20-preset-assistant-pack2.test.ts](../../../backend/tests/p20-preset-assistant-pack2.test.ts) 6 项：单段切段续行（含默认 15 轮常量与窗口不拉黑）、`task_pause` 同批停派与同窗接回原 `taskId`、同工具 3 次失败熔断、连续 3 段无进展熔断（含可见说明）、管理工具挂载范围与自改红线、样例 MCP 搜索／桌面控制与慢工具转后台结果回收。
+- `npm run typecheck` 通过；全量正式测试 **442／442**；`node scripts/accept-offline.mjs` **21／21** 步通过（`realServiceCalls = 0`、`sourceUnchanged = true`），报告 `backend/test-results/p5-2026-11-17T11-53-01-430Z-c8fd96f7/summary.json`；`node scripts/check-docs.mjs` 0 错误 0 警告。
+- 未覆盖：真实第三方 MCP 服务的安装与端到端联调、真实模型在 15 轮切段下的表现、桌面端新增入口（§4.3 取消按钮属包 3）。以上按 §6.2 与 §7.2 另行留证。

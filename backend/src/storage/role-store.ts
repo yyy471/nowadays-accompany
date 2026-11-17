@@ -1016,14 +1016,37 @@ export class RoleStore {
     })();
   }
 
+  /**
+   * 暂停任务（DL-154 / DL-158）。
+   *
+   * `waitReason` 说明这次暂停在等什么，并标记任务可由续行或用户答复接回；
+   * 角色停止与自主额度暂停沿用既有 end_reason 判定，同时写入等待原因。
+   */
   pauseTask(input: {
     roleId: string;
     taskId: string;
     endReason: string;
+    waitReason?: string | null;
   }): TaskRecord {
     return this.db.transaction(() => {
       const current = this.getTask(input.roleId, input.taskId);
       if (current.status === "paused") {
+        if (
+          input.waitReason !== undefined &&
+          current.waitReason !== input.waitReason
+        ) {
+          this.db
+            .prepare(
+              "UPDATE tasks SET wait_reason = ?, continuable = ?, updated_at = ? WHERE task_id = ?",
+            )
+            .run(
+              input.waitReason,
+              input.waitReason === null ? 0 : 1,
+              new Date().toISOString(),
+              input.taskId,
+            );
+          return this.getTask(input.roleId, input.taskId);
+        }
         return current;
       }
       if (current.status !== "active") {
@@ -1035,9 +1058,18 @@ export class RoleStore {
       }
       this.db
         .prepare(
-          "UPDATE tasks SET status = 'paused', end_reason = ?, updated_at = ? WHERE task_id = ?",
+          `UPDATE tasks
+              SET status = 'paused', end_reason = ?,
+                  wait_reason = ?, continuable = ?, updated_at = ?
+            WHERE task_id = ?`,
         )
-        .run(input.endReason, new Date().toISOString(), input.taskId);
+        .run(
+          input.endReason,
+          input.waitReason ?? null,
+          input.waitReason === undefined || input.waitReason === null ? 0 : 1,
+          new Date().toISOString(),
+          input.taskId,
+        );
       return this.getTask(input.roleId, input.taskId);
     })();
   }
@@ -1057,11 +1089,97 @@ export class RoleStore {
       }
       this.db
         .prepare(
-          "UPDATE tasks SET status = 'active', end_reason = NULL, updated_at = ? WHERE task_id = ?",
+          `UPDATE tasks
+              SET status = 'active', end_reason = NULL,
+                  wait_reason = NULL, continuable = 0, updated_at = ?
+            WHERE task_id = ?`,
         )
         .run(new Date().toISOString(), input.taskId);
       return this.getTask(input.roleId, input.taskId);
     })();
+  }
+
+  /**
+   * 写入熔断计数（连续失败／连续无进展），只更新仍在进行的任务。
+   * 计数由调用方根据真实工具结果与续行进展计算，存储层不做业务推断。
+   */
+  setTaskCircuitCounters(input: {
+    roleId: string;
+    taskId: string;
+    consecutiveFailures?: number;
+    consecutiveNoProgress?: number;
+  }): TaskRecord {
+    return this.db.transaction(() => {
+      const current = this.getTask(input.roleId, input.taskId);
+      // 暂停中的任务仍保留熔断计数（暂停可能正是熔断结果）；终态不再改写。
+      if (current.status === "completed" || current.status === "failed") {
+        return current;
+      }
+      this.db
+        .prepare(
+          `UPDATE tasks
+              SET consecutive_failures = ?, consecutive_no_progress = ?, updated_at = ?
+            WHERE task_id = ?`,
+        )
+        .run(
+          input.consecutiveFailures ?? current.consecutiveFailures,
+          input.consecutiveNoProgress ?? current.consecutiveNoProgress,
+          new Date().toISOString(),
+          input.taskId,
+        );
+      return this.getTask(input.roleId, input.taskId);
+    })();
+  }
+
+  /**
+   * 任务内最近一次「同一工具、同一错误码」的连续失败次数。
+   *
+   * 只统计已结算的真实工具结果（tool_results），按结束顺序从新到旧比较；
+   * 成功或换错误码即中断连续计数；结果未知与明确失败同样计入。
+   * 用于连续失败熔断（DL-154）。
+   */
+  taskToolFailureStreak(
+    roleId: string,
+    taskId: string,
+    sampleLimit = 6,
+  ): { count: number; toolName: string; code: string } | null {
+    const rows = this.db
+      .prepare(
+        `SELECT tc.tool_name AS tool_name, tr.status AS status,
+                COALESCE(tr.diagnostic_code, '') AS code
+           FROM tool_results tr
+           JOIN tool_calls tc ON tc.tool_call_id = tr.tool_call_id
+          WHERE tc.task_id = ?
+          ORDER BY tr.saved_at DESC, tr.rowid DESC
+          LIMIT ?`,
+      )
+      .all(taskId, sampleLimit) as Array<{
+      tool_name: string;
+      status: string;
+      code: string;
+    }>;
+    const newest = rows[0];
+    // 失败与结果未知都算「没有取得成功」：同一工具同一错误码连续出现即计入熔断，
+    // 但不把未知当成已执行完成（DL-103）。
+    if (newest === undefined || newest.status === "success") {
+      return null;
+    }
+    let count = 0;
+    for (const row of rows) {
+      if (
+        row.status === "success" ||
+        row.tool_name !== newest.tool_name ||
+        row.code !== newest.code
+      ) {
+        break;
+      }
+      count += 1;
+    }
+    return {
+      count,
+      toolName: newest.tool_name,
+      code: newest.code.length === 0 ? "UNKNOWN" : newest.code,
+    };
   }
 
   appendTaskNote(input: {

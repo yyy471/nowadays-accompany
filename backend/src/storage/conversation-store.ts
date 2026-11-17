@@ -103,7 +103,8 @@ export interface BeginExecutionResult {
 export interface CommitConversationTaskDecision {
   taskId: string;
   action:
-    | { kind: "pause"; reason: string }
+    | { kind: "pause"; reason: string; waitReason?: string }
+    | { kind: "continue"; reason: string }
     | { kind: "finish"; status: "completed" | "failed"; endReason: string };
 }
 
@@ -305,6 +306,29 @@ export class ConversationStore {
     return result;
   }
 
+  /**
+   * 同窗口等待用户回应的暂停任务（DL-158）。
+   *
+   * 模型暂停（内容待澄清）或熔断暂停的任务保留 `continuable = 1`；
+   * 用户在该窗口发新消息时自动接回同一任务，不另开新任务链。
+   */
+  findResumablePausedTask(windowId: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT t.task_id AS task_id
+           FROM tasks t
+           JOIN execution_tasks et ON et.task_id = t.task_id
+           JOIN executions e ON e.execution_id = et.execution_id
+          WHERE e.window_id = ? AND e.role_id = ?
+            AND t.status = 'paused' AND t.origin = 'user' AND t.continuable = 1
+            AND t.wait_reason IN ('AWAITING_USER_INPUT', 'CIRCUIT_BREAKER')
+          ORDER BY e.created_at DESC, e.rowid DESC
+          LIMIT 1`,
+      )
+      .get(windowId, this.roleId) as { task_id: string } | undefined;
+    return row?.task_id ?? null;
+  }
+
   beginExecution(input: {
     windowId: string;
     triggerType?: ExecutionTriggerType;
@@ -316,7 +340,21 @@ export class ConversationStore {
       if (running) {
         return null;
       }
-      const taskId = this.findInterruptedUserTask(input.windowId);
+      // 暂停等待用户澄清／熔断的任务优先接回；其次才是中断执行的原任务。
+      const pausedTaskId = this.findResumablePausedTask(input.windowId);
+      const taskId =
+        pausedTaskId ?? this.findInterruptedUserTask(input.windowId);
+      if (pausedTaskId !== null) {
+        // 用户回复即是接回信号：与原任务续行同一语义，保留进度与资源延续。
+        this.db
+          .prepare(
+            `UPDATE tasks
+                SET status = 'active', end_reason = NULL,
+                    wait_reason = NULL, continuable = 0, updated_at = ?
+              WHERE task_id = ? AND role_id = ? AND status = 'paused'`,
+          )
+          .run(now, pausedTaskId, this.roleId);
+      }
       const messages = this.db
         .prepare(
           `SELECT m.message_id, m.window_id, m.content, m.sequence, m.created_at

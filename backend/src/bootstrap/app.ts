@@ -26,6 +26,7 @@ import { RolesNotStoppedError } from "../domain/errors.js";
 import { RoleActivityService } from "../application/role-activity-service.js";
 import { RoleDeletionService } from "../application/role-deletion-service.js";
 import { ensurePresetAssistant } from "../application/preset-assistant.js";
+import type { AdminToolServices } from "../application/admin-tools.js";
 import { AppError } from "../domain/errors.js";
 import {
   SceneImageService,
@@ -211,6 +212,19 @@ export function createBackendApp(
           isRoleDeleting: (roleId) => isRoleDeleting(roleId),
         },
       );
+  // 管理工具需要反向引用对话服务（任务查询与记忆触发），构造完成后再补上。
+  const adminServices: AdminToolServices = {
+    roles: roleService,
+    activity,
+    messages: messageService,
+    memory: memoryService,
+    autonomy,
+    resources: resourceService,
+    modelServices: modelService,
+    voiceServices,
+    imageServices,
+    now,
+  };
   const conversation = new ConversationService(
     appStore,
     roleAccess,
@@ -249,6 +263,8 @@ export function createBackendApp(
       // 后台句段标注的调用领取（283 §13 R01）。
       claimModelCall: (roleId, resourceId) =>
         resourceService.claimModelCall(roleId, resourceId),
+      // 预置默认助手的内部管理工具直接复用应用服务（DL-159）。
+      adminServices,
       resolveVoiceRuntime: (settings) => {
         if (!settings.serviceId) {
           return {
@@ -273,6 +289,7 @@ export function createBackendApp(
       },
     },
   );
+  adminServices.conversation = conversation;
   // 首句合成遇到后台正在进行的句段情绪标注时短暂等待其落库，不抢在无情绪状态下先发合成。
   voiceService.setAnnotationWaiter((messageId, timeoutMs, signal) =>
     conversation.awaitMessageAnnotation(messageId, timeoutMs, signal),
