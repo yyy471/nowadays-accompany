@@ -32,6 +32,11 @@ dist/
 !.env.example
 !.env.*.example
 
+# Local agent workspace, review artifacts and machine-specific tooling
+/.workbuddy/
+/.workbuddy-ai/
+/.nowadays-review/
+
 # Editor and operating-system files
 /.idea/
 /.vscode/
