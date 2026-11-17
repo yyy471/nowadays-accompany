@@ -119,7 +119,10 @@ await probe("R07-automatic-candidate-maintenance", async () => {
     });
     send(fixture, "继续聊天");
     await fixture.app.conversation.waitForIdle(fixture.roleId);
-    await delay(200);
+    // 自动维护批次在 waitForIdle 之后异步启动，实测出现时间为 213～258ms，
+    // 固定等待 200ms 会偶发断言过早而抖动。改为轮询启动条件（与下方断言一致），
+    // 由 until 的 8s 上限兜底真正的功能失败，消除时间阈值抖动。
+    await until(() => calls > 0 && withStorage(fixture, (storage) => new MemoryStore(storage.business.db).listRefineCandidates(fixture.roleId, 100).length > 0));
     const observed = withStorage(fixture, (storage) => {
       const store = new MemoryStore(storage.business.db);
       return { currentRound: store.getCurrentRound(fixture.roleId), candidates: store.listRefineCandidates(fixture.roleId, 100).length, status: store.getMemoryStatus(fixture.roleId), batches: store.listBatches(fixture.roleId, 10), modelCalls: calls };
