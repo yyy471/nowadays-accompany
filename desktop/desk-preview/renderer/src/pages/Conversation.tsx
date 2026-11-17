@@ -11,11 +11,10 @@ import { dayKey, dateLabel } from '../conversation/history.js';
 import { useWindowSession, type ConversationSnapshot, type SessionEvent } from '../conversation/use-window-session';
 import { useSegmentVoice } from '../conversation/use-segment-voice';
 import { shouldClearRecoveredDraft } from '../conversation/window-model.js';
+import { pickCancelableTask, taskCancelLabel, taskCancelNotice, taskCancelTitle, type CancelableTask } from '../conversation/task-actions.js';
 import { ConversationStage, type StageSources } from '../conversation/ConversationStage';
 import { ChatPane } from '../conversation/ChatPane';
 import { HistoryPanel } from '../conversation/HistoryPanel';
-import character from '../assets/themes/xiacheng/character.png';
-import nightCharacter from '../assets/themes/xiacheng/character-night.png';
 import scene from '../assets/themes/xiacheng/scene-ink.png';
 import nightScene from '../assets/themes/xiacheng/scene-night.png';
 
@@ -108,6 +107,9 @@ export function ConversationPage({
   const [sceneOpen, setSceneOpen] = useState(false);
   const [voiceAuto, setVoiceAuto] = useState(() => readPreference('voice'));
   const [sceneAuto, setSceneAuto] = useState(() => readPreference('scene'));
+  const [task, setTask] = useState<CancelableTask | null>(null);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelBusy, setCancelBusy] = useState(false);
   const [roleMenuOpen, setRoleMenuOpen] = useState(false);
   const [windowMenuOpen, setWindowMenuOpen] = useState(false);
   const [announce, setAnnounce] = useState('');
@@ -142,6 +144,23 @@ export function ConversationPage({
     toastTimer.current = window.setTimeout(() => setToastText(''), 3200);
   }, []);
 
+
+  const cancelRunningTask = useCallback(async () => {
+    if (!task || cancelBusy) return;
+    setCancelBusy(true);
+    try {
+      await api(`/v1/roles/${encodeURIComponent(currentId)}/tasks/${encodeURIComponent(task.taskId)}/cancel`, { method: 'POST', body: { reason: 'USER_CANCELLED' } });
+      showToast(taskCancelNotice(task));
+      setCancelOpen(false);
+      setTask(null);
+      onRoleStateChanged?.();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '取消失败，请稍后再试。');
+    } finally {
+      setCancelBusy(false);
+    }
+  }, [task, cancelBusy, currentId, showToast, onRoleStateChanged]);
+
   const handleEventRef = useRef<(snapshot: ConversationSnapshot, event: SessionEvent) => void>(() => {});
   const session = useWindowSession({
     roleId: currentId,
@@ -149,6 +168,22 @@ export function ConversationPage({
     onEvent: (snapshot, event) => handleEventRef.current(snapshot, event)
   });
   const snapshot = session.snapshot;
+  // 办事任务可能在本页之外推进（自主唤醒、续行段），本轮只用 snapshot 判定刷新时机。
+  useEffect(() => {
+    if (!currentId) { setTask(null); return; }
+    let live = true;
+    const load = async () => {
+      try {
+        const result = await api<{ items: CancelableTask[] }>(`/v1/roles/${encodeURIComponent(currentId)}/tasks`);
+        if (live) setTask(pickCancelableTask(result.items));
+      } catch {
+        // 读取失败时保留上一次结果，不影响对话本身。
+      }
+    };
+    void load();
+    const timer = window.setInterval(() => { if (!document.hidden) void load(); }, 5000);
+    return () => { live = false; window.clearInterval(timer); };
+  }, [currentId, snapshot?.activeId]);
   const sessionRef = useRef(session);
   sessionRef.current = session;
   const voice = useSegmentVoice({ roleId: currentId, windowId: session.windowId, onToast: showToast });
@@ -308,8 +343,8 @@ export function ConversationPage({
     backgroundUrl: night ? nightScene : scene,
     segmentHomeUrl,
     outfitUrl: outfitHomeUrl,
-    // 只有确认角色衣柜确实为空时才显示主题默认人物；已有服饰等待角色穿搭时不闪现主题图。
-    themeUrl: !appearanceLoading && !hasOutfits ? (night ? nightCharacter : character) : null,
+    // 无立绘的角色保持空态：只用书房背景，不回退到内置主题人物（DL-153）。
+    themeUrl: null,
     resolveSprite: (assetId: string) => appearanceAssetUrl(currentId, assetId)
   }), [currentId, night, segmentHomeUrl, outfitHomeUrl, appearanceLoading, hasOutfits]);
 
@@ -459,6 +494,9 @@ export function ConversationPage({
           </div> : null}
           </div>
           <div className="dialogue-pane-actions">
+            {task ? <ControlButton type="button" className="dialogue-task-cancel" aria-label={taskCancelLabel(task)} title={taskCancelTitle(task)} onClick={() => setCancelOpen(true)}>
+              <Icon name="close" size={14} /><span>{taskCancelLabel(task)}</span>
+            </ControlButton> : null}
             <span className="dialogue-connection" data-state={snapshot.loading ? 'loading' : snapshot.connection} role="status" aria-label={snapshot.loading ? '读取中' : connectionText} title={snapshot.loading ? '读取中' : connectionText}><span className="sr-only">{snapshot.loading ? '读取中' : connectionText}</span></span>
             <IconButton className="dialogue-pane-icon" icon="tune" label="演出设置" onClick={() => setPerformanceOpen(true)} />
             <IconButton ref={historyButton} className="dialogue-pane-icon dialogue-history-button" icon="history" label="历史消息" aria-expanded={historyOpen} onClick={toggleHistory} />
@@ -483,7 +521,7 @@ export function ConversationPage({
                   onDraftFocusHandled={() => setRequestDraftFocus(0)}
                   onScrollFollow={next => { setFollow(next); if (next) { setHasNew(false); setHistoryLock(false); } }}
                   onLatest={onLatest} onSend={send} onTyping={session.noteTyping} onLoadOlder={() => void session.loadOlder()} onAdvance={advance} onAdvanceAll={advanceAll}
-                  notice={currentOutfit && currentOutfit.sprites.length === 0 ? '这套服饰没有对话表情，可先补一张差分' : null}
+                  notice={!appearanceLoading && !hasOutfits ? '这个角色还没有主页立绘，可在角色配置的外观里添加服饰' : currentOutfit && currentOutfit.sprites.length === 0 ? '这套服饰没有对话表情，可先补一张差分' : null}
                   waitReason={snapshot.waitReason}
                   roleStopped={roleActivity?.state === 'stopped'}
                   onResumeRole={resumeRole}
@@ -502,6 +540,16 @@ export function ConversationPage({
       <div className="dialogue-toast" hidden={!toastText} role="status">{toastText}</div>
       <div className="sr-only" aria-live="polite" aria-atomic="true">{announce}</div>
     </div>
+
+    <Modal open={cancelOpen} title={taskCancelLabel(task) || '取消任务'} onClose={() => setCancelOpen(false)} description={task ? taskCancelTitle(task) : ''}>
+      <div className="dialogue-cancel-task">
+        <p>取消后这条任务链会结束；已经保存的进度笔记与工具结果仍会留在本机，之后在这个窗口发消息不会自动接回它。</p>
+        <div className="dialogue-cancel-task-actions">
+          <Button variant="danger" busy={cancelBusy} onClick={() => void cancelRunningTask()}>确认取消任务</Button>
+          <Button onClick={() => setCancelOpen(false)}>继续办理</Button>
+        </div>
+      </div>
+    </Modal>
 
     <Modal open={performanceOpen} title="演出设置" onClose={() => setPerformanceOpen(false)} description="调整对话页面的演出与显示方式。">
       <div className="dialogue-settings-options">

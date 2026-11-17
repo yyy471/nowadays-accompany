@@ -10,6 +10,8 @@ import { HomePage } from './pages/Home';
 import { Relations } from './Relations';
 import { SettingsWorkspace } from './pages/Settings';
 import { ConversationPage } from './pages/Conversation';
+import { RoleEntry } from './pages/RoleEntry';
+import { needsEntryPick } from './entry/role-entry.js';
 import { createStateVersionGate } from './state-version.js';
 
 export function App() {
@@ -18,6 +20,19 @@ export function App() {
   const [scope] = useState(createMotionScope);
   const pageBody = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState('home');
+  // 冷启动先选角（DL-147）；自动化脚本可用 NOWADAYS_SKIP_ROLE_PICKER 直入工作区。
+  const [entered, setEntered] = useState(false);
+  const [skipEntry, setSkipEntry] = useState(false);
+  // 启动配置读完前不渲染任何页面：避免选角页在跳过模式下闪现一下。
+  const [booted, setBooted] = useState(false);
+  useEffect(() => {
+    let live = true;
+    fetch('/api-config.json')
+      .then(response => (response.ok ? response.json() as Promise<{ skipRolePicker?: boolean }> : null))
+      .then(config => { if (live) { setSkipEntry(config?.skipRolePicker === true); setBooted(true); } })
+      .catch(() => { if (live) setBooted(true); /* 非桌面壳环境没有这份配置，按正常冷启动处理。 */ });
+    return () => { live = false; };
+  }, []);
   const [workspaceRequest, setWorkspaceRequest] = useState<{ kind: 'section'; roleId: string; section: 'models'; key: number } | { kind: 'create'; key: number } | null>(null);
   const workspaceRequestSeq = useRef(0);
   const issueWorkspaceRequest = useCallback((req: { kind: 'section'; roleId: string; section: 'models' } | { kind: 'create' }) => {
@@ -160,6 +175,19 @@ export function App() {
     setHideConversationDock(hidden);
     try { localStorage.setItem('nowadays-dialogue-hide-dock', hidden ? '1' : '0'); } catch { /* 本地偏好不可写时仅保留本次设置。 */ }
   };
+  if (!booted) {
+    return <div className="studio-boot" role="status">正在打开书房…</div>;
+  }
+  if (!skipEntry && needsEntryPick({ loading: !roles && !error, roles, entered })) {
+    return <RoleEntry
+      roles={roles || []}
+      loading={!roles && !error}
+      error={error}
+      onRetry={() => void refresh()}
+      onEnter={roleId => { setCurrentId(roleId); setEntered(true); setPage('home'); }}
+      onCreate={() => { issueWorkspaceRequest({ kind: 'create' }); setEntered(true); setPage('role-config'); }}
+    />;
+  }
   return <div className="studio-shell" data-ui-palette="xiacheng" data-ui-preset={preset} data-page={page} data-dialogue-dock-hidden={dockHidden || undefined}>
     <UiThemeScope theme="xiacheng" className="studio-header-scope"><header className="studio-header">
       <ControlButton className="ui-studio-brand" aria-label="返回主页" onClick={() => setPage('home')}><BrandMark/><span>Nowadays<small>A NOTE FOR YOUR EVERYDAY.</small></span></ControlButton>
@@ -171,7 +199,7 @@ export function App() {
         {page === 'home' && <UiThemeScope theme="xiacheng"><HomePage accounts={accounts} selectedAccountId={currentId} outfitHomeUrl={outfitHomeUrl} outfitName={currentOutfit?.name ?? null} loading={!roles && !error} error={error} onRetry={() => refresh()} onGoWorkbench={() => setPage('roles')} onCreateRole={() => { issueWorkspaceRequest({ kind: 'create' }); setPage('role-config'); }}/></UiThemeScope>}
         {page === 'roles' && <Relations roles={roles || []} error={error} currentId={currentId} visit={rolesVisit} onSelect={setCurrentId} onOpenSettings={() => setPage('role-config')}/>}
         {page === 'conversation' && <ConversationPage roles={roles || []} currentId={currentId} currentOutfit={currentOutfit} outfits={outfits} outfitHomeUrl={outfitHomeUrl} appearanceLoading={appearanceLoading} loading={!roles && !error} error={error} hideDock={hideConversationDock} onHideDockChange={setConversationDockHidden} onSelectRole={setCurrentId} onOpenRelations={() => setPage('roles')} onConfigureModel={() => { issueWorkspaceRequest({ kind: 'section', roleId: currentId, section: 'models' }); setPage('role-config'); }} onCreateRole={() => { issueWorkspaceRequest({ kind: 'create' }); setPage('role-config'); }} onRoleStateChanged={() => { void refresh(); }}/>}
-        {settingsVisited && <SettingsWorkspace page={page} roles={roles || []} currentId={currentId} roleListError={roleListError} onRoleDeleted={removeRoleLocally} onSelectCompanion={setCurrentId} onRefresh={refresh} onNavigate={setPage} workspaceRequest={workspaceRequest} onWorkspaceRequestHandled={handleWorkspaceRequestHandled} onStartConversation={roleId => { setCurrentId(roleId); setPage('conversation'); }}/>}
+        {settingsVisited && <SettingsWorkspace page={page} roles={roles || []} currentId={currentId} roleListError={roleListError} onRoleDeleted={removeRoleLocally} onRefresh={refresh} onNavigate={setPage} workspaceRequest={workspaceRequest} onWorkspaceRequestHandled={handleWorkspaceRequestHandled} onStartConversation={roleId => { setCurrentId(roleId); setPage('conversation'); }}/>}
       </div>
     </UiThemeProvider></main>
     {!dockHidden && <UiThemeScope theme="xiacheng" className="studio-footer-scope"><footer className="studio-footer">

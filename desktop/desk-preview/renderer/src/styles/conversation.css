@@ -407,3 +407,9 @@
 .dialogue-wait-notice { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 7px; padding: 8px 10px; border: 1px solid var(--dlg-rule); border-radius: var(--nd-semantic-radius-action); background: color-mix(in srgb, var(--dlg-selection) 45%, var(--dlg-paper)); color: var(--dlg-ink); font-size: 12px; line-height: 18px; }
 .dialogue-wait-notice button { min-height: 30px; padding: 4px 10px; border: 1px solid var(--dlg-rule); border-radius: var(--nd-semantic-radius-action); font-size: 12px; color: var(--dlg-ink); background: var(--dlg-paper); }
 .dialogue-wait-notice button:hover { background: var(--dlg-selection); }
+/* 对话内轻量取消任务（310 §4.3）：只在存在可取消任务时出现。 */
+.dialogue-page .dialogue-task-cancel{display:flex;align-items:center;gap:6px;height:34px;padding:0 10px;border:1px solid var(--nd-semantic-color-line-control);border-radius:var(--nd-semantic-radius-action);background:var(--nd-semantic-color-surface);color:var(--nd-semantic-color-text-muted);font-family:var(--nd-semantic-font-body);font-size:var(--nd-semantic-type-caption-size);cursor:pointer}
+.dialogue-page .dialogue-task-cancel:hover,.dialogue-page .dialogue-task-cancel:focus-visible{border-color:var(--nd-semantic-color-danger);color:var(--nd-semantic-color-danger)}
+.dialogue-cancel-task{display:grid;gap:14px}
+.dialogue-cancel-task p{margin:0;font-size:var(--nd-semantic-type-body-size);line-height:var(--nd-semantic-type-body-line);color:var(--nd-semantic-color-text-muted)}
+.dialogue-cancel-task-actions{display:flex;gap:10px;justify-content:flex-end}

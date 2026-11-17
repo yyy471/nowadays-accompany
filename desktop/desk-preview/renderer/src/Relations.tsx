@@ -222,7 +222,7 @@ export function Relations({ roles, error, currentId, visit, onSelect, onOpenSett
           <div className="home-copy">
             <div className="home-eyebrow"><span className="day-only">A NOTE FOR OUR DAYS</span><span className="night-only">STAY A LITTLE, LISTEN A LITTLE</span></div>
             <h1>把日常，<br /><span>收进这一页。</span></h1>
-            <p>不必给陪伴打分。<br />一张人物票，几页一起经过的日常。</p>
+            <p>不必给相处打分。<br />一张人物票，几页一起经过的日常。</p>
             <div className="quiet-note"><span className="day-only">还有一些空白，留给以后。</span><span className="night-only">白天没说完的话，今晚也有人听。</span></div>
             <div className="postmark" aria-hidden="true"><div>日常<br /><b>藏本</b></div><svg viewBox="0 0 160 50"><path d="M0 14c25-18 35 18 65 0s40 18 90 0M0 26c25-18 35 18 65 0s40 18 90 0M0 38c25-18 35 18 65 0s40 18 90 0" /></svg></div>
           </div>
@@ -295,6 +295,11 @@ export function Relations({ roles, error, currentId, visit, onSelect, onOpenSett
               {ui.view === 'profile' && <div className="profile-layout" data-testid="profile">
                 <div>
                   <p className="profile-title" data-testid="profile-name">{profile.name}</p>
+                  {packet?.isBuiltin && packet.bioText.trim() && <section className="profile-official" data-testid="profile-official-intro">
+                    <span className="eyebrow">内置助手 · 官方介绍</span>
+                    <p>{packet.bioText}</p>
+                    <small>官方介绍只读；下面是可以自行修订的角色卡正文。</small>
+                  </section>}
                   {definition.quote && <h2 className="profile-quote">{definition.quote}</h2>}
                   <p className="profile-text" data-testid="profile-definition">{profile.loading ? '正在读取角色介绍。' : (definition.body || definition.quote || '还没有写下角色设定。')}</p>
                   {!!profile.lines.length && <dl className="profile-lines">{profile.lines.map(line => <Fragment key={line.key}><dt>{line.label}</dt><dd>{line.value}</dd></Fragment>)}</dl>}

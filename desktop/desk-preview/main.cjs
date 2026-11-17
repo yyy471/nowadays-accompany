@@ -5,6 +5,7 @@ const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const { join, resolve } = require("node:path");
 const { pathToFileURL } = require("node:url");
+const { resolveBackendLayout, resolveNodeExecutable } = require("./backend-paths.cjs");
 
 const home = "desk://bundle/index.html";
 const icon = join(__dirname, "assets", "window.png");
@@ -31,17 +32,18 @@ let backendChild = null;
 let backendBaseUrl = process.env.NOWADAYS_BACKEND_URL || "";
 let backendReadyPromise = null;
 
-function resolveNode24Executable() {
-  const candidates = [
-    resolve(__dirname, "..", "..", "prototypes", "p0", ".runtime", "node-v24.22.2-win-x64", "node.exe"),
-    process.env.NOWADAYS_NODE_PATH || ""
-  ].filter(Boolean);
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      return candidate;
-    }
-  }
-  return "node";
+// 开发仓库与打包产物的后端、预置素材与 Node 运行时位置统一由布局解析给出（310 §3.2）。
+function backendLayout() {
+  return resolveBackendLayout({
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    dirname: __dirname,
+    env: process.env
+  });
+}
+
+function resolveNode24Executable(layout) {
+  return resolveNodeExecutable({ layout, env: process.env, exists: fs.existsSync });
 }
 
 async function ensureBackendRunning() {
@@ -57,15 +59,26 @@ async function ensureBackendRunning() {
       return backendBaseUrl;
     }
 
-    const backendRoot = resolve(__dirname, "..", "..", "backend");
+    const layout = backendLayout();
+    const backendRoot = layout.backendRoot;
     const appRoot = process.env.NOWADAYS_APP_ROOT || resolve(backendRoot, ".nowadays-desktop");
-    const nodeBin = resolveNode24Executable();
-    const mainScript = resolve(backendRoot, "src", "main.ts");
+    const nodeBin = resolveNode24Executable(layout);
+    const mainScript = layout.entry;
 
     await new Promise((resolveStart, rejectStart) => {
       const child = spawn(
         nodeBin,
-        ["--import", "tsx", mainScript, "--app-root", appRoot, "--port", "0"],
+        [
+          "--import",
+          "tsx",
+          mainScript,
+          "--app-root",
+          appRoot,
+          "--preset-assets-dir",
+          layout.presetAssetsDir,
+          "--port",
+          "0"
+        ],
         {
           cwd: backendRoot,
           env: { ...process.env, NO_COLOR: "1" },
@@ -161,7 +174,9 @@ async function startDesk() {
       return new Response(
         JSON.stringify({
           backendBaseUrl,
-          connected: Boolean(backendBaseUrl)
+          connected: Boolean(backendBaseUrl),
+          // 自动化脚本用它跳过冷启动选角页，直接进入工作区。
+          skipRolePicker: process.env.NOWADAYS_SKIP_ROLE_PICKER === "1"
         }),
         {
           status: 200,

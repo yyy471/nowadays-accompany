@@ -367,3 +367,48 @@
 1. **观察项 1 · 单段轮次口径**：把「15 轮」统一明确为「15 个模型决策轮，最多实派 14 次工具」。改动 §5.1（标题下正文说明 `state.round + 1 >= maxToolRounds` 时该轮只提交进度、不派发工具）、§5.2、§7.1 包 2 条目与 §7.2 验收表。现行规范 [storage-memory-and-autonomy.md](../../specs/storage-memory-and-autonomy.md) 不含包 2 的 15 轮描述（第 89 行「默认最多 8 轮」属首轮原型旧述，不在此次范围），故无需改活规范。
 2. **观察项 2 · `task_pause` 前置条件**：在 [agent-tools.ts](../../../backend/src/application/agent-tools.ts) 的 `task_pause` 工具描述中注明「需先有活动任务（当前执行已关联任务编号）才能暂停，否则返回 `TASK_REQUIRED`、暂停不生效，同批后续调用照常派发」；并在 §5.2 第 1 点补充同样说明。仅改 `description` 文案，执行逻辑与错误码（`TASK_REQUIRED`）不变。
 3. **验证**：`tsc --noEmit` 通过；全量 `npx -y node@24 scripts/accept-offline.mjs` 21／21 步、正式测试 443／443、`sourceUnchanged=true`、`realServiceCalls=0`，报告 `backend/test-results/p5-2026-11-17T13-52-57-440Z-1cf7ace7/summary.json`；`node scripts/check-docs.mjs` 0 错误 0 警告。工具描述变更不影响离线模型按工具名选择，包 2 行为用例无需改动。
+
+## 11. 包 3 实施记录（2026-11-17，自验通过，待独立复核）
+
+按 §7.1 包 3 范围实施「桌面冷启动选角页与配置体验」，覆盖冷启动选角、全站去「陪伴」与共享当前角色、无图角色空态解耦、夏澄只读介绍／预置服饰锁定、对话内轻量取消任务，以及打包产物预置素材路径对齐。以下为实施者自验结论，独立复核另行留证。
+
+### 11.1 冷启动选角页与共享当前角色（DL-147）
+
+1. **入口页**：新增 [RoleEntry.tsx](../../../desktop/desk-preview/renderer/src/pages/RoleEntry.tsx) 与 [role-entry.css](../../../desktop/desk-preview/renderer/src/styles/role-entry.css)，全屏展示已建角色（立绘缩略、姓名、只读介绍）、内置助手标识（`data-builtin` + 「内置助手」徽标）、新建角色入口与「进入书房」；样式全部走 `--nd-*` 令牌，通过 `npm run check`。
+2. **排序与选中**：纯逻辑抽到 [role-entry.js](../../../desktop/desk-preview/renderer/src/entry/role-entry.js)，内置夏澄优先、其余保持创建顺序；默认焦点落在内置助手，编号失效时回退第一位。
+3. **冷启动门槛**：`App.tsx` 在启动配置读取完成后按 `needsEntryPick` 决定停在入口页还是直入工作区；选定角色后写入共享 `currentId`，主页、关系、对话三页同步（设置页仍只改 `editId`）。启动配置未读完前只渲染极短占位，避免入口页在跳过模式下闪现。
+4. **自动化开关**：桌面壳 `api-config.json` 增加 `skipRolePicker`（读 `NOWADAYS_SKIP_ROLE_PICKER=1`），供既有 Electron 脚本直入工作区；产品冷启动默认始终显示入口页。
+5. **立绘组件抽取**：`RolePortrait` 从 `Settings.tsx` 移到 [RolePortrait.tsx](../../../desktop/desk-preview/renderer/src/components/RolePortrait.tsx)，入口页、藏书票墙与状态页共用；无主页图时显示明确空态。
+
+### 11.2 去「陪伴」与无图空态解耦（DL-147 / DL-153）
+
+1. **移除陪伴概念**：删除设置页「当前陪伴／设为当前陪伴／设为陪伴」标签与按钮、`onSelectCompanion` 回调及 `.config-companion` 样式；藏书票墙脚注改为内置标识；关系页「不必给陪伴打分」改为「不必给相处打分」，离线演出样例同步改写。全站已无「陪伴」文案。
+2. **主页空态**：[HomeScene.tsx](../../../desktop/desk-preview/renderer/src/components/home/HomeScene.tsx) 不再把夏澄主题人物图作为无衣柜角色的兜底，仅保留日夜书房背景与「这个角色还没有主页立绘」空态卡片；预解码与视差逻辑不变。
+3. **对话空态**：[Conversation.tsx](../../../desktop/desk-preview/renderer/src/pages/Conversation.tsx) 的 `sources.themeUrl` 恒为 `null`，舞台只显示背景；无衣柜时在输入区提示去外观添加服饰，不再闪现主题人物。
+4. **关系页只读介绍**：[load-dossier.ts](../../../desktop/desk-preview/renderer/src/relations/load-dossier.ts) 携带 `bioText` 与 `isBuiltin`，[Relations.tsx](../../../desktop/desk-preview/renderer/src/Relations.tsx) 对内置角色先展示「内置助手 · 官方介绍」只读段落，再展示可编辑角色卡正文；普通角色不出现该段。
+
+### 11.3 夏澄只读介绍与预置服饰锁定（DL-153）
+
+1. **角色配置页**：内置角色显示「内置助手 · 不可删除」说明块、只读显示名（附固定原因）与只读「官方介绍」；角色卡正文仍可编辑，保存时不再回传显示名变更；删除区替换为不可删除说明，不再出现删除流程。
+2. **衣柜**：新增纯策略 [preset-lock.js](../../../desktop/desk-preview/renderer/src/components/appearance/preset-lock.js)，`isPreset = 1` 的服饰禁用改名、替换主页立绘、删除与补传差分，卡片标注「预置 · 只读」，补传目标下拉跳过预置项；自定义服饰全部操作保持开放。
+3. **错误映射**：`PRESET_APPEARANCE_LOCKED` 在前端映射为「预置服饰与素材随应用交付，不能改名、替换或删除；可以新增自己的服饰」，与后端 409 契约一致。
+
+### 11.4 对话内轻量取消任务（DL-154）
+
+1. **入口**：对话页 toolbar 在存在可取消任务时显示轻量「取消任务／取消等待中的任务」按钮，点击弹出确认，确认后调用 `POST /v1/roles/:roleId/tasks/:taskId/cancel`（`reason = USER_CANCELLED`），成功即刷新角色状态。
+2. **选择规则**：纯逻辑 [task-actions.js](../../../desktop/desk-preview/renderer/src/conversation/task-actions.js) 只挑 `origin = user` 且 `active` 或 `paused + continuable` 的任务，进行中优先、同状态取最近更新；自主／记忆任务与已终态任务不出现。
+3. **刷新时机**：切换角色、执行中状态变化与每 5 秒轮询（页面隐藏时暂停），不干扰对话 SSE 与流式演出。
+
+### 11.5 打包产物与预置素材路径（310 §3.2）
+
+1. **布局解析**：新增 [backend-paths.cjs](../../../desktop/desk-preview/backend-paths.cjs)，区分「开发仓库」「打包产物」「显式覆盖（`NOWADAYS_BACKEND_ROOT`）」三种布局，统一给出后端入口、预置素材目录与包内 Node 运行时；`main.cjs` 以 `--preset-assets-dir` 显式传给后端，不再依赖源码相对路径。
+2. **打包清单**：[package.json](../../../desktop/desk-preview/package.json) 的 `files` 纳入 `backend-paths.cjs`，`extraResources` 把 `backend`（`src`、`assets/presets`、依赖与清单）与 `preset-assets` 复制到 `resources/`；Node 运行时按「包内 `node-runtime` → `NOWADAYS_NODE_PATH` → PATH」回退。
+3. **路径验证**：新增后端用例 [p21-pack3-preset-assets.test.ts](../../../backend/tests/p21-pack3-preset-assets.test.ts)，在隔离的 `resources/preset-assets` 布局下启动，断言夏澄官方介绍、两套预置服饰、主页图字节、差分数量、默认穿着与重启幂等（`outfitId` 不变、不重复导入）。
+
+### 11.6 自验证据
+
+- 渲染器：`npm run check` 通过（令牌最新、23 个 CSS 零违规、`tsc --noEmit` 通过）；`npm run build` 通过。
+- 桌面单测：`node --test tests/*.test.cjs` **146／146**，新增 [pack3-entry.test.cjs](../../../desktop/desk-preview/tests/pack3-entry.test.cjs)（6 项：排序／标识／冷启动门槛／取消任务选择／文案／预置锁定）与 [pack3-packaging.test.cjs](../../../desktop/desk-preview/tests/pack3-packaging.test.cjs)（4 项：三种布局与运行时回退）。
+- 冷启动 E2E：新增 [pack3-entry-check.cjs](../../../desktop/desk-preview/tests/pack3-entry-check.cjs)，真实 Electron + 本地后端验证「先入选角页 → 内置标识与只读介绍 → 进入主页 → 关系页仍是同一位角色 → 全站无『陪伴』」，通过且无页面异常。
+- 后端：`tsc --noEmit` 通过；全量正式测试 **444／444**；`node scripts/accept-offline.mjs` **21／21** 步（`realServiceCalls = 0`、`sourceUnchanged = true`、正式测试 444／444），报告 `backend/test-results/p5-2026-11-17T15-22-27-980Z-d02c569a/summary.json`；`node scripts/check-docs.mjs` 0 错误 0 警告。
+- **遗留（不阻塞包 3 范围）**：`startup-flow-fixes-check.cjs` 与 `workflow-real-backend-chain-check.cjs` 以「初始 0 角色」为前置，与包 1「启动即创建夏澄」冲突，首步 `home-create-btn` 无法出现；该漂移早于包 3，需另行改写为「已有内置助手时从角色配置新建」。真实安装包（`package:win`）实机启动与 Node 运行时随包交付仍待真实打包联调。

@@ -405,7 +405,8 @@ async function run() {
   outfitFormB.append('home', new Blob([pngBytes], { type: 'image/png' }), 'home.png');
   const outfitB = await request(`/v1/roles/${roleB.roleId}/appearance/outfits`, { method: 'POST', body: outfitFormB });
 
-  const env = { ...process.env, NOWADAYS_BACKEND_URL: base, NOWADAYS_APP_ROOT: path.join(temp, 'desktop') };
+  // 这些脚本直接验证工作区页面，跳过冷启动选角页；选角页本身由 pack3-entry 单测覆盖。
+  const env = { ...process.env, NOWADAYS_BACKEND_URL: base, NOWADAYS_APP_ROOT: path.join(temp, 'desktop'), NOWADAYS_SKIP_ROLE_PICKER: '1' };
   delete env.ELECTRON_RUN_AS_NODE;
   const electronInfo = resolveElectronExecutableInfo({ repoRoot: root });
   electron = spawn(electronInfo.executable, [

@@ -18,7 +18,18 @@
   },
   "build": {
     "appId": "app.nowadays.desk",
-    "files": ["renderer/dist/**", "main.cjs", "assets/window.png", "assets/window.ico"],
+    "files": ["renderer/dist/**", "main.cjs", "backend-paths.cjs", "assets/window.png", "assets/window.ico"],
+    "extraResources": [
+      {
+        "from": "../../backend",
+        "to": "backend",
+        "filter": ["src/**/*", "assets/presets/**/*", "package.json", "package-lock.json", "tsconfig.json", "node_modules/**/*"]
+      },
+      {
+        "from": "../../backend/assets/presets",
+        "to": "preset-assets"
+      }
+    ],
     "win": {
       "icon": "assets/window.ico",
       "signExecutable": false
