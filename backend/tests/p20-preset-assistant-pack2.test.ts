@@ -12,6 +12,7 @@ import { RoleAccess } from "../src/application/role-access.js";
 import { createBackendApp, listen } from "../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths } from "../src/bootstrap/config.js";
 import { XIA_CHENG_BUILTIN_KEY } from "../src/application/preset-assistant.js";
+import { StorageError } from "../src/domain/errors.js";
 import type { ConversationTool, ConversationToolContext } from "../src/domain/conversation.js";
 import type { ModelEvent, ModelPort, ModelRequest } from "../src/domain/model.js";
 import {
@@ -624,6 +625,145 @@ test("包2：夏澄内部管理工具只挂载到内置助手，读写边界与�
     assert.equal(created.status, "success");
     const newRoleId = (created.adaptedResult as { roleId: string }).roleId;
     assert.equal(app.services.activity.view(newRoleId).state, "stopped");
+  } finally {
+    await app.close();
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 });
+  }
+});
+
+test("包2 R04：管理工具写入失败后恢复角色活动态并在错误回执中带出恢复结果", { timeout: 60_000 }, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nowadays-p20-r04-"));
+  const presetsDir = path.join(root, "presets");
+  fs.mkdirSync(presetsDir, { recursive: true });
+  const config = parseBackendConfig([
+    "--app-root",
+    path.join(root, "app"),
+    "--preset-assets-dir",
+    presetsDir,
+    "--port",
+    "0",
+  ]);
+  const app = createBackendApp(config, { disableMemoryRuntime: true });
+  try {
+    const builtinIndex = app.appStore.getRoleIndexByBuiltinKey(XIA_CHENG_BUILTIN_KEY);
+    assert.ok(builtinIndex);
+    const tools = createAdminTools({
+      builtinRoleId: builtinIndex.roleId,
+      roles: app.services.roles,
+      activity: app.services.activity,
+      messages: app.services.messages,
+      memory: app.services.memory,
+      autonomy: app.services.autonomy,
+      conversation: app.conversation,
+      resources: app.services.resources,
+      modelServices: app.services.modelServices,
+      voiceServices: app.services.voiceServices,
+      imageServices: app.services.imageServices,
+      now: () => new Date(),
+    });
+
+    const ordinary = app.services.roles.createRole({
+      displayName: "R04 普通角色",
+      definition: { text: "R04 人设" },
+    });
+    const model = app.services.resources.create({
+      kind: "model",
+      name: "R04 模型",
+      config: { protocol: "openai-chat", baseUrl: "http://offline.invalid/v1" },
+    });
+    // 先成功建立 chat_model 绑定，供后续资源维护暂停场景使用。
+    const bound = await callAdminTool(tools, "app_role_bindings_set", {
+      roleId: ordinary.roleId,
+      bindings: [
+        {
+          capability: "chat_model",
+          resourceId: model.resourceId,
+          modelName: "offline-chat",
+          enabled: true,
+        },
+      ],
+    });
+    assert.equal(bound.status, "success");
+    const ensureActive = (): void => {
+      try {
+        app.services.activity.resume(ordinary.roleId);
+      } catch {
+        // 已是 active 时忽略冲突。
+      }
+    };
+    const stateOf = (): string => app.services.activity.view(ordinary.roleId).state;
+    const detailsOf = (outcome: { adaptedResult?: unknown }): Record<string, unknown> =>
+      (outcome.adaptedResult as { error: { details: Record<string, unknown> } }).error.details;
+
+    // A. 过期 expectedRevision → BINDING_REVISION_CONFLICT，角色恢复 active。
+    ensureActive();
+    assert.equal(stateOf(), "active");
+    const stale = await callAdminTool(tools, "app_role_bindings_set", {
+      roleId: ordinary.roleId,
+      bindings: [],
+      expectedRevision: "00000000-0000-0000-0000-000000000000",
+    });
+    assert.equal(stale.status, "failed");
+    assert.equal(stale.diagnosticCode, "BINDING_REVISION_CONFLICT");
+    assert.equal(detailsOf(stale).roleStopped, true);
+    assert.equal(detailsOf(stale).resumed, true);
+    assert.equal(stateOf(), "active", "版本冲突失败后角色应恢复 active");
+
+    // B. chat_model 缺 modelName → INVALID_BINDING，角色恢复 active。
+    ensureActive();
+    const invalid = await callAdminTool(tools, "app_role_bindings_set", {
+      roleId: ordinary.roleId,
+      bindings: [{ capability: "chat_model", resourceId: model.resourceId }],
+    });
+    assert.equal(invalid.status, "failed");
+    assert.equal(invalid.diagnosticCode, "INVALID_BINDING");
+    assert.equal(detailsOf(invalid).roleStopped, true);
+    assert.equal(detailsOf(invalid).resumed, true);
+    assert.equal(stateOf(), "active", "无效绑定失败后角色应恢复 active");
+
+    // C. app_role_update 真实写入抛错，角色恢复 active，details 带恢复结果。
+    ensureActive();
+    const rolesService = app.services.roles;
+    const originalUpdateDefinition = rolesService.updateDefinition;
+    rolesService.updateDefinition = () => {
+      throw new StorageError("INJECTED_ROLE_UPDATE_FAILURE");
+    };
+    try {
+      const failed = await callAdminTool(tools, "app_role_update", {
+        roleId: ordinary.roleId,
+        displayName: "改名失败",
+      });
+      assert.equal(failed.status, "failed");
+      assert.equal(failed.diagnosticCode, "STORAGE_ERROR");
+      assert.equal(detailsOf(failed).roleStopped, true);
+      assert.equal(detailsOf(failed).resumed, true);
+      assert.equal(stateOf(), "active", "设定写入失败后角色应恢复 active");
+    } finally {
+      rolesService.updateDefinition = originalUpdateDefinition;
+    }
+
+    // D. 资源连接变更暂停角色后写入失败 → 回滚已暂停角色。
+    ensureActive();
+    const resourcesService = app.services.resources;
+    const originalResourceUpdate = resourcesService.update;
+    resourcesService.update = () => {
+      throw new StorageError("INJECTED_RESOURCE_UPDATE_FAILURE");
+    };
+    try {
+      const failed = await callAdminTool(tools, "app_resource_update", {
+        resourceId: model.resourceId,
+        config: { protocol: "openai-chat", baseUrl: "http://changed.invalid/v1" },
+      });
+      assert.equal(failed.status, "failed");
+      assert.equal(failed.diagnosticCode, "STORAGE_ERROR");
+      const paused = detailsOf(failed).pausedRoleIds as string[];
+      const rolledBack = detailsOf(failed).rolledBackRoleIds as string[];
+      assert.ok(paused.includes(ordinary.roleId), "连接变更应暂停依赖角色");
+      assert.ok(rolledBack.includes(ordinary.roleId), "写入失败应回滚被暂停角色");
+      assert.equal(stateOf(), "active", "资源写入失败后已暂停角色应恢复 active");
+    } finally {
+      resourcesService.update = originalResourceUpdate;
+    }
   } finally {
     await app.close();
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 });

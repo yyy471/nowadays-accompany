@@ -124,6 +124,30 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
     }
   };
 
+  /**
+   * 停机后写入失败：把停机／恢复结果并入原错误 details 后重抛。
+   * 保留原错误码（模型据此判断冲突类型），同时让回执明确给出角色已被恢复，
+   * 避免写入失败把角色静默留在 stopped（包 2 §10.2 R04）。
+   */
+  const failAfterStop = (
+    error: unknown,
+    recovery: Record<string, unknown>,
+  ): never => {
+    if (error instanceof AppError) {
+      const original =
+        error.details !== null &&
+        typeof error.details === "object" &&
+        !Array.isArray(error.details)
+          ? (error.details as Record<string, unknown>)
+          : {};
+      throw new AppError(error.status, error.code, error.message, {
+        ...original,
+        ...recovery,
+      });
+    }
+    throw error;
+  };
+
   /** 资源被夏澄自身占用（对话／记忆模型或任务续用）时禁止改写或删除。 */
   const assertResourceNotUsedBySelf = (
     resourceId: string,
@@ -493,12 +517,22 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
           return badArguments("app_role_update 至少需要 displayName 或 definitionText");
         }
         const wasActive = await stopForWrite(roleId);
-        const updated = roles.updateDefinition(roleId, {
-          ...(displayName === null ? {} : { displayName }),
-          ...(definitionText === null
-            ? {}
-            : { definition: { text: definitionText } }),
-        });
+        let updated;
+        try {
+          updated = roles.updateDefinition(roleId, {
+            ...(displayName === null ? {} : { displayName }),
+            ...(definitionText === null
+              ? {}
+              : { definition: { text: definitionText } }),
+          });
+        } catch (error) {
+          const resumed = resumeIfNeeded(roleId, wasActive);
+          return failAfterStop(error, {
+            roleStopped: wasActive,
+            resumed,
+            activity: activity.view(roleId).state,
+          });
+        }
         const resume = args.resume === false ? false : wasActive;
         const resumed = resume ? resumeIfNeeded(roleId, wasActive) : false;
         return {
@@ -576,11 +610,21 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
         }
         const wasActive = await stopForWrite(roleId);
         const expectedRevision = stringArg(args, "expectedRevision");
-        const view = resources.replaceBindings(
-          roleId,
-          parsed,
-          expectedRevision ?? undefined,
-        );
+        let view;
+        try {
+          view = resources.replaceBindings(
+            roleId,
+            parsed,
+            expectedRevision ?? undefined,
+          );
+        } catch (error) {
+          const resumed = resumeIfNeeded(roleId, wasActive);
+          return failAfterStop(error, {
+            roleStopped: wasActive,
+            resumed,
+            activity: activity.view(roleId).state,
+          });
+        }
         const resume = args.resume === false ? false : wasActive;
         const resumed = resume ? resumeIfNeeded(roleId, wasActive) : false;
         return {
@@ -747,6 +791,9 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
         const plan = resources.maintenancePlan(resourceId, patch);
         let maintenance = false;
         let pausedRoleIds: string[] = [];
+        let updatedView: ReturnType<typeof resources.update> | null = null;
+        let failure: unknown = null;
+        let resumedRoleIds: string[] = [];
         try {
           if (plan.connectionChanged) {
             resources.beginMaintenance(resourceId);
@@ -764,31 +811,47 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
             }
             pausedRoleIds = (await pause(plan.pauseRoleIds)).pausedRoleIds;
           }
-          const view = resources.update(resourceId, patch);
-          const resumedRoleIds =
-            args.resumeRoles === true
-              ? pausedRoleIds.filter((roleId) => {
-                  try {
-                    activity.resume(roleId);
-                    return true;
-                  } catch {
-                    return false;
-                  }
-                })
-              : [];
-          return {
-            resourceId,
-            name: view.name,
-            enabled: view.enabled,
-            connectionChanged: plan.connectionChanged,
-            pausedRoleIds,
-            resumedRoleIds,
-          };
+          updatedView = resources.update(resourceId, patch);
+        } catch (error) {
+          failure = error;
         } finally {
+          // 必须在维护窗口结束后再恢复角色：维护中 resume 会被 resumeGuard 拒绝（283 R01）。
           if (maintenance) {
             resources.endMaintenance(resourceId);
           }
+          // 成功时按 resumeRoles 参数恢复；失败时无条件回滚本次暂停的角色，
+          // 避免写入失败把角色静默留在 stopped（包 2 §10.2 R04）。
+          const shouldResume = failure !== null || args.resumeRoles === true;
+          if (shouldResume) {
+            resumedRoleIds = pausedRoleIds.filter((roleId) => {
+              try {
+                activity.resume(roleId);
+                return true;
+              } catch {
+                return false;
+              }
+            });
+          }
+          if (failure !== null) {
+            failAfterStop(failure, {
+              pausedRoleIds,
+              resumedRoleIds,
+              rolledBackRoleIds: resumedRoleIds,
+              activity: pausedRoleIds.map((roleId) => ({
+                roleId,
+                state: activity.view(roleId).state,
+              })),
+            });
+          }
         }
+        return {
+          resourceId,
+          name: updatedView!.name,
+          enabled: updatedView!.enabled,
+          connectionChanged: plan.connectionChanged,
+          pausedRoleIds,
+          resumedRoleIds,
+        };
       },
     ),
     defineTool(

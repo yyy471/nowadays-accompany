@@ -1275,7 +1275,7 @@ function taskPauseTool(
     name: "task_pause",
     source: "task",
     description:
-      "声明本轮先暂停当前任务：目标尚未完成，保留任务编号、进度笔记与资源延续，稍后由携带任务编号的唤醒或新消息接回。回复本身仍会正常保存。",
+      "声明本轮先暂停当前任务：需先有活动任务（当前执行已关联任务编号）才能暂停，否则返回 TASK_REQUIRED、暂停不生效，同批后续调用照常派发。目标尚未完成时保留任务编号、进度笔记与资源延续，稍后由携带任务编号的唤醒或新消息接回。回复本身仍会正常保存。",
     inputSchema: {
       type: "object",
       properties: {
@@ -1362,7 +1362,8 @@ function taskContinueTool(
   };
 }
 
-function taskFinishTool(  roleId: string,
+function taskFinishTool(
+  roleId: string,
   roleAccess: RoleAccess,
 ): ConversationTool {
   return {
