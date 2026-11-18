@@ -11,6 +11,7 @@ import {
   pickPresetVoiceForEngine,
   resolveCapabilities,
   resolveEngines,
+  syncVoiceFormServices,
   toVoicePayload,
   validateVoiceForm,
   withPendingReferenceAudio,
@@ -96,7 +97,8 @@ export function VoicePanel({
   const [previewElapsed, setPreviewElapsed] = useState(0);
   const lastRole = useRef(roleId);
   const lastActive = useRef(active);
-  const initialServiceSync = useRef(true);
+  const serviceSyncSeq = useRef(0);
+  const syncedState = useRef<{ roleId: string; version: number; active: boolean | undefined } | null>(null);
   if (lastActive.current !== active) {
     lastActive.current = active;
     if (!active) {
@@ -211,6 +213,8 @@ export function VoicePanel({
 
   useEffect(() => {
     let activeLoad = true;
+    const syncSeq = ++serviceSyncSeq.current;
+    syncedState.current = { roleId, version: serviceRefreshVersion, active };
     setConfig(null);
     setServices([]);
     setForm(createVoiceForm(null));
@@ -238,18 +242,18 @@ export function VoicePanel({
     ])
       .then(([voice, available, reference]) => {
         if (!activeLoad) return;
-        setConfig(voice.voice);
-        setServices(available.items);
-        const initial = createVoiceForm(voice.voice);
-        if (voice.voice === null && available.items.length > 0) {
-          const picked = available.items.find(item => item.enabled) ?? available.items[0]!;
-          initial.serviceId = picked.serviceId;
-          initial.protocol = picked.config.protocol;
-          initial.baseUrl = picked.config.baseUrl;
-        }
-        setForm(initial);
-        setSavedForm(initial);
         setReferences(reference.items);
+        const baseForm = createVoiceForm(voice.voice);
+        if (syncSeq === serviceSyncSeq.current) {
+          setConfig(voice.voice);
+          setServices(available.items);
+          const initial =
+            voice.voice === null ? syncVoiceFormServices(baseForm, available.items) : baseForm;
+          setForm(initial);
+          setSavedForm(initial);
+        } else {
+          setSavedForm(previous => previous ?? baseForm);
+        }
         setLoading(false);
       })
       .catch(reason => {
@@ -260,47 +264,35 @@ export function VoicePanel({
     return () => {
       activeLoad = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roleId]);
 
   useEffect(() => {
-    if (initialServiceSync.current) {
-      initialServiceSync.current = false;
+    const previousSync = syncedState.current;
+    if (!previousSync || previousSync.roleId !== roleId) {
+      syncedState.current = { roleId, version: serviceRefreshVersion, active };
       return;
     }
+    const versionChanged = previousSync.version !== serviceRefreshVersion;
+    const becameActive = Boolean(active && !previousSync.active);
+    syncedState.current = { roleId, version: serviceRefreshVersion, active };
+    if (!versionChanged && !becameActive) return;
     if (!roleId) return;
     const token = roleToken.current;
+    const syncSeq = ++serviceSyncSeq.current;
     Promise.all([
       api<{ voice: VoiceConfigView | null }>(`/v1/roles/${encodeURIComponent(roleId)}/voice`),
       api<{ items: VoiceServiceItem[] }>('/v1/voice-services'),
     ])
       .then(([voice, available]) => {
-        if (isStale(token)) return;
+        if (isStale(token) || syncSeq !== serviceSyncSeq.current) return;
         setConfig(voice.voice);
         setServices(available.items);
-        setForm(previous => {
-          if (previous.serviceId === '' && available.items.length > 0 && !previous.configured) {
-            const first = available.items.find(item => item.enabled) ?? available.items[0]!;
-            return {
-              ...previous,
-              serviceId: first.serviceId,
-              protocol: first.config.protocol,
-              baseUrl: first.config.baseUrl,
-            };
-          }
-          const matched = available.items.find(item => item.serviceId === previous.serviceId);
-          if (matched) {
-            return {
-              ...previous,
-              protocol: matched.config.protocol,
-              baseUrl: matched.config.baseUrl,
-            };
-          }
-          return previous;
-        });
+        setForm(previous => syncVoiceFormServices(previous, available.items));
       })
       .catch(() => { /* 从设置返回同步失败时保留现有草稿，保存时会触发正式校验 */ });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roleId, serviceRefreshVersion]);
+  }, [roleId, serviceRefreshVersion, active]);
 
   useEffect(() => {
     mounted.current = true;

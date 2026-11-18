@@ -74,6 +74,32 @@ export function savedImageModelOf(service) {
   return typeof modelName === "string" ? modelName.trim() : "";
 }
 
+/**
+ * 根据最新的全局生图服务列表同步角色表单：
+ * 未选服务时自动选中首个可用（优先启用）服务并补全默认模型；无变化时返回原引用。
+ */
+export function syncImageFormServices(form, services) {
+  if (!Array.isArray(services) || services.length === 0) {
+    return form;
+  }
+  if (form.serviceId === "") {
+    const first = services.find((item) => item.enabled) ?? services[0];
+    return {
+      ...form,
+      serviceId: first.serviceId,
+      modelPath: form.modelPath || savedImageModelOf(first),
+    };
+  }
+  const matched = services.find((item) => item.serviceId === form.serviceId);
+  if (matched && !form.modelPath) {
+    const defaultModel = savedImageModelOf(matched);
+    if (defaultModel) {
+      return { ...form, modelPath: defaultModel };
+    }
+  }
+  return form;
+}
+
 /** 构造生图服务连接探测草稿载荷（Settings 或面板新建服务共用）。 */
 export function toImageServiceProbePayload(input = {}) {
   const serviceId = String(input.serviceId ?? "").trim();

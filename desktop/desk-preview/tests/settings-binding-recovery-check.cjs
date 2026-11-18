@@ -43,7 +43,7 @@ async function run() {
     if (name === '春装') form.append('sprites', new Blob([bytes], { type: 'image/png' }), '微笑.png');
     await request(`/v1/roles/${a.roleId}/appearance/outfits`, { method: 'POST', body: form });
   }
-  const env = { ...process.env, NOWADAYS_BACKEND_URL: base, NOWADAYS_APP_ROOT: path.join(temp, 'desktop') }; delete env.ELECTRON_RUN_AS_NODE;
+  const env = { ...process.env, NOWADAYS_BACKEND_URL: base, NOWADAYS_APP_ROOT: path.join(temp, 'desktop'), NOWADAYS_SKIP_ROLE_PICKER: '1' }; delete env.ELECTRON_RUN_AS_NODE;
   electron = spawn(resolveElectronExecutable({ repoRoot: root }), ['--no-sandbox', '--remote-debugging-port=0', `--user-data-dir=${path.join(temp, 'profile')}`, path.join(root, 'desktop/desk-preview')], { env, windowsHide: true });
   electron.stdout.on('data', data => electronLog += data); electron.stderr.on('data', data => electronLog += data);
   const debugPort = await until(() => /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)/.exec(electronLog)?.[1]);
@@ -53,6 +53,11 @@ async function run() {
   await cmd('Runtime.enable'); await cmd('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
   await until(() => ev("!!document.querySelector('.ui-menu-trigger')")); await ev("document.querySelector('.ui-menu-trigger').click()");
   await until(() => ev("[...document.querySelectorAll('.ui-menu-item')].some(x=>x.textContent.includes('角色配置'))")); await ev("[...document.querySelectorAll('.ui-menu-item')].find(x=>x.textContent.includes('角色配置')).click()");
+  // 启动即存在内置助手夏澄，默认编辑对象可能不是联调甲；显式切到联调甲再继续。
+  await until(() => ev("!!document.querySelector('.config-switch-role')"));
+  await ev("document.querySelector('.config-switch-role').click()");
+  await until(() => ev("[...document.querySelectorAll('.config-poster-hit')].some(x=>x.textContent.includes('联调甲'))"));
+  await ev("[...document.querySelectorAll('.config-poster-hit')].find(x=>x.textContent.includes('联调甲')).click()");
   await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='联调甲'"));
   const editor = '.config-role-editor:not([hidden])';
   const button = (label, root = editor) => `[...document.querySelectorAll(${JSON.stringify(root + ' button')})].find(x=>x.textContent===${JSON.stringify(label)})`;

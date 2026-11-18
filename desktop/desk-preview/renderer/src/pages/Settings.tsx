@@ -1291,7 +1291,7 @@ function ImageServiceCreate({ onCancel, onCreated }: { onCancel: () => void; onC
           ...(secret.trim() ? { secret: secret.trim() } : {}),
         },
       });
-      if (!live.current) return;
+      // 提交后即使组件已卸载，已落库的模型缓存与父级刷新通知仍必须完成。
       if (carriedModels !== null) {
         writeImageModelCache(imageServiceCacheKey(result.service), carriedModels);
       }
@@ -1472,11 +1472,12 @@ function ImageServiceDetail({
           ...(keyMode === 'replace' ? { secret: secret.trim() } : keyMode === 'clear' ? { secret: null } : {}),
         },
       });
-      if (!live.current) return;
       const nextKey = imageServiceCacheKey(result.service);
       if (keyMode !== 'keep' || nextKey !== savedKey) clearImageModelCache(savedKey);
       if (keyMode !== 'keep') clearImageModelCache(nextKey);
       if (carriedModels !== null) writeImageModelCache(nextKey, carriedModels);
+      onUpdated(service.serviceId);
+      if (!live.current) return;
       setDraftName(result.service.name);
       setDraftUrl(result.service.config.baseUrl);
       setModelName(savedImageModelOf(result.service));
@@ -1485,7 +1486,6 @@ function ImageServiceDetail({
       setSecret('');
       probe.clearLog();
       setMessage('生图服务已保存。');
-      onUpdated(service.serviceId);
     } catch (reason) {
       if (live.current) setError(imageErrorText(reason));
     } finally {
@@ -1504,10 +1504,10 @@ function ImageServiceDetail({
         body: { enabled: !service.enabled },
       });
       if (service.enabled) clearImageModelCache(savedKey);
-      probe.clearLog();
-      if (!live.current) return;
-      setMessage(service.enabled ? '生图服务已全局停用。' : '生图服务已全局启用。');
       onUpdated(service.serviceId);
+      if (!live.current) return;
+      probe.clearLog();
+      setMessage(service.enabled ? '生图服务已全局停用。' : '生图服务已全局启用。');
     } catch (reason) {
       if (live.current) setError(imageErrorText(reason));
     } finally {
@@ -1526,7 +1526,6 @@ function ImageServiceDetail({
       for (const roleId of paused) {
         try { await api(`/v1/roles/${encodeURIComponent(roleId)}/activity/resume`, { method: 'POST' }); } catch { /* 删除成功后尽力恢复，其余角色可在状态页恢复 */ }
       }
-      if (!live.current) return;
       onRemoved(service.serviceId);
     } catch (reason) {
       if (live.current) setError(imageErrorText(reason));
@@ -1546,10 +1545,10 @@ function ImageServiceDetail({
         if (live.current) setError(`继续活动失败：${imageErrorText(reason)}`);
       }
     }
+    onUpdated();
     if (!live.current) return;
     setPausedRoleIds([]);
     if (names.length > 0) setMessage(`已继续本次活动暂停的角色：${names.join('、')}。`);
-    onUpdated();
   };
 
   const probeDisabled = !draftUrl.trim() || (keyMode === 'replace' && !secret.trim());

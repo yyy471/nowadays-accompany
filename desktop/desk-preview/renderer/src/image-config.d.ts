@@ -70,6 +70,10 @@ export function toSceneImagePreviewPayload(
   options?: { prompt?: string; outfitId?: string | null },
 ): { prompt: string; outfitId?: string; settings: ImageSettingsView };
 export function savedImageModelOf(service: { config?: { modelName?: string } } | null | undefined): string;
+export function syncImageFormServices(
+  form: ImageForm,
+  services: ReadonlyArray<{ serviceId: string; enabled?: boolean; config?: { modelName?: string } }>,
+): ImageForm;
 export function toImageServiceProbePayload(input: {
   serviceId?: string;
   baseUrl: string;

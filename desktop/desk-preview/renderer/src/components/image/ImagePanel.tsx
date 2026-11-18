@@ -9,6 +9,7 @@ import {
   describeImageSummary,
   imageServiceSnapshotKey,
   savedImageModelOf,
+  syncImageFormServices,
   toImagePayload,
   toSceneImagePreviewPayload,
   validateImageForm,
@@ -147,7 +148,8 @@ export function ImagePanel({
   previewOutfitRef.current = previewOutfitId;
   const noticeKindRef = useRef(noticeKind);
   noticeKindRef.current = noticeKind;
-  const initialServiceSync = useRef(true);
+  const serviceSyncSeq = useRef(0);
+  const syncedState = useRef<{ roleId: string; version: number; active: boolean } | null>(null);
   const initialOutfitSync = useRef(true);
   const isStale = (token: number) => !mounted.current || roleToken.current !== token;
 
@@ -233,7 +235,10 @@ export function ImagePanel({
   }, [previewBusy]);
 
   useEffect(() => {
+    let activeLoad = true;
     const token = roleToken.current;
+    const syncSeq = ++serviceSyncSeq.current;
+    syncedState.current = { roleId, version: serviceRefreshVersion, active };
     imageProbe.clearLog();
     invalidatePreview(true);
     invalidateAnchor(true);
@@ -245,42 +250,51 @@ export function ImagePanel({
       api<{ items: ServiceItem[] }>('/v1/image-services'),
       api<{ items: Outfit[] }>(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits`),
     ]).then(([config, available, wardrobe]) => {
-      if (isStale(token)) return;
-      setView(config);
-      servicesRef.current = available.items;
-      setServices(available.items);
+      if (!activeLoad || isStale(token)) return;
       setOutfits(wardrobe.items);
       setPreviewOutfitId(prev => prev && !wardrobe.items.some(item => item.outfitId === prev) ? '' : prev);
-      const next = createImageForm(config.settings);
-      if (next.serviceId === '' && available.items.length > 0) {
-        next.serviceId = available.items[0]!.serviceId;
-        if (!next.modelPath) {
-          next.modelPath = savedImageModelOf(available.items[0]);
-        }
+      const baseForm = createImageForm(config.settings);
+      if (syncSeq === serviceSyncSeq.current) {
+        setView(config);
+        servicesRef.current = available.items;
+        setServices(available.items);
+        const next = syncImageFormServices(baseForm, available.items);
+        setForm(next);
+        setSavedForm(next);
+      } else {
+        setSavedForm(previous => previous ?? baseForm);
       }
-      setForm(next); setSavedForm(next);
       setLoading(false);
     }).catch(reason => {
-      if (isStale(token)) return;
+      if (!activeLoad || isStale(token)) return;
       setError(failureText(reason));
       setLoading(false);
     });
+    return () => {
+      activeLoad = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roleId]);
 
   useEffect(() => {
-    if (initialServiceSync.current) {
-      initialServiceSync.current = false;
+    const previousSync = syncedState.current;
+    if (!previousSync || previousSync.roleId !== roleId) {
+      syncedState.current = { roleId, version: serviceRefreshVersion, active };
       return;
     }
+    const versionChanged = previousSync.version !== serviceRefreshVersion;
+    const becameActive = active && !previousSync.active;
+    syncedState.current = { roleId, version: serviceRefreshVersion, active };
+    if (!versionChanged && !becameActive) return;
     if (!roleId) return;
     const token = roleToken.current;
+    const syncSeq = ++serviceSyncSeq.current;
     Promise.all([
       api<ImageSettingsViewPayload>(`/v1/roles/${encodeURIComponent(roleId)}/scene-image`),
       api<{ items: ServiceItem[] }>('/v1/image-services'),
     ])
       .then(([config, available]) => {
-        if (isStale(token)) return;
+        if (isStale(token) || syncSeq !== serviceSyncSeq.current) return;
         setView(config);
         servicesRef.current = available.items;
         setServices(available.items);
@@ -297,24 +311,11 @@ export function ImagePanel({
         } else if (serviceInvalidated) {
           invalidatePreview(false);
         }
-        setForm(previous => {
-          if (previous.serviceId === '' && available.items.length > 0) {
-            const first = available.items[0]!;
-            return {
-              ...previous,
-              serviceId: first.serviceId,
-              modelPath: previous.modelPath || savedImageModelOf(first),
-            };
-          }
-          if (currentService && !previous.modelPath && savedImageModelOf(currentService)) {
-            return { ...previous, modelPath: savedImageModelOf(currentService) };
-          }
-          return previous;
-        });
+        setForm(previous => syncImageFormServices(previous, available.items));
       })
       .catch(() => { /* 从设置返回同步失败时保留现有草稿，保存时会触发正式校验 */ });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roleId, serviceRefreshVersion]);
+  }, [roleId, serviceRefreshVersion, active]);
 
   useEffect(() => {
     if (initialOutfitSync.current) {

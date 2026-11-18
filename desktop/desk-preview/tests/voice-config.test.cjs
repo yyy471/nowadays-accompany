@@ -452,3 +452,54 @@ test("暂存待上传参考音频时保留参考文本并通过校验，且切�
     referenceText: "新待上传录音原文"
   });
 });
+
+test("syncVoiceFormServices 在未配置时自动选中首个可用语音服务，并在服务变更时同步协议与地址", async () => {
+  const { createVoiceForm, syncVoiceFormServices } = await load();
+  const initial = createVoiceForm(null);
+  assert.equal(syncVoiceFormServices(initial, []), initial);
+
+  const services = [
+    {
+      serviceId: "v-disabled",
+      name: "停用服务",
+      enabled: false,
+      config: { protocol: "indextts", baseUrl: "http://127.0.0.1:9001" }
+    },
+    {
+      serviceId: "v-enabled",
+      name: "主语音",
+      enabled: true,
+      config: { protocol: "nowadays-tts-v1", baseUrl: "http://127.0.0.1:9002" }
+    }
+  ];
+  const picked = syncVoiceFormServices(initial, services);
+  assert.equal(picked.serviceId, "v-enabled");
+  assert.equal(picked.protocol, "nowadays-tts-v1");
+  assert.equal(picked.baseUrl, "http://127.0.0.1:9002");
+
+  // 服务信息未变化时返回同一对象引用，避免覆盖或误判草稿改动。
+  const unchanged = syncVoiceFormServices({ ...picked, speed: 1.3 }, services);
+  assert.equal(unchanged.speed, 1.3);
+  assert.equal(syncVoiceFormServices(unchanged, services), unchanged);
+
+  // 已配置但原服务被删除时，不得静默改写为其他服务。
+  const deleted = createVoiceForm({
+    ...referenceConfig,
+    serviceId: "v-missing",
+    baseUrl: "http://127.0.0.1:9999",
+    protocol: "nowadays-tts-v1"
+  });
+  assert.equal(syncVoiceFormServices(deleted, services), deleted);
+
+  // 全局服务改地址后，同步最新协议与地址并保留角色草稿。
+  const updated = syncVoiceFormServices(unchanged, [
+    services[0],
+    {
+      ...services[1],
+      config: { protocol: "indextts", baseUrl: "http://127.0.0.1:9003" }
+    }
+  ]);
+  assert.equal(updated.protocol, "indextts");
+  assert.equal(updated.baseUrl, "http://127.0.0.1:9003");
+  assert.equal(updated.speed, 1.3);
+});

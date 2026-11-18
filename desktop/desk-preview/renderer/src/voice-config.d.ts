@@ -190,6 +190,8 @@ export function normalizeBaseUrl(value: string | null | undefined): string;
 
 export function withVoiceService(form: VoiceForm, patch: Partial<VoiceForm>): VoiceForm;
 
+export function syncVoiceFormServices(form: VoiceForm, services: VoiceServiceItem[]): VoiceForm;
+
 export function isProbeCurrent(
   source: { baseUrl: string; protocol: string } | null | undefined,
   form: VoiceForm

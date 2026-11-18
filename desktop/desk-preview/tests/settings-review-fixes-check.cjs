@@ -41,7 +41,7 @@ async function run() {
     if (name === '春装') form.append('sprites', new Blob([bytes], { type: 'image/png' }), '微笑.png');
     await request(`/v1/roles/${a.roleId}/appearance/outfits`, { method: 'POST', body: form });
   }
-  const env = { ...process.env, NOWADAYS_BACKEND_URL: base, NOWADAYS_APP_ROOT: path.join(temp, 'desktop') }; delete env.ELECTRON_RUN_AS_NODE;
+  const env = { ...process.env, NOWADAYS_BACKEND_URL: base, NOWADAYS_APP_ROOT: path.join(temp, 'desktop'), NOWADAYS_SKIP_ROLE_PICKER: '1' }; delete env.ELECTRON_RUN_AS_NODE;
   electron = spawn(resolveElectronExecutable({ repoRoot: root }), ['--no-sandbox', '--remote-debugging-port=0', `--user-data-dir=${path.join(temp, 'profile')}`, path.join(root, 'desktop/desk-preview')], { env, windowsHide: true });
   electron.stdout.on('data', data => electronLog += data); electron.stderr.on('data', data => electronLog += data);
   const debugPort = await until(() => /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)/.exec(electronLog)?.[1]);
@@ -51,6 +51,11 @@ async function run() {
   await cmd('Runtime.enable'); await cmd('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
   await until(() => ev("!!document.querySelector('.ui-menu-trigger')")); await ev("document.querySelector('.ui-menu-trigger').click()");
   await until(() => ev("[...document.querySelectorAll('.ui-menu-item')].some(x=>x.textContent.includes('角色配置'))")); await ev("[...document.querySelectorAll('.ui-menu-item')].find(x=>x.textContent.includes('角色配置')).click()");
+  // 启动即存在内置助手夏澄，默认编辑对象可能不是联调甲；显式切到联调甲再继续。
+  await until(() => ev("!!document.querySelector('.config-switch-role')"));
+  await ev("document.querySelector('.config-switch-role').click()");
+  await until(() => ev("[...document.querySelectorAll('.config-poster-hit')].some(x=>x.textContent.includes('联调甲'))"));
+  await ev("[...document.querySelectorAll('.config-poster-hit')].find(x=>x.textContent.includes('联调甲')).click()");
   await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='联调甲'"));
   const editor = '.config-role-editor:not([hidden])';
   const button = (label, root = editor) => `[...document.querySelectorAll(${JSON.stringify(root + ' button')})].find(x=>x.textContent===${JSON.stringify(label)})`;
@@ -193,10 +198,12 @@ async function run() {
   catch (error) { console.error('PROFILE_SAVE_STATE', await ev("document.querySelector('.config-role-editor:not([hidden])')?.innerText")); throw error; }
   assert.ok((await request(`/v1/roles/${a.roleId}`)).definitionRevision > 1, '真实设定保存应更新版本');
   assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden])').innerText.includes('角色设定已保存')"), true);
+  const rolesBeforeDelete = (await request('/v1/roles')).items.length;
   await ev(`${button('删除角色')}.click()`);
   await ev("document.querySelector('.config-delete-options input[type=radio]').click()");
   await ev(`${button('确认删除', '.config-delete-options')}.click()`);
-  const rolesAfter = await until(async () => { const result = await request('/v1/roles'); return result.items.length === 2 ? result.items : null; });
+  // 启动即存在内置助手夏澄；按删除前后相对数量判断，不写死绝对数。
+  const rolesAfter = await until(async () => { const result = await request('/v1/roles'); return result.items.length === rolesBeforeDelete - 1 ? result.items : null; });
   await until(() => ev('window.reviewRoleRefreshFailed && !!document.querySelector(".config-delete-notice")'));
   await ev('window.reviewReleaseOldRoles()');
   await delay(300);

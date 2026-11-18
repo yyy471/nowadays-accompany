@@ -389,7 +389,7 @@
 
 ### 11.3 夏澄只读介绍与预置服饰锁定（DL-153）
 
-1. **角色配置页**：内置角色显示「内置助手 · 不可删除」说明块、只读显示名（附固定原因）与只读「官方介绍」；角色卡正文仍可编辑，保存时不再回传显示名变更；删除区替换为不可删除说明，不再出现删除流程。
+1. **角色配置页**：内置角色显示「内置助手 · 不可删除」说明块、只读显示名（附固定原因）与只读「官方介绍」；角色卡正文仍可编辑；显示名只读、保存不会产生显示名变更（实现仍提交同值 `displayName`，但输入框已禁用、值不变）；删除区替换为不可删除说明，不再出现删除流程。
 2. **衣柜**：新增纯策略 [preset-lock.js](../../../desktop/desk-preview/renderer/src/components/appearance/preset-lock.js)，`isPreset = 1` 的服饰禁用改名、替换主页立绘、删除与补传差分，卡片标注「预置 · 只读」，补传目标下拉跳过预置项；自定义服饰全部操作保持开放。
 3. **错误映射**：`PRESET_APPEARANCE_LOCKED` 在前端映射为「预置服饰与素材随应用交付，不能改名、替换或删除；可以新增自己的服饰」，与后端 409 契约一致。
 
@@ -412,3 +412,258 @@
 - 冷启动 E2E：新增 [pack3-entry-check.cjs](../../../desktop/desk-preview/tests/pack3-entry-check.cjs)，真实 Electron + 本地后端验证「先入选角页 → 内置标识与只读介绍 → 进入主页 → 关系页仍是同一位角色 → 全站无『陪伴』」，通过且无页面异常。
 - 后端：`tsc --noEmit` 通过；全量正式测试 **444／444**；`node scripts/accept-offline.mjs` **21／21** 步（`realServiceCalls = 0`、`sourceUnchanged = true`、正式测试 444／444），报告 `backend/test-results/p5-2026-11-17T15-22-27-980Z-d02c569a/summary.json`；`node scripts/check-docs.mjs` 0 错误 0 警告。
 - **遗留（不阻塞包 3 范围）**：`startup-flow-fixes-check.cjs` 与 `workflow-real-backend-chain-check.cjs` 以「初始 0 角色」为前置，与包 1「启动即创建夏澄」冲突，首步 `home-create-btn` 无法出现；该漂移早于包 3，需另行改写为「已有内置助手时从角色配置新建」。真实安装包（`package:win`）实机启动与 Node 运行时随包交付仍待真实打包联调。
+
+## 12. 包 3 独立复核（2026-11-17，未通过：E1 门禁项待补）
+
+在 `6010e1b`（工作树干净）上复核包 3。**功能实现与离线门禁独立通过；但 Electron E2E 套件整体为红（E1），未满足 §7.2「全仓回归门禁」，故本次复核不通过。**
+
+### 12.1 通过项
+
+| 验证项 | 独立方法 | 结果 |
+| --- | --- | --- |
+| 渲染器门禁 | 实跑 `npm run check` 与 `npm run build` | 令牌最新、**23 个 CSS 零违规**、`tsc --noEmit` 通过、构建成功 |
+| 桌面单测 | 实跑 `node --test tests/*.test.cjs` | **146／146** 通过 |
+| 后端门禁 | 实跑 `accept-offline.mjs` | **21／21** 步、**444／444**、`sourceUnchanged = true`、`realServiceCalls = 0`，报告 `backend/test-results/p5-2026-11-17T15-35-03-695Z-394363f0/summary.json` |
+| 文档巡检 | `node scripts/check-docs.mjs` | 0 错误 0 警告 |
+| 冷启动真实桌面 | 实跑 `tests/pack3-entry-check.cjs`（真实 Electron + 本地后端） | 入口页出现、进入前**不渲染** `.studio-shell`、内置徽标「内置助手」、只读介绍非空、进入后主页就位、`document.body.innerText` **不含「陪伴」**、关系页仍为选定角色、无页面异常 |
+| 全站去「陪伴」 | 全量搜索 `renderer/src` | 「陪伴」命中 **0**（含样式与组件文案） |
+| 打包路径解析 | 直接调用 `backend-paths.cjs` 验证三种布局 | 仓库态指向 `backend/` 与 `prototypes/p0/.runtime/...`；打包态指向 `resources/backend`＋`resources/preset-assets`＋`resources/node-runtime`；`NOWADAYS_BACKEND_ROOT` 覆盖优先 |
+| 取消接口契约 | 比对前端调用与后端路由/schema | `POST /v1/roles/:roleId/tasks/:taskId/cancel` 的 `{ reason }` 与 `taskCancelBodySchema`（trim/1–2000/optional）一致；任务字段与 `pickCancelableTask` 期望一致 |
+| 预置锁定数据 | 核对接口与类型 | `Outfit`／`OutfitAsset` 均带 `isPreset`（[p19](../../../backend/tests/p19-preset-assistant-pack1.test.ts) 已断言主页图与差分），锁定策略不会因字段缺失退化为「可编辑」 |
+
+### 12.2 E1 · P2 · Electron E2E 套件整体为红，不能作为包 3 回归门禁
+
+上一轮（309）记录为「均退出 0」的 Electron 脚本，本轮实跑结果：
+
+| 脚本 | 结果 | 失败断言 | 根因 |
+| --- | --- | --- | --- |
+| `tests/startup-flow-fixes-check.cjs` | 失败 | 等待 `home-create-btn` 超时 | 脚本以「初始 0 角色」为前置；包 1 起启动即创建夏澄，主页不再出现「创建角色」入口 |
+| `tests/workflow-real-backend-chain-check.cjs` | 失败 | 等待 `status-wall-two` 超时（要求「恢复活动」恰好 2 个） | 同一前置问题：脚本另建甲／乙两个角色，加上夏澄实为 3 个 |
+
+本次提交已在这两个脚本中加入 `NOWADAYS_SKIP_ROLE_PICKER=1`（让它们绕过选角页），**但未修正角色数量前置**，因此仍为红。§11.6 将该现象记为「早于包 3 的遗留」，经核对属实——漂移自包 1（`9f10d5f`）引入「启动即夏澄」时产生；但 §7.2 明确把「隔离 Electron E2E」列为全仓回归门禁，既然本次已改动这两个文件，应一并把前置改为「以已有内置助手为起点」、断言改用相对数量（`新建数 + 内置 1`）而非绝对 2，否则包 3 无法宣称门禁通过。
+
+### 12.3 观察项（不阻塞，建议处理）——五项均已处理
+
+1. **冷启动错误态不可达**：`needsEntryPick` 在「后端出错且无角色」时返回 `false`，App 直接进入工作区；`RoleEntry` 的 `error && cards.length === 0` 分支与 `onRetry` 因此永远走不到，且 [role-entry.js](../../../desktop/desk-preview/renderer/src/entry/role-entry.js) 的注释「出错且没有任何角色时仍停在入口页」与实现相反。建议二选一：让错误态停留在入口页（保留注释语义），或改正注释并删除死分支。**已处理（见 §12.5）：采用前者，错误态停留入口页，错误分支与重试可达。**
+2. **打包交付未完成**：`extraResources` 未包含 `node-runtime`，`resolveNodeExecutable` 最终回退到 PATH 上的 `node`（本机 PATH 为 v22，后端要求 Node 24）；`appRoot` 默认落在安装目录 `resources/backend/.nowadays-desktop`，在 `Program Files` 类只读安装位会写失败。§11.6 已列为遗留，建议在 STATUS 中明确写为「打包交付待联调」，不要表述为已完成。**部分处理（见 §12.5）：打包态 `appRoot` 改到用户数据目录；`node-runtime` 因目录被 gitignore 未强行纳入，STATUS 已明确「打包交付待联调」。**
+3. **预置素材重复打包**：`extraResources` 既复制 `backend/assets/presets` 又单独复制到 `preset-assets`，运行期只用后者，多占约 59MB；建议从 backend filter 去掉 `assets/presets/**/*`。**已处理（见 §12.5）。**
+4. **取消任务缺 E2E**：目前只有纯逻辑单测覆盖「选哪一条」，没有覆盖「按钮出现 → 确认 → 实际取消 → 任务终态」。建议在既有 Electron 脚本里补一条最短路径。**已处理（见 §12.5）：`startup-flow-fixes-check` 新增该最短路径。**
+5. **表述与实现差异**：§11.3 写「保存时不再回传显示名变更」，实现仍以 `displayName: draft.name.trim()` 提交（内置角色输入框已禁用，值不变），建议改为「显示名只读、保存不会产生变更」。**已处理（见 §12.5）。**
+
+### 12.4 复核范围
+
+仅覆盖包 3 的桌面端、随仓预置素材与离线/Electron 本地范围；真实安装包（`package:win`）实机启动、真实模型与第三方 MCP 联调不在本次范围。证据：`desktop` 三条门禁实跑输出、`backend/test-results/p5-2026-11-17T15-35-03-695Z-394363f0/summary.json`、`tests/pack3-entry-check.cjs` 运行结果。
+
+### 12.5 E1 与观察项补修（2026-11-18，自验通过，待独立复核）
+
+针对 §12.2 的 E1（Electron E2E 套件整体为红）与 §12.3 五项观察项完成补修；本轮**只改测试脚本、文档与打包配置**，不改变产品业务逻辑（唯一功能改动是冷启动错误态分支的启用，见观察项 1）。
+
+**E1 · Electron E2E 恢复为可用门禁**
+
+1. **根因**：包 1「启动即创建夏澄」后，各脚本以「初始 0 角色」为前置的假设失效；包 3 引入冷启动选角页后，未跳过选角页的脚本还会停在入口页。
+2. **`startup-flow-fixes-check.cjs`**：改为「以已有内置助手为起点」，走「角色配置 → 切换角色 → 新建角色」创建「林雾」；角色定位由 `items[0]` 改为按显示名查找，避免夏澄占位。
+3. **`workflow-real-backend-chain-check.cjs`**：角色墙断言由「恢复活动恰好 2 个」改为「甲乙各自可恢复」；绑定前显式切到甲角色（原依赖默认编辑对象）；所有「全员 active」断言改为只看甲乙（`bothActive`）；「仅改模型名后全员启用」改为按角色校验；删除后显式切到乙／丙继续删除链；生图保存按钮改为等待「保存配置／暂停并保存配置」任一文案后点击（活动态同步时差点按空）。
+4. **其余 8 个 E2E**（`dialogue-layout`、`relations-desktop`、`settings-auto-reload`、`settings-binding-recovery`、`settings-real-backend`、`settings-review-fixes`、`settings-workspace`、`theme-transition`）：补 `NOWADAYS_SKIP_ROLE_PICKER=1` 以跳过选角页（这些脚本只验证工作区页面）；4 个 real-backend 设置脚本在进入角色配置后显式切到「联调甲」；`settings-review-fixes` 删除后的角色数量断言改为相对（`删除前数量 - 1`）；`settings-workspace` 修正包 3 已移除的「当前陪伴（右页脚）」断言，改为校验当前编辑对象（左页脚/编辑对象），并区分「新建后编辑对象为丙」。
+
+**观察项 1 · 冷启动错误态**
+
+[role-entry.js](../../../desktop/desk-preview/renderer/src/entry/role-entry.js) 的 `needsEntryPick` 增加 `error` 参数：无角色且读取失败时返回 `true`，冷启动停在入口页并由 `RoleEntry` 呈现错误与「重试」；[App.tsx](../../../desktop/desk-preview/renderer/src/App.tsx) 传入 `error`，`role-entry.d.ts` 同步签名；[pack3-entry.test.cjs](../../../desktop/desk-preview/tests/pack3-entry.test.cjs) 补充「无角色+错误→停留」「有角色+错误→仍进入」断言。
+
+**观察项 2/3/5 · 打包与表述**
+
+- `extraResources` 从 backend filter 去掉 `assets/presets/**/*`，仅保留 `preset-assets`，消除约 59MB 重复（运行期本就使用后者）。
+- [main.cjs](../../../desktop/desk-preview/main.cjs) 打包态 `appRoot` 改为 `app.getPath("userData")/data`，避免在只读安装位写失败；仓库态与 `NOWADAYS_APP_ROOT` 覆盖行为不变。
+- `node-runtime` 未强行加入 `extraResources`：该目录被 `prototypes/p0/.gitignore` 忽略、未入库，直接引用会让干净检出构建失败；STATUS 明确记为「打包交付待联调」，待打包流水线提供运行时后再补。
+- §11.3 表述已改为「显示名只读、保存不会产生变更」。
+
+**观察项 4 · 取消任务 E2E**
+
+`startup-flow-fixes-check.cjs` 末尾新增最短路径：向角色业务库预置一条 `paused + continuable` 的用户任务 → 对话页轮询发现 → 取消入口出现（文案「取消等待中的任务」）→ 点击 → 弹窗「确认取消任务」→ 真实 `POST .../cancel` → 任务终态 `failed / USER_CANCELLED` 且入口消失。任务创建本身不在本用例范围。
+
+**门禁结果**：渲染器 `npm run check`（令牌最新、23 个 CSS 零违规、`tsc --noEmit`）与 `npm run build` 通过；桌面单测 **146／146**；**11 条 Electron E2E 全部退出 0**（含此前为红的三条：`startup-flow-fixes-check`、`workflow-real-backend-chain-check`、以及一批未跳过选角页的脚本）；后端 `accept-offline.mjs` **21／21 步**、正式测试 **444／444**、`sourceUnchanged=true`、`realServiceCalls=0`，报告 `backend/test-results/p5-2026-11-18T02-31-13-777Z-5646bc7d/summary.json`；`node scripts/check-docs.mjs` 0 错误 0 警告。
+
+**性质说明**：本次为实施者自验通过，尚未独立复核；E1 的复验仍应以独立实跑为准。
+
+### 12.6 补修独立复核（2026-11-18，**未通过：E1 未收口**）
+
+对 §12.5 的补修做独立复核。全部结论来自自行实跑与自建探针，不采信 §12.5 的自验数字。**十一条 E2E 中十条可由我独立复现通过；`workflow-real-backend-chain-check.cjs` 在我这里 7 次运行仅 1 次通过，E1 仍未收口，故本次复核不通过。**
+
+#### 12.6.1 通过项
+
+| 验证项 | 独立方法 | 结果 |
+| --- | --- | --- |
+| 渲染器门禁 | 实跑 `npm run check`、`npm run build` | 令牌最新、**23 个 CSS 零违规**、`tsc --noEmit` 通过、构建成功 |
+| 桌面单测 | 实跑 `node --test tests/*.test.cjs` | **146／146** |
+| 后端门禁 | 实跑 `accept-offline.mjs` | **21／21** 步、**444／444**、`realServiceCalls = 0`、`sourceUnchanged = true`，报告 `backend/test-results/p5-2026-11-18T02-40-07-559Z-01271d96/summary.json` |
+| 文档巡检 | `node scripts/check-docs.mjs` | 0 错误 0 警告 |
+| 观察项 1（产品改动） | 自建探针 `probe-entry-error.cjs`：真实 Electron + 假后端，`/v1/roles` 先 500 后恢复 | 失败态**未渲染** `.studio-shell`、入口页呈现「数据库暂时不可用」+「重试」、无角色卡；点「重试」后错误消失、列出角色、仍停选角页、进入后到 `home`。错误分支与重试**确实可达** |
+| 观察项 3（打包去重） | 读 `package.json` `extraResources` | backend filter 已去掉 `assets/presets/**/*`，仅保留 `preset-assets`，约 59MB 重复消除 |
+| 观察项 4（取消 E2E） | 实跑 `startup-flow-fixes-check.cjs` 4 次 | 4／4 通过（18～19s），输出 `issue7CancelTaskE2E: { status: failed, endReason: USER_CANCELLED }`，UI→后端→终态全链路真实生效 |
+| 观察项 5（表述） | 读 §11.3 | 已改为「显示名只读、保存不会产生显示名变更」，与实现一致 |
+| 观察项 2（部分） | 读 `main.cjs` | 打包态 `appRoot` 改为 `app.getPath("userData")/data`，仓库态与 `NOWADAYS_APP_ROOT` 覆盖不变；`node-runtime` 仍未随包，STATUS 已按「打包交付待联调」表述 |
+| 其余 10 条 E2E | 各独立运行 1 次 | 全部退出 0：`dialogue-layout` 4s、`relations-desktop` 10s、`theme-transition` 18s、`settings-auto-reload` 9s、`settings-binding-recovery` 6s、`pack3-entry` 3s、`settings-real-backend` 7s、`settings-review-fixes` 7s、`settings-workspace` 23s、`startup-flow-fixes` 18s |
+
+#### 12.6.2 E1 · P2 · `workflow-real-backend-chain-check.cjs` 仍不稳定
+
+同一命令连续 7 次：**1 次通过（22s）、6 次失败**，两类失败点：
+
+| 次数 | 失败点 | 现象 |
+| --- | --- | --- |
+| 5 次 | `:801` | `TypeError: Cannot read properties of undefined (reading 'click')` —— 找不到文案为「暂停并启用」的按钮 |
+| 1 次 | `:647` | 等待 `.nd-model-options [role=option]` 达 2 项，25s 超时（`comfy-a-two-options`） |
+
+**定位过程**：用临时诊断副本（仅替换 `:801` 的匹配方式，跑完即删，未留在仓库）连续运行 4 次，打印实际按钮文案：
+
+- 3 次打印到文案：2 次为「**全局启用**」、1 次为「暂停并启用」；改为容忍两种文案后 **4／4 全部通过**（含 `:801` 之后所有断言）。
+- 根因：该按钮文案随 `hasActiveRoles` 切换（[Settings.tsx](../../../desktop/desk-preview/renderer/src/pages/Settings.tsx#L1568)：`service.enabled ? (hasActiveRoles ? '暂停并停用' : '全局停用') : (hasActiveRoles ? '暂停并启用' : '全局启用')`），而脚本硬编码「暂停并启用」且不等待活动态就绪，进入设置后 `activities` 尚未落地时即点击。
+- `:647`：`ImageModelPicker` 的候选列表依赖 `open` 状态（[ImageModelPicker.tsx](../../../desktop/desk-preview/renderer/src/components/image/ImageModelPicker.tsx#L95)），脚本只 `focus()` 一次后干等；探测完成触发的重渲染或 `onBlur`（120ms 后关闭）会让列表不再渲染。
+
+两处均在本次改动**未触及**的行，属既有脆弱等待模式；但 §7.2 把「隔离 Electron E2E」列为全仓回归门禁，`11 条全部退出 0` 在我这里不可复现（仓库 `test-results` 下也没有该次 E2E 日志留证），因此 E1 不能算通过。
+
+**建议修复（最小改动）**：
+
+1. `:801` 改为容忍两种文案 `find(x => /^(暂停并启用|全局启用)$/.test(x.textContent.trim()))`，或先等活动态文本就绪再点。
+2. `:647` 把 `input.focus()` 换成 `input.click()`（组件 `onClick` 也会开列表），并等 `aria-expanded === 'true'` 再断言候选数。
+3. 通用模式：把「`until` 判定存在 → 下一次 `ev` 里 `find().click()`」合并为同一次求值内 `find + click` 并返回布尔，交给 `until` 重试，避免两次求值之间被重渲染清掉。
+
+#### 12.6.3 观察项（不阻塞）——四项已处理（见 §12.7）
+
+1. **注释与实现不符**：[settings-workspace-check.cjs](../../../desktop/desk-preview/tests/settings-workspace-check.cjs#L316) 新增说明「包 3 起编辑对象与当前角色共享 currentId」，但 `chooseRole` 只 `setEditId`（[Settings.tsx](../../../desktop/desk-preview/renderer/src/pages/Settings.tsx#L293)），`currentId` 不变，仅当 `editId` 失效时才回落到 `currentId`（同文件 `L190`）。断言本身成立（`config-footer-ident` 显示编辑对象），建议注释改为「编辑对象独立于当前角色」。
+2. **覆盖缺口**：原先 `#config-footer-right` 断言「编辑乙时当前角色仍是甲」，右页脚改为「切换角色」按钮后该断言消失，「编辑他人不改变当前角色」现无 E2E 覆盖。建议补一条 `currentId` 或主页头像不变的断言。
+3. **STATUS 数字过期**：验收基线写「22 个 CSS」，实为 23，已一并修正。
+4. **打包数据目录迁移**：`appRoot` 由 `resources/backend/.nowadays-desktop` 改为 `userData/data`。未发布前无迁移负担，但需写入打包联调清单——旧安装产物里的数据不会被自动接管。
+
+#### 12.6.4 复核范围
+
+仅覆盖包 3 桌面端与离线／Electron 本地范围；真实安装包（`package:win`）实机启动、真实模型与第三方 MCP 联调不在本次范围。证据：`backend/test-results/310-pack3-recheck-20261118/`（`probe-entry-error.json`、`e2e/*.log`、`e2e/diag1..3.log`）、`backend/test-results/p5-2026-11-18T02-40-07-559Z-01271d96/summary.json`。
+
+### 12.7 E1 收口与 §12.6.3 观察项补修（2026-11-18，自验通过，待独立复核）
+
+针对 §12.6.2 的 E1（`workflow-real-backend-chain-check.cjs` 7 次仅 1 次通过）与 §12.6.3 四项观察项完成补修。本轮**只改测试脚本与文档**，不触及产品逻辑。
+
+#### 12.7.1 E1 根因与改法
+
+复核定位的两处脆弱点都属同一类模式：**「先在一个求值里等到存在，再在下一个求值里查找并点击」**，两次求值之间被重渲染清掉即抛 `TypeError: ... reading 'click'`；以及**只触发一次就干等**，错过时机后永不重试。
+
+改为三个可重试原语，并全量替换脚本内的直接点击：
+
+1. **`clickWhen(表达式)`**：在同一次求值内 `find → click → 返回 true`，找不到返回 `false` 交给 `until` 每 100ms 重试。脚本内 133 处 `await ev("…click()")` 全部替换，根除「两次求值之间元素消失」这一类失败。
+2. **`untilModelOptions(scope, 数量)` / `pickModelOption(scope, 文案)`**：[ImageModelPicker](../../../desktop/desk-preview/renderer/src/components/image/ImageModelPicker.tsx#L95) 的候选列表依赖 `open`，`onBlur` 会在 120ms 后收起，原脚本 `focus()` 一次后干等必然超时。新原语在**同一次求值内**「未展开则唤出（`focus`+`click`）→ 数候选 / 派发 `mousedown`」，把 `:647` 的 `comfy-a-two-options` 与两处「focus+等候选+dispatchEvent」全部换掉（候选按钮只用 `onMouseDown`，故仍派发 `mousedown` 而非 `click()`）。
+3. **`clickAnyText(候选文案)` + `resumePausedIfAny()`**：生图／语音面板的启停按钮文案随「是否有启用中的角色」在「暂停并启用／全局启用」「暂停并停用／全局停用」间切换（[Settings.tsx](../../../desktop/desk-preview/renderer/src/pages/Settings.tsx#L1568)），原脚本硬编码单一文案且不等活动态就点。改为按候选文案匹配；启用／停用后是否出现「继续本次暂停的角色」也改为「出现则点、未出现则跳过」（`untilOrNull`），避免两种活动态下互斥的两个分支。
+
+#### 12.7.2 稳定性结果
+
+同一命令连续 7 次（复核用同一方法）：**7／7 通过**，耗时 21–27s（此前 7 次仅 1 次通过、失败固定在 `:801` 与 `:647`）。日志：`backend/test-results/310-e1-recheck/run-1..7.log`。
+
+#### 12.7.3 §12.6.3 四项观察项
+
+1. **注释与实现不符**：[settings-workspace-check.cjs](../../../desktop/desk-preview/tests/settings-workspace-check.cjs#L336) 两处说明改为「DL-147：编辑对象独立于当前角色」，与 `chooseRole` 只改 `editId` 的实现一致。
+2. **覆盖缺口**：补「编辑他人不改变当前角色」断言——切到乙角色编辑后点 Dock「桌面」，断言主页英雄区 `.home-account h2` 仍为甲角色，再返回角色配置继续草稿流程（编辑对象仍为乙）。该断言同时覆盖了包 3 移除 `#config-footer-right` 后丢失的语义。
+3. **STATUS 数字**：验收基线 CSS 数为 23，已核对一致。
+4. **打包数据目录迁移**：写入 [STATUS](../../STATUS.md) 打包联调清单——`appRoot` 由 `resources/backend/.nowadays-desktop` 改为 `userData/data`，旧安装产物数据不会被自动接管，联调时需确认迁移策略（未发布前无真实负担）。
+
+#### 12.7.4 门禁结果
+
+- 渲染器：`npm run check`（令牌最新、**23 个 CSS 零违规**、`tsc --noEmit` 通过）与 `npm run build` 通过。
+- 桌面单测：**146／146**。
+- Electron E2E：**11 条全部退出 0**——`workflow-real-backend-chain-check` 另做 7 次连跑（7／7），其余 10 条各 1 次（`dialogue-layout` 3s、`relations-desktop` 9s、`theme-transition` 18s、`settings-auto-reload` 6s、`settings-binding-recovery` 6s、`pack3-entry` 2s、`settings-real-backend` 7s、`settings-review-fixes` 6s、`settings-workspace` 23s、`startup-flow-fixes` 18s）；日志在 `backend/test-results/310-e1-recheck/`。
+- 后端：`accept-offline.mjs` **21／21 步**、正式测试 **444／444**、`sourceUnchanged=true`、`realServiceCalls=0`，报告 `backend/test-results/p5-2026-11-18T03-17-35-807Z-9c38e07e/summary.json`。
+- 文档巡检：`node scripts/check-docs.mjs` 0 错误 0 警告。
+
+**性质说明**：本次为实施者自验通过，尚未独立复核；E1 是否收口仍以独立实跑（含连续多次）为准。真实安装包实机启动与 Node 运行时随包交付仍待打包联调，不在本轮范围。
+
+### 12.8 二次补修独立复核（2026-11-18，**通过；附 1 项低频遗留抖动**）
+
+在 §12.7 工作树上独立复核，结论均来自自行实跑，不采信自验数字。**§12.6.2 已定位的两处失败点（`:801` 文案硬编码、`:647` 下拉只唤出一次）在 20 次连跑中 0 次复现，E1 复核通过。**
+
+#### 12.8.1 独立验证
+
+| 验证项 | 方法 | 结果 |
+| --- | --- | --- |
+| 工作流 E2E 稳定性 | 同一命令连续实跑 **20 次** | **19／20 退出 0**（22～25s）；唯一失败在第 9 次，`:942` 等待 `role-picked-voice-svc` 25s 超时（42s）。§12.6.2 的两处原失败点 0 次复现 |
+| 其余 10 条 E2E | 各独立运行 1 次 | **10／10** 退出 0（`dialogue-layout` 3s、`relations-desktop` 9s、`theme-transition` 18s、`settings-auto-reload` 7s、`settings-binding-recovery` 6s、`pack3-entry` 3s、`settings-real-backend` 7s、`settings-review-fixes` 7s、`settings-workspace` 23s、`startup-flow-fixes` 18s），含新增「编辑乙时当前角色仍为甲」断言 |
+| 渲染器门禁 | 实跑 `npm run check` + `npm run build` | 令牌最新、**23 个 CSS 零违规**、`tsc --noEmit` 通过、构建成功 |
+| 桌面单测 | 实跑 | **146／146** |
+| 后端门禁 | 实跑 `accept-offline.mjs` | **21／21** 步、**444／444**、`realServiceCalls = 0`、`sourceUnchanged = true`，报告 `backend/test-results/p5-2026-11-18T04-16-46-162Z-11ba55db/summary.json` |
+| 文档巡检 | `node scripts/check-docs.mjs` | 0 错误 0 警告 |
+
+#### 12.8.2 改动质量核对
+
+- `clickWhen` 在同一次求值内 `find → click → true`，找不到才重试；后续 `until` 断言仍校验点击效果，没有把失败吞成「恒通过」。133 处直接点击替换后，脚本只剩 1 处可选链直接点击（`.dialogue-messages?.click()`），无遗漏。
+- `untilModelOptions`／`pickModelOption` 每次重试都重新唤出下拉，并使候选按钮的 `mousedown` 与组件 `onMouseDown` 契约一致；`clickAnyText` 容忍「暂停并启用／全局启用」两种文案，但启停后仍以 `until(bothActive)` 校验角色终态，不会因跳过恢复按钮而漏检。
+- `untilOrNull` 会吞掉求值异常，但脚本末尾仍 `assert.deepEqual(errors, [])` 校验 `Runtime.exceptionThrown`，且终态断言保留，未见覆盖退化。
+- 本轮只改测试脚本与文档，未触及产品代码，无新增产品回归面。
+- §12.6.3 四项观察均已处理：注释改为「DL-147：编辑对象独立于当前角色」；新增断言用 `.home-account h2`（与 [Home.tsx](../../../desktop/desk-preview/renderer/src/pages/Home.tsx#L67) 一致）验证切换编辑对象不改变当前角色，属真守卫；CSS 计数 23 与实跑一致；`appRoot` 迁移写入 STATUS 打包清单。
+
+#### 12.8.3 遗留抖动（不阻塞，建议后续处理）
+
+20 次中第 9 次在 `workflow-real-backend-chain-check.cjs:942` 的 `role-picked-voice-svc` 等待超时：从设置页新建全局语音服务并返回角色配置后，角色语音服务的下拉未在 25s 内自动选中新服务。该行不在本轮改动范围，属低频状态同步竞态——[VoicePanel.tsx](../../../desktop/desk-preview/renderer/src/components/voice/VoicePanel.tsx#L268) 的自动选中发生在 `serviceRefreshVersion` 变化触发的拉取完成之后，且要求 `form.serviceId === '' && !configured`。建议先等下拉选项含目标 `serviceId` 再断言自动选中，或在创建服务后显式触发角色刷新；若能稳定复现，再排查 `voiceServiceVersion` 从设置页返回角色 editors 的传递链路。
+
+**结论**：E1 两处已定位缺陷确认修复，工作流失稳率由 §12.6 的 1／7 提升至 19／20，其余门禁全绿，**包 3 独立复核通过**。但不得表述为「E2E 零抖动」——上述 1／20 须作为遗留登记。打包交付（`node-runtime` 随包、`package:win` 实机启动、`appRoot` 迁移策略）仍在待联调范围，不随本次通过。
+
+**证据**：`backend/test-results/310-pack3-recheck2-20261118/e2e/`（`workflow-run1..20.log` 与其余 10 条脚本日志）、`backend/test-results/p5-2026-11-18T04-16-46-162Z-11ba55db/summary.json`。
+
+### 12.9 §12.8.3 遗留抖动修复与自验（2026-11-18，自验通过，待独立复核）
+
+针对 §12.8.3 记录的 `workflow-real-backend-chain-check.cjs:942` 低频超时（20 次中 1 次出现 `role-picked-voice-svc` 超时），定位到设置页与角色配置面板之间的两处异步同步竞态并完成修复。
+
+#### 12.9.1 根因定位
+
+1. **卸载后丢弃创建／变更回调与探测缓存**：[VoiceServiceEditor.tsx](../../../desktop/desk-preview/renderer/src/components/voice/VoiceServiceEditor.tsx#L65-L76)（`VoiceServiceCreate` 与 `VoiceServiceDetail`）及 [Settings.tsx](../../../desktop/desk-preview/renderer/src/pages/Settings.tsx#L1294-L1298)（`ImageServiceCreate` 与 `ImageServiceDetail`）在请求返回后先判断 `if (!live.current) return;`，再写入全局探测／模型缓存并调用 `onCreated`／`onUpdated`／`onRemoved`。当脚本（或用户）在后端刚提交 `POST /v1/voice-services` 后立即点击 `.config-return-footer` 返回角色配置页时，添加页先于 `fetch` 回调卸载、`live.current` 置为 `false`，导致 `writeVoiceProbeCache` 与 `onCreated` 被跳过，`voiceServiceVersion` 停留原值，[VoicePanel](../../../desktop/desk-preview/renderer/src/components/voice/VoicePanel.tsx) 永远收不到刷新信号。
+2. **返回可见与初次加载并发同步缺少保序**：[VoicePanel.tsx](../../../desktop/desk-preview/renderer/src/components/voice/VoicePanel.tsx#L214-L280) 与 [ImagePanel.tsx](../../../desktop/desk-preview/renderer/src/components/image/ImagePanel.tsx#L237-L310) 仅在 `serviceRefreshVersion` 变化时同步服务列表，不在 `active` 从 `false` 切回 `true` 时同步，且初始加载（`[roleId]`）与外部刷新缺少统一序号 `serviceSyncSeq` 保序（严格模式双挂载或并发刷新下旧请求可能覆盖新结果）。
+
+#### 12.9.2 修复内容
+
+1. **分离本地状态守卫与跨页提交通知**：在 [VoiceServiceEditor.tsx](../../../desktop/desk-preview/renderer/src/components/voice/VoiceServiceEditor.tsx)（`VoiceServiceCreate`、`VoiceServiceDetail`）与 [Settings.tsx](../../../desktop/desk-preview/renderer/src/pages/Settings.tsx)（`ImageServiceCreate`、`ImageServiceDetail`）中，后端写删成功后**无条件**完成共享探测／模型缓存写入及 `onCreated`／`onUpdated`／`onRemoved` 父级回调，`live.current` 仅保护本地组件状态更新（`setBusy`、`setError`、`setMessage` 等）。
+2. **统一服务列表同步与序号保序**：将表单自动选中与地址/协议/默认模型同步抽为纯函数 [syncVoiceFormServices](../../../desktop/desk-preview/renderer/src/voice-config.js) 与 [syncImageFormServices](../../../desktop/desk-preview/renderer/src/image-config.js)（无变化时返回原引用，不打断草稿）；[VoicePanel.tsx](../../../desktop/desk-preview/renderer/src/components/voice/VoicePanel.tsx) 与 [ImagePanel.tsx](../../../desktop/desk-preview/renderer/src/components/image/ImagePanel.tsx) 引入 `serviceSyncSeq` 保序并在 `serviceRefreshVersion` 变更或 `active` 由 `false` 切为 `true` 时执行同步，同时避免严格模式首次挂载重复拉取。
+3. **回归覆盖**：[voice-config.test.cjs](../../../desktop/desk-preview/tests/voice-config.test.cjs) 与 [image-config.test.cjs](../../../desktop/desk-preview/tests/image-config.test.cjs) 新增纯函数单测；[settings-workspace-check.cjs](../../../desktop/desk-preview/tests/settings-workspace-check.cjs#L558-L574) 新增「挂起 `POST /v1/voice-services` → 返回角色配置卸载添加页 → 释放响应 → 自动选中且保留探测结果并可跳转管理」的确定性复现断言。
+
+#### 12.9.3 自验证据
+
+- **渲染器门禁**：`cd desktop/desk-preview/renderer && npm run check && npm run build` 通过（令牌同步、23 个 CSS 零违规／豁免 388、`tsc --noEmit` 通过、`vite build` 130 模块）。
+- **桌面单测**：`cd desktop/desk-preview && npx -y node@24 --test tests/*.test.cjs` **148／148** 通过（0 失败，0 跳过）。
+- **Electron E2E**：
+  - `workflow-real-backend-chain-check.cjs` 连续实跑 **20／20 退出 0**（20.5～33.8s，原 `:942` `role-picked-voice-svc` 抖动 0 次复现）；
+  - 其余 10 条 E2E（含新增延迟卸载竞态断言的 `settings-workspace-check.cjs`）**10／10 退出 0**；日志位于 `backend/test-results/310-pack3-jitter-fix-20261118/e2e/`。
+- **后端门禁**：`npx -y node@24 ./node_modules/typescript/bin/tsc --noEmit` 与 `npx -y node@24 scripts/accept-offline.mjs` **21／21 步**通过（正式测试 **444／444**、`delivery-tests` 2／2、`realServiceCalls = 0`、`sourceUnchanged = true`，报告 `backend/test-results/p5-2026-11-18T09-38-18-926Z-963de732/summary.json`）。
+
+**性质说明**：本节修复及 20／20 复跑为实施者自验通过，待独立复核；真实安装包（`package:win`、`node-runtime` 随包、`appRoot` 迁移）与真实外部服务联调仍在待联调范围。
+
+### 12.10 §12.9 抖动修复独立复核（2026-11-18，**通过**）
+
+在 §12.9 工作树上独立复核，结论均来自自行实跑与回退对照，不采信 §12.9 自验数字。**工作流 E2E 连跑 20／20 通过，`:942` 抖动 0 次复现；两层修复均有回退对照验证为真守卫，§12.9 通过。**
+
+#### 12.10.1 独立验证
+
+| 验证项 | 独立方法 | 结果 |
+| --- | --- | --- |
+| 工作流 E2E 稳定性 | 同一命令连续实跑 **20 次** | **20／20 退出 0**（20～40s）；原 `:942` `role-picked-voice-svc` 0 次复现，`:801`／`:647` 亦 0 次复现；日志 `workflow-run1..20.log` |
+| 其余 10 条 E2E | 各独立运行 1 次，`settings-workspace-check` 另加跑 3 次 | **全部退出 0**（`dialogue-layout` 11s、`relations-desktop` 12s、`theme-transition` 21s、`settings-auto-reload` 20s、`settings-binding-recovery` 27s、`pack3-entry` 17s、`settings-real-backend` 8s、`settings-review-fixes` 8s、`startup-flow-fixes` 20s；`settings-workspace` 32s／37s／26s 三次均过），各日志 `errors: []` |
+| 渲染器门禁 | 实跑 `npm run check` + `npm run build` | 令牌最新、**23 个 CSS 零违规**（豁免 388）、`tsc --noEmit` 通过、构建成功 |
+| 桌面单测 | 实跑 `node --test tests/*.test.cjs` | **148／148** 通过（含新增 `syncVoiceFormServices`／`syncImageFormServices` 单测） |
+| 后端门禁 | 实跑 `accept-offline.mjs` | **21／21** 步、**444／444**、`realServiceCalls = 0`、`sourceUnchanged = true`，报告 `backend/test-results/p5-2026-11-18T10-16-42-632Z-f525433f/summary.json` |
+| 文档巡检 | `node scripts/check-docs.mjs` | 0 错误 0 警告 |
+
+#### 12.10.2 用例是否真守卫（回退对照）
+
+| 对照 | 方法 | 结果 |
+| --- | --- | --- |
+| 全量回退 | 临时把 `VoicePanel.tsx`／`ImagePanel.tsx`／`VoiceServiceEditor.tsx`／`Settings.tsx` 回退到 `6010e1b`，重建后单跑 `settings-workspace-check` | 在新增「延迟卸载」断言处等待超时（`:572` 自动选中 `voice-1`），确认用例不是空断言 |
+| 半修复对照（仅回退回调侧） | 只回退 `VoiceServiceEditor.tsx`／`Settings.tsx`（卸载后仍丢弃缓存写入与 `onCreated`），保留面板 `serviceSyncSeq`／`active` 同步 | 仍失败，断在 `:573` 探测缓存未带入；说明用例同时覆盖「卸载后写缓存并通知父级」与「面板回归可见时重新同步」两侧，任一侧缺失即红 |
+| 恢复后回归 | 还原补修文件（md5 与备份一致）重建 | `settings-workspace-check` 连跑 3 次全过 |
+
+#### 12.10.3 改动质量核对
+
+- **回调侧**：`VoiceServiceCreate`／`VoiceServiceDetail` 与 `ImageServiceCreate`／`ImageServiceDetail` 把「探测／模型缓存写入 + `onCreated`／`onUpdated`／`onRemoved`」移出 `live.current` 守卫，本地 UI 状态（`busy`／`error`／`message`）仍受守卫；缓存键与载荷取自响应结果与点击时快照，未引用已卸载组件的可变状态。React 19 下卸载后父级 `setState` 安全（父 `Settings` 仍挂载），不会产生警告或无效写入。
+- **面板侧**：`syncVoiceFormServices`／`syncImageFormServices` 在无变化时返回原引用（不打断草稿），仅在「未配置且未选服务」时自动选中（语音优先启用项，生图同样），已选服务只同步协议／地址／默认模型；两个面板以 `serviceSyncSeq` 保序，并在 `serviceRefreshVersion` 变化或 `active` 由 `false` 切为 `true` 时同步，初次加载与同步并发时按序号丢弃旧结果，角色切换仍由 `roleToken` 拦截。
+- **无覆盖退化**：同步失败仍 `catch` 后保留草稿、保存走正式校验；`savedForm` 比对维持脏标记；未把同步失败吞成「恒通过」。
+
+#### 12.10.4 观察项（不阻塞）
+
+1. **初次加载被后续同步超越的窄时序**：若角色切换的初次加载尚在途、同时 `serviceRefreshVersion` 变化触发新同步，`else` 分支会把 `savedForm` 基线写成 `baseForm`，可能与已同步 `form` 不一致而短暂误报未保存；仅影响脏标记，不改写表单内容。
+2. **生图侧无延迟卸载 E2E**：新增确定性延迟卸载用例只覆盖语音路径；生图侧为同构修复，由纯函数单测与既有生图 CRUD／自动选中流程覆盖，未单设延迟卸载用例。
+3. **E2E 防挂提示**：`settings-workspace-check` 的延迟响应 `Promise` 无超时，若保存点击未真正触发请求，脚本会挂起而非快速失败（测试健壮性建议，不影响结论）。
+
+**结论**：§12.8.3 的 `:942` 遗留抖动在 20 次连跑中 0 次复现，两层根因（卸载后丢弃回调、面板缺少回归可见同步与保序）均有回退对照证明为真守卫，其余门禁全绿，**§12.9 补修独立复核通过**，包 3 结论维持「通过」。该结论不表述为「E2E 绝对零抖动」，仅证明本轮 20 次与回退对照通过；打包交付（`node-runtime` 随包、`package:win` 实机启动、`appRoot` 迁移策略）仍待联调，不随本次通过。
+
+**证据**：`backend/test-results/310-pack3-recheck3-20261118/e2e/`（`workflow-run1..20.log` 与其余 12 次脚本日志）、`backend/test-results/p5-2026-11-18T10-16-42-632Z-f525433f/summary.json`。

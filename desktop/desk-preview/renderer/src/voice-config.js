@@ -345,6 +345,42 @@ export function withVoiceService(form, patch) {
   return { ...updated, ttsEngine: "", voiceId: "", referenceMode: "", capabilities: null };
 }
 
+/**
+ * 根据最新的全局语音服务列表同步角色表单：
+ * 未配置且未选服务时自动选中首个可用（优先启用）服务；已选服务存在且协议或地址变化时同步连接信息；
+ * 无变化时返回原对象引用，保留用户草稿。
+ *
+ * @param {VoiceForm} form
+ * @param {VoiceServiceItem[]} services
+ * @returns {VoiceForm}
+ */
+export function syncVoiceFormServices(form, services) {
+  if (!Array.isArray(services) || services.length === 0) {
+    return form;
+  }
+  if (form.serviceId === "" && !form.configured) {
+    const first = services.find((item) => item.enabled) ?? services[0];
+    return {
+      ...form,
+      serviceId: first.serviceId,
+      protocol: first.config.protocol,
+      baseUrl: first.config.baseUrl
+    };
+  }
+  const matched = services.find((item) => item.serviceId === form.serviceId);
+  if (
+    matched &&
+    (form.protocol !== matched.config.protocol || form.baseUrl !== matched.config.baseUrl)
+  ) {
+    return {
+      ...form,
+      protocol: matched.config.protocol,
+      baseUrl: matched.config.baseUrl
+    };
+  }
+  return form;
+}
+
 function matchesSavedService(config, form) {
   if (config === null || config === undefined) return false;
   if (form.serviceId && config.serviceId) {

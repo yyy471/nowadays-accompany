@@ -32,9 +32,11 @@ export function entrySubtitle(role) {
  * 冷启动是否需要先停在选角页。
  * 出错且没有任何角色时仍停在入口页，由页面呈现错误与重试，不闪进空工作区。
  */
-export function needsEntryPick({ loading, roles, entered }) {
+export function needsEntryPick({ loading, roles, entered, error }) {
   if (entered) return false;
   if (loading) return true;
+  // 无角色且读取失败时停在入口页，让 RoleEntry 的错误分支与「重试」可达。
+  if (error && (roles || []).length === 0) return true;
   return (roles || []).length > 0;
 }
 

@@ -23,7 +23,7 @@
       {
         "from": "../../backend",
         "to": "backend",
-        "filter": ["src/**/*", "assets/presets/**/*", "package.json", "package-lock.json", "tsconfig.json", "node_modules/**/*"]
+        "filter": ["src/**/*", "package.json", "package-lock.json", "tsconfig.json", "node_modules/**/*"]
       },
       {
         "from": "../../backend/assets/presets",

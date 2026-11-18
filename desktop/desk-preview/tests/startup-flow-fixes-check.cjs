@@ -9,6 +9,7 @@
  * 6. 多句按句推进在底部提供「继续下一句 / 全部展开」，两轮实时对话严格按正序排列。
  */
 const { spawn } = require('node:child_process');
+const { randomUUID } = require('node:crypto');
 const http = require('node:http');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -242,9 +243,16 @@ async function run() {
   await cmd('Runtime.enable');
   await cmd('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
 
-  // === #1 & #6：从主页创建首个角色，创建后弹窗不重开且活动状态立即可用 ===
-  await until(() => ev("[...document.querySelectorAll('button')].some(x=>x.textContent==='创建角色')"), 'home-create-btn');
-  await ev("[...document.querySelectorAll('button')].find(x=>x.textContent==='创建角色').click()");
+  // === #1 & #6：以已有内置助手为起点，从角色配置页新建角色，创建后弹窗不重开且活动状态立即可用 ===
+  // 包 1 起启动即创建内置助手夏澄，主页不再出现「创建角色」入口；
+  // 这里走「角色配置 → 切换角色 → 新建角色」，仍完整覆盖创建弹窗与活动状态同步。
+  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='home'"), 'home-ready');
+  await openMenuPage('角色配置');
+  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='role-config'"), 'page-role-config-entry');
+  await until(() => ev("!!document.querySelector('.config-switch-role')"), 'switch-role-btn');
+  await ev("document.querySelector('.config-switch-role').click()");
+  await until(() => ev("!!document.querySelector('.config-create-role')"), 'role-wall-open');
+  await ev("document.querySelector('.config-create-role').click()");
   await until(() => ev("!!document.querySelector('.config-create-form')"), 'create-modal-open');
   await setInput("document.querySelector('.config-create-form input')", '林雾');
   await setInput("document.querySelector('.config-create-form textarea')", '喜欢看海的少女');
@@ -261,9 +269,12 @@ async function run() {
   await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='role-config'"), 'page-role-back');
   assert.equal(await ev("!!document.querySelector('.config-create-form')"), false, '#1：创建完或切回角色配置后不得重开新建角色弹窗');
 
-  // 导入一套服饰（新角色默认已处于 stopped，可直接导入）并验证外观设置页与生图标签
+  // 导入一套服饰（新角色默认已处于 stopped，可直接导入）并验证外观设置页与生图标签。
+  // 启动即存在内置助手夏澄，items[0] 不再保证是刚建的「林雾」，按显示名定位新建角色。
   const rolesRes = await request('/v1/roles');
-  const roleId = rolesRes.items[0].roleId;
+  const createdRole = rolesRes.items.find(item => item.displayName === '林雾');
+  assert.ok(createdRole, `应能按显示名找到刚创建的角色，实际：${rolesRes.items.map(i => i.displayName).join('、')}`);
+  const roleId = createdRole.roleId;
   await until(async () => (await request(`/v1/roles/${roleId}/activity`)).activity.state === 'stopped');
   const outfitForm = new FormData();
   outfitForm.append('name', '春衫');
@@ -388,6 +399,38 @@ async function run() {
 
   await until(() => ev("!document.querySelector('.dialogue-stage-arriving') && [...document.querySelectorAll('.dialogue-character img')].some(img=>(img.getAttribute('src')||'').includes('/appearance/assets/'))"), 'role-outfit-arrived-on-stage');
 
+  // === 观察项4：取消任务最短 E2E（按钮出现 → 确认 → 实际取消 → 任务终态）===
+  // 对话内取消入口只对「用户委托、仍可取消」的任务出现（active／paused）。这里向角色业务库
+  // 预置一条 paused+continuable 的用户任务，覆盖「轮询发现 → 按钮出现 → 弹窗确认 → 真正取消 →
+  // 任务终态 failed/USER_CANCELLED」的完整 UI→后端链路；创建任务本身不在本用例范围。
+  const seededTaskId = randomUUID();
+  const seededAt = new Date().toISOString();
+  const Database = require(path.join(root, 'backend', 'node_modules', 'better-sqlite3'));
+  const businessDb = new Database(path.join(temp, 'app', 'data', 'roles', roleId, 'business.sqlite'));
+  try {
+    businessDb.prepare(
+      "INSERT INTO tasks (task_id, role_id, goal, status, end_reason, created_at, updated_at, origin, continuable, wait_reason) VALUES (?, ?, ?, 'paused', NULL, ?, ?, 'user', 1, 'AWAITING_USER_INPUT')",
+    ).run(seededTaskId, roleId, '等你确认后继续办理的测试任务', seededAt, seededAt);
+  } finally {
+    businessDb.close();
+  }
+  // 对话页每 5s 轮询任务列表；等取消入口出现（暂停态文案为「取消等待中的任务」）。
+  await until(() => ev("!!document.querySelector('.dialogue-task-cancel')"), 'cancel-task-btn-visible', 15000);
+  assert.equal(
+    await ev("document.querySelector('.dialogue-task-cancel')?.textContent?.includes('取消等待中的任务')"),
+    true, '暂停中的任务，取消入口文案应为「取消等待中的任务」',
+  );
+  await ev("document.querySelector('.dialogue-task-cancel').click()");
+  await until(() => ev("!!document.querySelector('.dialogue-cancel-task')"), 'cancel-task-modal-open');
+  await ev("[...document.querySelectorAll('.dialogue-cancel-task button')].find(b=>b.textContent==='确认取消任务').click()");
+  const cancelled = await until(async () => {
+    const task = await request(`/v1/roles/${roleId}/tasks/${seededTaskId}`);
+    return task.status === 'failed' && task.endReason === 'USER_CANCELLED' ? task : null;
+  }, 'cancel-task-terminal', 15000);
+  assert.equal(cancelled.status, 'failed');
+  assert.equal(cancelled.endReason, 'USER_CANCELLED');
+  await until(() => ev("!document.querySelector('.dialogue-task-cancel')"), 'cancel-task-btn-gone', 15000);
+
   console.log(JSON.stringify({
     issue1CreateModalNoReopen: true,
     issue2LiveTwoRoundOrder: positions,
@@ -395,6 +438,7 @@ async function run() {
     issue4AdvanceBarAndExpandAll: true,
     issue5Models404AndDraftTestCarried: true,
     issue6ActivitySyncAndCancelVoicePreview: true,
+    issue7CancelTaskE2E: { taskId: seededTaskId, status: cancelled.status, endReason: cancelled.endReason },
     errors,
   }, null, 2));
   assert.deepEqual(errors, []);

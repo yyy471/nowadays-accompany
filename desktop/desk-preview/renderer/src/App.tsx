@@ -178,7 +178,7 @@ export function App() {
   if (!booted) {
     return <div className="studio-boot" role="status">正在打开书房…</div>;
   }
-  if (!skipEntry && needsEntryPick({ loading: !roles && !error, roles, entered })) {
+  if (!skipEntry && needsEntryPick({ loading: !roles && !error, roles, entered, error })) {
     return <RoleEntry
       roles={roles || []}
       loading={!roles && !error}

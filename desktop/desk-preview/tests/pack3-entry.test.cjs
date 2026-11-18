@@ -36,6 +36,11 @@ test("冷启动先停在选角页，进入后不再拦路", async () => {
   assert.equal(needsEntryPick({ loading: false, roles, entered: false }), true);
   assert.equal(needsEntryPick({ loading: false, roles, entered: true }), false);
   assert.equal(needsEntryPick({ loading: false, roles: [], entered: false }), false);
+  // 观察项1：无角色且读取失败时停在入口页，让错误分支与「重试」可达。
+  assert.equal(needsEntryPick({ loading: false, roles: undefined, entered: false, error: "后端不可用" }), true);
+  assert.equal(needsEntryPick({ loading: false, roles: [], entered: false, error: "后端不可用" }), true);
+  assert.equal(needsEntryPick({ loading: false, roles, entered: false, error: "部分详情失败" }), true);
+  assert.equal(needsEntryPick({ loading: false, roles: [], entered: false, error: "" }), false);
   assert.equal(defaultEntryChoice(roles), "x");
   assert.equal(resolveEntryChoice(roles, "a"), "a");
   assert.equal(resolveEntryChoice(roles, "gone"), "x");

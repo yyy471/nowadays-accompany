@@ -313,3 +313,24 @@ test("savedImageModelOf、toImageServiceProbePayload 与 evaluateImageConnection
     text: "测试通过 · 工作流就绪 · ComfyUI 0.3.60 · 探测到 2 个模型 · 21 ms",
   });
 });
+
+test("syncImageFormServices 自动选中首个可用生图服务并补全默认模型，同时保留已有草稿", async () => {
+  const { createImageForm, syncImageFormServices } = await load();
+  const initial = createImageForm(null);
+  assert.equal(syncImageFormServices(initial, []), initial);
+
+  const services = [
+    { serviceId: "img-disabled", enabled: false, config: { modelName: "disabled.safetensors" } },
+    { serviceId: "img-enabled", enabled: true, config: { modelName: "moss-v1.safetensors" } },
+  ];
+  const picked = syncImageFormServices(initial, services);
+  assert.equal(picked.serviceId, "img-enabled");
+  assert.equal(picked.modelPath, "moss-v1.safetensors");
+  assert.equal(syncImageFormServices(picked, services), picked);
+
+  // 已填写模型草稿或已绑定已删除服务时，不得静默改写。
+  const customDraft = { ...picked, modelPath: "custom.safetensors" };
+  assert.equal(syncImageFormServices(customDraft, services), customDraft);
+  const missing = createImageForm({ ...initial, serviceId: "img-missing" });
+  assert.equal(syncImageFormServices(missing, services), missing);
+});

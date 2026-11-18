@@ -69,7 +69,7 @@ export function VoiceServiceCreate({
           config: toVoiceServiceConfig({ protocol, baseUrl, defaultEngine }),
         },
       });
-      if (!live.current) return;
+      // 提交后即使组件已因跳转返回角色配置而卸载，已落库的探测缓存与父级刷新通知仍必须完成。
       if (carriedProbe !== null) {
         writeVoiceProbeCache(voiceServiceCacheKey(created.service), carriedProbe);
       }
@@ -297,17 +297,17 @@ export function VoiceServiceDetail({
           },
         },
       );
-      if (!live.current) return;
       const nextKey = voiceServiceCacheKey(result.service);
       if (nextKey !== savedKey) clearVoiceProbeCache(savedKey);
       if (carriedProbe !== null) writeVoiceProbeCache(nextKey, carriedProbe);
+      onUpdated(service.serviceId);
+      if (!live.current) return;
       setDraftName(result.service.name);
       setDraftProtocol(result.service.config.protocol);
       setDraftUrl(result.service.config.baseUrl);
       setDefaultEngine(result.service.config.defaultEngine ?? '');
       probe.clearLog();
       setMessage('语音服务已保存。');
-      onUpdated(service.serviceId);
     } catch (reason) {
       if (live.current) setError(voiceErrorText(reason));
     } finally {
@@ -331,10 +331,10 @@ export function VoiceServiceDetail({
         },
       );
       if (service.enabled) clearVoiceProbeCache(savedKey);
-      probe.clearLog();
-      if (!live.current) return;
-      setMessage(service.enabled ? '语音服务已全局停用。' : '语音服务已全局启用。');
       onUpdated(service.serviceId);
+      if (!live.current) return;
+      probe.clearLog();
+      setMessage(service.enabled ? '语音服务已全局停用。' : '语音服务已全局启用。');
     } catch (reason) {
       if (live.current) setError(voiceErrorText(reason));
     } finally {
@@ -363,7 +363,6 @@ export function VoiceServiceDetail({
           /* 尽力恢复；未恢复的角色可在角色状态页手动继续 */
         }
       }
-      if (!live.current) return;
       onRemoved(service.serviceId);
     } catch (reason) {
       if (live.current) setError(voiceErrorText(reason));
@@ -385,10 +384,10 @@ export function VoiceServiceDetail({
         if (live.current) setError(`继续活动失败：${voiceErrorText(reason)}`);
       }
     }
+    onUpdated();
     if (!live.current) return;
     setPausedRoleIds([]);
     if (names.length > 0) setMessage(`已继续本次活动暂停的角色：${names.join('、')}。`);
-    onUpdated();
   };
 
   return (

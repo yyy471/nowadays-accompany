@@ -34,6 +34,7 @@ const imageServices = [];
 let nextImageServiceId = 1;
 const voiceServices = [];
 let nextVoiceServiceId = 1;
+let pendingVoiceCreate = null;
 const voiceServiceProbes = [];
 const sceneImages = {};
 const imageServiceProbes = [];
@@ -134,7 +135,13 @@ const server = http.createServer((req, res) => {
     return req.on('end', () => {
       const data = JSON.parse(body);
       const created = { serviceId: `voice-${nextVoiceServiceId++}`, name: data.name, enabled: data.enabled ?? true, config: { ...data.config }, createdAt: '2026-11-16T00:00:00Z', updatedAt: '2026-11-16T00:00:00Z' };
-      voiceServices.push(created); json(res, { service: created }, 201);
+      const reply = () => { voiceServices.push(created); json(res, { service: created }, 201); };
+      if (pendingVoiceCreate && !pendingVoiceCreate.release) {
+        pendingVoiceCreate.release = reply;
+        pendingVoiceCreate.arrived();
+        return;
+      }
+      reply();
     });
   }
   if (p === '/v1/voice-services') return json(res, { items: voiceServices });
@@ -301,7 +308,7 @@ async function pixels() { const data = await cmd('Page.captureScreenshot', { for
 function compareRect(a, b, rect) { let changed = 0, checked = 0; for (let y = Math.ceil(rect.top) + 2; y < Math.floor(rect.bottom) - 2; y += 4) for (let x = Math.ceil(rect.left) + 2; x < Math.floor(rect.right) - 2; x += 4) { const i = (y * a.width + x) * 4; checked++; if (a.data[i] !== b.data[i] || a.data[i + 1] !== b.data[i + 1] || a.data[i + 2] !== b.data[i + 2]) changed++; } return { changed, checked }; }
 async function run() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const env = { ...process.env, NOWADAYS_BACKEND_URL: `http://127.0.0.1:${server.address().port}`, NOWADAYS_APP_ROOT: path.join(temp, 'data') }; delete env.ELECTRON_RUN_AS_NODE;
+  const env = { ...process.env, NOWADAYS_BACKEND_URL: `http://127.0.0.1:${server.address().port}`, NOWADAYS_APP_ROOT: path.join(temp, 'data'), NOWADAYS_SKIP_ROLE_PICKER: '1' }; delete env.ELECTRON_RUN_AS_NODE;
   proc = spawn(resolveElectronExecutable({ repoRoot: root }), ['--no-sandbox', '--remote-debugging-port=0', `--user-data-dir=${path.join(temp, 'profile')}`, path.join(root, 'desktop/desk-preview')], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   proc.stdout.on('data', x => logs += x); proc.stderr.on('data', x => logs += x);
   let port; await until(() => port = /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)/.exec(logs)?.[1]);
@@ -316,7 +323,7 @@ async function run() {
   await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) textarea')"));
   await until(() => ev("!!document.querySelector('.config-stage img')"));
   await delay(450);
-  assert.ok(await ev("document.querySelector('#config-footer-right').textContent.includes('甲角色')"));
+  assert.ok(await ev("document.querySelector('.config-footer-ident strong')?.textContent==='甲角色'"), '当前编辑角色应为甲角色（包 3 起右页脚为切换按钮，不再显示陪伴名）');
   const visibleBounds = await ev("(()=>{const book=document.querySelector('.config-book').getBoundingClientRect(),last=document.querySelector('.config-tabs button:last-child').getBoundingClientRect(),button=document.querySelector('.config-switch-role').getBoundingClientRect();return {bookBottom:book.bottom,lastBottom:last.bottom,switchBottom:button.bottom,innerHeight}})()");
   assert.ok(visibleBounds.lastBottom <= visibleBounds.bookBottom && visibleBounds.switchBottom <= visibleBounds.innerHeight, JSON.stringify(visibleBounds));
   const portraitRect = await ev("(()=>{const r=document.querySelector('.config-stage .config-portrait').getBoundingClientRect();return {top:r.top,bottom:r.bottom,left:r.left,right:r.right}})()");
@@ -333,7 +340,16 @@ async function run() {
   await until(() => ev("!!document.querySelector('.config-poster-hit')"));
   await ev("[...document.querySelectorAll('.config-poster-hit')].find(x=>x.textContent.includes('乙角色')).click()");
   await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) textarea')?.value==='乙角色设定'"));
-  assert.ok(await ev("document.querySelector('#config-footer-right').textContent.includes('甲角色')"));
+  assert.ok(await ev("document.querySelector('.config-footer-ident strong')?.textContent==='乙角色'"), '切换角色后编辑对象应为乙角色（DL-147：编辑对象独立于当前角色）');
+  // DL-147：切换编辑对象不得改变「当前角色」。主页英雄区展示当前角色名，用它做可见断言。
+  await ev("[...document.querySelectorAll('.ui-dock-item')].find(x=>x.textContent.includes('桌面')).click()");
+  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='home'"), 'home-after-edit-switch');
+  assert.ok(await ev("document.querySelector('.home-account h2')?.textContent?.trim()==='甲角色'"), '编辑对象切到乙角色后，当前角色（主页英雄区）仍应为甲角色');
+  // 回到角色配置继续后续草稿流程；编辑对象应仍是乙。
+  await ev("document.querySelector('.ui-menu-trigger').click()");
+  await until(() => ev("[...document.querySelectorAll('.ui-menu-item')].some(x=>x.textContent.includes('角色配置'))"));
+  await ev("[...document.querySelectorAll('.ui-menu-item')].find(x=>x.textContent.includes('角色配置')).click()");
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) textarea')?.value==='乙角色设定'"), 'back-to-edit-b');
   await ev("(()=>{const e=document.querySelector('.config-role-editor:not([hidden]) textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(e,'乙的未保存草稿');e.dispatchEvent(new Event('input',{bubbles:true}));})()");
   await until(() => ev("!!document.querySelector('.config-dirty-ribbon')"));
   await ev("document.querySelector('.config-switch-role').click()");
@@ -540,8 +556,23 @@ async function run() {
   await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='测试连接').click()");
   await until(() => voiceServiceProbes.length === 1 && ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) .nd-voice-probe')?.textContent.includes('mock-tts')"));
   await ev("(()=>{const s=document.querySelector('.config-leaf-body > .config-prose:not([hidden]) select[aria-label=默认语音引擎]');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(s,'cosyvoice');s.dispatchEvent(new Event('change',{bubbles:true}));})()");
+  // 模拟创建语音服务提交后立即点「返回角色配置」导致添加页在响应回来前卸载：角色语音面板仍应自动选中新服务并带上探测缓存。
+  let releaseVoiceCreate;
+  const voiceCreateArrived = new Promise(resolve => {
+    pendingVoiceCreate = { arrived: resolve, release: null };
+  });
   await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='保存语音服务').click()");
-  await until(() => voiceServices.length === 1 && ev("document.querySelector('.config-leaf').innerText.includes('本机测试语音') && document.querySelector('.config-index').innerText.includes('cosyvoice')"));
+  await voiceCreateArrived;
+  releaseVoiceCreate = pendingVoiceCreate.release;
+  pendingVoiceCreate = null;
+  await ev("document.querySelector('.config-return-footer').click()");
+  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='role-config'"));
+  releaseVoiceCreate();
+  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-model-toggle')].find(x=>x.textContent.includes('语音')).click()");
+  await until(() => voiceServices.length === 1 && ev("document.querySelector('.config-role-editor:not([hidden]) .nd-voice select[aria-label=\"语音服务\"]')?.value==='voice-1'"));
+  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-voice-probe')?.textContent.includes('mock-tts')"));
+  await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-voice button')].find(x=>x.textContent.includes('在设置中管理')).click()");
+  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings' && document.querySelector('.config-leaf').innerText.includes('本机测试语音') && document.querySelector('.config-index').innerText.includes('cosyvoice')"));
   assert.equal(voiceServices[0].config.defaultEngine, 'cosyvoice');
   await ev("[...document.querySelectorAll('.config-kind-tabs button')].find(x=>x.textContent==='模型').click()");
   await until(() => ev("document.querySelector('.config-kind-tabs button[aria-pressed=\"true\"]')?.textContent==='模型'"));
@@ -709,7 +740,7 @@ async function run() {
   await ev("(()=>{const d=document.querySelector('.config-dialog');const input=d.querySelector('input');const area=d.querySelector('textarea');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'丙角色');input.dispatchEvent(new Event('input',{bubbles:true}));Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(area,'丙的设定');area.dispatchEvent(new Event('input',{bubbles:true}));})()");
   await ev("[...document.querySelectorAll('.config-dialog button')].find(x=>x.textContent==='创建角色').click()");
   await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='丙角色'"));
-  assert.ok(await ev("document.querySelector('#config-footer-right').textContent.includes('甲角色')"));
+  assert.ok(await ev("document.querySelector('.config-footer-ident strong')?.textContent==='丙角色'"), '创建新角色后编辑对象应为新建的丙角色（DL-147：编辑对象独立于当前角色）');
   await ev("document.querySelector('.config-switch-role').click()");
   await until(() => ev("!!document.querySelector('.config-poster-hit')"));
   await ev("[...document.querySelectorAll('.config-poster-hit')].find(x=>x.textContent.includes('乙角色')).click()");
@@ -721,13 +752,13 @@ async function run() {
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-delete-options button')].find(x=>x.textContent==='确认删除').click()");
   await until(() => roleDeletes.some(item => item.roleId === 'b' && item.choice === '1'));
   await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='甲角色'"));
-  assert.ok(await ev("document.querySelector('#config-footer-right').textContent.includes('甲角色')"));
+  assert.ok(await ev("document.querySelector('.config-footer-ident strong')?.textContent==='甲角色'"), '当前编辑角色应为甲角色（包 3 起右页脚为切换按钮，不再显示陪伴名）');
   await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].some(x=>x.textContent==='删除角色'&&!x.disabled)"));
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].find(x=>x.textContent==='删除角色').click()");
   await ev("document.querySelectorAll('.config-role-editor:not([hidden]) .config-delete-options input[type=radio]')[1].click()");
   await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-delete-options button')].find(x=>x.textContent==='确认删除').click()");
   await until(() => roleDeletes.some(item => item.roleId === 'a' && item.choice === '0'));
-  await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='丙角色' && document.querySelector('#config-footer-right').textContent.includes('丙角色')"));
+  await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='丙角色'"));
   assert.ok(await ev("document.querySelector('.config-delete-notice')?.textContent.includes('尚待清理')"));
   await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].find(x=>x.textContent.includes('删除角色'))?.disabled"));
   assert.deepEqual(errors, []); assert.ok(requests.includes('DELETE /v1/resources/x2')); console.log(JSON.stringify({ editIsolation: true, crossPageDraft: true, roleDraft: true, voiceImageDraft: true, activityStop: true, profileSave: true, outfitManagement: true, roleDeleteBothPaths: true, bindingPreservation: true, quotaSave: true, settingsThreeTabs: true, voiceServiceCrudAndProbe: true, imageServiceCrudAndProbe: true, roleImageDraftProbeAndPreview: true, voiceStagingPreviewAndSave: true, roleCreation: true, modelCreation: true, modelList: true, modelTest: true, extensionManagement: true, night: true, visibleBounds, widths: [1280,1440,720], errors }, null, 2));

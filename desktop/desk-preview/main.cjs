@@ -61,7 +61,10 @@ async function ensureBackendRunning() {
 
     const layout = backendLayout();
     const backendRoot = layout.backendRoot;
-    const appRoot = process.env.NOWADAYS_APP_ROOT || resolve(backendRoot, ".nowadays-desktop");
+    // 打包态写到用户数据目录，避免落在 Program Files 类只读安装位导致后端写失败；
+    // 仓库态仍用后端的本地目录，脚本可用 NOWADAYS_APP_ROOT 覆盖。
+    const appRoot = process.env.NOWADAYS_APP_ROOT
+      || (app.isPackaged ? join(app.getPath("userData"), "data") : resolve(backendRoot, ".nowadays-desktop"));
     const nodeBin = resolveNode24Executable(layout);
     const mainScript = layout.entry;
 

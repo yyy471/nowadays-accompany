@@ -118,7 +118,8 @@ async function run() {
   const env = {
     ...process.env,
     NOWADAYS_BACKEND_URL: `http://127.0.0.1:${server.address().port}`,
-    NOWADAYS_APP_ROOT: path.join(temp, 'data')
+    NOWADAYS_APP_ROOT: path.join(temp, 'data'),
+    NOWADAYS_SKIP_ROLE_PICKER: '1'
   };
   delete env.ELECTRON_RUN_AS_NODE;
   proc = spawn(resolveElectronExecutable({ repoRoot: root }), [
