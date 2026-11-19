@@ -184,7 +184,10 @@ node scripts/check-docs.mjs                                          # 文档巡
 - `renderer npm run check`：通过（24 个 CSS 零违规、`tsc` 通过）。
 - `renderer build`：通过。**环境注意**：本机执行 `npm run build` 会被 sandbox 的 safe-delete 垫片以 `state lock timeout` 拦在清空 `dist` 一步；用 `NODE_OPTIONS= node ./node_modules/vite/bin/vite.js build` 可正常构建，属环境问题而非代码。
 - 桌面单测：**160／160**。
-- 临时 Electron + 真实后端探针（未入库）：进入角色配置 → 标题「设定」、页脚干净态收起；改显示名 → 页脚「设定 · 1 处改动未保存」+「保存 1」；保存后页脚出现 T30「继续活动」，点击后恢复 `active`，页面无异常。
+- 临时 Electron + 真实后端探针（未入库，两轮）：
+  1. 进入角色配置 → 标题「设定」、页脚干净态收起；改显示名 → 页脚「设定 · 1 处改动未保存」+「保存 1」；先恢复活动再保存 → 页脚出现 T30「继续活动」，点击后恢复 `active`，页面无异常。
+  2. 新建普通角色 → 切换编辑对象 → 「删除角色…」→ 确认纸笺：`data-shape=confirm`、宽 600、顶边对齐触发行（top 6）、右页与书本两层压暗均开启、正文 `inert`、初始焦点在「保留本机数据」单选；确认删除后纸笺收起、角色从 `/v1/roles` 消失，无页面异常。
+- **实现注意**：纸笺必须通过 portal 挂到 `.config-leaf`（正文之外）。早期把纸笺渲染在 `.config-leaf-body` 内，再对该正文设 `inert`，会把纸笺自身一起禁用、焦点落不到字段。
 - **未跑**：`settings-workspace-check.cjs` 等既有 E2E 仍指向旧 DOM（保存按钮文案、`.config-delete-options`、丝带/folio），在 P2 全部迁完并移植脚本前预期失败，不作为本轮回归结论。
 
 ### 7.3 尚未完成（P2 余下）
