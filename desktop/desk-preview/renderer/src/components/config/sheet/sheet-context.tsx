@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
+import { readMotionTime } from '../../../ui';
 
 /** 纸笺形态（规范 §2）：完整表单 / 只含一组的紧凑表单 / 删除确认。 */
 export type SheetShape = 'full' | 'compact' | 'confirm';
@@ -14,7 +15,7 @@ export interface SheetState {
   anchor?: HTMLElement | null;
 }
 
-interface SheetContextValue {
+export interface SheetContextValue {
   sheet: SheetState | null;
   dirty: boolean;
   /** 纸笺内未保存的改动数（T8 / T9 文案用）。 */
@@ -35,7 +36,11 @@ const SheetContext = createContext<SheetContextValue | null>(null);
  * 单纸笺状态（规范 §2 / §7.3）：同一时间最多一张；关闭时有改动先出 T9 确认；
  * 关闭后焦点回到触发元素，找不到时回该行的「编辑」按钮。
  */
-export function SheetProvider({ children }: { children: ReactNode }) {
+/**
+ * `controller` 让 Provider 之上的工作区（如分区页签）能在不重建组件树的前提下
+ * 读到当前纸笺并按关闭规则收尾——纸笺开着时切分区必须先关纸笺（验收 29）。
+ */
+export function SheetProvider({ children, controller }: { children: ReactNode; controller?: MutableRefObject<SheetContextValue | null> }) {
   const [sheet, setSheet] = useState<SheetState | null>(null);
   const [dirty, setDirtyState] = useState(false);
   const [dirtyCount, setDirtyCount] = useState(0);
@@ -71,6 +76,9 @@ export function SheetProvider({ children }: { children: ReactNode }) {
     const then = pendingThen.current;
     pendingThen.current = null;
     current.current = null;
+    // M2：纸笺退出动画期间先留着画面，待办（切换分区 / 保存反馈）等它收完再执行。
+    const frame = document.querySelector<HTMLElement>('.config-sheet');
+    const exit = frame ? readMotionTime(frame, '--nd-semantic-motion-page-exit', 260) : 0;
     setSheet(null);
     setDirtyState(false);
     setDirtyCount(0);
@@ -78,6 +86,10 @@ export function SheetProvider({ children }: { children: ReactNode }) {
     setConfirming(false);
     if (then) {
       // 导航到新内容：焦点交给新页面的 h2，由接管方处理。
+      if (exit > 0) {
+        window.setTimeout(then, exit);
+        return;
+      }
       then();
       return;
     }
@@ -129,6 +141,14 @@ export function SheetProvider({ children }: { children: ReactNode }) {
     setBusy,
     resolveConfirm,
   }), [sheet, dirty, dirtyCount, busy, confirming, open, requestClose, closeNow, resolveConfirm, setDirty]);
+
+  useEffect(() => {
+    if (!controller) return;
+    controller.current = value;
+    return () => {
+      if (controller.current === value) controller.current = null;
+    };
+  }, [controller, value]);
 
   return <SheetContext.Provider value={value}>{children}</SheetContext.Provider>;
 }

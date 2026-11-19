@@ -6,11 +6,11 @@ import { Button, Field, Input, LiveAnnouncer, Select, StatusDot, Switch, Textare
 import type { MotionPreference } from '../ui/motion';
 import { AppearancePanel } from '../components/appearance/AppearancePanel';
 import { RolePortrait } from '../components/RolePortrait';
-import { SheetProvider, useSheet } from '../components/config/sheet/sheet-context';
+import { SheetProvider, useSheet, type SheetContextValue } from '../components/config/sheet/sheet-context';
 import { WriteProvider, useWrite } from '../components/config/write-runner';
 import { RoleSheetHost } from '../components/config/role/RoleSheetHost';
 import { Sheet } from '../components/config/sheet/Sheet';
-import { T6, T8, T23, T25, T28, T30, T31, T33, T36 } from '../components/config/config-texts.js';
+import { T1, T2, T6, T8, T23, T25, T28, T30, T31, T33, T34, T36, T37 } from '../components/config/config-texts.js';
 import { VoicePanel } from '../components/voice/VoicePanel';
 import { VoiceServiceCreate, VoiceServiceDetail } from '../components/voice/VoiceServiceEditor';
 import { ImagePanel } from '../components/image/ImagePanel';
@@ -117,6 +117,10 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
   const [editId, setEditId] = useState('');
   const [visited, setVisited] = useState<string[]>([]);
   const [roleSection, setRoleSection] = useState<RoleSection>('profile');
+  // 底栏角色下拉的目标：脏改动时先出 T37 确认，再把切换交给纸笺回调（规范 §7.9）。
+  const [pendingSwitch, setPendingSwitch] = useState<{ roleId: string; from: string; to: string; count: number } | null>(null);
+  // 纸笺状态在 Provider 内，页签在工作区层：用控制器引用跨层读取（仅用于切换前的关闭规则）。
+  const sheetController = useRef<SheetContextValue | null>(null);
   const [stagePreview, setStagePreview] = useState<{ roleId: string; assetId: string } | null>(null);
   const [stageOutfitName, setStageOutfitName] = useState('');
   // 切换编辑对象时先清空立绘框上方的服饰名，等新角色读取完成再填。
@@ -146,7 +150,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
   const [creatingDefinition, setCreatingDefinition] = useState('');
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState('');
-  const switchRef = useRef<HTMLButtonElement>(null);
+  const switchRef = useRef<HTMLButtonElement | HTMLSelectElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const roleFlight = useRef<{ animation: Animation; node: HTMLElement } | null>(null);
   const [selectedResource, setSelectedResource] = useState('');
@@ -343,15 +347,45 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
     } catch (e) { setCreateError(errorText(e)); } finally { setCreateBusy(false); }
   };
   const chosen = roles.find(role => role.roleId === editId);
-  const changeSection = (id: string) => {
-    if (roleActive) { setStagePreview(null); setRoleSection(id as RoleSection); }
-    else setSettingsSection(id as SettingsSection);
-    const content = contentRef.current;
-    if (content) {
-      content.scrollTop = 0;
-      // 分区切换动效走语义令牌（v6 M9：micro-exit 出 / component 入）；减少动效时令牌为 0，不播。
-      if (!motion.reduced) content.animate([{ opacity:0, transform:'translateX(8px)' }, { opacity:1, transform:'none' }], { duration: readMotionTime(content, '--nd-semantic-motion-component', 220), easing: readMotionValue(content, '--nd-semantic-motion-ease-out', 'ease-out') });
+  const applyRole = (roleId: string) => {
+    if (roleId === '__new') {
+      sheetController.current?.open({ id: 'create-role', title: '新建角色', shape: 'full' });
+      return;
     }
+    if (roleId === editId) return;
+    setStagePreview(null);
+    setEditId(roleId);
+  };
+  const switchRole = (roleId: string) => {
+    if (roleId === editId) return;
+    if (roleId === '__new') { applyRole(roleId); return; }
+    const dirtyCount = Object.values(roleDirty[editId] || {}).filter(Boolean).length;
+    if (dirtyCount > 0) {
+      const to = roles.find(role => role.roleId === roleId)?.displayName || '该角色';
+      setPendingSwitch({ roleId, from: chosen?.displayName || '当前角色', to, count: dirtyCount });
+      sheetController.current?.open({ id: 'switch-role', title: '切换角色', shape: 'confirm' });
+      return;
+    }
+    applyRole(roleId);
+  };
+  const changeSection = (id: string) => {
+    const apply = () => {
+      if (roleActive) { setStagePreview(null); setRoleSection(id as RoleSection); }
+      else setSettingsSection(id as SettingsSection);
+      const content = contentRef.current;
+      if (content) {
+        content.scrollTop = 0;
+        // 分区切换动效走语义令牌（v6 M9：micro-exit 出 / component 入）；减少动效时令牌为 0，不播。
+        if (!motion.reduced) content.animate([{ opacity:0, transform:'translateX(8px)' }, { opacity:1, transform:'none' }], { duration: readMotionTime(content, '--nd-semantic-motion-component', 220), easing: readMotionValue(content, '--nd-semantic-motion-ease-out', 'ease-out') });
+      }
+    };
+    // 纸笺开着时点页签：先按关闭规则收纸笺（有改动走确认），关闭后再切换（验收 29）。
+    const current = sheetController.current;
+    if (current?.sheet) {
+      current.requestClose(apply);
+      return;
+    }
+    apply();
   };
   const filtered = resources.filter(item => item.kind === settingsSection);
   useEffect(() => {
@@ -374,12 +408,16 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
   const sectionTitle = (roleActive ? roleSections : settingSections).find(item => item[0] === (roleActive ? roleSection : settingsSection))?.[1];
   const dirtyScopes = roleDirty[editId];
   const dirtyNames = dirtyScopes ? (Object.entries(dirtyScopes) as Array<[keyof RoleDirty, boolean]>).filter(([, dirty]) => dirty).map(([id]) => ({profile:'设定',models:'模型',voice:'语音',image:'生图',ext:'扩展',quota:'自主额度'}[id])) : [];
-  return <WriteProvider><SheetProvider><div className="config-workspace" data-ui-preset={preset} hidden={!roleActive && !settingsActive}>
+  return <WriteProvider><SheetProvider controller={sheetController}><div className="config-workspace" data-ui-preset={preset} hidden={!roleActive && !settingsActive}>
     <LiveAnnouncer/>
     {(roleActive || settingsActive) && <ConfigThemeTransition/>}
     <PausedRolesFooter/>
+    <WorkspaceSheets pendingSwitch={pendingSwitch} clearPendingSwitch={() => setPendingSwitch(null)} onSwitch={applyRole} onCreated={async role => { await onRefresh(); setRefreshVersion(v => v + 1); setDrafts(previous => ({ ...previous, [role.roleId]: { name: role.displayName, definition: role.definition.text, revision: role.definitionRevision, payload: role.definition.payload, isBuiltin: role.isBuiltin === true, bio: role.bio ?? '' } })); setEditId(role.roleId); setRoleSection('profile'); }}/>
     {footerLeft && createPortal(roleActive ? <div className="config-footer-ident"><strong>{chosen?.displayName || '角色配置'}</strong><span>{activityError ? '状态获取失败' : activityText(activities.find(item => item.roleId === editId))}</span></div> : <div className="config-footer-ident"><strong>设置</strong><span>全局资源</span></div>, footerLeft)}
-    {footerRight && createPortal(roleActive ? <div className="config-footer-tools"><button ref={switchRef} type="button" className="config-footer-button config-switch-role" onClick={() => setShowRoles(true)}>切换角色 <span>{roles.length}</span></button></div> : <div className="config-footer-tools"><span>{activities.filter(item => item.state === 'active').length} 位角色启用中</span></div>, footerRight)}
+    {footerRight && createPortal(roleActive ? <div className="config-footer-tools"><select ref={switchRef as React.RefObject<HTMLSelectElement>} className="config-role-switch" aria-label="切换角色" value={editId} onChange={event => { const next = event.target.value; event.target.value = editId; switchRole(next); }}>
+      {roles.map(role => { const state = activities.find(item => item.roleId === role.roleId)?.state; return <option key={role.roleId} value={role.roleId}>{role.displayName}{state === 'stopped' ? '（已停止）' : ''}</option>; })}
+      <option value="__new">＋ 新建角色…</option>
+    </select></div> : <div className="config-footer-tools"><span>{activities.filter(item => item.state === 'active').length} 位角色启用中</span></div>, footerRight)}
     <div className="config-book" data-layout={settingsActive && settingsSection === 'roles' ? 'wide' : settingsActive ? 'catalog' : 'role'}>
       <div className="config-book-surface" aria-hidden="true"><div className="config-paper-left"/><div className="config-gutter"/><div className="config-paper-right"/><div className="config-grain"/><div className="config-thread"><i/><i/></div></div>
       {roleActive ? <aside className="config-stage"><figure className="config-plate"><div className="config-plate-mat"/><div className="config-stage-label" data-testid="stage-label">{stageOutfitName}</div>
@@ -429,6 +467,14 @@ function RoleEditor({ roleId, roleCount, active, activity, activityLoading = fal
   // 扩展与自主额度都按「一行 = 一张紧凑纸笺」打开（规范 §二.3 点击映射）。
   const openExtension = (kind: 'mcp' | 'skill') => sheetApi.open({ id: `ext:${kind}`, title: kind === 'mcp' ? 'MCP' : 'Skill', shape: 'compact' });
   const openQuota = (anchor: HTMLElement) => sheetApi.open({ id: 'quota', title: '自主额度 · 每日额度', shape: 'compact', anchor });
+  // 对话：值与协议 → 紧凑「服务」，整行 / 编辑 → 完整；记忆：整行 → 紧凑整份（规范 §二.3）。
+  const openChat = (group?: '服务' | '连接测试', anchor?: HTMLElement) => sheetApi.open({
+    id: group === undefined ? 'model:chat' : `model:chat:${group === '服务' ? 'service' : 'test'}`,
+    title: group === undefined ? '编辑对话模型' : `对话 · ${group}`,
+    shape: group === undefined ? 'full' : 'compact',
+    ...(group === undefined ? {} : { group, anchor: anchor ?? null }),
+  });
+  const openMemory = () => sheetApi.open({ id: 'model:memory', title: '记忆整理', shape: 'compact' });
   const [voiceDraft, setVoiceDraft] = useState<ConfigDraftState | null>(null);
   const [imageDraft, setImageDraft] = useState<ConfigDraftState | null>(null);
   const [detailError, setDetailError] = useState('');
@@ -721,14 +767,15 @@ function RoleEditor({ roleId, roleCount, active, activity, activityLoading = fal
       <RoleSheetHost active={active} roleId={roleId} roleName={draft.name} roleCount={roleCount} onDeleted={onDeleted}/></>}
     </div>
     <div hidden={!active || section !== 'look'} className="config-prose"><header className="config-sec-head"><h2 tabIndex={-1}>衣柜</h2></header>{loaded.look && <AppearancePanel roleId={roleId} canWrite={!!activity || activityLoading} pausedWrite={activity?.state !== 'stopped'} onPreview={onPreviewOutfit} onPreviewAsset={onPreviewAsset} onOpenImageSettings={() => onOpenSettings('model', { modelKind: 'image' })} onChanged={() => { onClearPreview(); setLookVersion(v => v + 1); void onRefresh(); }}/>}</div>
-    <div hidden={!active || section !== 'models'} className="config-prose"><ConfigHeading number="03" label="模型" english="MODELS" title="模型" description="模型列表和连接测试在设置里；这里配置角色使用的模型和演出。"/>{statusNote}{bindingAlert}
+    <div hidden={!active || section !== 'models'} className="config-prose"><header className="config-sec-head"><h2 tabIndex={-1}>模型</h2></header>
+      {bindingAlert}
+      <ModelRow kind="chat" bindings={bindings} resources={resources} draft={modelDraft} loaded={bindingLoaded} onOpen={openChat}/>
+      <ModelRow kind="memory" bindings={bindings} resources={resources} draft={modelDraft} loaded={bindingLoaded} onOpen={() => openMemory()}/>
+      <ModelSheetHost active={active && section === 'models'} draft={modelDraft} setDraft={setModelDraft} resources={resources} bindings={bindings} loaded={bindingLoaded} notice={bindingNotice} chatProbe={chatProbe} memoryProbe={memoryProbe} chatKey={chatKey} memoryKey={memoryKey} onOpenSettings={onOpenSettings} onSave={saveBindings}/>
       <div className="config-model-head"><span>用途</span><span>所选模型</span><span>已保存</span><span>当前状态</span></div>
-      {([['chat','对话'],['memory','记忆整理'],['image','生图'],['voice','语音']] as const).map(([id,label]) => <div className="config-model-row" key={id}>
-        <button type="button" className="config-model-toggle" aria-expanded={modelPart === id} onClick={() => setModelPart(id)}><strong>{label}</strong><span>{id === 'chat' ? selectedModel(modelDraft.chatResource) : id === 'memory' ? (modelDraft.memoryResource ? selectedModel(modelDraft.memoryResource) : '跟随对话模型') : '角色配置'}</span><small>{id === 'chat' || id === 'memory' ? (bindings.some(item => item.capability === (id === 'chat' ? 'chat_model' : 'memory_model') && item.enabled) ? '已保存' : '未单独设置') : '查看配置'}</small><span>⌄</span></button>
+      {([['image','生图'],['voice','语音']] as const).map(([id,label]) => <div className="config-model-row" key={id}>
+        <button type="button" className="config-model-toggle" aria-expanded={modelPart === id} onClick={() => setModelPart(id)}><strong>{label}</strong><span>角色配置</span><small>查看配置</small><span>⌄</span></button>
         <div hidden={!active || section !== 'models' || modelPart !== id} className="config-model-details">
-          {id === 'chat' && bindingLoaded && <><Field label="对话模型：从设置里已保存的模型中选择"><Select disabled={bindingBusy} value={modelDraft.chatResource} onChange={event => { const resourceId = event.target.value; const picked = modelOptions.find(item => item.resourceId === resourceId); setModelDraft(previous => ({ ...previous, chatResource: resourceId, chatModel: picked ? savedModelNameOf(picked) : '' })); chatProbe.reset(); }}><option value="">未选择</option>{modelOptions.map(item => <option value={item.resourceId} key={item.resourceId}>{item.name}{item.enabled ? '' : '（全局已停用）'}</option>)}</Select></Field>{modelDraft.chatResource ? <ModelNamePicker value={modelDraft.chatModel} onChange={value => setModelDraft(previous => ({ ...previous, chatModel: value }))} models={chatProbe.models} listBusy={chatProbe.listBusy} listError={chatProbe.listError} listLoaded={chatProbe.listLoaded} testBusy={chatProbe.testBusy} testNote={chatProbe.testModel === modelDraft.chatModel ? chatProbe.testNote : ''} notice={chatProbe.notice} onRefresh={() => void chatProbe.refresh({ kind: 'saved', resourceId: modelDraft.chatResource, cacheKey: chatKey })} onTest={() => void chatProbe.test({ kind: 'saved', resourceId: modelDraft.chatResource, cacheKey: chatKey }, modelDraft.chatModel.trim())} testDisabled={!modelDraft.chatModel.trim()} disabled={bindingBusy}/> : <p className="config-muted">未选择对话模型；保存后角色无法开始对话。</p>}</>}
-          {id === 'memory' && bindingLoaded && <><Field label="记忆模型"><Select disabled={bindingBusy} value={modelDraft.memoryResource} onChange={event => { const resourceId = event.target.value; const picked = modelOptions.find(item => item.resourceId === resourceId); setModelDraft(previous => ({ ...previous, memoryResource: resourceId, memoryModel: picked ? savedModelNameOf(picked) : '' })); memoryProbe.reset(); }}><option value="">跟随对话模型</option>{modelOptions.map(item => <option value={item.resourceId} key={item.resourceId}>{item.name}{item.enabled ? '' : '（全局已停用）'}</option>)}</Select></Field>{modelDraft.memoryResource ? <ModelNamePicker value={modelDraft.memoryModel} onChange={value => setModelDraft(previous => ({ ...previous, memoryModel: value }))} models={memoryProbe.models} listBusy={memoryProbe.listBusy} listError={memoryProbe.listError} listLoaded={memoryProbe.listLoaded} testBusy={memoryProbe.testBusy} testNote={memoryProbe.testModel === modelDraft.memoryModel ? memoryProbe.testNote : ''} notice={memoryProbe.notice} onRefresh={() => void memoryProbe.refresh({ kind: 'saved', resourceId: modelDraft.memoryResource, cacheKey: memoryKey })} onTest={() => void memoryProbe.test({ kind: 'saved', resourceId: modelDraft.memoryResource, cacheKey: memoryKey }, modelDraft.memoryModel.trim())} testDisabled={!modelDraft.memoryModel.trim()} disabled={bindingBusy}/> : <p className="config-muted">跟随对话模型：运行时继承已绑定的对话模型。</p>}</>}
-          {(id === 'chat' || id === 'memory') && <><button type="button" onClick={() => { const resourceId = id === 'chat' ? modelDraft.chatResource : modelDraft.memoryResource; onOpenSettings('model', { modelKind: 'model', ...(resourceId ? { resourceId } : {}) }); }}>在设置中查看模型 →</button>{id === 'chat' && savedChat?.enabled && savedChat.modelName && onStartConversation ? <Button variant="primary" onClick={() => { void (async () => { if (activity?.state !== 'active') { try { await api(`/v1/roles/${encodeURIComponent(roleId)}/activity/resume`, { method: 'POST' }); await onRefresh(); } catch { /* 状态由原页提示 */ } } onStartConversation(roleId); })(); }}>{activity?.state === 'stopped' ? '开始对话（先恢复活动）' : '开始对话'}</Button> : null}{bindingNotice && <p role="status">{bindingNotice}</p>}<Button disabled={bindingBusy || !bindingRevision || !!resourceError} onClick={() => void saveBindings('models')}>{writeLabel('保存模型选择')}</Button></>}
           {id === 'voice' && loaded.voice && <VoicePanel roleId={roleId} active={active && section === 'models' && modelPart === 'voice'} serviceRefreshVersion={voiceServiceVersion} serviceEpochs={voiceServiceEpochs} onOpenVoiceSettings={target => onOpenSettings('model', { modelKind: 'voice', ...(target?.serviceId ? { resourceId: target.serviceId } : {}), ...(target?.createNew ? { newVoiceService: true } : {}) })} guardWrite={guardAction} pausedWrite={activity?.state !== 'stopped'} onDraftStateChange={setVoiceDraft} onChanged={() => { void onRefresh(); }}/>} {id === 'image' && loaded.image && <ImagePanel roleId={roleId} active={active && section === 'models' && modelPart === 'image'} serviceRefreshVersion={imageServiceVersion} serviceEpochs={imageServiceEpochs} outfitRefreshVersion={lookVersion} onOpenImageSettings={target => onOpenSettings('model', { modelKind: 'image', ...(target?.serviceId ? { resourceId: target.serviceId } : {}), ...(target?.createNew ? { newImageService: true } : {}) })} guardWrite={guardAction} pausedWrite={activity?.state !== 'stopped'} onDraftStateChange={setImageDraft} onChanged={() => { void onRefresh(); }}/>}
         </div></div>)}
     </div>
@@ -742,11 +789,11 @@ function RoleEditor({ roleId, roleCount, active, activity, activityLoading = fal
     </div>
     <div hidden={!active || section !== 'quota'} className="config-prose"><header className="config-sec-head"><h2 tabIndex={-1}>自主额度</h2></header>
       {budgetError && <p role="alert">{budgetError}</p>}
-      {budget ? <><button type="button" className="config-sum" data-edit="quota" onClick={event => openQuota(event.currentTarget)}>
+      {budget ? <><div className="config-sum" data-edit="quota" role="button" tabIndex={0} onClick={event => openQuota(event.currentTarget)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openQuota(event.currentTarget); } }}>
         <span className="config-sum-name"><strong>今日</strong></span>
         <span className="config-sum-val"><b>今日已用 {budget.usedPoints} / {budget.unlimited ? '不限' : budget.dailyLimit} 点</b><span className="config-sum-keys"><span>{budget.unlimited ? '不限额' : `每日 ${budget.dailyLimit} 点`}</span><span>{budget.localDate}</span><span>本机 00:00 重置</span></span></span>
         <span className="config-sum-end"><StatusDot status="ok" label="生效中"/><span className="config-sum-slot"><button type="button" className="config-sum-edit" onClick={event => { event.stopPropagation(); openQuota(event.currentTarget); }}>编辑</button><span className="config-sum-slot-ghost">编辑</span></span></span>
-      </button>
+      </div>
       <div className="config-quota-track" aria-hidden="true"><span style={{ width: budget.unlimited ? '0%' : `${Math.min(100, budget.dailyLimit ? budget.usedPoints / budget.dailyLimit * 100 : 0)}%` }}/></div>
       <QuotaSheetHost active={active && section === 'quota'} budget={budget} draft={budgetDraft} setDraft={setBudgetDraft} notice={budgetNotice} busy={budgetBusy} onSave={saveBudget}/></> : !budgetError && <p>正在读取额度…</p>}
     </div>
@@ -840,6 +887,181 @@ function QuotaSheetHost({ active, budget, draft, setDraft, notice, busy, onSave 
       </div>
     </div>}
   </Sheet>;
+}
+
+type ModelDraftState = { chatResource: string; chatModel: string; memoryResource: string; memoryModel: string };
+type ModelProbeState = ReturnType<typeof useModelProbe>;
+
+/** 模型摘要行（规范 §二.2）：值 =「服务 · 模型」，第二行写协议或继承关系；状态点 bare。 */
+function ModelRow({ kind, bindings, resources, draft, loaded, onOpen }: { kind: 'chat' | 'memory'; bindings: Binding[]; resources: Resource[]; draft: ModelDraftState; loaded: boolean; onOpen: (group?: '服务' | '连接测试', anchor?: HTMLElement) => void }) {
+  const label = kind === 'chat' ? '对话' : '记忆整理';
+  const capability = kind === 'chat' ? 'chat_model' : 'memory_model';
+  const resourceId = kind === 'chat' ? draft.chatResource : draft.memoryResource;
+  const modelName = kind === 'chat' ? draft.chatModel : draft.memoryModel;
+  const resource = resources.find(item => item.resourceId === resourceId);
+  const chatBinding = bindings.find(item => item.capability === 'chat_model');
+  const protocol = typeof resource?.config.protocol === 'string' ? resource.config.protocol : '';
+  const protocolLabel = MODEL_PROTOCOL_OPTIONS.find(item => item.value === protocol)?.label ?? protocol;
+  const follows = kind === 'memory' && resourceId === '';
+  const deleted = resourceId !== '' && resource === undefined;
+  const value = !loaded ? '正在读取…'
+    : deleted ? T34.value
+      : follows ? '跟随对话模型'
+        : resourceId === '' ? T2.value
+          : `${resource?.name ?? ''} · ${modelName || T23.unset}`;
+  const key = !loaded ? '' : deleted ? ''
+    : follows ? `继承 ${chatBinding?.modelName || '未选择'}`
+      : resourceId === '' ? T2.hint : protocolLabel;
+  const status: 'ok' | 'follow' | 'off' | 'error' | 'none' = !loaded ? 'none'
+    : deleted ? 'error'
+      : follows ? 'follow'
+        : resourceId === '' || !modelName ? 'off'
+          : resource?.enabled === false ? 'off' : 'ok';
+  const stateText = !loaded ? '同步中' : deleted ? '原服务已删除' : follows ? '跟随对话模型' : resourceId === '' ? '未设置' : resource?.enabled === false ? '服务已停用' : !modelName ? '未设置' : '生效中';
+  return <div className="config-sum" data-edit={`model:${kind}`} role="button" tabIndex={0} onClick={() => onOpen(undefined)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onOpen(undefined); } }}>
+    <span className="config-sum-name"><strong>{label}</strong></span>
+    <span className="config-sum-val">
+      <b><button type="button" className="config-chip-v" disabled={kind === 'memory'} onClick={event => { event.stopPropagation(); onOpen('服务', event.currentTarget); }} onKeyDown={event => event.stopPropagation()}>{value}</button></b>
+      {key && <span className="config-sum-keys"><span>{key}</span></span>}
+    </span>
+    <span className="config-sum-end"><StatusDot status={status} label={stateText} bare/><span className="config-sum-slot"><button type="button" className="config-sum-edit" onClick={event => { event.stopPropagation(); onOpen(undefined); }}>编辑</button><span className="config-sum-slot-ghost">编辑</span></span></span>
+  </div>;
+}
+
+/**
+ * 对话 / 记忆纸笺（规范 §二.2／§二.4）：对话分「服务」「连接测试」两组，
+ * 值或协议打开紧凑「服务」，编辑打开完整；记忆整行打开紧凑整份。
+ */
+function ModelSheetHost({ active, draft, setDraft, resources, bindings, loaded, notice, chatProbe, memoryProbe, chatKey, memoryKey, onOpenSettings, onSave }: {
+  active: boolean;
+  draft: ModelDraftState;
+  setDraft: (updater: (previous: ModelDraftState) => ModelDraftState) => void;
+  resources: Resource[];
+  bindings: Binding[];
+  loaded: boolean;
+  notice: string;
+  chatProbe: ModelProbeState;
+  memoryProbe: ModelProbeState;
+  chatKey: string;
+  memoryKey: string;
+  onOpenSettings: (section: SettingsSection, options?: OpenSettingsOptions) => void;
+  onSave: (scope: 'models' | 'ext') => Promise<void>;
+}) {
+  const { sheet, requestClose, setDirty, setBusy } = useSheet();
+  const kind = sheet !== null && sheet.id.startsWith('model:') ? (sheet.id.startsWith('model:chat') ? 'chat' : 'memory') : null;
+  const group = kind === 'chat' ? (sheet?.id === 'model:chat:test' ? 'test' : sheet?.id === 'model:chat:service' ? 'service' : null) : null;
+  const saved = bindings.find(item => item.capability === (kind === 'chat' ? 'chat_model' : 'memory_model'));
+  const dirty = kind === 'chat'
+    ? draft.chatResource !== (saved?.resourceId || '') || (!!draft.chatResource && draft.chatModel !== (saved?.modelName || ''))
+    : kind === 'memory'
+      ? draft.memoryResource !== (saved?.resourceId || '') || (!!draft.memoryResource && draft.memoryModel !== (saved?.modelName || ''))
+      : false;
+  useEffect(() => { setDirty(!!kind && dirty, kind && dirty ? 1 : 0); }, [kind, dirty, setDirty]);
+  const save = async () => {
+    setBusy(true);
+    try { await onSave('models'); } finally { setBusy(false); }
+  };
+  const options = resources.filter(item => item.kind === 'model');
+  const probe = kind === 'chat' ? chatProbe : memoryProbe;
+  const resourceId = kind === 'chat' ? draft.chatResource : draft.memoryResource;
+  const modelName = kind === 'chat' ? draft.chatModel : draft.memoryModel;
+  const cacheKey = kind === 'chat' ? chatKey : memoryKey;
+  const pick = (id: string) => {
+    const picked = options.find(item => item.resourceId === id);
+    const nextName = picked ? savedModelNameOf(picked) : '';
+    setDraft(previous => kind === 'chat' ? { ...previous, chatResource: id, chatModel: nextName } : { ...previous, memoryResource: id, memoryModel: nextName });
+    probe.reset();
+  };
+  const setName = (name: string) => setDraft(previous => kind === 'chat' ? { ...previous, chatModel: name } : { ...previous, memoryModel: name });
+  const serviceGroup = kind !== null && <div className="config-grp" data-sheet-group={group === 'service' ? '' : undefined}>
+    <div className="config-grp-label"><b>服务</b></div>
+    <div className="config-grp-fields">
+      <Field label={kind === 'chat' ? '对话模型' : '记忆模型'}>
+        <Select disabled={!loaded} value={resourceId} onChange={event => pick(event.target.value)}>
+          <option value="">{kind === 'chat' ? '未选择' : '跟随对话模型'}</option>
+          {options.map(item => <option value={item.resourceId} key={item.resourceId} disabled={!item.enabled}>{item.name}{item.enabled ? '' : T33.optionSuffix}</option>)}
+        </Select>
+      </Field>
+      {loaded && options.every(item => !item.enabled) && <p className="config-sheet-note"><button type="button" className="config-sheet-link" onClick={() => requestClose(() => onOpenSettings('model'))}>{T25.add}</button></p>}
+      {kind === 'chat' && !resourceId && <p className="config-sheet-note">{T1}</p>}
+      {kind === 'memory' && !resourceId && <p className="config-sheet-note">跟随对话模型：运行时继承已绑定的对话模型。</p>}
+      {resourceId !== '' && <ModelNamePicker value={modelName} onChange={setName} models={probe.models} listBusy={probe.listBusy} listError={probe.listError} listLoaded={probe.listLoaded} testBusy={probe.testBusy} testNote={probe.testModel === modelName ? probe.testNote : ''} notice={probe.notice} onRefresh={() => void probe.refresh({ kind: 'saved', resourceId, cacheKey })} onTest={() => void probe.test({ kind: 'saved', resourceId, cacheKey }, modelName.trim())} testDisabled={!modelName.trim()} disabled={!loaded}/>}
+    </div>
+  </div>;
+  return <Sheet idPrefix="model:" footer={kind !== null && dirty ? <div className="config-sheet-actions">
+    <span className="config-sheet-note">{T8.dirty(1)}</span>
+    <span className="config-sheet-spacer"/>
+    <button type="button" onClick={() => requestClose()}>取消</button>
+    <Button disabled={!loaded} onClick={() => void save()}>保存</Button>
+  </div> : null}>
+    {kind !== null && <div className="config-sheet-groups">
+      {group !== 'test' && serviceGroup}
+      {kind === 'chat' && group !== 'service' && <div className="config-grp" data-sheet-group={group === 'test' ? '' : undefined}>
+        <div className="config-grp-label"><b>连接测试</b></div>
+        <div>
+          <div className="config-sheet-row">
+            <Button disabled={!resourceId || !modelName.trim() || probe.testBusy} busy={probe.testBusy} onClick={() => void probe.test({ kind: 'saved', resourceId, cacheKey }, modelName.trim())}>测试</Button>
+            <span className="config-sheet-note" role="status">{probe.testBusy ? '正在测试…' : probe.testModel === modelName ? probe.testNote : ''}</span>
+          </div>
+          <p className="config-sheet-note"><button type="button" className="config-sheet-link" onClick={() => requestClose(() => onOpenSettings('model', resourceId ? { modelKind: 'model', resourceId } : { modelKind: 'model' }))}>{T25.viewModel}</button></p>
+        </div>
+      </div>}
+      {notice && <p className="config-sheet-note" role="status">{notice}</p>}
+    </div>}
+  </Sheet>;
+}
+
+/** 工作区级纸笺：T37 切换角色确认与「＋ 新建角色…」（规范 §7.9）。 */
+function WorkspaceSheets({ pendingSwitch, clearPendingSwitch, onSwitch, onCreated }: { pendingSwitch: { roleId: string; from: string; to: string; count: number } | null; clearPendingSwitch: () => void; onSwitch: (roleId: string) => void; onCreated: (role: RoleDetail) => Promise<void> }) {
+  const { sheet, requestClose, setBusy } = useSheet();
+  const [name, setName] = useState('');
+  const [definition, setDefinition] = useState('');
+  const [busy, setLocalBusy] = useState(false);
+  const [error, setError] = useState('');
+  const openSwitch = sheet?.id === 'switch-role';
+  const openCreate = sheet?.id === 'create-role';
+  const create = async () => {
+    if (busy || !name.trim() || !definition.trim()) return;
+    setLocalBusy(true); setError('');
+    try {
+      const role = await api<RoleDetail>('/v1/roles', { method: 'POST', body: { displayName: name.trim(), definition: { text: definition.trim() } } });
+      await onCreated(role);
+      setName(''); setDefinition(''); setError('');
+      setBusy(false);
+      requestClose();
+    } catch (e) { setError(errorText(e)); }
+    finally { setLocalBusy(false); }
+  };
+  return <>
+    <Sheet idPrefix="switch-role" footer={openSwitch ? <div className="config-sheet-actions">
+      <span className="config-sheet-spacer"/>
+      <button type="button" onClick={() => { clearPendingSwitch(); requestClose(); }}>{T37.cancel}</button>
+      <Button variant="danger" onClick={() => { const target = pendingSwitch?.roleId; requestClose(() => { clearPendingSwitch(); if (target) onSwitch(target); }); }}>{T37.confirm}</Button>
+    </div> : null}>
+      {openSwitch && pendingSwitch && <div className="config-sheet-groups">
+        <div className="config-grp" data-sheet-group>
+          <div className="config-grp-label"><b>切换</b></div>
+          <div><p className="config-sheet-ask">{T37.text(pendingSwitch.count, pendingSwitch.from, pendingSwitch.to)}</p></div>
+        </div>
+      </div>}
+    </Sheet>
+    <Sheet idPrefix="create-role" footer={openCreate ? <div className="config-sheet-actions">
+      {error && <p className="config-sheet-error" role="alert">{error}</p>}
+      <span className="config-sheet-spacer"/>
+      <button type="button" disabled={busy} onClick={() => requestClose()}>{T37.cancel}</button>
+      <Button disabled={busy || !name.trim() || !definition.trim()} busy={busy} onClick={() => void create()}>创建角色</Button>
+    </div> : null}>
+      {openCreate && <div className="config-sheet-groups">
+        <div className="config-grp" data-sheet-group>
+          <div className="config-grp-label"><b>新角色</b></div>
+          <div className="config-grp-fields">
+            <Field label="名字"><Input data-sheet-focus value={name} maxLength={200} disabled={busy} onChange={event => setName(event.target.value)}/></Field>
+            <Field label="角色设定"><Textarea rows={6} value={definition} disabled={busy} onChange={event => setDefinition(event.target.value)}/></Field>
+          </div>
+        </div>
+      </div>}
+    </Sheet>
+  </>;
 }
 
 function ConfigHeading({ number, label, english, title, description }: { number: string; label: string; english: string; title: string; description: string }) {

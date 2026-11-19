@@ -130,7 +130,7 @@ html[data-config-switching] .studio-shell *,html[data-config-switching] .studio-
 .config-sec-head{display:flex;align-items:center;gap:10px;padding:10px 0 24px}
 .config-sec-head h2{flex:none;margin:0;font:700 26px/34px var(--nd-semantic-font-heading);letter-spacing:-.01em}
 /* 摘要行（v6 §6.3）：名称 132px｜值｜状态点+编辑槽。编辑隐藏时仍占位 → 状态点同列。 */
-.config-sum{position:relative;display:grid;grid-template-columns:132px minmax(0,1fr) auto;gap:20px;align-items:center;margin:0 -12px;padding:16px 12px;border-radius:var(--nd-semantic-radius-action);cursor:pointer;overflow:hidden;transition:background var(--nd-semantic-motion-micro-exit) var(--nd-semantic-motion-ease-in),box-shadow var(--nd-semantic-motion-micro-exit) var(--nd-semantic-motion-ease-in)}
+.config-sum{position:relative;box-sizing:border-box;width:100%;border:0;background:transparent;color:inherit;font:inherit;text-align:left;display:grid;grid-template-columns:132px minmax(0,1fr) auto;gap:20px;align-items:center;margin:0 -12px;padding:16px 12px;border-radius:var(--nd-semantic-radius-action);cursor:pointer;overflow:hidden;transition:background var(--nd-semantic-motion-micro-exit) var(--nd-semantic-motion-ease-in),box-shadow var(--nd-semantic-motion-micro-exit) var(--nd-semantic-motion-ease-in)}
 .config-sum:hover,.config-sum:focus-within{background:color-mix(in srgb,var(--cfg-paper) 70%,var(--cfg-selection));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--cfg-ink) 10%,transparent),var(--nd-semantic-shadow-rest);transition:background var(--nd-semantic-motion-micro) var(--nd-semantic-motion-ease-out),box-shadow var(--nd-semantic-motion-micro) var(--nd-semantic-motion-ease-out)}
 .config-sum+.config-sum:before{content:"";position:absolute;left:12px;right:12px;top:0;border-top:1px solid color-mix(in srgb,var(--cfg-ink) 10%,transparent);transition:opacity var(--nd-semantic-motion-micro)}
 .config-sum:hover:before,.config-sum:focus-within:before,.config-sum:hover+.config-sum:before,.config-sum:focus-within+.config-sum:before{opacity:0}
@@ -308,3 +308,8 @@ html[data-config-switching] .studio-shell *,html[data-config-switching] .studio-
 /* 完成度清单（v6 §6）：名称 · 点线 · 状态点 · 查看。 */
 .config-check-list{display:flex;flex-direction:column}
 .config-check-view{margin-left:8px;border:0;background:none;padding:0;color:var(--cfg-accent);font-size:12px;cursor:pointer}
+
+/* 底栏角色切换（v6 §7.9）：原生 select，已停止的角色带后缀，末项为新建入口。 */
+.config-role-switch{height:38px;min-width:150px;max-width:230px;padding:0 30px 0 12px;border:1px solid var(--nd-semantic-color-line-control);border-radius:var(--nd-semantic-radius-field);background:var(--nd-semantic-color-surface);color:var(--nd-semantic-color-text);font:600 13px var(--nd-semantic-font-body);appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23887a6c' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;cursor:pointer}
+.config-role-switch:focus-visible{outline:2px solid var(--nd-semantic-color-focus);outline-offset:2px}
+@media(max-width:900px){.config-role-switch{height:32px;min-width:112px;max-width:42vw;font-size:12px}}

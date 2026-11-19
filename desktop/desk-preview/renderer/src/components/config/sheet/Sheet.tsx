@@ -28,6 +28,8 @@ export function Sheet({ children, footer, idPrefix }: { children: ReactNode; foo
   const [host, setHost] = useState<HTMLElement | null>(null);
   // 关闭时保留上一张纸笺做退出动画（M2），结束后再卸载。
   const [held, setHeld] = useState<SheetState | null>(null);
+  // 首帧重渲染可能多次触发聚焦效应，用「同一纸笺只排一帧」去重。
+  const pendingFocus = useRef<{ key: string; raf: number } | null>(null);
   useEffect(() => {
     setHost(probe.current?.closest<HTMLElement>('.config-leaf') ?? null);
   }, []);
@@ -45,13 +47,23 @@ export function Sheet({ children, footer, idPrefix }: { children: ReactNode; foo
   }, [owned]);
 
   useEffect(() => {
-    if (!owned) return;
+    if (!owned) {
+      if (pendingFocus.current) {
+        cancelAnimationFrame(pendingFocus.current.raf);
+        pendingFocus.current = null;
+      }
+      return;
+    }
     const frame = panel.current;
     if (!frame) return;
     // 等压暗层 portal 与纸笺内容同帧落定后再聚焦，避免被后续 DOM 插入夺走焦点。
     // 同一纸笺在首帧内可能因脏标记等状态再渲染一次；取消帧回调会让焦点永远落空，
-    // 因此这里只校验节点仍在文档中，不做 cleanup。
+    // 因此这里只校验节点仍在文档中，不做 cleanup；同一纸笺同一组只排一帧，避免累积冗余 focus。
+    const key = `${owned.id}|${owned.group ?? ''}`;
+    if (pendingFocus.current?.key === key) return;
+    if (pendingFocus.current) cancelAnimationFrame(pendingFocus.current.raf);
     const raf = requestAnimationFrame(() => {
+      pendingFocus.current = null;
       if (!frame.isConnected) return;
       const first = frame.querySelector<HTMLElement>('[data-sheet-focus]')
         ?? focusableControls(frame)[0]
@@ -60,6 +72,7 @@ export function Sheet({ children, footer, idPrefix }: { children: ReactNode; foo
       const group = owned.group ? frame.querySelector<HTMLElement>('[data-sheet-group]') : null;
       group?.scrollIntoView({ block: 'start' });
     });
+    pendingFocus.current = { key, raf };
   }, [owned?.id, owned?.group, owned]);
 
   // M1 / M3 / M4：进入动画。令牌为 0（减少动效）时不建动画对象，满足「16ms 内 getAnimations() 为 0」。

@@ -464,3 +464,126 @@ node scripts/check-docs.mjs                                          # 文档巡
 2. 底栏原生 `<select>` 角色切换 +「＋ 新建角色…」+ T37 脏切换确认；删除 `config-dialog` 藏书票墙与 `config-dirty-prompt`。
 3. 语音按服务会话缓存；`VoicePanel` / `ImagePanel` 的分组化（随模型段一起做）。
 4. V3 删除 / 测试两条读屏播报的「测试」项随模型纸笺接入；`settings-workspace-check.cjs` 等旧 E2E 选择器移植。
+
+---
+
+## 14. P2 余下四段独立复核（2026-11-19，基线 b69d91e：**总体通过；1 项展示缺口 R10-1**）
+
+在 `b69d91e`（工作树干净）上独立复核，结论来自自建真机探针，不采信 §13 自验。**外观／扩展／额度／完成度四段展示与纸笺归属修复实测通过；发现 1 项切分区不关纸笺的展示缺口（R10-1，P2）。**
+
+### 14.1 通过项
+
+| 验证项 | 独立方法 | 结果 |
+| --- | --- | --- |
+| 渲染器门禁 | 实跑 `npm run check` + `build` | 令牌最新、24 CSS 零违规、`tsc` 通过、构建成功 |
+| 桌面单测 | 实跑 `node --test tests/*.test.cjs` | **160／160** |
+| 后端门禁 | 实跑 `accept-offline.mjs` | **21／21** 步、正式测试 **444／444**、`sourceUnchanged = true`、`realServiceCalls = 0`，报告 `backend/test-results/p5-2026-11-19T09-25-32-589Z-e623ef65/summary.json` |
+| 文档巡检 | `node scripts/check-docs.mjs` | 0 错误 0 警告 |
+| 外观卡片 | 自建假后端 3 套服饰（2 预置＋1 自建） | 渲染 3 张服饰卡＋1 张「导入服饰」；名称、`19 张差分 · 预置`、状态点「可穿」正确；标题仅「衣柜」，无「人物档案／立绘」旧标题（空态「还没有立绘」是 demo 要求的 T22） |
+| 编辑服饰纸笺 | 打开预置服饰 | `sheetCount/scrimCount/bookCount` 均 **1**（原会叠空纸笺＋双层压暗，归属修复生效）；四组分组、标题「编辑服饰」、`data-shape=full` |
+| 预置锁定 | 预置服饰纸笺 | 名称框与「删除服饰…」均 `disabled`，给出只读说明（DL-153 策略） |
+| Esc 关闭 | 打开服饰纸笺后 Esc＋等 500ms | 纸笺／两层压暗全部卸载（0/0/0） |
+| 扩展段 | 切到扩展、点 MCP 摘要行 | 两行摘要「设置里还没有MCP./Skill.」+「开启 无」；纸笺标题「MCP」、`data-shape=compact`、单层 |
+| 额度段 | 切到额度、点摘要行 | 摘要「今日已用 0 / 200 点／每日 200 点／本机 00:00 重置」；纸笺「自主额度 · 每日额度」紧凑形态、数字框预填 200 |
+| 额度校验 | 数字框填 0 | `role=alert` 显示 T28「请输入 1–1000000 的整数」、`aria-invalid=true`、保存禁用 |
+| 额度保存 | 填 37 保存 | 后端 `dailyLimit=37`、摘要更新「0 / 37 点」、纸笺收起；走既有暂停管线 |
+| 完成度 | 切到完成度 | 四行（设定／对话模型／记忆整理／角色状态）各带「查看」，点「对话模型·查看」切到模型段 |
+
+### 14.2 R10-1 · P2 · 切分区不关闭已开纸笺（展示缺口）
+
+**复现**：扩展段打开 MCP 紧凑纸笺（不按 Esc），直接点页签「设定」，等 300ms 与 1500ms 两次采样，`sheets/titles` 始终是 `1 / ["MCP"]`、两层压暗仍在——纸笺不随分区切换关闭，停留在已离开分区的内容上。
+
+**期望**（v6 demo §验收 29 与 `app.js` 的 `goSection`）：`if (state.sheet) requestClose(() => goSection(id))` —— 纸笺开着点另一分类，无改动应先关闭再切换，有改动先走关闭确认。仓库 [Settings.tsx](../../../desktop/desk-preview/renderer/src/pages/Settings.tsx#L346) 的 `changeSection` 不检查 `sheet`，直接 `setRoleSection(id)`。
+
+**定位**：`changeSection` 不在本轮 diff 中，属 P2 早期切片遗留；本轮纸笺归属修复（`idPrefix` 过滤）解决了多宿主叠加空纸笺，但没有补上切段关闭。按 DL-160 属展示层，不得以「既有遗留」长期搁置。
+
+**修法建议**：`changeSection` 内先读 `useSheet()` 的当前 `sheet`（或暴露 `getSheet()`），若非空则 `requestClose(() => applySection(id))`，把实际切换放进回调；有脏时复用既有关闭确认阶梯。属纯前端交互改动，不触碰接口。
+
+### 14.3 观察项（不阻塞）
+
+1. **首帧焦点对 disabled 字段**：预置服饰名称框 `disabled`，探针 `focusOnName=false` 属预期（disabled 不可聚焦）；自验称「焦点落名称框」是非预置服饰场景，本轮未对非预置服饰复验焦点，建议下轮补。
+2. **纸笺归属修复的 rAF 累积**：`Sheet.tsx` 去掉 `requestAnimationFrame` 的 cleanup 后，同一纸笺在首帧重渲染会累积多个回调；均以 `frame.isConnected` 校验后 focus，实测无异常，但高频重渲染下有冗余 focus，可后续加 `slot`/去重。
+3. **§13 自验的「探针未入库」**：本轮证据已入库 `backend/test-results/400-v6-verify-20261119-b69d91e/`，替代自验口径。
+
+### 14.4 范围与环境
+
+仅覆盖 P2 四段与纸笺归属的桌面端／离线范围；模型段、底栏原生 `<select>`、语音按服务缓存、P3a 依赖暂停、真实后端与模型联调不在本次范围。
+
+## 15. R10-1 与 §14.3 观察项补修（2026-11-19，自验通过，待独立复核）
+
+按 §14.2 的建议修 R10-1（切分区不关闭已开纸笺），并处理 §14.3 的前两项观察项。
+
+### 15.1 R10-1 · 切分区先按关闭规则收纸笺
+
+**问题**：`changeSection` 直接 `setRoleSection/ setSettingsSection`，纸笺开着点页签时不关闭，停留在已离开分区的内容上（违反验收 29）。
+
+**改法**（纯前端，不触接口）：
+
+1. [sheet-context.tsx](../../../desktop/desk-preview/renderer/src/components/config/sheet/sheet-context.tsx) 的 `SheetProvider` 增加可选 `controller` 引用，把最新的 context 值挂到工作区层的 `MutableRefObject` 上——页签在工作区层、纸笺状态在 Provider 内，跨层只能靠这个引用，不需要把 Provider 整体外提。
+2. [Settings.tsx](../../../desktop/desk-preview/renderer/src/pages/Settings.tsx) 的 `changeSection` 拆成 `apply()`（真正的切换与 M9 淡入）和前置判断：`sheetController.current?.sheet` 非空时先 `requestClose(apply)`，让既有闭关闭规则接管——无改动直接关，有改动先出 T9 确认、确认「放弃」后才切；写入中 `requestClose` 自身会忽略。
+3. 同步补齐 M2 时序：[sheet-context.tsx](../../../desktop/desk-preview/renderer/src/components/config/sheet/sheet-context.tsx) 的 `closeNow` 先读纸笺的 `--nd-semantic-motion-page-exit`，`then` 待办（切换分区 / 保存反馈）改为退出动画结束后再执行；减少动效（令牌 0）时仍旧同步执行。
+
+### 15.2 §14.3 观察项
+
+1. **非预置服饰首帧焦点**：用 §14 同一支四段探针补测「我的搭配」（`isPreset:false`）：名称框 `disabled=false`、值 `我的搭配`、`document.activeElement` 就是该输入框（`focusIsName:true`）。预置服饰名称框 `disabled` 不可聚焦属预期，焦点落到下一个可聚焦控件。
+2. **焦点 rAF 累积**：`Sheet.tsx` 的聚焦效应按「纸笺编号｜组名」去重，同一纸笺同一组只排一帧，重渲染时取消上一帧再排新的；关闭纸笺时清空。`owned` 变化不再累积冗余 `focus()`。
+3. 证据目录说明属信息项，无需改动。
+
+### 15.3 自验证据（真实 Electron + 本地假后端，复用 §14 探针并把时序写严）
+
+证据目录：`backend/test-results/400-v6-fix-r10-1-20261119/`（`probe-switch-delay.cjs` + `report-switch-delay.json`、`probe-four-sections.cjs` + `report-four-sections.json`）。
+
+| 场景 | 实测 |
+| --- | --- |
+| 扩展段开 MCP 纸笺 → 点「设定」（无改动） | 300ms 与 1500ms 两次采样：`sheets/scrims/books` 全 0，页签 `01设定`、正文 `h2=["设定"]`（R10-1 收口） |
+| 额度纸笺改 37 → 点「设定」（有改动） | 400ms 后：纸笺仍在、`confirm=true`、页签仍是 `05额度`、正文仍是「自主额度」——先确认不切段 |
+| 上一步点「放弃」 | 600ms 后：纸笺 0/0/0，页签 `01设定`、正文 `设定` |
+| 非预置服饰纸笺 | `nameDisabled=false`、`focusIsName=true`、`value="我的搭配"`、标题「编辑服饰」 |
+
+门禁：`renderer npm run check`（24 CSS 零违规、`tsc` 通过）与 `vite build` 通过；桌面单测 **160／160**；后端 `accept-offline.mjs` **21／21 步**、正式测试 **444／444**、`sourceUnchanged=true`、`realServiceCalls=0`（报告 `backend/test-results/p5-2026-11-19T09-43-05-872Z-03a0de97/summary.json`）；`node scripts/check-docs.mjs` 0 错误 0 警告；`theme-transition-check`、`pack3-entry-check` 退出 0。
+
+`startup-flow-fixes-check`（`保存设定` 旧文案）与 `settings-workspace-check`（`.config-dirty-ribbon`）仍红，失败点都在 P2 已删除的旧 DOM 上，与 §8.2／§14 一致，非本轮回归。
+
+### 15.4 复核对齐提示（未改）
+
+§14.1 的「额度保存 … 纸笺收起」与同目录基线产物不一致：`report-four-sections.json` 的 `quotaSaved.sheets` 为 `1`，且 `QuotaSheetHost` 保存成功后并不调用 `requestClose`。本轮未改这一行为（属 P2 写入反馈范畴，规范 §7.5 要求「写入成功后纸笺收回再做 M7/M8 反馈」）。若确认要对齐规范，需要连同额度／扩展／模型／语音／生图五类纸笺的保存后收回与行内扫光一起做，建议并入 P5。
+
+**性质说明**：本轮为实施者自验，R10-1 是否收口以独立复核实跑为准。
+
+---
+
+## 16. 模型段与底栏角色切换（2026-11-19，自验通过，待独立复核）
+
+接续 §15 的工作树，把模型段从「四行折叠表单」改为 v6 摘要行 + 纸笺，并把底栏的「切换角色」按钮换成原生 `<select>`。**生图 / 语音仍沿用旧折叠行**（见 §16.4），P2 整体仍未达验收。
+
+### 16.1 模型段（对话 / 记忆）
+
+1. **摘要行**：`ModelRow` 两行——对话、记忆整理。值写 `{服务} · {模型}`，未选写「未选择」+ T2 提示；记忆未选写「跟随对话模型」+「继承 {对话模型}」；资源被删写 T34「原服务已删除，请重新选择」；状态点 bare（生效中 / 未设置 / 服务已停用 / 跟随对话模型 / 原服务已删除）。
+2. **点击映射**：对话点值或协议 → 紧凑「对话 · 服务」；整行 / 编辑 → 完整「编辑对话模型」（服务 + 连接测试两组）；记忆整行 → 紧凑「记忆整理」（整份）。为避免按钮嵌套，摘要行改为 `div[role=button]`（Enter / Space 同步），额度行一并改。
+3. **纸笺内容**：服务组为服务下拉（全局停用项 `disabled` + T33 后缀；一个可用服务都没有时给 T25「去设置添加 →」）+ `ModelNamePicker`（读取列表 / 测试 / 结果）；连接测试组提供「测试」与 T25「在设置中查看模型 →」，跳转先关纸笺再进设置。保存走既有 `saveBindings('models')`，脏时页脚 T8 + 取消 / 保存。
+4. **保留**：生图 / 语音两行仍是 `config-model-row` 折叠面板（`ImagePanel` / `VoicePanel`），纸笺分组化随各自面板改造再做。
+
+### 16.2 底栏角色切换（§7.9）
+
+1. 页脚「切换角色 N」按钮替换为原生 `<select class="config-role-switch">`：选项为角色名，已停止的加「（已停止）」，末项「＋ 新建角色…」；选中后立即复位显示当前角色，由状态驱动。
+2. **切换规则**：无脏改动直接切换（清空左页预览）；当前角色有未保存改动时先开 T37 确认纸笺「「{from}」有 {count} 处修改还没保存，切换到「{to}」会丢掉它们。」，确认「放弃并切换」后先关纸笺再切换，取消则留在原角色。
+3. **新建入口**：`＋ 新建角色…` 打开「新建角色」纸笺（名字 + 角色设定），创建成功后刷新列表、写入草稿并切到新角色的「设定」分区。
+
+### 16.3 自验证据（真实 Electron + 本地后端，探针未入库）
+
+| 验证项 | 结果 |
+| --- | --- |
+| 两行摘要 | 对话「未选择 / 角色暂时无法开始对话 / 未设置」；记忆「跟随对话模型 / 继承 未选择 / 跟随对话模型」 |
+| 紧凑「服务」 | 标题「对话 · 服务」、`data-shape=compact`、仅「服务」组，含 T1 提示与「去设置添加 →」 |
+| 完整纸笺 | 标题「编辑对话模型」、`data-shape=full`、两组「服务 / 连接测试」、两个跳转链接、无改动时页脚为空 |
+| 记忆整份 | 标题「记忆整理」、紧凑形态、仅「服务」组，含「跟随对话模型：运行时继承已绑定的对话模型。」 |
+| 底栏下拉 | `SELECT`，选项「夏澄（已停止）/ 探针二号（已停止）/ ＋ 新建角色…」；选「探针二号」后页脚身份区变为「探针二号」 |
+| T37 | 改显示名后切换 → 提问句与页脚「取消 / 放弃并切换」正确；确认后切到「探针二号」 |
+| 门禁 | `renderer check`（24 CSS 零违规、`tsc`）✓、`build` ✓、桌面单测 **160／160** ✓、探针无页面异常 |
+
+### 16.4 仍未完成（P2 余下）
+
+1. 生图 / 语音的摘要行与纸笺分组化（`ImagePanel` / `VoicePanel` 仍在旧折叠行内）。
+2. 删除 `config-dialog` 藏书票墙与 `config-dirty-prompt`（当前入口已改下拉，旧代码仍在，切换逻辑仍保留 `chooseRole` 供「新建」路径）。
+3. 保存后纸笺收回与行内 M7/M8 反馈（§15.4 已记录，属写入反馈，建议并入 P5 与五类纸笺一起做）。
+4. `settings-workspace-check.cjs` 等旧 E2E 选择器移植；V3「测试」播报随模型纸笺接入。
