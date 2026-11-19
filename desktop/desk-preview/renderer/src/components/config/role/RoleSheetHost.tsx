@@ -54,7 +54,7 @@ export function RoleSheetHost({
   };
 
   if (!active) return null;
-  return <Sheet footer={open
+  return <Sheet idPrefix="delete-role" footer={open
     ? <div className="config-sheet-actions">
       {error && <p className="config-sheet-error" role="alert">{error}</p>}
       <span className="config-sheet-spacer" />

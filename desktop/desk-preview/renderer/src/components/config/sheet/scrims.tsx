@@ -21,8 +21,10 @@ function fade(node: HTMLElement | null, from: number, to: number, timeToken: str
  * 两层都把图片框挖空，立绘始终由真实页面绘制。
  * 关闭时先淡出（M6）再卸载，避免压暗层瞬间消失。
  */
-export function SheetScrims() {
+export function SheetScrims({ idPrefix }: { idPrefix?: string }) {
   const { sheet, requestClose } = useSheet();
+  // 与 Sheet 同一归属规则：只压暗自己负责的纸笺，避免多分区各挂一层导致双重压暗。
+  const owned = sheet !== null && (idPrefix === undefined || sheet.id.startsWith(idPrefix)) ? sheet : null;
   const probe = useRef<HTMLSpanElement>(null);
   const [leaf, setLeaf] = useState<HTMLElement | null>(null);
   const [book, setBook] = useState<HTMLElement | null>(null);
@@ -31,7 +33,7 @@ export function SheetScrims() {
   const mounted = useRef(false);
 
   useEffect(() => {
-    if (sheet) {
+    if (owned) {
       mounted.current = true;
       setLeaf(probe.current?.closest<HTMLElement>('.config-leaf') ?? null);
       setBook(probe.current?.closest<HTMLElement>('.config-book') ?? null);
@@ -58,19 +60,19 @@ export function SheetScrims() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [sheet]);
+  }, [owned]);
 
   useEffect(() => {
-    if (!sheet || !leaf) return;
+    if (!owned || !leaf) return;
     const enters = [
       fade(leafScrim.current, 0, 1, '--nd-semantic-motion-component', '--nd-semantic-motion-ease-out', 220, 'ease-out'),
       fade(bookScrim.current, 0, 1, '--nd-semantic-motion-component', '--nd-semantic-motion-ease-out', 220, 'ease-out'),
     ].filter((animation): animation is Animation => animation !== null);
     return () => enters.forEach(animation => animation.cancel());
-  }, [sheet, leaf]);
+  }, [owned, leaf]);
 
   useEffect(() => {
-    if (!sheet || !leaf || !book) return;
+    if (!owned || !leaf || !book) return;
     const paint = () => {
       const wells = collectWellRects(leaf, CONFIG_WELL_SELECTORS);
       if (leafScrim.current) applySubtractMask(leafScrim.current, wells);
@@ -90,7 +92,7 @@ export function SheetScrims() {
       if (leafScrim.current) clearSubtractMask(leafScrim.current);
       if (bookScrim.current) clearSubtractMask(bookScrim.current);
     };
-  }, [sheet, leaf, book]);
+  }, [owned, leaf, book]);
 
   return <>
     <span ref={probe} hidden />

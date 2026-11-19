@@ -46,7 +46,7 @@
 .config-stage { position:relative; z-index:2; grid-column:1; padding:14px 12px 12px 14px; display:grid; min-height:0; }
 .config-plate { position:relative; margin:0; min-height:0; display:grid; grid-template-rows:auto minmax(0,1fr); padding:8px 10px 10px; }
 .config-plate-mat { position:absolute; inset:0; border-radius:var(--nd-semantic-radius-action); background:var(--cfg-mat); box-shadow:0 0 0 1px var(--cfg-line),0 16px 28px -16px color-mix(in srgb,var(--cfg-ink) 55%,transparent); }
-.config-stage-label { position:relative; display:flex; justify-content:space-between; align-items:center; height:22px; font-size:11px; color:var(--cfg-muted); }.config-stage-label b { font:10px var(--nd-semantic-font-code); color:var(--cfg-accent); }
+.config-stage-label { position:relative; display:flex; justify-content:center; align-items:center; height:22px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:11px; color:var(--cfg-muted); }.config-stage-label b { font:10px var(--nd-semantic-font-code); color:var(--cfg-accent); }
 .config-stage-label:after { content:""; position:absolute; top:-14px; left:50%; width:62px; height:17px; transform:translateX(-50%) rotate(3deg); background:repeating-linear-gradient(90deg,transparent 0 5px,#fff4 5px 7px),color-mix(in srgb,var(--cfg-pink) 60%,transparent); clip-path:polygon(3% 0,97% 4%,100% 22%,97% 44%,100% 66%,96% 100%,4% 96%,0 76%,3% 52%,0 28%); }
 [data-ui-preset="nightwave"] .config-stage-label:after { display:none; }
 .config-portrait { position:relative; min-width:0; min-height:0; overflow:hidden; display:grid; place-items:center; background:repeating-linear-gradient(90deg,transparent 0 31px,#e2d9cb 31px 32px),repeating-linear-gradient(0deg,transparent 0 31px,#e2d9cb 31px 32px),var(--cfg-lightbox); color:#7b7480; border-radius:var(--nd-semantic-radius-chip); box-shadow:0 0 0 1px rgba(60,50,50,.14); }
@@ -239,8 +239,72 @@ html[data-config-switching] .studio-shell *,html[data-config-switching] .studio-
 .config-sheet-confirm-actions{display:flex;gap:8px;margin-left:auto}
 .config-sheet-confirm-actions button{height:32px;padding:0 12px;border:1px solid var(--cfg-line);border-radius:var(--nd-semantic-radius-action);background:transparent;color:var(--cfg-ink);font:600 12px var(--nd-semantic-font-body);cursor:pointer}
 .config-sheet-confirm-actions button.danger{border-color:var(--nd-semantic-color-danger);color:var(--nd-semantic-color-danger)}
+.config-footer-right{flex:0 0 auto!important;display:flex;align-items:center;gap:8px}
 .config-resume-save{height:32px;padding:0 12px;border:1px solid var(--nd-semantic-color-commit);border-radius:var(--nd-semantic-radius-action);background:transparent;color:var(--nd-semantic-color-commit);font:600 12px var(--nd-semantic-font-body);cursor:pointer}
 .config-leaf-foot[data-empty="true"]{min-height:0;height:0;margin:0;padding:0;border-top:0;overflow:hidden}
 /* 书脊草稿点：7px 实心 warning，右上角，2px 标签底色环。 */
 .config-tabs button{position:relative}
 .tab-dot{position:absolute;top:8px;right:7px;width:7px;height:7px;border-radius:var(--nd-semantic-radius-round);background:var(--nd-semantic-color-warning);box-shadow:0 0 0 2px var(--cfg-paper)}
+
+/* 衣柜（规范 §二.1／§二.4）：服饰卡网格 + 编辑服饰纸笺。 */
+.config-outfit-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:16px;padding:6px 0 4px}
+.config-outfit-card{position:relative;display:flex;flex-direction:column;gap:8px;min-width:0;padding:8px;border:1px solid var(--cfg-line);border-radius:var(--nd-semantic-radius-action);background:var(--cfg-mat);text-align:left;cursor:pointer;box-shadow:var(--nd-semantic-shadow-rest);transition:box-shadow var(--nd-semantic-motion-micro) var(--nd-semantic-motion-ease-out),transform var(--nd-semantic-motion-micro) var(--nd-semantic-motion-ease-out)}
+.config-outfit-card:hover,.config-outfit-card:focus-visible{box-shadow:var(--nd-semantic-shadow-hover);transform:translateY(-1px)}
+.config-outfit-thumb{display:grid;place-items:center;width:100%;aspect-ratio:2/3;overflow:hidden;border-radius:var(--nd-semantic-radius-chip);background:var(--cfg-lightbox)}
+.config-outfit-thumb img{width:100%;height:100%;object-fit:contain;display:block}
+.config-outfit-thumb i{font-style:normal;font-size:11.5px;color:var(--cfg-muted)}
+.config-outfit-card strong{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px;font-weight:600}
+.config-outfit-card small{color:var(--cfg-muted);font-size:11.5px}
+.config-outfit-meta{display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0}
+.config-outfit-state{display:inline-flex;flex:none;align-items:center}
+.config-outfit-state i{width:7px;height:7px;border-radius:var(--nd-semantic-radius-round);background:var(--cfg-ok);box-shadow:0 0 0 2px var(--cfg-paper)}
+.config-outfit-state[data-wearing] i{background:var(--cfg-accent)}
+/* M35：悬停／聚焦时右上角「编辑」淡入（离开 90ms，进入 120ms）。 */
+.config-outfit-edit{position:absolute;top:14px;right:14px;display:inline-flex;align-items:center;height:24px;padding:0 8px;border-radius:var(--nd-semantic-radius-chip);background:color-mix(in srgb,var(--cfg-paper) 92%,transparent);box-shadow:var(--nd-semantic-shadow-rest);font-size:11.5px;color:var(--cfg-ink);opacity:0;transition:opacity var(--nd-semantic-motion-micro) var(--nd-semantic-motion-ease-out)}
+.config-outfit-card:hover .config-outfit-edit,.config-outfit-card:focus-visible .config-outfit-edit{opacity:1}
+@media (hover:none){.config-outfit-edit{opacity:1}}
+.config-outfit-new{display:grid;place-items:center;align-content:center;gap:6px;border-style:dashed;color:var(--cfg-muted);box-shadow:none;text-align:center}
+.config-outfit-new .config-outfit-thumb{display:grid;place-items:center;background:transparent}
+.config-outfit-new .config-outfit-thumb i{font-size:28px;line-height:1;color:var(--cfg-muted)}
+.config-outfit-new strong{font-size:13.5px;color:var(--cfg-muted)}
+.config-wardrobe-empty{padding:10px 0 14px}
+/* 编辑服饰纸笺：左图右字段；差分为 52px 小图 +「+N」。 */
+.config-outfit-hero{display:grid;grid-template-columns:112px minmax(0,1fr);gap:16px;align-items:start}
+.config-outfit-hero-thumb{display:grid;place-items:center;width:112px;aspect-ratio:2/3;overflow:hidden;border-radius:var(--nd-semantic-radius-action);background:var(--cfg-lightbox);box-shadow:0 0 0 1px var(--cfg-line)}
+.config-outfit-hero-thumb img{width:100%;height:100%;object-fit:contain;display:block}
+.config-outfit-hero-thumb i{font-style:normal;font-size:11px;color:var(--cfg-muted)}
+.config-grp-fields{display:grid;gap:12px;min-width:0}
+.config-grp-label small{display:block;margin-top:2px;color:var(--cfg-muted);font-size:11.5px;line-height:17px}
+.config-faces{display:flex;flex-wrap:wrap;gap:8px}
+.config-face{width:52px;height:52px;padding:0;overflow:hidden;border:0;border-radius:var(--nd-semantic-radius-action);background:var(--cfg-lightbox);box-shadow:0 0 0 1px var(--cfg-line);cursor:pointer}
+.config-face img{width:100%;height:100%;object-fit:cover;display:block}
+.config-face-more{display:grid;place-items:center;width:52px;height:52px;border:1px dashed var(--cfg-outline);border-radius:var(--nd-semantic-radius-action);color:var(--cfg-muted);font:11px var(--nd-semantic-font-code)}
+.config-sheet-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.config-sprite-list{display:grid;gap:2px;margin:12px 0 0;padding:0;list-style:none}
+.config-sprite-list li{display:flex;align-items:center;gap:10px;min-width:0;padding:5px 0;border-top:1px solid color-mix(in srgb,var(--cfg-ink) 8%,transparent)}
+.config-sprite-open{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:0;background:none;padding:0;color:var(--cfg-ink);font-size:12.5px;text-align:left;cursor:pointer}
+.config-sprite-list button:last-child{margin-left:auto;flex:none;border:1px solid var(--cfg-line);border-radius:var(--nd-semantic-radius-action);background:transparent;padding:3px 8px;color:var(--cfg-muted);font-size:11.5px;cursor:pointer}
+.config-sprite-list button:last-child:disabled{opacity:.45;cursor:default}
+.config-sheet-link{border:0;background:none;padding:0;color:var(--cfg-accent);font-size:12px;cursor:pointer}
+.config-danger-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:4px;padding:14px 0 6px;border-top:1px dashed color-mix(in srgb,var(--cfg-ink) 14%,transparent)}
+@media (max-width:900px){.config-outfit-grid{grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px}.config-outfit-hero{grid-template-columns:76px minmax(0,1fr)}.config-outfit-hero-thumb{width:76px}}
+
+/* 摘要行的「编辑」槽（v6 §6.3）：悬停／聚焦行时淡入；空位由隐形副本撑开保证状态点同列。 */
+.config-sum-edit{height:26px;padding:0 10px;border:1px solid var(--cfg-line);border-radius:var(--nd-semantic-radius-action);background:transparent;color:var(--cfg-muted);font:600 11.5px var(--nd-semantic-font-body);cursor:pointer;opacity:0;transition:opacity var(--nd-semantic-motion-micro) var(--nd-semantic-motion-ease-out)}
+.config-sum:hover .config-sum-edit,.config-sum:focus-within .config-sum-edit,.config-sum-edit:focus-visible{opacity:1}
+@media (hover:none){.config-sum-edit{opacity:1}}
+.config-sum[disabled]{cursor:default;opacity:.6}
+/* 扩展纸笺：一行一个开关。 */
+.config-toggle-list{display:flex;flex-direction:column}
+.config-toggle-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-top:1px solid color-mix(in srgb,var(--cfg-ink) 8%,transparent)}
+.config-toggle-row:first-child{border-top:0;padding-top:2px}
+.config-toggle-row strong{display:block;font-size:13.5px;font-weight:600}
+.config-toggle-row small{color:var(--cfg-muted);font-size:11.5px}
+/* 自主额度纸笺：数字框 + 不限制。 */
+.config-quota-input{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.config-quota-input .ui-input{width:160px;max-width:160px}
+.config-sheet-check{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;cursor:pointer}
+.config-sheet-check input{width:15px;height:15px;margin:0;accent-color:var(--nd-semantic-color-commit)}
+/* 完成度清单（v6 §6）：名称 · 点线 · 状态点 · 查看。 */
+.config-check-list{display:flex;flex-direction:column}
+.config-check-view{margin-left:8px;border:0;background:none;padding:0;color:var(--cfg-accent);font-size:12px;cursor:pointer}

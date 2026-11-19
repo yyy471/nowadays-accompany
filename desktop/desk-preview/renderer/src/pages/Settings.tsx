@@ -2,14 +2,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api, ApiError } from '../api';
 import type { Outfit, RoleDetail, RoleListItem } from '../types';
-import { Button, Field, Input, LiveAnnouncer, Select, Textarea, readMotionTime, readMotionValue, useMotionPolicy } from '../ui';
+import { Button, Field, Input, LiveAnnouncer, Select, StatusDot, Switch, Textarea, readMotionTime, readMotionValue, useMotionPolicy } from '../ui';
 import type { MotionPreference } from '../ui/motion';
 import { AppearancePanel } from '../components/appearance/AppearancePanel';
 import { RolePortrait } from '../components/RolePortrait';
 import { SheetProvider, useSheet } from '../components/config/sheet/sheet-context';
 import { WriteProvider, useWrite } from '../components/config/write-runner';
 import { RoleSheetHost } from '../components/config/role/RoleSheetHost';
-import { T6, T30, T31 } from '../components/config/config-texts.js';
+import { Sheet } from '../components/config/sheet/Sheet';
+import { T6, T8, T23, T25, T28, T30, T31, T33, T36 } from '../components/config/config-texts.js';
 import { VoicePanel } from '../components/voice/VoicePanel';
 import { VoiceServiceCreate, VoiceServiceDetail } from '../components/voice/VoiceServiceEditor';
 import { ImagePanel } from '../components/image/ImagePanel';
@@ -117,6 +118,9 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
   const [visited, setVisited] = useState<string[]>([]);
   const [roleSection, setRoleSection] = useState<RoleSection>('profile');
   const [stagePreview, setStagePreview] = useState<{ roleId: string; assetId: string } | null>(null);
+  const [stageOutfitName, setStageOutfitName] = useState('');
+  // 切换编辑对象时先清空立绘框上方的服饰名，等新角色读取完成再填。
+  useEffect(() => { setStageOutfitName(''); }, [editId]);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('model');
   const [modelPart, setModelPart] = useState<ModelPart>('chat');
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
@@ -378,8 +382,8 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
     {footerRight && createPortal(roleActive ? <div className="config-footer-tools"><button ref={switchRef} type="button" className="config-footer-button config-switch-role" onClick={() => setShowRoles(true)}>切换角色 <span>{roles.length}</span></button></div> : <div className="config-footer-tools"><span>{activities.filter(item => item.state === 'active').length} 位角色启用中</span></div>, footerRight)}
     <div className="config-book" data-layout={settingsActive && settingsSection === 'roles' ? 'wide' : settingsActive ? 'catalog' : 'role'}>
       <div className="config-book-surface" aria-hidden="true"><div className="config-paper-left"/><div className="config-gutter"/><div className="config-paper-right"/><div className="config-grain"/><div className="config-thread"><i/><i/></div></div>
-      {roleActive ? <aside className="config-stage"><figure className="config-plate"><div className="config-plate-mat"/><div className="config-stage-label"><span>人物档案 <b>{String(Math.max(0, roles.findIndex(role => role.roleId === editId)) + 1).padStart(2, '0')}</b></span><span>立绘</span></div>
-        <RolePortrait roleId={editId} version={refreshVersion} cycle={roleSection} previewAssetId={stagePreview?.roleId === editId && roleSection === 'look' ? stagePreview.assetId : undefined} />
+      {roleActive ? <aside className="config-stage"><figure className="config-plate"><div className="config-plate-mat"/><div className="config-stage-label" data-testid="stage-label">{stageOutfitName}</div>
+        <RolePortrait roleId={editId} version={refreshVersion} cycle={roleSection} previewAssetId={stagePreview?.roleId === editId && roleSection === 'look' ? stagePreview.assetId : undefined} onOutfitName={setStageOutfitName} />
       </figure></aside> : <aside className="config-index"><div className="config-index-heading">
         {settingsSection === 'model' && <div className="config-kind-tabs" role="group" aria-label="模型分类">{([['model','模型'],['voice','语音'],['image','生图']] as const).map(([id,label]) => <button key={id} type="button" aria-pressed={modelKind === id} onClick={() => { setModelKind(id); setNewModel(false); setNewVoiceService(false); setNewImageService(false); }}>{label}</button>)}</div>}
         <small>{settingsSection === 'model' ? ({model:'模型服务',voice:'语音服务',image:'生图服务'} as const)[modelKind] : settingSections.find(item => item[0] === settingsSection)?.[1]} · {settingsSection === 'model' ? (modelKind === 'image' ? imageServices.length : modelKind === 'voice' ? voiceServices.length : filtered.length) : filtered.length} 项</small></div>
@@ -390,7 +394,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
         <div className="config-leaf-body" ref={contentRef}>
           {roleListError && <p role="alert" className="config-delete-notice">角色列表同步失败：{roleListError} <button type="button" onClick={() => void onRefresh()}>重试读取角色列表</button></p>}
           {deleteNotice && roleActive && <p role="status" className="config-delete-notice">{deleteNotice}</p>}
-          {visited.filter(id => roles.some(role => role.roleId === id)).map(id => <RoleEditor key={id} roleId={id} roleCount={roles.length} active={roleActive && editId === id} activity={activityError ? undefined : activities.find(item => item.roleId === id)} activityLoading={!activityError && (!activityReady || activityRefreshing)} voiceServiceVersion={voiceServiceVersion} voiceServiceEpochs={voiceServiceEpochs} imageServiceVersion={imageServiceVersion} imageServiceEpochs={imageServiceEpochs} section={roleSection} modelPart={modelPart} setModelPart={setModelPart} draft={drafts[id]} setDraft={draft => setDrafts(previous => ({ ...previous, [id]: draft }))} resources={resources} removedResources={removedResources} resourceError={resourceError} onEditorState={updateEditorState} onOpenSettings={openSettings} onStartConversation={onStartConversation} onPreviewOutfit={outfit => setStagePreview(outfit.home ? { roleId: id, assetId: outfit.home.assetId } : null)} onPreviewAsset={assetId => setStagePreview({ roleId: id, assetId })} onClearPreview={() => setStagePreview(previous => previous?.roleId === id ? null : previous)} onDeleted={async (roleId, keepHistory, filesRemoved) => { onRoleDeleted(roleId); setStagePreview(previous => previous?.roleId === roleId ? null : previous); setDeleteNotice(keepHistory ? '角色已移除，记忆与对话数据保留在本机目录。' : filesRemoved ? '角色及其本机数据已删除。' : '角色已移除，部分文件尚待清理，后端将继续处理。'); await onRefresh(); setDrafts(previous => { const next = { ...previous }; delete next[roleId]; return next; }); setRefreshVersion(v => v + 1); }} onRefresh={async () => { await onRefresh(); setRefreshVersion(v => v + 1); }} />)}
+          {visited.filter(id => roles.some(role => role.roleId === id)).map(id => <RoleEditor key={id} roleId={id} roleCount={roles.length} active={roleActive && editId === id} activity={activityError ? undefined : activities.find(item => item.roleId === id)} activityLoading={!activityError && (!activityReady || activityRefreshing)} voiceServiceVersion={voiceServiceVersion} voiceServiceEpochs={voiceServiceEpochs} imageServiceVersion={imageServiceVersion} imageServiceEpochs={imageServiceEpochs} section={roleSection} modelPart={modelPart} setModelPart={setModelPart} draft={drafts[id]} setDraft={draft => setDrafts(previous => ({ ...previous, [id]: draft }))} resources={resources} removedResources={removedResources} resourceError={resourceError} onEditorState={updateEditorState} onOpenSettings={openSettings} onStartConversation={onStartConversation} onPreviewOutfit={outfit => { setStageOutfitName(outfit.name); setStagePreview(outfit.home ? { roleId: id, assetId: outfit.home.assetId } : null); }} onPreviewAsset={assetId => setStagePreview({ roleId: id, assetId })} onClearPreview={() => setStagePreview(previous => previous?.roleId === id ? null : previous)} onChangeSection={changeSection} onDeleted={async (roleId, keepHistory, filesRemoved) => { onRoleDeleted(roleId); setStagePreview(previous => previous?.roleId === roleId ? null : previous); setDeleteNotice(keepHistory ? '角色已移除，记忆与对话数据保留在本机目录。' : filesRemoved ? '角色及其本机数据已删除。' : '角色已移除，部分文件尚待清理，后端将继续处理。'); await onRefresh(); setDrafts(previous => { const next = { ...previous }; delete next[roleId]; return next; }); setRefreshVersion(v => v + 1); }} onRefresh={async () => { await onRefresh(); setRefreshVersion(v => v + 1); }} />)}
           {roleActive && !editId && <p>还没有角色，请先创建角色。</p>}
           {visitedResources.map(id => { const resource = resources.find(item => item.resourceId === id); if (!resource) return null; const visible = settingsActive && id === selectedResource && resource.kind === settingsSection && newExtension !== resource.kind && !(settingsSection === 'model' && (newModel || modelKind !== 'model')); return <ResourceDetail key={id} resource={resource} roles={roles} active={visible} canWrite={true} onRemoved={resourceId => setRemovedResources(previous => previous.includes(resourceId) ? previous : [...previous, resourceId])} onUpdated={() => setRefreshVersion(v => v + 1)} />; })}
           {(['mcp', 'skill'] as const).map(kind => <ExtensionCreate key={kind} kind={kind} active={settingsActive && settingsSection === kind && newExtension === kind} onCancel={() => setNewExtension(null)} onCreated={resource => { setResources(previous => [...previous, resource]); setRefreshVersion(v => v + 1); if (viewRef.current.settingsActive && viewRef.current.settingsSection === kind && viewRef.current.newExtension === kind) { setSelectedResource(resource.resourceId); setNewExtension(null); } }}/>) }
@@ -419,8 +423,12 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
   </div></SheetProvider></WriteProvider>;
 }
 
-function RoleEditor({ roleId, roleCount, active, activity, activityLoading = false, voiceServiceVersion = 0, voiceServiceEpochs = {}, imageServiceVersion = 0, imageServiceEpochs = {}, section, modelPart, setModelPart, draft, setDraft, resources, removedResources, resourceError, onEditorState, onOpenSettings, onStartConversation, onPreviewOutfit, onPreviewAsset, onClearPreview, onDeleted, onRefresh }: { roleId: string; roleCount: number; active: boolean; activity?: Activity; activityLoading?: boolean; voiceServiceVersion?: number; voiceServiceEpochs?: Record<string, number>; imageServiceVersion?: number; imageServiceEpochs?: Record<string, number>; section: RoleSection; modelPart: ModelPart; setModelPart: (part: ModelPart) => void; draft?: Draft; setDraft: (draft: Draft) => void; resources: Resource[]; removedResources: string[]; resourceError: string; onEditorState: (roleId: string, state: RoleEditorState | null) => void; onOpenSettings: (section: SettingsSection, options?: OpenSettingsOptions) => void; onStartConversation?: (roleId: string) => void; onPreviewOutfit: (outfit: Outfit) => void; onPreviewAsset: (assetId: string) => void; onClearPreview: () => void; onDeleted: (roleId: string, keepHistory: boolean, filesRemoved: boolean) => Promise<void>; onRefresh: () => Promise<void> }) {
+function RoleEditor({ roleId, roleCount, active, activity, activityLoading = false, voiceServiceVersion = 0, voiceServiceEpochs = {}, imageServiceVersion = 0, imageServiceEpochs = {}, section, modelPart, setModelPart, draft, setDraft, resources, removedResources, resourceError, onEditorState, onOpenSettings, onStartConversation, onPreviewOutfit, onPreviewAsset, onClearPreview, onDeleted, onRefresh, onChangeSection }: { roleId: string; roleCount: number; active: boolean; activity?: Activity; activityLoading?: boolean; voiceServiceVersion?: number; voiceServiceEpochs?: Record<string, number>; imageServiceVersion?: number; imageServiceEpochs?: Record<string, number>; section: RoleSection; modelPart: ModelPart; setModelPart: (part: ModelPart) => void; draft?: Draft; setDraft: (draft: Draft) => void; resources: Resource[]; removedResources: string[]; resourceError: string; onEditorState: (roleId: string, state: RoleEditorState | null) => void; onOpenSettings: (section: SettingsSection, options?: OpenSettingsOptions) => void; onStartConversation?: (roleId: string) => void; onPreviewOutfit: (outfit: Outfit) => void; onPreviewAsset: (assetId: string) => void; onClearPreview: () => void; onDeleted: (roleId: string, keepHistory: boolean, filesRemoved: boolean) => Promise<void>; onRefresh: () => Promise<void>; onChangeSection: (section: RoleSection) => void }) {
   const write = useWrite();
+  const sheetApi = useSheet();
+  // 扩展与自主额度都按「一行 = 一张紧凑纸笺」打开（规范 §二.3 点击映射）。
+  const openExtension = (kind: 'mcp' | 'skill') => sheetApi.open({ id: `ext:${kind}`, title: kind === 'mcp' ? 'MCP' : 'Skill', shape: 'compact' });
+  const openQuota = (anchor: HTMLElement) => sheetApi.open({ id: 'quota', title: '自主额度 · 每日额度', shape: 'compact', anchor });
   const [voiceDraft, setVoiceDraft] = useState<ConfigDraftState | null>(null);
   const [imageDraft, setImageDraft] = useState<ConfigDraftState | null>(null);
   const [detailError, setDetailError] = useState('');
@@ -712,7 +720,7 @@ function RoleEditor({ roleId, roleCount, active, activity, activityLoading = fal
       <RoleDeleteEntry roleName={draft.name} roleCount={roleCount} isBuiltin={draft.isBuiltin}/>
       <RoleSheetHost active={active} roleId={roleId} roleName={draft.name} roleCount={roleCount} onDeleted={onDeleted}/></>}
     </div>
-    <div hidden={!active || section !== 'look'} className="config-prose"><ConfigHeading number="02" label="外观" english="WARDROBE" title="衣柜" description="管理可供角色自由穿搭的服饰与差分素材。点开一套服饰查看或整理素材。"/>{statusNote}{loaded.look && <AppearancePanel roleId={roleId} canWrite={!!activity || activityLoading} guardWrite={guardAction} pausedWrite={activity?.state !== 'stopped'} onPreview={onPreviewOutfit} onPreviewAsset={onPreviewAsset} onChanged={() => { onClearPreview(); setLookVersion(v => v + 1); void onRefresh(); }}/>}</div>
+    <div hidden={!active || section !== 'look'} className="config-prose"><header className="config-sec-head"><h2 tabIndex={-1}>衣柜</h2></header>{loaded.look && <AppearancePanel roleId={roleId} canWrite={!!activity || activityLoading} pausedWrite={activity?.state !== 'stopped'} onPreview={onPreviewOutfit} onPreviewAsset={onPreviewAsset} onOpenImageSettings={() => onOpenSettings('model', { modelKind: 'image' })} onChanged={() => { onClearPreview(); setLookVersion(v => v + 1); void onRefresh(); }}/>}</div>
     <div hidden={!active || section !== 'models'} className="config-prose"><ConfigHeading number="03" label="模型" english="MODELS" title="模型" description="模型列表和连接测试在设置里；这里配置角色使用的模型和演出。"/>{statusNote}{bindingAlert}
       <div className="config-model-head"><span>用途</span><span>所选模型</span><span>已保存</span><span>当前状态</span></div>
       {([['chat','对话'],['memory','记忆整理'],['image','生图'],['voice','语音']] as const).map(([id,label]) => <div className="config-model-row" key={id}>
@@ -724,10 +732,114 @@ function RoleEditor({ roleId, roleCount, active, activity, activityLoading = fal
           {id === 'voice' && loaded.voice && <VoicePanel roleId={roleId} active={active && section === 'models' && modelPart === 'voice'} serviceRefreshVersion={voiceServiceVersion} serviceEpochs={voiceServiceEpochs} onOpenVoiceSettings={target => onOpenSettings('model', { modelKind: 'voice', ...(target?.serviceId ? { resourceId: target.serviceId } : {}), ...(target?.createNew ? { newVoiceService: true } : {}) })} guardWrite={guardAction} pausedWrite={activity?.state !== 'stopped'} onDraftStateChange={setVoiceDraft} onChanged={() => { void onRefresh(); }}/>} {id === 'image' && loaded.image && <ImagePanel roleId={roleId} active={active && section === 'models' && modelPart === 'image'} serviceRefreshVersion={imageServiceVersion} serviceEpochs={imageServiceEpochs} outfitRefreshVersion={lookVersion} onOpenImageSettings={target => onOpenSettings('model', { modelKind: 'image', ...(target?.serviceId ? { resourceId: target.serviceId } : {}), ...(target?.createNew ? { newImageService: true } : {}) })} guardWrite={guardAction} pausedWrite={activity?.state !== 'stopped'} onDraftStateChange={setImageDraft} onChanged={() => { void onRefresh(); }}/>}
         </div></div>)}
     </div>
-    <div hidden={!active || section !== 'ext'} className="config-prose"><ConfigHeading number="04" label="扩展" english="EXTENSIONS" title="扩展" description="设置里的 MCP 与 Skill 在这里按角色开启或关闭。"/>{statusNote}{bindingAlert}{(['mcp','skill'] as const).map(kind => <div className="config-ledger" key={kind}><div className="config-ledger-label"><b>{kind === 'mcp' ? 'MCP' : 'Skill'}</b><small>{resources.filter(item => item.kind === kind).length} 项</small></div><div>{resources.filter(item => item.kind === kind).map(item => <label className="config-row" key={item.resourceId}><span><strong>{item.name}</strong><small>{item.enabled ? '全局已启用' : '全局已停用'}</small></span><span><input type="checkbox" disabled={bindingBusy || !bindingLoaded} checked={extensionDraft[item.resourceId] || false} onChange={event => setExtensionDraft(previous => ({ ...previous, [item.resourceId]: event.target.checked }))}/> 角色开启</span></label>)}{!resources.some(item => item.kind === kind) && <p className="config-muted">暂无{kind === 'mcp' ? ' MCP' : ' Skill'}。</p>}</div></div>)}{!bindingLoaded && list(extensions)}{bindingNotice && <p role="status">{bindingNotice}</p>}<Button disabled={bindingBusy || !bindingRevision || !!resourceError} onClick={() => void saveBindings('ext')}>{writeLabel('保存扩展')}</Button><button type="button" className="config-text-button" onClick={() => onOpenSettings('mcp')}>在设置中管理 →</button></div>
-    <div hidden={!active || section !== 'quota'} className="config-prose"><ConfigHeading number="05" label="自主额度" english="QUOTA" title="自主额度" description="角色后台活动所消耗的点数。"/>{statusNote}{budgetError && <p role="alert">{budgetError}</p>}{budget ? <><div className="config-ledger"><div className="config-ledger-label"><b>今日</b><small>{budget.localDate}</small></div><div><div className="config-quota-number">{budget.usedPoints} <small>/ {budget.unlimited ? '不限' : budget.dailyLimit} 点</small></div><div className="config-quota-track"><span style={{ width: budget.unlimited ? '0%' : `${Math.min(100, budget.dailyLimit ? budget.usedPoints / budget.dailyLimit * 100 : 0)}%` }}/></div></div></div><div className="config-ledger"><div className="config-ledger-label"><b>每日额度</b><small>角色自主活动</small></div><div><div className="config-quota-input"><Input type="number" min={1} max={1000000} disabled={budgetBusy || budgetDraft.unlimited} value={budgetDraft.dailyLimit} aria-label="每日额度" onChange={event => setBudgetDraft({ ...budgetDraft, dailyLimit: Number(event.target.value) })}/><label><input type="checkbox" disabled={budgetBusy} checked={budgetDraft.unlimited} onChange={event => setBudgetDraft({ ...budgetDraft, unlimited: event.target.checked })}/> 不限制</label></div><p className="config-muted">保存时会先暂停角色并由后端确认停止。</p><Button disabled={budgetBusy || !Number.isInteger(budgetDraft.dailyLimit) || budgetDraft.dailyLimit < 1 || budgetDraft.dailyLimit > 1_000_000} onClick={() => void saveBudget()}>{writeLabel('保存额度')}</Button>{budgetNotice && <p role="status">{budgetNotice}</p>}</div></div></> : !budgetError && <p>正在读取额度…</p>}</div>
-    <div hidden={!active || section !== 'done'} className="config-prose"><ConfigHeading number="06" label="完成度" english="CHECKLIST" title="完成度" description="按已保存的配置查看当前状态；必需项仍待确认。"/>{[['设定',savedProfile?.definition ? '已保存' : '尚未读取'],['对话模型',bindings.some(item => item.capability === 'chat_model' && item.enabled) ? '已绑定' : '未绑定'],['记忆整理',bindings.some(item => item.capability === 'memory_model' && item.enabled) ? '已绑定' : '跟随对话模型'],['角色状态',activityText(activity, activityLoading)]].map(([label,value],i) => <div className="config-check-row" key={label}><small>{String(i+1).padStart(2,'0')}</small><b>{label}</b><i/><span>{value}</span></div>)}</div>
+    <div hidden={!active || section !== 'ext'} className="config-prose"><header className="config-sec-head"><h2 tabIndex={-1}>扩展</h2></header>
+      {bindingAlert}
+      {(['mcp','skill'] as const).map(kind => <ExtensionRow key={kind} kind={kind} resources={resources.filter(item => item.kind === kind)} draft={extensionDraft} bindings={bindings} loaded={bindingLoaded} busy={bindingBusy || !bindingRevision || !!resourceError} onOpen={() => openExtension(kind)}/>)}
+      {!bindingLoaded && list(extensions)}
+      {bindingNotice && <p role="status">{bindingNotice}</p>}
+      <p className="config-sheet-note"><button type="button" className="config-sheet-link" onClick={() => onOpenSettings('mcp')}>{T25.manage}</button></p>
+      <ExtSheetHosts active={active && section === 'ext'} resources={resources} draft={extensionDraft} setDraft={setExtensionDraft} bindings={bindings} loaded={bindingLoaded} notice={bindingNotice} onSave={saveBindings}/>
+    </div>
+    <div hidden={!active || section !== 'quota'} className="config-prose"><header className="config-sec-head"><h2 tabIndex={-1}>自主额度</h2></header>
+      {budgetError && <p role="alert">{budgetError}</p>}
+      {budget ? <><button type="button" className="config-sum" data-edit="quota" onClick={event => openQuota(event.currentTarget)}>
+        <span className="config-sum-name"><strong>今日</strong></span>
+        <span className="config-sum-val"><b>今日已用 {budget.usedPoints} / {budget.unlimited ? '不限' : budget.dailyLimit} 点</b><span className="config-sum-keys"><span>{budget.unlimited ? '不限额' : `每日 ${budget.dailyLimit} 点`}</span><span>{budget.localDate}</span><span>本机 00:00 重置</span></span></span>
+        <span className="config-sum-end"><StatusDot status="ok" label="生效中"/><span className="config-sum-slot"><button type="button" className="config-sum-edit" onClick={event => { event.stopPropagation(); openQuota(event.currentTarget); }}>编辑</button><span className="config-sum-slot-ghost">编辑</span></span></span>
+      </button>
+      <div className="config-quota-track" aria-hidden="true"><span style={{ width: budget.unlimited ? '0%' : `${Math.min(100, budget.dailyLimit ? budget.usedPoints / budget.dailyLimit * 100 : 0)}%` }}/></div>
+      <QuotaSheetHost active={active && section === 'quota'} budget={budget} draft={budgetDraft} setDraft={setBudgetDraft} notice={budgetNotice} busy={budgetBusy} onSave={saveBudget}/></> : !budgetError && <p>正在读取额度…</p>}
+    </div>
+    <div hidden={!active || section !== 'done'} className="config-prose"><header className="config-sec-head"><h2 tabIndex={-1}>完成度</h2></header>
+      <div className="config-check-list">{[['设定', savedProfile?.definition ? ['ok', '已保存'] : ['off', '尚未读取'], 'profile'],['对话模型', bindings.some(item => item.capability === 'chat_model' && item.enabled) ? ['ok', '已绑定'] : ['off', '未绑定'], 'models'],['记忆整理', bindings.some(item => item.capability === 'memory_model' && item.enabled) ? ['ok', '已绑定'] : ['follow', '跟随对话模型'], 'models'],['角色状态', activity ? [activity.state === 'active' ? 'ok' : 'off', activityText(activity, activityLoading)] : ['none', '未知'], 'roles']].map(([label, state, target], index) => {
+        const [status, text] = state as [Parameters<typeof StatusDot>[0]['status'], string];
+        return <div className="config-check-row" key={String(label)}><small>{String(index + 1).padStart(2, '0')}</small><b>{String(label)}</b><i/><StatusDot status={status} label={text}/><button type="button" className="config-check-view" onClick={() => target === 'roles' ? onOpenSettings('roles') : onChangeSection(target as RoleSection)}>查看</button></div>;
+      })}</div>
+    </div>
   </div>{active && section === 'profile' && draft && footer && createPortal(<>{dirtyProfile && <Button disabled={saveBusy} onClick={() => { if (savedProfile) setDraft(savedProfile); }}>{T6.discard}</Button>}<Button disabled={saveBusy || !draft.name.trim() || !draft.definition.trim()} onClick={() => void saveProfile()}>{activity?.state === 'stopped' ? T6.save(profileCount) : T6.pauseAndSave(profileCount)}</Button></>, footer)}</>;
+}
+
+/** 扩展摘要行（规范 §二.2）：值写已开启数，第二行写开启 / 停用名单；状态点 bare。 */
+function ExtensionRow({ kind, resources, draft, bindings, loaded, busy, onOpen }: { kind: 'mcp' | 'skill'; resources: Resource[]; draft: Record<string, boolean>; bindings: Binding[]; loaded: boolean; busy: boolean; onOpen: () => void }) {
+  const label = kind === 'mcp' ? 'MCP' : 'Skill';
+  const on = resources.filter(item => draft[item.resourceId] && item.enabled);
+  const off = resources.filter(item => draft[item.resourceId] && !item.enabled);
+  const value = !loaded ? '正在读取…' : resources.length === 0 ? T36.settingsKind(label) : `已为角色开启 ${on.length} / ${resources.length}`;
+  const status = !loaded ? 'none' : resources.length === 0 ? 'none' : off.length > 0 ? 'off' : on.length > 0 ? 'ok' : 'off';
+  const stateText = !loaded ? '同步中' : resources.length === 0 ? T23.none : off.length > 0 ? '有服务已停用' : on.length > 0 ? '生效中' : '全部关闭';
+  return <button type="button" className="config-sum" data-edit={`ext:${kind}`} disabled={busy} onClick={onOpen}>
+    <span className="config-sum-name"><strong>{label}</strong></span>
+    <span className="config-sum-val"><b>{value}</b><span className="config-sum-keys"><span>开启 {on.map(item => item.name).join('、') || T23.none}</span>{off.length > 0 && <span>停用 {off.map(item => item.name).join('、')}（已全局停用）</span>}</span></span>
+    <span className="config-sum-end"><StatusDot status={status} label={stateText} bare/><span className="config-sum-slot"><button type="button" className="config-sum-edit" disabled={busy} onClick={event => { event.stopPropagation(); onOpen(); }}>编辑</button><span className="config-sum-slot-ghost">编辑</span></span></span>
+  </button>;
+}
+
+/** 扩展纸笺：一行一个开关；全局停用的项禁用并说明原因（T33）。 */
+function ExtSheetHosts({ active, resources, draft, setDraft, bindings, loaded, notice, onSave }: { active: boolean; resources: Resource[]; draft: Record<string, boolean>; setDraft: (next: Record<string, boolean>) => void; bindings: Binding[]; loaded: boolean; notice: string; onSave: (scope: 'models' | 'ext') => Promise<void> }) {
+  const { sheet, requestClose, setDirty, setBusy } = useSheet();
+  const kind = sheet !== null && sheet.id.startsWith('ext:') ? (sheet.id.slice(4) as 'mcp' | 'skill') : null;
+  const list = kind ? resources.filter(item => item.kind === kind) : [];
+  const dirty = kind !== null && list.some(item => !!draft[item.resourceId] !== !!bindings.find(binding => binding.capability === kind && binding.resourceId === item.resourceId)?.enabled);
+  useEffect(() => { setDirty(dirty, dirty ? 1 : 0); }, [dirty, setDirty]);
+  const save = async () => {
+    setBusy(true);
+    try { await onSave('ext'); } finally { setBusy(false); }
+  };
+  return <Sheet idPrefix="ext:" footer={dirty ? <div className="config-sheet-actions">
+    <span className="config-sheet-note">{T8.dirty(1)}</span>
+    <span className="config-sheet-spacer"/>
+    <button type="button" onClick={() => requestClose()}>取消</button>
+    <Button disabled={!loaded} onClick={() => void save()}>保存</Button>
+  </div> : null}>
+    {kind && <div className="config-sheet-groups">
+      <div className="config-grp" data-sheet-group>
+        <div className="config-grp-label"><b>{kind === 'mcp' ? 'MCP' : 'Skill'}</b></div>
+        <div>
+          {list.length === 0 ? <p className="config-sheet-note">{T36.settingsKind(kind === 'mcp' ? 'MCP' : 'Skill')}</p> : <div className="config-toggle-list">
+            {list.map(item => <div className="config-toggle-row" key={item.resourceId}>
+              <span><strong>{item.name}</strong>{!item.enabled && <small>{T33.switchNote}</small>}</span>
+              <Switch checked={!!draft[item.resourceId]} disabled={!item.enabled || !loaded} label={`为角色开启${item.name}`} onCheckedChange={checked => setDraft({ ...draft, [item.resourceId]: checked })}/>
+            </div>)}
+          </div>}
+          {notice && <p className="config-sheet-note" role="status">{notice}</p>}
+        </div>
+      </div>
+    </div>}
+  </Sheet>;
+}
+
+/** 自主额度纸笺：紧凑形态只含「每日额度」组，含 T28 校验与「不限制」。 */
+function QuotaSheetHost({ active, budget, draft, setDraft, notice, busy, onSave }: { active: boolean; budget: { usedPoints: number; dailyLimit: number; unlimited: boolean; localDate: string }; draft: { dailyLimit: number; unlimited: boolean }; setDraft: (next: { dailyLimit: number; unlimited: boolean }) => void; notice: string; busy: boolean; onSave: () => Promise<void> }) {
+  const { sheet, requestClose, setDirty, setBusy } = useSheet();
+  const open = sheet?.id === 'quota';
+  const invalid = !draft.unlimited && (!Number.isInteger(draft.dailyLimit) || draft.dailyLimit < 1 || draft.dailyLimit > 1_000_000);
+  const dirty = draft.dailyLimit !== budget.dailyLimit || draft.unlimited !== budget.unlimited;
+  useEffect(() => { setDirty(!!open && dirty, open && dirty ? 1 : 0); }, [open, dirty, setDirty]);
+  const save = async () => {
+    if (invalid) return;
+    setBusy(true);
+    try { await onSave(); } finally { setBusy(false); }
+  };
+  return <Sheet idPrefix="quota" footer={open ? <div className="config-sheet-actions">
+    <span className={invalid ? 'config-sheet-error' : 'config-sheet-note'} role={invalid ? 'alert' : undefined}>{invalid ? T28 : dirty ? T8.dirty(1) : ''}</span>
+    <span className="config-sheet-spacer"/>
+    <button type="button" onClick={() => requestClose()}>取消</button>
+    <Button disabled={busy || invalid || !dirty} onClick={() => void save()}>保存</Button>
+  </div> : null}>
+    {open && <div className="config-sheet-groups">
+      <div className="config-grp" data-sheet-group>
+        <div className="config-grp-label"><b>每日额度</b><small>{budget.localDate} · 本机 00:00 重置</small></div>
+        <div>
+          <div className="config-quota-input">
+            <Input type="number" min={1} max={1000000} step={1} disabled={busy || draft.unlimited} value={String(draft.dailyLimit)} aria-label="每日额度" aria-invalid={invalid || undefined} aria-describedby={invalid ? 'quota-error' : undefined} data-sheet-focus onChange={event => setDraft({ ...draft, dailyLimit: Number(event.target.value) })}/>
+            <label className="config-sheet-check"><input type="checkbox" disabled={busy} checked={draft.unlimited} onChange={event => setDraft({ ...draft, unlimited: event.target.checked })}/> 不限制</label>
+          </div>
+          {invalid && <p className="config-sheet-error" id="quota-error">{T28}</p>}
+          {notice && <p className="config-sheet-note" role="status">{notice}</p>}
+        </div>
+      </div>
+    </div>}
+  </Sheet>;
 }
 
 function ConfigHeading({ number, label, english, title, description }: { number: string; label: string; english: string; title: string; description: string }) {

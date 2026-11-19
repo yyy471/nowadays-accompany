@@ -8,11 +8,14 @@ import { useMotionPolicy } from '../ui';
  * 角色立绘缩略图：优先当前服饰，其次任意有主页图的服饰。
  * 没有任何主页图时显示明确空态，不回退到内置主题插画（DL-153）。
  */
-export function RolePortrait({ roleId, version = 0, previewAssetId, cycle }: { roleId: string; version?: number; previewAssetId?: string; cycle?: string }) {
+export function RolePortrait({ roleId, version = 0, previewAssetId, cycle, onOutfitName }: { roleId: string; version?: number; previewAssetId?: string; cycle?: string; onOutfitName?: (name: string) => void }) {
   const [url, setUrl] = useState('');
   const [previousUrl, setPreviousUrl] = useState('');
   const lastUrl = useRef('');
   const stageChoice = useRef<{ roleId: string; cycle?: string; assetId: string }>({ roleId: '', assetId: '' });
+  // 立绘框上方只写当前服饰名（规范 §二.1）；回调用 ref 保存避免每次渲染重触发读取。
+  const reportName = useRef(onOutfitName);
+  reportName.current = onOutfitName;
   const motion = useMotionPolicy();
   useEffect(() => {
     let live = true;
@@ -29,6 +32,7 @@ export function RolePortrait({ roleId, version = 0, previewAssetId, cycle }: { r
       const asset = picked?.home;
       stageChoice.current = { roleId, cycle, assetId: asset?.assetId || '' };
       setUrl(asset ? appearanceAssetUrl(roleId, asset.assetId) : '');
+      reportName.current?.(picked?.name ?? '');
     });
     return () => { live = false; };
   }, [roleId, version, previewAssetId, cycle]);

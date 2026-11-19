@@ -18,8 +18,10 @@ function enterTransform(): string {
  * 负责模态语义、inert、焦点陷阱、Esc 阶梯、紧凑形态的顶边对齐，
  * 以及 M1–M4 的进入 / 退出动效（时长与曲线全部取自令牌，减少动效时令牌为 0 即直接出现）。
  */
-export function Sheet({ children, footer }: { children: ReactNode; footer: ReactNode }) {
+export function Sheet({ children, footer, idPrefix }: { children: ReactNode; footer: ReactNode; idPrefix?: string }) {
   const { sheet, dirtyCount, busy, confirming, requestClose, resolveConfirm } = useSheet();
+  // 多个分区各挂一张 Sheet：只有自己负责的纸笺编号才渲染，避免同时弹出空纸笺。
+  const owned = sheet !== null && (idPrefix === undefined || sheet.id.startsWith(idPrefix)) ? sheet : null;
   const panel = useRef<HTMLElement>(null);
   const probe = useRef<HTMLSpanElement>(null);
   // 纸笺必须挂在右页（.config-leaf）下、正文之外：正文会被设为 inert，挂在其中会让纸笺自身不可聚焦。
@@ -33,34 +35,36 @@ export function Sheet({ children, footer }: { children: ReactNode; footer: React
   useEffect(() => {
     const body = document.querySelector<HTMLElement>('.config-leaf-body');
     const foot = document.querySelector<HTMLElement>('.config-leaf-foot');
-    if (!sheet) return;
+    if (!owned) return;
     body?.setAttribute('inert', '');
     foot?.setAttribute('inert', '');
     return () => {
       body?.removeAttribute('inert');
       foot?.removeAttribute('inert');
     };
-  }, [sheet]);
+  }, [owned]);
 
   useEffect(() => {
-    if (!sheet) return;
+    if (!owned) return;
     const frame = panel.current;
     if (!frame) return;
     // 等压暗层 portal 与纸笺内容同帧落定后再聚焦，避免被后续 DOM 插入夺走焦点。
+    // 同一纸笺在首帧内可能因脏标记等状态再渲染一次；取消帧回调会让焦点永远落空，
+    // 因此这里只校验节点仍在文档中，不做 cleanup。
     const raf = requestAnimationFrame(() => {
+      if (!frame.isConnected) return;
       const first = frame.querySelector<HTMLElement>('[data-sheet-focus]')
         ?? focusableControls(frame)[0]
         ?? frame;
       first.focus({ preventScroll: true });
-      const group = sheet.group ? frame.querySelector<HTMLElement>('[data-sheet-group]') : null;
+      const group = owned.group ? frame.querySelector<HTMLElement>('[data-sheet-group]') : null;
       group?.scrollIntoView({ block: 'start' });
     });
-    return () => cancelAnimationFrame(raf);
-  }, [sheet?.id, sheet?.group, sheet]);
+  }, [owned?.id, owned?.group, owned]);
 
   // M1 / M3 / M4：进入动画。令牌为 0（减少动效）时不建动画对象，满足「16ms 内 getAnimations() 为 0」。
   useEffect(() => {
-    if (!sheet) return;
+    if (!owned) return;
     const frame = panel.current;
     if (!frame) return;
     const duration = readMotionTime(frame, '--nd-semantic-motion-page', 360);
@@ -74,12 +78,12 @@ export function Sheet({ children, footer }: { children: ReactNode; footer: React
       fill: 'both',
     });
     return () => animation.cancel();
-  }, [sheet?.id, sheet?.group, sheet?.shape, sheet]);
+  }, [owned?.id, owned?.group, owned?.shape, owned]);
 
   // M2：退出动画。关闭后保留一帧旧纸笺，动画结束即卸载（压暗层由 SheetScrims 自行淡出）。
   useEffect(() => {
-    if (sheet) {
-      setHeld(sheet);
+    if (owned) {
+      setHeld(owned);
       return;
     }
     if (!held) return;
@@ -107,10 +111,10 @@ export function Sheet({ children, footer }: { children: ReactNode; footer: React
       window.clearTimeout(timer);
       animation.cancel();
     };
-  }, [sheet, held]);
+  }, [owned, held]);
 
-  const active = sheet ?? held;
-  const exiting = !sheet && !!held;
+  const active = owned ?? held;
+  const exiting = !owned && !!held;
 
   let compactTop: number | undefined;
   const anchor = active?.anchor ?? null;
@@ -194,6 +198,6 @@ export function Sheet({ children, footer }: { children: ReactNode; footer: React
   return <>
     <span ref={probe} hidden />
     {active ? (host ? createPortal(frame, host) : frame) : null}
-    <SheetScrims />
+    <SheetScrims idPrefix={idPrefix} />
   </>;
 }
