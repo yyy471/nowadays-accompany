@@ -207,3 +207,25 @@ html[data-config-switching] .studio-shell *,html[data-config-switching] .studio-
 /* 720 紧凑纸笺贴底后的书本抬层与页脚遮挡关系见上；减少动效全部瞬时。 */
 @media (prefers-reduced-motion:reduce){html:not([data-motion="full"]) .config-sum,html:not([data-motion="full"]) .config-save-btn,html:not([data-motion="full"]) .config-save-n{transition:none!important}}
 [data-motion="reduced"] .config-sum,[data-motion="reduced"] .config-save-btn,[data-motion="reduced"] .config-save-n{transition:none!important}
+
+/* v6 角色页切片：纸笺关闭、确认、单选与页脚 T30。 */
+.config-sheet-x{display:grid;place-items:center;width:32px;height:32px;margin-left:auto;padding:0;border:0;border-radius:var(--nd-semantic-radius-action);background:transparent;color:var(--cfg-muted);font:400 20px/1 var(--nd-semantic-font-body);cursor:pointer}
+.config-sheet-x:hover:not(:disabled),.config-sheet-x:focus-visible{background:color-mix(in srgb,var(--cfg-ink) 8%,transparent);color:var(--cfg-ink)}
+.config-sheet-x:disabled{opacity:.4;cursor:default}
+.config-sheet-ask{margin:0 0 12px;font-size:14px;line-height:23px;color:var(--cfg-ink)}
+.config-sheet-note{margin:10px 0 0;font-size:12px;line-height:20px;color:var(--cfg-muted)}
+.config-radio{display:flex;align-items:flex-start;gap:8px;margin:8px 0;font-size:13px;line-height:21px;color:var(--cfg-ink);cursor:pointer}
+.config-radio input{margin-top:4px;accent-color:var(--nd-semantic-color-commit)}
+.config-sheet-actions{display:flex;align-items:center;gap:10px;width:100%}
+.config-sheet-spacer{flex:1}
+.config-sheet-error{margin:0;flex:1;font-size:12px;line-height:19px;color:var(--nd-semantic-color-danger)}
+.config-sheet-confirm{display:flex;align-items:center;gap:14px;width:100%;flex-wrap:wrap}
+.config-sheet-confirm p{flex:1;min-width:200px;margin:0;color:var(--nd-semantic-color-warning)}
+.config-sheet-confirm-actions{display:flex;gap:8px;margin-left:auto}
+.config-sheet-confirm-actions button{height:32px;padding:0 12px;border:1px solid var(--cfg-line);border-radius:var(--nd-semantic-radius-action);background:transparent;color:var(--cfg-ink);font:600 12px var(--nd-semantic-font-body);cursor:pointer}
+.config-sheet-confirm-actions button.danger{border-color:var(--nd-semantic-color-danger);color:var(--nd-semantic-color-danger)}
+.config-resume-save{height:32px;padding:0 12px;border:1px solid var(--nd-semantic-color-commit);border-radius:var(--nd-semantic-radius-action);background:transparent;color:var(--nd-semantic-color-commit);font:600 12px var(--nd-semantic-font-body);cursor:pointer}
+.config-leaf-foot[data-empty="true"]{min-height:0;height:0;margin:0;padding:0;border-top:0;overflow:hidden}
+/* 书脊草稿点：7px 实心 warning，右上角，2px 标签底色环。 */
+.config-tabs button{position:relative}
+.tab-dot{position:absolute;top:8px;right:7px;width:7px;height:7px;border-radius:var(--nd-semantic-radius-round);background:var(--nd-semantic-color-warning);box-shadow:0 0 0 2px var(--cfg-paper)}

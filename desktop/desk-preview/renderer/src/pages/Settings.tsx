@@ -6,6 +6,10 @@ import { Button, Field, Input, Select, Textarea, readMotionTime, readMotionValue
 import type { MotionPreference } from '../ui/motion';
 import { AppearancePanel } from '../components/appearance/AppearancePanel';
 import { RolePortrait } from '../components/RolePortrait';
+import { SheetProvider, useSheet } from '../components/config/sheet/sheet-context';
+import { WriteProvider, useWrite } from '../components/config/write-runner';
+import { RoleSheetHost } from '../components/config/role/RoleSheetHost';
+import { T6, T30, T31 } from '../components/config/config-texts.js';
 import { VoicePanel } from '../components/voice/VoicePanel';
 import { VoiceServiceCreate, VoiceServiceDetail } from '../components/voice/VoiceServiceEditor';
 import { ImagePanel } from '../components/image/ImagePanel';
@@ -102,7 +106,7 @@ const activityText = (a?: Activity, loading = false) => !a ? (loading ? '正在�
 
 type ModelPart = 'chat' | 'memory' | 'voice' | 'image';
 type RoleDirty = { profile: boolean; models: boolean; voice: boolean; image: boolean; ext: boolean; quota: boolean };
-type RoleEditorState = { dirty: RoleDirty; busy: boolean; discard: () => void };
+type RoleEditorState = { dirty: RoleDirty; busy: boolean; profileCount: number; discard: () => void };
 type Props = { page: string; roles: RoleListItem[]; currentId: string; roleListError: string; onRoleDeleted: (id: string) => void; onRefresh: () => Promise<void>; onNavigate: (page: string) => void; workspaceRequest?: { kind: 'section'; roleId: string; section: RoleSection; key: number } | { kind: 'create'; key: number } | null; onWorkspaceRequestHandled?: (key: number) => void; onStartConversation?: (roleId: string) => void };
 
 /** 两页常驻以保留跨页草稿；编辑对象绝不隐式改变当前角色（DL-147）。 */
@@ -117,6 +121,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
   const [modelPart, setModelPart] = useState<ModelPart>('chat');
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [roleDirty, setRoleDirty] = useState<Record<string, RoleDirty>>({});
+  const [profileCounts, setProfileCounts] = useState<Record<string, number>>({});
   const [deleteNotice, setDeleteNotice] = useState('');
   const editorActions = useRef(new Map<string, RoleEditorState>());
   const [pendingRole, setPendingRole] = useState<{ roleId: string; button: HTMLButtonElement | null } | null>(null);
@@ -180,6 +185,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
   const updateEditorState = useCallback((roleId: string, value: RoleEditorState | null) => {
     if (!value) { editorActions.current.delete(roleId); return; }
     editorActions.current.set(roleId, value);
+    setProfileCounts(previous => previous[roleId] === value.profileCount ? previous : { ...previous, [roleId]: value.profileCount });
     setRoleDirty(previous => {
       const current = previous[roleId];
       return current && current.profile === value.dirty.profile && current.models === value.dirty.models && current.voice === value.dirty.voice && current.image === value.dirty.image && current.ext === value.dirty.ext && current.quota === value.dirty.quota ? previous : { ...previous, [roleId]: value.dirty };
@@ -364,8 +370,9 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
   const sectionTitle = (roleActive ? roleSections : settingSections).find(item => item[0] === (roleActive ? roleSection : settingsSection))?.[1];
   const dirtyScopes = roleDirty[editId];
   const dirtyNames = dirtyScopes ? (Object.entries(dirtyScopes) as Array<[keyof RoleDirty, boolean]>).filter(([, dirty]) => dirty).map(([id]) => ({profile:'设定',models:'模型',voice:'语音',image:'生图',ext:'扩展',quota:'自主额度'}[id])) : [];
-  return <div className="config-workspace" data-ui-preset={preset} hidden={!roleActive && !settingsActive}>
+  return <WriteProvider><SheetProvider><div className="config-workspace" data-ui-preset={preset} hidden={!roleActive && !settingsActive}>
     {(roleActive || settingsActive) && <ConfigThemeTransition/>}
+    <PausedRolesFooter/>
     {footerLeft && createPortal(roleActive ? <div className="config-footer-ident"><strong>{chosen?.displayName || '角色配置'}</strong><span>{activityError ? '状态获取失败' : activityText(activities.find(item => item.roleId === editId))}</span></div> : <div className="config-footer-ident"><strong>设置</strong><span>全局资源</span></div>, footerLeft)}
     {footerRight && createPortal(roleActive ? <div className="config-footer-tools"><button ref={switchRef} type="button" className="config-footer-button config-switch-role" onClick={() => setShowRoles(true)}>切换角色 <span>{roles.length}</span></button></div> : <div className="config-footer-tools"><span>{activities.filter(item => item.state === 'active').length} 位角色启用中</span></div>, footerRight)}
     <div className="config-book" data-layout={settingsActive && settingsSection === 'roles' ? 'wide' : settingsActive ? 'catalog' : 'role'}>
@@ -377,8 +384,8 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
         <small>{settingsSection === 'model' ? ({model:'模型服务',voice:'语音服务',image:'生图服务'} as const)[modelKind] : settingSections.find(item => item[0] === settingsSection)?.[1]} · {settingsSection === 'model' ? (modelKind === 'image' ? imageServices.length : modelKind === 'voice' ? voiceServices.length : filtered.length) : filtered.length} 项</small></div>
         {settingsSection === 'roles' ? null : settingsSection === 'local' ? <><button type="button" className="config-index-item" data-selected="true"><strong>外观与动效</strong><small>本机动效偏好</small></button><button type="button" className="config-index-item" onClick={() => document.getElementById('config-local-connection')?.scrollIntoView({block:'nearest'})}><strong>版本与连接</strong><small>后端状态</small></button></> : settingsSection === 'model' && modelKind === 'voice' ? <>{voiceServiceError && <p role="alert">{voiceServiceError}</p>}{voiceServices.map((item,index) => { const sub = item.config.defaultEngine ? `${item.config.defaultEngine} · ${item.config.baseUrl}` : item.config.baseUrl; return <button className="config-index-item" type="button" key={item.serviceId} onClick={() => { setSelectedResource(item.serviceId); setNewVoiceService(false); }} data-selected={!newVoiceService && selectedResource === item.serviceId}><small>{String(index+1).padStart(2,'0')}</small><strong>{item.name}</strong><small>{sub}</small><small>{item.enabled ? '已启用' : '已停用'}</small></button>; })}{!voiceServiceError && !voiceServices.length && <p className="config-muted">还没有语音服务。</p>}<button type="button" className="config-index-new" onClick={() => setNewVoiceService(true)}>＋ 添加语音服务</button></> : settingsSection === 'model' && modelKind === 'image' ? <>{imageServiceError && <p role="alert">{imageServiceError}</p>}{imageServices.map((item,index) => { const itemModel = savedImageModelOf(item); const sub = itemModel ? `${itemModel} · ${item.config.baseUrl}` : item.config.baseUrl; return <button className="config-index-item" type="button" key={item.serviceId} onClick={() => { setSelectedResource(item.serviceId); setNewImageService(false); }} data-selected={!newImageService && selectedResource === item.serviceId}><small>{String(index+1).padStart(2,'0')}</small><strong>{item.name}</strong><small>{sub}</small><small>{item.enabled ? '已启用' : '已停用'}</small></button>; })}{!imageServiceError && !imageServices.length && <p className="config-muted">还没有生图服务。</p>}<button type="button" className="config-index-new" onClick={() => setNewImageService(true)}>＋ 添加生图服务</button></> : <>{resourceError && <p role="alert">{resourceError}</p>}{filtered.map((item,index) => { const itemModel = item.kind === 'model' ? savedModelNameOf(item) : ''; const sub = typeof item.config.baseUrl === 'string' ? (itemModel ? `${itemModel} · ${item.config.baseUrl}` : item.config.baseUrl) : item.kind.toUpperCase(); return <button className="config-index-item" type="button" key={item.resourceId} onClick={() => { setSelectedResource(item.resourceId); setNewModel(false); setNewExtension(null); }} data-selected={!newModel && newExtension !== item.kind && selectedResource === item.resourceId}><small>{String(index+1).padStart(2,'0')}</small><strong>{item.name}</strong><small>{sub}</small><small>{item.enabled ? '已启用' : '已停用'}{item.lastTest ? item.lastTest.stale ? ' · 测试已过期' : item.lastTest.ok ? ' · 测试通过' : ' · 测试失败' : ''}</small></button>; })}{!resourceError && !filtered.length && <p className="config-muted">还没有已保存的资源。</p>}{settingsSection === 'model' && <button type="button" className="config-index-new" onClick={() => setNewModel(true)}>＋ 添加模型服务</button>}{(settingsSection === 'mcp' || settingsSection === 'skill') && <button type="button" className="config-index-new" onClick={() => setNewExtension(settingsSection)}>＋ 添加 {settingsSection === 'mcp' ? 'MCP' : 'Skill'}</button>}</>}
       </aside>}
-      <nav className="config-tabs" aria-label={roleActive ? '角色配置分区' : '设置分区'}>{(roleActive ? roleSections : settingSections).map(([id, title], index) => <button key={id} type="button" aria-current={(roleActive ? roleSection : settingsSection) === id ? 'page' : undefined} onClick={() => changeSection(id)}><small>{String(index + 1).padStart(2, '0')}</small><strong>{id === 'quota' ? '额度' : id === 'done' ? '完成' : id === 'roles' ? '角色' : title}</strong>{roleActive && (dirtyScopes?.[id as keyof RoleDirty] || (id === 'models' && (dirtyScopes?.voice || dirtyScopes?.image))) && <i className="config-tab-led" aria-label="有未保存草稿"/>}</button>)}</nav>
-      <section className="config-leaf">{roleActive && dirtyNames.length > 0 && <div className="config-dirty-ribbon" aria-label={`${dirtyNames.length} 处未保存`}>{dirtyNames.length}</div>}<header className="config-leaf-head"><div className="config-crumb">{roleActive ? <>角色配置 <i>/</i> {chosen?.displayName || '选择角色'} <i>/</i> <b>{sectionTitle}</b></> : <>设置 <i>/</i> <b>{sectionTitle}</b> <button type="button" className="config-return-link" onClick={() => onNavigate('role-config')}>返回角色配置</button></>}</div><span className="config-folio">{roleActive ? `档案 ${String(Math.max(0, roles.findIndex(role => role.roleId === editId)) + 1).padStart(2, '0')} / ` : '设置 · '}第 {sectionNumber} 页</span></header>
+      <nav className="config-tabs" aria-label={roleActive ? '角色配置分区' : '设置分区'}>{(roleActive ? roleSections : settingSections).map(([id, title], index) => <button key={id} type="button" aria-current={(roleActive ? roleSection : settingsSection) === id ? 'page' : undefined} aria-label={`${id === 'quota' ? '额度' : id === 'done' ? '完成' : id === 'roles' ? '角色' : title}${roleActive && (dirtyScopes?.[id as keyof RoleDirty] || (id === 'models' && (dirtyScopes?.voice || dirtyScopes?.image))) ? '，有未保存的改动' : ''}`} onClick={() => changeSection(id)}><small>{String(index + 1).padStart(2, '0')}</small><strong>{id === 'quota' ? '额度' : id === 'done' ? '完成' : id === 'roles' ? '角色' : title}</strong>{roleActive && (dirtyScopes?.[id as keyof RoleDirty] || (id === 'models' && (dirtyScopes?.voice || dirtyScopes?.image))) && <i className="tab-dot" aria-hidden="true"/>}</button>)}</nav>
+      <section className="config-leaf"><header className="config-leaf-head"><div className="config-crumb">{roleActive ? <>角色配置 <i>/</i> {chosen?.displayName || '选择角色'} <i>/</i> <b>{sectionTitle}</b></> : <>设置 <i>/</i> <b>{sectionTitle}</b> <button type="button" className="config-return-link" onClick={() => onNavigate('role-config')}>返回角色配置</button></>}</div>{!roleActive && <span className="config-folio">设置 · 第 {sectionNumber} 页</span>}</header>
         <div className="config-leaf-body" ref={contentRef}>
           {roleListError && <p role="alert" className="config-delete-notice">角色列表同步失败：{roleListError} <button type="button" onClick={() => void onRefresh()}>重试读取角色列表</button></p>}
           {deleteNotice && roleActive && <p role="status" className="config-delete-notice">{deleteNotice}</p>}
@@ -393,7 +400,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
           {settingsActive && settingsSection === 'roles' && <div className="config-prose"><ConfigHeading number="04" label="角色状态" english="ROLE STATUS" title="角色状态" description="停止角色后才能修改它的配置；后端确认停止前，正在进行的任务会继续推进到保存边界。"/>{activityError && <p role="alert">状态获取失败：{activityError}</p>}<div className="config-status-wall">{roles.map((role,index) => { const item = activityError ? undefined : activities.find(a => a.roleId === role.roleId); return <article className="config-status-poster" key={role.roleId} data-stopped={item?.state === 'stopped'}><div className="config-poster-top">人物档案 <b>{String(index+1).padStart(2,'0')}</b><span>立绘</span></div><RolePortrait roleId={role.roleId}/><strong>{role.displayName}</strong><small>初始化：{item?.initStatus || '未知'}</small><span className="config-status-stamp">{activityText(item, !activityError && (!activityReady || activityRefreshing))}</span><div className="config-status-actions">{item && <Button disabled={activityBusy[role.roleId] || item.state === 'stopping'} onClick={() => void changeActivity(role.roleId, item.state === 'stopped' ? 'resume' : 'stop')}>{item.state === 'stopped' ? '恢复活动' : item.state === 'stopping' ? '正在停止' : '停止活动'}</Button>}<button type="button" onClick={() => { setEditId(role.roleId); onNavigate('role-config'); }}>角色配置</button></div>{activityOperationError[role.roleId] && <p role="alert">{activityOperationError[role.roleId]}</p>}</article>; })}</div><button type="button" onClick={() => setRefreshVersion(v => v + 1)}>刷新状态</button></div>}
           {settingsActive && settingsSection === 'local' && <div className="config-prose"><ConfigHeading number="05" label="本机" english="THIS DEVICE" title="本机" description="只影响这台电脑，改动立即生效。"/><div className="config-ledger"><div className="config-ledger-label"><b>外观与动效</b></div><div><p>昼夜主题可在页面顶部切换。</p><Field label="动效偏好"><Select value={motion.preference} onChange={event => motion.select(event.target.value as MotionPreference)}><option value="system">跟随系统</option><option value="reduced">减少动效</option><option value="full">完整动效</option></Select></Field></div></div><div className="config-ledger" id="config-local-connection"><div className="config-ledger-label"><b>版本与连接</b></div><div>资源读取：{resourceError ? `失败（${resourceError}）` : '已连接'}</div></div></div>}
         </div>
-        <footer className="config-leaf-foot" id="config-leaf-actions"><span>{settingsActive ? '✓　配置状态以已保存的数据为准' : dirtyNames.length ? `●　未保存：${dirtyNames.join('、')}` : '✓　已全部保存'}</span>{settingsActive && <button type="button" className="config-return-footer" onClick={() => onNavigate('role-config')}>返回 {chosen?.displayName || '角色配置'} · {roleSections.find(item => item[0] === roleSection)?.[1]}</button>}</footer>
+        <footer className="config-leaf-foot" id="config-leaf-actions" data-empty={roleActive && !dirtyScopes?.profile ? 'true' : undefined}><span>{roleActive && dirtyScopes?.profile ? T6.state(profileCounts[editId] ?? 0) : ''}</span>{settingsActive && <button type="button" className="config-return-footer" onClick={() => onNavigate('role-config')}>返回 {chosen?.displayName || '角色配置'} · {roleSections.find(item => item[0] === roleSection)?.[1]}</button>}</footer>
       </section>
     </div>
     {showRoles && roleActive && <div className="config-dialog-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) closeRoles(); }}>
@@ -408,10 +415,11 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
         {pendingRole && <div className="config-dirty-prompt" ref={pendingPrompt} role="alertdialog" aria-modal="true" aria-label="未保存的草稿"><p><b>{chosen?.displayName}</b> 还有 {dirtyNames.length} 处未保存：{dirtyNames.join('、')}。</p><p>切换前要怎么处理？</p><div className="config-actions"><Button onClick={() => { const target = pendingRole; setPendingRole(null); chooseRole(target.roleId, target.button, true); }}>保留草稿，切换</Button><Button disabled={editorActions.current.get(editId)?.busy} onClick={() => { const target = pendingRole; editorActions.current.get(editId)?.discard(); setPendingRole(null); chooseRole(target.roleId, target.button, true); }}>放弃改动，切换</Button><button type="button" onClick={() => { const target = pendingRole.button; setPendingRole(null); requestAnimationFrame(() => target?.focus()); }}>留在当前角色</button></div></div>}
       </div>
     </div>}
-  </div>;
+  </div></SheetProvider></WriteProvider>;
 }
 
 function RoleEditor({ roleId, roleCount, active, activity, activityLoading = false, voiceServiceVersion = 0, voiceServiceEpochs = {}, imageServiceVersion = 0, imageServiceEpochs = {}, section, modelPart, setModelPart, draft, setDraft, resources, removedResources, resourceError, onEditorState, onOpenSettings, onStartConversation, onPreviewOutfit, onPreviewAsset, onClearPreview, onDeleted, onRefresh }: { roleId: string; roleCount: number; active: boolean; activity?: Activity; activityLoading?: boolean; voiceServiceVersion?: number; voiceServiceEpochs?: Record<string, number>; imageServiceVersion?: number; imageServiceEpochs?: Record<string, number>; section: RoleSection; modelPart: ModelPart; setModelPart: (part: ModelPart) => void; draft?: Draft; setDraft: (draft: Draft) => void; resources: Resource[]; removedResources: string[]; resourceError: string; onEditorState: (roleId: string, state: RoleEditorState | null) => void; onOpenSettings: (section: SettingsSection, options?: OpenSettingsOptions) => void; onStartConversation?: (roleId: string) => void; onPreviewOutfit: (outfit: Outfit) => void; onPreviewAsset: (assetId: string) => void; onClearPreview: () => void; onDeleted: (roleId: string, keepHistory: boolean, filesRemoved: boolean) => Promise<void>; onRefresh: () => Promise<void> }) {
+  const write = useWrite();
   const [voiceDraft, setVoiceDraft] = useState<ConfigDraftState | null>(null);
   const [imageDraft, setImageDraft] = useState<ConfigDraftState | null>(null);
   const [detailError, setDetailError] = useState('');
@@ -556,12 +564,18 @@ function RoleEditor({ roleId, roleCount, active, activity, activityLoading = fal
     if (!draft || saveBusy || !draft.name.trim() || !draft.definition.trim()) return;
     setSaveBusy(true); setDetailError(''); setSaveMessage('');
     try {
-      if (!(await ensureRoleStopped())) return;
-      const saved = await api<{ definitionRevision: number; updatedAt: string }>(`/v1/roles/${encodeURIComponent(roleId)}/definition`, { method: 'PATCH', body: { displayName: draft.name.trim(), definition: { text: draft.definition.trim(), payload: draft.payload }, expectedRevision: draft.revision } });
-      const next = { ...draft, name: draft.name.trim(), definition: draft.definition.trim(), payload: draft.payload, revision: saved.definitionRevision };
-      setSavedProfile(next); setDraft(next);
-      setSaveMessage('角色设定已保存。'); await onRefresh();
-    } catch (e) { setDetailError(errorText(e)); } finally { setSaveBusy(false); }
+      const result = await write.runWrite({
+        roleIds: [roleId],
+        verb: '保存设定',
+        commit: async () => {
+          const saved = await api<{ definitionRevision: number; updatedAt: string }>(`/v1/roles/${encodeURIComponent(roleId)}/definition`, { method: 'PATCH', body: { displayName: draft.name.trim(), definition: { text: draft.definition.trim(), payload: draft.payload }, expectedRevision: draft.revision } });
+          const next = { ...draft, name: draft.name.trim(), definition: draft.definition.trim(), payload: draft.payload, revision: saved.definitionRevision };
+          setSavedProfile(next); setDraft(next);
+          await onRefresh();
+        },
+      });
+      if (!result.ok) setDetailError(result.failure.message);
+    } finally { setSaveBusy(false); }
   };
   const saveBindings = async (scope: 'models' | 'ext') => {
     if (bindingLock.current || !bindingRevision) return;
@@ -635,6 +649,7 @@ function RoleEditor({ roleId, roleCount, active, activity, activityLoading = fal
   const savedChat = bindings.find(item => item.capability === 'chat_model');
   const savedMemory = bindings.find(item => item.capability === 'memory_model');
   const dirtyProfile = !!draft && !!savedProfile && (draft.name !== savedProfile.name || draft.definition !== savedProfile.definition);
+  const profileCount = !draft || !savedProfile ? 0 : (draft.name !== savedProfile.name ? 1 : 0) + (draft.definition !== savedProfile.definition ? 1 : 0);
   const dirtyModels = bindingLoaded && (modelDraft.chatResource !== (savedChat?.resourceId || '') || (!!modelDraft.chatResource && modelDraft.chatModel !== (savedChat?.modelName || '')) || modelDraft.memoryResource !== (savedMemory?.resourceId || '') || (!!modelDraft.memoryResource && modelDraft.memoryModel !== (savedMemory?.modelName || '')));
   const dirtyExt = bindingLoaded && resources.some(item => (item.kind === 'mcp' || item.kind === 'skill') && !!extensionDraft[item.resourceId] !== !!bindings.find(binding => binding.capability === item.kind && binding.resourceId === item.resourceId)?.enabled);
   const dirtyQuota = !!budget && (budgetDraft.dailyLimit !== budget.dailyLimit || budgetDraft.unlimited !== budget.unlimited);
@@ -647,7 +662,7 @@ function RoleEditor({ roleId, roleCount, active, activity, activityLoading = fal
       voiceDraft?.discard(); imageDraft?.discard();
       setDetailError(''); if (bindingRevision) setBindingError(''); setBudgetError('');
     };
-    onEditorState(roleId, { dirty: { profile: dirtyProfile, models: dirtyModels, voice: !!voiceDraft?.dirty, image: !!imageDraft?.dirty, ext: dirtyExt, quota: dirtyQuota }, busy: saveBusy || bindingBusy || budgetBusy || !!voiceDraft?.busy || !!imageDraft?.busy, discard });
+    onEditorState(roleId, { dirty: { profile: dirtyProfile, models: dirtyModels, voice: !!voiceDraft?.dirty, image: !!imageDraft?.dirty, ext: dirtyExt, quota: dirtyQuota }, busy: saveBusy || bindingBusy || budgetBusy || !!voiceDraft?.busy || !!imageDraft?.busy, profileCount, discard });
   }, [roleId, onEditorState, dirtyProfile, dirtyModels, dirtyExt, dirtyQuota, saveBusy, bindingBusy, bindingRevision, budgetBusy, savedProfile, bindings, budget, voiceDraft, imageDraft]);
   useEffect(() => () => onEditorState(roleId, null), [roleId, onEditorState]);
   const list = (items: Binding[]) => items.length ? items.map(item => <div className="config-row" key={`${item.capability}-${item.resourceId}`}><span><strong>{resources.find(resource => resource.resourceId === item.resourceId)?.name || item.resourceId}</strong><small>{item.capability}{item.modelName ? ` · ${item.modelName}` : ''}</small></span><span>{item.enabled ? '角色已开启' : '角色已关闭'}</span></div>) : <p className="config-muted">暂无绑定。</p>;
@@ -664,13 +679,14 @@ function RoleEditor({ roleId, roleCount, active, activity, activityLoading = fal
   const bindingAlert = (bindingProblem || resourceError) && <p role="alert">{bindingProblem || resourceError}{needsBindingRead && <button type="button" disabled={bindingBusy} onClick={() => void reloadBindings()}>重试读取绑定</button>}</p>;
   return <><div hidden={!active} className="config-role-editor">
     <div hidden={!active || section !== 'profile'} className="config-prose">
-      <ConfigHeading number="01" label="设定" english="PROFILE" title="设定" description={draft?.isBuiltin ? '内置助手的显示名与官方介绍只读；角色卡正文可以自由修订，不影响系统职责。' : '显示名和人设直接参与提示词；修改是同一角色的修订，不会重建角色。'}/>
-      {statusNote}{detailError && <p role="alert">{detailError}</p>}{saveMessage && <p role="status">{saveMessage}</p>}
+      <header className="config-sec-head"><h2 tabIndex={-1}>设定</h2></header>
+      {detailError && <p role="alert">{detailError}</p>}
       {draft?.isBuiltin && <div className="config-builtin-note" role="status"><b>内置助手 · 不可删除</b><p>系统职责由后端固定注入；下面的正文只决定她的性格、语气与协作偏好，修改或清空都不会覆盖职责。</p></div>}
       {draft && <><div className="config-ledger"><div className="config-ledger-label"><b>显示名</b><small>{draft.isBuiltin ? '内置角色固定为「夏澄」' : '对话、主页与日记里的称呼'}</small></div><div><Input aria-label="显示名" disabled={saveBusy || draft.isBuiltin} value={draft.name} maxLength={200} onChange={event => setDraft({ ...draft, name: event.target.value })}/>{draft.isBuiltin && <small className="config-inline-hint">内置角色的显示名不能修改。</small>}</div></div>
       {draft.isBuiltin && draft.bio.trim() && <div className="config-ledger"><div className="config-ledger-label"><b>官方介绍</b><small>只读</small></div><div><p className="config-muted" data-testid="builtin-bio">{draft.bio}</p></div></div>}
       <div className="config-ledger"><div className="config-ledger-label"><b>人设</b><small>她是谁、怎么说话、在意什么<br/>{draft.definition.length} 字</small></div><div><Textarea aria-label="角色设定" className="config-ruled" disabled={saveBusy} rows={8} value={draft.definition} onChange={event => setDraft({ ...draft, definition: event.target.value })}/></div></div>
-      <RoleDeletion roleId={roleId} roleName={draft.name} roleCount={roleCount} isBuiltin={draft.isBuiltin} activityState={activity?.state} onPaused={() => setPausedForWrite(true)} onStatusRefresh={onRefresh} onDeleted={onDeleted}/></>}
+      <RoleDeleteEntry roleName={draft.name} roleCount={roleCount} isBuiltin={draft.isBuiltin}/>
+      <RoleSheetHost active={active} roleId={roleId} roleName={draft.name} roleCount={roleCount} onDeleted={onDeleted}/></>}
     </div>
     <div hidden={!active || section !== 'look'} className="config-prose"><ConfigHeading number="02" label="外观" english="WARDROBE" title="衣柜" description="管理可供角色自由穿搭的服饰与差分素材。点开一套服饰查看或整理素材。"/>{statusNote}{loaded.look && <AppearancePanel roleId={roleId} canWrite={!!activity || activityLoading} guardWrite={guardAction} pausedWrite={activity?.state !== 'stopped'} onPreview={onPreviewOutfit} onPreviewAsset={onPreviewAsset} onChanged={() => { onClearPreview(); setLookVersion(v => v + 1); void onRefresh(); }}/>}</div>
     <div hidden={!active || section !== 'models'} className="config-prose"><ConfigHeading number="03" label="模型" english="MODELS" title="模型" description="模型列表和连接测试在设置里；这里配置角色使用的模型和演出。"/>{statusNote}{bindingAlert}
@@ -687,69 +703,32 @@ function RoleEditor({ roleId, roleCount, active, activity, activityLoading = fal
     <div hidden={!active || section !== 'ext'} className="config-prose"><ConfigHeading number="04" label="扩展" english="EXTENSIONS" title="扩展" description="设置里的 MCP 与 Skill 在这里按角色开启或关闭。"/>{statusNote}{bindingAlert}{(['mcp','skill'] as const).map(kind => <div className="config-ledger" key={kind}><div className="config-ledger-label"><b>{kind === 'mcp' ? 'MCP' : 'Skill'}</b><small>{resources.filter(item => item.kind === kind).length} 项</small></div><div>{resources.filter(item => item.kind === kind).map(item => <label className="config-row" key={item.resourceId}><span><strong>{item.name}</strong><small>{item.enabled ? '全局已启用' : '全局已停用'}</small></span><span><input type="checkbox" disabled={bindingBusy || !bindingLoaded} checked={extensionDraft[item.resourceId] || false} onChange={event => setExtensionDraft(previous => ({ ...previous, [item.resourceId]: event.target.checked }))}/> 角色开启</span></label>)}{!resources.some(item => item.kind === kind) && <p className="config-muted">暂无{kind === 'mcp' ? ' MCP' : ' Skill'}。</p>}</div></div>)}{!bindingLoaded && list(extensions)}{bindingNotice && <p role="status">{bindingNotice}</p>}<Button disabled={bindingBusy || !bindingRevision || !!resourceError} onClick={() => void saveBindings('ext')}>{writeLabel('保存扩展')}</Button><button type="button" className="config-text-button" onClick={() => onOpenSettings('mcp')}>在设置中管理 →</button></div>
     <div hidden={!active || section !== 'quota'} className="config-prose"><ConfigHeading number="05" label="自主额度" english="QUOTA" title="自主额度" description="角色后台活动所消耗的点数。"/>{statusNote}{budgetError && <p role="alert">{budgetError}</p>}{budget ? <><div className="config-ledger"><div className="config-ledger-label"><b>今日</b><small>{budget.localDate}</small></div><div><div className="config-quota-number">{budget.usedPoints} <small>/ {budget.unlimited ? '不限' : budget.dailyLimit} 点</small></div><div className="config-quota-track"><span style={{ width: budget.unlimited ? '0%' : `${Math.min(100, budget.dailyLimit ? budget.usedPoints / budget.dailyLimit * 100 : 0)}%` }}/></div></div></div><div className="config-ledger"><div className="config-ledger-label"><b>每日额度</b><small>角色自主活动</small></div><div><div className="config-quota-input"><Input type="number" min={1} max={1000000} disabled={budgetBusy || budgetDraft.unlimited} value={budgetDraft.dailyLimit} aria-label="每日额度" onChange={event => setBudgetDraft({ ...budgetDraft, dailyLimit: Number(event.target.value) })}/><label><input type="checkbox" disabled={budgetBusy} checked={budgetDraft.unlimited} onChange={event => setBudgetDraft({ ...budgetDraft, unlimited: event.target.checked })}/> 不限制</label></div><p className="config-muted">保存时会先暂停角色并由后端确认停止。</p><Button disabled={budgetBusy || !Number.isInteger(budgetDraft.dailyLimit) || budgetDraft.dailyLimit < 1 || budgetDraft.dailyLimit > 1_000_000} onClick={() => void saveBudget()}>{writeLabel('保存额度')}</Button>{budgetNotice && <p role="status">{budgetNotice}</p>}</div></div></> : !budgetError && <p>正在读取额度…</p>}</div>
     <div hidden={!active || section !== 'done'} className="config-prose"><ConfigHeading number="06" label="完成度" english="CHECKLIST" title="完成度" description="按已保存的配置查看当前状态；必需项仍待确认。"/>{[['设定',savedProfile?.definition ? '已保存' : '尚未读取'],['对话模型',bindings.some(item => item.capability === 'chat_model' && item.enabled) ? '已绑定' : '未绑定'],['记忆整理',bindings.some(item => item.capability === 'memory_model' && item.enabled) ? '已绑定' : '跟随对话模型'],['角色状态',activityText(activity, activityLoading)]].map(([label,value],i) => <div className="config-check-row" key={label}><small>{String(i+1).padStart(2,'0')}</small><b>{label}</b><i/><span>{value}</span></div>)}</div>
-  </div>{active && section === 'profile' && draft && footer && createPortal(<>{dirtyProfile && <Button disabled={saveBusy} onClick={() => { if (savedProfile) setDraft(savedProfile); }}>放弃</Button>}<Button disabled={saveBusy || !draft.name.trim() || !draft.definition.trim()} onClick={() => void saveProfile()}>{writeLabel('保存设定')}</Button></>, footer)}</>;
+  </div>{active && section === 'profile' && draft && footer && createPortal(<>{dirtyProfile && <Button disabled={saveBusy} onClick={() => { if (savedProfile) setDraft(savedProfile); }}>{T6.discard}</Button>}<Button disabled={saveBusy || !draft.name.trim() || !draft.definition.trim()} onClick={() => void saveProfile()}>{activity?.state === 'stopped' ? T6.save(profileCount) : T6.pauseAndSave(profileCount)}</Button></>, footer)}</>;
 }
 
 function ConfigHeading({ number, label, english, title, description }: { number: string; label: string; english: string; title: string; description: string }) {
   return <header className="config-section-heading"><small><i>{number}</i> {label} · {english}</small><h2>{title}</h2><p>{description}</p></header>;
 }
 
-function RoleDeletion({ roleId, roleName, roleCount, isBuiltin = false, activityState, onPaused, onStatusRefresh, onDeleted }: { roleId: string; roleName: string; roleCount: number; isBuiltin?: boolean; activityState?: 'active' | 'stopping' | 'stopped'; onPaused: () => void; onStatusRefresh: () => Promise<void>; onDeleted: (roleId: string, keepHistory: boolean, filesRemoved: boolean) => Promise<void> }) {
-  const stopped = activityState === 'stopped';
-  const [open, setOpen] = useState(false);
-  const trigger = useRef<HTMLButtonElement | null>(null);
-  const [choice, setChoice] = useState<'keep' | 'remove' | ''>('');
-  const [busy, setBusy] = useState(false);
-  const [step, setStep] = useState<'idle' | 'pausing' | 'deleting'>('idle');
-  const [error, setError] = useState('');
-  // 278 §1.4：删除前按当前活动状态暂停角色，后端确认停止后再执行删除。
-  const ensureStopped = async () => {
-    if (stopped) return;
-    if (activityState !== 'stopping') {
-      await api(`/v1/roles/${encodeURIComponent(roleId)}/activity/stop`, { method: 'POST' });
-    }
-    const deadline = Date.now() + 20_000;
-    while (Date.now() < deadline) {
-      const view = await api<{ activity: { state: string } }>(`/v1/roles/${encodeURIComponent(roleId)}/activity`);
-      if (view.activity.state === 'stopped') {
-        onPaused();
-        await onStatusRefresh();
-        return;
-      }
-      await new Promise(resolve => window.setTimeout(resolve, 250));
-    }
-    throw new Error('角色尚未确认停止，请稍后重试。');
-  };
-  const remove = async () => {
-    if (busy || !choice || roleCount < 2) return;
-    const keepHistory = choice === 'keep';
-    setBusy(true); setError('');
-    try {
-      setStep('pausing');
-      await ensureStopped();
-      setStep('deleting');
-      const result = await api<{ roleId: string; keepHistory: boolean; filesRemoved: boolean }>(`/v1/roles/${encodeURIComponent(roleId)}?keepHistory=${keepHistory ? '1' : '0'}`, { method: 'DELETE' });
-      await onDeleted(result.roleId, result.keepHistory, result.filesRemoved);
-    } catch (reason) {
-      setError(errorText(reason));
-      // 暂停成功但删除失败时，刷新实际状态并在原处提供继续活动。
-      try { await onStatusRefresh(); } catch { /* 状态由下次读取刷新 */ }
-    } finally { setBusy(false); setStep('idle'); }
-  };
+/** 为保存而暂停的角色提供一键恢复（T30），两页页脚右侧共用。 */
+function PausedRolesFooter() {
+  const write = useWrite();
+  const target = document.getElementById('config-footer-right');
+  if (!write.pausedRoleIds.length || !target) return null;
+  return createPortal(<button type="button" className="config-resume-save" disabled={write.resuming} onClick={() => void write.resumePaused()}>{write.resuming ? T30.resuming : T30.resume}</button>, target);
+}
+
+/** 设定分区的删除入口：打开删除确认纸笺（§7.7）；实际写入在 RoleSheetHost。 */
+function RoleDeleteEntry({ roleName, roleCount, isBuiltin }: { roleName: string; roleCount: number; isBuiltin: boolean }) {
+  const { open } = useSheet();
   if (isBuiltin) {
     return <div className="config-ledger"><div className="config-ledger-label"><b>删除角色</b><small>内置助手</small></div><div>
       <p className="config-muted">内置默认助手随应用提供，不能删除；可以停止活动、修改角色卡正文与外观。</p>
     </div></div>;
   }
   return <div className="config-ledger"><div className="config-ledger-label"><b>删除角色</b></div><div>
-    <Button disabled={roleCount < 2 || busy} onClick={event => { trigger.current = event.currentTarget; setOpen(true); setChoice(''); setError(''); }}>{stopped ? '删除角色' : '暂停并删除角色'}</Button>
-    {roleCount < 2 ? <small className="config-inline-hint">至少保留一个角色。</small> : !stopped ? <small className="config-inline-hint">{activityState === 'stopping' ? '角色正在停止，确认删除会等它停稳。' : '删除前会先暂停角色，后端确认停止后再执行。'}</small> : null}
-    {open && <fieldset className="config-delete-options"><legend>删除「{roleName}」</legend><p>请选择记忆、对话和角色目录的处理方式：</p>
-      <label><input type="radio" name={`delete-${roleId}`} checked={choice === 'keep'} disabled={busy} onChange={() => setChoice('keep')}/> 保留本机数据（移除角色，保留目录；应用内无法读取已删除角色）</label>
-      <label><input type="radio" name={`delete-${roleId}`} checked={choice === 'remove'} disabled={busy} onChange={() => setChoice('remove')}/> 一并删除本机数据（包括记忆、对话、工作区与素材副本）</label>
-      <p>原始素材文件不会被删除。</p>{error && <p role="alert">{error}</p>}
-      <div className="config-actions"><Button disabled={!choice || busy || roleCount < 2} onClick={() => void remove()}>{busy ? (step === 'pausing' ? '正在暂停角色…' : '正在删除…') : stopped ? '确认删除' : '暂停并删除角色'}</Button><button type="button" disabled={busy} onClick={() => { setOpen(false); requestAnimationFrame(() => trigger.current?.focus()); }}>取消</button></div>
-    </fieldset>}
+    <Button variant="danger" disabled={roleCount < 2} onClick={event => open({ id: 'delete-role', title: T31.role.title, shape: 'confirm', anchor: event.currentTarget })}>{T31.role.title}</Button>
+    {roleCount < 2 && <small className="config-inline-hint" id="role-delete-min">至少保留一个角色。</small>}
   </div></div>;
 }
 
