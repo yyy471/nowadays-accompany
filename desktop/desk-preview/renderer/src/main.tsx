@@ -19,6 +19,7 @@ import './styles/role-entry.css';
 import './styles/relations-exlibris.css';
 import './styles/conversation.css';
 import './ui/preset-appearance.css';
+import './ui/status-dot.css';
 import './ui/relationship-journal.css';
 import './ui/relationship-journal-integration.css';
 import './ui/relationship-journal-transition.css';

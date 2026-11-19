@@ -1,0 +1,21 @@
+export type RowStatus = 'ok' | 'follow' | 'off' | 'dirty' | 'error' | 'none';
+export type Statused = { status: RowStatus; label: string };
+export type ServiceRef = { service: { name: string; enabled: boolean } | null };
+
+export function bindingIssue(ref: ServiceRef | null): Statused | null;
+export const CHAT_UNSET: Statused;
+export const FOLLOW_CHAT: Statused;
+export function chatRowStatus(ref: ServiceRef | null): Statused;
+export function memoryRowStatus(ref: ServiceRef | null, follow: boolean): Statused;
+export function imageRowStatus(ref: ServiceRef | null): Statused;
+export function voiceRowStatus(ref: ServiceRef | null, toneReady: boolean): Statused;
+export function extensionRowStatus(items: Array<{ enabled: boolean; roleEnabled: boolean }>): Statused;
+export const QUOTA_OK: Statused;
+export function imageKeys(input: { width: number; height: number; steps: number; cfg: number; sampler: string; scheduler: string }): string[];
+export function voiceKeys(input: { tone: string; speed: number; emotion: number }): string[];
+export function quotaKeys(input: { dailyLimit: number; unlimited: boolean; localDate: string }): string[];
+export function extensionValue(items: Array<{ enabled: boolean; roleEnabled: boolean }>): string;
+export function extensionKeys(items: Array<{ name: string; enabled: boolean; roleEnabled: boolean }>): { on: string[]; disabled: string[] };
+export function rowDotVisible(status: RowStatus): boolean;
+export function localDate(date?: Date): string;
+export function quotaLimitBad(draft: { dailyLimit: number; unlimited: boolean }): boolean;

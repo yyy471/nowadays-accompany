@@ -188,6 +188,8 @@
   --nd-primitive-layer-scene: 1;
   --nd-primitive-layer-shell: 10;
   --nd-primitive-layer-popover: 20;
+  --nd-primitive-layer-sheet: 60;
+  --nd-primitive-layer-theme-transition: 2000;
   --nd-primitive-layer-modal: 1000;
   --nd-primitive-layer-nested-modal: 1010;
   --nd-primitive-layer-notice: 1020;
@@ -444,6 +446,8 @@
   --nd-semantic-layer-scene: var(--nd-primitive-layer-scene);
   --nd-semantic-layer-shell: var(--nd-primitive-layer-shell);
   --nd-semantic-layer-popover: var(--nd-primitive-layer-popover);
+  --nd-semantic-layer-sheet: var(--nd-primitive-layer-sheet);
+  --nd-semantic-layer-theme-transition: var(--nd-primitive-layer-theme-transition);
   --nd-semantic-layer-modal: var(--nd-primitive-layer-modal);
   --nd-semantic-layer-nested-modal: var(--nd-primitive-layer-nested-modal);
   --nd-semantic-layer-notice: var(--nd-primitive-layer-notice);
@@ -655,6 +659,11 @@
   --nd-component-modal-radius: var(--nd-semantic-radius-surface);
   --nd-component-modal-padding: var(--nd-semantic-space-panel-inset);
   --nd-component-modal-shadow: var(--nd-semantic-shadow-overlay);
+  --nd-component-sheet-background: var(--nd-semantic-color-surface);
+  --nd-component-sheet-border: var(--nd-semantic-color-line-decorative);
+  --nd-component-sheet-radius: var(--nd-semantic-radius-field);
+  --nd-component-sheet-layer: var(--nd-semantic-layer-sheet);
+  --nd-component-sheet-shadow: var(--nd-semantic-shadow-overlay);
   --nd-component-switch-width: var(--nd-semantic-size-switch-width);
   --nd-component-switch-height: var(--nd-semantic-size-switch-height);
   --nd-component-switch-on-background: var(--nd-semantic-color-commit);
@@ -946,6 +955,8 @@
   --nd-primitive-layer-scene: 1;
   --nd-primitive-layer-shell: 10;
   --nd-primitive-layer-popover: 20;
+  --nd-primitive-layer-sheet: 60;
+  --nd-primitive-layer-theme-transition: 2000;
   --nd-primitive-layer-modal: 1000;
   --nd-primitive-layer-nested-modal: 1010;
   --nd-primitive-layer-notice: 1020;
@@ -1202,6 +1213,8 @@
   --nd-semantic-layer-scene: var(--nd-primitive-layer-scene);
   --nd-semantic-layer-shell: var(--nd-primitive-layer-shell);
   --nd-semantic-layer-popover: var(--nd-primitive-layer-popover);
+  --nd-semantic-layer-sheet: var(--nd-primitive-layer-sheet);
+  --nd-semantic-layer-theme-transition: var(--nd-primitive-layer-theme-transition);
   --nd-semantic-layer-modal: var(--nd-primitive-layer-modal);
   --nd-semantic-layer-nested-modal: var(--nd-primitive-layer-nested-modal);
   --nd-semantic-layer-notice: var(--nd-primitive-layer-notice);
@@ -1413,6 +1426,11 @@
   --nd-component-modal-radius: var(--nd-semantic-radius-surface);
   --nd-component-modal-padding: var(--nd-semantic-space-panel-inset);
   --nd-component-modal-shadow: var(--nd-semantic-shadow-overlay);
+  --nd-component-sheet-background: var(--nd-semantic-color-surface);
+  --nd-component-sheet-border: var(--nd-semantic-color-line-decorative);
+  --nd-component-sheet-radius: var(--nd-semantic-radius-field);
+  --nd-component-sheet-layer: var(--nd-semantic-layer-sheet);
+  --nd-component-sheet-shadow: var(--nd-semantic-shadow-overlay);
   --nd-component-switch-width: var(--nd-semantic-size-switch-width);
   --nd-component-switch-height: var(--nd-semantic-size-switch-height);
   --nd-component-switch-on-background: var(--nd-semantic-color-commit);

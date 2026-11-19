@@ -1,0 +1,65 @@
+/* 状态点（v6 规范 §3）：颜色全部取语义令牌；白昼/晚风随 preset 切换。 */
+.ui-dot.dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--nd-semantic-color-text-muted);
+  white-space: nowrap;
+}
+.ui-dot.dot:before {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--nd-semantic-radius-round);
+  background: var(--nd-semantic-color-success);
+}
+.ui-dot.dot[data-s="follow"]:before {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--nd-semantic-color-success);
+}
+.ui-dot.dot[data-s="off"]:before {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--nd-semantic-color-line-control);
+}
+.ui-dot.dot[data-s="dirty"]:before {
+  background: var(--nd-semantic-color-warning);
+}
+.ui-dot.dot[data-s="dirty"] {
+  color: color-mix(in srgb, var(--nd-semantic-color-warning) 70%, var(--nd-semantic-color-text));
+}
+.ui-dot.dot[data-s="error"]:before {
+  background: var(--nd-semantic-color-danger);
+}
+.ui-dot.dot[data-s="error"] {
+  color: var(--nd-semantic-color-danger);
+}
+/* 只有圆点的写法：文字收进 title/aria-label。 */
+.ui-dot.dot.bare {
+  font-size: 0;
+  gap: 0;
+}
+/* 正常态淡色点（≥3:1）；off 空心圈不淡化。 */
+.ui-dot.dot.faint {
+  opacity: 0.8;
+}
+.ui-dot.dot.faint[data-s="off"] {
+  opacity: 1;
+}
+/* 高对比模式：圆点不允许消失（forced-color-adjust:none + 系统色描边）。 */
+@media (forced-colors: active) {
+  .ui-dot.dot:before {
+    forced-color-adjust: none;
+    background: CanvasText !important;
+    box-shadow: none !important;
+  }
+  .ui-dot.dot[data-s="off"]:before,
+  .ui-dot.dot[data-s="follow"]:before {
+    background: Canvas !important;
+    box-shadow: inset 0 0 0 1.5px CanvasText !important;
+  }
+  .ui-dot.dot[data-s="error"]:before {
+    background: Mark !important;
+  }
+}

@@ -12,3 +12,6 @@ export * from './switch';
 export * from './menu';
 export * from './disclosure';
 export * from './brand-mark';
+export * from './status-dot';
+export * from './live-announcer';
+export * from './dom-mask';

@@ -44,7 +44,8 @@ export type IconName =
   | 'reset'
   | 'upload'
   | 'sun'
-  | 'moon';
+  | 'moon'
+  | 'edit';
 
 const ICONS: Record<IconName, ReactNode> = {
   overview: (
@@ -237,7 +238,13 @@ const ICONS: Record<IconName, ReactNode> = {
       <path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5" />
     </>
   ),
-  moon: <path d="M20.5 14.4A8.7 8.7 0 0 1 9.6 3.5 8.8 8.8 0 1 0 20.5 14.4Z" />
+  moon: <path d="M20.5 14.4A8.7 8.7 0 0 1 9.6 3.5 8.8 8.8 0 1 0 20.5 14.4Z" />,
+  edit: (
+    <>
+      <path d="M4 20h4L19.5 8.5l-4-4L4 16.5V20Z" />
+      <path d="m13.5 6.5 4 4" />
+    </>
+  )
 };
 
 export function Icon({

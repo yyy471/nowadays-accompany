@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api, ApiError } from '../api';
 import type { Outfit, RoleDetail, RoleListItem } from '../types';
-import { Button, Field, Input, Select, Textarea, useMotionPolicy } from '../ui';
+import { Button, Field, Input, Select, Textarea, readMotionTime, readMotionValue, useMotionPolicy } from '../ui';
 import type { MotionPreference } from '../ui/motion';
 import { AppearancePanel } from '../components/appearance/AppearancePanel';
 import { RolePortrait } from '../components/RolePortrait';
@@ -339,7 +339,8 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
     const content = contentRef.current;
     if (content) {
       content.scrollTop = 0;
-      if (!motion.reduced) content.animate([{ opacity:0, transform:'translateX(8px)' }, { opacity:1, transform:'none' }], { duration:200, easing:'cubic-bezier(.2,.7,.2,1)' });
+      // 分区切换动效走语义令牌（v6 M9：micro-exit 出 / component 入）；减少动效时令牌为 0，不播。
+      if (!motion.reduced) content.animate([{ opacity:0, transform:'translateX(8px)' }, { opacity:1, transform:'none' }], { duration: readMotionTime(content, '--nd-semantic-motion-component', 220), easing: readMotionValue(content, '--nd-semantic-motion-ease-out', 'ease-out') });
     }
   };
   const filtered = resources.filter(item => item.kind === settingsSection);
