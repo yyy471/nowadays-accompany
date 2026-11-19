@@ -85,3 +85,4 @@ export const PLACEHOLDER: {
   mcpCommand: string; mcpArgs: string; mcpEnv: string;
   skillSource: string; newName: string;
 };
+export const LIVE: { saved: (verb: string) => string; resumed: string; theme: (name: string) => string };

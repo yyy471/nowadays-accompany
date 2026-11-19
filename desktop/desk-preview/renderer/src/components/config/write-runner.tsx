@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../../api';
-import { T29, T30, T32 } from './config-texts.js';
+import { LIVE, T29, T30, T32 } from './config-texts.js';
 import { announceLive } from '../../ui/live-announcer';
 
 export type WriteFailure =
@@ -62,6 +62,7 @@ export function WriteProvider({ children }: { children: ReactNode }) {
       }
       if (paused.length > 0) announceLive(T29.saving);
       await input.commit();
+      announceLive(LIVE.saved(input.verb));
       if (paused.length > 0) {
         rolesRef.current = [...new Set([...rolesRef.current, ...paused])];
         setPausedRoleIds(rolesRef.current);
@@ -88,7 +89,7 @@ export function WriteProvider({ children }: { children: ReactNode }) {
       for (const roleId of rolesRef.current) {
         await api(`/v1/roles/${encodeURIComponent(roleId)}/activity/resume`, { method: 'POST' });
       }
-      announceLive(T30.text(rolesRef.current));
+      announceLive(LIVE.resumed);
       rolesRef.current = [];
       setPausedRoleIds([]);
     } finally {

@@ -241,3 +241,13 @@ export const PLACEHOLDER = {
   skillSource: "SKILL.md 所在目录",
   newName: "起一个好认的名字",
 };
+
+/**
+ * #live 专用播报（§7.10）：只写入读屏区域，不作为可见文字出现。
+ * 可见的保存反馈走行内扫光（M7/M8），因此这些句子不进 T 表。
+ */
+export const LIVE = {
+  saved: (verb) => `已${verb}`,
+  resumed: "已恢复活动",
+  theme: (name) => `已切换到${name}`,
+};

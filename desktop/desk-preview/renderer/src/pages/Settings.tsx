@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api, ApiError } from '../api';
 import type { Outfit, RoleDetail, RoleListItem } from '../types';
-import { Button, Field, Input, Select, Textarea, readMotionTime, readMotionValue, useMotionPolicy } from '../ui';
+import { Button, Field, Input, LiveAnnouncer, Select, Textarea, readMotionTime, readMotionValue, useMotionPolicy } from '../ui';
 import type { MotionPreference } from '../ui/motion';
 import { AppearancePanel } from '../components/appearance/AppearancePanel';
 import { RolePortrait } from '../components/RolePortrait';
@@ -371,6 +371,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
   const dirtyScopes = roleDirty[editId];
   const dirtyNames = dirtyScopes ? (Object.entries(dirtyScopes) as Array<[keyof RoleDirty, boolean]>).filter(([, dirty]) => dirty).map(([id]) => ({profile:'设定',models:'模型',voice:'语音',image:'生图',ext:'扩展',quota:'自主额度'}[id])) : [];
   return <WriteProvider><SheetProvider><div className="config-workspace" data-ui-preset={preset} hidden={!roleActive && !settingsActive}>
+    <LiveAnnouncer/>
     {(roleActive || settingsActive) && <ConfigThemeTransition/>}
     <PausedRolesFooter/>
     {footerLeft && createPortal(roleActive ? <div className="config-footer-ident"><strong>{chosen?.displayName || '角色配置'}</strong><span>{activityError ? '状态获取失败' : activityText(activities.find(item => item.roleId === editId))}</span></div> : <div className="config-footer-ident"><strong>设置</strong><span>全局资源</span></div>, footerLeft)}
@@ -650,6 +651,29 @@ function RoleEditor({ roleId, roleCount, active, activity, activityLoading = fal
   const savedMemory = bindings.find(item => item.capability === 'memory_model');
   const dirtyProfile = !!draft && !!savedProfile && (draft.name !== savedProfile.name || draft.definition !== savedProfile.definition);
   const profileCount = !draft || !savedProfile ? 0 : (draft.name !== savedProfile.name ? 1 : 0) + (draft.definition !== savedProfile.definition ? 1 : 0);
+  // 设定字段的改动细线（M19）：逐字段比较，不共用整体 dirty 标记。
+  const nameDirty = !!draft && !!savedProfile && draft.name !== savedProfile.name;
+  const definitionDirty = !!draft && !!savedProfile && draft.definition !== savedProfile.definition;
+  // 人设自动增高（§5）：最小 136，上限 max(140, 窗口高×0.4 与正文可视高−120 的较小者)。
+  const definitionRef = useRef<HTMLTextAreaElement>(null);
+  const growDefinition = useCallback(() => {
+    const node = definitionRef.current;
+    if (!node) return;
+    const pane = node.closest<HTMLElement>('.config-prose');
+    const cap = Math.max(140, Math.round(Math.min(window.innerHeight * 0.4, (pane?.clientHeight ?? 0) - 120)));
+    node.style.height = 'auto';
+    const need = node.scrollHeight + 2;
+    node.style.height = `${Math.min(Math.max(need, 136), cap)}px`;
+    node.style.overflowY = need > cap ? 'auto' : 'hidden';
+    node.toggleAttribute('data-capped', need > cap);
+  }, []);
+  useEffect(() => {
+    if (!active || section !== 'profile') return;
+    growDefinition();
+    window.addEventListener('resize', growDefinition);
+    void (document.fonts?.ready ?? Promise.resolve()).then(() => growDefinition());
+    return () => window.removeEventListener('resize', growDefinition);
+  }, [active, section, draft?.definition, growDefinition]);
   const dirtyModels = bindingLoaded && (modelDraft.chatResource !== (savedChat?.resourceId || '') || (!!modelDraft.chatResource && modelDraft.chatModel !== (savedChat?.modelName || '')) || modelDraft.memoryResource !== (savedMemory?.resourceId || '') || (!!modelDraft.memoryResource && modelDraft.memoryModel !== (savedMemory?.modelName || '')));
   const dirtyExt = bindingLoaded && resources.some(item => (item.kind === 'mcp' || item.kind === 'skill') && !!extensionDraft[item.resourceId] !== !!bindings.find(binding => binding.capability === item.kind && binding.resourceId === item.resourceId)?.enabled);
   const dirtyQuota = !!budget && (budgetDraft.dailyLimit !== budget.dailyLimit || budgetDraft.unlimited !== budget.unlimited);
@@ -682,9 +706,9 @@ function RoleEditor({ roleId, roleCount, active, activity, activityLoading = fal
       <header className="config-sec-head"><h2 tabIndex={-1}>设定</h2></header>
       {detailError && <p role="alert">{detailError}</p>}
       {draft?.isBuiltin && <div className="config-builtin-note" role="status"><b>内置助手 · 不可删除</b><p>系统职责由后端固定注入；下面的正文只决定她的性格、语气与协作偏好，修改或清空都不会覆盖职责。</p></div>}
-      {draft && <><div className="config-ledger"><div className="config-ledger-label"><b>显示名</b><small>{draft.isBuiltin ? '内置角色固定为「夏澄」' : '对话、主页与日记里的称呼'}</small></div><div><Input aria-label="显示名" disabled={saveBusy || draft.isBuiltin} value={draft.name} maxLength={200} onChange={event => setDraft({ ...draft, name: event.target.value })}/>{draft.isBuiltin && <small className="config-inline-hint">内置角色的显示名不能修改。</small>}</div></div>
+      {draft && <><div className="config-ledger"><div className="config-ledger-label"><b>显示名</b><small>{draft.isBuiltin ? '内置角色固定为「夏澄」' : '对话、主页与日记里的称呼'}</small></div><div><div className="config-ctl" data-dirty={nameDirty || undefined}><Input aria-label="显示名" disabled={saveBusy || draft.isBuiltin} value={draft.name} maxLength={200} onChange={event => setDraft({ ...draft, name: event.target.value })}/></div>{draft.isBuiltin && <small className="config-inline-hint">内置角色的显示名不能修改。</small>}</div></div>
       {draft.isBuiltin && draft.bio.trim() && <div className="config-ledger"><div className="config-ledger-label"><b>官方介绍</b><small>只读</small></div><div><p className="config-muted" data-testid="builtin-bio">{draft.bio}</p></div></div>}
-      <div className="config-ledger"><div className="config-ledger-label"><b>人设</b><small>她是谁、怎么说话、在意什么<br/>{draft.definition.length} 字</small></div><div><Textarea aria-label="角色设定" className="config-ruled" disabled={saveBusy} rows={8} value={draft.definition} onChange={event => setDraft({ ...draft, definition: event.target.value })}/></div></div>
+      <div className="config-ledger"><div className="config-ledger-label"><b>人设</b><small>她是谁、怎么说话、在意什么</small></div><div><div className="config-ctl" data-dirty={definitionDirty || undefined}><Textarea ref={definitionRef} aria-label="角色设定" aria-describedby="config-definition-count" className="config-ruled" disabled={saveBusy} rows={4} value={draft.definition} onChange={event => setDraft({ ...draft, definition: event.target.value })}/></div><div className="config-field-foot"><span/><span className="config-count" id="config-definition-count"><b>{draft.definition.length}</b> 字</span></div></div></div>
       <RoleDeleteEntry roleName={draft.name} roleCount={roleCount} isBuiltin={draft.isBuiltin}/>
       <RoleSheetHost active={active} roleId={roleId} roleName={draft.name} roleCount={roleCount} onDeleted={onDeleted}/></>}
     </div>

@@ -177,11 +177,18 @@ html[data-config-switching] .studio-shell *,html[data-config-switching] .studio-
 .config-sheet.compact .config-sheet-body{flex:0 1 auto;min-height:0;padding-top:12px;padding-bottom:16px}
 .config-sheet.compact .config-grp{grid-template-columns:minmax(0,1fr);border-top:0;padding:0}
 .config-sheet.compact .config-grp-label{display:none}
-/* 双层压暗：右页一层（可点关闭）+ 书本一层；图片框由 JS mask 挖空。 */
+/* 双层压暗：右页一层（可点关闭）+ 书本一层；图片框由 JS mask 挖空。
+   两层都必须 `.on` 时达到不透明并可点：只写 pointer-events 会留下 opacity:0 → 页面不变暗，
+   书本层漏了 `:on` 规则则左页、立绘区、书脊空白处都点不关闭（验收 27）。 */
 .config-scrim{position:absolute;inset:0;z-index:5;background:var(--nd-semantic-color-backdrop);opacity:0;pointer-events:none}
-.config-scrim.on{pointer-events:auto}
+.config-scrim.on{opacity:1;pointer-events:auto}
 .config-book-scrim{position:absolute;inset:0;z-index:5;border-radius:inherit;background:var(--nd-semantic-color-backdrop);opacity:0;pointer-events:none}
+.config-book-scrim.on{opacity:1;pointer-events:auto}
+/* 读屏播报区（§7.10）：只给读屏，不进视觉。 */
+.ui-live{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 .config-leaf:has(> .config-sheet:not([hidden])){z-index:6}
+/* 退出动画（M2）期间纸笺只做视觉残留，不再接收指针与键盘。 */
+.config-sheet.exiting{pointer-events:none}
 /* 保存按钮（M18）：无改动描边禁用，有改动点亮并显改动数徽标。 */
 .config-save-btn{min-width:76px;background:transparent;border-color:var(--cfg-line);color:var(--cfg-muted);transition:background var(--nd-semantic-motion-component) var(--nd-semantic-motion-ease-out),border-color var(--nd-semantic-motion-component) var(--nd-semantic-motion-ease-out),color var(--nd-semantic-motion-component) var(--nd-semantic-motion-ease-out)}
 .config-save-btn:disabled{opacity:1}
@@ -189,6 +196,14 @@ html[data-config-switching] .studio-shell *,html[data-config-switching] .studio-
 .config-save-btn[data-on]:hover:not(:disabled){background:var(--nd-semantic-color-commit-hover);border-color:var(--nd-semantic-color-commit-hover)}
 .config-save-n{display:inline-grid;place-items:center;min-width:0;height:18px;border-radius:var(--nd-semantic-radius-round);font:600 10.5px/1 var(--nd-semantic-font-code);overflow:hidden;max-width:0;opacity:0;transition:max-width var(--nd-semantic-motion-component) var(--nd-semantic-motion-ease-out),opacity var(--nd-semantic-motion-component),padding var(--nd-semantic-motion-component)}
 .config-save-btn[data-on] .config-save-n{max-width:40px;min-width:18px;padding:0 5px;opacity:1;background:color-mix(in srgb,var(--nd-semantic-color-on-solid) 22%,transparent)}
+/* 设定字段（§5）：改动后左侧 2px 琥珀线（M19）；人设自动增高后的字数 T5 在输入框右下。 */
+.config-ctl{position:relative}
+.config-ctl:before{content:"";position:absolute;left:-12px;top:3px;bottom:3px;width:2px;border-radius:var(--nd-semantic-radius-tick);background:var(--cfg-warn);opacity:0;transform:scaleY(.4);transition:opacity var(--nd-semantic-motion-component) var(--nd-semantic-motion-ease-out),transform var(--nd-semantic-motion-component) var(--nd-semantic-motion-ease-out)}
+.config-ctl[data-dirty]:before{opacity:1;transform:none}
+.config-field-foot{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-top:6px;min-height:16px}
+.config-count{font:11px/16px var(--nd-semantic-font-code);color:var(--cfg-muted)}
+.config-count b{font-weight:600;color:var(--cfg-ink)}
+.config-ruled[data-capped]{scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--nd-semantic-color-line-control) 70%,transparent) transparent}
 /* 720（≤900）：纸笺铺满宽度从底部升起；书本抬层防底栏盖住纸笺。 */
 @media (max-width:900px){
   .config-sum{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"name end" "val end";gap:2px 10px;padding:11px 12px}

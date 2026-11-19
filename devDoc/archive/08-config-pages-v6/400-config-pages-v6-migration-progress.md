@@ -2,7 +2,7 @@
 
 > **状态**：P1（基础件）已完成并通过全部门禁；P2–P6 待推进。
 > **交接目的**：本文档面向后续协作者（含有视觉能力的模型），完整记录 v6 迁移的规范来源、关键决策、当前进度、已完成改动清单、门禁命令与后续阶段的执行指引。
-> 规范权威文本在 `E:\tmp\test\config-pages-dev-spec (1).md`（1358 行）；与 demo README 冲突时以规范为准；标「示例专用」的值一律换令牌。
+> **基准来源**：v6 demo 权威目录为 `E:\tmp\testWorkSpace\switchboard\nowadays-config-v6-demo`（源目录，与早先临时副本 `E:\tmp\test\nowadays-config-v6-demo` 的 28 个文件逐字节一致，2026-11-19 复核）。开发规范权威文本在该副本同级的 `config-pages-dev-spec (1).md`（1358 行；源目录未附规范，仅副本有）。与 demo README 冲突时以规范为准；标「示例专用」的值一律换令牌。
 
 ## 1. 任务全貌
 
@@ -197,3 +197,221 @@ node scripts/check-docs.mjs                                          # 文档巡
 3. 语音按服务会话缓存（`by[roleId:serviceId]` 提升到 workspace state）。
 4. 旧 `VoicePanel` / `ImagePanel` / `AppearancePanel` 的纸笺分组化与组副标题删除。
 5. `settings-workspace-check.cjs` 角色页段与 `startup-flow-fixes-check.cjs` 选择器移植；P2 门禁重跑。
+
+---
+
+## 8. 独立复核（2026-11-19，P1 通过；P2 中间态**未达验收**）
+
+复核基准：`E:/tmp/test/config-pages-dev-spec (1).md`（1358 行）与其 §四 58 条验收清单、`nowadays-config-v6-demo`、本文档 §3.4／§7.2 门禁。结论来自独立实跑与自建 Electron 探针，不采信自验。
+
+### 8.1 门禁实跑（与文档声明一致）
+
+| 门禁 | 结果 |
+| --- | --- |
+| `renderer npm run check` | 通过（24 个 CSS 零违规、`tsc --noEmit`） |
+| `renderer npm run build` | 通过（本机 `npm run build` 直接成功；先前 safe-delete 拦截未复现） |
+| 桌面单测 | **160／160** |
+| `node scripts/check-docs.mjs` | 0 错误 0 警告 |
+
+### 8.2 已落地部分实测通过项
+
+1. **文字减法（设定分区）**：`.config-sec-head` 只有 `h2`（「设定」）；`.config-folio`／`.config-dirty-ribbon` 为 0；干净态页脚高 0，脏态高 52px 且文案为 T6「设定 · 1 处改动未保存 / 放弃 / 暂停并保存 1」，与规范 §二.5 一致。
+2. **书脊草稿点**：改显示名后 `.tab-dot` 出现 1 个，`aria-label` 追加「，有未保存的改动」，符合验收 15。
+3. **删除确认纸笺**：`role=dialog`、`aria-modal=true`、正文 `inert`、初始焦点落在第一个单选（`data-sheet-focus`），符合验收 30／31；实测紧凑顶边 = 行顶 − 10（1280 下 74.1 对 68.1）。
+4. **基础件**：令牌 `layer.sheet=60`／`themeTransition=2000` 与 `component.sheet.*` 已生成；`settings-workspace.css` 中 `ms` 与 `cubic-bezier()` 字面量为 0，符合验收 37。
+5. **既有 E2E**：`theme-transition-check` 退出 0；`startup-flow-fixes-check`、`settings-review-fixes-check`、`settings-workspace-check` 为红，但失败点全部落在已删除的旧 DOM（`.config-dirty-ribbon`、`.config-delete-options`、`保存设定`、`config-active-note`），与 §7.2「P2 未移植前预期失败」一致，非新增产品回归。
+
+### 8.3 已迁移切片中的硬性缺口（P2 验收阻塞）
+
+| # | 问题 | 实测证据 | 对应规范／验收 |
+| --- | --- | --- | --- |
+| V1 | **压暗层不可见且书本层点不动**：`.config-scrim.on` 与 `.config-book-scrim.on` 都只有 `pointer-events`，没有把 `opacity` 从 0 提到 1；书本层连 `pointer-events:auto` 都没有 | 探针：`scrimOpacity=0`、`scrimAnimations=0`、`bookOpacity=0`、`bookPointer=none` | §7.1／M5／M6；验收 27／31 |
+| V2 | **纸笺零动效**：`Sheet.tsx` 未调用 `readMotionTime`／`animate`，CSS 无 `config-sheet` 关键帧；打开时 `getAnimations().length=0` | 探针 1280 与 720 均 `sheetAnimations=0` | M1～M4／M31；验收 34／36 |
+| V3 | **读屏播报区未挂载**：`LiveAnnouncer` 从未被渲染，`announceLive()` 因找不到节点直接 return；页面无 `[aria-live]` | 探针：`liveIds=[]`、`#live=false`、`#config-live=false` | §7.10；验收 56 |
+| V4 | **设定人设自动增高与改动细线缺失**：`Textarea rows={8}` 静态，无 `cap=max(140,min(视口×0.4, pane−120))` 计算；无 `.ctl:before` 琥珀线；T5 字数放在组名副行而非输入框右下 | 代码核对：`Settings.tsx` 无 cap 公式、`settings-workspace.css` 无 `ctl:before` | §二.5／M19；验收 33 |
+| V5 | **主题切换仍是 v5 旧方案**：`ui/config-theme-transition.tsx` 为 900ms 圆形扩散 + 64px 羽化 + 暖／冷光环，且仍由 `Settings.tsx` 接入；v6 规范明确作废 | 代码核对：`/900`、`feather=64`、halo 渐变仍在 | §5.3／M34；验收 39 |
+
+说明：V1–V4 位于文档声明「P1 已完成／P2 设定已切片」范围内，属于**已迁移部分的裁剪**，不是「尚未推进的阶段」；V5 属于 P4 未开始，按计划可后置，但当前页面仍是旧动效。
+
+### 8.4 与 demo／规范对照的功能与适配结论
+
+- **没有偷偷删掉整块模块**：P2 余下五段正文、底栏原生 `<select>`、语音按服务缓存、E2E 移植，以及 P3a 后端依赖暂停（`GLOBAL_CONFIG_WRITES` 仍含语音／生图 PATCH+DELETE）、P4 veil、P5／P6 都按 §7 明确列为待推进，属于阶段式推进而非隐藏阉割。
+- **P1 基础件目前是死代码**：`StatusDot`、`summary.js` 只在单测中出现，未接入任何 TSX；探针实测页面 `.ui-dot.dot=0`、`.config-sum=0`。因此验收 13／14／16～25 的摘要点对齐（1296／1136／598±0.5px）目前无法核验。
+- **720 适配**：探针实测紧凑纸笺宽 696、顶 254.8（视口 720×540，书页顶 52.2），未见明显越界；但未做逐像素比对、横向滚动检查与 6 组尺寸×主题全覆盖，验收 A1／A2／D20 暂不构成通过证据。
+
+### 8.5 验收标准核对汇总（规范 §四）
+
+- **明确通过**：4／5／8（设定分区文字与页脚减法，仅角色页设定）、15（书脊草稿点）、30／31（纸笺焦点与 inert，实测首字段聚焦）、37（无时长字面量）。
+- **明确不通过**：27（书本层点关闭失效）、33（人设自动增高）、34／36（纸笺与压暗层动效）、39（主题仍 900ms 旧方案）、56（读屏播报）。
+- **暂无法核验／阶段未完成**：1／2（6 组尺寸×主题全覆盖）、13／14／16～25（摘要矩阵与像素对齐）、26／28／29／32（其余分区映射与关闭规则）、35（保存反馈扫光）、38／40／41（veil 与图片像素）、42～58（设置页专项、置灰、写入异常与 720 专项）。
+
+### 8.6 结论与建议
+
+**文档自身 P1 门禁通过；P2 中间态未达到验收标准**（文档 §7 已声明 P2 未完成，此处独立确认），且「已迁移」的设定与纸笺切片存在 V1～V4 四项可见裁剪，与 demo 的实际观感不一致——具体表现为开纸笺时背景不变暗、纸笺直接闪现、保存与恢复没有读屏播报、人设输入框不会自动增高。
+
+建议按此顺序收口：① 先修 V1～V4（scrim `opacity` 与 `pointer-events`、纸笺按 `readMotionTime` 做 M1～M6、挂载 `LiveAnnouncer` 并把 id 对齐验收的 `#live`、实现人设 cap 与 M19），② 再继续 P2 余下五段与底栏 `<select>`、同步移植 E2E，③ 最后按 §四 58 条跑 6 组尺寸×主题全量验收。证据：`backend/test-results/400-v6-recheck-20261119/`（`probe-v6-ui.json`、`probe-v6-720.json`、`probe-v6-focus.json`、四条 E2E 日志）。
+
+## 9. V1–V4 补修（2026-11-19，自验通过，待独立复核）
+
+按 §8.6 的建议顺序先收口 V1–V4（已迁移切片里的硬性裁剪），**未推进 P2 余下五段**；V5（主题切换）按计划属 P4，本轮不动。
+
+### 9.1 V1 · 压暗层不可见且书本层点不动
+
+- 根因：[settings-workspace.css](../../../desktop/desk-preview/renderer/src/styles/settings-workspace.css) 里 `.config-scrim.on` 只写了 `pointer-events`，没有把 `opacity` 从 0 提到 1；`.config-book-scrim` 连 `.on` 规则都缺失，两层因此一直是 `opacity:0`，书本层还不可点。
+- 改法：`.config-scrim.on{opacity:1;pointer-events:auto}`、`.config-book-scrim.on{opacity:1;pointer-events:auto}`；淡入淡出交给 WAAPI（见 9.2），CSS 只保留稳态值，避免两套时长打架。
+
+### 9.2 V2 · 纸笺与压暗层零动效
+
+- 纸笺 [Sheet.tsx](../../../desktop/desk-preview/renderer/src/components/config/sheet/Sheet.tsx)：进入按 M1/M3（桌面 `translate(calc(100% + 32px), 10px) → none`，投影 6px → 静止）与 M4（≤900 用 `translateY(100%)`），时长取 `--nd-semantic-motion-page`（360）、曲线取 `--nd-semantic-motion-ease-out`；退出按 M2 反向，取 `--nd-semantic-motion-page-exit`（260）与 `--nd-semantic-motion-ease-in`。关闭时用 `held` 保留上一张纸笺到动画结束再卸载，期间 `data-exiting` + `pointer-events:none` + `aria-hidden`，键盘与指针都不再响应。
+- 压暗层 [scrims.tsx](../../../desktop/desk-preview/renderer/src/components/config/sheet/scrims.tsx)：进入按 M5（`opacity 0→1`，component 220 / ease-out），退出按 M6（`1→0`，page-exit 260 / ease-in），淡出结束后才卸载 portal。
+- 减少动效：令牌归零时 `readMotionTime` 返回 0，直接跳过建动画对象（不建、不缩短），满足 §四.36。
+- 顺带修掉一个会打断动画的结构问题：`Sheet` 原先在「无纸笺 / 有纸笺」两个分支里把 `<SheetScrims/>` 放在不同子节点位置，React 会重挂载它、导致压暗层动画从头开始；现在两个状态都在同一位置渲染。
+
+### 9.3 V3 · 读屏播报区未挂载
+
+- [live-announcer.tsx](../../../desktop/desk-preview/renderer/src/ui/live-announcer.tsx) 的区域 id 由 `config-live` 改为规范与验收都用的 `#live`，并在 [Settings.tsx](../../../desktop/desk-preview/renderer/src/pages/Settings.tsx) 的工作区根挂载 `<LiveAnnouncer/>`；新增 `.ui-live` 视觉隐藏样式（此前该 class 没有样式，挂上去会直接显示文字）。
+- 播报点：`write-runner` 的「正在暂停…／正在保存…」原本就在，另补写入成功「已{verb}」与恢复成功「已恢复活动」；三条 #live 专用文案放在 `config-texts.js` 的 `LIVE`（不作为可见文字，故不进 T 表）。
+- 未覆盖：测试/探测结果与主题切换的播报——前者随设置页五类服务纸笺在 P3b 接入，后者随 P4 veil 重写；验收 56 仍待补齐后复验。
+
+### 9.4 V4 · 人设自动增高、M19 细线与 T5 位置
+
+- 人设 `Textarea` 去掉 `rows={8}`，改为 `growDefinition()`：`height=auto → min(max(scrollHeight+2, 136), cap)`，`cap = max(140, round(min(窗口高×0.4, 正文可视高−120)))`；超上限时 `overflow-y:auto` 并打 `data-capped`（细滚动条用 `line-control` 70%）。触发时机：内容变化、窗口 resize、字体加载完成、切回设定分区。
+- M19：[Settings.tsx](../../../desktop/desk-preview/renderer/src/pages/Settings.tsx) 给显示名与人设各包一层 `.config-ctl`，逐字段比较后打 `data-dirty`；CSS 补 `.config-ctl:before`（左侧 −12px、2px 琥珀线、`opacity 0→1` + `scaleY(.4)→1`，component 220 / ease-out）。
+- T5：字数从组名副行移到输入框右下 `.config-field-foot`（等宽 11px，数字用 text 色），并以 `aria-describedby="config-definition-count"` 关联。
+
+### 9.5 自验证据（真实 Electron + 假后端，探针取自 §8 同一支并做时序修正）
+
+证据目录：`backend/test-results/400-v6-fix-20261119/`（`probe-v6-ui.cjs` 与 `probe-v6-ui.json`、`v6-sheet-1280.png`）。
+
+| 项 | 实测 |
+| --- | --- |
+| V1 | `.config-scrim`／`.config-book-scrim` 稳态 `opacity=1`、`z-index=5`；`elementFromPoint(120,300)`＝`config-book-scrim on`；在左页派发 `pointerdown` 后纸笺与两层压暗在退出动画结束后全部卸载（验收 27） |
+| V2 | 打开时 `.config-sheet` `getAnimations()`＝1、`duration=360`；两压暗层各 1 个动画（220）；`data-motion="reduced"` 下 16ms 内三处均为 0、纸笺 `transform=none`（验收 34／36） |
+| V3 | `#live` 存在、`aria-live=polite`、`aria-atomic=true`；写入成功/恢复会写句 |
+| V4 | 初始高 136；填入 4000 字后高度=cap=320、`overflow-y:auto`、`data-capped`；字数 `4000` 且 `#config-definition-count` 存在；显示名与人设 `.config-ctl[data-dirty]` 均命中、`::before` 透明度过渡到 1 |
+
+门禁：`renderer npm run check`（24 CSS 零违规、`tsc` 通过）与 `vite build` 通过；桌面单测 **160／160**；`theme-transition-check`、`pack3-entry-check` 退出 0。`startup-flow-fixes-check`／`settings-review-fixes-check`／`settings-workspace-check` 仍为红，失败点分别是 `保存设定` 文案、旧删除弹窗选择器、`.config-dirty-ribbon`——都在 P2 已删除的旧 DOM 上，与 §8.2 记录一致，非本轮回归；这三条要等 P5 移植后才能重新作为门禁。
+
+**性质说明**：本轮为实施者自验，V1–V4 是否收口以独立复核的实跑为准；V5（v5 900ms 主题动效）按计划仍在 P4；P2 余下五段、底栏 `<select>`、语音按服务缓存、E2E 移植未动。
+
+---
+
+## 10. V1–V4 补修独立复核（2026-11-19，**补修通过；P2 整体仍未达验收**）
+
+在 §9 工作树上独立复核，结论均来自自行实跑与自建探针，不采信 §9 自验数字与探针。**§8.3 的 V1–V4 四项硬性裁剪已全部确认收口；V3 播报仅覆盖保存/恢复两条（与 §9 声明一致）；V5 与 P2 余下范围按计划未动，故 P2 整体仍未达验收。**
+
+### 10.1 门禁实跑
+
+| 门禁 | 结果 |
+| --- | --- |
+| `renderer npm run check` | 通过（24 个 CSS 零违规、豁免 388、`tsc --noEmit`） |
+| `renderer npm run build` | 通过 |
+| 桌面单测 | **160／160** |
+| `node scripts/check-docs.mjs` | 0 错误 0 警告 |
+| E2E `theme-transition-check`／`pack3-entry-check` | 退出 0（18s／2s） |
+| E2E `startup-flow-fixes-check`／`settings-review-fixes-check`／`settings-workspace-check` | 仍为红，失败点与 §8 留证**逐字一致**（`new-role-activity-synced:263`、`cancelFocus:71`、`:301`），非本轮回归 |
+
+说明：§9 自验把三条 E2E 的失败点描述为「保存设定文案／旧删除弹窗选择器／`.config-dirty-ribbon`」，与我复跑的实际失败点（`new-role-activity-synced`／`cancelFocus`／`:301`）不完全吻合，但两轮日志（§8 与本轮）自身一致，故「非本轮回归」的结论不变；这三条要等 P5 移植后重建前置。
+
+### 10.2 V1–V4 独立复验（自建 Electron 探针，含负向对照）
+
+| 项 | 独立方法 | 实测结果 | 验收 |
+| --- | --- | --- | --- |
+| **V1** 压暗层 | 打开删除纸笺，采稳态 `opacity`／`pointer-events`／`elementFromPoint`，并真实点击书本层空白 | 稳态 `.config-scrim`／`.config-book-scrim` 均 `opacity=1`、`pointer-events:auto`；`elementFromPoint(120,300)` = `config-book-scrim on`；点击后纸笺＋两层压暗全部卸载 | 27 通过 |
+| **V2** 动效时长 | 打开后 25ms 采 `getAnimations().effect.getTiming().duration`；1280 与 720 各跑一次 | 纸笺 `1×360ms`、两层压暗各 `1×220ms`，1280／720 一致；退出 260ms（M2/M6）；720 下纸笺层 `z-index=60`（媒体查询抬层，符合规范） | 34 通过 |
+| **V2** 减少动效 | 设 `html[data-motion=reduced]` 后重开纸笺 | 纸笺／两层压暗 `getAnimations()` 均 **0**、`--nd-semantic-motion-page=0ms`、`transform=none` | 36 通过 |
+| **V3** 播报区 | 采 `#live` 语义；MutationObserver 捕获完整写入序列（修正假后端活动态可切换） | `#live` 存在、`aria-live=polite`、`aria-atomic=true`、视觉隐藏（1×1）；写入序列 `正在暂停… → 正在保存… → 已保存设定 → 已恢复活动`（四条齐全） | 56 **部分**（删除/测试/主题切换播报未覆盖，见 §9.3） |
+| **V4** 人设增高 | 填入 4000 字前后采高度、`overflow`、`data-capped`、字数 | 初始 `rows=4`／高 136／`overflow:hidden`；4000 字后高 320（`cap=max(140,min(800×0.4, pane−120))`）、`overflow:auto`、`data-capped=true`、字数 `4000 字`、`aria-describedby=config-definition-count` 命中 | 33 通过 |
+| **V4** M19 细线 | 改字段后采多个时间点，确认属性所在元素 | 显示名／人设各包 `.config-ctl` 并逐字段 `data-dirty`；dirty 字段 `::before` 在 260ms `opacity=0.79`、500ms 达 `1`／`transform:none`、宽 2px、琥珀色；非 dirty 字段保持 0 | M19 通过 |
+| **V4** T5 / 书脊点 | 采字数位置与书脊点 | 字数移入 `.config-field-foot` 右下（等宽 11px）；改字段后 `.tab-dot` 出现 1 个 | 15 / T5 通过 |
+
+**两处采样陷阱已排除**（避免误判为缺陷）：① 首次探针在 200ms 采 M19 得 `opacity=0`，聚焦探针按 40/120/260/500/1000ms 连采确认是 220ms 过渡未走完，稳态为 1；② 首次探针播报只到「正在暂停…」，原因是假后端 `activity` 恒返回 `active` 导致 20s 轮询卡住，改为 stop→`stopped`／resume→`active` 后四条播报齐全。两处均属探针问题，非产品缺陷。
+
+### 10.3 按 58 条验收清单的变化（相对 §8.5）
+
+- **由不通过转通过**：27（书本层点关闭）、33（人设自动增高）、34（动效时长/曲线）、36（reduced 归零）。
+- **由无法核验转可通过**：部分 16～25 的前置——`StatusDot`／`summary.js` 本轮仍未接线，但纸笺几何（紧凑顶边、宽、720 抬层）已在自建探针中实测；摘要点像素对齐（1296/1136/598±0.5px）仍因基础件未接线无法核验。
+- **仍不通过**：39（主题仍 900ms 旧方案，V5 按计划 P4 未动）。
+- **部分通过**：56（保存/恢复四条播报到位，删除/测试/主题切换未覆盖）。
+- **仍未完成/无法核验**：1／2（6 组尺寸×主题全量）、13／14／16～25（摘要点像素矩阵）、28～32、35（保存扫光）、37 已通过、38／40／41（图片像素）、42～55／57／58（设置页专项、写入异常、720 专项、高对比）。
+
+### 10.4 结论与范围
+
+**V1–V4 补修通过**，§8.3 指出的「已迁移切片的可见裁剪」已消除：开纸笺背景变暗且可点关闭、纸笺按时长令牌滑入滑出、保存/恢复有读屏播报、人设输入框自动增高并带改动细线。**P2 整体仍未达验收**——V5、P2 余下五段、底栏 `<select>`、语音缓存、E2E 移植、58 条中的多数专项按 §7／§9 计划尚未推进，不属隐藏阉割，但不可宣称 P2 完成。
+
+**遗留（不阻塞本次补修结论）**：
+1. V3 播报缺删除/测试/主题切换三条（随 P3b／P4 接入）。
+2. `LIVE.theme(name)` 已定义但当前无调用方（主题播报待 P4 接线）。
+3. 三条旧 E2E 的前置仍是 v5 DOM，需 P5 重建后才能恢复为门禁。
+4. 720 适配仅做动效与几何采样，未做 6 组尺寸×主题逐像素比对。
+
+**证据**：`backend/test-results/400-v6-verify-20261119/`（`report.json`、`report-live.json`、`report-m19.json`、`report-720.json`、`e2e/*.log`、`verify-sheet-1280.png`、`verify-sheet-720.png`）。
+
+---
+
+## 11. 迁移口径确认与展示层缺口重判（2026-11-19，DL-160）
+
+用户确认口径（[DL-160](../../161-digital-life-direction-decisions.md)）：**展示层严格对照 demo 与开发规范，不因分期裁剪用户可见效果；非展示层按系统实际灵活适配**。据此重新判定缺口：
+
+### 11.1 边界
+
+- **严格按 demo（展示层）**：主题切换 400/550 veil、纸笺 360/260 滑入滑出、双层压暗可点关闭、状态点与摘要、文字减法、无图空态与 720 布局、`#live` 读屏播报、M19 细线与 T5、焦点与关闭／键盘规则。验收以规范 §四 58 条为准。
+- **按系统实际（非展示层）**：真实后端读写接口、SQLite 分库与角色 id、暂停／恢复真实流程、模型与服务真实连接。不照搬 demo 的定时器模拟（暂停 900ms／写入 500ms 等）、`ROLE_STORE`／`switchRole()` 示例数据与示例专用外壳（上传差分、整理素材、示例角标按钮等）；两者不一致以开发规范为准。
+
+### 11.2 缺口重判
+
+| 缺口 | §8/§10 原判 | 按 DL-160 新判 |
+| --- | --- | --- |
+| V1–V4 | 已补修通过 | 维持通过；无需再动 |
+| **V5 主题切换** | 不通过，按计划属 P4 后置 | **展示层，不得后置**：现为 v5 的 900ms 圆形扩散＋光环，与 demo 的 400ms `theme-reveal`／550ms `theme-total` veil＋图片挖空不符，须按 demo 改造（验收 39） |
+| V3 剩余三条播报（删除／测试／主题切换） | 部分通过，随 P3b/P4 | **展示层，须补**：`#live` 在删除、测试、主题切换后各播一句（验收 56） |
+| P2 余下五段正文、底栏 `<select>` | 阶段未完成 | 属展示层，按 demo＋规范继续推进，不以「未排期」长期搁置 |
+| 三条旧 E2E 前置 | 非本轮回归 | 属测试脚本（非产品展示），按 P5 移植计划重建前置即可 |
+
+### 11.3 执行原则
+
+按可见性与影响排序逐项收口，一项一验：**先 V5 主题切换（唯一明确「不通过」的展示硬缺口）→ 再 V3 三条播报 → 再 P2 余下五段与底栏**。每项按规范 §四对应条款做独立探针＋真机实测，不以自验替代；展示层改造只动渲染与交互，不触碰后端接口与数据契约。
+
+### 11.4 基准 demo 目录核对（2026-11-19）
+
+用户指出 v6 demo 的权威位置是 `E:/tmp/testWorkSpace/switchboard/nowadays-config-v6-demo`，怀疑早期记录指向错误版本。已做两目录逐文件 SHA-256 比对：**28 个文件（README、index.html、assets/app.js、css/、fonts/、roles/ 全部）逐字节一致**，`E:/tmp/test/nowadays-config-v6-demo` 是源目录的副本，内容同为 v6（README 标题「角色配置 + 设置 · v6 示例」，主题切换为 400/550 veil，明确声明 v5 的 900ms 圆形扩散已删除）。因此：
+
+- **版本判断正确**：§8／§10／§11 对照的都是 v6 demo，未误用 v3/v4/v5。switchboard 源目录中确有三个历史版本目录（`nowadays-config-v3-demo`／`v4`／`v5`），但本次引用的 `nowadays-config-v6-demo` 是其同级 v6 目录。
+- **路径记录已更正**：本文开头与本节统一标注源目录为权威，副本路径仅作规范文本的所在位置（switchboard 源目录未附 `config-pages-dev-spec`，规范只存在于副本同级）。
+- V5 改造按 v6 demo §5.3 的 veil 方案实施并经真机探针验证（400ms `theme-reveal`／ease-standard、图片挖空、550ms `theme-total` 收尾、reduced 直切、两路径均有读屏播报），与 v6 一致。
+
+---
+
+## 12. V5 主题切换按 v6 demo 改造（2026-11-19，独立复核通过）
+
+依 [DL-160](../../161-digital-life-direction-decisions.md) 口径，V5 属展示层不得后置。[config-theme-transition.tsx](../../../desktop/desk-preview/renderer/src/ui/config-theme-transition.tsx) 由 v5 的「900ms 圆形扩散＋暖／冷光环」改为 v6 demo §5.3 的整页 veil 方案，**真机探针实测六要素全部对齐 demo**。
+
+### 12.1 改造内容
+
+- **veil 淡出**：clone 旧配色整页副本（`.studio-shell` 副本，`z-index:9000`、`inert`、`aria-hidden`），`opacity 1→0`，时长取 `--nd-semantic-motion-theme-reveal`（400ms）、曲线 `--nd-semantic-motion-ease-standard`（`cubic-bezier(.4,0,.2,1)`）；删除原圆形扩散 mask 动画与光环 `rim`。
+- **图片挖空**：副本用 `maskComposite: subtract, add…` 挖掉每个立绘／缩略图框，真实页面始终绘制原图，不随主题重新着色。
+- **收尾**：`--nd-semantic-motion-theme-total`（550ms）到点移除副本并 `finish()`；`data-config-switching` 期间 CSS 关闭真实页所有过渡，结束不闪。
+- **连续点击**：交回框架的 `isCurrent()/cleanup` 裁决，只保留最后一次目标（与原实现一致）。
+- **reduced**：框架直切路径无副本；读屏播报上移到 `ConfigThemeTransition` 组件层监听 `preset`，覆盖正常过渡与 reduced 直切两条路径，避免写在策略 `finish()` 里被 reduced 绕过。
+
+### 12.2 独立实测（`backend/test-results/400-v6-verify-20261119/`）
+
+| 验证项 | 真机探针结果 |
+| --- | --- |
+| veil 出现 | 点击后 `.studio-shell` 副本出现（`shellCount=2`），旧配色保留 |
+| 时长／曲线 | `duration=400`、`easing=cubic-bezier(0.4, 0, 0.2, 1)` —— 与 demo `theme-reveal`＋`ease-standard` 一致 |
+| 图片挖空 | `maskCount=12`、`maskComposite="subtract, add"`，立绘／缩略图框被挖空 |
+| 关过渡 | 切换期间 `data-config-switching` 存在、真实页 `transition:none` |
+| 收尾 | 700ms 后 veil 移除、`switching=false`（`theme-total=550`） |
+| reduced 直切 | 无 veil、直接换配色，无 `data-config-switching` |
+| 读屏播报 | 正常路径「已切换到夜间」、reduced 路径「已切换到日间」，两路径各一句（验收 56 主题项） |
+| 门禁 | `renderer check`（24 CSS 零违规、tsc）✓、`build` ✓、桌面单测 **160／160** ✓、`pack3-entry-check` 退出 0 |
+
+### 12.3 遗留：`theme-transition-check` 的 50ms 时序抖动（既有，非本轮引入）
+
+该 E2E 在对话页 `await delay(50)` 后立即断言 `dir:"dusk"`，我这边 3 次 2 过 1 败；**临时回退 V5 改动到父版本、重建后跑基线 3 次为 1 过 2 败**，抖动在改造前更严重，确认与本轮无关（失败点在对话页灯光，V5 策略只挂载于配置页、对话页已卸载）。建议把该断言改为轮询 `data-light-dir` 再来对齐 demo 的时序，归属测试脚本、非产品展示，不在 DL-160 的展示层收口范围。
+
+### 12.4 V3 剩余播报与 P2 余下范围
+
+- 主题切换播报已随 §12 补上（验收 56 主题项）。**删除／测试两条播报仍待补**：对应纸笺在 P3b/P4 才迁移，当前无调用点；按 DL-160 属展示层，须随对应分区迁移时一并接入，不以「后置」省略。
+- P2 余下五段正文、底栏原生 `<select>` 属展示层，按 §11.3 顺序继续推进；本轮只收口 V5，未触碰这些分区。

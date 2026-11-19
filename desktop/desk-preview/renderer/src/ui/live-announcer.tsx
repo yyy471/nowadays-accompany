@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 
-const LIVE_REGION_ID = 'config-live';
+/** 规范 §7.10 与验收 56 都用 `#live` 指这个区域，仓库沿用同一 id。 */
+const LIVE_REGION_ID = 'live';
 
 /** 读屏播报（v6 规范 §7.10）：清空后延迟置入，保证同一句在部分读屏上也会重读。 */
 export function announceLive(text: string): void {
