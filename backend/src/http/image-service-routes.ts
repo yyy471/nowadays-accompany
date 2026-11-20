@@ -58,17 +58,10 @@ export function registerImageServiceRoutes(
     "/v1/image-services/:serviceId",
     async ({ request, params }): Promise<RouteResponse> => {
       const body = parseBody(updateImageServiceSchema, await readJsonBody(request));
-      return {
-        status: 200,
-        body: {
-          service: services.imageServices.update(params.serviceId ?? "", {
-            ...(body.name === undefined ? {} : { name: body.name }),
-            ...(body.enabled === undefined ? {} : { enabled: body.enabled }),
-            ...(body.config === undefined ? {} : { config: body.config }),
-            ...(body.secret === undefined ? {} : { secret: body.secret }),
-          }),
-        },
-      };
+      const serviceId = params.serviceId ?? "";
+      const connectionChanged = services.imageServices.connectionChanged(serviceId, body);
+      const result = await services.mediaMaintenance.update('image', serviceId, connectionChanged, () => services.imageServices.update(serviceId, body));
+      return { status: 200, body: { service: result.value, maintenance: result.maintenance } };
     },
   );
 
@@ -77,7 +70,7 @@ export function registerImageServiceRoutes(
     "/v1/image-services/:serviceId",
     ({ params }): RouteResponse => ({
       status: 200,
-      body: services.imageServices.delete(params.serviceId ?? ""),
+      body: services.mediaMaintenance.remove("image", params.serviceId ?? "", () => services.imageServices.delete(params.serviceId ?? "")),
     }),
   );
 

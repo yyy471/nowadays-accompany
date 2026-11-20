@@ -218,6 +218,15 @@ export class SceneImageStore {
     return rows.reverse();
   }
 
+  /** 手动幂等请求在领取新服务调用前查询；真正写入仍由唯一索引兜底。 */
+  findManualTask(windowId: string, messageId: string, idempotencyKey: string): SceneImageTaskRecord | null {
+    const row = this.db.prepare(`${TASK_SELECT}
+      WHERE t.role_id = ? AND t.window_id = ? AND t.message_id = ?
+        AND t.trigger_source = 'manual' AND t.idempotency_key = ?`)
+      .get(this.roleId, windowId, messageId, idempotencyKey) as TaskRow | undefined;
+    return row === undefined ? null : mapTask(row);
+  }
+
   createTask(input: NewSceneImageTaskInput): {
     task: SceneImageTaskRecord;
     duplicate: boolean;

@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { api, apiUpload, ApiError } from '../../api';
-import type { Outfit } from '../../types';
+import type { Outfit, RoleStateResponse } from '../../types';
 import { assetLocked, outfitWritePolicy } from './preset-lock.js';
 import { appearanceAssetUrl } from '../../types';
-import { Button, Field, LoadingNote, Select } from '../../ui';
+import { Button, createMotionScope, Field, Select, useMotionPolicy } from '../../ui';
 import { Sheet } from '../config/sheet/Sheet';
+import { animateSheetExit } from '../config/sheet/sheet-motion';
 import { useSheet } from '../config/sheet/sheet-context';
+import { MediaStateRow, RoleSaveActions } from '../config/MediaSheet';
+import { ConfigNotice } from '../config/ConfigNotice';
 import { useWrite } from '../config/write-runner';
 import { T22, T25, T27, T29, T31, T36 } from '../config/config-texts.js';
 import { announceLive } from '../../ui/live-announcer';
@@ -21,6 +25,8 @@ import {
 
 type Props = {
   roleId: string;
+  /** 只有当前激活的编辑器才能认领纸笺；访问过的角色会保留组件以保住草稿（R11-1）。 */
+  active?: boolean;
   canWrite?: boolean;
   onChanged?: () => void;
   onPreview?: (outfit: Outfit) => void;
@@ -61,6 +67,7 @@ function draftChanges(outfit: Outfit, draft: OutfitDraft): number {
 
 export function AppearancePanel({
   roleId,
+  active = true,
   canWrite = true,
   onChanged,
   onPreview,
@@ -68,15 +75,44 @@ export function AppearancePanel({
   pausedWrite = false,
   onOpenImageSettings,
 }: Props) {
-  const { sheet, open, requestClose, setDirty, setBusy } = useSheet();
+  const { sheet, open, requestClose, closeNow, setDirty, setBusy } = useSheet();
   const write = useWrite();
+  const { reduced } = useMotionPolicy();
   const [items, setItems] = useState<Outfit[]>([]);
   const [currentOutfitId, setCurrentOutfitId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [readError, setReadError] = useState('');
+  const [readAttempt, setReadAttempt] = useState(0);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [deleteNotice, setDeleteNotice] = useState('');
   const [draft, setDraft] = useState<OutfitDraft | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [spriteDelete, setSpriteDelete] = useState<{ assetId: string; displayName: string } | null>(null);
+  const [confirmationMotion] = useState(createMotionScope);
+  const closingConfirmation = useRef<Animation | null>(null);
+  const deleteTrigger = useRef('');
+  const cancelConfirmation = () => {
+    if (write.busy || closingConfirmation.current) return;
+    const restore = () => {
+      flushSync(() => { setConfirmDelete(false); setSpriteDelete(null); setError(''); setBusy(false); });
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        document.querySelector<HTMLElement>(`.config-sheet [data-delete-trigger="${CSS.escape(deleteTrigger.current)}"]`)?.focus({ preventScroll: true });
+      }));
+    };
+    const frame = document.querySelector<HTMLElement>('.config-sheet[data-shape="confirm"]');
+    const animation = frame && !reduced ? animateSheetExit(frame, confirmationMotion) : null;
+    if (!animation) { restore(); return; }
+    closingConfirmation.current = animation;
+    setBusy(true);
+    void animation.finished.then(() => {
+      closingConfirmation.current = null;
+      restore();
+      animation.cancel();
+    }, () => {});
+  };
+  useEffect(() => () => confirmationMotion.cancelAll(), [confirmationMotion]);
+  useEffect(() => { if (reduced) closingConfirmation.current?.finish(); }, [reduced]);
   const [scan, setScan] = useState<AppearanceScanResult | null>(null);
   const [merges, setMerges] = useState<Record<string, string>>({});
   const [renames, setRenames] = useState<Record<string, string>>({});
@@ -107,6 +143,7 @@ export function AppearancePanel({
       if (isStale(token)) return;
       setItems(result.items);
       setError('');
+      return result.items;
     } catch (e) {
       if (isStale(token)) return;
       setError(e instanceof Error ? e.message : String(e));
@@ -117,21 +154,21 @@ export function AppearancePanel({
 
   useEffect(() => {
     let active = true;
-    setItems([]); setError(''); setNotice(''); setLoading(true);
+    setItems([]); setError(''); setReadError(''); setNotice(''); setLoading(true);
     setScan(null); setMerges({}); setRenames({}); setHomePicks({}); setImportFailures({}); setImportedIds({});
     void api<{ items: Outfit[] }>(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits`).then(result => {
       if (!active) return;
       setItems(result.items);
       setLoading(false);
     }).catch(e => {
-      if (active) { setError(e instanceof Error ? e.message : String(e)); setLoading(false); }
+      if (active) { setReadError(e instanceof Error ? e.message : String(e)); setLoading(false); }
     });
     // 当前穿着用于卡片状态点；读不到时不显示状态，不影响衣柜本身。
     void api<{ state: Record<string, unknown> }>(`/v1/roles/${encodeURIComponent(roleId)}/state`).then(result => {
       if (active) setCurrentOutfitId(typeof result.state.outfitId === 'string' ? result.state.outfitId : null);
     }).catch(() => { /* 状态读取失败只是少了「当前服饰」标记。 */ });
     return () => { active = false; };
-  }, [roleId]);
+  }, [roleId, readAttempt]);
 
   const plans = useMemo<AppearanceImportPlan[]>(() => {
     if (scan === null) return [];
@@ -270,7 +307,8 @@ export function AppearancePanel({
     }
   };
 
-  const activeOutfit = sheet !== null && sheet.id.startsWith('outfit:')
+  const ownsSheet = active && Boolean(sheet?.id.startsWith('outfit:'));
+  const activeOutfit = ownsSheet && sheet
     ? items.find(item => item.outfitId === sheet.id.slice('outfit:'.length)) ?? null
     : null;
   const activePolicy = outfitWritePolicy(activeOutfit);
@@ -279,14 +317,14 @@ export function AppearancePanel({
 
   // 草稿改动同步到纸笺状态：关闭时才会出 T9 确认，页脚才会出 T8。
   useEffect(() => {
-    setDirty(dirtyCount > 0, dirtyCount);
-  }, [dirtyCount, setDirty]);
+    if (ownsSheet) { setDirty(dirtyCount > 0, dirtyCount); setBusy(write.busy); }
+  }, [ownsSheet, dirtyCount, write.busy, setBusy, setDirty]);
 
   const openOutfit = (outfit: Outfit, trigger: HTMLElement) => {
     setDraft(draftOf(outfit));
-    setConfirmDelete(false);
+    setConfirmDelete(false); setSpriteDelete(null);
     setError(''); setNotice('');
-    open({ id: `outfit:${outfit.outfitId}`, title: '编辑服饰', shape: 'full', anchor: trigger });
+    open({ id: `outfit:${outfit.outfitId}`, title: '编辑服饰', shape: 'full', anchor: trigger, focusReturn: trigger });
     onPreview?.(outfit);
   };
 
@@ -319,7 +357,6 @@ export function AppearancePanel({
     setBusy(false);
     if (!result.ok) { setError(result.failure.message); return; }
     setDirty(false);
-    announceLive(`已保存服饰「${name}」`);
     // 以服务端返回的列表为准更新卡片与草稿，避免用旧的 items 把草稿又算成脏。
     const list = await api<{ items: Outfit[] }>(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits`).catch(() => null);
     if (isStale(roleToken.current)) return;
@@ -328,16 +365,18 @@ export function AppearancePanel({
     setDraft(refreshed ? draftOf(refreshed) : { name, description });
     // 先让外层清掉旧预览，再把纸笺当前服饰设为左页预览：左页在纸笺打开期间始终显示正在编辑的那套。
     onChanged?.();
-    if (refreshed) onPreview?.(refreshed);
+    closeNow();
   };
 
   const deleteOutfit = async () => {
-    if (!activeOutfit || write.busy || !canWrite || items.length <= 1) return;
+    if (!activeOutfit || write.busy || closingConfirmation.current || !canWrite || items.length <= 1) return;
     setBusy(true);
     const removedName = activeOutfit.name;
+    const currentRemoved = activeOutfit.outfitId === currentOutfitId;
     const result = await write.runWrite({
       roleIds: [roleId],
       verb: '删除服饰',
+      announceSuccess: false,
       commit: async () => {
         await api(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits/${encodeURIComponent(activeOutfit.outfitId)}`, { method: 'DELETE' });
       },
@@ -345,10 +384,18 @@ export function AppearancePanel({
     setBusy(false);
     if (!result.ok) { setError(result.failure.message); return; }
     setConfirmDelete(false);
-    announceLive(`已删除服饰「${removedName}」`);
-    requestClose();
-    await load();
-    if (!isStale(roleToken.current)) onChanged?.();
+    closeNow(() => {
+      const token = roleToken.current;
+      const current = currentRemoved ? api<RoleStateResponse>(`/v1/roles/${encodeURIComponent(roleId)}/state`).catch(() => null) : Promise.resolve(null);
+      void Promise.all([load(token), current]).then(([wardrobe, state]) => {
+        if (isStale(token)) return;
+        const next = wardrobe?.find(item => item.outfitId === state?.state.outfitId);
+        if (next) setCurrentOutfitId(next.outfitId);
+        const text = next ? `已删除「${removedName}」，现在穿着「${next.name}」` : `已删除服饰「${removedName}」`;
+        setDeleteNotice(text); announceLive(text); onChanged?.();
+      });
+      requestAnimationFrame(() => document.querySelector<HTMLElement>('.config-leaf-body .config-prose:not([hidden]) h2')?.focus({ preventScroll: true }));
+    });
   };
 
   const uploadSprite = async (files: FileList | null) => {
@@ -394,19 +441,21 @@ export function AppearancePanel({
   };
 
   const removeSprite = async (assetId: string, displayName: string) => {
-    if (!activeOutfit || write.busy || !canWrite) return;
+    if (!activeOutfit || write.busy || closingConfirmation.current || !canWrite) return;
     setBusy(true); setError(''); setNotice('');
     const result = await write.runWrite({
       roleIds: [roleId],
       verb: '删除差分',
+      announceSuccess: false,
       commit: async () => {
         await api(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits/${encodeURIComponent(activeOutfit.outfitId)}/sprites/${encodeURIComponent(assetId)}`, { method: 'DELETE' });
       },
     });
     setBusy(false);
     if (!result.ok) { setError(result.failure.message); return; }
-    announceLive(`已删除差分「${displayName}」`);
-    setNotice('差分已删除，历史引用的素材会保留。');
+    setSpriteDelete(null);
+    const text = `已删除差分「${displayName}」，历史引用的素材已保留。`;
+    setDeleteNotice(text); announceLive(text);
     await load();
     if (!isStale(roleToken.current)) onChanged?.();
   };
@@ -419,31 +468,25 @@ export function AppearancePanel({
     return [...counts.entries()].map(([reason, count]) => `${SKIP_REASON_LABELS[reason] ?? reason} ${count}`);
   }, [scan]);
 
-  const sheetFooter = activeOutfit ? (confirmDelete
+  const confirmationTitle = confirmDelete ? '删除服饰' : spriteDelete ? '删除差分' : undefined;
+  const sheetFooter = activeOutfit ? (confirmationTitle
     ? <div className="config-sheet-actions">
       {error && <p className="config-sheet-error" role="alert">{error}</p>}
       <span className="config-sheet-spacer" />
-      <button type="button" disabled={write.busy} onClick={() => { setConfirmDelete(false); setError(''); }}>{T31.cancel}</button>
-      <Button variant="danger" busy={write.busy} disabled={write.busy || items.length <= 1} onClick={() => void deleteOutfit()}>
-        {write.busy ? T29.deleting : pausedWrite ? T31.pauseAndDelete : T31.delete}
+      <button type="button" data-sheet-focus disabled={write.busy} onClick={cancelConfirmation}>{T31.cancel}</button>
+      <Button variant="danger" busy={write.busy} disabled={write.busy || (confirmDelete && items.length <= 1)}
+        onClick={() => spriteDelete ? void removeSprite(spriteDelete.assetId, spriteDelete.displayName) : void deleteOutfit()}>
+        {write.busy ? write.phase === 'pause' ? T29.pausing : T29.deleting : error ? T29.retry('删除') : pausedWrite ? T31.pauseAndDelete : T31.delete}
       </Button>
     </div>
-    : <div className="config-sheet-actions">
-      {error && <p className="config-sheet-error" role="alert">{error}</p>}
-      {!error && notice && <p className="config-sheet-note" role="status">{notice}</p>}
-      <span className="config-sheet-spacer" />
-      <button type="button" disabled={write.busy} onClick={() => requestClose()}>{T31.cancel}</button>
-      <Button
-        disabled={write.busy || !canWrite || presetLocked || dirtyCount === 0 || !draft?.name.trim()}
-        busy={write.busy}
-        onClick={() => void saveOutfit()}
-      >{write.busy ? T29.saving : '保存'}</Button>
-    </div>) : null;
+    : <RoleSaveActions count={dirtyCount} pause={pausedWrite} busy={write.busy} invalid={!canWrite || presetLocked || !draft?.name.trim()} error={error} onSave={() => void saveOutfit()}/>) : null;
 
   return <div className="nd-appearance">
+    <ConfigNotice message={deleteNotice} onDismiss={() => setDeleteNotice('')}/>
     <input ref={folderInput} type="file" multiple {...folderAttributes} className="nd-visually-hidden" onChange={event => scanFolder(event.target.files)} />
 
-    {loading ? <LoadingNote label="正在读取衣柜…" /> : <>
+    {loading ? <div className="config-outfit-grid" aria-busy="true" aria-label="正在读取衣柜">{[0, 1, 2].map(item => <div className="config-outfit-card config-skel" key={item} aria-hidden="true"><div className="config-outfit-thumb"/><i/><i className="short"/></div>)}</div>
+      : readError ? <MediaStateRow label="衣柜" loading={false} error={readError} onRetry={() => setReadAttempt(value => value + 1)}/> : <>
       {items.length === 0 && scan === null ? <p className="config-sheet-note config-wardrobe-empty">{T36.kind('服饰')}</p> : null}
       <div className="config-outfit-grid">
         {items.map(outfit => {
@@ -470,8 +513,7 @@ export function AppearancePanel({
         })}
         <button type="button" className="config-outfit-card config-outfit-new" disabled={!canWrite || write.busy} onClick={() => folderInput.current?.click()}>
           <span className="config-outfit-thumb"><i>＋</i></span>
-          <strong>导入服饰</strong>
-          <small>选择角色素材文件夹</small>
+          <strong>新服饰</strong>
         </button>
       </div>
     </>}
@@ -531,15 +573,14 @@ export function AppearancePanel({
     {notice && scan === null ? <p className="config-sheet-note" role="status">{notice}</p> : null}
     {error && scan === null ? <p className="config-sheet-error" role="alert">{error}</p> : null}
 
-    <Sheet idPrefix="outfit:" footer={sheetFooter}>
-      {activeOutfit && draft ? (confirmDelete
+    <Sheet idPrefix="outfit:" enabled={active} footer={sheetFooter} confirmationTitle={confirmationTitle} onCancelConfirmation={confirmationTitle ? cancelConfirmation : undefined}>
+      {activeOutfit && draft ? (confirmationTitle
         ? <div className="config-sheet-groups">
           <div className="config-grp" data-sheet-group>
             <div className="config-grp-label"><b>删除</b></div>
             <div>
-              <p className="config-sheet-ask">{T31.outfit.ask(activeOutfit.name)}</p>
-              {activeOutfit.outfitId === currentOutfitId && <p className="config-sheet-note">{T31.outfit.current}</p>}
-              <button type="button" className="config-sheet-link" data-sheet-focus onClick={() => { setConfirmDelete(false); requestAnimationFrame(() => renameInput.current?.focus()); }}>返回编辑</button>
+              <p className="config-sheet-ask">{spriteDelete ? `删除「${spriteDelete.displayName}」？历史消息里引用的图仍保留。` : T31.outfit.ask(activeOutfit.name)}</p>
+              {confirmDelete && activeOutfit.outfitId === currentOutfitId && <p className="config-sheet-note">{T31.outfit.current}</p>}
             </div>
           </div>
         </div>
@@ -580,7 +621,7 @@ export function AppearancePanel({
               {activeOutfit.sprites.length > 0 && <ul className="config-sprite-list">
                 {activeOutfit.sprites.map(sprite => <li key={sprite.assetId}>
                   <button type="button" className="config-sprite-open" onClick={() => onPreviewAsset?.(sprite.assetId)}>{sprite.displayName}</button>
-                  <button type="button" disabled={write.busy || !canWrite || assetLocked(sprite)} onClick={() => void removeSprite(sprite.assetId, sprite.displayName)}>删除</button>
+                  <button type="button" data-delete-trigger={sprite.assetId} disabled={write.busy || !canWrite || assetLocked(sprite)} onClick={() => { deleteTrigger.current = sprite.assetId; setSpriteDelete(sprite); setError(''); }}>删除</button>
                 </li>)}
               </ul>}
             </div>
@@ -601,7 +642,8 @@ export function AppearancePanel({
                   variant="danger"
                   disabled={write.busy || !canWrite || items.length <= 1 || presetLocked}
                   aria-describedby={items.length <= 1 ? 'outfit-last' : undefined}
-                  onClick={() => { setConfirmDelete(true); setError(''); }}
+                  data-delete-trigger="outfit"
+                  onClick={() => { deleteTrigger.current = 'outfit'; setConfirmDelete(true); setError(''); }}
                 >删除服饰…</Button>
                 {items.length <= 1 && <span className="config-sheet-note" id="outfit-last">{T27}</span>}
               </div>

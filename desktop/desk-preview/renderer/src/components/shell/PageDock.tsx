@@ -234,6 +234,7 @@ export function PageDock({ page, onNavigate }: { page: string; onNavigate: (page
       <span className="ui-dock-surface" aria-hidden="true" />
     </ControlButton>)}
     <MoreMenu label="更多" currentLabel={direct ? undefined : [...PAGES, ...ALL_PAGES].find(item => item.id === page)?.title}
+      selectedPage={ALL_PAGES.some(item => item.id === page) ? page : undefined}
       onNavigate={onNavigate} triggerIcon="more" triggerLayout="stacked" triggerClassName="ui-dock-more"
       triggerRef={moreRef} triggerDecoration={<span className="ui-dock-surface" aria-hidden="true" />} />
   </nav>;

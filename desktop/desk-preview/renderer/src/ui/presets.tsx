@@ -9,10 +9,11 @@ export type ThemePreset = 'daylight' | 'nightwave';
 const STORAGE_KEY = 'nowadays.theme-preset.v1';
 type PresetContextValue = {
   preset: ThemePreset;
+  requestedPreset: ThemePreset;
   select: (preset: ThemePreset) => void;
   registerTransitionStrategy: (strategy: ThemeTransitionStrategy) => () => void;
 };
-const PresetContext = createContext<PresetContextValue>({ preset: 'daylight', select() {}, registerTransitionStrategy: () => () => {} });
+const PresetContext = createContext<PresetContextValue>({ preset: 'daylight', requestedPreset: 'daylight', select() {}, registerTransitionStrategy: () => () => {} });
 
 /** 只保存本机外观偏好，不写账号配置，不发送业务请求。 */
 export function readThemePreset(): ThemePreset {
@@ -22,6 +23,7 @@ export function readThemePreset(): ThemePreset {
 
 export function ThemePresetProvider({ children }: { children: ReactNode }) {
   const [preset, setPreset] = useState<ThemePreset>(readThemePreset);
+  const [requestedPreset, setRequestedPreset] = useState(preset);
   const [weather, setWeather] = useState<ThemePreset>();
   const transition = useRef<ReturnType<typeof createThemeTransition> | undefined>(undefined);
   const strategy = useRef<ThemeTransitionStrategy | undefined>(undefined);
@@ -39,7 +41,10 @@ export function ThemePresetProvider({ children }: { children: ReactNode }) {
     transition.current = controller;
     return () => { controller.dispose(); transition.current = undefined; };
   }, []);
-  const select = useCallback((next: ThemePreset) => transition.current?.select(next), []);
+  const select = useCallback((next: ThemePreset) => {
+    setRequestedPreset(next);
+    transition.current?.select(next);
+  }, []);
   const registerTransitionStrategy = useCallback((next: ThemeTransitionStrategy) => {
     strategy.current = next;
     transition.current?.setStrategy(next);
@@ -49,7 +54,7 @@ export function ThemePresetProvider({ children }: { children: ReactNode }) {
       transition.current?.setStrategy(undefined);
     };
   }, []);
-  return <PresetContext.Provider value={{ preset, select, registerTransitionStrategy }}><UiThemeProvider theme="xiacheng" preset={preset}>{children}{weather && <ThemeWeather preset={weather}/>}</UiThemeProvider></PresetContext.Provider>;
+  return <PresetContext.Provider value={{ preset, requestedPreset, select, registerTransitionStrategy }}><UiThemeProvider theme="xiacheng" preset={preset}>{children}{weather && <ThemeWeather preset={weather}/>}</UiThemeProvider></PresetContext.Provider>;
 }
 
 export function useThemePreset() { return useContext(PresetContext); }

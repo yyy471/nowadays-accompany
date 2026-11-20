@@ -835,22 +835,16 @@ test("global voice services support CRUD, probe, global write guard, role bindin
     assert.equal(fake.calls.at(-1)!.engine, "indextts");
     assert.ok((capturedEngineHints[0] ?? "").includes("IndexTTS"));
 
-    // 4. 活跃角色未停止时修改全局语音服务被 GLOBAL_CONFIG_WRITES 拦截 (409 ROLES_NOT_STOPPED)
-    const blockedPatch = await fetch(`${rootUrl}/voice-services/${svc.serviceId}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ enabled: false }),
-    });
-    assert.equal(blockedPatch.status, 409);
-    assert.equal(((await blockedPatch.json()) as { error: { code: string } }).error.code, "ROLES_NOT_STOPPED");
-
-    // 通过 configFetch 停机后停用全局服务 -> 角色试听、保存和语音合成均一并拒绝 409 VOICE_SERVICE_DISABLED
-    const disabledPatch = await configFetch(`${rootUrl}/voice-services/${svc.serviceId}`, {
+    // 4. 停用全局语音服务只暂停依赖角色，响应回带本次暂停名单。
+    const disabledPatch = await fetch(`${rootUrl}/voice-services/${svc.serviceId}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ enabled: false }),
     });
     assert.equal(disabledPatch.status, 200);
+    const maintenance = (await disabledPatch.json()) as { maintenance: { pausedRoleIds: string[] } };
+    assert.deepEqual(maintenance.maintenance.pausedRoleIds, [fixture.roleId]);
+    fixture.app.services.activity.resume(fixture.roleId);
 
     const previewDisabled = await configFetch(`${base}/voice/preview`, {
       method: "POST",
@@ -871,10 +865,14 @@ test("global voice services support CRUD, probe, global write guard, role bindin
         serviceId: svc.serviceId,
         voiceSource: { kind: "preset", voiceId: "cosy:v1" },
         capabilities: BASE_CAPABILITIES,
+        speed: 1.1,
       }),
     });
-    assert.equal(saveDisabled.status, 409);
-    assert.equal(((await saveDisabled.json()) as { error: { code: string } }).error.code, "VOICE_SERVICE_DISABLED");
+    assert.equal(saveDisabled.status, 200);
+    const keptVoice = ((await saveDisabled.json()) as { voice: { serviceId: string; service: { enabled: boolean }; speed: number } }).voice;
+    assert.equal(keptVoice.serviceId, svc.serviceId);
+    assert.equal(keptVoice.service.enabled, false);
+    assert.equal(keptVoice.speed, 1.1);
 
     // 重新启用并切全局 defaultEngine -> cosyvoice
     const reEnabled = await configFetch(`${rootUrl}/voice-services/${svc.serviceId}`, {
@@ -934,8 +932,10 @@ test("global voice services support CRUD, probe, global write guard, role bindin
     assert.equal(fake.calls.at(-1)!.engine, "cosyvoice");
 
     // 6. 删除全局语音服务：角色读视图返回 service: null，播放/保存返回 404 VOICE_SERVICE_NOT_FOUND
+    fixture.app.services.activity.requestStop(fixture.roleId);
     const deletedRes = await configFetch(`${rootUrl}/voice-services/${svc.serviceId}`, { method: "DELETE" });
     assert.equal(deletedRes.status, 200);
+    fixture.app.services.activity.resume(fixture.roleId);
     const readAfterDelete = await (await fetch(`${base}/voice`)).json() as { voice: { serviceId: string; service: unknown } };
     assert.equal(readAfterDelete.voice.serviceId, svc.serviceId);
     assert.equal(readAfterDelete.voice.service, null);

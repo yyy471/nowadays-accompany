@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { resolveElectronExecutable } = require('./electron-executable.cjs');
+const { button, configControls, editor, element, setValue, sheet } = require('./config-page-controls.cjs');
 const root = path.resolve(__dirname, '../../..');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'nowadays-ui-real-'));
 const node = process.execPath;
@@ -16,6 +17,7 @@ let backend, electron, ws, backendLog = '', electronLog = '', nextId = 0, base =
 const waiting = new Map(), errors = [];
 function cmd(method, params = {}) { return new Promise((resolve, reject) => { const id = ++nextId; waiting.set(id, { resolve, reject }); ws.send(JSON.stringify({ id, method, params })); }); }
 async function ev(expression) { const result = await cmd('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }); if (result.exceptionDetails) throw Error(JSON.stringify(result.exceptionDetails)); return result.result.value; }
+const { click, pickRole, tab, openRoleRow, openSheet } = configControls(ev, until);
 async function request(route, options = {}) { const response = await fetch(base + route, options); const body = await response.json(); if (!response.ok) throw Error(`${response.status}: ${JSON.stringify(body)}`); return body; }
 const json = body => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 async function run() {
@@ -47,47 +49,40 @@ async function run() {
   const debugPort = await until(() => /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)/.exec(electronLog)?.[1]);
   const target = await until(async () => (await (await fetch(`http://127.0.0.1:${debugPort}/json/list`)).json()).find(item => item.url.startsWith('desk://bundle/')));
   ws = new WebSocket(target.webSocketDebuggerUrl); await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
-  ws.onmessage = ({ data }) => { const message = JSON.parse(data); if (message.id) { const job = waiting.get(message.id); waiting.delete(message.id); message.error ? job?.reject(message.error) : job?.resolve(message.result); } else if (message.method === 'Runtime.exceptionThrown') errors.push(message.params.exceptionDetails.text); };
+  ws.onmessage = ({ data }) => { const message = JSON.parse(data); if (message.id) { const job = waiting.get(message.id); waiting.delete(message.id); message.error ? job?.reject(message.error) : job?.resolve(message.result); } else if (message.method === 'Runtime.exceptionThrown') errors.push(message.params.exceptionDetails.exception?.description || message.params.exceptionDetails.text); };
   await cmd('Runtime.enable'); await cmd('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
   await until(() => ev("!!document.querySelector('.ui-menu-trigger')")); await ev("document.querySelector('.ui-menu-trigger').click()");
   await until(() => ev("[...document.querySelectorAll('.ui-menu-item')].some(x=>x.textContent.includes('角色配置'))")); await ev("[...document.querySelectorAll('.ui-menu-item')].find(x=>x.textContent.includes('角色配置')).click()");
   // 启动即存在内置助手夏澄，默认编辑对象可能不是联调甲；显式切到联调甲再继续。
-  await until(() => ev("!!document.querySelector('.config-switch-role')"));
-  await ev("document.querySelector('.config-switch-role').click()");
-  await until(() => ev("[...document.querySelectorAll('.config-poster-hit')].some(x=>x.textContent.includes('联调甲'))"));
-  await ev("[...document.querySelectorAll('.config-poster-hit')].find(x=>x.textContent.includes('联调甲')).click()");
+  const profileInput = element(`${editor} textarea[aria-label="角色设定"]`);
+  await until(() => ev(`!!${profileInput}?.value`));
+  await pickRole(a.roleId);
   await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='联调甲'"));
-  const editor = '.config-role-editor:not([hidden])';
-  const button = (label, root = editor) => `[...document.querySelectorAll(${JSON.stringify(root + ' button')})].find(x=>x.textContent===${JSON.stringify(label)})`;
-  const tab = async (label) => ev(`[...document.querySelectorAll('.config-tabs button')].find(x=>x.textContent.includes(${JSON.stringify(label)})).click()`);
-  const enter = async () => {
-    const params = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 };
-    await cmd('Input.dispatchKeyEvent', { ...params, type: 'keyDown' });
-    await cmd('Input.dispatchKeyEvent', { ...params, type: 'keyUp' });
-  };
-  async function cancelFocus(trigger, prompt) {
-    await until(() => ev(`!!${button(trigger)} && !${button(trigger)}.disabled`));
-    await ev(`${button(trigger)}.focus();${button(trigger)}.click()`);
-    await until(() => ev(`!!document.querySelector(${JSON.stringify(prompt)})`));
-    await ev(`${button('取消', prompt)}.focus()`);
-    assert.equal(await ev(`document.activeElement === ${button('取消', prompt)}`), true);
-    await ev(`${button('取消', prompt)}.click()`);
-    await until(() => ev(`!document.querySelector(${JSON.stringify(prompt)})`));
-    await until(() => ev(`document.activeElement === ${button(trigger)}`));
-    return ev(`({ activeTag: document.activeElement?.tagName, triggerFocused: document.activeElement === ${button(trigger)} })`);
-  }
-  const roleFocus = await cancelFocus('删除角色', '.config-delete-options');
-  await tab('外观');
-  await until(() => ev(`!!document.querySelector(${JSON.stringify(editor + ' .nd-outfit-card')})`));
-  await ev(`document.querySelector(${JSON.stringify(editor + ' .nd-outfit-card')}).click()`);
-  await until(() => ev(`!!document.querySelector(${JSON.stringify(editor + ' .nd-outfit-manage')})`));
-  const outfitFocus = await cancelFocus('删除服饰', '.nd-outfit-confirm');
-  const spriteFocus = await cancelFocus('删除差分', '.nd-outfit-confirm');
-  console.log('DELETE_CANCEL_FOCUS', JSON.stringify({ roleFocus, outfitFocus, spriteFocus }));
 
+  const sheetActions = sheet + ' .config-sheet-actions';
+  async function cancelFocus(trigger, confirmation) {
+    await until(() => ev(`!!${trigger} && !${trigger}.disabled`));
+    await ev(`${trigger}.focus();${trigger}.click()`);
+    const cancel = button('取消', sheetActions);
+    await until(() => ev(`${element(sheet)}?.innerText.includes(${JSON.stringify(confirmation)})`));
+    await until(() => ev(`document.activeElement === ${cancel}`));
+    await click(cancel);
+    await until(() => ev(`document.activeElement === ${trigger}`));
+    return ev(`({ activeTag: document.activeElement?.tagName, triggerFocused: document.activeElement === ${trigger} })`);
+  }
+  const roleFocus = await cancelFocus(button('删除角色', editor), '保留本机数据');
+  await tab('外观');
+  await click(element(`${editor} .config-outfit-card[aria-label="编辑服饰：春装"]`));
+  await until(() => ev(`${element(sheet + ' input[data-sheet-focus]')}?.value==='春装'`));
+  const outfitFocus = await cancelFocus(button('删除服饰…', sheet), '衣柜里不再显示');
+  const spriteFocus = await cancelFocus(button('删除', sheet + ' .config-sprite-list'), '删除差分');
+  console.log('DELETE_CANCEL_FOCUS', JSON.stringify({ roleFocus, outfitFocus, spriteFocus }));
+  const modelInput = sheet + ' input[role=combobox]';
+  const sheetSave = `[...document.querySelectorAll('${sheetActions} button')].find(button=>/^(?:重试)?保存(?: *[0-9]+)?$/.test(button.textContent.trim()))`;
+  const retry = button('重试读取绑定', sheet);
   await tab('模型');
-  const modelInput = editor + ' .config-model-details:not([hidden]) input[type=text]';
-  await until(() => ev(`document.querySelector(${JSON.stringify(modelInput)})?.value === 'saved-model'`));
+  await openRoleRow('model:chat');
+  await until(() => ev(`${element(modelInput)}?.value==='saved-model'`));
   await ev(`(() => {
     window.reviewBindingWrites=[];
     const original=window.fetch;
@@ -110,12 +105,16 @@ async function run() {
       { capability: 'mcp', resourceId: mcp.resourceId, enabled: true },
     ],
   }));
-  await ev(`${button('保存模型选择')}.click()`);
-  await until(() => ev("window.reviewBindingWrites.length===2 && document.querySelector('.config-role-editor:not([hidden])')?.innerText.includes('已与最新绑定自动合并并保存')"));
+  await click(sheetSave);
+  await until(() => ev("window.reviewBindingWrites.length===2"));
   const afterAutoModel = await request(bindingPath);
   assert.deepEqual(await ev('window.reviewBindingWrites.slice(0,2).map(item=>item.status)'), [409, 200]);
   assert.equal(afterAutoModel.items.find(item => item.capability === 'chat_model')?.modelName, 'unsaved-model');
   assert.equal(afterAutoModel.items.find(item => item.capability === 'mcp')?.enabled, true);
+
+  await until(() => ev(`!${element(sheet)}`));
+  await openRoleRow('model:chat');
+  await until(() => ev(`${element(modelInput)}?.value==='unsaved-model'`));
 
   // 2) 同用途重叠冲突：页面修改模型为 local-conflict-model，同时服务端也把 chat_model 改成 server-conflict-model；
   // 应阻断自动重提并要求点击「重试读取绑定」（先注入一次 503，再二次读取成功且保留用户草稿），随后保存成功。
@@ -127,9 +126,9 @@ async function run() {
       { capability: 'mcp', resourceId: mcp.resourceId, enabled: true },
     ],
   }));
-  await ev(`${button('保存模型选择')}.click()`);
-  await until(() => ev(`window.reviewBindingWrites.length===3 && !!${button('重试读取绑定')}`));
-  assert.equal(await ev(`${button('保存模型选择')}.disabled`), true, '同用途冲突后不能重复提交旧版本');
+  await click(sheetSave);
+  await until(() => ev(`window.reviewBindingWrites.length===3 && !!${retry}`));
+  assert.equal(await ev(`${sheetSave}.disabled`), true, '同用途冲突后不能重复提交旧版本');
   assert.equal(await ev(`document.querySelector(${JSON.stringify(modelInput)}).value`), 'local-conflict-model');
   await ev(`(() => {
     const original=window.fetch; window.reviewBindingReadFailed=false;
@@ -141,13 +140,13 @@ async function run() {
       return original.call(this,input,options);
     };
   })()`);
-  await ev(`${button('重试读取绑定')}.click()`);
-  await until(() => ev(`window.reviewBindingReadFailed && !!${button('重试读取绑定')} && !${button('重试读取绑定')}.disabled`));
-  assert.equal(await ev(`${button('保存模型选择')}.disabled`), true, '重读失败后仍不能提交');
-  await ev(`${button('重试读取绑定')}.click()`);
-  await until(() => ev(`!!${button('保存模型选择')} && !${button('保存模型选择')}.disabled`));
+  await ev(`${retry}.click()`);
+  await until(() => ev(`window.reviewBindingReadFailed && !!${retry} && !${retry}.disabled`));
+  assert.equal(await ev(`${sheetSave}.disabled`), true, '重读失败后仍不能提交');
+  await ev(`${retry}.click()`);
+  await until(() => ev(`!!${sheetSave} && !${sheetSave}.disabled`));
   assert.equal(await ev(`document.querySelector(${JSON.stringify(modelInput)}).value`), 'local-conflict-model');
-  await ev(`${button('保存模型选择')}.click()`);
+  await click(sheetSave);
   await until(() => ev('window.reviewBindingWrites.length===4'));
   const writes = await ev('window.reviewBindingWrites');
   const bindingAfter = await request(bindingPath);
@@ -158,24 +157,38 @@ async function run() {
   console.log('BINDING_CONFLICT', JSON.stringify({ writes: writes.map(item => item.status), autoMergedModel: true, overlapConflictRecovered: true, latestMcpPreserved: true, readRetry: true }));
 
   // 3) 扩展非重叠冲突：扩展取消勾选 mcp，同时服务端把 chat_model 改成 external-model；应自动合并保留 external-model 并关闭 mcp（[409, 200]）。
+  await until(() => ev(`!${element(sheet)}`));
   await tab('扩展');
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .config-prose:not([hidden]) input[type=checkbox]')?.checked"));
-  await ev("document.querySelector('.config-role-editor:not([hidden]) .config-prose:not([hidden]) input[type=checkbox]').click()");
+  await openRoleRow('ext:mcp');
+  const extensionSwitch = element(`${sheet} [role=switch][aria-label="为角色开启复核扩展"]`);
+  await until(() => ev(`${extensionSwitch}?.getAttribute('aria-checked')==='true' || ${extensionSwitch}?.checked`));
+  await click(extensionSwitch);
   const beforeExt = await request(bindingPath);
   await request(bindingPath, put({ expectedRevision: beforeExt.revision, bindings: [
     { capability: 'chat_model', resourceId: model.resourceId, modelName: 'external-model', enabled: true },
     { capability: 'mcp', resourceId: mcp.resourceId, enabled: true },
   ] }));
-  await ev(`${button('保存扩展')}.click()`);
-  await until(() => ev("window.reviewBindingWrites.length===6 && document.querySelector('.config-role-editor:not([hidden])')?.innerText.includes('已与最新绑定自动合并并保存')"));
+  await click(sheetSave);
+  await until(() => ev("window.reviewBindingWrites.length===6"));
   const finalBinding = await request(bindingPath);
   assert.deepEqual(await ev('window.reviewBindingWrites.slice(4,6).map(item=>item.status)'), [409, 200]);
   assert.equal(finalBinding.items.find(item => item.capability === 'chat_model')?.modelName, 'external-model');
   assert.equal(finalBinding.items.find(item => item.capability === 'mcp')?.enabled, false);
+  await until(() => ev(`!${element(sheet)}`));
   await tab('模型');
-  assert.equal(await ev(`document.querySelector(${JSON.stringify(modelInput)}).value`), 'external-model');
+  await openRoleRow('model:chat');
+  assert.equal(await ev(`${element(modelInput)}.value`), 'external-model');
 
   await tab('设定');
+  await ev(setValue(profileInput, '更新后的联调角色甲'));
+  const profileSave = `[...document.querySelectorAll('.config-leaf-foot button')].find(button=>/^保存(?: *[0-9]+)?$/.test(button.textContent.trim()))`;
+  await click(profileSave);
+  await until(async () => (await request(`/v1/roles/${a.roleId}`)).definitionRevision > 1);
+  await until(() => ev(`!${profileSave}`));
+
+  // v6 写入期间禁止再提交删除。从服饰保存触发独立的列表刷新，让旧响应跨过角色删除。
+  await tab('外观');
+  await openSheet(element(`${editor} .config-outfit-card[aria-label="编辑服饰：春装"]`), '编辑服饰');
   await ev(`(() => {
     const original=window.fetch;
     window.reviewRoleRefreshFailed=false;
@@ -192,16 +205,15 @@ async function run() {
       return original.call(this,input,options);
     };
   })()`);
-  await until(() => ev("[...document.querySelectorAll('.config-leaf-foot button')].some(x=>x.textContent==='保存设定'&&!x.disabled)"));
-  await ev("[...document.querySelectorAll('.config-leaf-foot button')].find(x=>x.textContent==='保存设定').click()");
-  try { await until(() => ev("typeof window.reviewReleaseOldRoles === 'function'")); }
-  catch (error) { console.error('PROFILE_SAVE_STATE', await ev("document.querySelector('.config-role-editor:not([hidden])')?.innerText")); throw error; }
-  assert.ok((await request(`/v1/roles/${a.roleId}`)).definitionRevision > 1, '真实设定保存应更新版本');
-  assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden])').innerText.includes('角色设定已保存')"), true);
+  await ev(setValue(element(sheet + ' input[data-sheet-focus]'), '春装复核'));
+  await click(sheetSave);
+  await until(() => ev("typeof window.reviewReleaseOldRoles === 'function'"));
+  await until(() => ev(`!${element(sheet)}`));
+  await tab('设定');
   const rolesBeforeDelete = (await request('/v1/roles')).items.length;
-  await ev(`${button('删除角色')}.click()`);
-  await ev("document.querySelector('.config-delete-options input[type=radio]').click()");
-  await ev(`${button('确认删除', '.config-delete-options')}.click()`);
+  await openSheet(button('删除角色', editor), '删除角色');
+  await click(element(`${sheet} input[name=role-delete]:checked`));
+  await click(button('删除', sheetActions));
   // 启动即存在内置助手夏澄；按删除前后相对数量判断，不写死绝对数。
   const rolesAfter = await until(async () => { const result = await request('/v1/roles'); return result.items.length === rolesBeforeDelete - 1 ? result.items : null; });
   await until(() => ev('window.reviewRoleRefreshFailed && !!document.querySelector(".config-delete-notice")'));

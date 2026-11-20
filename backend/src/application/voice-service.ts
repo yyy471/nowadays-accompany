@@ -55,7 +55,10 @@ const MAX_UNIFIED_SPEED = 10;
 const DEFAULT_EMO_ALPHA = 1;
 const DEFAULT_PROBE_TIMEOUT_MS = 10_000;
 
+import type { MediaMaintenance } from './media-maintenance.js';
+
 export interface VoiceServiceOptions {
+  mediaMaintenance?: MediaMaintenance;
   now?: () => Date;
   timeoutMs?: number;
   probeTimeoutMs?: number;
@@ -158,6 +161,7 @@ export class VoiceService {
   private readonly timeoutMs: number;
   private readonly probeTimeoutMs: number;
   private readonly voiceServices: GlobalVoiceService | null;
+  private readonly mediaMaintenance: MediaMaintenance | undefined;
   private awaitMessageAnnotation?: VoiceServiceOptions["awaitMessageAnnotation"];
 
   constructor(
@@ -168,6 +172,7 @@ export class VoiceService {
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TTS_TIMEOUT_MS;
     this.probeTimeoutMs = options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
     this.voiceServices = options.voiceServices ?? null;
+    this.mediaMaintenance = options.mediaMaintenance;
     this.awaitMessageAnnotation = options.awaitMessageAnnotation;
   }
 
@@ -202,6 +207,9 @@ export class VoiceService {
   setEnabled(roleId: string, enabled: boolean): { voice: VoiceConfigView } {
     return this.roleAccess.withStore(roleId, (storage) => {
       const store = new VoiceStore(storage.business.db, roleId);
+      const existingServiceId = store.getSettings()?.serviceId;
+      this.mediaMaintenance?.assertAvailable('voice', existingServiceId);
+      if (enabled && existingServiceId) lookupGlobalVoiceService(existingServiceId, this.voiceServices);
       const settings = store.setEnabled(enabled, this.now().toISOString());
       if (settings === null) {
         throw new AppError(
@@ -235,6 +243,8 @@ export class VoiceService {
       const existing = store.getSettings();
       const target = resolveSaveTarget(input, existing, this.voiceServices);
       const { serviceId, linkedService, protocol, baseUrl } = target;
+      this.mediaMaintenance?.assertAvailable('voice', existing?.serviceId);
+      this.mediaMaintenance?.assertAvailable('voice', serviceId);
       const serviceChanged =
         existing !== null &&
         ((serviceId !== null &&
@@ -527,9 +537,13 @@ export class VoiceService {
           temporaryAudio,
         ),
     );
+    const serviceId = input.serviceId !== undefined ? input.serviceId : input.baseUrl !== undefined ? null : this.getVoice(roleId).voice?.serviceId;
+    let release: (() => void) | undefined;
     try {
+      release = this.mediaMaintenance?.claim('voice', serviceId, roleId);
       return await this.synthesize(resolved, text, signal, input.emotion);
     } finally {
+      release?.();
       if (tempDir !== undefined) {
         fs.rmSync(tempDir, { recursive: true, force: true });
       }
@@ -543,27 +557,20 @@ export class VoiceService {
     signal?: AbortSignal,
     emotion?: string,
   ): Promise<SynthesizedAudio> {
-    const first = this.resolveSegmentSpeech(roleId, windowId, segmentId, emotion);
-    if (first.waitForAnnotation && this.awaitMessageAnnotation !== undefined) {
-      await this.awaitMessageAnnotation(
-        first.messageId,
-        DEFAULT_ANNOTATION_WAIT_MS,
-        signal,
-      );
-      const settled = this.resolveSegmentSpeech(
-        roleId,
-        windowId,
-        segmentId,
-        emotion,
-      );
-      return this.synthesize(
-        settled.resolved,
-        settled.text,
-        signal,
-        settled.emotion,
-      );
-    }
-    return this.synthesize(first.resolved, first.text, signal, first.emotion);
+    const serviceId = this.getVoice(roleId).voice?.serviceId;
+    const release = this.mediaMaintenance?.claim('voice', serviceId, roleId);
+    let releaseNext: (() => void) | undefined;
+    try {
+      const first = this.resolveSegmentSpeech(roleId, windowId, segmentId, emotion);
+      if (first.waitForAnnotation && this.awaitMessageAnnotation !== undefined) {
+        await this.awaitMessageAnnotation(first.messageId, DEFAULT_ANNOTATION_WAIT_MS, signal);
+        const nextId = this.getVoice(roleId).voice?.serviceId;
+        if (nextId !== serviceId) releaseNext = this.mediaMaintenance?.claim('voice', nextId, roleId);
+        const settled = this.resolveSegmentSpeech(roleId, windowId, segmentId, emotion);
+        return await this.synthesize(settled.resolved, settled.text, signal, settled.emotion);
+      }
+      return await this.synthesize(first.resolved, first.text, signal, first.emotion);
+    } finally { releaseNext?.(); release?.(); }
   }
 
   private resolveSegmentSpeech(
@@ -1366,12 +1373,13 @@ interface ResolvedVoiceTarget {
 function lookupGlobalVoiceService(
   serviceId: string,
   voiceServices: GlobalVoiceService | null,
+  allowDisabled = false,
 ): VoiceServiceRecord {
   const service = voiceServices?.findRecord(serviceId) ?? null;
   if (service === null) {
     throw new VoiceServiceNotFoundError(serviceId);
   }
-  if (!service.enabled) {
+  if (!service.enabled && !allowDisabled) {
     throw new VoiceServiceDisabledError(serviceId);
   }
   return service;
@@ -1383,7 +1391,8 @@ function resolveSaveTarget(
   voiceServices: GlobalVoiceService | null,
 ): ResolvedVoiceTarget {
   if (input.serviceId !== undefined && input.serviceId !== null) {
-    const service = lookupGlobalVoiceService(input.serviceId, voiceServices);
+    // 允许保存同一角色在这个停用服务下的音色与表现，运行时仍拒绝停用服务。
+    const service = lookupGlobalVoiceService(input.serviceId, voiceServices, existing?.serviceId === input.serviceId);
     return {
       serviceId: service.serviceId,
       linkedService: service,

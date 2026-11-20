@@ -90,7 +90,7 @@
 
 ### 4.2 层级（`--nd-semantic-layer-*`）
 
-`base 0 → scene 1 → shell 10 → popover 20 → modal 1000 → nested-modal 1010 → notice 1020 → tooltip 1030`。`z-index` 只用这些令牌，不写裸数字。
+`base 0 → scene 1 → shell 10 → popover 20 → sheet 60 → modal 1000 → nested-modal 1010 → notice 1020 → tooltip 1030 → theme-transition 2000`。`z-index` 只用层级令牌。纸笺与主题副本分别使用 `--nd-semantic-layer-sheet`、`--nd-semantic-layer-theme-transition`。
 
 ## 5. 颜色
 
@@ -98,6 +98,7 @@
 - **昼夜规则**
   - 昼夜由 `data-ui-preset="daylight|nightwave"` 切换，所有语义色在两个预置下各有取值；页面不要用 `@media (prefers-color-scheme)` 或自己的 `.dark` 类。
   - **图片不随主题重新着色**：立绘、角色图、场景图不加 `filter`/`mix-blend-mode` 去适配昼夜；只调整它们周围的纸、边框、阴影。品牌符号按预置选 `fold-light.svg` / `fold-dark.svg`（`BrandMark`），这是换图，不是着色。
+  - 设置页角色状态卡按活动状态处理立绘。后端确认已停止后，以 220ms 转为灰度，进入恢复中时以 220ms 恢复色彩。减少动效时直接切换。日夜切换期间，活动卡和停止卡各自保留原有画框内部像素。
   - **切换结束时不闪**：昼夜切换由 `ui/theme-transition.ts` 的视图过渡完成，结束帧必须与新主题静止帧一致。不要给根节点或页面容器加只在过渡里存在的背景，不要在切换结束后再追加一次颜色过渡。
   - 页面内部自带局部昼夜（如藏书票的 `data-theme`）时，局部色与全局预置要成对翻转，不能只改一半。
 - **减少动效 = 瞬时**：见 6.5。
@@ -181,6 +182,7 @@
 | 悬停 | 卡片/纸签：**不改颜色**，阴影从 `shadow-rest` 加深到 `shadow-hover` 并抬起 1–2px；离开用退出档 + `ease-in`。现有 `Button` 等控件悬停变底色，沿用现状。只在有悬停能力的设备生效（`@media (hover: hover)`） | 进入 `micro` + `ease-out`，离开 `micro-exit` + `ease-in` |
 | 按下 | 现有控件向下压 1px（`translateY`，`--nd-semantic-motion-detail-press-offset`），主按钮的深色底边收窄；新的卡片/按钮可用 `scale(0.98)` 轻压，松开回到 1，只压不弹；不放大 | `micro` 档 |
 | 键盘焦点 | **只在 `:focus-visible` 显示**：`outline: var(--nd-component-focus-width) solid var(--nd-component-focus-color); outline-offset: var(--nd-component-focus-offset)`（2px 实线、偏移 2px）；需要更醒目时再叠 `box-shadow: var(--nd-component-focus-halo)` | 强制颜色模式下改用 `Highlight` |
+| 配置书文本框及下拉框 | 常态使用 `input-border`、`input-radius`、`input-background` 组件令牌。聚焦时使用 `focus-color` 与 `focus-halo`，键盘焦点环偏移 −1px，与控件边框重合。 | v6 开发规范 §6.5，其他控件沿用通用焦点环 |
 | 禁用 | 底色 `color-disabled-surface`、文字 `color-disabled-text`、`cursor: not-allowed`，**不用降低 opacity** 表示禁用；`aria-disabled` 与 `disabled` 同样处理 | |
 | 忙碌 | 保留可聚焦，`aria-busy`；按钮宽度不抖动（`Button` 已锁最小宽度），重复触发被拦截 | `Button busy`、`Switch busy` |
 | 选中 | `color-selection` 底；菜单/导航用 `--nd-component-menu-selected-background`、`--nd-component-dock-selected-*` | |
@@ -208,6 +210,8 @@
 | `ConfirmProvider` + `useConfirm()` | `confirm.tsx` | 异步并发排队的确认对话框，必须在 `ConfirmProvider` 内 |
 | `Card` / `Empty` / `ErrorNote` / `StatePill` / `Tag` | `foundation.tsx` | 卡片、空态、错误提醒（`role="alert"`）、实例状态胶囊与标签 |
 | `AsyncBoundary` / `LoadingNote` | `async-state.tsx` | 只有「成功且确认无数据」才显示空态；有旧数据时错误显示在内容上方 |
+| `StatusDot` | `status-dot.tsx` | 配置书共用的 7px 状态点。正常摘要用 `bare` 保留读屏名称与悬停说明，停用、未保存或错误时配可见文字。 |
+| `LiveAnnouncer` / `announceLive` | `live-announcer.tsx` | 配置工作区常驻一个礼貌播报区。保存、删除、恢复、连接测试和昼夜切换落定后播报结果。 |
 | `Icon` | `icons.tsx` | 描边 1.7、`currentColor`；图标不够用先补进 `icons.tsx` 的 `IconName`，不要内联 SVG |
 | `BrandMark` | `brand-mark.tsx` | 折信符号，按预置选亮/暗图，34×36 |
 | `UiThemeScope` / `UiThemeProvider` | `appearance.tsx` | 作用域节点（`data-ui-theme`、`data-motion`、`data-ui-preset`）；`reduced` 为不可解除的下限 |

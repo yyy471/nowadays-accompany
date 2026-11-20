@@ -159,6 +159,21 @@ export function useImageProbe(key: string, options: ImageProbeOptions = {}) {
     setNotice(null);
   }, []);
 
+  /** 更换被测试的模型时保留同一个端点的候选列表。 */
+  const invalidateTest = useCallback(() => {
+    testGeneration.current += 1;
+    setTestBusy(false);
+    setNotice(previous => previous?.source === 'test' ? null : previous);
+  }, []);
+
+  const cancelPending = useCallback(() => {
+    listGeneration.current += 1;
+    testGeneration.current += 1;
+    setListBusy(false);
+    setTestBusy(false);
+    clearLog();
+  }, [clearLog]);
+
   const reset = useCallback(() => {
     listGeneration.current += 1;
     testGeneration.current += 1;
@@ -292,6 +307,8 @@ export function useImageProbe(key: string, options: ImageProbeOptions = {}) {
     refresh,
     test,
     clearLog,
+    cancelPending,
+    invalidateTest,
     reset,
   };
 }

@@ -1,6 +1,6 @@
 "use strict";
 
-const { app, BrowserWindow, Menu, Tray, net, protocol } = require("electron");
+const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, net, protocol } = require("electron");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const { join, resolve } = require("node:path");
@@ -226,15 +226,47 @@ async function startDesk() {
     show: false,
     backgroundColor: "#1b1e2b",
     titleBarStyle: "default",
-    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true }
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, preload: join(__dirname, "settings-preload.cjs") }
+  });
+  ipcMain.handle("settings:choose-skill-directory", async (event) => {
+    if (!window || window.isDestroyed() || event.sender !== window.webContents ||
+        event.senderFrame !== window.webContents.mainFrame || event.senderFrame.url !== home) {
+      throw new Error("SETTINGS_DIRECTORY_PICKER_DENIED");
+    }
+    const result = await dialog.showOpenDialog(window, { properties: ["openDirectory"] });
+    return result.canceled ? null : result.filePaths[0] ?? null;
   });
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event) => event.preventDefault());
+  window.webContents.on("will-prevent-unload", (event) => {
+    const choice = dialog.showMessageBoxSync(window, {
+      type: "warning", message: "配置有改动未保存。要放弃修改并离开吗？",
+      buttons: ["继续编辑", "放弃修改"], defaultId: 0, cancelId: 0, noLink: true
+    });
+    if (choice === 1) event.preventDefault();
+    else quitting = false;
+  });
   window.once("ready-to-show", revealDesk);
+  let checkingTrayHide = false;
   window.on("close", (event) => {
     if (!quitting && tray) {
       event.preventDefault();
-      window.hide();
+      if (checkingTrayHide) return;
+      checkingTrayHide = true;
+      void window.webContents.executeJavaScript('window.dispatchEvent(new Event("nowadays:before-tray-hide", {cancelable:true}))')
+        .then(async canHide => {
+          if (window.isDestroyed() || quitting) return;
+          if (!canHide) {
+            const { response } = await dialog.showMessageBox(window, {
+              type: "warning", message: "配置有改动未保存。要保留草稿并隐藏窗口吗？",
+              buttons: ["继续编辑", "隐藏窗口"], defaultId: 0, cancelId: 0, noLink: true
+            });
+            if (response !== 1) return;
+          }
+          if (!window.isDestroyed()) window.hide();
+        })
+        .catch(() => { if (!window.isDestroyed() && !quitting) window.hide(); })
+        .finally(() => { checkingTrayHide = false; });
     }
   });
   tray = new Tray(icon);
@@ -255,8 +287,8 @@ if (!app.requestSingleInstanceLock()) {
   app.on("second-instance", revealDesk);
   app.on("before-quit", () => {
     quitting = true;
-    stopManagedBackend();
   });
+  app.on("will-quit", stopManagedBackend);
   app.on("window-all-closed", () => {
     app.quit();
   });

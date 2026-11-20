@@ -18,7 +18,7 @@
   },
   "build": {
     "appId": "app.nowadays.desk",
-    "files": ["renderer/dist/**", "main.cjs", "backend-paths.cjs", "assets/window.png", "assets/window.ico"],
+    "files": ["renderer/dist/**", "main.cjs", "settings-preload.cjs", "backend-paths.cjs", "assets/window.png", "assets/window.ico"],
     "extraResources": [
       {
         "from": "../../backend",

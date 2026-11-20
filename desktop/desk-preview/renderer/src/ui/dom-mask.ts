@@ -8,10 +8,11 @@ export function collectWellRects(
   scope: ParentNode | null,
   selectorList: string,
   viewport: { width: number; height: number } = { width: window.innerWidth, height: window.innerHeight },
+  includeSheet = false,
 ): DOMRect[] {
   if (!scope) return [];
   return Array.from(scope.querySelectorAll<HTMLElement>(selectorList))
-    .filter(element => element.offsetParent !== null)
+    .filter(element => element.offsetParent !== null && (includeSheet || !element.closest('.config-sheet')))
     .map(element => element.getBoundingClientRect())
     .filter(box =>
       box.width > 2 && box.height > 2
@@ -43,11 +44,7 @@ export function applySubtractMask(element: HTMLElement, rects: DOMRect[]): void 
   element.style.maskSize = sizes.join(',');
   element.style.maskRepeat = 'no-repeat';
   element.style.maskComposite = ['subtract', ...inner.map(() => 'add')].join(',');
-  // 兼容前缀（Electron/Chromium 仍识别 webkit 前缀的 composite 写法）。
-  element.style.webkitMaskImage = layers.join(',');
-  element.style.webkitMaskPosition = positions.join(',');
-  element.style.webkitMaskSize = sizes.join(',');
-  element.style.webkitMaskRepeat = 'no-repeat';
+
 }
 
 /** 清除 applySubtractMask 留下的所有遮罩样式。 */
@@ -64,4 +61,4 @@ export function clearSubtractMask(element: HTMLElement): void {
 }
 
 /** 配置页的图框选择器族：立绘、服饰缩略、差分、试生图、角色状态卡画框。 */
-export const CONFIG_WELL_SELECTORS = '.config-portrait,.nd-outfit-thumb,.nd-import-thumb,.nd-image-figure,.ui-poster-well';
+export const CONFIG_WELL_SELECTORS = '.config-portrait:has(img),.config-outfit-thumb:has(img),.config-outfit-hero-thumb:has(img),.config-face:has(img),.nd-outfit-thumb:has(img),.nd-import-thumb:has(img),.nd-image-figure:has(img),.ui-poster-well:has(img)';

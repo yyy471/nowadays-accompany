@@ -1,101 +1,188 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../../api';
-import { LIVE, T29, T30, T32 } from './config-texts.js';
+import { LIVE, T29, T32 } from './config-texts.js';
 import { announceLive } from '../../ui/live-announcer';
 
 export type WriteFailure =
   | { phase: 'pause'; message: string }
   | { phase: 'commit'; message: string; paused: boolean };
 
+type WriteInput = {
+  roleIds?: string[];
+  verb: string;
+  commit: () => Promise<void>;
+  toggle?: boolean;
+  /** 特定结果由纸笺收回后的反馈统一播报。 */
+  announceSuccess?: boolean;
+};
+
 interface WriteContextValue {
   busy: boolean;
-  /** 为保存而暂停、尚未恢复的角色编号（T30）。 */
+  phase: 'pause' | 'commit' | null;
+  pendingPauseIds: string[];
+  pauseNotice: string;
   pausedRoleIds: string[];
   resuming: boolean;
-  runWrite: (input: { roleIds?: string[]; verb: string; commit: () => Promise<void> }) => Promise<{ ok: true } | { ok: false; failure: WriteFailure }>;
+  beginWrite: (pauseRoleIds?: string[], managedByBackend?: boolean) => (() => void) | null;
+  runWrite: (input: WriteInput) => Promise<{ ok: true } | { ok: false; failure: WriteFailure }>;
   resumePaused: () => Promise<void>;
   clearPaused: () => void;
+  forgetPaused: (roleId: string) => void;
+  recordPaused: (roleIds: string[]) => void;
+  statusError: string;
+  reportFailure: (message: string) => void;
 }
 
 const WriteContext = createContext<WriteContextValue | null>(null);
-
-const sleep = (ms: number) => new Promise<void>(resolve => { setTimeout(resolve, ms); });
+const sleep = (ms: number) => new Promise<void>(resolve => { window.setTimeout(resolve, ms); });
 
 async function activityState(roleId: string): Promise<string> {
   const result = await api<{ activity: { state: string } }>(`/v1/roles/${encodeURIComponent(roleId)}/activity`);
   return result.activity.state;
 }
 
-/**
- * 统一写入管线（规范 §7.5 / D5）：保存前按需暂停相关角色，等待后端确认 stopped 后写入；
- * 写入失败时区分「暂停失败」与「已暂停但保存失败」，并保留 T30 供用户手动恢复。
- */
-export function WriteProvider({ children }: { children: ReactNode }) {
-  const [busy, setBusy] = useState(false);
+/** 保留本次真实暂停的角色以供用户恢复，设置与角色纸笺共用一个写入锁。 */
+export function WriteProvider({ children, roleName, onActivityChanged }: { children: ReactNode; roleName?: (roleId: string) => string; onActivityChanged?: () => void }) {
+  const [phase, setPhase] = useState<WriteContextValue['phase']>(null);
+  const [pendingPauseIds, setPendingPauseIds] = useState<string[]>([]);
   const [pausedRoleIds, setPausedRoleIds] = useState<string[]>([]);
   const [resuming, setResuming] = useState(false);
+  const [statusError, setStatusError] = useState('');
   const lock = useRef(false);
   const rolesRef = useRef<string[]>([]);
+  const resumeLock = useRef(false);
+  const callbacks = useRef({ roleName, onActivityChanged });
+  callbacks.current = { roleName, onActivityChanged };
 
-  const runWrite = useCallback(async (input: { roleIds?: string[]; verb: string; commit: () => Promise<void> }) => {
-    if (lock.current) return { ok: false as const, failure: { phase: 'commit' as const, message: '', paused: false } };
+  const recordPaused = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    rolesRef.current = [...new Set([...rolesRef.current, ...ids])];
+    setPausedRoleIds(rolesRef.current);
+    callbacks.current.onActivityChanged?.();
+  }, []);
+
+  const forgetPaused = useCallback((id: string) => {
+    if (!rolesRef.current.includes(id)) return;
+    rolesRef.current = rolesRef.current.filter(roleId => roleId !== id);
+    setPausedRoleIds(rolesRef.current);
+  }, []);
+
+  const beginWrite = useCallback((pauseRoleIds: string[] = [], managedByBackend = true) => {
+    if (lock.current || resumeLock.current) return null;
     lock.current = true;
-    setBusy(true);
+    setStatusError('');
+    setPendingPauseIds(pauseRoleIds);
+    setPhase(pauseRoleIds.length ? 'pause' : 'commit');
+    const request = new AbortController();
+    if (managedByBackend && pauseRoleIds.length > 0) {
+      const names = pauseRoleIds.map(id => callbacks.current.roleName?.(id) ?? id);
+      announceLive(T29.pausingRoles(names));
+      // 维护接口在同一次请求内暂停和提交；只观察后端已确认的活动状态。
+      const monitor = async () => {
+        while (!request.signal.aborted) {
+          await sleep(250);
+          if (request.signal.aborted) return;
+          try {
+            const data = await api<{ items: Array<{ roleId: string; state: string }> }>('/v1/activities', { signal: request.signal });
+            if (request.signal.aborted) return;
+            const pending = pauseRoleIds.filter(id => data.items.find(role => role.roleId === id)?.state !== 'stopped');
+            setPendingPauseIds(pending);
+            if (pending.length === 0) {
+              setPhase('commit');
+              callbacks.current.onActivityChanged?.();
+              return;
+            }
+          } catch {
+            // 写入响应仍提供真实暂停名单；读取错误不会中断后端维护请求。
+          }
+        }
+      };
+      void monitor();
+    }
+    return () => {
+      request.abort();
+      lock.current = false;
+      setPendingPauseIds([]);
+      setPhase(null);
+    };
+  }, []);
+
+  const runWrite = useCallback(async (input: WriteInput) => {
     const targets = [...new Set(input.roleIds ?? [])];
+    const finish = beginWrite(targets, false);
+    if (!finish) return { ok: false as const, failure: { phase: 'commit' as const, message: '', paused: false } };
+    const label = (id: string) => callbacks.current.roleName?.(id) ?? id;
     const paused: string[] = [];
+    let pausingRole: string | null = null;
     try {
       for (const roleId of targets) {
+        pausingRole = roleId;
         let state = await activityState(roleId);
-        if (state === 'stopped') continue;
-        announceLive(T29.pausing);
-        await api(`/v1/roles/${encodeURIComponent(roleId)}/activity/stop`, { method: 'POST' });
+        if (state === 'stopped') {
+          setPendingPauseIds(previous => previous.filter(id => id !== roleId));
+          continue;
+        }
+        announceLive(T29.pausingRoles([label(roleId)]));
+        const ownStop = state === 'active';
+        if (ownStop) {
+          const { activity } = await api<{ activity?: { state: string } }>(`/v1/roles/${encodeURIComponent(roleId)}/activity/stop`, { method: 'POST' });
+          state = activity?.state ?? state;
+        }
         const deadline = Date.now() + 20_000;
         while (state !== 'stopped' && Date.now() < deadline) {
-          await sleep(250);
           state = await activityState(roleId);
+          if (state !== 'stopped') await sleep(250);
         }
-        if (state !== 'stopped') {
-          const names = [roleId];
-          return { ok: false as const, failure: { phase: 'pause' as const, message: T32.pauseFail(names) } };
-        }
-        paused.push(roleId);
+        if (state !== 'stopped') throw new Error('角色没有确认停止。');
+        if (ownStop) paused.push(roleId);
       }
-      if (paused.length > 0) announceLive(T29.saving);
+      pausingRole = null;
+      setPendingPauseIds([]);
+      setPhase('commit');
+      if (targets.length) callbacks.current.onActivityChanged?.();
       await input.commit();
-      announceLive(LIVE.saved(input.verb));
-      if (paused.length > 0) {
-        rolesRef.current = [...new Set([...rolesRef.current, ...paused])];
-        setPausedRoleIds(rolesRef.current);
-      }
+      if (input.announceSuccess !== false) announceLive(LIVE.saved(input.verb));
       return { ok: true as const };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      if (paused.length > 0) {
-        rolesRef.current = [...new Set([...rolesRef.current, ...paused])];
-        setPausedRoleIds(rolesRef.current);
-        return { ok: false as const, failure: { phase: 'commit' as const, message: T32.saveFailPaused(input.verb, reason, paused), paused: true } };
+      if (pausingRole) {
+        return { ok: false as const, failure: { phase: 'pause' as const, message: input.toggle ? T32.toggleFail(input.verb, reason) : T32.pauseFail([label(pausingRole)]) } };
       }
-      return { ok: false as const, failure: { phase: 'commit' as const, message: T32.saveFail(input.verb, reason), paused: false } };
+      const message = input.toggle ? T32.toggleFail(input.verb, reason)
+        : paused.length ? T32.saveFailPaused(input.verb, reason, paused.map(label)) : T32.saveFail(input.verb, reason);
+      return { ok: false as const, failure: { phase: 'commit' as const, message, paused: paused.length > 0 } };
     } finally {
-      lock.current = false;
-      setBusy(false);
+      recordPaused(paused);
+      if (targets.length && paused.length === 0 && pausingRole) callbacks.current.onActivityChanged?.();
+      finish();
     }
-  }, []);
+  }, [beginWrite, recordPaused]);
 
   const resumePaused = useCallback(async () => {
-    if (resuming || rolesRef.current.length === 0) return;
+    if (lock.current || resumeLock.current || rolesRef.current.length === 0) return;
+    resumeLock.current = true;
     setResuming(true);
+    setStatusError('');
+    const failed: string[] = [];
+    const restored: string[] = [];
     try {
-      for (const roleId of rolesRef.current) {
-        await api(`/v1/roles/${encodeURIComponent(roleId)}/activity/resume`, { method: 'POST' });
+      for (const roleId of [...rolesRef.current]) {
+        if (!rolesRef.current.includes(roleId)) continue;
+        try {
+          const state = await activityState(roleId);
+          if (state !== 'active') await api(`/v1/roles/${encodeURIComponent(roleId)}/activity/resume`, { method: 'POST' });
+          forgetPaused(roleId);
+          restored.push(callbacks.current.roleName?.(roleId) ?? roleId);
+        } catch { failed.push(callbacks.current.roleName?.(roleId) ?? roleId); }
       }
-      announceLive(LIVE.resumed);
-      rolesRef.current = [];
-      setPausedRoleIds([]);
+      if (failed.length) setStatusError(`${failed.join('、')}恢复活动失败，请重试。`);
+      if (restored.length) announceLive(`${restored.join('、')} ${LIVE.resumed}`);
     } finally {
+      callbacks.current.onActivityChanged?.();
+      resumeLock.current = false;
       setResuming(false);
     }
-  }, [resuming]);
+  }, [forgetPaused]);
 
   const clearPaused = useCallback(() => {
     rolesRef.current = [];
@@ -103,8 +190,10 @@ export function WriteProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<WriteContextValue>(() => ({
-    busy, pausedRoleIds, resuming, runWrite, resumePaused, clearPaused,
-  }), [busy, pausedRoleIds, resuming, runWrite, resumePaused, clearPaused]);
+    busy: phase !== null, phase, pendingPauseIds,
+    pauseNotice: pendingPauseIds.length ? T29.pausingRoles(pendingPauseIds.map(id => callbacks.current.roleName?.(id) ?? id)) : '',
+    pausedRoleIds, resuming, beginWrite, runWrite, resumePaused, clearPaused, forgetPaused, recordPaused, statusError, reportFailure: setStatusError,
+  }), [phase, pendingPauseIds, pausedRoleIds, resuming, beginWrite, runWrite, resumePaused, clearPaused, forgetPaused, recordPaused, statusError]);
 
   return <WriteContext.Provider value={value}>{children}</WriteContext.Provider>;
 }

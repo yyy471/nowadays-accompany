@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { api, ApiError } from '../../api';
 import { modelTestNote, type ProbeNotice } from './model-picker.js';
+import { T4 } from '../config/config-texts.js';
 import {
   getModelCacheEpoch,
   getModelCacheVersion,
@@ -29,6 +30,7 @@ export type ModelProbeTarget =
     };
 
 export interface ModelProbeOptions {
+  scope?: 'role';
   /** 读取按服务共享的候选（角色页与设置页共用）。 */
   shared?: boolean;
   /** 已保存服务的列表 / 测试成功后刷新资源摘要。 */
@@ -154,6 +156,24 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
     setNotice(null);
   }, []);
 
+  /** 更换被测试的模型时保留同一个端点的候选列表。 */
+  const invalidateTest = useCallback(() => {
+    testGeneration.current += 1;
+    setTestBusy(false);
+    setNotice(previous => previous?.source === 'test' ? null : previous);
+    setTestNote('');
+    setTestModel('');
+    setDraftTestCallId(null);
+  }, []);
+
+  const cancelPending = useCallback(() => {
+    listGeneration.current += 1;
+    testGeneration.current += 1;
+    setListBusy(false);
+    setTestBusy(false);
+    clearLog();
+  }, [clearLog]);
+
   const reset = useCallback(() => {
     listGeneration.current += 1;
     testGeneration.current += 1;
@@ -268,7 +288,9 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
       if (target.kind === 'draft' && result.ok === true && typeof result.testCallId === 'string') {
         setDraftTestCallId(result.testCallId);
       }
-      const note = modelTestNote(result);
+      const note = savedHooks.current.scope === 'role'
+        ? result.ok === true ? T4.ok(Math.max(0, Math.round(result.elapsedMs ?? 0))) : T4.fail(result.error?.message ?? '模型请求失败')
+        : modelTestNote(result);
       if (logSeq === clickLogSeq.current) {
         setTestNote(note);
         setNotice({
@@ -282,7 +304,7 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
     } catch (error) {
       if (version !== testGeneration.current || capturedKey !== keyRef.current) return;
       if (staleAfterRotation(target, epoch)) return;
-      const note = `测试失败：${messageOf(error)}`;
+      const note = savedHooks.current.scope === 'role' ? T4.fail(messageOf(error)) : `测试失败：${messageOf(error)}`;
       if (logSeq === clickLogSeq.current) {
         setTestNote(note);
         setNotice({
@@ -310,6 +332,8 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
     refresh,
     test,
     clearLog,
+    cancelPending,
+    invalidateTest,
     reset,
   };
 }

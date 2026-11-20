@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { resolveElectronExecutable } = require('./electron-executable.cjs');
+const { button, configControls, editor, element, setValue, sheet } = require('./config-page-controls.cjs');
 const root = path.resolve(__dirname, '../../..');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'nowadays-ui-real-'));
 const node = path.join(root, 'prototypes/p0/.runtime/node-v24.22.2-win-x64/node.exe');
@@ -16,6 +17,7 @@ let backend, electron, ws, backendLog = '', electronLog = '', nextId = 0, base =
 const waiting = new Map(), errors = [];
 function cmd(method, params = {}) { return new Promise((resolve, reject) => { const id = ++nextId; waiting.set(id, { resolve, reject }); ws.send(JSON.stringify({ id, method, params })); }); }
 async function ev(expression) { const result = await cmd('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }); if (result.exceptionDetails) throw Error(JSON.stringify(result.exceptionDetails)); return result.result.value; }
+const { click, pickRole, tab, openRoleRow } = configControls(ev, until);
 async function request(route, options = {}) { const response = await fetch(base + route, options); const body = await response.json(); if (!response.ok) throw Error(`${response.status}: ${JSON.stringify(body)}`); return body; }
 const json = body => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 async function run() {
@@ -53,42 +55,31 @@ async function run() {
   await cmd('Runtime.enable'); await cmd('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
   await until(() => ev("!!document.querySelector('.ui-menu-trigger')")); await ev("document.querySelector('.ui-menu-trigger').click()");
   await until(() => ev("[...document.querySelectorAll('.ui-menu-item')].some(x=>x.textContent.includes('角色配置'))")); await ev("[...document.querySelectorAll('.ui-menu-item')].find(x=>x.textContent.includes('角色配置')).click()");
-  // 启动即存在内置助手夏澄，默认编辑对象可能不是联调甲；显式切到联调甲再继续。
-  await until(() => ev("!!document.querySelector('.config-switch-role')"));
-  await ev("document.querySelector('.config-switch-role').click()");
-  await until(() => ev("[...document.querySelectorAll('.config-poster-hit')].some(x=>x.textContent.includes('联调甲'))"));
-  await ev("[...document.querySelectorAll('.config-poster-hit')].find(x=>x.textContent.includes('联调甲')).click()");
+  const profile = element(`${editor} textarea[aria-label="角色设定"]`);
+  await until(() => ev(`!!${profile}?.value`));
+  await pickRole(a.roleId);
   await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='联调甲'"));
-  const editor = '.config-role-editor:not([hidden])';
-  const button = (label, root = editor) => `[...document.querySelectorAll(${JSON.stringify(root + ' button')})].find(x=>x.textContent===${JSON.stringify(label)})`;
-  const tab = async (label) => ev(`[...document.querySelectorAll('.config-tabs button')].find(x=>x.textContent.includes(${JSON.stringify(label)})).click()`);
-  const enter = async () => {
-    const params = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 };
-    await cmd('Input.dispatchKeyEvent', { ...params, type: 'keyDown' });
-    await cmd('Input.dispatchKeyEvent', { ...params, type: 'keyUp' });
-  };
   const visible = editor + ' .config-prose:not([hidden])';
-  const modelInput = editor + ' .config-model-details:not([hidden]) input[type=text]';
+  const modelInput = element(sheet + ' input[role=combobox]');
+  const initialRetry = button('重试', visible + ' .config-load-err');
+  const retry = button('重试读取绑定', visible);
+  const sheetRetry = button('重试读取绑定', sheet);
+  const sheetSave = `[...document.querySelectorAll('${sheet} .config-sheet-actions button')].find(button=>/^(?:重试保存|保存(?: *[0-9]+)?)$/.test(button.textContent.trim()))`;
   const snapshot = () => ev(`({
-    model:document.querySelector(${JSON.stringify(modelInput)})?.value ?? null,
-    error:document.querySelector(${JSON.stringify(visible + ' [role=alert]')})?.textContent ?? null,
-    retry:!!${button('重试读取绑定', visible)},
-    saveDisabled:${button('保存模型选择', visible)}?.disabled ?? null
+    model:${modelInput}?.value ?? null,
+    error:${element(sheet + ' [role=alert]')}?.textContent ?? ${element(visible + ' [role=alert]')}?.textContent ?? null,
+    retry:!!(${sheetRetry} || ${retry} || ${initialRetry}),
+    saveDisabled:${sheetSave}?.disabled ?? true
   })`);
-  const choose = async (name) => {
-    await ev("document.querySelector('.config-switch-role').click()");
-    const expression = `[...document.querySelectorAll('.config-poster-hit')].find(x=>x.textContent.includes(${JSON.stringify(name)}))`;
-    await until(() => ev(`!!${expression}`));
-    await ev(`${expression}.click()`);
-  };
   await tab('模型');
+  await openRoleRow('model:chat');
   await until(async () => (await snapshot()).model === 'saved-model');
-  await ev(`(()=>{const input=document.querySelector(${JSON.stringify(modelInput)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'discard-this');input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await ev(setValue(modelInput, 'discard-this'));
   const old = await request(bindingPath);
   await request(bindingPath, put({ expectedRevision: old.revision, bindings: [
     { capability: 'chat_model', resourceId: model.resourceId, modelName: 'external-chat', enabled: true },
   ] }));
-  await ev(`${button('保存模型选择', visible)}.click()`);
+  await click(sheetSave);
   await until(async () => (await snapshot()).retry);
   const conflict = await snapshot();
 
@@ -103,35 +94,58 @@ async function run() {
       return original.call(this,input,options);
     };
   })()`);
-  await choose('联调乙');
-  await until(() => ev("!!document.querySelector('.config-dirty-prompt')"));
-  await ev("[...document.querySelectorAll('.config-dirty-prompt button')].find(x=>x.textContent==='放弃改动，切换').click()");
-  await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='联调乙'"));
+  await pickRole(b.roleId);
+  await click(button('放弃修改', sheet + ' .config-sheet-confirm'));
+  await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='联调乙'"))
+    .catch(async error => {
+      const state = await ev(`(() => {
+        const sheet=document.querySelector('.config-sheet');
+        return {
+          visibility:document.visibilityState, focused:document.hasFocus(),
+          role:document.querySelector('.config-footer-ident strong')?.textContent,
+          sheet:sheet?.querySelector('h3')?.textContent, exiting:sheet?.hasAttribute('data-exiting'),
+          confirmation:!!sheet?.querySelector('.config-sheet-confirm'),
+          animations:[...document.querySelectorAll('.config-sheet,.config-scrim,.config-book-scrim')].flatMap(node=>
+            node.getAnimations().map(animation=>({ state:animation.playState, at:animation.currentTime, end:animation.effect.getComputedTiming().endTime }))
+          ),
+          initialReadInjected:window.reviewInitialBindingFailed,
+        };
+      })()`);
+      throw Error(`T9 放弃后等待切到联调乙失败：${JSON.stringify(state)}`, { cause: error });
+    });
   await tab('模型');
-  await until(async () => { const state=await snapshot(); return state.error?.includes('首次读取') || state.model==='second-model'; });
-  const initialFailure = await snapshot();
+  const initialFailure = await until(async () => {
+    const state = await snapshot();
+    return state.error?.includes('首次读取') && state.retry && state;
+  }).catch(async error => {
+    throw Error(`等待联调乙的 T35 失败：${JSON.stringify({ ...await snapshot(), injected: await ev('window.reviewInitialBindingFailed') })}`,
+      { cause: error });
+  });
   assert.equal(initialFailure.retry, true, '首次读取失败必须有恢复入口');
   await tab('扩展');
-  assert.equal(await ev(`!!${button('重试读取绑定', visible)}`), true, '扩展分区也应能恢复绑定');
-  assert.equal(await ev(`document.querySelector(${JSON.stringify(visible + ' input[type=checkbox]')})?.disabled`), true, '首次读取完成前不应允许修改未知的扩展绑定');
+  assert.equal(await ev(`!!${initialRetry}`), true, '扩展分区也应能恢复绑定');
+  assert.equal(await ev(`!!${element(visible + ' [data-edit="ext:mcp"] .config-sum-edit:not(:disabled)')}`), false, '读取前不能修改未知的扩展绑定');
   await tab('模型');
-  let initialRecovered = initialFailure.model === 'second-model';
-  if (initialFailure.retry) {
-    // 第二次读取也失败，入口必须保留，直到读取成功。
-    await ev('window.reviewInitialBindingFailed=false');
-    await ev(`${button('重试读取绑定', visible)}.click()`);
-    await until(async () => { const state = await snapshot(); return state.error?.includes('重新读取绑定失败') && state.retry; });
-    assert.equal((await snapshot()).saveDisabled, true);
-    await ev(`${button('重试读取绑定', visible)}.click()`);
-    await until(async () => (await snapshot()).model === 'second-model');
-    initialRecovered = true;
-  }
+
+  // 第二次读取仍失败；第三次读取到真实版本后才能继续编辑。
+  await ev('window.reviewInitialBindingFailed=false');
+  await click(initialRetry);
+  await until(async () => {
+    const state = await snapshot();
+    return state.error?.includes('重新读取绑定失败') && state.retry;
+  });
+  assert.equal((await snapshot()).saveDisabled, true);
+  await click(initialRetry);
+  await until(() => ev(`!${initialRetry}`));
+  await openRoleRow('model:chat');
+  await until(async () => (await snapshot()).model === 'second-model');
+  const initialRecovered = true;
   console.log('INITIAL_BINDING_READ_FAILURE', JSON.stringify({ ...initialFailure, recovered: initialRecovered }));
 
-  await choose('联调甲');
+  await pickRole(a.roleId);
   await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='联调甲'"));
   await tab('模型');
-  await delay(120);
+  await until(() => ev(`!!${retry}`));
   const back = await snapshot();
   const serverBinding = (await request(bindingPath)).items.find(item=>item.capability==='chat_model');
   console.log('DISCARD_BINDING_CONFLICT', JSON.stringify({
@@ -139,17 +153,17 @@ async function run() {
   }));
   assert.equal(back.retry, true);
   assert.equal(back.saveDisabled, true);
-  await ev(`${button('重试读取绑定', visible)}.click()`);
-  await until(async () => { const state = await snapshot(); return state.model === 'external-chat' && !state.saveDisabled; });
+  await click(retry);
+  await until(() => ev(`!${retry}`));
+  await openRoleRow('model:chat');
+  await until(async () => (await snapshot()).model === 'external-chat');
   assert.equal((await snapshot()).model, serverBinding.modelName, '放弃草稿后应读取最新服务端值');
-  await ev(`(()=>{const input=document.querySelector(${JSON.stringify(modelInput)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'recovered-model');input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
-  await ev(`${button('保存模型选择', visible)}.click()`);
+  await ev(setValue(modelInput, 'recovered-model'));
+  await click(sheetSave);
   await until(async () => (await request(bindingPath)).items.find(item=>item.capability==='chat_model')?.modelName === 'recovered-model');
   assert.deepEqual(errors, []);
-  assert.deepEqual({
-    initialReadCanRecover: initialRecovered,
-    discardedConflictCanRecover: back.retry || (!back.saveDisabled && back.model==='external-chat'),
-  }, { initialReadCanRecover: true, discardedConflictCanRecover: true });
+  assert.equal(initialRecovered, true);
+  assert.equal(back.retry, true);
 }
 run().catch(error => { console.error(error, backendLog.slice(-1500), electronLog.slice(-1000)); process.exitCode = 1; }).finally(async () => {
   try { if (ws?.readyState === 1) { ws.send(JSON.stringify({ id: 999999, method: 'Browser.close' })); ws.close(); } } catch {}

@@ -1,12 +1,15 @@
-import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type SetStateAction } from 'react';
 import { api, ApiError } from '../../api';
 import { appearanceAssetUrl, type Outfit } from '../../types';
-import { Button, Disclosure, Field, Input, LoadingNote, Select, Textarea } from '../../ui';
+import { Button, Field, Input, Select, Textarea } from '../../ui';
+import { announceLive } from '../../ui/live-announcer';
 import type { ConfigDraftState } from '../config-draft';
+import { MediaGroup, MediaRow, MediaSheet, MediaStateRow, RoleSaveActions, type MediaSummaryStatus } from '../config/MediaSheet';
+import { useSheet } from '../config/sheet/sheet-context';
+import { T25, T33, T34 } from '../config/config-texts.js';
 import {
   createImageForm,
   describeImageFailure,
-  describeImageSummary,
   imageServiceSnapshotKey,
   savedImageModelOf,
   syncImageFormServices,
@@ -31,7 +34,8 @@ type Props = {
   onOpenImageSettings?: (target?: { serviceId?: string; createNew?: boolean }) => void;
   onChanged?: () => void;
   onDraftStateChange?: (state: ConfigDraftState) => void;
-  guardWrite?: <T>(action: () => Promise<T>) => Promise<T>;
+  onSummaryStatus?: (status: MediaSummaryStatus) => void;
+  guardWrite?: <T>(action: () => Promise<T>, verb?: string) => Promise<T>;
   pausedWrite?: boolean;
 };
 
@@ -90,20 +94,32 @@ export function ImagePanel({
   onOpenImageSettings,
   onChanged,
   onDraftStateChange,
+  onSummaryStatus,
   guardWrite = action => action(),
   pausedWrite = false,
 }: Props) {
+  const { sheet, closeNow } = useSheet();
+  const editing = active && sheet?.id === 'media:image';
   const [view, setView] = useState<ImageSettingsViewPayload | null>(null);
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [outfits, setOutfits] = useState<Outfit[]>([]);
-  const [form, setForm] = useState<ImageForm>(() => createImageForm(null));
-  const [savedForm, setSavedForm] = useState<ImageForm | null>(null);
+  const [{ form, savedForm }, setForms] = useState<{ form: ImageForm; savedForm: ImageForm | null }>(
+    () => ({ form: createImageForm(null), savedForm: null }),
+  );
+  const setForm = useCallback((update: SetStateAction<ImageForm>) => {
+    setForms(previous => {
+      const next = typeof update === 'function' ? update(previous.form) : update;
+      return next === previous.form ? previous : { ...previous, form: next };
+    });
+  }, []);
+  const draftStateRef = useRef<ConfigDraftState>({ dirty: false, busy: false, discard: () => {} });
   const draftCallback = useRef(onDraftStateChange);
   draftCallback.current = onDraftStateChange;
   const [preview, setPreview] = useState<TaggedPreview | null>(null);
   const [previewPrompt, setPreviewPrompt] = useState(DEFAULT_PREVIEW_PROMPT);
   const [previewOutfitId, setPreviewOutfitId] = useState('');
   const [loading, setLoading] = useState(true);
+  const [readRetry, setReadRetry] = useState(0);
   const [busy, setBusy] = useState(false);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewElapsed, setPreviewElapsed] = useState(0);
@@ -135,7 +151,7 @@ export function ImagePanel({
   }
   const mounted = useRef(true);
   const activeRef = useRef(active);
-  activeRef.current = active;
+  activeRef.current = editing;
   const servicesRef = useRef(services);
   servicesRef.current = services;
   const serviceEpochsRef = useRef(serviceEpochs);
@@ -162,6 +178,8 @@ export function ImagePanel({
     shared: probeCacheKey !== '',
     onBeforeProbe: () => setError(''),
   });
+
+  useEffect(() => { if (editing && imageProbe.notice?.source === 'test') announceLive(imageProbe.notice.text); }, [editing, imageProbe.notice]);
 
   const snapshotKeyFor = (serviceId: string, list: ServiceItem[] = servicesRef.current): string => {
     const matched = list.find(item => item.serviceId === serviceId);
@@ -192,7 +210,7 @@ export function ImagePanel({
   };
 
   useEffect(() => {
-    draftCallback.current?.({
+    draftStateRef.current = {
       dirty: savedForm !== null && JSON.stringify(form) !== JSON.stringify(savedForm),
       busy: busy || imageProbe.listBusy || imageProbe.testBusy || previewBusy || anchorBusyKey !== '',
       discard: () => {
@@ -202,18 +220,19 @@ export function ImagePanel({
         if (savedForm) setForm(savedForm);
         setError(''); setNotice(''); setNoticeKind('');
       },
-    });
+    };
+    draftCallback.current?.(draftStateRef.current);
     // imageProbe.clearLog 是稳定回调，无需触发额外草稿上报。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form, savedForm, busy, imageProbe.listBusy, imageProbe.testBusy, previewBusy, anchorBusyKey]);
 
   useEffect(() => {
-    if (!active) {
-      imageProbe.clearLog();
+    if (!editing) {
+      imageProbe.reset();
       invalidatePreview(false);
       invalidateAnchor(false);
     }
-  }, [active, imageProbe.clearLog]);
+  }, [editing, imageProbe.reset]);
 
   useEffect(() => {
     mounted.current = true;
@@ -243,7 +262,7 @@ export function ImagePanel({
     invalidatePreview(true);
     invalidateAnchor(true);
     setLoading(true); setError(''); setNotice(''); setNoticeKind(''); setView(null);
-    setForm(createImageForm(null)); setSavedForm(null);
+    setForms({ form: createImageForm(null), savedForm: null });
     if (!roleId) { setLoading(false); return; }
     Promise.all([
       api<ImageSettingsViewPayload>(`/v1/roles/${encodeURIComponent(roleId)}/scene-image`),
@@ -259,10 +278,9 @@ export function ImagePanel({
         servicesRef.current = available.items;
         setServices(available.items);
         const next = syncImageFormServices(baseForm, available.items);
-        setForm(next);
-        setSavedForm(next);
+        setForms({ form: next, savedForm: next });
       } else {
-        setSavedForm(previous => previous ?? baseForm);
+        setForms(previous => previous.savedForm === null ? { form: baseForm, savedForm: baseForm } : previous);
       }
       setLoading(false);
     }).catch(reason => {
@@ -274,7 +292,7 @@ export function ImagePanel({
       activeLoad = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roleId]);
+  }, [roleId, readRetry]);
 
   useEffect(() => {
     const previousSync = syncedState.current;
@@ -311,7 +329,23 @@ export function ImagePanel({
         } else if (serviceInvalidated) {
           invalidatePreview(false);
         }
-        setForm(previous => syncImageFormServices(previous, available.items));
+        setForms(previous => {
+          const { form: draft, savedForm: baseline } = previous;
+          if (baseline === null) {
+            const initial = syncImageFormServices(createImageForm(config.settings), available.items);
+            return { form: initial, savedForm: initial };
+          }
+          if (draft.serviceId !== baseline.serviceId) return previous;
+          // 只补齐草稿和基线中还相同的字段，保留用户录入或清空的模型。
+          const defaults = syncImageFormServices(baseline, available.items);
+          if (defaults === baseline) return previous;
+          const sameModel = draft.modelPath === baseline.modelPath;
+          const serviceId = defaults.serviceId;
+          return {
+            form: { ...draft, serviceId, modelPath: sameModel ? defaults.modelPath : draft.modelPath },
+            savedForm: { ...baseline, serviceId, modelPath: sameModel ? defaults.modelPath : baseline.modelPath },
+          };
+        });
       })
       .catch(() => { /* 从设置返回同步失败时保留现有草稿，保存时会触发正式校验 */ });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -459,7 +493,8 @@ export function ImagePanel({
       setError('当前所选生图服务已不存在，请重新选择或前往设置新建。');
       return;
     }
-    if (!currentLocal.enabled) {
+    const retainService = view?.settings?.serviceId === form.serviceId;
+    if (!currentLocal.enabled && !retainService) {
       setError(describeImageFailure('IMAGE_SERVICE_DISABLED', ''));
       return;
     }
@@ -476,19 +511,18 @@ export function ImagePanel({
         setError('当前所选生图服务已不存在，请重新选择或前往设置新建。');
         return;
       }
-      if (!latest.enabled) {
+      if (!latest.enabled && !retainService) {
         setError(describeImageFailure('IMAGE_SERVICE_DISABLED', ''));
         return;
       }
       const saved = await guardWrite(() => api<ImageSettingsViewPayload>(
         `/v1/roles/${encodeURIComponent(roleId)}/scene-image`,
         { method: 'PUT', body: toImagePayload(submittedForm) },
-      ));
+      ), '保存生图配置');
       if (isStale(token)) return;
       setView(saved);
-      setSavedForm(submittedForm);
-      setNoticeKind('save');
-      setNotice('已保存生图配置。');
+      setForms(previous => ({ ...previous, savedForm: submittedForm }));
+      closeNow();
       onChanged?.();
     } catch (reason) {
       if (!isStale(token)) setError(failureText(reason));
@@ -570,6 +604,7 @@ export function ImagePanel({
   };
 
   const missingSelectedService = form.serviceId !== '' && !selectedService;
+  const hasAvailableService = services.some(service => service.enabled);
   const disabledSelectedService = Boolean(selectedService && !selectedService.enabled);
   const currentSnapshotKey = selectedService
     ? imageServiceSnapshotKey(selectedService, serviceEpochs[selectedService.serviceId] ?? 0)
@@ -586,10 +621,21 @@ export function ImagePanel({
     if (preview !== null && !previewValid) invalidatePreview(true);
   }, [preview, previewValid]);
 
-  if (loading) return <LoadingNote label="正在读取生图配置…" />;
 
   const activePreview = previewValid ? preview.result : null;
-  const summary = describeImageSummary(view);
+  const count = savedForm ? (Object.keys(form) as (keyof ImageForm)[]).filter(key => JSON.stringify(form[key]) !== JSON.stringify(savedForm[key])).length : 0;
+  const dirty = count > 0;
+  const state: ConfigDraftState = { dirty, count, busy, discard: () => draftStateRef.current.discard() };
+  const unset = view?.settings === null && !dirty;
+  const status = unset ? 'off' : dirty ? 'dirty' : !form.serviceId ? 'off' : !selectedService ? 'error' : !selectedService.enabled ? 'off' : 'ok';
+  const statusText = unset ? '未设置' : dirty ? '有改动未保存' : !form.serviceId ? '未设置' : !selectedService ? '原服务已删除' : !selectedService.enabled ? '服务已停用' : '生效中';
+  useEffect(() => {
+    if (loading) { onSummaryStatus?.({ status: 'none', label: '正在读取…' }); return; }
+    if (!savedForm && error) { onSummaryStatus?.({ status: 'error', label: '读取失败' }); return; }
+    onSummaryStatus?.({ status, label: statusText });
+  }, [status, statusText, loading, Boolean(savedForm), Boolean(error), onSummaryStatus]);
+  if (loading || (!savedForm && error)) return <MediaStateRow label="生图" loading={loading} error={error} onRetry={() => setReadRetry(value => value + 1)}/>;
+
   const roleProbeTarget =
     selectedService && !disabledSelectedService
       ? {
@@ -601,8 +647,14 @@ export function ImagePanel({
         }
       : null;
 
-  return <div className="nd-image">
-    <p className="nd-image-summary">{summary}</p>
+  return <>
+    <MediaRow id="image" label="生图" value={unset || !form.serviceId ? '未选择' : !selectedService ? '原服务已删除，请重新选择' : `${selectedService.name} · ${(form.modelPath || '未设置模型').replace(/\.safetensors$/, '')}`} status={status} statusText={statusText} keys={!unset && selectedService ? [
+      {label:'尺寸', value:`${form.width}×${form.height}`, group:'参数'},
+      {label:'步数', value:`${form.steps} 步 · CFG ${form.cfg}`, group:'参数'},
+      {label:'采样', value:`${form.sampler} / ${form.scheduler}`, group:'参数'},
+    ] : []}/>
+    <MediaSheet id="image" active={active} state={state} footer={<RoleSaveActions count={count} pause={pausedWrite} busy={busy} invalid={validateImageForm(form).length > 0} error={error} onSave={() => void save()}/>}>
+    {group => <div className="nd-image">
     <input
       ref={uploadInputRef}
       type="file"
@@ -611,36 +663,35 @@ export function ImagePanel({
       onChange={handleUploadChange}
     />
 
-    <Field label="生图服务" hint="切换服务会自动带入该服务的默认模型；未设置默认模型时可展开候选或手填。">
+    <MediaGroup title="服务" group={group}><Field label="生图服务" hint="切换服务会自动带入该服务的默认模型；未设置默认模型时可展开候选或手填。">
       <div className="nd-image-service-row">
         <Select value={form.serviceId} disabled={busy} onChange={event => selectService(event.target.value)}>
           {services.length === 0 && <option value="">还没有生图服务</option>}
           {services.length > 0 && form.serviceId === '' && <option value="">请选择生图服务</option>}
-          {missingSelectedService && <option value={form.serviceId}>原服务已删除（请重新选择）</option>}
-          {services.map(service => <option key={service.serviceId} value={service.serviceId}>
-            {service.name}{service.enabled ? '' : '（已停用）'}
+          {missingSelectedService && <option value={form.serviceId} disabled>{T34.option}</option>}
+          {services.map(service => <option key={service.serviceId} value={service.serviceId} disabled={!service.enabled}>
+            {service.name}{service.enabled ? '' : T33.optionSuffix}
           </option>)}
         </Select>
         {onOpenImageSettings && <Button
           variant="ghost"
           size="sm"
           onClick={() => onOpenImageSettings(
-            selectedService
+            !hasAvailableService ? { createNew: true } : selectedService
               ? { serviceId: selectedService.serviceId }
-              : services.length === 0
-                ? { createNew: true }
-                : undefined,
+              : undefined,
           )}
         >
-          在设置中管理 →
+          {hasAvailableService ? T25.manage : T25.add}
         </Button>}
       </div>
       {missingSelectedService && <p role="alert" className="nd-appearance-hint nd-image-warn">当前所选生图服务已不存在，请重新选择或前往设置新建。</p>}
-      {disabledSelectedService && <p role="alert" className="nd-appearance-hint nd-image-warn">当前所选生图服务已停用，请先启用或重新选择。</p>}
+      {disabledSelectedService && <p role="alert" className="nd-appearance-hint nd-image-warn">{T33.selectedNote}</p>}
     </Field>
 
     <ImageModelPicker
       label="模型名称或目录"
+      testAnnouncedExternally
       hint="与文本模型选取一致：点击聚焦展开或输入筛选；自定义工作流可填本地模型目录。"
       value={form.modelPath}
       onChange={value => patch({ modelPath: value })}
@@ -654,7 +705,7 @@ export function ImagePanel({
       disabled={busy}
     />
 
-    <section className="nd-image-section" aria-label="基础锚点提示词">
+    </MediaGroup><MediaGroup title="提示词" group={group}><section className="nd-image-section" aria-label="基础锚点提示词">
       <div className="nd-image-section-head">
         <div className="nd-image-section-title">
           <h3>基础锚点提示词</h3>
@@ -769,7 +820,7 @@ export function ImagePanel({
       )}
     </section>
 
-    <Disclosure title="生成参数" description="负向提示词、尺寸、步数、CFG、采样器与种子">
+
       <Field label="负向提示词" hint="留空也可出图；人物或复杂场景可填入防崩坏词提升稳定性。">
         <Input
           value={form.negativePrompt}
@@ -779,28 +830,29 @@ export function ImagePanel({
         />
       </Field>
 
-      <div className="nd-image-grid">
+    </MediaGroup><MediaGroup title="参数" group={group}><div className="nd-image-grid">
         <Field label="宽度"><Input type="number" min={256} max={2048} step={16} value={form.width} onChange={event => patch({ width: Number(event.target.value) })} /></Field>
         <Field label="高度"><Input type="number" min={256} max={2048} step={16} value={form.height} onChange={event => patch({ height: Number(event.target.value) })} /></Field>
         <Field label="步数"><Input type="number" min={1} max={150} value={form.steps} onChange={event => patch({ steps: Number(event.target.value) })} /></Field>
         <Field label="CFG"><Input type="number" min={0} max={30} step={0.5} value={form.cfg} onChange={event => patch({ cfg: Number(event.target.value) })} /></Field>
         <Field label="采样器"><Input value={form.sampler} onChange={event => patch({ sampler: event.target.value })} /></Field>
         <Field label="调度器"><Input value={form.scheduler} onChange={event => patch({ scheduler: event.target.value })} /></Field>
-        <Field label="种子" hint="留空则每次随机。">
+        <Field label="种子">
           <Input
             type="number"
             min={0}
             value={form.seed === null ? '' : form.seed}
-            placeholder="随机"
+            placeholder="留空则每次随机"
             onChange={event => patch({ seed: event.target.value === '' ? null : Number(event.target.value) })}
           />
         </Field>
       </div>
-    </Disclosure>
-
-    <div className="nd-image-preview">
-      <p className="nd-appearance-hint">测试生图：直接用当前草稿真出一张，不修改已保存配置，也不写入过场图历史；可反复生成提示词测试效果后再保存。</p>
-      <div className="nd-image-preview-row">
+    </MediaGroup><MediaGroup title="试生图" group={group}><div className="nd-image-preview">
+      {activePreview && <figure className="nd-image-figure">
+        <img src={`data:${activePreview.mediaType};base64,${activePreview.dataBase64}`} alt="测试生图结果" />
+        <figcaption title={activePreview.prompt}>{activePreview.prompt}</figcaption>
+      </figure>}
+      <div className="nd-image-preview-controls">
         <Field label="测试画面描述">
           <Input
             value={previewPrompt}
@@ -811,7 +863,7 @@ export function ImagePanel({
             }}
           />
         </Field>
-        <Field label="试生图参考服饰" hint="仅用于本次试生图拼接，不影响角色对话实际穿着。">
+        <Field label="试生图参考服饰">
           <Select
             value={previewOutfitId}
             onChange={event => {
@@ -823,22 +875,16 @@ export function ImagePanel({
             {outfits.map(outfit => <option key={outfit.outfitId} value={outfit.outfitId}>{outfit.name}</option>)}
           </Select>
         </Field>
-      </div>
-      <div className="nd-image-actions">
-        <Button variant="ghost" disabled={previewBusy} onClick={() => void runPreview()}>
+        <div className="nd-image-actions"><Button variant="ghost" disabled={previewBusy} onClick={() => void runPreview()}>
           {previewBusy ? `正在出图（${previewElapsed}s）…` : '测试生图'}
         </Button>
-        {previewBusy && <Button variant="ghost" onClick={cancelPreview}>取消</Button>}
-        <Button disabled={busy} onClick={() => void save()}>
-          {busy ? '正在保存…' : pausedWrite ? '暂停并保存配置' : '保存配置'}
-        </Button>
+        {previewBusy && <Button variant="ghost" onClick={cancelPreview}>取消</Button>}</div>
       </div>
-      {activePreview && <figure className="nd-image-figure">
-        <img src={`data:${activePreview.mediaType};base64,${activePreview.dataBase64}`} alt="测试生图结果" />
-        <figcaption>{activePreview.prompt}</figcaption>
-      </figure>}
     </div>
 
+    </MediaGroup>
     {(notice || error) && <p role={error ? 'alert' : 'status'} className={`nd-appearance-hint${error ? ' nd-image-warn' : ''}`}>{error || notice}</p>}
-  </div>;
+  </div>}
+    </MediaSheet>
+  </>;
 }

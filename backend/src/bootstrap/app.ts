@@ -63,6 +63,8 @@ export interface BackendAppOptions {
   roleDeletionWaitMs?: number;
 }
 
+import { MediaMaintenance } from '../application/media-maintenance.js';
+
 export interface BackendApp {
   config: BackendConfig;
   appStore: AppStore;
@@ -137,13 +139,15 @@ export function createBackendApp(
       externalInflightRoleIds(resourceId),
   });
   // 维护期间拒绝先恢复活动再领取调用（283 R01）。
-  activity.setResumeGuard((roleId) => resourceService.assertResumeAllowed(roleId));
+  const mediaMaintenance = new MediaMaintenance(appStore, roleAccess, activity, resourceService.pauseRoles);
+  activity.setResumeGuard((roleId) => { resourceService.assertResumeAllowed(roleId); mediaMaintenance.assertResumeAllowed(roleId); });
   const appearanceService = new AppearanceService(roleAccess);
   const voiceServices = new GlobalVoiceService(appStore, { now });
   voiceServices.backfillFromRoles(roleAccess);
   const voiceService = new VoiceService(roleAccess, {
     now,
     voiceServices,
+    mediaMaintenance,
   });
   const imageServices = new ImageServiceService(appStore, {
     credentialResolver: credentials,
@@ -155,6 +159,7 @@ export function createBackendApp(
     {
       now,
       bindings,
+      mediaMaintenance,
       appearance: appearanceService,
       appRoot: config.appRoot,
       credentialResolver: credentials,
@@ -319,6 +324,7 @@ export function createBackendApp(
   resourceService.reconcilePendingDeletions();
   const sceneImages = new SceneImageService(appStore, roleAccess, config.dataRoot, {
     now,
+    mediaMaintenance,
     planner:
       options.sceneImagePlanner ??
       new ModelSceneImagePlanner(roleAccess, bindings, {
@@ -437,6 +443,7 @@ export function createBackendApp(
     sceneImageSettings,
     activity,
     roleDeletion,
+    mediaMaintenance,
   };
   let server: http.Server;
   try {

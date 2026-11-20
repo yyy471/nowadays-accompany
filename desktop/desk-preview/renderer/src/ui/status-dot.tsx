@@ -32,7 +32,7 @@ export function StatusDot({
   }
   return (
     <span className={`ui-dot dot${faint ? ' faint' : ''}`} data-s={dataStatus}>
-      {label}
+      <span className="ui-dot-label">{label}</span>
     </span>
   );
 }

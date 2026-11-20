@@ -4,6 +4,8 @@ import { filterModelNames, visibleProbeNotice, type ProbeNotice } from '../model
 
 export interface ImageModelPickerProps {
   value: string;
+  settings?: boolean;
+  testAnnouncedExternally?: boolean;
   onChange: (value: string) => void;
   models: readonly string[];
   listBusy: boolean;
@@ -24,6 +26,8 @@ export interface ImageModelPickerProps {
  */
 export function ImageModelPicker({
   value,
+  settings = false,
+  testAnnouncedExternally = false,
   onChange,
   models,
   listBusy,
@@ -92,13 +96,14 @@ export function ImageModelPicker({
       return;
     }
     if (event.key === 'Escape') {
+      if (open && filtered.length > 0) event.stopPropagation();
       setOpen(false);
       setActive(-1);
     }
   };
 
   return (
-    <Field label={label} hint={hint}>
+    <Field label={label} hint={settings ? undefined : hint}>
       <div className="nd-model-picker">
         <Input
           value={value}
@@ -149,15 +154,15 @@ export function ImageModelPicker({
         ) : null}
       </div>
       <div className="config-actions">
-        <Button size="sm" disabled={disabled || probeDisabled || listBusy} onClick={onRefresh}>
+        <Button size="sm" disabled={disabled || probeDisabled || listBusy || (settings && testBusy)} onClick={onRefresh}>
           {listBusy ? '正在读取…' : '读取模型列表'}
         </Button>
-        <Button size="sm" disabled={disabled || probeDisabled || testBusy} onClick={onTest}>
+        <Button size="sm" disabled={disabled || probeDisabled || testBusy || (settings && listBusy)} onClick={onTest}>
           {testBusy ? '正在测试…' : '测试连接'}
         </Button>
       </div>
       {activeNotice ? (
-        <p className="config-muted" role={activeNotice.role}>
+        <p className={activeNotice.role === 'alert' ? 'config-sheet-error' : 'config-muted'} role={testAnnouncedExternally && activeNotice.source === 'test' ? undefined : activeNotice.role}>
           {activeNotice.text}
         </p>
       ) : null}

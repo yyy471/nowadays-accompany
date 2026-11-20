@@ -34,6 +34,7 @@ export type VoiceProbeTarget =
 export interface VoiceProbeNotice {
   kind: 'status' | 'alert';
   text: string;
+  elapsedMs?: number;
 }
 
 export interface UseVoiceProbeOptions {
@@ -95,6 +96,12 @@ export function useVoiceProbe(key: string, options: UseVoiceProbeOptions = {}) {
     setNotice(null);
   }, []);
 
+  const cancelPending = useCallback(() => {
+    generation.current += 1;
+    setBusy(false);
+    setNotice(null);
+  }, []);
+
   const reset = useCallback(() => {
     generation.current += 1;
     setBusy(false);
@@ -137,6 +144,7 @@ export function useVoiceProbe(key: string, options: UseVoiceProbeOptions = {}) {
       const engineNames = summary?.engines ? Object.keys(summary.engines).join(' / ') : '';
       setNotice({
         kind: 'status',
+        elapsedMs: response.elapsedMs,
         text: `连接成功：${summary?.service || '语音服务'}${engineNames ? ` · 引擎 ${engineNames}` : ''} · ${voiceCount}`,
       });
       return response.probe;
@@ -158,5 +166,5 @@ export function useVoiceProbe(key: string, options: UseVoiceProbeOptions = {}) {
     }
   }, []);
 
-  return { result, busy, notice, run, clearLog, reset };
+  return { result, busy, notice, run, clearLog, cancelPending, reset };
 }

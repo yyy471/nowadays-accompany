@@ -45,7 +45,7 @@ devDoc/
 
 | 文档 | 定位 |
 | --- | --- |
-| [400 v6 迁移实施记录与交接文档](archive/08-config-pages-v6/400-config-pages-v6-migration-progress.md) | P1 基础件已完成（令牌/状态点/播报/遮罩/T 字串/摘要单测，门禁全绿）；P2–P6 阶段指引、排障结论与门禁命令速查 |
+| [400 v6 迁移实施记录与交接文档](archive/08-config-pages-v6/400-config-pages-v6-migration-progress.md) | P1–P6 的实施指引、角色配置与五类全局服务的展示对照、依赖维护、写入反馈、回归门禁及独立复核记录 |
 
 ### 07 · 文档组织与维护
 

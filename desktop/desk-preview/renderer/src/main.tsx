@@ -15,6 +15,7 @@ import './styles/appearance.css';
 import './styles/voice.css';
 import './styles/image.css';
 import './styles/settings-workspace.css';
+import './styles/settings-catalog.css';
 import './styles/role-entry.css';
 import './styles/relations-exlibris.css';
 import './styles/conversation.css';

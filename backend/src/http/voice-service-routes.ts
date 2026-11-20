@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { normalizeVoiceBaseUrl } from "../domain/voice.js";
 import { voiceServiceConfigSchema } from "../domain/voice-service.js";
 import type { Router } from "./router.js";
 import type { ApiServices } from "./routes.js";
@@ -67,16 +68,13 @@ export function registerVoiceServiceRoutes(
         updateVoiceServiceSchema,
         await readJsonBody(request),
       );
-      return {
-        status: 200,
-        body: {
-          service: services.voiceServices.update(params.serviceId ?? "", {
-            ...(body.name === undefined ? {} : { name: body.name }),
-            ...(body.enabled === undefined ? {} : { enabled: body.enabled }),
-            ...(body.config === undefined ? {} : { config: body.config }),
-          }),
-        },
-      };
+      const serviceId = params.serviceId ?? "";
+      services.voiceServices.validateUpdate(serviceId, body);
+      const current = services.voiceServices.get(serviceId);
+      const next = body.config ?? current.config;
+      const connectionChanged = next.protocol !== current.config.protocol || normalizeVoiceBaseUrl(next.baseUrl) !== normalizeVoiceBaseUrl(current.config.baseUrl) || (current.enabled && body.enabled === false);
+      const result = await services.mediaMaintenance.update('voice', serviceId, connectionChanged, () => services.voiceServices.update(serviceId, body));
+      return { status: 200, body: { service: result.value, maintenance: result.maintenance } };
     },
   );
 
@@ -85,7 +83,7 @@ export function registerVoiceServiceRoutes(
     "/v1/voice-services/:serviceId",
     ({ params }): RouteResponse => ({
       status: 200,
-      body: services.voiceServices.delete(params.serviceId ?? ""),
+      body: services.mediaMaintenance.remove("voice", params.serviceId ?? "", () => services.voiceServices.delete(params.serviceId ?? "")),
     }),
   );
 

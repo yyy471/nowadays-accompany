@@ -1,11 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type SetStateAction } from 'react';
 import { api, apiBinary } from '../../api';
-import { Button, Field, Input, LoadingNote, Select, Textarea } from '../../ui';
+import { Button, Field, Input, Select, Textarea } from '../../ui';
+import { announceLive } from '../../ui/live-announcer';
 import type { ConfigDraftState } from '../config-draft';
+import { MediaGroup, MediaRow, MediaSheet, MediaStateRow, RoleSaveActions, type MediaSummaryStatus } from '../config/MediaSheet';
+import { useSheet } from '../config/sheet/sheet-context';
+import { T3, T25, T33, T34 } from '../config/config-texts.js';
 import {
   createVoiceForm,
   describeVoiceFailure,
-  describeVoiceSummary,
   isPresetVoiceAvailable,
   normalizeBaseUrl,
   pickPresetVoiceForEngine,
@@ -16,7 +19,6 @@ import {
   validateVoiceForm,
   withPendingReferenceAudio,
   withReferenceAudio,
-  withVoiceService,
   type VoiceConfigView,
   type VoiceForm,
   type VoiceReferenceItem,
@@ -31,7 +33,7 @@ const PREVIEW_EMOTION_PRESETS = ['温柔', '开心', '傲娇', '撒娇', '俏皮
 const MAX_REFERENCE_AUDIO_BYTES = 32 * 1024 * 1024;
 
 type Props = {
-  guardWrite?: <T>(action: () => Promise<T>) => Promise<T>;
+  guardWrite?: <T>(action: () => Promise<T>, verb?: string) => Promise<T>;
   pausedWrite?: boolean;
   roleId: string;
   active?: boolean;
@@ -40,9 +42,10 @@ type Props = {
   onOpenVoiceSettings?: (target?: { serviceId?: string; createNew?: boolean }) => void;
   onChanged?: () => void;
   onDraftStateChange?: (state: ConfigDraftState) => void;
+  onSummaryStatus?: (status: MediaSummaryStatus) => void;
 };
 
-const DEFAULT_PREVIEW_TEXT = '今天想和你一起，慢慢走一段路。';
+const DEFAULT_PREVIEW_TEXT = '这是一段语音试听文本。';
 
 export function VoicePanel({
   roleId,
@@ -52,17 +55,31 @@ export function VoicePanel({
   onOpenVoiceSettings,
   onChanged,
   onDraftStateChange,
+  onSummaryStatus,
   guardWrite = action => action(),
   pausedWrite = false,
 }: Props) {
+  const { sheet, closeNow } = useSheet();
+  const editing = Boolean(active && sheet?.id === 'media:voice');
   const [config, setConfig] = useState<VoiceConfigView | null>(null);
   const [services, setServices] = useState<VoiceServiceItem[]>([]);
-  const [form, setForm] = useState<VoiceForm>(() => createVoiceForm(null));
-  const [savedForm, setSavedForm] = useState<VoiceForm | null>(null);
+  const [{ form, savedForm }, setForms] = useState<{ form: VoiceForm; savedForm: VoiceForm | null }>(
+    () => ({ form: createVoiceForm(null), savedForm: null }),
+  );
+  const setForm = useCallback((update: SetStateAction<VoiceForm>) => {
+    setForms(previous => {
+      const next = typeof update === 'function' ? update(previous.form) : update;
+      return next === previous.form ? previous : { ...previous, form: next };
+    });
+  }, []);
+  const draftStateRef = useRef<ConfigDraftState>({ dirty: false, busy: false, discard: () => {} });
   const draftCallback = useRef(onDraftStateChange);
   draftCallback.current = onDraftStateChange;
   const [references, setReferences] = useState<VoiceReferenceItem[]>([]);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
+  // 每个角色面板常驻；切换服务时暂存各自的会话草稿及未上传录音。
+  const serviceDrafts = useRef(new Map<string, { form: VoiceForm; file: File | null; text: string; emotion: string }>());
+  const savedServiceForms = useRef(new Map<string, VoiceForm>());
   const [previewText, setPreviewText] = useState(DEFAULT_PREVIEW_TEXT);
   const [previewEmotion, setPreviewEmotion] = useState('');
   const [previewBusy, setPreviewBusy] = useState(false);
@@ -84,6 +101,7 @@ export function VoicePanel({
     if (inFlight.current?.seq === lock.seq) inFlight.current = null;
   };
   const [loading, setLoading] = useState(true);
+  const [readRetry, setReadRetry] = useState(0);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
@@ -96,12 +114,12 @@ export function VoicePanel({
   const previewAbortRef = useRef<AbortController | null>(null);
   const [previewElapsed, setPreviewElapsed] = useState(0);
   const lastRole = useRef(roleId);
-  const lastActive = useRef(active);
+  const lastActive = useRef(editing);
   const serviceSyncSeq = useRef(0);
   const syncedState = useRef<{ roleId: string; version: number; active: boolean | undefined } | null>(null);
-  if (lastActive.current !== active) {
-    lastActive.current = active;
-    if (!active) {
+  if (lastActive.current !== editing) {
+    lastActive.current = editing;
+    if (!editing) {
       previewToken.current += 1;
       previewAbortRef.current?.abort();
       previewAbortRef.current = null;
@@ -124,6 +142,13 @@ export function VoicePanel({
   formRef.current = form;
 
   const selectedService = services.find(service => service.serviceId === form.serviceId) ?? null;
+  const hasAvailableService = services.some(service => service.enabled);
+  const comparison = savedForm?.serviceId === form.serviceId ? savedForm : savedServiceForms.current.get(form.serviceId) ?? createVoiceForm(null);
+  const count = Number(pendingFile !== null && (form.protocol === 'indextts' || form.sourceKind === 'reference')) + (savedForm
+    ? Number(form.serviceId !== savedForm.serviceId) + (Object.keys(form) as (keyof VoiceForm)[]).filter(key =>
+      !['serviceId', 'protocol', 'baseUrl', 'capabilities'].includes(key) && JSON.stringify(form[key]) !== JSON.stringify(comparison[key]),
+    ).length
+    : 0);
   const missingSelectedService = form.serviceId.length > 0 && selectedService === null;
   const disabledSelectedService = selectedService !== null && !selectedService.enabled;
   const probeCacheKey =
@@ -139,6 +164,8 @@ export function VoicePanel({
       setNotice('');
     },
   });
+
+  useEffect(() => { if (editing && voiceProbe.notice) announceLive(voiceProbe.notice.text); }, [editing, voiceProbe.notice]);
 
   const stopPreview = () => {
     const audio = audioRef.current;
@@ -157,17 +184,12 @@ export function VoicePanel({
   };
 
   useEffect(() => {
-    // 探测返回的能力声明是服务信息，不代表用户修改了配置。
-    const comparable = (value: VoiceForm) => {
-      const { capabilities: _capabilities, ...fields } = value;
-      return JSON.stringify(fields);
-    };
-    const stagedPending =
-      pendingFile !== null && (form.protocol === 'indextts' || form.sourceKind === 'reference');
-    draftCallback.current?.({
-      dirty: stagedPending || (savedForm !== null && comparable(form) !== comparable(savedForm)),
-      busy: busy || toggleBusy || voiceProbe.busy,
+    draftStateRef.current = {
+      dirty: count > 0,
+      count,
+      busy: busy || toggleBusy,
       discard: () => {
+        serviceDrafts.current.clear();
         if (savedForm) setForm(savedForm);
         setPendingFile(null);
         if (fileInput.current) fileInput.current.value = '';
@@ -181,20 +203,21 @@ export function VoicePanel({
         setError('');
         setNotice('');
       },
-    });
+    };
+    draftCallback.current?.(draftStateRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form, savedForm, pendingFile, busy, toggleBusy, voiceProbe.busy]);
+  }, [count, savedForm, busy, toggleBusy]);
 
   useEffect(() => {
-    if (!active) {
+    if (!editing) {
       previewToken.current += 1;
       previewAbortRef.current?.abort();
       previewAbortRef.current = null;
       stopPreview();
       setPreviewBusy(false);
-      voiceProbe.clearLog();
+      voiceProbe.cancelPending();
     }
-  }, [active, voiceProbe.clearLog]);
+  }, [editing, voiceProbe.cancelPending]);
 
   useEffect(() => () => {
     previewAbortRef.current?.abort();
@@ -215,10 +238,11 @@ export function VoicePanel({
     let activeLoad = true;
     const syncSeq = ++serviceSyncSeq.current;
     syncedState.current = { roleId, version: serviceRefreshVersion, active };
+    serviceDrafts.current.clear();
+    savedServiceForms.current.clear();
     setConfig(null);
     setServices([]);
-    setForm(createVoiceForm(null));
-    setSavedForm(null);
+    setForms({ form: createVoiceForm(null), savedForm: null });
     setReferences([]);
     setPendingFile(null);
     if (fileInput.current) fileInput.current.value = '';
@@ -244,15 +268,15 @@ export function VoicePanel({
         if (!activeLoad) return;
         setReferences(reference.items);
         const baseForm = createVoiceForm(voice.voice);
+        if (voice.voice?.serviceId) savedServiceForms.current.set(voice.voice.serviceId, baseForm);
         if (syncSeq === serviceSyncSeq.current) {
           setConfig(voice.voice);
           setServices(available.items);
           const initial =
             voice.voice === null ? syncVoiceFormServices(baseForm, available.items) : baseForm;
-          setForm(initial);
-          setSavedForm(initial);
+          setForms({ form: initial, savedForm: initial });
         } else {
-          setSavedForm(previous => previous ?? baseForm);
+          setForms(previous => previous.savedForm === null ? { form: baseForm, savedForm: baseForm } : previous);
         }
         setLoading(false);
       })
@@ -265,7 +289,7 @@ export function VoicePanel({
       activeLoad = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roleId]);
+  }, [roleId, readRetry]);
 
   useEffect(() => {
     const previousSync = syncedState.current;
@@ -288,7 +312,20 @@ export function VoicePanel({
         if (isStale(token) || syncSeq !== serviceSyncSeq.current) return;
         setConfig(voice.voice);
         setServices(available.items);
-        setForm(previous => syncVoiceFormServices(previous, available.items));
+        if (voice.voice?.serviceId) savedServiceForms.current.set(voice.voice.serviceId, createVoiceForm(voice.voice));
+        setForms(previous => {
+          const { form: draft, savedForm: baseline } = previous;
+          if (baseline === null) {
+            const initial = createVoiceForm(voice.voice);
+            const next = voice.voice === null ? syncVoiceFormServices(initial, available.items) : initial;
+            return { form: next, savedForm: next };
+          }
+          // 目录补齐的默认服务属于基线，用户在途选中的其他服务仍属于草稿。
+          const sameService = draft.serviceId === baseline.serviceId;
+          const next = draft.serviceId || sameService ? syncVoiceFormServices(draft, available.items) : draft;
+          const nextBaseline = sameService ? syncVoiceFormServices(baseline, available.items) : baseline;
+          return next === draft && nextBaseline === baseline ? previous : { form: next, savedForm: nextBaseline };
+        });
       })
       .catch(() => { /* 从设置返回同步失败时保留现有草稿，保存时会触发正式校验 */ });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -305,18 +342,17 @@ export function VoicePanel({
   const patch = (next: Partial<VoiceForm>) => setForm(previous => ({ ...previous, ...next }));
 
   const selectService = (nextServiceId: string) => {
+    if (nextServiceId === form.serviceId) return;
+    serviceDrafts.current.set(form.serviceId, { form, file: pendingFile, text: previewText, emotion: previewEmotion });
     const picked = services.find(item => item.serviceId === nextServiceId);
-    if (!picked) {
-      setForm(previous => withVoiceService(previous, { serviceId: nextServiceId }));
-      return;
-    }
-    setForm(previous =>
-      withVoiceService(previous, {
-        serviceId: picked.serviceId,
-        protocol: picked.config.protocol,
-        baseUrl: picked.config.baseUrl,
-      }),
-    );
+    const cached = serviceDrafts.current.get(nextServiceId);
+    const base = cached?.form ?? savedServiceForms.current.get(nextServiceId) ?? createVoiceForm(null);
+    setForm(picked ? { ...base, serviceId: picked.serviceId, protocol: picked.config.protocol, baseUrl: picked.config.baseUrl } : { ...base, serviceId: nextServiceId });
+    setPendingFile(cached?.file ?? null);
+    if (fileInput.current) fileInput.current.value = '';
+    setPreviewText(cached?.text ?? DEFAULT_PREVIEW_TEXT);
+    setPreviewEmotion(cached?.emotion ?? '');
+    setError(''); setNotice('');
   };
 
   const refreshReferences = async (token: number) => {
@@ -385,7 +421,7 @@ export function VoicePanel({
     probeSource,
   });
 
-  const validateServiceSelectionBeforeAction = (): string | null => {
+  const validateServiceSelectionBeforeAction = (allowRetained = false): string | null => {
     if (form.serviceId === '' && form.baseUrl.trim().length === 0) {
       return services.length === 0
         ? '还没有语音服务，请先在「设置 -> 模型 -> 语音」中添加。'
@@ -394,7 +430,7 @@ export function VoicePanel({
     if (missingSelectedService) {
       return '当前所选语音服务已不存在，请重新选择或前往设置新建。';
     }
-    if (disabledSelectedService) {
+    if (disabledSelectedService && (!allowRetained || config?.serviceId !== form.serviceId)) {
       return describeVoiceFailure({ code: 'VOICE_SERVICE_DISABLED' });
     }
     return null;
@@ -522,7 +558,7 @@ export function VoicePanel({
       const result = await guardWrite(() => api<{ deleted: boolean; fileRemoved: boolean }>(
         `/v1/roles/${encodeURIComponent(roleId)}/voice/references/${encodeURIComponent(item.assetId)}`,
         { method: 'DELETE' },
-      ));
+      ), '删除参考音频');
       if (isStale(token)) return;
       if (formRef.current.referenceAssetId === item.assetId) {
         setForm(previous => withReferenceAudio(previous, ''));
@@ -545,7 +581,7 @@ export function VoicePanel({
   const save = async () => {
     // 保存与启停互斥：任一进行中都不接受另一个，避免旧快照覆盖已确认的启用状态。
     if (inFlight.current !== null || busy || toggleBusy) return;
-    const serviceProblem = validateServiceSelectionBeforeAction();
+    const serviceProblem = validateServiceSelectionBeforeAction(true);
     if (serviceProblem !== null) {
       setError(serviceProblem);
       return;
@@ -582,7 +618,7 @@ export function VoicePanel({
           setError('当前所选语音服务已不存在，请重新选择或前往设置新建。');
           return;
         }
-        if (!latest.enabled) {
+        if (!latest.enabled && config?.serviceId !== submittedForm.serviceId) {
           setError(describeVoiceFailure({ code: 'VOICE_SERVICE_DISABLED' }));
           return;
         }
@@ -607,17 +643,17 @@ export function VoicePanel({
           method: 'PUT',
           body,
         },
-      ));
+      ), '保存声音配置');
       if (isStale(token)) return;
       if (stateSeq.current === configSeq) setConfig(result.voice);
       setPendingFile(null);
       if (fileInput.current) fileInput.current.value = '';
       const saved = createVoiceForm(result.voice);
-      setForm(saved);
-      setSavedForm(saved);
-      await refreshReferences(token);
-      if (isStale(token)) return;
-      setNotice('已保存声音配置。');
+      serviceDrafts.current.delete(saved.serviceId);
+      if (saved.serviceId) savedServiceForms.current.set(saved.serviceId, saved);
+      setForms({ form: saved, savedForm: saved });
+      closeNow();
+      void refreshReferences(token).catch(() => { /* 配置已保存；再次打开时仍可读取参考音频列表。 */ });
       onChanged?.();
     } catch (reason) {
       if (isStale(token)) return;
@@ -659,7 +695,6 @@ export function VoicePanel({
     }
   };
 
-  if (loading) return <LoadingNote label="正在读取声音配置…" />;
 
   const activeDefaultEngine = selectedService?.config.defaultEngine ?? activeEngines.defaultEngine;
   const availableEngineEntries = activeEngines.engines ? Object.entries(activeEngines.engines) : [];
@@ -672,15 +707,33 @@ export function VoicePanel({
   const speedRange = capabilities?.speed ?? null;
   const voices = probeSource !== null ? voiceProbe.result?.voices ?? null : null;
 
-  return (
-    <div className="nd-voice">
-      <p className="nd-appearance-hint">{describeVoiceSummary(config)}</p>
+  const dirty = count > 0;
+  const state: ConfigDraftState = { dirty, count, busy: busy || toggleBusy, discard: () => draftStateRef.current.discard() };
+  const tone = form.sourceKind === 'preset' ? form.voiceId : pendingFile?.name || references.find(item => item.assetId === form.referenceAssetId)?.fileName || '';
+  const unset = config === null && !dirty;
+  const status = unset ? 'off' : dirty ? 'dirty' : !form.serviceId ? 'off' : !selectedService ? 'error' : !selectedService.enabled || !tone || config?.enabled === false ? 'off' : 'ok';
+  const statusText = unset ? '未设置' : dirty ? '有改动未保存' : !form.serviceId ? '未设置' : !selectedService ? '原服务已删除' : !selectedService.enabled ? '服务已停用' : !tone ? '未选音色' : config?.enabled === false ? '角色语音已停用' : '生效中';
+  useEffect(() => {
+    if (loading) { onSummaryStatus?.({ status: 'none', label: '正在读取…' }); return; }
+    if (!savedForm && error) { onSummaryStatus?.({ status: 'error', label: '读取失败' }); return; }
+    onSummaryStatus?.({ status, label: statusText });
+  }, [status, statusText, loading, Boolean(savedForm), Boolean(error), onSummaryStatus]);
+  if (loading || (!savedForm && error)) return <MediaStateRow label="语音" loading={loading} error={error} onRetry={() => setReadRetry(value => value + 1)}/>;
+
+  return (<>
+    <MediaRow id="voice" label="语音" value={unset || !form.serviceId ? '未选择' : !selectedService ? '原服务已删除，请重新选择' : `${selectedService.name} · ${form.sourceKind === 'preset' ? '预置音色' : '参考音频'}`} status={status} statusText={statusText} keys={!unset && selectedService ? [
+      {label:'音色', value:tone || (form.sourceKind === 'preset' ? '未选音色' : '未选参考音频'), group:'音色'},
+      {label:'语速', value:`${Number(form.speed).toFixed(1)}×`, group:'表现'},
+      {label:'情感强度', value:`情感 ${Number(form.emoAlpha).toFixed(1)}`, group:'表现'},
+    ] : []}/>
+    <MediaSheet id="voice" active={Boolean(active)} state={state} footer={<RoleSaveActions count={count} pause={pausedWrite} busy={busy || toggleBusy} error={error} onSave={() => void save()}/>}>
+    {group => <div className="nd-voice"><MediaGroup title="服务" group={group}>
 
       <label className="nd-voice-toggle">
         <input
           type="checkbox"
           checked={config !== null && config.enabled !== false}
-          disabled={config === null || busy || toggleBusy}
+          disabled={config === null || busy || toggleBusy || (config.enabled === false && (disabledSelectedService || missingSelectedService))}
           onChange={event => void toggleVoiceEnabled(event.target.checked)}
         />
         <span>启用角色语音</span>
@@ -715,12 +768,12 @@ export function VoicePanel({
               <option value="">请选择语音服务</option>
             ) : null}
             {missingSelectedService ? (
-              <option value={form.serviceId}>原服务已删除（请重新选择）</option>
+              <option value={form.serviceId} disabled>{T34.option}</option>
             ) : null}
             {services.map(service => (
-              <option key={service.serviceId} value={service.serviceId}>
+              <option key={service.serviceId} value={service.serviceId} disabled={!service.enabled}>
                 {service.name}
-                {service.enabled ? '' : '（已停用）'}
+                {service.enabled ? '' : T33.optionSuffix}
               </option>
             ))}
           </Select>
@@ -738,15 +791,13 @@ export function VoicePanel({
               size="sm"
               onClick={() =>
                 onOpenVoiceSettings(
-                  selectedService
+                  !hasAvailableService ? { createNew: true } : selectedService
                     ? { serviceId: selectedService.serviceId }
-                    : services.length === 0
-                      ? { createNew: true }
-                      : undefined,
+                    : undefined,
                 )
               }
             >
-              {services.length === 0 ? '去设置添加 →' : '在设置中管理 →'}
+              {hasAvailableService ? T25.manage : T25.add}
             </Button>
           ) : null}
         </div>
@@ -757,7 +808,7 @@ export function VoicePanel({
         ) : null}
         {disabledSelectedService ? (
           <p role="alert" className="nd-appearance-hint nd-voice-warn">
-            当前所选语音服务已停用，请先启用或重新选择。
+            {T33.selectedNote}
           </p>
         ) : null}
         {isLegacy && selectedService ? (
@@ -766,7 +817,7 @@ export function VoicePanel({
       </Field>
 
       {voiceProbe.notice ? (
-        <p role={voiceProbe.notice.kind === 'alert' ? 'alert' : 'status'}>
+        <p className={voiceProbe.notice.kind === 'alert' ? 'config-sheet-error' : 'config-sheet-note'}>
           {voiceProbe.notice.text}
         </p>
       ) : null}
@@ -809,7 +860,7 @@ export function VoicePanel({
         </Field>
       ) : null}
 
-      {!isLegacy ? (
+      </MediaGroup><MediaGroup title="音色" group={group}>{!isLegacy ? (
         <Field label="音色来源">
           <Select
             aria-label="音色来源"
@@ -828,7 +879,7 @@ export function VoicePanel({
           label="预置音色"
           hint={
             capabilities !== null && capabilities.presetVoices === false
-              ? '当前服务未声明预置音色，保存会被拒绝，请改用参考音频音色。'
+              ? T3
               : voices && voices.length > 0
                 ? '列表来自最近一次连接测试。'
                 : '可以先在设置或此处点击「测试连接」获取列表，也可以直接填写音色 ID。'
@@ -965,60 +1016,41 @@ export function VoicePanel({
         </>
       )}
 
-      <Field label="语言">
-        {languages.length > 0 ? (
-          <Select
-            aria-label="语言"
-            disabled={busy}
-            value={form.language}
-            onChange={event => patch({ language: event.target.value })}
-          >
-            {languages.map(code => (
-              <option key={code} value={code}>
-                {code}
-              </option>
-            ))}
-          </Select>
-        ) : (
-          <Input
-            aria-label="语言"
-            disabled={busy}
-            value={form.language}
-            onChange={event => patch({ language: event.target.value })}
-          />
-        )}
+      </MediaGroup><MediaGroup title="表现" group={group}><div className="config-media-performance"><Field label="语言">
+        <Select aria-label="语言" disabled={busy} value={form.language} onChange={event => patch({ language: event.target.value })}>
+          {[...new Set([...(languages.length ? languages : ['auto', 'zh', 'ja', 'en']), form.language])].map(code => (
+            <option key={code} value={code}>{({ auto: '自动判断', zh: '中文', ja: '日语', en: '英语' } as Record<string, string>)[code] ?? code}</option>
+          ))}
+        </Select>
       </Field>
 
-      <Field
-        label="语速"
-        hint={speedRange === null ? '服务未声明语速范围，保存时由服务端判断。' : `服务声明范围 ${speedRange.min}～${speedRange.max}。`}
-      >
-        <Input
+      <Field label="语速"><div className="config-media-range">
+        <input
           aria-label="语速"
-          type="number"
-          step="0.05"
-          min={speedRange?.min ?? 0.1}
-          max={speedRange?.max ?? 10}
+          type="range"
+          step="0.1"
+          min={speedRange?.min ?? Math.min(0.5, form.speed)}
+          max={speedRange?.max ?? Math.max(2, form.speed)}
           disabled={busy}
           value={String(form.speed)}
           onChange={event => patch({ speed: Number(event.target.value) })}
-        />
-      </Field>
+        /><output>{Number(form.speed).toFixed(1)}×</output></div>
+      </Field></div>
 
-      <Field label="情感强度" hint="0 到 1，越高越贴近参考音频的情绪。">
-        <Input
+      <Field label="情感强度"><div className="config-media-range">
+        <input
           aria-label="情感强度"
-          type="number"
-          step="0.05"
+          type="range"
+          step="0.1"
           min="0"
           max="1"
           disabled={busy}
           value={String(form.emoAlpha)}
           onChange={event => patch({ emoAlpha: Number(event.target.value) })}
-        />
+        /><output>{Number(form.emoAlpha).toFixed(1)}</output></div>
       </Field>
 
-      {!isLegacy ? (
+      </MediaGroup><MediaGroup title="试听" group={group}>{!isLegacy ? (
         <Field
           label="试听情绪指令"
           hint="可选；留空由服务自动判断。CosyVoice 支持自然语言语气，IndexTTS 支持情绪词（对话中会由模型按语境自动标注）。"
@@ -1068,10 +1100,8 @@ export function VoicePanel({
         <Button disabled={!playing} onClick={stopPreview}>
           停止播放
         </Button>
-        <Button variant="primary" disabled={busy || toggleBusy} onClick={() => void save()}>
-          {busy ? '正在保存…' : pausedWrite ? '暂停并保存声音配置' : '保存声音配置'}
-        </Button>
       </div>
+      </MediaGroup>
       {notice ? (
         <p className="nd-appearance-notice" role="status">
           {notice}
@@ -1082,8 +1112,9 @@ export function VoicePanel({
           {error}
         </p>
       ) : null}
-    </div>
-  );
+    </div>}
+    </MediaSheet>
+  </>);
 }
 
 function failureText(reason: unknown): string {

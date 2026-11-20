@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { api } from './api';
 import type { Outfit, RoleDetail, RoleListItem, RoleStateResponse } from './types';
 import { appearanceAssetUrl } from './types';
-import { BrandMark, Button, ControlButton, UiThemeProvider, UiThemeScope, createMotionScope, readMotionPx, readMotionTime, readMotionValue, useMotionPolicy } from './ui';
+import { BrandMark, Button, ControlButton, Icon, UiThemeProvider, UiThemeScope, createMotionScope, readMotionPx, readMotionTime, readMotionValue, useMotionPolicy } from './ui';
 import { useThemePreset } from './ui/presets';
 import { ThemeSwitcher } from './components/shell/ThemeSwitcher';
 import { PageDock } from './components/shell/PageDock';
 import { HomePage } from './pages/Home';
 import { Relations } from './Relations';
-import { SettingsWorkspace } from './pages/Settings';
+import { SettingsWorkspace, type ConfigNavigationGuard } from './pages/Settings';
 import { ConversationPage } from './pages/Conversation';
 import { RoleEntry } from './pages/RoleEntry';
 import { needsEntryPick } from './entry/role-entry.js';
@@ -20,6 +21,48 @@ export function App() {
   const [scope] = useState(createMotionScope);
   const pageBody = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState('home');
+  const [configFooterLeft, setConfigFooterLeft] = useState<HTMLDivElement | null>(null);
+  const [configFooterRight, setConfigFooterRight] = useState<HTMLDivElement | null>(null);
+  const configGuard = useRef<ConfigNavigationGuard | null>(null);
+  const configSwap = useRef({ generation: 0, animations: [] as Animation[] });
+  const applyPage = (next: string, after?: () => void) => {
+    if (next === page) return;
+    const apply = () => { after?.(); setPage(next); };
+    const configPages = ['role-config', 'settings'];
+    const state = configSwap.current;
+    const generation = ++state.generation;
+    state.animations.forEach(animation => animation.cancel());
+    state.animations = [];
+    if (motion.reduced || !configPages.includes(page) || !configPages.includes(next)) { apply(); return; }
+    const targets = () => [...document.querySelectorAll<HTMLElement>(
+      '.studio-shell:not(.config-theme-veil) :is(.config-stage,.config-index,.config-tabs,.config-leaf,#config-footer-left,#config-footer-right)',
+    )].filter(element => element.offsetParent !== null);
+    const previous = targets();
+    state.animations = previous.map(element => element.animate([{ opacity: 1 }, { opacity: 0 }], {
+      duration: readMotionTime(element, '--nd-semantic-motion-micro-exit', 90),
+      easing: readMotionValue(element, '--nd-semantic-motion-ease-in', 'ease-in'), fill: 'forwards',
+    }));
+    void Promise.allSettled(state.animations.map(animation => animation.finished)).then(() => {
+      if (generation !== state.generation) return;
+      flushSync(apply);
+      state.animations.forEach(animation => animation.cancel());
+      state.animations = targets().flatMap(element => {
+        const duration = readMotionTime(element, '--nd-semantic-motion-component', 220);
+        return duration <= 0 ? [] : [element.animate([{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }], {
+          duration, easing: readMotionValue(element, '--nd-semantic-motion-ease-out', 'ease-out'),
+        })];
+      });
+    });
+  };
+  const navigate = (next: string, after?: () => void) => {
+    if (next === page) return;
+    const proceed = () => applyPage(next, after);
+    if ((page === 'role-config' || page === 'settings') && configGuard.current) configGuard.current(next, proceed);
+    else proceed();
+  };
+  useEffect(() => {
+    if (motion.reduced) configSwap.current.animations.forEach(animation => animation.cancel());
+  }, [motion.reduced]);
   // 冷启动先选角（DL-147）；自动化脚本可用 NOWADAYS_SKIP_ROLE_PICKER 直入工作区。
   const [entered, setEntered] = useState(false);
   const [skipEntry, setSkipEntry] = useState(false);
@@ -162,7 +205,7 @@ export function App() {
   useEffect(() => {
     scope.cancelAll();
     const element = pageBody.current;
-    if (!element || page === 'home' || motion.reduced) return;
+    if (!element || page === 'home' || page === 'role-config' || page === 'settings' || motion.reduced) return;
     scope.run(element, [{ opacity: .35, transform: `translateY(${readMotionPx(element, '--nd-component-motion-page-offset', 4)}px)` }, { opacity: 1, transform: 'translateY(0)' }],
       { duration: readMotionTime(element, '--nd-component-motion-page', 360), easing: readMotionValue(element, '--nd-component-motion-ease', 'cubic-bezier(0.2, 0.8, 0.2, 1)'), slot: 'page', fill: 'backwards' });
     return () => scope.cancelAll();
@@ -190,21 +233,24 @@ export function App() {
   }
   return <div className="studio-shell" data-ui-palette="xiacheng" data-ui-preset={preset} data-page={page} data-dialogue-dock-hidden={dockHidden || undefined}>
     <UiThemeScope theme="xiacheng" className="studio-header-scope"><header className="studio-header">
-      <ControlButton className="ui-studio-brand" aria-label="返回主页" onClick={() => setPage('home')}><BrandMark/><span>Nowadays<small>A NOTE FOR YOUR EVERYDAY.</small></span></ControlButton>
+      <ControlButton className="ui-studio-brand" aria-label="返回主页" onClick={() => navigate('home')}><BrandMark/><span>Nowadays<small>A NOTE FOR YOUR EVERYDAY.</small></span></ControlButton>
       <ThemeSwitcher/>
-      <div className="studio-header-actions" aria-hidden="true" />
+      {page === 'role-config' || page === 'settings' ? <div className="studio-header-actions">
+        <ControlButton className="config-motion-toggle" aria-pressed={motion.reduced} aria-label="减少动效" title="减少动效"
+          onClick={() => motion.select(motion.reduced ? 'full' : 'reduced')}><Icon name="tune" size={13}/><span>减少动效</span></ControlButton>
+      </div> : <div className="studio-header-actions" aria-hidden="true"/>}
     </header></UiThemeScope>
     <main className="studio-content" tabIndex={-1} aria-label="当前页面内容"><UiThemeProvider theme="xiacheng">
       <div ref={pageBody} className={page === 'home' ? 'studio-home-content' : page === 'roles' ? 'studio-relations-content' : page === 'conversation' ? 'studio-conversation-content' : 'studio-legacy-page'}>
         {page === 'home' && <UiThemeScope theme="xiacheng"><HomePage accounts={accounts} selectedAccountId={currentId} outfitHomeUrl={outfitHomeUrl} outfitName={currentOutfit?.name ?? null} loading={!roles && !error} error={error} onRetry={() => refresh()} onGoWorkbench={() => setPage('roles')} onCreateRole={() => { issueWorkspaceRequest({ kind: 'create' }); setPage('role-config'); }}/></UiThemeScope>}
         {page === 'roles' && <Relations roles={roles || []} error={error} currentId={currentId} visit={rolesVisit} onSelect={setCurrentId} onOpenSettings={() => setPage('role-config')}/>}
         {page === 'conversation' && <ConversationPage roles={roles || []} currentId={currentId} currentOutfit={currentOutfit} outfits={outfits} outfitHomeUrl={outfitHomeUrl} appearanceLoading={appearanceLoading} loading={!roles && !error} error={error} hideDock={hideConversationDock} onHideDockChange={setConversationDockHidden} onSelectRole={setCurrentId} onOpenRelations={() => setPage('roles')} onConfigureModel={() => { issueWorkspaceRequest({ kind: 'section', roleId: currentId, section: 'models' }); setPage('role-config'); }} onCreateRole={() => { issueWorkspaceRequest({ kind: 'create' }); setPage('role-config'); }} onRoleStateChanged={() => { void refresh(); }}/>}
-        {settingsVisited && <SettingsWorkspace page={page} roles={roles || []} currentId={currentId} roleListError={roleListError} onRoleDeleted={removeRoleLocally} onRefresh={refresh} onNavigate={setPage} workspaceRequest={workspaceRequest} onWorkspaceRequestHandled={handleWorkspaceRequestHandled} onStartConversation={roleId => { setCurrentId(roleId); setPage('conversation'); }}/>}
+        {settingsVisited && <SettingsWorkspace page={page} roles={roles || []} currentId={currentId} roleListError={roleListError} onRoleDeleted={removeRoleLocally} onRefresh={refresh} onNavigate={applyPage} navigationGuard={configGuard} footerLeft={configFooterLeft} footerRight={configFooterRight} workspaceRequest={workspaceRequest} onWorkspaceRequestHandled={handleWorkspaceRequestHandled} onStartConversation={roleId => navigate('conversation', () => setCurrentId(roleId))}/>}
       </div>
     </UiThemeProvider></main>
     {!dockHidden && <UiThemeScope theme="xiacheng" className="studio-footer-scope"><footer className="studio-footer">
-      {page === 'role-config' || page === 'settings' ? <div id="config-footer-left" className="config-footer-left"/> : <span className="studio-runtime">{error ? '连接状态待更新' : roles ? `${roles.length} 位角色 · 本地生活空间` : '正在连接'}</span>}
-      <PageDock page={page} onNavigate={next => { setPage(next); if (next === 'roles') setRolesVisit(value => value + 1); }}/>{page === 'role-config' || page === 'settings' ? <div id="config-footer-right" className="config-footer-right"/> : <span className="studio-edition">CHARACTER STUDIO / 开发版</span>}
+      {page === 'role-config' || page === 'settings' ? <div ref={setConfigFooterLeft} id="config-footer-left" className="config-footer-left"/> : <span className="studio-runtime">{error ? '连接状态待更新' : roles ? `${roles.length} 位角色 · 本地生活空间` : '正在连接'}</span>}
+      <PageDock page={page} onNavigate={next => navigate(next, () => { if (next === 'roles') setRolesVisit(value => value + 1); })}/>{page === 'role-config' || page === 'settings' ? <div ref={setConfigFooterRight} id="config-footer-right" className="config-footer-right"/> : <span className="studio-edition">CHARACTER STUDIO / 开发版</span>}
     </footer></UiThemeScope>}
   </div>;
 }

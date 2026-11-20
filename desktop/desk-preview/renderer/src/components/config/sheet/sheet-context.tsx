@@ -1,5 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
-import { readMotionTime } from '../../../ui';
+import { flushSync } from 'react-dom';
+import { createMotionScope, readMotionTime, readMotionValue, useMotionPolicy } from '../../../ui';
+import { focusableControls } from '../../../ui/focus';
+import { captureSavedSummary } from './save-feedback';
+import { animateSheetExit } from './sheet-motion';
 
 /** 纸笺形态（规范 §2）：完整表单 / 只含一组的紧凑表单 / 删除确认。 */
 export type SheetShape = 'full' | 'compact' | 'confirm';
@@ -13,6 +17,8 @@ export interface SheetState {
   group?: string;
   /** 紧凑形态对齐的触发元素。 */
   anchor?: HTMLElement | null;
+  /** 显式焦点返回控件，允许锚定整行与触发按钮分开。 */
+  focusReturn?: HTMLElement | null;
 }
 
 export interface SheetContextValue {
@@ -22,9 +28,15 @@ export interface SheetContextValue {
   dirtyCount: number;
   busy: boolean;
   confirming: boolean;
+  closing: boolean;
+  /** 每次纸笺关闭后递增（含「放弃修改」与保存后关闭）；宿主据此把草稿回滚到已保存值（R11-2）。 */
+  discardToken: number;
+  closedId: string | null;
+  closedSaved: boolean;
   open: (next: SheetState) => void;
   requestClose: (then?: () => void) => void;
-  closeNow: () => void;
+  closeNow: (then?: () => void) => void;
+  discardNow: (then?: () => void) => void;
   setDirty: (value: boolean, count?: number) => void;
   setBusy: (value: boolean) => void;
   resolveConfirm: (keepEditing: boolean) => void;
@@ -44,26 +56,40 @@ export function SheetProvider({ children, controller }: { children: ReactNode; c
   const [sheet, setSheet] = useState<SheetState | null>(null);
   const [dirty, setDirtyState] = useState(false);
   const [dirtyCount, setDirtyCount] = useState(0);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusyState] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const [discardToken, setDiscardToken] = useState(0);
+  const [closedId, setClosedId] = useState<string | null>(null);
+  const [closedSaved, setClosedSaved] = useState(false);
+  const { reduced } = useMotionPolicy();
   const lastTrigger = useRef<HTMLElement | null>(null);
   const pendingThen = useRef<(() => void) | null>(null);
   const current = useRef<SheetState | null>(null);
+  const savedFeedback = useRef<ReturnType<typeof captureSavedSummary> | null>(null);
+  const leaving = useRef(false);
+  const busyRef = useRef(false);
+  const pendingFinalization = useRef<(() => void) | null>(null);
+  const [exitMotion] = useState(createMotionScope);
+  // 新纸笺可在卸载后立刻打开，旧焦点回调须识别这次打开。
+  const closeSeq = useRef(0);
 
   const focusAfterClose = useCallback((target: SheetState | null) => {
     const trigger = lastTrigger.current;
-    if (trigger && trigger.isConnected) {
+    if (trigger && trigger.isConnected && trigger !== document.body && trigger.tabIndex >= 0 && !trigger.matches(':disabled')) {
       trigger.focus({ preventScroll: true });
       return;
     }
     if (target) {
-      const edit = document.querySelector<HTMLElement>(`[data-edit="${target.id}"]`);
-      if (edit) {
-        edit.focus({ preventScroll: true });
+      const rowId = target.id.replace(/:(service|test)$/, '');
+      const edit = [...document.querySelectorAll<HTMLElement>(`[data-edit="${CSS.escape(rowId)}"]`)].find(element => element.offsetParent !== null);
+      const control = edit?.querySelector<HTMLElement>('button.config-sum-edit') ?? edit;
+      if (control) {
+        control.focus({ preventScroll: true });
         return;
       }
     }
-    document.querySelector<HTMLElement>('.config-leaf-body h2')?.focus({ preventScroll: true });
+    [...document.querySelectorAll<HTMLElement>('.config-leaf-body h2')].find(element => element.offsetParent !== null)?.focus({ preventScroll: true });
   }, []);
 
   const setDirty = useCallback((next: boolean, count = 0) => {
@@ -71,62 +97,129 @@ export function SheetProvider({ children, controller }: { children: ReactNode; c
     setDirtyCount(next ? count : 0);
   }, []);
 
-  const closeNow = useCallback(() => {
-    const closing = current.current;
-    const then = pendingThen.current;
+  const setBusy = useCallback((next: boolean) => {
+    busyRef.current = next;
+    setBusyState(next);
+  }, []);
+
+  const close = useCallback((saved: boolean, after?: () => void) => {
+    const target = current.current;
+    if (!target || leaving.current) return;
+    const then = after ?? pendingThen.current;
     pendingThen.current = null;
-    current.current = null;
-    // M2：纸笺退出动画期间先留着画面，待办（切换分区 / 保存反馈）等它收完再执行。
-    const frame = document.querySelector<HTMLElement>('.config-sheet');
-    const exit = frame ? readMotionTime(frame, '--nd-semantic-motion-page-exit', 260) : 0;
-    setSheet(null);
+    leaving.current = true;
+    setClosing(true);
     setDirtyState(false);
     setDirtyCount(0);
     setBusy(false);
     setConfirming(false);
-    if (then) {
-      // 导航到新内容：焦点交给新页面的 h2，由接管方处理。
-      if (exit > 0) {
-        window.setTimeout(then, exit);
-        return;
-      }
-      then();
-      return;
+    // 退出动画结束后再广播丢弃信号：否则淡出中的纸笺会立刻显示回滚后的值。
+    const seq = ++closeSeq.current;
+    const finalize = () => {
+      if (closeSeq.current !== seq || !leaving.current) return;
+      pendingFinalization.current = null;
+      current.current = null;
+      leaving.current = false;
+      flushSync(() => {
+        setSheet(null);
+        setClosing(false);
+        setClosedId(target.id);
+        setClosedSaved(saved);
+        setDiscardToken(token => token + 1);
+      });
+      exitMotion.cancelAll();
+      if (saved) savedFeedback.current?.();
+      savedFeedback.current = null;
+      if (then) then();
+      else requestAnimationFrame(() => {
+        if (closeSeq.current === seq && !current.current) focusAfterClose(target);
+      });
+    };
+    pendingFinalization.current = finalize;
+    const frame = document.querySelector<HTMLElement>('.config-sheet');
+    const panelExit = !reduced && frame ? animateSheetExit(frame, exitMotion) : null;
+    if (!panelExit) { finalize(); return; }
+
+    const exits = [panelExit];
+    for (const node of document.querySelectorAll<HTMLElement>('.config-scrim, .config-book-scrim')) {
+      const duration = readMotionTime(node, '--nd-semantic-motion-page-exit', 260);
+      if (duration <= 0) continue;
+      exits.push(exitMotion.run(node, [{ opacity: getComputedStyle(node).opacity }, { opacity: 0 }], {
+        duration, easing: readMotionValue(node, '--nd-semantic-motion-ease-in', 'ease-in'), fill: 'both',
+      }));
     }
-    focusAfterClose(closing);
-  }, [focusAfterClose]);
+    if (saved) requestAnimationFrame(() => {
+      if (leaving.current && closeSeq.current === seq) savedFeedback.current?.hold();
+    });
+    // M2/M6 用三层实际动画完成信号；同一提交卸载三个节点，再开始保存反馈或下一步。
+    void Promise.allSettled(exits.map(animation => animation.finished)).then(finalize);
+  }, [exitMotion, focusAfterClose, reduced, setBusy]);
+
+  const closeNow = useCallback((then?: () => void) => close(true, then), [close]);
+  const discardNow = useCallback((then?: () => void) => close(false, then), [close]);
 
   const open = useCallback((next: SheetState) => {
+    if (leaving.current) return;
     const active = document.activeElement;
-    if (active instanceof HTMLElement) lastTrigger.current = active;
+    const trigger = next.focusReturn ?? (active instanceof HTMLElement ? active : null);
+    lastTrigger.current = trigger?.matches('.config-chip-v,.config-chip-k')
+      ? trigger.closest('.config-sum')?.querySelector<HTMLElement>('.config-sum-edit') ?? trigger
+      : trigger;
+    // 重新打开时作废上一次关闭尚未广播的丢弃信号，避免把新纸笺的草稿清掉。
+    closeSeq.current += 1;
     current.current = next;
+    savedFeedback.current = captureSavedSummary();
     pendingThen.current = null;
     setConfirming(false);
     setDirtyState(false);
     setDirtyCount(0);
     setBusy(false);
     setSheet(next);
-  }, []);
+  }, [setBusy]);
 
   const requestClose = useCallback((then?: () => void) => {
-    if (busy) return;
+    if (busyRef.current || leaving.current || !current.current) return;
     if (dirty) {
+      if (confirming) {
+        document.querySelector<HTMLElement>('.config-sheet-confirm [data-sheet-focus]')?.focus({ preventScroll: true });
+        return;
+      }
       pendingThen.current = then ?? null;
       setConfirming(true);
       return;
     }
     if (then) pendingThen.current = then;
-    closeNow();
-  }, [busy, dirty, closeNow]);
+    close(false);
+  }, [confirming, dirty, close]);
+
+  useEffect(() => {
+    const finalize = pendingFinalization.current;
+    if (reduced && finalize) queueMicrotask(finalize);
+  }, [reduced]);
+
+  useEffect(() => () => {
+    pendingFinalization.current = null;
+    leaving.current = false;
+    exitMotion.cancelAll();
+  }, [exitMotion]);
 
   const resolveConfirm = useCallback((keepEditing: boolean) => {
     if (keepEditing) {
       setConfirming(false);
       pendingThen.current = null;
+      // 取消关闭后回到第一个字段（demo 行为），而不是停在关闭按钮上（§17.6 观察项 3）。
+      requestAnimationFrame(() => {
+        const frame = document.querySelector<HTMLElement>('.config-sheet');
+        if (!frame) return;
+        const first = frame.querySelector<HTMLElement>('[data-sheet-focus]')
+          ?? focusableControls(frame).find(element => !element.classList.contains('config-sheet-x'))
+          ?? frame;
+        first.focus({ preventScroll: true });
+      });
       return;
     }
-    closeNow();
-  }, [closeNow]);
+    close(false);
+  }, [close]);
 
   const value = useMemo<SheetContextValue>(() => ({
     sheet,
@@ -134,13 +227,18 @@ export function SheetProvider({ children, controller }: { children: ReactNode; c
     dirtyCount,
     busy,
     confirming,
+    closing,
+    discardToken,
+    closedId,
+    closedSaved,
     open,
     requestClose,
     closeNow,
+    discardNow,
     setDirty,
     setBusy,
     resolveConfirm,
-  }), [sheet, dirty, dirtyCount, busy, confirming, open, requestClose, closeNow, resolveConfirm, setDirty]);
+  }), [sheet, dirty, dirtyCount, busy, confirming, closing, discardToken, closedId, closedSaved, open, requestClose, closeNow, discardNow, resolveConfirm, setBusy, setDirty]);
 
   useEffect(() => {
     if (!controller) return;

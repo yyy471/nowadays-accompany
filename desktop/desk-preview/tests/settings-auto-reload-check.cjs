@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { resolveElectronExecutable } = require('./electron-executable.cjs');
+const { button, configControls, editor, element, setValue, sheet } = require('./config-page-controls.cjs');
 const root = path.resolve(__dirname, '../../..');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'nowadays-ui-real-'));
 const node = path.join(root, 'prototypes/p0/.runtime/node-v24.22.2-win-x64/node.exe');
@@ -16,6 +17,7 @@ let backend, electron, ws, backendLog = '', electronLog = '', nextId = 0, base =
 const waiting = new Map(), errors = [];
 function cmd(method, params = {}) { return new Promise((resolve, reject) => { const id = ++nextId; waiting.set(id, { resolve, reject }); ws.send(JSON.stringify({ id, method, params })); }); }
 async function ev(expression) { const result = await cmd('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }); if (result.exceptionDetails) throw Error(JSON.stringify(result.exceptionDetails)); return result.result.value; }
+const { click, pickRole, tab, openRoleRow } = configControls(ev, until);
 async function request(route, options = {}) { const response = await fetch(base + route, options); const body = await response.json(); if (!response.ok) throw Error(`${response.status}: ${JSON.stringify(body)}`); return body; }
 const json = body => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 async function run() {
@@ -52,29 +54,24 @@ async function run() {
   await cmd('Runtime.enable'); await cmd('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
   await until(() => ev("!!document.querySelector('.ui-menu-trigger')")); await ev("document.querySelector('.ui-menu-trigger').click()");
   await until(() => ev("[...document.querySelectorAll('.ui-menu-item')].some(x=>x.textContent.includes('角色配置'))")); await ev("[...document.querySelectorAll('.ui-menu-item')].find(x=>x.textContent.includes('角色配置')).click()");
-  // 启动即存在内置助手夏澄，默认编辑对象可能不是联调甲；显式切到联调甲再继续。
-  await until(() => ev("!!document.querySelector('.config-switch-role')"));
-  await ev("document.querySelector('.config-switch-role').click()");
-  await until(() => ev("[...document.querySelectorAll('.config-poster-hit')].some(x=>x.textContent.includes('联调甲'))"));
-  await ev("[...document.querySelectorAll('.config-poster-hit')].find(x=>x.textContent.includes('联调甲')).click()");
+  const profile = element(`${editor} textarea[aria-label="角色设定"]`);
+  await until(() => ev(`!!${profile}?.value`));
+  await pickRole(a.roleId);
   await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='联调甲'"));
-  const editor = '.config-role-editor:not([hidden])';
-  const button = (label, root = editor) => `[...document.querySelectorAll(${JSON.stringify(root + ' button')})].find(x=>x.textContent===${JSON.stringify(label)})`;
-  const tab = async (label) => ev(`[...document.querySelectorAll('.config-tabs button')].find(x=>x.textContent.includes(${JSON.stringify(label)})).click()`);
-  const enter = async () => {
-    const params = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 };
-    await cmd('Input.dispatchKeyEvent', { ...params, type: 'keyDown' });
-    await cmd('Input.dispatchKeyEvent', { ...params, type: 'keyUp' });
+  const modelInput = element(sheet + ' input[role=combobox]');
+  const sheetSave = `[...document.querySelectorAll('${sheet} .config-sheet-actions button')].find(button=>/^保存(?: *[0-9]+)?$/.test(button.textContent.trim()))`;
+  const openSettings = async () => {
+    await click(element('.ui-menu-trigger'));
+    await click(button('设置'));
+    await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings'"));
   };
+  const switchRow = name => element(`${sheet} [role=switch][aria-label="为角色开启${name}"]`);
+  const isChecked = target => ev(`(${target}?.checked ?? (${target}?.getAttribute('aria-checked') === 'true'))`);
   await tab('模型');
-  const detail = editor + ' .config-model-details:not([hidden])';
-  const input = detail + ' input[type=text]';
-  const select = detail + ' select';
-  const modelPart = (text) => ev(`[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-model-toggle')].find(x=>x.querySelector('strong').textContent===${JSON.stringify(text)}).click()`);
-  await until(() => ev(`document.querySelector(${JSON.stringify(input)})?.value==='saved-model'`));
-  await ev(`(()=>{const e=document.querySelector(${JSON.stringify(input)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'local-chat');e.dispatchEvent(new Event('input',{bubbles:true}));})()`);
-  assert.equal(await ev(`document.querySelector(${JSON.stringify(input)}).value`), 'local-chat');
-
+  await until(() => ev(`${element(`${editor} [data-edit="model:chat"]`)}?.innerText.includes('saved-model')`));
+  await openSettings();
+  await tab('MCP');
+  await click(element(`.config-index-item[data-resource-id="${mcp.resourceId}"]`));
   const original = await request(bindingPath);
   const external = await request(bindingPath, put({
     expectedRevision: original.revision,
@@ -88,111 +85,100 @@ async function run() {
     const original=window.fetch;
     window.reviewAuto=[];
     window.reviewWrites=[];
+    window.holdReviewBinding=true;
     window.fetch=async function(input, options) {
       const response=await original.call(this,input,options);
       if (String(input)===${JSON.stringify(bindingPath)}) {
         if (options?.method==='PUT') window.reviewWrites.push({status:response.status,revision:JSON.parse(options.body).expectedRevision});
-        else if (response.ok) window.reviewAuto.push((await response.clone().json()).revision);
+        else if (response.ok) {
+          const revision=(await response.clone().json()).revision;
+          if (window.holdReviewBinding) {
+            window.holdReviewBinding=false;
+            return new Promise(resolve=>{window.releaseReviewBinding=()=>{window.reviewAuto.push(revision);resolve(response);};});
+          }
+          window.reviewAuto.push(revision);
+        }
       }
       return response;
     };
   })()`);
-  await ev(`[...document.querySelectorAll(${JSON.stringify(detail + ' button')})].find(x=>x.textContent.includes('在设置中查看模型')).click()`);
-  await until(() => ev("document.querySelector('.studio-shell').dataset.page==='settings'"));
-  await tab('MCP');
-  const visibleSettings = '.config-leaf-body > .config-prose:not([hidden])';
-  await until(() => ev(`!!${button('删除', visibleSettings)} && !${button('删除', visibleSettings)}.disabled`));
-  await ev(`${button('删除', visibleSettings)}.click()`);
-  await ev(`${button('确认删除', visibleSettings)}.click()`);
-  await until(() => ev(`window.reviewAuto.includes(${JSON.stringify(external.revision)})`));
+  await click(button('删除 MCP…'));
+  await click(button('删除', sheet));
+  await until(() => ev("typeof window.releaseReviewBinding==='function'"));
   assert.equal((await fetch(base + '/v1/resources/' + mcp.resourceId)).status, 404);
-  await ev("document.querySelector('.config-return-footer').click()");
-  await until(() => ev("document.querySelector('.studio-shell').dataset.page==='role-config'"));
-  await modelPart('记忆整理');
-  const memoryDraft = await ev(`({ resource:document.querySelector(${JSON.stringify(select)})?.value, model:document.querySelector(${JSON.stringify(input)})?.value })`);
-  await modelPart('对话');
-  const chatDraft = await ev(`document.querySelector(${JSON.stringify(input)})?.value`);
-  await until(() => ev(`!!${button('保存模型选择')} && !${button('保存模型选择')}.disabled`));
-  await ev(`${button('保存模型选择')}.click()`);
+
+  // v6 的脏纸笺离开会要求放弃。保留真实删除与刷新链路，控制刷新返回时机，
+  // 在返回角色页后仍可编辑已读到的模型字段，并观察重读是否只更新未改字段。
+  await click(element('.config-return-link'));
+  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='role-config'"));
+  await tab('扩展');
+  assert.equal(await ev(`${element(`${editor} [data-edit="ext:mcp"] .config-sum-edit`)}?.disabled`), true, '自动重读期间不可编辑未知版本的扩展');
+  await tab('模型');
+  await openRoleRow('model:chat');
+  await until(() => ev(`${modelInput}?.value==='saved-model'`));
+  await ev(setValue(modelInput, 'local-chat'));
+  await ev('window.releaseReviewBinding()');
+  await until(() => ev(`${element(`${editor} [data-edit="model:memory"]`)}?.innerText.includes('external-memory')`));
+  assert.equal(await ev(`${modelInput}.value`), 'local-chat', '重读不得覆盖纸笺里的本地对话模型草稿');
+  await click(sheetSave);
   await until(() => ev('window.reviewWrites.length===1'));
   const writes = await ev('window.reviewWrites');
+  assert.deepEqual(writes, [{status:200,revision:external.revision}]);
   const saved = await request(bindingPath);
-  const savedChat = saved.items.find(item => item.capability === 'chat_model');
-  const savedMemory = saved.items.find(item => item.capability === 'memory_model');
-  console.log('AUTO_RELOAD_BINDING', JSON.stringify({
-    chatDraft, memoryDraft: memoryDraft.model, memoryDraftUsesExternalService: memoryDraft.resource === remoteModel.resourceId,
-    serverMemoryBefore: 'external-memory', saveStatus: writes[0].status,
-    usedLatestRevision: writes[0].revision === external.revision,
-    savedChat: savedChat?.modelName, savedMemory: savedMemory?.modelName,
-    savedMemoryUsesExternalService: savedMemory?.resourceId === remoteModel.resourceId,
-  }));
-  assert.deepEqual(errors, []);
-  assert.equal(savedChat?.modelName, 'local-chat');
-  assert.equal(savedMemory?.resourceId, remoteModel.resourceId, 'saving the edited chat model must preserve the other client’s memory model service');
-  assert.equal(savedMemory?.modelName, 'external-memory');
+  assert.equal(saved.items.find(item => item.capability === 'chat_model')?.modelName, 'local-chat');
+  assert.equal(saved.items.find(item => item.capability === 'memory_model')?.resourceId, remoteModel.resourceId);
+  assert.equal(saved.items.find(item => item.capability === 'memory_model')?.modelName, 'external-memory');
+  console.log('AUTO_RELOAD_BINDING', JSON.stringify({ localChatPreserved:true, externalMemoryPreserved:true, writes }));
 
-  // 反向场景：本地改记忆模型和一个扩展开关，其他客户端改对话模型和另一个扩展。
-  const unused = await request('/v1/resources', json({ kind: 'mcp', name: '第二个待删除扩展', config: { command: 'node', args: [], env: {} } }));
+  // 一张纸笺完成一个范围的保存。先让扩展纸笺在真实 409 中合并另一扩展和对话模型，
+  // 再让记忆模型纸笺在真实 409 中保留新出现的扩展状态。
   const localMcp = await request('/v1/resources', json({ kind: 'mcp', name: '本地草稿扩展', config: { command: 'node', args: [], env: {} } }));
   const externalMcp = await request('/v1/resources', json({ kind: 'mcp', name: '外部更新扩展', config: { command: 'node', args: [], env: {} } }));
-  await ev(`[...document.querySelectorAll(${JSON.stringify(detail + ' button')})].find(x=>x.textContent.includes('在设置中查看模型')).click()`);
-  await until(() => ev("document.querySelector('.studio-shell').dataset.page==='settings'"));
+  await until(() => ev(`!${element(sheet)}`));
+  await openSettings();
   await tab('MCP');
-  await until(() => ev("[...document.querySelectorAll('.config-index-item')].some(x=>x.textContent.includes('本地草稿扩展'))"));
-  await ev("document.querySelector('.config-return-footer').click()");
-  await until(() => ev("document.querySelector('.studio-shell').dataset.page==='role-config'"));
-  await modelPart('记忆整理');
-  await ev(`(()=>{const e=document.querySelector(${JSON.stringify(input)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'local-memory');e.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await until(() => ev(`!!${element(`.config-index-item[data-resource-id="${localMcp.resourceId}"]`)}`));
+  await click(element('.config-return-link'));
+  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='role-config'"));
   await tab('扩展');
-  const localCheckbox = `[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-prose:not([hidden]) label.config-row')].find(x=>x.textContent.includes('本地草稿扩展'))?.querySelector('input')`;
-  await until(() => ev(`!!${localCheckbox}`));
-  await ev(`${localCheckbox}.click()`);
-  const beforeSecond = await request(bindingPath);
-  const externalSecond = await request(bindingPath, put({ expectedRevision: beforeSecond.revision, bindings: [
+  await openRoleRow('ext:mcp');
+  await click(switchRow('本地草稿扩展'));
+  const beforeExternal = await request(bindingPath);
+  await request(bindingPath, put({ expectedRevision: beforeExternal.revision, bindings: [
     { capability: 'chat_model', resourceId: model.resourceId, modelName: 'external-chat', enabled: true },
-    { capability: 'memory_model', resourceId: remoteModel.resourceId, modelName: 'external-new-memory', enabled: true },
+    { capability: 'memory_model', resourceId: remoteModel.resourceId, modelName: 'external-memory', enabled: true },
     { capability: 'mcp', resourceId: externalMcp.resourceId, enabled: true },
   ] }));
+  await click(sheetSave);
+  await until(() => ev(`window.reviewWrites.length===3 && !${element(sheet)}`));
+  const extensions = await request(bindingPath);
+  assert.equal(extensions.items.find(item => item.resourceId === localMcp.resourceId)?.enabled, true);
+  assert.equal(extensions.items.find(item => item.resourceId === externalMcp.resourceId)?.enabled, true);
+  assert.equal(extensions.items.find(item => item.capability === 'chat_model')?.modelName, 'external-chat');
+  await openRoleRow('ext:mcp');
+  assert.equal(await isChecked(switchRow('本地草稿扩展')), true);
+  assert.equal(await isChecked(switchRow('外部更新扩展')), true);
   await tab('模型');
-  await ev(`[...document.querySelectorAll(${JSON.stringify(detail + ' button')})].find(x=>x.textContent.includes('在设置中查看模型')).click()`);
-  await until(() => ev("document.querySelector('.studio-shell').dataset.page==='settings'"));
-  await tab('MCP');
-  await until(() => ev("[...document.querySelectorAll('.config-index-item')].some(x=>x.textContent.includes('第二个待删除扩展'))"));
-  await ev("[...document.querySelectorAll('.config-index-item')].find(x=>x.textContent.includes('第二个待删除扩展')).click()");
-  await until(() => ev(`!!${button('删除', visibleSettings)} && !${button('删除', visibleSettings)}.disabled`));
-  await ev(`${button('删除', visibleSettings)}.click()`);
-  await ev(`${button('确认删除', visibleSettings)}.click()`);
-  await until(() => ev(`window.reviewAuto.includes(${JSON.stringify(externalSecond.revision)})`));
-  assert.equal((await fetch(base + '/v1/resources/' + unused.resourceId)).status, 404);
-  await ev("document.querySelector('.config-return-footer').click()");
-  await until(() => ev("document.querySelector('.studio-shell').dataset.page==='role-config'"));
-  await modelPart('记忆整理');
-  await until(() => ev(`document.querySelector(${JSON.stringify(input)})?.value==='local-memory'`));
-  await modelPart('对话');
-  assert.equal(await ev(`document.querySelector(${JSON.stringify(input)})?.value`), 'external-chat');
-  await tab('扩展');
-  const externalCheckbox = `[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-prose:not([hidden]) label.config-row')].find(x=>x.textContent.includes('外部更新扩展'))?.querySelector('input')`;
-  assert.equal(await ev(`${localCheckbox}.checked`), true, '未保存的本地扩展开关应保留');
-  assert.equal(await ev(`${externalCheckbox}.checked`), true, '未修改的扩展开关应同步外部更新');
-  await tab('模型'); await modelPart('记忆整理');
-  await until(() => ev(`!!${button('保存模型选择')} && !${button('保存模型选择')}.disabled`));
-  await ev(`${button('保存模型选择')}.click()`);
-  await until(() => ev('window.reviewWrites.length===2'));
-  const afterModels = await request(bindingPath);
-  assert.equal(afterModels.items.find(item => item.capability === 'chat_model')?.modelName, 'external-chat');
-  assert.equal(afterModels.items.find(item => item.capability === 'memory_model')?.modelName, 'local-memory');
-  assert.equal(afterModels.items.find(item => item.resourceId === externalMcp.resourceId)?.enabled, true);
-  assert.equal(afterModels.items.some(item => item.resourceId === localMcp.resourceId), false, '保存模型不得隐式保存扩展草稿');
-  await tab('扩展');
-  await until(() => ev(`!!${button('保存扩展')} && !${button('保存扩展')}.disabled`));
-  await ev(`${button('保存扩展')}.click()`);
-  await until(() => ev('window.reviewWrites.length===3'));
-  const afterExtensions = await request(bindingPath);
-  assert.equal(afterExtensions.items.find(item => item.resourceId === localMcp.resourceId)?.enabled, true);
-  assert.equal(afterExtensions.items.find(item => item.resourceId === externalMcp.resourceId)?.enabled, true);
-  assert.equal(afterExtensions.items.find(item => item.capability === 'chat_model')?.modelName, 'external-chat');
-  console.log('AUTO_RELOAD_BOTH_SCOPES', JSON.stringify({ localMemoryPreserved:true, localExtensionPreserved:true, externalChatPreserved:true, externalExtensionPreserved:true }));
+  await openRoleRow('model:memory');
+  await until(() => ev(`${modelInput}?.value==='external-memory'`));
+  await ev(setValue(modelInput, 'local-memory'));
+  await request(bindingPath, put({ expectedRevision: extensions.revision, bindings: [
+    { capability: 'chat_model', resourceId: model.resourceId, modelName: 'external-chat', enabled: true },
+    { capability: 'memory_model', resourceId: remoteModel.resourceId, modelName: 'external-memory', enabled: true },
+    { capability: 'mcp', resourceId: localMcp.resourceId, enabled: true },
+    { capability: 'mcp', resourceId: externalMcp.resourceId, enabled: false },
+  ] }));
+  await click(sheetSave);
+  await until(() => ev(`window.reviewWrites.length===5 && !${element(sheet)}`));
+  const models = await request(bindingPath);
+  assert.equal(models.items.find(item => item.capability === 'memory_model')?.modelName, 'local-memory');
+  assert.equal(models.items.find(item => item.capability === 'chat_model')?.modelName, 'external-chat');
+  assert.equal(models.items.find(item => item.resourceId === localMcp.resourceId)?.enabled, true);
+  assert.equal(models.items.find(item => item.resourceId === externalMcp.resourceId)?.enabled, false);
+  assert.deepEqual(await ev('window.reviewWrites.map(item=>item.status)'), [200, 409, 200, 409, 200]);
   assert.deepEqual(errors, []);
+  console.log('AUTO_RELOAD_BOTH_SCOPES', JSON.stringify({ localMemoryPreserved:true, localExtensionPreserved:true, externalChatPreserved:true, externalExtensionPreserved:true }));
+
 }
 run().catch(error => { console.error(error, backendLog.slice(-1500), electronLog.slice(-1000)); process.exitCode = 1; }).finally(async () => {
   try { if (ws?.readyState === 1) { ws.send(JSON.stringify({ id: 999999, method: 'Browser.close' })); ws.close(); } } catch {}

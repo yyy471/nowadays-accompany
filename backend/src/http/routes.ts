@@ -76,6 +76,8 @@ import { registerImageServiceRoutes } from "./image-service-routes.js";
 import { registerVoiceRoutes } from "./voice-routes.js";
 import { registerVoiceServiceRoutes } from "./voice-service-routes.js";
 
+import type { MediaMaintenance } from '../application/media-maintenance.js';
+
 export interface ApiServices {
   roles: RoleService;
   messages: MessageService;
@@ -92,6 +94,7 @@ export interface ApiServices {
   sceneImageSettings: SceneImageSettingsService;
   activity: RoleActivityService;
   roleDeletion: RoleDeletionService;
+  mediaMaintenance: MediaMaintenance;
 }
 
 export function registerApiRoutes(

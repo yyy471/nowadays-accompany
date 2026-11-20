@@ -4,6 +4,8 @@ import { filterModelNames, visibleProbeNotice, type ProbeNotice } from './model-
 
 export interface ModelNamePickerProps {
   value: string;
+  settings?: boolean;
+  roleLayout?: 'service' | 'memory';
   onChange: (value: string) => void;
   models: readonly string[];
   listBusy: boolean;
@@ -30,6 +32,8 @@ export interface ModelNamePickerProps {
  */
 export function ModelNamePicker({
   value,
+  settings = false,
+  roleLayout,
   onChange,
   models,
   listBusy,
@@ -119,17 +123,19 @@ export function ModelNamePicker({
       return;
     }
     if (event.key === 'Escape') {
+      if (open && filtered.length > 0) event.stopPropagation();
       setOpen(false);
       setActive(-1);
     }
   };
 
-  return <Field label={label} hint={hint ?? '选择或直接输入模型名称；接口未开放列表时，手填模型名即可测试与保存。'}>
+  return <Field label={label} hint={settings || roleLayout ? undefined : hint ?? '选择或直接输入模型名称；接口未开放列表时，手填模型名即可测试与保存。'}>
+    <div className={roleLayout ? 'config-role-model-picker' : settings ? 'config-service-model-picker' : undefined}>
     <div className="nd-model-picker">
       <Input
         value={value}
         disabled={disabled}
-        placeholder="选择或输入模型名称"
+        placeholder={roleLayout ? '从列表选择或手填' : settings ? '读取列表后选择，或直接手填' : '选择或输入模型名称'}
         autoComplete="off"
         spellCheck={false}
         role="combobox"
@@ -158,9 +164,10 @@ export function ModelNamePicker({
       </ul> : null}
     </div>
     <div className="config-actions">
-      <Button size="sm" disabled={disabled || listBusy} onClick={onRefresh}>{listBusy ? '正在读取…' : '读取模型列表'}</Button>
-      <Button size="sm" disabled={disabled || testBusy || testDisabled} onClick={onTest}>{testBusy ? '正在测试…' : '测试连接'}</Button>
+      <Button size="sm" disabled={disabled || listBusy || testBusy} onClick={onRefresh}>{listBusy ? '正在读取…' : settings || roleLayout ? '读取列表' : '读取模型列表'}</Button>
+      {roleLayout !== 'service' && <Button size="sm" disabled={disabled || testBusy || testDisabled || listBusy} onClick={onTest}>{testBusy ? '正在测试…' : roleLayout ? '测试' : '测试连接'}</Button>}
     </div>
-    {activeNotice ? <p className="config-muted" role={activeNotice.role}>{activeNotice.text}</p> : null}
+    </div>
+    {activeNotice || roleLayout ? <p className={activeNotice?.role === 'alert' ? 'config-sheet-error config-role-model-note' : 'config-muted config-role-model-note'} role={roleLayout && activeNotice?.source === 'test' ? undefined : activeNotice?.role}>{activeNotice?.text}</p> : null}
   </Field>;
 }

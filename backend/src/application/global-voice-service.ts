@@ -82,6 +82,12 @@ export class GlobalVoiceService {
     });
   }
 
+  validateUpdate(serviceId: string, input: UpdateVoiceServiceInput): void {
+    this.store.get(serviceId);
+    if (input.name !== undefined) normalizeServiceName(input.name);
+    if (input.config !== undefined) this.parseConfig(input.config);
+  }
+
   update(serviceId: string, input: UpdateVoiceServiceInput): VoiceServiceRecord {
     this.store.get(serviceId);
     const name =

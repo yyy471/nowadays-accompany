@@ -46,7 +46,10 @@ const MAX_CONTEXT_MESSAGES = 4;
 const DEFAULT_GENERATION_TIMEOUT_MS = 180_000;
 const INTERRUPTED_CODE = "SCENE_IMAGE_INTERRUPTED";
 
+import type { MediaMaintenance } from './media-maintenance.js';
+
 export interface SceneImageServiceOptions {
+  mediaMaintenance?: MediaMaintenance;
   now?: () => Date;
   planner?: SceneImagePlannerPort;
   generator?: SceneImageGeneratorPort;
@@ -74,6 +77,7 @@ export interface SceneImageAssetFile {
 }
 
 export class SceneImageService {
+  private readonly mediaMaintenance: MediaMaintenance | undefined;
   private readonly now: () => Date;
   private readonly planner: SceneImagePlannerPort;
   private readonly generator: SceneImageGeneratorPort;
@@ -91,6 +95,7 @@ export class SceneImageService {
     private readonly dataRoot: string,
     options: SceneImageServiceOptions = {},
   ) {
+    this.mediaMaintenance = options.mediaMaintenance;
     this.now = options.now ?? (() => new Date());
     this.planner = options.planner ?? new FixedSceneImagePlanner();
     this.generator = options.generator ?? new FakeSceneImageGenerator();
@@ -118,9 +123,18 @@ export class SceneImageService {
         { roleId },
       );
     }
+    // 重放已有幂等请求不启动新的调用，即使服务维护中也应返回原任务。
+    // 此处只读；真正创建时仍由 createTask 的事务与唯一索引兜底。
+    const existing = this.roleAccess.withStore(roleId, (storage) => {
+      storage.business.getWindow(roleId, windowId);
+      return new SceneImageStore(storage.business.db, roleId).findManualTask(windowId, messageId, input.idempotencyKey);
+    });
+    if (existing !== null) return { task: existing, duplicate: true };
     // 接收任务时就固定当前生图配置，规划期间修改模型或锚点不影响本次任务。
     const config = this.generator.lock?.(roleId) ?? null;
-    const result = this.roleAccess.withStore(roleId, (storage) => {
+    const release = this.mediaMaintenance?.claim('image', config?.settings?.serviceId, roleId);
+    let result: SceneImageRequestResult;
+    try { result = this.roleAccess.withStore(roleId, (storage) => {
       storage.business.getWindow(roleId, windowId);
       const db = storage.business.db;
       const store = new SceneImageStore(db, roleId);
@@ -160,10 +174,10 @@ export class SceneImageService {
         config,
         now: this.nowIso(),
       });
-    });
+    }); } catch (error) { release?.(); throw error; }
     if (!result.duplicate) {
-      this.start(roleId, windowId, result.task.taskId);
-    }
+      this.start(roleId, windowId, result.task.taskId, release);
+    } else { release?.(); }
     return result;
   }
 
@@ -279,16 +293,19 @@ export class SceneImageService {
     }
   }
 
-  private start(roleId: string, windowId: string, taskId: string): void {
+  private start(roleId: string, windowId: string, taskId: string, release?: () => void): void {
     if (this.closed) {
       this.settle(roleId, taskId, INTERRUPTED_CODE, "服务已关闭，任务未开始");
+      release?.();
       return;
     }
     const controller = new AbortController();
     this.controllers.add(controller);
     this.controllerRoles.set(controller, roleId);
+    // 外层任务可因超时先结算；服务调用的领取须保留到生成器自身真正结束。
+    const generation = { pending: null as Promise<unknown> | null };
     let promise: Promise<void>;
-    promise = this.run(roleId, windowId, taskId, controller.signal)
+    promise = this.run(roleId, windowId, taskId, controller.signal, generation)
       // 兜底：任何未预期异常都要留下终态，不能让任务停在 generating。
       .catch((error) => {
         this.settle(
@@ -300,6 +317,8 @@ export class SceneImageService {
         );
       })
       .finally(() => {
+        if (release && generation.pending) void generation.pending.then(release, release);
+        else release?.();
         this.controllers.delete(controller);
         this.controllerRoles.delete(controller);
         const tasks = this.inFlight.get(roleId);
@@ -320,6 +339,7 @@ export class SceneImageService {
     windowId: string,
     taskId: string,
     signal: AbortSignal,
+    generation: { pending: Promise<unknown> | null },
   ): Promise<void> {
     const prepared = this.roleAccess.withStore(roleId, (storage) => {
       const db = storage.business.db;
@@ -463,8 +483,7 @@ export class SceneImageService {
     try {
       // 服务侧竞速：生成器不理会 AbortSignal 时，超时或关闭也能立即结算，
       // 生成器之后返回的结果不再写盘或改变任务状态。
-      const generated = await raceWithSignal(
-        this.generator.generate({
+      const generatingCall = this.generator.generate({
           roleId,
           prompt: plan.description,
           layerMode: plan.layerMode,
@@ -476,9 +495,9 @@ export class SceneImageService {
           ...(references.length === 0 ? {} : { references }),
           ...(prepared.config === null ? {} : { config: prepared.config }),
           signal: generationSignal,
-        }),
-        generationSignal,
-      );
+        });
+      generation.pending = generatingCall;
+      const generated = await raceWithSignal(generatingCall, generationSignal);
       assertActive();
       if (generated.data.length === 0) {
         throw new SceneImageGenerationFailedError("生成结果为空");

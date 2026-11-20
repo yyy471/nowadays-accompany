@@ -1,4 +1,10 @@
 'use strict';
+/** 底栏角色切换（3a4ac9a 起改为原生 select）：按显示名选中并派发 change。 */
+async function pickRole(name) {
+  const ok = await ev(`(()=>{const s=document.querySelector('.config-role-switch');if(!s)return false;const o=[...s.options].find(o=>o.textContent.includes(${JSON.stringify(name)}));if(!o)return false;Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(s,o.value);s.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
+  if (!ok) throw Error('no role option: ' + name);
+}
+
 /**
  * 真实后端 + 本地假 OpenAI/TTS/ComfyUI HTTP 服务 + Electron 全链路交互核验：
  * 覆盖模型主链与在用暂停支链、扩展绑定与回收、生图配置与删除异常支链、
@@ -12,6 +18,7 @@ const os = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { resolveElectronExecutableInfo } = require('./electron-executable.cjs');
+const { button, configControls, editor, element, sheet } = require('./config-page-controls.cjs');
 
 const root = path.resolve(__dirname, '../../..');
 const screenshotDir = path.join(root, 'test-results', 'full-chain-review');
@@ -242,7 +249,7 @@ function startFakeComfy(name, models) {
     const chunks = [];
     for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     const raw = Buffer.concat(chunks).toString('utf8');
-    const url = req.url || '/';
+    const url = (req.url || '/').replace(/^\/alternate(?=\/)/, '');
     if (req.headers.authorization) state.authHeaders.push(req.headers.authorization);
     if (req.method === 'GET' && url === '/system_stats') {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -379,21 +386,7 @@ async function setSelect(selectorExpr, value) {
  * 表现为 TypeError: Cannot read properties of undefined (reading 'click')。
  */
 async function clickWhen(expression, label = '') {
-  await until(() => ev(`(()=>{const el=${expression};if(!el)return false;el.click();return true;})()`), label);
-}
-
-/** 按钮文案随活动态切换（如「暂停并启用／全局启用」），按候选文案逐个尝试。 */
-async function clickAnyText(arrayExpression, texts, label = '') {
-  await clickWhen(`[...${arrayExpression}].find(x=>${JSON.stringify(texts)}.includes(x.textContent.trim()))`, label);
-}
-
-/** 等待可选 UI：超时返回 null 而不抛错，用于「出现则处理、未出现则跳过」的分支。 */
-async function untilOrNull(fn, timeoutMs = 3000) {
-  try {
-    return await until(fn, '', timeoutMs);
-  } catch {
-    return null;
-  }
+  await until(() => ev(`(()=>{const el=${expression};if(!el || el.disabled || el.closest('[inert]') || el.getAttribute('aria-disabled')==='true' || !el.getClientRects().length)return false;el.click();return true;})()`), label || expression);
 }
 
 /**
@@ -456,18 +449,6 @@ async function run() {
     const stateOf = (roleId) => items.find(i => i.roleId === roleId)?.state;
     return stateOf(roleA.roleId) === 'active' && stateOf(roleB.roleId) === 'active';
   };
-  // 生图保存按钮文案随活动态在「保存配置 / 暂停并保存配置」间切换，统一等待后点击，避免活动态同步时差点按空。
-  const clickImageSave = async () => {
-    await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].some(x=>x.textContent.includes('保存配置'))"), 'image-save-btn');
-    await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent.includes('保存配置'))");
-  };
-  // 全局服务（生图／语音）面板的启停与保存按钮文案随「是否有启用中的角色」切换。
-  const SCOPE = "document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')";
-  // 启停若暂停了活跃角色，面板会出现「继续本次暂停的角色」；未暂停时不出现，两种都要能继续。
-  const resumePausedIfAny = async () => {
-    const shown = await untilOrNull(() => ev(`[...${SCOPE}].some(x=>x.textContent==='继续本次暂停的角色')`), 5000);
-    if (shown) await clickWhen(`[...${SCOPE}].find(x=>x.textContent==='继续本次暂停的角色')`, 'resume-paused-roles');
-  };
   const outfitForm = new FormData();
   outfitForm.append('name', '春装');
   outfitForm.append('home', new Blob([pngBytes], { type: 'image/png' }), 'home.png');
@@ -510,473 +491,509 @@ async function run() {
       waiting.delete(msg.id);
       msg.error ? job?.reject(msg.error) : job?.resolve(msg.result);
     } else if (msg.method === 'Runtime.exceptionThrown') {
-      errors.push(msg.params.exceptionDetails.text);
+      errors.push(msg.params.exceptionDetails.exception?.description || msg.params.exceptionDetails.text);
+    } else if (msg.method === 'Page.javascriptDialogOpening') {
+      const { type, message } = msg.params;
+      errors.push(`未预期的本机确认：${type} ${message}`);
+      void cmd('Page.handleJavaScriptDialog', { accept: false }).catch(error => errors.push(String(error)));
     }
   };
   await cmd('Runtime.enable');
+  await cmd('Page.enable');
   await cmd('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+  await cmd('Emulation.setEmulatedMedia', { features: [{ name:'prefers-reduced-motion', value:'reduce' }] });
+
+  const { openRoleRow, tab, openSheet } = configControls(ev, until);
+  const actions = sheet + ' .config-sheet-actions';
+  const sheetButton = (label) => button(label, sheet);
+  const saveButton = (pause = false) => `[...document.querySelectorAll('${actions} button')].find(button=>new RegExp(${JSON.stringify(pause ? '^暂停并保存(?: *[0-9]+)?$' : '^保存(?: *[0-9]+)?$')}).test(button.textContent.trim()))`;
+  const field = selector => element(`${sheet} ${selector}`);
+  const selectService = async name => {
+    await clickWhen(`[...document.querySelectorAll('.config-index-item')].find(item=>item.querySelector('strong')?.textContent===${JSON.stringify(name)})`);
+    await waitService(name);
+  };
+  const waitService = name => until(() => ev(`!document.querySelector('.config-sheet') && document.querySelector('.config-leaf-body > .config-prose:not([hidden]) h2')?.textContent===${JSON.stringify(name)}`), 'service ' + name);
+  const openSettings = async () => {
+    await clickWhen(element('.ui-menu-trigger'));
+    await clickWhen("[...document.querySelectorAll('.ui-menu-item')].find(item=>item.textContent.includes('设置'))");
+    await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings'"), 'page-settings');
+  };
+  const returnRole = async (closeCleanSheet = false) => {
+    if (!closeCleanSheet) await until(() => ev("!document.querySelector('.config-sheet,.config-leaf-body[inert]')"), 'current write and sheet exit complete');
+    await until(() => ev(`(() => {
+      if(document.querySelector('.studio-shell')?.dataset.page==='role-config')return true;
+      const link=document.querySelector('.config-return-link');
+      if(link && !link.disabled && !document.querySelector('.config-sheet-confirm'))link.click();
+      return false;
+    })()`), 'return-role');
+  };
+  const addService = title => openSheet(element('.config-index button.config-index-new'), title);
+  const navigateModel = () => clickWhen(sheetButton('在设置中查看模型 →'));
+  const resumePaused = () => clickWhen(button('继续活动', '.config-leaf-foot'));
+  const editService = () => openSheet(element('.config-prose:not([hidden]) .config-service-edit'));
+  const poster = name => `[...document.querySelectorAll('.config-status-poster')].find(item=>item.querySelector('.config-status-name')?.textContent===${JSON.stringify(name)})`;
+  const addField = index => `document.querySelectorAll('.config-sheet input')[${index}]`;
+  const setModel = model => setInput(field('input[role=combobox]'), model);
+  const bindModel = async (role, resource, model, pause) => {
+    await openRoleRow('model:chat');
+    await until(() => ev(`!!${field('select')}`), 'chat service field');
+    await setSelect(field('select'), resource);
+    await until(() => ev(`!!${field('input[role=combobox]')}`), 'chat name field');
+    await setModel(model);
+    await clickWhen(saveButton(pause), pause ? '暂停并保存绑定' : '保存绑定');
+    await until(async () => (await request(`/v1/roles/${role}/bindings`)).items.some(item => item.capability === 'chat_model' && item.resourceId === resource && item.modelName === model), 'saved chat binding');
+    await until(() => ev("!document.querySelector('.config-sheet')"), 'binding sheet closes');
+  };
 
   // === 链路 1：设置导航、两栏收敛、跨页回跳不串 Tab（Bug 1 & Bug 2） ===
-  await until(() => ev("!!document.querySelector('.ui-menu-trigger')"), 'menu-trigger');
-  await clickWhen("document.querySelector('.ui-menu-trigger')");
-  await until(() => ev("[...document.querySelectorAll('.ui-menu-item')].some(x=>x.textContent.includes('设置'))"), 'menu-settings');
-  await clickWhen("[...document.querySelectorAll('.ui-menu-item')].find(x=>x.textContent.includes('设置'))");
-  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings'"), 'page-settings');
+  await openSettings();
   assert.deepEqual(await ev("[...document.querySelectorAll('.config-kind-tabs button')].map(x=>x.textContent)"), ['模型', '语音', '生图']);
-
-  // 先切到「生图」，再回到角色「模型 -> 对话 -> 在设置中查看模型」，验证必须回到「模型」而非停在「生图」。
-  await clickWhen("[...document.querySelectorAll('.config-kind-tabs button')].find(x=>x.textContent==='生图')");
-  await until(() => ev("document.querySelector('.config-kind-tabs button[aria-pressed=\"true\"]')?.textContent==='生图'"));
-  await clickWhen("document.querySelector('.config-return-footer')");
-  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='role-config'"), 'return-role');
-  await clickWhen("[...document.querySelectorAll('.config-tabs button')].find(x=>x.textContent.includes('模型'))");
-  await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].some(x=>x.textContent.includes('在设置中查看模型'))"), 'open-model-link');
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].find(x=>x.textContent.includes('在设置中查看模型'))");
+  await clickWhen(button('生图', '.config-kind-tabs'));
+  await until(() => ev("document.querySelector('.config-kind-tabs button[aria-pressed=true]')?.textContent==='生图'"));
+  await returnRole();
+  await tab('模型');
+  await openRoleRow('model:chat');
+  await clickWhen(sheetButton('去设置添加 →'), 'unbound model link');
   await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings'"), 'back-to-settings');
-  assert.equal(await ev("document.querySelector('.config-kind-tabs button[aria-pressed=\"true\"]')?.textContent"), '模型', 'Bug1修复：查看模型应切回模型分类而非留在生图');
+  assert.equal(await ev("document.querySelector('.config-kind-tabs button[aria-pressed=true]')?.textContent"), '模型', '查看对话模型应回到模型分类');
 
-  // 验证 Bug 2：先点「添加 MCP」停在添加页，再切回角色扩展点「在设置中管理」不得滞留添加表单。
-  await clickWhen("[...document.querySelectorAll('.config-tabs button')].find(x=>x.textContent.includes('MCP'))");
-  await until(() => ev("!!document.querySelector('.config-index button.config-index-new')"));
-  await clickWhen("document.querySelector('.config-index button.config-index-new')");
-  await until(() => ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) h2')].some(x=>x.textContent==='添加 MCP')"));
-  await clickWhen("document.querySelector('.config-return-footer')");
-  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='role-config'"));
-  await clickWhen("[...document.querySelectorAll('.config-tabs button')].find(x=>x.textContent.includes('扩展'))");
-  await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].some(x=>x.textContent.includes('在设置中管理'))"));
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].find(x=>x.textContent.includes('在设置中管理'))");
+  await tab('MCP');
+  await addService('添加 MCP');
+  await returnRole(true);
+  await tab('扩展');
+  await openRoleRow('ext:mcp');
+  await clickWhen(sheetButton('去设置添加 →'));
   await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings'"));
-  assert.equal(await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) h2')].some(x=>x.textContent==='添加 MCP')"), false, 'Bug2修复：进入扩展管理不得滞留未关闭的添加表单');
+  assert.equal(await ev("!!document.querySelector('.config-sheet')"), false, '进入扩展管理不得滞留未关闭的添加表单');
 
-  // === 链路 2：创建模型 m1/m2 + 列表与测通 + 绑定到激活中角色甲/乙 ===
-  await clickWhen("[...document.querySelectorAll('.config-tabs button')].find(x=>x.textContent.includes('模型'))");
-  await until(() => ev("!!document.querySelector('.config-index button.config-index-new')"));
-  await clickWhen("document.querySelector('.config-index button.config-index-new')");
-  await until(() => ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) h2')].some(x=>x.textContent==='添加模型服务')"));
-  await setInput("document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) input')[0]", '主对话模型');
-  await setInput("document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) input')[1]", llmA.baseUrl);
-  await setInput("document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) input')[2]", 'key-a');
-  await clickWhen("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='读取模型列表')");
+  // === 链路 2：创建模型 m1/m2 + 列表与测通 + 绑定激活中角色甲/乙 ===
+  await tab('模型');
+  await addService('添加模型服务');
+  await setInput(addField(0), '主对话模型');
+  await setInput(field('.config-connection input'), llmA.baseUrl);
+  await setInput(field('input[type=password]'), 'key-a');
+  await clickWhen(sheetButton('读取列表'));
   await until(() => llmA.listCalls === 1, 'm1-list');
-  await setInput("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) input[role=combobox]')", 'fake-chat-a');
-  await clickWhen("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='测试连接')");
-  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden])')?.innerText.includes('测试通过')"), 'm1-test');
-  await clickWhen("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='保存模型服务')");
-  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) h2')?.textContent==='主对话模型'"), 'm1-saved-ui');
+  await setModel('fake-chat-a');
+  await clickWhen(button('测试连接', sheet + ' .config-grp:has(input[role=combobox])'));
+  await until(() => ev("document.querySelector('.config-sheet')?.innerText.includes('测试通过')"), 'm1-test');
+  await clickWhen(sheetButton('添加'));
+  await waitService('主对话模型');
 
-  // 创建第二个模型 m2 给乙角色，用于验证修改 m1 连接参数时只暂停依赖 m1 的甲角色而不碰乙角色。
-  await clickWhen("document.querySelector('.config-index button.config-index-new')");
-  await until(() => ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) h2')].some(x=>x.textContent==='添加模型服务')"));
-  await setInput("document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) input')[0]", '次模型');
-  await setInput("document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) input')[1]", llmB.baseUrl);
-  await setInput("document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) input')[2]", 'key-b');
-  await clickWhen("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='保存模型服务')");
-  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) h2')?.textContent==='次模型'"), 'm2-saved-ui');
+  await addService('添加模型服务');
+  await setInput(addField(0), '次模型');
+  await setInput(field('.config-connection input'), llmB.baseUrl);
+  await setInput(field('input[type=password]'), 'key-b');
+  await clickWhen(sheetButton('添加'));
+  await waitService('次模型');
   const resourcesInit = await request('/v1/resources');
   const m1 = resourcesInit.items.find(i => i.name === '主对话模型');
   const m2 = resourcesInit.items.find(i => i.name === '次模型');
 
-  // 回到角色配置：stopped 甲直接绑 m1（「保存模型选择」），再去角色状态恢复甲/乙为启用中，随后在启用中的乙绑 m2（「暂停并保存」+「继续活动」）。
-  await clickWhen("document.querySelector('.config-return-footer')");
-  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='role-config'"));
-  // 包 1 起启动即创建内置助手夏澄，默认编辑对象可能是夏澄而非脚本自建的甲；
-  // 先显式切到甲角色，后续绑定与断言才不依赖角色数量与创建顺序。
-  await until(() => ev("!!document.querySelector('.config-switch-role')"), 'switch-role-for-a');
-  await clickWhen("document.querySelector('.config-switch-role')");
-  await until(() => ev("[...document.querySelectorAll('.config-poster-hit')].some(x=>x.textContent.includes('甲角色'))"), 'role-wall-for-a');
-  await clickWhen("[...document.querySelectorAll('.config-poster-hit')].find(x=>x.textContent.includes('甲角色'))");
+  await returnRole();
+  await tab('设定');
+  await until(() => ev(`!!${element(`${editor} textarea[aria-label="角色设定"]`)}?.value`));
+  await pickRole("甲角色");
   await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='甲角色'"), 'select-a-before-bind');
-  await clickWhen("[...document.querySelectorAll('.config-tabs button')].find(x=>x.textContent.includes('模型'))");
-  await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) .config-model-details select')"));
-  await setSelect("document.querySelector('.config-role-editor:not([hidden]) .config-model-details select')", m1.resourceId);
-  await setInput("document.querySelector('.config-role-editor:not([hidden]) .config-model-details input[role=combobox]')", 'fake-chat-a');
-  assert.equal(await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-model-details button')].some(x=>x.textContent==='保存模型选择')"), true, '停止态角色应直接显示保存模型选择');
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-model-details button')].find(x=>x.textContent==='保存模型选择')");
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden])')?.innerText.includes('模型选择已保存')"), 'bind-a-stopped');
+  await tab('模型');
+  await bindModel(roleA.roleId, m1.resourceId, 'fake-chat-a', false);
 
-  // 通过设置 -> 角色状态页恢复甲和乙，并从乙状态卡直跳乙角色配置页
-  await clickWhen("document.querySelector('.ui-menu-trigger')");
-  await until(() => ev("[...document.querySelectorAll('.ui-menu-item')].some(x=>x.textContent.includes('设置'))"));
-  await clickWhen("[...document.querySelectorAll('.ui-menu-item')].find(x=>x.textContent.includes('设置'))");
-  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings'"));
-  await clickWhen("[...document.querySelectorAll('.config-tabs button')].find(x=>x.textContent.includes('角色'))");
-  // 包 1 起启动即创建内置助手夏澄，角色墙会比脚本自建的甲乙多一位；断言按「甲乙各自可恢复」判定，不依赖绝对数量。
-  await until(() => ev("['甲角色','乙角色'].every(n=>[...document.querySelectorAll('.config-status-poster')].some(p=>p.textContent.includes(n)&&p.textContent.includes('恢复活动')))"), 'status-wall-two');
-  await clickWhen("[...document.querySelectorAll('.config-status-poster')].find(p=>p.textContent.includes('甲角色')).querySelector('button')");
+  await openSettings();
+  await tab('角色');
+  await until(() => ev(`${poster('甲角色')}?.innerText.includes('恢复活动') && ${poster('乙角色')}?.innerText.includes('恢复活动')`), 'status-wall-two');
+  await clickWhen(`${poster('甲角色')}.querySelector('button')`);
   await until(async () => (await request(`/v1/roles/${roleA.roleId}/activity`)).activity.state === 'active', 'resume-a-wall');
-  await clickWhen("[...document.querySelectorAll('.config-status-poster')].find(p=>p.textContent.includes('乙角色')).querySelector('button')");
+  await clickWhen(`${poster('乙角色')}.querySelector('button')`);
   await until(async () => (await request(`/v1/roles/${roleB.roleId}/activity`)).activity.state === 'active', 'resume-b-wall');
-  await clickWhen("[...document.querySelectorAll('.config-status-poster')].find(p=>p.textContent.includes('乙角色')).querySelectorAll('button')[1]");
+  await clickWhen(element('button[aria-label="乙角色的角色配置"]'));
   await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='role-config' && document.querySelector('.config-footer-ident strong')?.textContent==='乙角色'"), 'jump-b-from-wall');
-  await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) .config-model-details select')"));
-  await setSelect("document.querySelector('.config-role-editor:not([hidden]) .config-model-details select')", m2.resourceId);
-  await setInput("document.querySelector('.config-role-editor:not([hidden]) .config-model-details input[role=combobox]')", 'fake-chat-b');
-  assert.equal(await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-model-details button')].some(x=>x.textContent==='暂停并保存')"), true, '启用中角色应显示暂停并保存');
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-model-details button')].find(x=>x.textContent==='暂停并保存')");
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden])')?.innerText.includes('模型选择已保存') && document.querySelector('.config-role-editor:not([hidden])')?.innerText.includes('继续活动')"), 'bind-b');
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].find(x=>x.textContent==='继续活动')");
+  await tab('模型');
+  await bindModel(roleB.roleId, m2.resourceId, 'fake-chat-b', true);
+  assert.equal((await request(`/v1/roles/${roleB.roleId}/activity`)).activity.state, 'stopped');
+  await resumePaused();
   await until(async () => (await request(`/v1/roles/${roleB.roleId}/activity`)).activity.state === 'active', 'resume-b-after-bind');
 
-  // 切回甲角色后再从甲角色「在设置中查看模型」，验证定位到 m1
-  await clickWhen("document.querySelector('.config-switch-role')");
-  await until(() => ev("[...document.querySelectorAll('.config-poster-hit')].some(x=>x.textContent.includes('甲角色'))"));
-  await clickWhen("[...document.querySelectorAll('.config-poster-hit')].find(x=>x.textContent.includes('甲角色'))");
+  await pickRole("甲角色");
   await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='甲角色'"), 'switch-to-a-for-model');
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].find(x=>x.textContent.includes('在设置中查看模型'))");
-  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings' && document.querySelector('.config-leaf-body > .config-prose:not([hidden]) h2')?.textContent==='主对话模型'"), 'jump-to-m1');
+  await openRoleRow('model:chat');
+  await navigateModel();
+  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings'"), 'jump-to-m1');
+  await waitService('主对话模型');
 
-  // === 链路 3：模型主链修改（改名不暂停）+ 正被使用的支链（改连接只暂停依赖角色甲，不动乙） ===
-  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden])')?.innerText.includes('甲角色 · 对话 / 记忆整理 · 启用中')"), 'impact-a-only');
-  assert.equal(await ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden])')?.innerText.includes('乙角色')"), false, '影响范围不应误包含无关角色乙');
+  // === 链路 3：改名不暂停；改连接只暂停依赖角色甲 ===
+  const occupancy = element('.config-prose:not([hidden]) .config-use-row');
+  await until(() => ev(`${occupancy}?.innerText.includes('甲角色')`), 'impact-a-only');
+  assert.equal(await ev(`${occupancy}?.innerText.includes('乙角色')`), false, '影响范围不应误包含无关角色乙');
   await shot('settings-model-1280.png');
-  await setInput("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) input[aria-label=\"模型服务名称\"]')", '主对话模型·改');
-  assert.equal(await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].some(x=>x.textContent==='保存模型服务')"), true, '仅改名称不得要求暂停相关角色');
-  await clickWhen("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='保存模型服务')");
-  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden])')?.innerText.includes('模型服务已保存')"), 'm1-renamed');
-  const actsAfterRename = await request('/v1/activities');
-  // 列表还含内置助手夏澄（stopped），只校验脚本自建的甲、乙仍启用中。
-  const activeOf = (roleId) => actsAfterRename.items.find(i => i.roleId === roleId)?.state;
-  assert.equal(activeOf(roleA.roleId), 'active', '仅改模型名后甲角色应保持启用中');
-  assert.equal(activeOf(roleB.roleId), 'active', '仅改模型名后乙角色应保持启用中');
+  await editService();
+  await setInput(field('input[aria-label="模型服务名称"]'), '主对话模型·改');
+  await clickWhen(saveButton(false), 'rename without pause');
+  await waitService('主对话模型·改');
+  assert.equal(await bothActive(), true, '仅改模型名保持甲乙活动');
 
-  // 现在修改 m1 的地址（切到 llmB）和密钥：必须出现「暂停相关角色并保存」，且仅暂停甲，乙继续保持 active！
-  await setInput("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) .config-connection input')", llmB.baseUrl);
-  await setInput("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) input[aria-label=\"模型密钥\"]')", 'key-b2');
-  await until(() => ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].some(x=>x.textContent==='暂停相关角色并保存')"), 'pause-related-btn');
-  await clickWhen("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='暂停相关角色并保存')");
-  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden])')?.innerText.includes('已暂停 甲角色')"), 'paused-only-a');
+  await editService();
+  await setInput(field('.config-connection input'), llmB.baseUrl);
+  await setInput(field('input[aria-label="模型密钥"]'), 'key-b2');
+  await clickWhen(saveButton(true), 'pause-related-btn');
+  await until(() => ev("document.querySelector('.config-leaf-foot')?.innerText.includes('已为保存暂停甲角色')"), 'paused-only-a');
   assert.equal((await request(`/v1/roles/${roleA.roleId}/activity`)).activity.state, 'stopped', '关联角色甲应已被暂停');
   assert.equal((await request(`/v1/roles/${roleB.roleId}/activity`)).activity.state, 'active', '未关联角色乙应保持启用中');
-  await clickWhen("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='继续本次活动暂停的角色')");
+  await resumePaused();
   await until(async () => (await request(`/v1/roles/${roleA.roleId}/activity`)).activity.state === 'active', 'resume-a-from-model-detail');
 
-  // === 链路 4：扩展（MCP/Skill）创建、角色开启绑定、占用检查、关闭绑定、停用删除 ===
-  await clickWhen("[...document.querySelectorAll('.config-tabs button')].find(x=>x.textContent.includes('MCP'))");
-  await until(() => ev("!!document.querySelector('.config-index button.config-index-new')"));
-  await clickWhen("document.querySelector('.config-index button.config-index-new')");
-  await until(() => ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) h2')].some(x=>x.textContent==='添加 MCP')"));
-  await setInput("document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) input')[0]", '文件工具');
-  await setInput("document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) input')[1]", 'node');
-  await clickWhen("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='保存资源')");
-  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) h2')?.textContent==='文件工具'"), 'mcp-saved-ui');
-
-  await clickWhen("document.querySelector('.config-return-footer')");
-  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='role-config'"));
-  await clickWhen("[...document.querySelectorAll('.config-tabs button')].find(x=>x.textContent.includes('扩展'))");
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) > .config-prose:not([hidden])')?.innerText.includes('文件工具')"));
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) > .config-prose:not([hidden]) .config-row')].find(x=>x.textContent.includes('文件工具')).querySelector('input[type=checkbox]')");
-  await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) > .config-prose:not([hidden]) button')].some(x=>x.textContent==='暂停并保存'&&!x.disabled)"));
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) > .config-prose:not([hidden]) button')].find(x=>x.textContent==='暂停并保存')");
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) > .config-prose:not([hidden])')?.innerText.includes('扩展选择已保存') && document.querySelector('.config-role-editor:not([hidden]) > .config-prose:not([hidden])')?.innerText.includes('继续活动')"), 'ext-saved-real');
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) > .config-prose:not([hidden]) button')].find(x=>x.textContent==='继续活动')");
+  // === 链路 4：MCP 创建、角色开启绑定、占用检查、关闭绑定、停用删除 ===
+  await tab('MCP');
+  await addService('添加 MCP');
+  await setInput(addField(0), '文件工具');
+  await setInput(addField(1), 'node');
+  await clickWhen(sheetButton('添加'));
+  await waitService('文件工具');
+  const extension = (await request('/v1/resources')).items.find(item => item.name === '文件工具');
+  await returnRole();
+  await tab('扩展');
+  await openRoleRow('ext:mcp');
+  await clickWhen(field('[role=switch][aria-label="为角色开启文件工具"]'));
+  await clickWhen(saveButton(true), 'pause for extension binding');
+  await until(async () => (await request(`/v1/roles/${roleA.roleId}/bindings`)).items.some(item => item.resourceId === extension.resourceId && item.enabled), 'ext-saved-real');
+  await resumePaused();
   await until(async () => (await request(`/v1/roles/${roleA.roleId}/activity`)).activity.state === 'active', 'resume-a-after-ext');
 
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) > .config-prose:not([hidden]) button')].find(x=>x.textContent.includes('在设置中管理'))");
-  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings' && document.querySelector('.config-leaf')?.innerText.includes('文件工具')"));
-  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden])')?.innerText.includes('甲角色') && document.querySelector('.config-leaf-body > .config-prose:not([hidden])')?.innerText.includes('角色已开启')"), 'ext-ref-shown');
-  assert.equal(await ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='删除')?.disabled"), true, '被启用角色绑定的扩展禁止删除');
-  await clickWhen("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='关闭全部启用绑定')");
-  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden])')?.innerText.includes('甲角色 · 角色已关闭')"), 'ext-unbound');
-  assert.equal((await request(`/v1/roles/${roleA.roleId}/activity`)).activity.state, 'active', '关闭绑定后甲角色应自动恢复活动');
-  await until(() => ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].some(x=>x.textContent==='全局停用'&&!x.disabled)"));
-  await clickWhen("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='全局停用')");
-  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden])')?.innerText.includes('已停用')"), 'ext-disabled');
-  await until(() => ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].some(x=>x.textContent==='删除'&&!x.disabled)"));
-  await clickWhen("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='删除')");
-  await clickWhen("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='确认删除')");
+  await openRoleRow('ext:mcp');
+  await clickWhen(sheetButton('在设置中管理 →'));
+  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings'"));
+  await selectService('文件工具');
+  await until(() => ev(`${occupancy}?.innerText.includes('甲角色')`), 'ext-ref-shown');
+  const deleteMcp = button('删除 MCP…');
+  assert.equal(await ev(`${deleteMcp}?.disabled`), true, '被启用角色绑定的扩展禁止删除');
+  await clickWhen(element('.config-prose:not([hidden]) .config-occupancy-details summary'));
+  await clickWhen(button('关闭全部启用绑定'));
+  await until(async () => (await request(`/v1/roles/${roleA.roleId}/bindings`)).items.some(item => item.resourceId === extension.resourceId && !item.enabled), 'ext-unbound');
+  await until(async () => (await request(`/v1/roles/${roleA.roleId}/activity`)).activity.state === 'active', '关闭绑定后甲角色应自动恢复活动');
+  await clickWhen(element('[role=switch][aria-label="全局启用文件工具"]'));
+  await until(async () => (await request('/v1/resources')).items.some(item => item.resourceId === extension.resourceId && !item.enabled), 'ext-disabled');
+  await clickWhen(deleteMcp);
+  await clickWhen(sheetButton('删除'));
   await until(async () => !(await request('/v1/resources')).items.some(i => i.name === '文件工具'), 'mcp-deleted');
 
-  // === 链路 5：生图全局管理（收敛后无角色内建、跨站点留密预拦截、暂停与恢复） + 角色生图 + 删除服务后失效服务支链 ===
-  await clickWhen("document.querySelector('.config-return-footer')");
-  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='role-config'"));
-  await clickWhen("[...document.querySelectorAll('.config-tabs button')].find(x=>x.textContent.includes('模型'))");
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-model-toggle')].find(x=>x.textContent.includes('生图'))");
-  await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-image')"));
-  assert.equal(await ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].some(x=>x.textContent.includes('新建服务'))"), false, '收敛检查：角色生图面板不得保留重复的内联新建服务按钮');
-  assert.equal(await ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-image-new-service')"), false);
+  // === 链路 5：全局生图、角色图片草稿与服务维护 ===
+  const image = sheet + ' .nd-image';
+  const voice = sheet + ' .nd-voice';
+  const openImage = () => openRoleRow('media:image');
+  const openVoice = () => openRoleRow('media:voice');
+  const imageSettings = label => clickWhen(button(label, image));
+  const imageButton = label => button(label, image);
+  const mediaSave = `[...document.querySelectorAll('${actions} button')].find(button=>/^(?:暂停并|重试)?保存(?: *[0-9]+)?$/.test(button.textContent.trim()))`;
+  const clickImageSave = () => clickWhen(mediaSave, 'image save');
+  const clickVoiceSave = () => clickWhen(mediaSave, 'voice save');
+  const imageNotice = text => until(() => ev(`document.querySelector('.config-sheet')?.innerText.includes(${JSON.stringify(text)})`), text);
+  const imageSaved = (roleId, serviceId) => until(async () => (await request(`/v1/roles/${roleId}/scene-image`)).settings?.serviceId === serviceId, 'role image saved');
 
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent.includes('在设置中管理'))");
-  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings' && document.querySelector('.config-leaf')?.innerText.includes('添加生图服务')"), 'auto-open-new-image-service');
+  await returnRole();
+  await tab('模型');
+  await openImage();
+  assert.equal(await ev(`!!${button('新建服务', image)} || !!${element(image + ' .nd-image-new-service')}`), false, '角色生图纸笺不得有重复的新建入口');
+  await imageSettings('去设置添加 →');
+  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings' && document.querySelector('.config-sheet h3')?.textContent==='添加生图服务'"), 'auto-open-new-image-service');
 
-  // 创建主生图 comfyA 与备用生图 comfyB
-  await setInput("document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) input')[0]", '主生图');
-  await setInput("document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) input')[1]", comfyA.baseUrl);
-  await setInput("document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) input')[2]", 'img-secret-a');
-  await setInput("document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) input')[3]", '15000');
-  await clickWhen("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='读取模型列表')");
-  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) .nd-model-picker ~ .config-actions ~ [role=status]')?.textContent.includes('已读取 2 个模型')"), 'probe-comfy-a-list');
-  await untilModelOptions('.config-leaf-body > .config-prose:not([hidden])', 2, 'comfy-a-two-options');
-  await pickModelOption('.config-leaf-body > .config-prose:not([hidden])', 'moss-image-base.safetensors', 'comfy-a-pick-default');
-  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) input[role=combobox]')?.value==='moss-image-base.safetensors'"), 'comfy-a-picked-default');
-  await clickWhen("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='测试连接')");
-  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) .nd-model-picker ~ .config-actions ~ [role=status]')?.textContent.includes('moss-image-base.safetensors')"), 'probe-comfy-a');
-  await clickWhen("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='保存生图服务')");
-  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) h2')?.textContent==='主生图'"), 'img-1-created-ui');
+  await setInput(addField(0), '主生图');
+  await setInput(addField(1), comfyA.baseUrl);
+  await setInput(field('input[type=password]'), 'img-secret-a');
+  await clickWhen(sheetButton('读取模型列表'));
+  await imageNotice('已读取 2 个模型');
+  await untilModelOptions(sheet, 2, 'comfy-a-two-options');
+  await pickModelOption(sheet, 'moss-image-base.safetensors', 'comfy-a-pick-default');
+  await until(() => ev(`${field('input[role=combobox]')}?.value==='moss-image-base.safetensors'`), 'comfy-a-picked-default');
+  await clickWhen(sheetButton('测试连接'));
+  await imageNotice('moss-image-base.safetensors');
+  await clickWhen(sheetButton('添加'));
+  await waitService('主生图');
 
-  await clickWhen("document.querySelector('.config-index button.config-index-new')");
-  await until(() => ev("document.querySelector('.config-leaf')?.innerText.includes('添加生图服务')"));
-  await setInput("document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) input')[0]", '备用生图');
-  await setInput("document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) input')[1]", comfyB.baseUrl);
-  await clickWhen("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='保存生图服务')");
-  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) h2')?.textContent==='备用生图'"), 'img-2-created-ui');
+  await addService('添加生图服务');
+  await setInput(addField(0), '备用生图');
+  await setInput(addField(1), comfyB.baseUrl);
+  await clickWhen(sheetButton('添加'));
+  await waitService('备用生图');
 
-  // 选中主生图测试「保留原密钥改站点」客户端前置拦截：绝不能先暂停活跃角色甲乙再报错！
-  await clickWhen("[...document.querySelectorAll('.config-index button')].find(x=>x.textContent.includes('主生图'))");
-  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) h2')?.textContent==='主生图'"));
-  await setInput("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) .config-connection input')", comfyB.baseUrl);
-  await clickWhen("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='暂停活跃角色并保存')");
-  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) [role=alert]')?.textContent.includes('换了服务地址，需要重新填写密钥')"), 'site-change-blocked-before-pause');
-  assert.equal(await bothActive(), true, '跨站点留密前置校验拦截后不得无故暂停活跃角色');
-
-  // 改回 comfyA，修改名称与密钥并正式保存（应先停活跃角色并允许一键继续）。
-  await setInput("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) input[aria-label=\"生图服务名称\"]')", '主生图·可用');
-  await setInput("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) .config-connection input')", comfyA.baseUrl);
-  await clickWhen("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='暂停活跃角色并保存')");
-  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden])')?.innerText.includes('已暂停') && document.querySelector('.config-leaf-body > .config-prose:not([hidden])')?.innerText.includes('继续本次暂停的角色')"), 'img1-paused-save');
-  await clickWhen("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='继续本次暂停的角色')");
-  await until(bothActive, 'img1-resumed');
+  // 更换 origin 却留用原密钥时，客户端拦截，不发 PATCH 或暂停。
+  await selectService('主生图');
+  await editService();
+  const groupInput = name => `[...document.querySelectorAll('.config-sheet .config-grp')].find(group=>group.querySelector('.config-grp-label b')?.textContent===${JSON.stringify(name)})?.querySelector('input')`;
+  await setInput(groupInput('连接'), comfyB.baseUrl);
+  await imageNotice('换了站点，请重新填写密钥。');
+  assert.equal(await ev(`${field('.config-save-btn')}?.disabled`), true, '保留密钥换站点时不可提交');
+  assert.equal(await bothActive(), true, '跨站点保留密钥时不得暂停角色');
+  await setInput(groupInput('连接'), comfyA.baseUrl);
+  await setInput(field('input[aria-label="生图服务名称"]'), '主生图·可用');
+  await clickWhen(saveButton(false));
+  await waitService('主生图·可用');
+  assert.equal(await bothActive(), true, '仅改名称不得暂停角色');
 
   // 回到甲角色配置生图（探测、选模型芯片、填锚点、展开生成参数与服饰锚点、草稿试生图不落库、再正式保存）
-  await clickWhen("document.querySelector('.config-return-footer')");
+  await clickWhen("document.querySelector('.config-return-link')");
   await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='role-config'"));
+  await tab('模型');
+  await openImage();
   const svcs = (await request('/v1/image-services')).items;
   const img1 = svcs.find(s => s.name === '主生图·可用');
   const img2 = svcs.find(s => s.name === '备用生图');
-  await until(() => ev(`(() => { const s = document.querySelector('.config-role-editor:not([hidden]) .nd-image-service-row select'); return !!s && s.value !== '' && [...s.options].some(o => o.value === '${img1.serviceId}'); })()`), 'auto-select-after-settings');
-  await setSelect("document.querySelector('.config-role-editor:not([hidden]) .nd-image-service-row select')", img1.serviceId);
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image input[role=combobox]')?.value==='moss-image-base.safetensors'"), 'prefill-default-image-model');
-  await pickModelOption('.config-role-editor:not([hidden]) .nd-image', 'sd_xl_base_1.0.safetensors', 'shared-image-options');
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image input[role=combobox]')?.value==='sd_xl_base_1.0.safetensors'"), 'pick-second-image-model');
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='测试连接')");
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image .nd-model-picker ~ .config-actions ~ [role=status]')?.textContent.includes('已确认模型「sd_xl_base_1.0.safetensors」')"), 'confirm-second-image-model');
-  await pickModelOption('.config-role-editor:not([hidden]) .nd-image', 'moss-image-base.safetensors', 'reopen-image-options');
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image input[role=combobox]')?.value==='moss-image-base.safetensors'"), 'pick-first-image-model');
+  await until(() => ev(`(() => { const s = document.querySelector('.config-sheet .nd-image-service-row select'); return !!s && s.value !== '' && [...s.options].some(o => o.value === '${img1.serviceId}'); })()`), 'auto-select-after-settings');
+  await setSelect("document.querySelector('.config-sheet .nd-image-service-row select')", img1.serviceId);
+  await until(() => ev("document.querySelector('.config-sheet .nd-image input[role=combobox]')?.value==='moss-image-base.safetensors'"), 'prefill-default-image-model');
+  await pickModelOption('.config-sheet .nd-image', 'sd_xl_base_1.0.safetensors', 'shared-image-options');
+  await until(() => ev("document.querySelector('.config-sheet .nd-image input[role=combobox]')?.value==='sd_xl_base_1.0.safetensors'"), 'pick-second-image-model');
+  await clickWhen("[...document.querySelectorAll('.config-sheet .nd-image button')].find(x=>x.textContent==='测试连接')");
+  await imageNotice('已确认模型「sd_xl_base_1.0.safetensors」');
+  await pickModelOption('.config-sheet .nd-image', 'moss-image-base.safetensors', 'reopen-image-options');
+  await until(() => ev("document.querySelector('.config-sheet .nd-image input[role=combobox]')?.value==='moss-image-base.safetensors'"), 'pick-first-image-model');
   const llmBCallsBeforeAnchor = llmB.chatCalls.length;
-  await clickWhen("document.querySelector('.config-role-editor:not([hidden]) .nd-image button[aria-label=\"用对话模型生成基础锚点提示词\"]')");
-  await until(() => llmB.chatCalls.length > llmBCallsBeforeAnchor && ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image textarea[aria-label=\"基础锚点提示词\"]')?.value==='黑长直，深棕瞳，日系厚涂质感'"), 'chat-model-base-anchor-1');
+  await clickWhen("document.querySelector('.config-sheet .nd-image button[aria-label=\"用对话模型生成基础锚点提示词\"]')");
+  await until(() => llmB.chatCalls.length > llmBCallsBeforeAnchor && ev("document.querySelector('.config-sheet .nd-image textarea[aria-label=\"基础锚点提示词\"]')?.value==='黑长直，深棕瞳，日系厚涂质感'"), 'chat-model-base-anchor-1');
   assert.equal(llmB.chatCalls.at(-1).hasImage, true);
-  await clickWhen("document.querySelector('.config-role-editor:not([hidden]) .nd-image button[aria-label=\"用对话模型生成基础锚点提示词\"]')");
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image textarea[aria-label=\"基础锚点提示词\"]')?.value==='黑长直，琥珀瞳，柔和神情，日系厚涂'"), 'chat-model-base-anchor-2');
-  await clickWhen("document.querySelector('.config-role-editor:not([hidden]) .nd-image button[aria-label=\"用对话模型生成「春装」服饰提示词\"]')");
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image-outfits input[placeholder=\"例如：米色风衣，深色长裤\"]')?.value==='浅米针织开衫，深蓝百褶裙，白色棉袜'"), 'chat-model-outfit-anchor');
-  await setInput("document.querySelector('.config-role-editor:not([hidden]) .nd-image textarea')", '黑长直，深棕瞳，柔和神情');
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent.includes('生成参数'))");
-  await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-image input[placeholder=\"例如：米色风衣，深色长裤\"]')"));
-  await setInput("document.querySelector('.config-role-editor:not([hidden]) .nd-image input[placeholder=\"例如：米色风衣，深色长裤\"]')", '米色风衣');
+  await clickWhen("document.querySelector('.config-sheet .nd-image button[aria-label=\"用对话模型生成基础锚点提示词\"]')");
+  await until(() => ev("document.querySelector('.config-sheet .nd-image textarea[aria-label=\"基础锚点提示词\"]')?.value==='黑长直，琥珀瞳，柔和神情，日系厚涂'"), 'chat-model-base-anchor-2');
+  await clickWhen("document.querySelector('.config-sheet .nd-image button[aria-label=\"用对话模型生成「春装」服饰提示词\"]')");
+  await until(() => ev("document.querySelector('.config-sheet .nd-image-outfits input[placeholder=\"例如：米色风衣，深色长裤\"]')?.value==='浅米针织开衫，深蓝百褶裙，白色棉袜'"), 'chat-model-outfit-anchor');
+  await setInput("document.querySelector('.config-sheet .nd-image textarea')", '黑长直，深棕瞳，柔和神情');
+  await until(() => ev("!!document.querySelector('.config-sheet .nd-image input[placeholder=\"例如：米色风衣，深色长裤\"]')"));
+  await setInput("document.querySelector('.config-sheet .nd-image input[placeholder=\"例如：米色风衣，深色长裤\"]')", '米色风衣');
   await shot('role-image-1280.png');
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='测试生图')");
-  await until(() => ev("(() => { const img = document.querySelector('.config-role-editor:not([hidden]) .nd-image-figure img'); return !!(img && img.complete && img.naturalWidth > 0); })()"), 'draft-image-preview');
+  await clickWhen("[...document.querySelectorAll('.config-sheet .nd-image button')].find(x=>x.textContent==='测试生图')");
+  await until(() => ev("(() => { const img = document.querySelector('.config-sheet .nd-image-figure img'); return !!(img && img.complete && img.naturalWidth > 0); })()"), 'draft-image-preview');
   assert.equal(comfyA.prompts.some(p => p.auth === 'Bearer img-secret-a'), true, '生图测试应使用已保存凭据访问真实本地 ComfyUI');
   const beforeSceneSave = await request(`/v1/roles/${roleA.roleId}/scene-image`);
   assert.equal(beforeSceneSave.configured, false, '测试生图不得修改已保存角色生图配置');
   await clickImageSave();
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image')?.innerText.includes('已保存生图配置') && document.querySelector('.config-role-editor:not([hidden])')?.innerText.includes('继续活动')"), 'save-roleA-scene-image');
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].find(x=>x.textContent==='继续活动')");
+  await imageSaved(roleA.roleId, img1.serviceId);
+  await resumePaused();
   await until(async () => (await request(`/v1/roles/${roleA.roleId}/activity`)).activity.state === 'active', 'resume-a-after-scene');
 
   // 给乙角色绑定备用生图后去设置删除备用生图，验证 Bug 3 修复（乙角色生图面板必须显式显示「原服务已删除」，不得视觉错显为主生图、也不得误停用角色乙）。
-  await clickWhen("document.querySelector('.config-switch-role')");
-  await until(() => ev("[...document.querySelectorAll('.config-poster-hit')].some(x=>x.textContent.includes('乙角色'))"));
-  await clickWhen("[...document.querySelectorAll('.config-poster-hit')].find(x=>x.textContent.includes('乙角色'))");
+  await pickRole("乙角色");
   await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='乙角色'"));
-  await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-image-service-row select')"));
-  await setSelect("document.querySelector('.config-role-editor:not([hidden]) .nd-image-service-row select')", img2.serviceId);
-  await setInput("document.querySelector('.config-role-editor:not([hidden]) .nd-image input[placeholder=\"moss_image_sft_int8_convrot.safetensors\"]')", 'backup-image-model.safetensors');
+  await openImage();
+  await until(() => ev("!!document.querySelector('.config-sheet .nd-image-service-row select')"));
+  await setSelect("document.querySelector('.config-sheet .nd-image-service-row select')", img2.serviceId);
+  await setInput("document.querySelector('.config-sheet .nd-image input[placeholder=\"moss_image_sft_int8_convrot.safetensors\"]')", 'backup-image-model.safetensors');
   await clickImageSave();
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image')?.innerText.includes('已保存生图配置') && document.querySelector('.config-role-editor:not([hidden])')?.innerText.includes('继续活动')"));
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].find(x=>x.textContent==='继续活动')");
+  await imageSaved(roleB.roleId, img2.serviceId);
+  await resumePaused();
   await until(async () => (await request(`/v1/roles/${roleB.roleId}/activity`)).activity.state === 'active');
+
+  await openImage();
 
   // 292-R05 / 292-R06 跨页生图与在途编辑恢复回归验证：
   // 0) 出图期间修改测试画面描述、测试服饰或基础草稿参数：旧响应不得写回样图，同时「测试生图」按钮立即/可用最新草稿重测（283 §28）。
   const inFlightEdit1 = comfyB.holdNextPrompt('r06-inflight-edit-1-prompt');
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image-preview button')].find(x=>x.textContent==='测试生图')");
+  await clickWhen("[...document.querySelectorAll('.config-sheet .nd-image-preview button')].find(x=>x.textContent==='测试生图')");
   await inFlightEdit1.arrived;
-  await until(() => ev("(() => { const btn = document.querySelector('.config-role-editor:not([hidden]) .nd-image-preview button'); return !!btn && btn.disabled && btn.textContent.includes('正在出图'); })()"), 'r06-inflight-busy-1');
-  await setInput("document.querySelector('.config-role-editor:not([hidden]) .nd-image-preview input')", '雨夜霓虹街景');
-  await until(() => ev("(() => { const btn = document.querySelector('.config-role-editor:not([hidden]) .nd-image-preview button'); return !!btn && !btn.disabled && btn.textContent === '测试生图'; })()"), 'r06-button-restored-after-prompt-edit');
+  await until(() => ev("(() => { const btn = document.querySelector('.config-sheet .nd-image-preview button'); return !!btn && btn.disabled && btn.textContent.includes('正在出图'); })()"), 'r06-inflight-busy-1');
+  await setInput("document.querySelector('.config-sheet .nd-image-preview input')", '雨夜霓虹街景');
+  await until(() => ev("(() => { const btn = document.querySelector('.config-sheet .nd-image-preview button'); return !!btn && !btn.disabled && btn.textContent === '测试生图'; })()"), 'r06-button-restored-after-prompt-edit');
   inFlightEdit1.release();
   await delay(250);
-  assert.equal(await ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-image-figure')"), false, '出图期间改画面描述后，旧响应不得渲染样图');
+  assert.equal(await ev("!!document.querySelector('.config-sheet .nd-image-figure')"), false, '出图期间改画面描述后，旧响应不得渲染样图');
 
   const inFlightEdit2 = comfyB.holdNextPrompt('r06-inflight-edit-2-prompt');
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image-preview button')].find(x=>x.textContent==='测试生图')");
+  await clickWhen("[...document.querySelectorAll('.config-sheet .nd-image-preview button')].find(x=>x.textContent==='测试生图')");
   await inFlightEdit2.arrived;
-  await until(() => ev("(() => { const btn = document.querySelector('.config-role-editor:not([hidden]) .nd-image-preview button'); return !!btn && btn.disabled && btn.textContent.includes('正在出图'); })()"), 'r06-inflight-busy-2');
-  await setSelect("document.querySelector('.config-role-editor:not([hidden]) .nd-image-preview select')", outfitB.outfitId);
-  await setInput("document.querySelector('.config-role-editor:not([hidden]) .nd-image textarea')", '银灰挑染，冷静眼神');
-  await setInput("document.querySelector('.config-role-editor:not([hidden]) .nd-image-preview input')", '窗边微光特写');
-  await until(() => ev("(() => { const btn = document.querySelector('.config-role-editor:not([hidden]) .nd-image-preview button'); return !!btn && !btn.disabled && btn.textContent === '测试生图'; })()"), 'r06-button-restored-after-draft-edit');
+  await until(() => ev("(() => { const btn = document.querySelector('.config-sheet .nd-image-preview button'); return !!btn && btn.disabled && btn.textContent.includes('正在出图'); })()"), 'r06-inflight-busy-2');
+  await setSelect("document.querySelector('.config-sheet .nd-image-preview select')", outfitB.outfitId);
+  await setInput("document.querySelector('.config-sheet .nd-image textarea')", '银灰挑染，冷静眼神');
+  await setInput("document.querySelector('.config-sheet .nd-image-preview input')", '窗边微光特写');
+  await until(() => ev("(() => { const btn = document.querySelector('.config-sheet .nd-image-preview button'); return !!btn && !btn.disabled && btn.textContent === '测试生图'; })()"), 'r06-button-restored-after-draft-edit');
   inFlightEdit2.release();
   await delay(250);
-  assert.equal(await ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-image-figure')"), false, '出图期间改服饰与草稿后，旧响应不得渲染样图');
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image-preview button')].find(x=>x.textContent==='测试生图')");
-  await until(() => ev("(() => { const img = document.querySelector('.config-role-editor:not([hidden]) .nd-image-figure img'); const cap = document.querySelector('.config-role-editor:not([hidden]) .nd-image-figure figcaption')?.textContent || ''; return !!(img && img.complete && img.naturalWidth > 0 && cap.includes('银灰挑染，冷静眼神') && cap.includes('窗边微光特写')); })()"), 'r06-repreview-with-latest-draft');
+  assert.equal(await ev("!!document.querySelector('.config-sheet .nd-image-figure')"), false, '出图期间改服饰与草稿后，旧响应不得渲染样图');
+  await clickWhen("[...document.querySelectorAll('.config-sheet .nd-image-preview button')].find(x=>x.textContent==='测试生图')");
+  await until(() => ev("(() => { const img = document.querySelector('.config-sheet .nd-image-figure img'); const cap = document.querySelector('.config-sheet .nd-image-figure figcaption')?.textContent || ''; return !!(img && img.complete && img.naturalWidth > 0 && cap.includes('银灰挑染，冷静眼神') && cap.includes('窗边微光特写')); })()"), 'r06-repreview-with-latest-draft');
 
   // 验证已有样图时再次出图并在途中改写画面描述：旧在途响应不得覆盖现有样图，随后仍可用最新草稿重测。
-  await setInput("document.querySelector('.config-role-editor:not([hidden]) .nd-image-preview input')", '将被放弃的旧出图描述');
+  await setInput("document.querySelector('.config-sheet .nd-image-preview input')", '将被放弃的旧出图描述');
   const inFlightEdit3 = comfyB.holdNextPrompt('r06-inflight-edit-3-prompt');
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image-preview button')].find(x=>x.textContent==='测试生图')");
+  await clickWhen("[...document.querySelectorAll('.config-sheet .nd-image-preview button')].find(x=>x.textContent==='测试生图')");
   await inFlightEdit3.arrived;
-  await until(() => ev("(() => { const btn = document.querySelector('.config-role-editor:not([hidden]) .nd-image-preview button'); return !!btn && btn.disabled && btn.textContent.includes('正在出图'); })()"), 'r06-inflight-busy-3');
-  await setInput("document.querySelector('.config-role-editor:not([hidden]) .nd-image-preview input')", '最终稳定新描述');
-  await until(() => ev("(() => { const btn = document.querySelector('.config-role-editor:not([hidden]) .nd-image-preview button'); return !!btn && !btn.disabled && btn.textContent === '测试生图'; })()"), 'r06-button-restored-with-existing-preview');
+  await until(() => ev("(() => { const btn = document.querySelector('.config-sheet .nd-image-preview button'); return !!btn && btn.disabled && btn.textContent.includes('正在出图'); })()"), 'r06-inflight-busy-3');
+  await setInput("document.querySelector('.config-sheet .nd-image-preview input')", '最终稳定新描述');
+  await until(() => ev("(() => { const btn = document.querySelector('.config-sheet .nd-image-preview button'); return !!btn && !btn.disabled && btn.textContent === '测试生图'; })()"), 'r06-button-restored-with-existing-preview');
   inFlightEdit3.release();
   await delay(250);
-  assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image-figure figcaption')?.textContent.includes('将被放弃的旧出图描述')"), false, '已有样图时在途编辑，旧响应不得覆盖样图');
+  assert.equal(await ev("document.querySelector('.config-sheet .nd-image-figure figcaption')?.textContent.includes('将被放弃的旧出图描述')"), false, '已有样图时在途编辑，旧响应不得覆盖样图');
 
   // 1) 在乙角色探测备用生图（得到 backup-image-model.safetensors 候选）并以最新草稿测试生图，验证草稿字段保留。
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='测试连接')");
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image .nd-model-picker ~ .config-actions ~ [role=status]')?.textContent.includes('已确认模型「backup-image-model.safetensors」')"), 'r06-probe-before-disable');
+  await clickWhen("[...document.querySelectorAll('.config-sheet .nd-image button')].find(x=>x.textContent==='测试连接')");
+  await imageNotice('已确认模型「backup-image-model.safetensors」');
   const beforeStep1Prompts = comfyB.prompts.length;
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image-preview button')].find(x=>x.textContent==='测试生图')");
-  await until(() => comfyB.prompts.length > beforeStep1Prompts && ev("(() => { const img = document.querySelector('.config-role-editor:not([hidden]) .nd-image-figure img'); const cap = document.querySelector('.config-role-editor:not([hidden]) .nd-image-figure figcaption')?.textContent || ''; const btn = document.querySelector('.config-role-editor:not([hidden]) .nd-image-preview button'); return !!(img && img.complete && img.naturalWidth > 0 && cap.includes('最终稳定新描述') && btn && !btn.disabled && btn.textContent === '测试生图'); })()"), 'r06-preview-before-disable');
+  await clickWhen("[...document.querySelectorAll('.config-sheet .nd-image-preview button')].find(x=>x.textContent==='测试生图')");
+  await until(() => comfyB.prompts.length > beforeStep1Prompts && ev("(() => { const img = document.querySelector('.config-sheet .nd-image-figure img'); const cap = document.querySelector('.config-sheet .nd-image-figure figcaption')?.textContent || ''; const btn = document.querySelector('.config-sheet .nd-image-preview button'); return !!(img && img.complete && img.naturalWidth > 0 && cap.includes('最终稳定新描述') && btn && !btn.disabled && btn.textContent === '测试生图'); })()"), 'r06-preview-before-disable');
 
-  // 2) 去设置停用备用生图再返回：旧探测候选与预览图必须清除、草稿字段保留，且直接保存被拦下（不得暂停活跃角色乙）。
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent.includes('在设置中管理'))");
-  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings' && document.querySelector('.config-leaf-body > .config-prose:not([hidden]) h2')?.textContent==='备用生图'"));
-  // 启停按钮文案随活动态在「暂停并停用 / 全局停用」间切换；未暂停则不会有「继续本次暂停的角色」。
-  await clickAnyText(SCOPE, ['暂停并停用', '全局停用'], 'img2-disable-btn');
-  await until(async () => (await request('/v1/image-services')).items.find(s => s.serviceId === img2.serviceId)?.enabled === false, 'img2-disabled');
-  await resumePausedIfAny();
-  await until(bothActive, 'roles-resumed-after-disable');
-  await clickWhen("document.querySelector('.config-return-footer')");
-  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='role-config'"));
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image')?.innerText.includes('当前所选生图服务已停用')"), 'r05-disabled-alert');
-  await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image input[role=combobox]').focus()");
-  assert.equal(await ev("document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image .nd-model-options [role=option]').length"), 0, '停用后旧候选模型必须清除');
-  assert.equal(await ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-image-figure')"), false, '停用后旧测试样图必须清除');
-  assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image textarea')?.value"), '银灰挑染，冷静眼神', '停用后返回不得丢失未保存生图草稿');
+  // 2) 先保存角色纸笺中的基础草稿，再走公开设置入口。全局停用只暂停乙，
+  // 返回后不能沿用旧探测和试生图结果；已保存的停用绑定仍可随其他字段保存。
   await clickImageSave();
-  await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image [role=alert]')].some(x=>x.textContent.includes('生图服务已停用，启用后再试'))"), 'r05-disabled-save-rejected');
-  assert.equal((await request(`/v1/roles/${roleB.roleId}/activity`)).activity.state, 'active', '292-R05：停用生图服务保存失败前不得暂停角色乙');
-
-  // 3) 重新启用备用生图，再完成一次探测并发起一条在途慢预览，然后去设置修改连接配置（timeoutMs）后释放：
-  // 已返回的探测候选与在途晚到的测试样图都不得渲染或写回，草稿保留。
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent.includes('在设置中管理'))");
-  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings' && document.querySelector('.config-leaf-body > .config-prose:not([hidden]) h2')?.textContent==='备用生图'"));
-  await clickAnyText(SCOPE, ['暂停并启用', '全局启用'], 'img2-enable-btn');
-  await until(async () => (await request('/v1/image-services')).items.find(s => s.serviceId === img2.serviceId)?.enabled === true, 'img2-reenabled');
-  await resumePausedIfAny();
+  await imageSaved(roleB.roleId, img2.serviceId);
+  await resumePaused();
   await until(bothActive);
-  await clickWhen("document.querySelector('.config-return-footer')");
-  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='role-config'"));
+  await openImage();
+  await imageSettings('在设置中管理 →');
+  await waitService('备用生图');
+  const image2Switch = element('[role=switch][aria-label="全局启用备用生图"]');
+  await clickWhen(image2Switch, 'img2-disable-btn');
+  await until(async () => (await request('/v1/image-services')).items.find(service => service.serviceId === img2.serviceId)?.enabled === false, 'img2-disabled');
+  assert.equal((await request(`/v1/roles/${roleA.roleId}/activity`)).activity.state, 'active', '全局停用不能暂停无关角色甲');
+  assert.equal((await request(`/v1/roles/${roleB.roleId}/activity`)).activity.state, 'stopped', '全局停用需暂停依赖角色乙');
+  await resumePaused();
+  await until(bothActive);
+  await returnRole();
+  await openImage();
+  await imageNotice('所选服务已全局停用');
+  assert.equal(await ev(`document.querySelectorAll('${image} .nd-model-options [role=option]').length`), 0);
+  assert.equal(await ev(`!!${field('.nd-image-figure')}`), false);
+  assert.equal(await ev(`${field('textarea[aria-label="基础锚点提示词"]')}?.value`), '银灰挑染，冷静眼神');
+  const option = field(`option[value="${img2.serviceId}"]`);
+  assert.equal(await ev(`${option}?.disabled`), true, '全局停用的服务不能新选用');
+  assert.match(await ev(`${option}?.textContent`), /已全局停用，不能选用/);
+  await setInput(field('.nd-image-grid input[type=number]'), '896');
+  await clickImageSave();
+  await until(async () => {
+    const { settings } = await request(`/v1/roles/${roleB.roleId}/scene-image`);
+    return settings?.serviceId === img2.serviceId && settings.width === 896;
+  }, 'retained disabled binding is saved with other fields');
+  await resumePaused();
+  await until(bothActive);
 
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='读取模型列表')");
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image .nd-model-picker ~ .config-actions ~ [role=status]')?.textContent.includes('已读取 1 个模型')"), 'r06-probe-before-edit');
+  // 3) 恢复服务，再发起在途出图并离开纸笺。关闭后的晚到结果和改连接前的候选都不能显示。
+  await openImage();
+  await imageSettings('在设置中管理 →');
+  await waitService('备用生图');
+  await clickWhen(image2Switch, 'img2-enable-btn');
+  await until(async () => (await request('/v1/image-services')).items.find(service => service.serviceId === img2.serviceId)?.enabled === true, 'img2-reenabled');
+  await until(() => ev(`${image2Switch}?.checked && !${image2Switch}?.disabled`), 'image enable request finished in renderer');
+  assert.equal(await bothActive(), true, '重新启用无需暂停');
+  await returnRole();
+  await openImage();
+  await clickWhen(imageButton('读取模型列表'));
+  await imageNotice('已读取 1 个模型');
   const slowPreview = comfyB.holdNextPrompt('r06-slow-preview-prompt');
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='测试生图')");
+  await clickWhen(imageButton('测试生图'));
   await slowPreview.arrived;
-
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent.includes('在设置中管理'))");
-  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings' && document.querySelector('.config-leaf-body > .config-prose:not([hidden]) h2')?.textContent==='备用生图'"));
-  await setInput("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) .config-connection input[type=number]')", '45000');
-  await clickWhen("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='暂停活跃角色并保存')");
-  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden])')?.innerText.includes('生图服务已保存')"));
-  await clickWhen("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='继续本次暂停的角色')");
-  await until(bothActive);
+  await imageSettings('在设置中管理 →');
+  await waitService('备用生图');
+  await editService();
+  await setInput(groupInput('连接'), `${comfyB.baseUrl}/alternate`);
+  await clickWhen(saveButton(true), 'pause for connection maintenance');
   slowPreview.release();
-  await delay(150);
-  await clickWhen("document.querySelector('.config-return-footer')");
-  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='role-config'"));
-  await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image input[role=combobox]').focus()");
-  await until(() => ev("document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image .nd-model-options [role=option]').length === 0 && !document.querySelector('.config-role-editor:not([hidden]) .nd-image-figure')"), 'r06-cleared-after-edit');
-  await delay(200);
-  assert.equal(await ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-image-figure')"), false, '连接修改后在途晚到测试样图不得写回渲染');
-  assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image textarea')?.value"), '银灰挑染，冷静眼神', '修改连接配置返回后应保留生图草稿');
+  await waitService('备用生图');
+  await resumePaused();
+  await until(bothActive);
+  await returnRole();
+  await openImage();
+  assert.equal(await ev(`document.querySelectorAll('${image} .nd-model-options [role=option]').length`), 0);
+  assert.equal(await ev(`!!${field('.nd-image-figure')}`), false, '修改连接后，旧试生图不得写回');
+  assert.equal(await ev(`${field('textarea[aria-label="基础锚点提示词"]')}?.value`), '银灰挑染，冷静眼神');
 
-  // 4) 验证：一次已完成的探测 + 生图，以及一个尚未返回的在途慢探测，在设置删除备用生图后都不得残留或晚到写回。
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='测试连接')");
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image .nd-model-picker ~ .config-actions ~ [role=status]')?.textContent.includes('已确认模型「backup-image-model.safetensors」')"), 'r06-probe-before-delete');
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='测试生图')");
-  await until(() => ev("(() => { const img = document.querySelector('.config-role-editor:not([hidden]) .nd-image-figure img'); return !!(img && img.complete && img.naturalWidth > 0); })()"), 'r06-preview-before-delete');
+  // 4) 服务有活动依赖时禁止删除。先经角色状态停止乙，再删除，返回验证保留失效绑定。
+  await clickWhen(imageButton('测试连接'));
+  await imageNotice('已确认模型「backup-image-model.safetensors」');
+  await clickWhen(imageButton('测试生图'));
+  await until(() => ev(`${field('.nd-image-figure img')}?.naturalWidth > 0`), 'r06-preview-before-delete');
   const slowProbe = comfyB.holdNextObjectInfo('r06-slow-probe-object-info');
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent==='读取模型列表')");
+  await clickWhen(imageButton('读取模型列表'));
   await slowProbe.arrived;
-
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image button')].find(x=>x.textContent.includes('在设置中管理'))");
-  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings' && document.querySelector('.config-leaf-body > .config-prose:not([hidden]) h2')?.textContent==='备用生图'"));
-  await clickWhen("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='删除生图服务')");
-  await until(() => ev("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].some(x=>x.textContent==='暂停并删除')"));
-  await clickWhen("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='暂停并删除')");
-  await until(async () => (await request('/v1/image-services')).items.length === 1, 'img2-deleted');
-  await until(bothActive, 'roles-resumed-after-delete');
+  await imageSettings('在设置中管理 →');
+  await waitService('备用生图');
+  const deleteImage2 = button('删除生图服务…');
+  await until(() => ev(`${deleteImage2}?.disabled`), 'active dependency blocks image deletion');
+  await tab('角色');
+  await clickWhen(`${poster('乙角色')}.querySelector('button')`);
+  await until(async () => (await request(`/v1/roles/${roleB.roleId}/activity`)).activity.state === 'stopped', 'stop dependent role');
   slowProbe.release();
-  await delay(150);
-  await clickWhen("document.querySelector('.config-return-footer')");
-  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='role-config'"));
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image')?.innerText.includes('当前所选生图服务已不存在')"), 'bug3-missing-service-alert');
-  await delay(250);
-  await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image input[role=combobox]').focus()");
-  assert.equal(await ev("document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image .nd-model-options [role=option]').length"), 0, '删除后旧候选及在途晚到响应均不得存在');
-  assert.equal(await ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-image-figure')"), false, '删除后旧样图必须清除');
-  assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image textarea')?.value"), '银灰挑染，冷静眼神', '删除后应保留未保存生图草稿');
-  assert.equal(await ev(`document.querySelector('.config-role-editor:not([hidden]) .nd-image-service-row select')?.value==='${img2.serviceId}'`), true, 'Bug3修复：不得静默改写已失效 serviceId');
+  await tab('模型');
+  await clickWhen(button('生图', '.config-kind-tabs'));
+  await selectService('备用生图');
+  await clickWhen(deleteImage2);
+  await clickWhen(sheetButton('删除'));
+  await until(async () => (await request('/v1/image-services')).items.length === 1, 'img2-deleted');
+  assert.equal((await request(`/v1/roles/${roleA.roleId}/activity`)).activity.state, 'active');
+  assert.equal((await request(`/v1/roles/${roleB.roleId}/activity`)).activity.state, 'stopped');
+  await returnRole();
+  await openImage();
+  await imageNotice('当前所选生图服务已不存在');
+  assert.equal(await ev(`document.querySelectorAll('${image} .nd-model-options [role=option]').length`), 0);
+  assert.equal(await ev(`!!${field('.nd-image-figure')}`), false);
+  assert.equal(await ev(`${field('textarea[aria-label="基础锚点提示词"]')}?.value`), '银灰挑染，冷静眼神');
+  assert.equal(await ev(`${field('.nd-image-service-row select')}?.value`), img2.serviceId, '保留失效服务标识');
+  await setInput(field('textarea[aria-label="基础锚点提示词"]'), '验证失效服务不能保存');
   await clickImageSave();
-  await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-image [role=alert]')].filter(x=>x.textContent.includes('已不存在')).length === 2"), 'bug3-save-blocked-before-pause');
-  assert.equal((await request(`/v1/roles/${roleB.roleId}/activity`)).activity.state, 'active', '保存失效生图服务前校验拦截不得无故暂停角色乙');
-  await setSelect("document.querySelector('.config-role-editor:not([hidden]) .nd-image-service-row select')", img1.serviceId);
+  await imageNotice('服务已不存在');
+  assert.equal((await request(`/v1/roles/${roleB.roleId}/activity`)).activity.state, 'stopped');
+  await setSelect(field('.nd-image-service-row select'), img1.serviceId);
   await clickImageSave();
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-image')?.innerText.includes('已保存生图配置') && document.querySelector('.config-role-editor:not([hidden])')?.innerText.includes('继续活动')"));
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].find(x=>x.textContent==='继续活动')");
-  await until(async () => (await request(`/v1/roles/${roleB.roleId}/activity`)).activity.state === 'active');
+  await imageSaved(roleB.roleId, img1.serviceId);
+  await openSettings();
+  await tab('角色');
+  await clickWhen(`${poster('乙角色')}.querySelector('button')`);
+  await until(bothActive, 'resume rebound role B');
+  await returnRole();
+  await tab('模型');
 
-  // === 链路 6：设置添加全局语音服务 -> 切回甲角色配置语音暂存、试听、原子 multipart 保存、使用中不可删、停用/启用切换 ===
-  await clickWhen("document.querySelector('.config-switch-role')");
-  await until(() => ev("[...document.querySelectorAll('.config-poster-hit')].some(x=>x.textContent.includes('甲角色'))"));
-  await clickWhen("[...document.querySelectorAll('.config-poster-hit')].find(x=>x.textContent.includes('甲角色'))");
+  // === 链路 6：全局语音添加、角色参考音频暂存、试听、原子保存及启停 ===
+  await pickRole("甲角色");
   await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='甲角色'"), 'switch-to-a-for-voice');
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-model-toggle')].find(x=>x.textContent.includes('语音'))");
-  await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-voice button')].some(x=>x.textContent.includes('去设置添加'))"), 'role-voice-open-settings');
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-voice button')].find(x=>x.textContent.includes('去设置添加'))");
-  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings' && document.querySelector('.config-kind-tabs button[aria-pressed=\"true\"]')?.textContent==='语音' && document.querySelector('.config-leaf').innerText.includes('添加语音服务')"), 'open-add-voice-service');
-  await setInput("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) input[aria-label=\"语音服务名称\"]')", '主本地语音');
-  await setInput("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) input[aria-label=\"语音服务地址\"]')", tts.baseUrl);
-  await clickWhen("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='测试连接')");
-  await until(() => ev("document.querySelector('.config-leaf-body > .config-prose:not([hidden]) .nd-voice-probe')?.textContent.includes('local-fake-tts')"), 'global-tts-probe');
-  await clickWhen("[...document.querySelectorAll('.config-leaf-body > .config-prose:not([hidden]) button')].find(x=>x.textContent==='保存语音服务')");
-  await until(async () => (await request('/v1/voice-services')).items.length === 1, 'global-tts-saved');
+  await openVoice();
+  await clickWhen(button('去设置添加 →', voice));
+  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings' && document.querySelector('.config-kind-tabs button[aria-pressed=true]')?.textContent==='语音' && document.querySelector('.config-sheet h3')?.textContent==='添加语音服务'"), 'open-add-voice-service');
+  await setInput(field('input[aria-label="语音服务名称"]'), '主本地语音');
+  await setInput(field('input[aria-label="语音服务地址"]'), tts.baseUrl);
+  await clickWhen(sheetButton('探测服务'));
+  await until(() => ev("document.querySelector('.config-sheet')?.innerText.includes('探测到')"), 'global-tts-probe');
+  await clickWhen(sheetButton('添加'));
+  await waitService('主本地语音');
   const voiceSvc = (await request('/v1/voice-services')).items[0];
-  await clickWhen("document.querySelector('.config-return-footer')");
-  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='role-config'"), 'return-to-role-voice');
-  await until(() => ev(`document.querySelector('.config-role-editor:not([hidden]) .nd-voice select[aria-label="语音服务"]')?.value==='${voiceSvc.serviceId}'`), 'role-picked-voice-svc');
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-voice-probe')?.textContent.includes('local-fake-tts')"), 'tts-probe-carried');
+  assert.ok(voiceSvc?.serviceId, '全局语音服务已写入后端');
+  await returnRole();
+  await openVoice();
+  await until(() => ev(`${field('select[aria-label="语音服务"]')}?.value===${JSON.stringify(voiceSvc.serviceId)}`), 'role-picked-voice-svc');
+  await until(() => ev("document.querySelector('.config-sheet .nd-voice-probe')?.textContent.includes('local-fake-tts')"), 'tts-probe-carried');
 
-  await setSelect(" [...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-voice select')].find(x=>[...x.options].some(o=>o.value==='cross_language'))", 'cross_language');
+  const refMode = `[...document.querySelectorAll('${voice} select')].find(select=>[...select.options].some(option=>option.value==='cross_language'))`;
+  await setSelect(refMode, 'cross_language');
   const docVoice = await cmd('DOM.getDocument');
-  const voiceInput = await cmd('DOM.querySelector', { nodeId: docVoice.root.nodeId, selector: '.config-role-editor:not([hidden]) .nd-voice input[type=file]' });
+  const voiceInput = await cmd('DOM.querySelector', { nodeId: docVoice.root.nodeId, selector: `${voice} input[type=file]` });
   await cmd('DOM.setFileInputFiles', { nodeId: voiceInput.nodeId, files: [wavPath] });
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-voice')?.innerText.includes('待上传：sample.wav')"), 'voice-staged');
-  assert.equal((await request(`/v1/roles/${roleA.roleId}/voice/references`)).items.length, 0, '选文件暂存期不得写入后端参考音频');
+  await until(() => ev("document.querySelector('.config-sheet .nd-voice')?.innerText.includes('待上传：sample.wav')"), 'voice-staged');
+  assert.equal((await request(`/v1/roles/${roleA.roleId}/voice/references`)).items.length, 0, '暂存期不得上传参考音频');
 
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-voice button')].find(x=>x.textContent==='生成试听')");
+  await clickWhen(button('生成试听', voice));
   await until(() => tts.synthCalls.length === 1 && tts.synthCalls[0].hasCrossLang, 'voice-preview-real');
-  assert.equal((await request(`/v1/roles/${roleA.roleId}/voice/references`)).items.length, 0, '试听不得写入后端参考音频');
+  assert.equal((await request(`/v1/roles/${roleA.roleId}/voice/references`)).items.length, 0, '试听不得上传参考音频');
 
-  // 切到需要参考文本的 zero_shot 且不填文本：点击保存应在暂停前就被客户端拦截，甲仍为 active！
-  await setSelect(" [...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-voice select')].find(x=>[...x.options].some(o=>o.value==='zero_shot'))", 'zero_shot');
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-voice button')].find(x=>x.textContent==='暂停并保存声音配置')");
-  await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) .nd-voice .nd-appearance-error')"), 'voice-missing-ref-text');
-  assert.equal((await request(`/v1/roles/${roleA.roleId}/activity`)).activity.state, 'active', '缺少参考文本拦截时不得暂停甲角色');
+  // 需要参考文本的 zero_shot 必须在暂停前拦截。
+  await setSelect(refMode, 'zero_shot');
+  await clickVoiceSave();
+  await until(() => ev("!!document.querySelector('.config-sheet [role=alert]')"), 'voice-missing-ref-text');
+  assert.equal((await request(`/v1/roles/${roleA.roleId}/activity`)).activity.state, 'active');
 
-  await setInput("document.querySelectorAll('.config-role-editor:not([hidden]) .nd-voice textarea')[0]", '你好，今天风很轻。');
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .nd-voice button')].find(x=>x.textContent==='暂停并保存声音配置')");
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-voice-references')?.innerText.includes('sample.wav') && document.querySelector('.config-role-editor:not([hidden])')?.innerText.includes('继续活动')"), 'voice-atomic-saved');
+  await setInput(element(voice + ' textarea'), '你好，今天风很轻。');
+  await clickVoiceSave();
+  await until(async () => (await request(`/v1/roles/${roleA.roleId}/voice/references`)).items.some(item => item.fileName === 'sample.wav' && item.inUse), 'voice-atomic-saved');
   const refsAfterSave = (await request(`/v1/roles/${roleA.roleId}/voice/references`)).items;
   assert.equal(refsAfterSave.length, 1);
   assert.equal(refsAfterSave[0].inUse, true);
-  assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden]) .nd-voice-references button')?.disabled"), true, '使用中的参考音频不得删除');
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].find(x=>x.textContent==='继续活动')");
+  await resumePaused();
   await until(async () => (await request(`/v1/roles/${roleA.roleId}/activity`)).activity.state === 'active');
+  await openVoice();
+  assert.equal(await ev("document.querySelector('.config-sheet .nd-voice-references button')?.disabled"), true, '使用中的参考音频不得删除');
 
-  // 停用语音开关 -> 确认已保留配置且可再启用
-  await clickWhen("document.querySelector('.config-role-editor:not([hidden]) .nd-voice-toggle input')");
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-voice')?.innerText.includes('已停用角色语音')"));
-  assert.equal((await request(`/v1/roles/${roleA.roleId}/voice`)).voice.enabled, false);
-  await clickWhen("document.querySelector('.config-role-editor:not([hidden]) .nd-voice-toggle input')");
-  await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) .nd-voice')?.innerText.includes('已启用角色语音')"));
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) button')].find(x=>x.textContent==='继续活动')");
+  // 停用再启用角色语音，保留已保存的参考音频及配置。
+  await clickWhen(field('.nd-voice-toggle input'));
+  await until(async () => (await request(`/v1/roles/${roleA.roleId}/voice`)).voice.enabled === false, 'role voice disabled');
+  await clickWhen(field('.nd-voice-toggle input'));
+  await until(async () => (await request(`/v1/roles/${roleA.roleId}/voice`)).voice.enabled === true, 'role voice re-enabled');
+  await clickWhen(element('.config-sheet-x'));
+  await until(() => ev("!document.querySelector('.config-sheet')"));
+  await resumePaused();
   await until(async () => (await request(`/v1/roles/${roleA.roleId}/activity`)).activity.state === 'active');
+  const voiceAfterToggle = await request(`/v1/roles/${roleA.roleId}/voice`);
+  assert.equal(voiceAfterToggle.voice.voiceSource.referenceAssetId, refsAfterSave[0].assetId, '启停保留参考音频');
 
   // 小屏 + 夜间主题抽查
   await cmd('Emulation.setDeviceMetricsOverride', { width: 720, height: 540, deviceScaleFactor: 1, mobile: false });
@@ -988,24 +1005,29 @@ async function run() {
   await clickWhen("document.querySelectorAll('.ui-theme-switcher button')[0]");
   await delay(300);
 
-  // === 链路 7：跨角色未保存草稿切换（.config-poster-dirty）+ 进入真实对话（发送消息验证 llmB -> 点播语音 -> 手动生成过场图并查看） ===
+  // === 链路 7：跨角色设定草稿确认（T37）+ 进入真实对话（发送消息验证 llmB -> 点播语音 -> 手动生成过场图并查看） ===
   await clickWhen("[...document.querySelectorAll('.config-tabs button')].find(x=>x.textContent.includes('设定'))");
   await until(() => ev("!!document.querySelector('.config-role-editor:not([hidden]) input[aria-label=\"显示名\"]')"));
   await setInput("document.querySelector('.config-role-editor:not([hidden]) input[aria-label=\"显示名\"]')", '甲角色未保存草稿');
-  await clickWhen("document.querySelector('.config-switch-role')");
-  await until(() => ev("[...document.querySelectorAll('.config-poster-hit')].some(x=>x.textContent.includes('乙角色'))"));
-  await clickWhen("[...document.querySelectorAll('.config-poster-hit')].find(x=>x.textContent.includes('乙角色'))");
-  await until(() => ev("!!document.querySelector('.config-dirty-prompt')"), 'dirty-prompt-visible');
-  await clickWhen("[...document.querySelectorAll('.config-dirty-prompt button')].find(x=>x.textContent==='保留草稿，切换')");
+  await until(() => ev("!!document.querySelector('.config-tabs [aria-current=page] .tab-dot')"), 'profile draft visible');
+  await pickRole("乙角色");
+  // 3a4ac9a 起跨角色脏草稿走 T37 纸笺（原角色墙的三选一提示已移除）。
+  await until(() => ev("!!document.querySelector('.config-sheet') && document.querySelector('.config-sheet').textContent.includes('还没保存')"), 'dirty-prompt-visible');
+  await clickWhen("[...document.querySelectorAll('.config-sheet button')].find(x=>x.textContent==='放弃并切换')");
   await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='乙角色'"));
-  await clickWhen("document.querySelector('.config-switch-role')");
-  await until(() => ev("[...document.querySelectorAll('.config-poster')].find(x=>x.textContent.includes('甲角色'))?.querySelector('.config-poster-dirty')?.textContent==='未保存'"), 'poster-dirty-badge');
-  await clickWhen("[...document.querySelectorAll('.config-poster-hit')].find(x=>x.textContent.includes('甲角色'))");
+  await pickRole("甲角色");
   await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='甲角色'"), 'switch-to-a-for-chat');
-  await clickWhen("[...document.querySelectorAll('.config-tabs button')].find(x=>x.textContent.includes('模型'))");
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-model-toggle')].find(x=>x.textContent.includes('对话'))");
-  await until(() => ev("[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-model-details button')].some(x=>x.textContent==='开始对话')"));
-  await clickWhen("[...document.querySelectorAll('.config-role-editor:not([hidden]) .config-model-details button')].find(x=>x.textContent==='开始对话')");
+  assert.equal(await ev("document.querySelector('.config-role-editor:not([hidden]) input[aria-label=\"显示名\"]')?.value"), '甲角色', 'T37 放弃后保留已保存的角色名');
+  assert.equal(await ev(`(() => {
+    const event = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  })()`), false, 'T37 放弃最后一份用户草稿后无需拦截离开');
+  await clickWhen("[...document.querySelectorAll('.ui-dock-item')].find(button=>button.textContent.includes('对话'))");
+  assert.deepEqual(errors, [], '离开配置页进入对话时没有本机确认或渲染异常');
+  await clickWhen(element('.dialogue-role-switch button'));
+  await clickWhen("[...document.querySelectorAll('.dialogue-role-menu button')].find(button=>button.textContent.includes('甲角色'))");
+  await until(() => ev("document.querySelector('.dialogue-role-switch button')?.getAttribute('aria-label')?.includes('甲角色')"), 'dialogue uses A');
 
   await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='conversation' && document.querySelector('.dialogue-connection')?.dataset.state==='open'"), 'dialogue-open');
   await shot('dialogue-ready.png');
@@ -1054,7 +1076,7 @@ async function run() {
     imageServiceConvergedNoInlineCreate: true,
     imageSiteChangeGuardedBeforePause: true,
     imageDeletedServiceGuardedAndDisplayed: true,
-    imageDisabledSaveGuardedBeforePause: true,
+    disabledImageOptionGuardedAndExistingBindingRetained: true,
     imageCrossPageProbeAndPreviewInvalidated: true,
     imageInFlightDraftEditRecoversPreviewButton: true,
     electronExecutableSource: electronInfo.source,
@@ -1066,8 +1088,11 @@ async function run() {
   }, null, 2));
 }
 
-run().catch(error => {
-  console.error(error, '\n--- BACKEND LOG ---\n', backendLog.slice(-1500), '\n--- ELECTRON LOG ---\n', electronLog.slice(-1000));
+run().catch(async error => {
+  console.error(error, errors, '\n--- BACKEND LOG ---\n', backendLog.slice(-1500), '\n--- ELECTRON LOG ---\n', electronLog.slice(-1000));
+  if (ws?.readyState === 1) console.error(await ev(`({ page:document.querySelector('.studio-shell')?.dataset.page,
+    sheet:document.querySelector('.config-sheet h3')?.textContent, bodyInert:!!document.querySelector('.config-leaf-body[inert]'),
+    text:document.body.innerText.slice(-1900) })`).catch(() => null));
   process.exitCode = 1;
 }).finally(async () => {
   for (const release of [...releaseAllHolds]) { try { release(); } catch {} }

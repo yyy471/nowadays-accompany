@@ -36,14 +36,14 @@
 
 ### 2.1 应用 HTTP 路由
 
-语音与生图路由分别注册于 [voice-service-routes.ts](../../backend/src/http/voice-service-routes.ts)、[voice-routes.ts](../../backend/src/http/voice-routes.ts) 与 [image-service-routes.ts](../../backend/src/http/image-service-routes.ts)，其中标记「角色守卫」与「全局守卫」的写路由受 [config-writes.ts](../../backend/src/http/config-writes.ts) 约束：
+语音与生图路由分别注册于 [voice-service-routes.ts](../../backend/src/http/voice-service-routes.ts)、[voice-routes.ts](../../backend/src/http/voice-routes.ts) 与 [image-service-routes.ts](../../backend/src/http/image-service-routes.ts)。角色守卫由 [config-writes.ts](../../backend/src/http/config-writes.ts) 分类；全局服务改删按 [语音／生图服务维护窗口](role-config-and-activity.md#321-语音生图服务维护窗口) 协调。
 
 | 方法与路径 | 守卫／请求形态 | 主要入参与成功响应 | 典型业务／校验错误码 |
 | --- | --- | --- | --- |
 | `GET /v1/voice-services` | 无写锁 | `{ items: VoiceServiceView[] }` | — |
 | `POST /v1/voice-services` | 无写锁；JSON | `{ name, enabled?, config }`（`config: { protocol, baseUrl, defaultEngine? }`），返回 `201 { service }` | `400 INVALID_VOICE_SERVICE_CONFIG`、`400 VOICE_BASE_URL_INVALID` |
-| `PATCH /v1/voice-services/:serviceId` | **全局守卫**；JSON | `{ name?, enabled?, config? }` | `409 ROLES_NOT_STOPPED`、`404 VOICE_SERVICE_NOT_FOUND`、`400 INVALID_VOICE_SERVICE_CONFIG` |
-| `DELETE /v1/voice-services/:serviceId` | **全局守卫** | 删除全局语音服务（仅删全局表；角色已保存配置保留以供重选），返回 `{ serviceId, deleted: true }` | `409 ROLES_NOT_STOPPED`、`404 VOICE_SERVICE_NOT_FOUND` |
+| `PATCH /v1/voice-services/:serviceId` | **依赖维护**；JSON | `{ name?, enabled?, config? }`，返回 `{ service, maintenance: { connectionChanged, pausedRoleIds } }` | `409 MEDIA_SERVICE_MAINTENANCE` / `ROLES_NOT_STOPPED`、`404 VOICE_SERVICE_NOT_FOUND`、`400 INVALID_VOICE_SERVICE_CONFIG` |
+| `DELETE /v1/voice-services/:serviceId` | **依赖检查** | 删除全局语音服务（仅删全局表；角色已保存配置保留以供重选），返回 `{ serviceId, deleted: true }` | `409 MEDIA_SERVICE_IN_USE` / `MEDIA_SERVICE_MAINTENANCE`、`404 VOICE_SERVICE_NOT_FOUND` |
 | `POST /v1/voice-services/probe` · `POST /v1/voice-services/:serviceId/probe` | 无写锁；JSON | 探测 `nowadays-tts-v1` 全局草稿 `{ config: { protocol, baseUrl } }` 或已保存服务；拒绝旧 `indextts` | `400 VOICE_PROBE_UNSUPPORTED`/`VOICE_BASE_URL_INVALID`、`404 VOICE_SERVICE_NOT_FOUND`、`502 TTS_PROBE_FAILED` |
 | `GET /v1/roles/:roleId/voice` | 无写锁；JSON | 返回 `{ voice: VoiceConfigView \| null }`（含 `serviceId?`、`service?` 与 `reference` 摘要） | `404 ROLE_NOT_FOUND` |
 | `PUT /v1/roles/:roleId/voice` | **角色守卫**；JSON 或 `multipart/form-data`（`payload`+单文件 `file`） | 覆盖保存（推荐传 `serviceId`，亦兼容直连 `baseUrl`/`protocol`）+ `ttsEngine`/`voiceSource`/`capabilities`/`language`/`speed`/`emoAlpha`；保留原 `enabled` | `404 VOICE_SERVICE_NOT_FOUND`、`409 VOICE_SERVICE_DISABLED`、`400 VOICE_BASE_URL_*`/`VOICE_SOURCE_*`/`VOICE_REFERENCE_MODE_*`/`VOICE_ENGINE_UNSUPPORTED`、`409 ROLE_NOT_STOPPED`、`413 AUDIO_TOO_LARGE` |
@@ -56,8 +56,8 @@
 | `POST /v1/roles/:roleId/windows/:windowId/segments/:segmentId/speech` | 无写锁；可选 JSON `{ emotion? }` | 按已保存配置（优先请求 `emotion`，否则等待并读取 `segment.voice_emotion`）合成 `speech` 句段并返回 `audio/wav` | `409 VOICE_DISABLED`、`400 VOICE_SEGMENT_NOT_SPEAKABLE`/`VOICE_SEGMENT_EMPTY`、`409 TTS_VOICE_UNAVAILABLE` |
 | `GET /v1/image-services` | 无写锁 | `{ items: ImageServiceView[] }`；凭据只返回 `credential: { status, reference, resolvable }` | — |
 | `POST /v1/image-services` | 无写锁；JSON | `{ name, enabled?, config, secret? }`（`config.modelName?` 为可选默认模型名），返回 `201 { service }` | `400 INVALID_IMAGE_SERVICE_CONFIG`、`409 RESOURCE_CREDENTIAL_CONFLICT` |
-| `PATCH /v1/image-services/:serviceId` | **全局守卫**；JSON | `{ name?, enabled?, config?, secret? }`（`secret: null` 清除、`undefined` 保留） | `409 ROLES_NOT_STOPPED`/`RESOURCE_CREDENTIAL_CONFLICT`/`RESOURCE_CREDENTIAL_STALE`、`404 IMAGE_SERVICE_NOT_FOUND` |
-| `DELETE /v1/image-services/:serviceId` | **全局守卫** | 删除服务及密钥，返回 `{ serviceId, deleted: true }` | `409 ROLES_NOT_STOPPED`、`404 IMAGE_SERVICE_NOT_FOUND` |
+| `PATCH /v1/image-services/:serviceId` | **依赖维护**；JSON | `{ name?, enabled?, config?, secret? }`（`secret: null` 清除、`undefined` 保留），返回 `{ service, maintenance: { connectionChanged, pausedRoleIds } }` | `409 MEDIA_SERVICE_MAINTENANCE` / `ROLES_NOT_STOPPED` / `RESOURCE_CREDENTIAL_CONFLICT` / `RESOURCE_CREDENTIAL_STALE`、`404 IMAGE_SERVICE_NOT_FOUND` |
+| `DELETE /v1/image-services/:serviceId` | **依赖检查** | 删除服务及密钥，返回 `{ serviceId, deleted: true }` | `409 MEDIA_SERVICE_IN_USE` / `MEDIA_SERVICE_MAINTENANCE`、`404 IMAGE_SERVICE_NOT_FOUND` |
 | `POST /v1/image-services/probe` | 无写锁；JSON | `{ serviceId?, config, secret?, workflow? }`（草稿探测，不落库） | `409 RESOURCE_CREDENTIAL_STALE`、`401 IMAGE_SERVICE_AUTH_FAILED`、`502 IMAGE_SERVICE_UNAVAILABLE` |
 | `POST /v1/image-services/:serviceId/probe` | 无写锁 | 探测已保存服务与内置 MOSS-Image 工作流节点齐全度 | `404 IMAGE_SERVICE_NOT_FOUND`、`502 IMAGE_SERVICE_UNAVAILABLE` |
 | `GET /v1/roles/:roleId/scene-image` | 无写锁 | 返回 `{ settings, service, configured }`（`service` 含 `modelName?` 展示字段，不解析凭据） | `404 ROLE_NOT_FOUND` |
@@ -109,7 +109,7 @@
    - 配置页支持选择具体引擎、按所选引擎匹配并自动回退对应前缀预置音色（`cosy:` / `index:`），并在试听卡片提供可选 `emotion` 输入框随 `POST /voice/preview` 下发。
    - **实机对比（本机 WSL `http://127.0.0.1:9890` 双引擎实测）**：`CosyVoice3-0.5B` 输出 `24000 Hz` 单声道 WAV，热态推理 `5.6–7.3 秒`，显存约 `5.0–5.3 GiB`，原生支持自由中文 `instruct2` 情绪指令，推荐为首版默认引擎；`IndexTTS-2.5` 输出 `22050 Hz` 单声道 WAV，热态推理更快（实测 `4.7 秒` / 约 `1.05 RTF`），但显存占用较高（约 `8.2 GiB`）且情绪由中文关键词映射到 8 维向量。两引擎按需冷切换约 `28.6–39.7 秒`（对应 WSL 宿主机外部脚本修改保留 `.bak-pre-emotion` 备份，独立于本仓库源码）。
 6. **全局语音服务目录、角色引用与跨页缓存共享**（[global-voice-service.ts](../../backend/src/application/global-voice-service.ts) · [voice-service.ts](../../backend/src/application/voice-service.ts) · [Settings.tsx](../../desktop/desk-preview/renderer/src/pages/Settings.tsx) · [VoiceServiceEditor.tsx](../../desktop/desk-preview/renderer/src/components/voice/VoiceServiceEditor.tsx) · [voice-cache.js](../../desktop/desk-preview/renderer/src/components/voice/voice-cache.js) · [use-voice-probe.ts](../../desktop/desk-preview/renderer/src/components/voice/use-voice-probe.ts)）：
-   - 全局「设置 -> 模型 -> 语音」统一维护语音服务的名称、接口协议、服务地址、可选默认引擎（`defaultEngine`）、在线连接探测及全局启用／停用／删除（停用与删除触发 `GLOBAL_CONFIG_WRITES` 前先止活全部角色）；启动时通过 `backfillFromRoles` 将既有角色已保存 `(protocol, baseUrl)` 自动归入 `voice_services` 并回填 `service_id`。
+   - 全局「设置 -> 模型 -> 语音」统一维护语音服务的名称、接口协议、服务地址、可选默认引擎（`defaultEngine`）、在线连接探测及全局启用／停用／删除。后端按服务依赖处理维护。启动时通过 `backfillFromRoles` 将既有角色已保存 `(protocol, baseUrl)` 自动归入 `voice_services` 并回填 `service_id`。
    - 角色配置「模型 -> 语音」不保留手填地址／协议输入，改为下拉选择已配置语音服务，并提供「测试连接」与「在设置中管理 →／去设置添加 →」直达设置页；全局详情页改址／删改时通过 `serviceRefreshVersion` 与 `serviceEpochs` 通知角色页同步列表并按服务版本清除 `voice-cache.js` 缓存。
    - 角色保存前在发起 `guardWrite` 停机前先校验服务选择及重查 `/v1/voice-services`，拦截已删除或全局停用的服务；当角色引擎选回「跟随服务默认」时通过显式 `clearEngine` 清空角色覆盖列（`tts_engine = NULL`），运行时（合成与后台情绪标注 `resolveVoiceRuntime`）实时校验全局服务启用状态并继承最新 `service.config.defaultEngine`。
 
@@ -119,7 +119,7 @@
    - 直填明文 `secret` 与 `config.credentialRef`（`env:`/`file:`）不能共存（`409 RESOURCE_CREDENTIAL_CONFLICT`）；仅保存环境变量／文件引用时可读写配置页，待真正探测或生图时再通过 `resolveConnection` 解析。
    - 当 `protocol` 与 `URL.origin` 发生变化（跨站点修改）而沿用已存储密钥或原 `credentialRef` 时，无论正式 `PATCH /v1/image-services/:id` 还是草稿 `resolveDraftConnection` 均拒绝并抛出 `409 RESOURCE_CREDENTIAL_STALE`，防止把凭据发送给新地址。
 2. **先校验后停机的前端顺序与统一模型选取**（[Settings.tsx](../../desktop/desk-preview/renderer/src/pages/Settings.tsx#L1237-L1581) · [ImageModelPicker.tsx](../../desktop/desk-preview/renderer/src/components/image/ImageModelPicker.tsx) · [use-image-probe.ts](../../desktop/desk-preview/renderer/src/components/image/use-image-probe.ts) · [image-cache.js](../../desktop/desk-preview/renderer/src/components/image/image-cache.js) · `292 §7.1`）：
-   - `ImageServiceDetail.save()` 必须在调用 `stopActiveRolesForGlobalWrite` 前先行校验地址格式（`http:`/`https:`）及跨站点换密确认，避免合法拒绝前误停全部活跃角色。
+   - 提交前校验地址格式（`http:`/`https:`）及跨站点换密确认。后端也在暂停前校验密钥冲突和换站重验，详见 [语音／生图服务维护窗口](role-config-and-activity.md#321-语音生图服务维护窗口)。
    - 全局设置页（创建/详情）与角色配置页共用 `ImageModelPicker`、`useImageProbe` 与按服务密钥代次隔离的 `image-cache.js` 缓存（与文本模型 `ModelNamePicker` / `useModelProbe` 对齐）：`读取模型列表` 与 `测试连接` 的状态日志在当前页相互覆盖、切页或切换服务即清零；在全局生图服务可选保存 `config.modelName` 后，角色配置切换或初选该服务时自动带入默认模型，同时允许从已探测候选下拉选择或手填覆盖。
    - 全局探测与角色草稿探测／测试出图均只读不写库；`ImagePanel` 不保留重复的内联「新建生图服务」表单，新建／修改统一跳设置页并在返回时经 `serviceRefreshVersion` 与 `serviceEpochs` 同步服务列表与失效缓存（`292-R05` 已通过独立复核；`292-R06` 原跨页场景通过后已于 [292 §9](../archive/06-workflow-simplification/292-278-remaining-deletion-maintenance.md#9-283-28-补修复核跟进与文档勘误自验292-r06-在途编辑292-r08-干净隔离环境与-doc-r01r04) 补修在途编辑阻塞，复核结论见第 5.1 节）。
 
@@ -187,7 +187,7 @@ npx -y node@24 desktop/desk-preview/tests/workflow-real-backend-chain-check.cjs
 
 | 编号 / 来源 | 问题位置与处理摘要 | 当前状态 |
 | --- | --- | --- |
-| `292-R05`（[283 §27](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#271-待修复项)） | [ImagePanel.tsx](../../desktop/desk-preview/renderer/src/components/image/ImagePanel.tsx#L308-L354) `save()` 先检查本地启用态并在 `guardWrite` 停机前重查 `/v1/image-services`，停用时直接报错 `IMAGE_SERVICE_DISABLED` | **已独立复核通过**（[283 §28](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#28-292-第-8-节独立复验)） |
+| `292-R05`（[283 §27](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#271-待修复项)） | v6 保留新绑定或改选停用服务的预校验。同一角色可以保留已停用的原服务并保存其他字段，探测和生成继续受守卫约束。现行口径见[服务维护窗口](role-config-and-activity.md#321-语音生图服务维护窗口)。 | 原场景的[独立复验](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#28-292-第-8-节独立复验)；v6 后续见 [400](../archive/08-config-pages-v6/400-config-pages-v6-migration-progress.md) |
 | `292-R06`（[283 §27](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#271-待修复项) · [§28](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#28-292-第-8-节独立复验)） | [ImagePanel.tsx](../../desktop/desk-preview/renderer/src/components/image/ImagePanel.tsx#L149-L505) 与 [imageServiceSnapshotKey](../../desktop/desk-preview/renderer/src/image-config.js#L195-L210) 为探测／样图绑定快照键并在 [292 §9](../archive/06-workflow-simplification/292-278-remaining-deletion-maintenance.md#9-283-28-补修复核跟进与文档勘误自验292-r06-在途编辑292-r08-干净隔离环境与-doc-r01r04) 新增 `invalidateProbe`／`invalidatePreview`（`#L149-L165`、`#L295-L306`、`#L606-L618`），跨页失效或在途修改测试描述／服饰／草稿时同步释放忙态按钮并拒收晚到响应 | 原跨页失效场景已通过 [283 §28](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#28-292-第-8-节独立复验)；在途编辑按钮恢复通过 [283 §29](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#29-292-第-9-节独立复验) |
 | `292-R07`（[283 §27](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#271-待修复项)） | [scene-image-settings.ts](../../backend/src/application/scene-image-settings.ts#L155-L195) 的 `preview()` 对非空 `outfitId` 调用 `AppearanceStore.getOutfit(outfitId)` 核验当前角色下未删除服饰，否则生图前拒绝并返回 `404 OUTFIT_NOT_FOUND` | **已独立复核通过**（[283 §28](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#28-292-第-8-节独立复验)） |
 

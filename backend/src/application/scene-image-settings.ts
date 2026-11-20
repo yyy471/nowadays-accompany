@@ -67,7 +67,10 @@ export type AnchorPromptModelFactory = (
   binding: ResolvedModelBinding,
 ) => ModelPort;
 
+import type { MediaMaintenance } from './media-maintenance.js';
+
 export interface SceneImageSettingsServiceOptions {
+  mediaMaintenance?: MediaMaintenance;
   now?: () => Date;
   /** 探测、锚点提示词生成与测试生图各自的等待上限。 */
   probeTimeoutMs?: number;
@@ -109,6 +112,7 @@ const DEFAULT_PREVIEW_PROMPT = "半身肖像，柔和自然光，背景简洁，
  * 首版只支持文生图，支持由绑定对话模型读取锚点图生成基础/服饰提示词。
  */
 export class SceneImageSettingsService {
+  private readonly mediaMaintenance: MediaMaintenance | undefined;
   private readonly now: () => Date;
   private readonly probeTimeoutMs: number;
   private readonly previewTimeoutMs: number;
@@ -126,6 +130,7 @@ export class SceneImageSettingsService {
     private readonly imageServices: ImageServiceService,
     options: SceneImageSettingsServiceOptions = {},
   ) {
+    this.mediaMaintenance = options.mediaMaintenance;
     this.now = options.now ?? (() => new Date());
     this.probeTimeoutMs = options.probeTimeoutMs ?? 20_000;
     this.previewTimeoutMs = options.previewTimeoutMs ?? DEFAULT_PREVIEW_TIMEOUT_MS;
@@ -182,11 +187,15 @@ export class SceneImageSettingsService {
 
   save(roleId: string, input: SceneImageSettingsInput): SceneImageSettingsView {
     this.roleAccess.requireReady(roleId);
+    const existingServiceId = this.read(roleId)?.serviceId;
+    this.mediaMaintenance?.assertAvailable('image', existingServiceId);
+    this.mediaMaintenance?.assertAvailable('image', input.serviceId);
     const service = this.imageServices.findRecord(input.serviceId);
     if (service === null) {
       throw new ImageServiceNotFoundError(input.serviceId);
     }
-    if (!service.enabled) {
+    // 停用期间可以改同一角色既有配置的其他字段；探测和生成仍走启用校验。
+    if (!service.enabled && existingServiceId !== input.serviceId) {
       throw new ImageServiceDisabledError(input.serviceId);
     }
     if (input.workflow !== null) {
@@ -275,7 +284,10 @@ export class SceneImageSettingsService {
       input.prompt ?? DEFAULT_PREVIEW_PROMPT,
     );
     const signal = AbortSignal.timeout(this.previewTimeoutMs);
-    const generated = await this.generator.generate(runtime, prompt, signal);
+    const release = this.mediaMaintenance?.claim('image', runtime.settings.serviceId, roleId);
+    let generated;
+    try { generated = await this.generator.generate(runtime, prompt, signal); }
+    finally { release?.(); }
     if (generated.data.length > MAX_PREVIEW_BYTES) {
       throw new AppError(400, "IMAGE_WORKFLOW_INVALID", "测试样图超过 8 MiB 上限", {
         byteSize: generated.data.length,

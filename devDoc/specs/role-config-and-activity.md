@@ -11,7 +11,7 @@
 
 - **角色活动与配置写入守卫**：角色三态（`active` / `stopping` / `stopped`）、停启控制、写保护租约与读体二次校验、重启收敛与恢复重调度。
 - **角色配置读写与直接删除**：人设档案与修订号、自主额度、资源全表绑定与乐观锁合并、外观服饰/差分运维与回退、角色语音/场景生图配置写入，以及角色带历史选项删除（`keepHistory`）。
-- **全局资源与语音／生图服务维护**：全局模型 / MCP / Skill 资源目录的创建、更新、凭据只写与换站重验、MCP 环境变量脱敏、占用报告（`references`）、依赖影响范围（`impact`）、模型维护窗口协调（`maintenance`）与两阶段删除；以及全局语音／生图服务写删的全局守卫。
+- **全局资源与语音／生图服务维护**：全局模型 / MCP / Skill 资源目录的创建、更新、凭据只写与换站重验、MCP 环境变量脱敏、占用报告（`references`）、依赖影响范围（`impact`）、模型维护窗口协调（`maintenance`）与两阶段删除；以及全局语音／生图服务按依赖维护和删除。
 - **桌面设置页与后台协调**：设置页（[Settings.tsx](../../desktop/desk-preview/renderer/src/pages/Settings.tsx)）的同页暂停保存/删除、并发绑定自动合并，以及句段标注/过场图规划的维护等待协调。
 - **不包含范围**（归入其他现行规范）：
   - 前端设计语言、字体/间距/颜色/动效令牌与 `ui/` 组件约定：统一见 [前端设计规范](frontend-design-system.md)。
@@ -49,7 +49,7 @@
 | 列出全部角色活动状态 | `GET /v1/activities` | `activity list` | `{ items: RoleActivityView[] }` |
 | 查询单角色活动状态 | `GET /v1/roles/:roleId/activity` | `activity get --role <id>` | `{ activity: RoleActivityView }`：`roleId`、`state`（`active \| stopping \| stopped`）、`requestedAt`、`confirmedAt`、`boundaryExecutionId`、`updatedAt`、`initStatus`、`running`；无持久化记录时视 `state: "active"`、`updatedAt: null` |
 | 请求停止角色活动 | `POST /v1/roles/:roleId/activity/stop` | `activity stop --role <id>` | `{ activity: RoleActivityView, confirmed: boolean }`；无在途执行时同步确认 `stopped` 并返回 `confirmed: true` |
-| 恢复角色活动 | `POST /v1/roles/:roleId/activity/resume` | `activity resume --role <id>` | `{ activity: RoleActivityView }`；切回 `active` 并接回因停止暂缓的任务链与到期待办；若角色当前 `chat` 或 `memory` 模型正处维护窗口，拒绝返回 `409 RESOURCE_MAINTENANCE` |
+| 恢复角色活动 | `POST /v1/roles/:roleId/activity/resume` | `activity resume --role <id>` | `{ activity: RoleActivityView }`；切回 `active` 并接回因停止暂缓的任务链与到期待办；角色当前模型服务处于维护窗口时返回 `409 RESOURCE_MAINTENANCE`，当前语音／生图服务处于维护窗口时返回 `409 MEDIA_SERVICE_MAINTENANCE` |
 
 ### 2.2 受保护的配置写入接口与守卫分类
 
@@ -68,8 +68,8 @@
    - **外观衣柜**：
      - `POST /v1/roles/:roleId/appearance/outfits`、`PATCH /v1/roles/:roleId/appearance/outfits/:outfitId`、`POST /v1/roles/:roleId/appearance/outfits/:outfitId/home`、`DELETE /v1/roles/:roleId/appearance/outfits/:outfitId`、`POST /v1/roles/:roleId/appearance/outfits/:outfitId/sprites`、`DELETE /v1/roles/:roleId/appearance/outfits/:outfitId/sprites/:assetId`
 
-2. **全局语音／生图服务写入（`GLOBAL_CONFIG_WRITES`，共 4 个路由，包装 `globalWrite`）**：
-   - `PATCH /v1/voice-services/:serviceId`、`DELETE /v1/voice-services/:serviceId`、`PATCH /v1/image-services/:serviceId`、`DELETE /v1/image-services/:serviceId`：全局写锁 `guardAll` + 读体后复验 `assertAllStopped`，要求全部角色均已处于 `stopped`。
+2. **全局语音／生图服务写入**：
+   - `PATCH` 和 `DELETE /v1/voice-services/:serviceId`、`/v1/image-services/:serviceId` 由服务维护协调器按当前依赖处理。`GLOBAL_CONFIG_WRITES` 现为空，后端这四条路由允许无关角色继续活动。见 [§3.2.1](#321-语音生图服务维护窗口)。
 
 3. **全局资源维护与删除（`RESOURCE_CONFIG_WRITES`，[routes.ts](../../backend/src/http/routes.ts#L103-L107) 不再挂载旧 `resourceWrite`，改为处理器与服务层分级处理）**：
    - `PATCH /v1/resources/:resourceId`（CLI：`resource update`）：`{ name?, enabled?, config?, secret?: string | null }`。
@@ -111,15 +111,17 @@
 | `400` | `INVALID_RESOURCE_CONFIG` / `INVALID_BINDING` | 资源配置结构或绑定字段校验失败 |
 | `404` | `ROLE_NOT_FOUND` / `RESOURCE_NOT_FOUND` / `IMAGE_SERVICE_NOT_FOUND` | 目标角色、全局资源或全局生图服务不存在 |
 | `409` | `ROLE_NOT_STOPPED` | `ROLE_CONFIG_WRITES` 目标角色非 `stopped`（含读体后并发恢复） |
-| `409` | `ROLES_NOT_STOPPED` | `GLOBAL_CONFIG_WRITES` 时仍有角色非 `stopped`，或模型维护暂停协调失败/未配置 `pauseRoles`（错误 `details.roles` / `details.maintenance.pausedRoleIds` 可带回状态） |
+| `409` | `ROLES_NOT_STOPPED` | 模型或语音／生图服务维护遇角色暂停协调失败或未配置 `pauseRoles`。响应可在 `details.roles` 或 `details.maintenance.pausedRoleIds` 带回状态 |
 | `409` | `ROLE_ACTIVITY_CONFLICT` | 请求 `resume` 时持写租约冲突或状态不允许 |
 | `409` | `ROLE_STOP_REQUESTED` / `ROLE_ACTIVITY_STOPPED` / `ROLE_BUSY` | 角色正请求停止/已停止时拒绝新执行；删除等待在途收尾（默认 `roleDeletionWaitMs = 15000`）超时返回 `ROLE_BUSY` |
 | `409` | `RESOURCE_IN_USE` | `DELETE /v1/resources/:id` 存在启用绑定/`TASK_CHAIN`/`INFLIGHT_CALL`，或修改被占用的 MCP/Skill；`details.references` 返回具体占用项 |
 | `409` | `RESOURCE_MAINTENANCE` | 并发对同一模型维护、维护期间向该资源新增启用绑定、维护后复查出现新增依赖角色，或恢复依赖维护中资源的已停止角色 |
+| `409` | `MEDIA_SERVICE_MAINTENANCE` | 并发维护同一语音／生图服务、维护期间新领取该服务、角色改绑或恢复受影响、在途调用未在期限内结算等 |
+| `409` | `MEDIA_SERVICE_IN_USE` | 删除语音／生图服务时有非 `stopped` 角色引用或在途调用。`details.roles` 给出活动依赖，`details.inFlightRoleIds` 给出在途角色 |
 | `409` | `RESOURCE_CREDENTIAL_CONFLICT` / `RESOURCE_CREDENTIAL_STALE` | 同时传入 `secret` 与 `credentialRef`；或换协议/换站点时仍沿用旧密钥/旧引用 |
 | `409` | `BINDING_REVISION_CONFLICT` / `REVISION_CONFLICT` | `PUT /bindings` 传入的 `expectedRevision` 过期；或人设版本冲突 |
 | `409` | `LAST_ROLE_REQUIRED` / `LAST_OUTFIT_REQUIRED` | 试图删除最后一个角色或角色最后一套服饰 |
-| `409` | `IMAGE_SERVICE_DISABLED` | 角色生图保存引用已停用的生图服务 |
+| `409` | `IMAGE_SERVICE_DISABLED` | 新建或改绑选择了已停用的生图服务，或请求通过该服务探测、生成 |
 
 ---
 
@@ -134,7 +136,7 @@
    - `reconcileStartup`（后端启动时）：清理历史运行状态并把无在途执行的 `stopping` 请求收敛为 `stopped`。
 2. **并发写锁与读体后复验（[RoleActivityService](../../backend/src/application/role-activity-service.ts)、[write-guard.ts](../../backend/src/http/write-guard.ts)）**：
    - `guardRole` 按 `roleId` 维度的 `writeChains` 队列串行执行配置写入，并在持有 `roleLeases` 期间阻断并发 `resume`。
-   - `guardAll` 持有 `globalLeases` 阻断全局写期间任一角色恢复或启动，覆盖 `GLOBAL_CONFIG_WRITES`。
+   - `guardAll` 的全局租约机制保留，当前 `GLOBAL_CONFIG_WRITES` 清单为空。
    - 对带请求体的配置写入，通过 `setBodyReadHook` 在异步读取完整请求体后、进入处理器之前再次执行 `assertStopped` / `assertAllStopped`，防止读体间隙有其他调用恢复角色导致写入越权。
 
 ### 3.2 模型连接维护窗口与后台调用协调
@@ -154,6 +156,14 @@
    - **仅旧任务链依赖（`TASK_CHAIN`）** 目标模型而不作当前角色默认绑定时，不暂停整个角色，改为在调度入口 `chatTargetUnderMaintenance` 按任务暂缓；
    - 句段标注与过场图规划通过 `isResourceUnderMaintenance` / `waitForMaintenanceEnd` / `claimModelCall`（在同一同步步骤完成维护态校验与在途计数登记）等待维护结束，醒来后重新解析已保存配置再发请求。
 
+#### 3.2.1 语音／生图服务维护窗口
+
+角色已绑定的服务被全局停用后，可以保留原服务 ID、修改该角色其他参数。其他角色的新绑定、改绑到另一个停用服务、实际合成与生成仍受停用守卫约束。已删除的服务须重新选择。语音会话中曾为备用服务暂存的草稿不构成绑定。
+
+- [MediaMaintenance](../../backend/src/application/media-maintenance.ts) 读取就绪角色库内当前保存的 `serviceId` 并结合活动状态计算依赖。连接字段或凭据实际变更及全局停用进入维护窗口；只修改名称、默认引擎／模型或重新启用直接提交。
+- 维护先校验可预判的输入错误，只暂停目标服务的活动依赖并等待已经领取的语音合成、试听或生图调用。窗口内阻止对同服务的并发写入、新领取、相关改绑和角色恢复，写前复验实际依赖。成功返回 `{ service, maintenance: { connectionChanged, pausedRoleIds } }`，失败也回带本次已暂停的角色 ID。已停止或原本正在停止的角色不计入本次恢复名单。
+- 手动过场图重放已有幂等键仍返回原任务。单次生成超时可先结算任务，服务领取保留到实际生成调用结束；维护等待有界。删除时检查活动依赖和在途调用，停止角色的旧引用保留在角色库，用于界面提示重新选择。
+
 ### 3.3 删除两阶段事务与启动恢复
 
 - **全局资源删除（[ResourceService.remove](../../backend/src/application/resource-service.ts#L707-L748)）**：
@@ -172,7 +182,7 @@
 | 状态判定 | 维护唯一 `active`/`stopping`/`stopped` 状态、在途判断与维护窗口 | 不本地缓存假定可写；提交前拉取最新 `/v1/activities` 决定先暂停还是直接保存 |
 | 角色同页暂停与保存 | 提供 `/activity/stop`、`/activity`、配置 `PUT/PATCH/POST/DELETE` 与 `guardRole` | 人设、绑定、额度与 `AppearancePanel` / `VoicePanel` / `ImagePanel` 统一经 `ensureRoleStopped` / `guardAction` 请求停止并按 250ms 轮询至 `stopped`（20s 上限），写完后在原处提供 `继续活动` |
 | 模型服务变更与恢复 | `PATCH /v1/resources/:id` 协调依赖角色暂停并在成功响应或失败详情带回 `pausedRoleIds` | 在资源详情页展示 `/impact`；有活跃依赖时按钮文案切换为「暂停相关角色并保存」；失败保留草稿并根据 `pausedRoleIds` 提供「继续本次活动暂停的角色」 |
-| 全局语音／生图服务改删 | `globalWrite` 要求全部角色 `stopped` | `stopActiveRolesForGlobalWrite` 逐一停下全部非 `stopped` 角色后再提交，删后尝试逐一恢复本次暂停角色 |
+| 全局语音／生图服务改删 | 服务维护协调器按 §3.2.1 处理 | 桌面设置直接提交服务变更，使用后端返回的暂停名单展示恢复操作。活动依赖和在途请求的最终判定在后端。桌面复核范围见 [400 §26](../archive/08-config-pages-v6/400-config-pages-v6-migration-progress.md#26-主进程复核与系统适配2026-11-20) |
 | 对象隔离与过期丢弃 | 按请求 URL 的 `roleId` 落库与加锁 | 捕获操作发起时的 `roleId`、`roleToken` 与请求序列号 `seq`（`AppearancePanel` / `VoicePanel` / `ImagePanel` / `useModelProbe`），切换编辑角色或页签后旧异步响应不污染新页面草稿（`DL-147`） |
 | 绑定并行并发合并 | `PUT /bindings` 校验 `expectedRevision`，过期抛 `409 BINDING_REVISION_CONFLICT` | 捕获冲突后自动拉取最新 `/bindings`，调用 [mergeBindingDrafts](../../desktop/desk-preview/renderer/src/components/model/binding-merge.js) 按范围字段级合并（`models` 按能力名、`ext` 按 `capability:resourceId`）；无互斥改动时带最新 `revision` 自动重提一次，有互斥冲突则清空 `bindingRevision`、保留草稿并提示重新读取确认 |
 
@@ -223,7 +233,13 @@ npx -y node@24 --test tests/*.test.cjs
 
 ```bash
 npx -y node@24 desktop/desk-preview/tests/workflow-real-backend-chain-check.cjs
+npx -y node@24 desktop/desk-preview/tests/settings-sheet-focus-check.cjs
+npx -y node@24 desktop/desk-preview/tests/settings-media-sheet-check.cjs
+npx -y node@24 desktop/desk-preview/tests/settings-v6-behavior-check.cjs
 ```
+
+- **纸笺与分区交接**。按 v6 §7.3、§7.9，点击参数片段后关闭纸笺，焦点回到该行的「编辑」。切分区或切换既有角色后聚焦新分区标题。切角色先处理当前纸笺的 T9，再判断是否有设定草稿需要 T37。新建角色成功后收起纸笺和双层压暗，焦点回到底栏选择器。跨页打开设置时聚焦目标分区标题。对应检查见 [settings-sheet-focus-check.cjs](../../desktop/desk-preview/tests/settings-sheet-focus-check.cjs)。
+- **媒体及展示回归**。语音按角色和服务保存会话草稿，后端保存当前一份。系统减少动效、昼夜与三种视口、停止卡对比度、仅对摘要确有变化的行播放保存反馈等检查见 [媒体纸笺回归](../../desktop/desk-preview/tests/settings-media-sheet-check.cjs)与 [v6 行为验收](../../desktop/desk-preview/tests/settings-v6-behavior-check.cjs)。
 
 - **已同步工具与并发绑定回写**：E2E 脚本已通过 [electron-executable.cjs](../../desktop/desk-preview/tests/electron-executable.cjs) 优先解析 `desktop/desk-preview/node_modules/electron`（`292-R08` 与 `292-R06` 已在 [283 §29](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#29-292-第-9-节独立复验) 复核通过）；`292-R09` 模拟服务与 CDP 有界超时清理已按 [292 §10](../archive/06-workflow-simplification/292-278-remaining-deletion-maintenance.md#10-283-29292-r09doc-r01-邻接契约与-settings-review-fixes-checkcjs-收口自验) 完成补修自验（待独立复核）。[settings-review-fixes-check.cjs](../../desktop/desk-preview/tests/settings-review-fixes-check.cjs) 已同步更新以分别覆盖非重叠 `mergeBindingDrafts` 自动合并、同用途重叠冲突阻断 + `503` 重读恢复、以及删除取消焦点回退与删后刷新重试；同时修复 [Settings.tsx](../../desktop/desk-preview/renderer/src/pages/Settings.tsx#L531) 在 `409` 自动合并重提成功后改调 `mergeRefreshedBindings` 同步跨标签页草稿状态，避免另一页草稿滞留假脏标记（自验通过，待独立复核）。
 

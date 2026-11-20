@@ -110,7 +110,7 @@ export class ImageServiceService {
     return this.get(serviceId);
   }
 
-  update(serviceId: string, input: UpdateImageServiceInput): ImageServiceView {
+  private prepareUpdate(serviceId: string, input: UpdateImageServiceInput) {
     const current = this.store.get(serviceId);
     const config =
       input.config === undefined ? undefined : this.parseConfig(input.config);
@@ -137,6 +137,23 @@ export class ImageServiceService {
         throw new ResourceCredentialStaleError({ from, to });
       }
     }
+    return { current, config, replacingSecret };
+  }
+
+  validateUpdate(serviceId: string, input: UpdateImageServiceInput): void { this.prepareUpdate(serviceId, input); }
+
+  connectionChanged(serviceId: string, input: UpdateImageServiceInput): boolean {
+    const { current, config } = this.prepareUpdate(serviceId, input);
+    const next = config ?? current.config;
+    return next.protocol !== current.config.protocol || next.baseUrl !== current.config.baseUrl ||
+      (next.timeoutMs ?? 180_000) !== (current.config.timeoutMs ?? 180_000) ||
+      next.credentialRef !== current.config.credentialRef || typeof input.secret === "string" ||
+      (input.secret === null && this.credentials.hasStoredSecret(serviceId)) ||
+      (current.enabled && input.enabled === false);
+  }
+
+  update(serviceId: string, input: UpdateImageServiceInput): ImageServiceView {
+    const { config, replacingSecret } = this.prepareUpdate(serviceId, input);
     const now = this.now().toISOString();
     this.appStore.db.transaction(() => {
       this.store.update({

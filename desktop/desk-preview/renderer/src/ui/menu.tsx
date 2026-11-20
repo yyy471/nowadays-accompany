@@ -6,8 +6,9 @@ import { createMotionScope, readMotionTime, readMotionValue, useMotionPolicy } f
 export type MenuItem = { id: string; label: string; icon?: IconName; disabled?: boolean; onSelect: () => void };
 
 /** Action menu; account selection and page navigation have separate semantics. */
-export function DropdownMenu({ label, items, currentLabel, triggerIcon, triggerRef, triggerClassName, triggerLayout = 'inline', triggerDecoration }: {
+export function DropdownMenu({ label, items, currentLabel, selectedPage, triggerIcon, triggerRef, triggerClassName, triggerLayout = 'inline', triggerDecoration }: {
   label: string; items: MenuItem[]; currentLabel?: string;
+  selectedPage?: string;
   /** 公共触发器扩展：Dock等场景可提供图标、布局与装饰，不复制菜单。 */
   triggerIcon?: IconName; triggerRef?: Ref<HTMLButtonElement>; triggerClassName?: string;
   triggerLayout?: 'inline' | 'stacked'; triggerDecoration?: ReactNode;
@@ -32,7 +33,7 @@ export function DropdownMenu({ label, items, currentLabel, triggerIcon, triggerR
   const resume = useRef<{ opacity: number; transform: string } | null>(null);
   const generation = useRef(0);
   const id = useId();
-  const controls = () => Array.from(panel.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? []);
+  const controls = () => Array.from(panel.current?.querySelectorAll<HTMLButtonElement>(':is([role="menuitem"],[role="menuitemradio"]):not(:disabled)') ?? []);
 
   const finishClose = useCallback(() => {
     generation.current += 1;
@@ -45,9 +46,9 @@ export function DropdownMenu({ label, items, currentLabel, triggerIcon, triggerR
     setOpen(false);
     if (restore) trigger.current?.focus({ preventScroll: true });
     if (!presentRef.current) return;
-    if (reduced.current || !panel.current) { finishClose(); return; }
+    if (selectedPage || reduced.current || !panel.current) { finishClose(); return; }
     setClosing(true);
-  }, [finishClose]);
+  }, [finishClose, selectedPage]);
   const requestOpen = useCallback((last = false) => {
     if (openRef.current) return;
     lastFirst.current = last;
@@ -92,13 +93,13 @@ export function DropdownMenu({ label, items, currentLabel, triggerIcon, triggerR
     if (!element) return;
     const snapshot = resume.current;
     resume.current = null;
-    const start = snapshot ?? { opacity: 0, transform: 'translateY(4px)' };
+    const start = snapshot ?? { opacity: 0, transform: selectedPage ? 'translateY(6px)' : 'translateY(4px)' };
     scope.cancelAll();
     if (reduced.current) return;
-    const duration = readMotionTime(element, '--nd-component-motion-control', 160);
-    const ease = readMotionValue(element, '--nd-component-motion-surface-ease', 'cubic-bezier(0.2, 0.8, 0.2, 1)');
+    const duration = selectedPage ? readMotionTime(element, '--nd-semantic-motion-component', 220) : readMotionTime(element, '--nd-component-motion-control', 160);
+    const ease = selectedPage ? readMotionValue(element, '--nd-semantic-motion-ease-out', 'ease-out') : readMotionValue(element, '--nd-component-motion-surface-ease', 'ease-out');
     scope.run(element, [start, { opacity: 1, transform: 'translateY(0)' }], { duration, easing: ease, slot: 'menu', fill: 'backwards' });
-  }, [present, open, scope]);
+  }, [present, open, scope, selectedPage]);
 
   useLayoutEffect(() => {
     if (!closing) return;
@@ -128,7 +129,7 @@ export function DropdownMenu({ label, items, currentLabel, triggerIcon, triggerR
     if (!open) return;
     const entries = controls();
     // 底部菜单初次渲染时位置尚待布局更新；焦点不能让视口滚动并触发菜单自行关闭。
-    (lastFirst.current ? entries.at(-1) : entries[0])?.focus({ preventScroll: true });
+    (entries.find(entry => entry.getAttribute('aria-checked') === 'true') ?? (lastFirst.current ? entries.at(-1) : entries[0]))?.focus({ preventScroll: true });
     if (panel.current) panel.current.scrollTop = lastFirst.current ? panel.current.scrollHeight : 0;
     const outside = (event: PointerEvent) => { if (event.target instanceof Node && !root.current?.contains(event.target)) requestClose(); };
     const escape = (event: globalThis.KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); requestClose(true); } };
@@ -164,14 +165,14 @@ export function DropdownMenu({ label, items, currentLabel, triggerIcon, triggerR
       onClick={() => { if (open) requestClose(); else requestOpen(false); }}
       onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); requestOpen(event.key === 'ArrowUp'); } }}>
       {triggerIcon ? <span className="ui-menu-trigger-icon" aria-hidden="true"><Icon name={triggerIcon} size={20} /></span> : null}
-      <span className="ui-menu-trigger-label">{label}</span>
+      <span className="ui-menu-trigger-label">{selectedPage && currentLabel ? currentLabel : label}</span>
       {triggerIcon || triggerLayout === 'stacked' ? null : <Icon name="chevron" size={16} />}
       {triggerDecoration}
     </ControlButton>
     {present ? <div className="ui-menu-panel" role="menu" aria-label={label} id={id} ref={panel} style={position} onKeyDown={keyboard}
       data-closing={closing || undefined} inert={closing || undefined} aria-hidden={closing || undefined}
       onBlur={event => { if (event.relatedTarget instanceof Node && !root.current?.contains(event.relatedTarget)) requestClose(); }}>
-      {items.map(item => <ControlButton key={item.id} role="menuitem" tabIndex={-1} disabled={item.disabled} className="ui-menu-item"
+      {items.map(item => <ControlButton key={item.id} role={selectedPage ? 'menuitemradio' : 'menuitem'} aria-checked={selectedPage ? selectedPage === item.id : undefined} tabIndex={-1} disabled={item.disabled} className="ui-menu-item"
         onClick={() => { requestClose(true); item.onSelect(); }}>{item.icon ? <Icon name={item.icon} size={20} /> : null}{item.label}</ControlButton>)}
     </div> : null}
   </div>;

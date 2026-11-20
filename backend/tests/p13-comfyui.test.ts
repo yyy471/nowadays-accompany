@@ -7,6 +7,7 @@ import sharp from "sharp";
 import { listen } from "../src/bootstrap/app.js";
 import { ImageGenerationFailedError } from "../src/domain/errors.js";
 import type {
+  SceneImageGeneratorPort,
   SceneImagePlanRecord,
   SceneImagePlannerInput,
   SceneImagePlannerPort,
@@ -24,6 +25,7 @@ import {
   createFixtureWithModel,
   deferred,
   ScriptedChatModel,
+  withStorage,
   type Deferred,
   type Fixture,
 } from "./p2-05-fixture.js";
@@ -420,7 +422,7 @@ test("probing a comfyui service reports missing nodes and available models", { t
   }
 });
 
-test("scene image settings reject an unknown output node and a disabled service", { timeout: 30_000 }, async () => {
+test("scene image settings reject an unknown output node while retaining an existing disabled service", { timeout: 30_000 }, async () => {
   const context = await setup();
   try {
     const roleBase = `/v1/roles/${context.fixture.roleId}/scene-image`;
@@ -460,11 +462,11 @@ test("scene image settings reject an unknown output node and a disabled service"
       roleBase,
       settingsBody(context, { modelPath: "/models/other" }),
     );
-    assert.equal(disabled.status, 409);
-    assert.equal(
-      (disabled.body.error as { code: string }).code,
-      "IMAGE_SERVICE_DISABLED",
-    );
+    assert.equal(disabled.status, 200);
+    const kept = disabled.body as { configured: boolean; settings: { serviceId: string; modelPath: string } };
+    assert.equal(kept.configured, false);
+    assert.equal(kept.settings.serviceId, context.serviceId);
+    assert.equal(kept.settings.modelPath, '/models/other');
 
     // 已保存的配置在服务停用后也不能继续出图。
     const preview = await api(context.base, "POST", `${roleBase}/preview`, {});
@@ -838,7 +840,7 @@ test("a task keeps the settings captured when it was accepted", { timeout: 60_00
   }
 });
 
-test("a task fails clearly when its pinned service is disabled while planning", { timeout: 60_000 }, async () => {
+test("disabling a service waits for a previously accepted image task", { timeout: 60_000 }, async () => {
   const planner = new GatedScenePlanner();
   const context = await setup({ sceneImagePlanner: planner });
   try {
@@ -855,28 +857,66 @@ test("a task fails clearly when its pinned service is disabled while planning", 
     assert.equal(created.status, 201);
     const task = created.body.task as SceneImageTaskRecord;
     await planner.started.promise;
-    const disabled = await api(
-      context.base,
-      "PATCH",
-      `/v1/image-services/${context.serviceId}`,
-      { enabled: false },
-    );
-    assert.equal(disabled.status, 200);
-
+    let committed = false;
+    const disabled = api(context.base, "PATCH", `/v1/image-services/${context.serviceId}`, { enabled: false })
+      .then(result => { committed = true; return result; });
+    await new Promise(resolve => setTimeout(resolve, 200));
+    assert.equal(committed, false, "已接收任务未完成前不能停用服务");
+    const route = `/v1/roles/${context.fixture.roleId}/windows/${context.fixture.windowId}/messages/${replyId}/scene-images`;
+    const repeated = await api(context.base, "POST", route, { idempotencyKey: "disabled-1", layerMode: "background" });
+    assert.equal(repeated.status, 200);
+    assert.equal(repeated.body.duplicate, true);
+    assert.equal((repeated.body.task as SceneImageTaskRecord).taskId, task.taskId);
+    assert.equal((repeated.body.task as SceneImageTaskRecord).layerMode, "full_scene");
+    const blockedNew = await api(context.base, "POST", route, { idempotencyKey: "during-maintenance", layerMode: "full_scene" });
+    assert.equal(blockedNew.status, 409);
+    assert.equal((blockedNew.body.error as { code: string }).code, "MEDIA_SERVICE_MAINTENANCE");
+    const inserted = withStorage(context.fixture, storage => storage.business.db.prepare("SELECT COUNT(*) AS n FROM scene_image_tasks WHERE idempotency_key = ?").get("during-maintenance") as { n: number });
+    assert.equal(inserted.n, 0, "维护中拒绝新请求前不得创建任务");
     planner.release.resolve();
-    await context.fixture.app.services.sceneImages.waitForIdle(
-      context.fixture.roleId,
-    );
-    const detail = await api(
-      context.base,
-      "GET",
-      `/v1/roles/${context.fixture.roleId}/windows/${context.fixture.windowId}/scene-images/${task.taskId}`,
-    );
+    await context.fixture.app.services.sceneImages.waitForIdle(context.fixture.roleId);
+    assert.equal((await disabled).status, 200);
+    const detail = await api(context.base, "GET", `/v1/roles/${context.fixture.roleId}/windows/${context.fixture.windowId}/scene-images/${task.taskId}`);
     const finished = detail.body.task as SceneImageTaskRecord;
-    assert.equal(finished.status, "failed");
-    assert.equal(finished.errorCode, "IMAGE_SERVICE_DISABLED");
-    assert.equal(context.comfy.workflows.length, 0);
+    assert.equal(finished.status, "succeeded");
+    assert.equal(context.comfy.workflows.length, 1);
   } finally {
+    await context.close();
+  }
+});
+
+test("media maintenance waits for a timed-out generator that ignores cancellation", { timeout: 30_000 }, async () => {
+  const entered = deferred<void>();
+  const finish = deferred<void>();
+  let context: Context;
+  const generator: SceneImageGeneratorPort = {
+    lock(roleId) {
+      const settings = context.fixture.app.services.sceneImageSettings.get(roleId).settings;
+      assert.ok(settings);
+      return { version: 1, settings, service: { protocol: "comfyui", baseUrl: context.comfy.baseUrl, timeoutMs: null } };
+    },
+    async generate() {
+      entered.resolve();
+      await finish.promise;
+      throw new Error("controlled late completion");
+    },
+  };
+  context = await setup({ sceneImageGenerator: generator, sceneImageGenerationTimeoutMs: 100 });
+  try {
+    await api(context.base, "PUT", `/v1/roles/${context.fixture.roleId}/scene-image`, settingsBody(context));
+    const replyId = await createReply(context);
+    const created = await api(context.base, "POST", `/v1/roles/${context.fixture.roleId}/windows/${context.fixture.windowId}/messages/${replyId}/scene-images`, { idempotencyKey: "timeout-claim", layerMode: "full_scene" });
+    assert.equal(created.status, 201);
+    await entered.promise;
+    await context.fixture.app.services.sceneImages.waitForIdle(context.fixture.roleId);
+    let committed = false;
+    const update = api(context.base, "PATCH", `/v1/image-services/${context.serviceId}`, { enabled: false }).then(result => { committed = true; return result; });
+    await new Promise(resolve => setTimeout(resolve, 250));
+    assert.equal(committed, false, "外层任务超时后，维护仍须等待实际生成调用");
+    finish.resolve();
+    assert.equal((await update).status, 200);
+  } finally {
+    finish.resolve();
     await context.close();
   }
 });
@@ -1025,31 +1065,30 @@ test("a pinned task does not send new-site credentials to the old address", { ti
     const task = created.body.task as SceneImageTaskRecord;
     await planner.started.promise;
 
-    const moved = await api(
-      context.base,
-      "PATCH",
-      `/v1/image-services/${context.serviceId}`,
-      {
-        config: { protocol: "comfyui", baseUrl: siteB.baseUrl },
-        secret: "token-b",
-      },
-    );
-    assert.equal(moved.status, 200);
-
+    let committed = false;
+    const moved = api(context.base, "PATCH", `/v1/image-services/${context.serviceId}`, {
+      config: { protocol: "comfyui", baseUrl: siteB.baseUrl }, secret: "token-b",
+    }).then(result => { committed = true; return result; });
+    await new Promise(resolve => setTimeout(resolve, 200));
+    assert.equal(committed, false, "迁移连接必须等待已接收任务结算");
     planner.release.resolve();
-    await context.fixture.app.services.sceneImages.waitForIdle(
-      context.fixture.roleId,
-    );
-    const detail = await api(
-      context.base,
-      "GET",
-      `/v1/roles/${context.fixture.roleId}/windows/${context.fixture.windowId}/scene-images/${task.taskId}`,
-    );
-    const finished = detail.body.task as SceneImageTaskRecord;
-    assert.equal(finished.status, "failed");
-    assert.equal(finished.errorCode, "SCENE_IMAGE_SERVICE_CHANGED");
-    assert.equal(siteA.requests.length, 0);
+    await context.fixture.app.services.sceneImages.waitForIdle(context.fixture.roleId);
+    assert.equal((await moved).status, 200);
+    const detail = await api(context.base, "GET", `/v1/roles/${context.fixture.roleId}/windows/${context.fixture.windowId}/scene-images/${task.taskId}`);
+    assert.equal((detail.body.task as SceneImageTaskRecord).status, "succeeded");
+    const oldPrompts = siteA.requests.filter(request => request.url === "/prompt");
+    assert.equal(oldPrompts.length, 1);
+    assert.equal(oldPrompts[0]?.authorization, "Bearer token-a");
+    assert.equal(siteA.requests.some(request => request.authorization === "Bearer token-b"), false);
     assert.equal(siteB.requests.length, 0);
+    if (context.fixture.app.services.activity.view(context.fixture.roleId).state === "stopped") context.fixture.app.services.activity.resume(context.fixture.roleId);
+    const next = await api(context.base, "POST", `/v1/roles/${context.fixture.roleId}/windows/${context.fixture.windowId}/messages/${replyId}/scene-images`, { idempotencyKey: "cross-site-2", layerMode: "full_scene" });
+    assert.equal(next.status, 201);
+    await context.fixture.app.services.sceneImages.waitForIdle(context.fixture.roleId);
+    const newPrompts = siteB.requests.filter(request => request.url === "/prompt");
+    assert.equal(newPrompts.length, 1);
+    assert.equal(newPrompts[0]?.authorization, "Bearer token-b");
+    assert.equal(siteA.requests.some(request => request.authorization === "Bearer token-b"), false);
   } finally {
     await context.close();
     await siteB.close();

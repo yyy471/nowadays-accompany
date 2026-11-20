@@ -1,40 +1,44 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { T9 } from '../config-texts.js';
 import { focusableControls } from '../../../ui/focus';
-import { readMotionTime, readMotionValue } from '../../../ui';
+import { createMotionScope, readMotionTime, readMotionValue, useMotionPolicy } from '../../../ui';
 import { SheetScrims } from './scrims';
+import { sheetKeyframe } from './sheet-motion';
 import { useSheet, type SheetState } from './sheet-context';
-
-/** ≤900 的 720 桶里纸笺从底部升起（M4），桌面从右侧滑出（M1/M3）。 */
-function enterTransform(): string {
-  return window.matchMedia('(max-width: 900px)').matches
-    ? 'translateY(100%)'
-    : 'translate(calc(100% + 32px), 10px)';
-}
 
 /**
  * 纸笺外框（规范 §7.1–§7.5）：完整 / 紧凑 / 确认三形态共用；
  * 负责模态语义、inert、焦点陷阱、Esc 阶梯、紧凑形态的顶边对齐，
  * 以及 M1–M4 的进入 / 退出动效（时长与曲线全部取自令牌，减少动效时令牌为 0 即直接出现）。
  */
-export function Sheet({ children, footer, idPrefix }: { children: ReactNode; footer: ReactNode; idPrefix?: string }) {
-  const { sheet, dirtyCount, busy, confirming, requestClose, resolveConfirm } = useSheet();
+export function Sheet({ children, footer, idPrefix, enabled = true, confirmationTitle, onCancelConfirmation }: {
+  children: ReactNode; footer: ReactNode; idPrefix?: string; enabled?: boolean;
+  confirmationTitle?: string; onCancelConfirmation?: () => void;
+}) {
+  const { sheet, dirtyCount, busy, confirming, closing, requestClose, resolveConfirm } = useSheet();
+  const { reduced } = useMotionPolicy();
+  const [entryMotion] = useState(createMotionScope);
   // 多个分区各挂一张 Sheet：只有自己负责的纸笺编号才渲染，避免同时弹出空纸笺。
-  const owned = sheet !== null && (idPrefix === undefined || sheet.id.startsWith(idPrefix)) ? sheet : null;
+  // `enabled` 用于「常驻但非激活」的角色编辑器：访问过的角色会保留组件以保住草稿，
+  // 但只有激活角色才能认领纸笺，否则同一张纸笺会被多个角色实例各渲染一份（R11-1）。
+  const owned = useMemo<SheetState | null>(() => {
+    if (!enabled || !sheet || (idPrefix !== undefined && !sheet.id.startsWith(idPrefix))) return null;
+    return confirmationTitle ? { ...sheet, title: confirmationTitle, shape: 'confirm' as const } : sheet;
+  }, [enabled, sheet, idPrefix, confirmationTitle]);
   const panel = useRef<HTMLElement>(null);
   const probe = useRef<HTMLSpanElement>(null);
   // 纸笺必须挂在右页（.config-leaf）下、正文之外：正文会被设为 inert，挂在其中会让纸笺自身不可聚焦。
   const [host, setHost] = useState<HTMLElement | null>(null);
-  // 关闭时保留上一张纸笺做退出动画（M2），结束后再卸载。
-  const [held, setHeld] = useState<SheetState | null>(null);
+  const lastContents = useRef({ children, footer });
+  if (owned && !closing) lastContents.current = { children, footer };
   // 首帧重渲染可能多次触发聚焦效应，用「同一纸笺只排一帧」去重。
   const pendingFocus = useRef<{ key: string; raf: number } | null>(null);
   useEffect(() => {
     setHost(probe.current?.closest<HTMLElement>('.config-leaf') ?? null);
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const body = document.querySelector<HTMLElement>('.config-leaf-body');
     const foot = document.querySelector<HTMLElement>('.config-leaf-foot');
     if (!owned) return;
@@ -44,10 +48,14 @@ export function Sheet({ children, footer, idPrefix }: { children: ReactNode; foo
       body?.removeAttribute('inert');
       foot?.removeAttribute('inert');
     };
-  }, [owned]);
+  }, [Boolean(owned)]);
+
+  useLayoutEffect(() => {
+    if (confirming && owned) panel.current?.querySelector<HTMLElement>('.config-sheet-confirm [data-sheet-focus]')?.focus({ preventScroll: true });
+  }, [confirming, owned]);
 
   useEffect(() => {
-    if (!owned) {
+    if (!owned || closing) {
       if (pendingFocus.current) {
         cancelAnimationFrame(pendingFocus.current.raf);
         pendingFocus.current = null;
@@ -65,80 +73,57 @@ export function Sheet({ children, footer, idPrefix }: { children: ReactNode; foo
     const raf = requestAnimationFrame(() => {
       pendingFocus.current = null;
       if (!frame.isConnected) return;
-      const first = frame.querySelector<HTMLElement>('[data-sheet-focus]')
-        ?? focusableControls(frame)[0]
+      const controls = focusableControls(frame);
+      const first = controls.find(element => element.hasAttribute('data-sheet-focus'))
+        ?? controls.find(element => element.closest('.config-sheet-body'))
+        ?? controls.find(element => !element.classList.contains('config-sheet-x'))
         ?? frame;
       first.focus({ preventScroll: true });
-      const group = owned.group ? frame.querySelector<HTMLElement>('[data-sheet-group]') : null;
-      group?.scrollIntoView({ block: 'start' });
+      const group = owned.shape === 'full' && owned.group ? frame.querySelector<HTMLElement>('[data-sheet-group]') : null;
+      const body = group?.closest<HTMLElement>('.config-sheet-body');
+      if (group && body) body.scrollTop += group.getBoundingClientRect().top - body.getBoundingClientRect().top - (window.matchMedia('(max-width: 900px)').matches ? 4 : 2);
     });
     pendingFocus.current = { key, raf };
-  }, [owned?.id, owned?.group, owned]);
+  }, [owned?.id, owned?.group, owned, host, closing]);
 
   // M1 / M3 / M4：进入动画。令牌为 0（减少动效）时不建动画对象，满足「16ms 内 getAnimations() 为 0」。
   useEffect(() => {
-    if (!owned) return;
+    if (!owned || reduced) return;
     const frame = panel.current;
     if (!frame) return;
     const duration = readMotionTime(frame, '--nd-semantic-motion-page', 360);
     if (duration <= 0) return;
-    const animation = frame.animate([
-      { transform: enterTransform(), boxShadow: '0 2px 6px rgba(30,20,40,.12)' },
-      { transform: 'none' },
+    const animation = entryMotion.run(frame, [
+      sheetKeyframe(frame),
+      { transform: 'none', boxShadow: getComputedStyle(frame).boxShadow },
     ], {
       duration,
       easing: readMotionValue(frame, '--nd-semantic-motion-ease-out', 'ease-out'),
       fill: 'both',
     });
     return () => animation.cancel();
-  }, [owned?.id, owned?.group, owned?.shape, owned]);
+  }, [owned, entryMotion, reduced]);
 
-  // M2：退出动画。关闭后保留一帧旧纸笺，动画结束即卸载（压暗层由 SheetScrims 自行淡出）。
-  useEffect(() => {
-    if (owned) {
-      setHeld(owned);
-      return;
-    }
-    if (!held) return;
+  const active = owned;
+  const exiting = closing && Boolean(owned);
+
+  const [compactTop, setCompactTop] = useState<number | undefined>(undefined);
+  useLayoutEffect(() => {
     const frame = panel.current;
-    if (!frame) {
-      setHeld(null);
-      return;
-    }
-    const duration = readMotionTime(frame, '--nd-semantic-motion-page-exit', 260);
-    if (duration <= 0) {
-      setHeld(null);
-      return;
-    }
-    const animation = frame.animate([{ transform: 'none' }, { transform: enterTransform() }], {
-      duration,
-      easing: readMotionValue(frame, '--nd-semantic-motion-ease-in', 'ease-in'),
-      fill: 'forwards',
-    });
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      if (!cancelled) setHeld(null);
-    }, duration);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-      animation.cancel();
+    if (!active || active.shape === 'full' || !frame || !host) { setCompactTop(undefined); return; }
+    const position = () => {
+      const leafBox = host.getBoundingClientRect();
+      const row = active.anchor?.getBoundingClientRect();
+      const desired = row ? row.top - leafBox.top - 10 : 6;
+      const top = Math.round(Math.max(6, Math.min(desired, leafBox.height - frame.offsetHeight - 8)));
+      setCompactTop(top);
     };
-  }, [owned, held]);
-
-  const active = owned ?? held;
-  const exiting = !owned && !!held;
-
-  let compactTop: number | undefined;
-  const anchor = active?.anchor ?? null;
-  if (active?.shape === 'compact' && anchor) {
-    const leaf = panel.current?.closest<HTMLElement>('.config-leaf');
-    if (leaf) {
-      const row = anchor.getBoundingClientRect();
-      const box = leaf.getBoundingClientRect();
-      compactTop = Math.max(6, Math.round(row.top - box.top - 10));
-    }
-  }
+    position();
+    const observer = new ResizeObserver(position);
+    observer.observe(frame); observer.observe(host);
+    window.addEventListener('resize', position);
+    return () => { observer.disconnect(); window.removeEventListener('resize', position); };
+  }, [active?.id, active?.shape, active?.group, active?.anchor, host]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (exiting) return;
@@ -151,7 +136,8 @@ export function Sheet({ children, footer, idPrefix }: { children: ReactNode; foo
         resolveConfirm(true);
         return;
       }
-      requestClose();
+      if (onCancelConfirmation) onCancelConfirmation();
+      else requestClose();
       return;
     }
     if (event.key !== 'Tab') return;
@@ -177,6 +163,7 @@ export function Sheet({ children, footer, idPrefix }: { children: ReactNode; foo
       aria-labelledby="config-sheet-title"
       aria-busy={busy || undefined}
       aria-hidden={exiting || undefined}
+      inert={exiting || undefined}
       data-shape={active?.shape}
       data-exiting={exiting || undefined}
       style={compactTop === undefined ? undefined : { top: `${compactTop}px` }}
@@ -190,10 +177,10 @@ export function Sheet({ children, footer, idPrefix }: { children: ReactNode; foo
           className="config-sheet-x"
           aria-label="关闭"
           disabled={busy}
-          onClick={() => requestClose()}
+          onClick={() => onCancelConfirmation ? onCancelConfirmation() : requestClose()}
         >×</button>
       </header>
-      <div className="config-sheet-body">{children}</div>
+      <div className="config-sheet-body" inert={confirming || busy || undefined}>{exiting ? lastContents.current.children : children}</div>
       <footer className="config-sheet-foot">
         {confirming
           ? <div className="config-sheet-confirm" role="alert">
@@ -203,7 +190,7 @@ export function Sheet({ children, footer, idPrefix }: { children: ReactNode; foo
               <button type="button" className="danger" onClick={() => resolveConfirm(false)}>{T9.drop}</button>
             </div>
           </div>
-          : footer}
+          : exiting ? lastContents.current.footer : footer}
       </footer>
     </section>;
   // 纸笺内容与压暗层始终在同一位置渲染：若两个分支的子节点顺序不同，
@@ -211,6 +198,6 @@ export function Sheet({ children, footer, idPrefix }: { children: ReactNode; foo
   return <>
     <span ref={probe} hidden />
     {active ? (host ? createPortal(frame, host) : frame) : null}
-    <SheetScrims idPrefix={idPrefix} />
+    <SheetScrims idPrefix={idPrefix} enabled={enabled} />
   </>;
 }

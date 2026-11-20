@@ -26,13 +26,8 @@ export const ROLE_CONFIG_WRITES: ReadonlySet<string> = new Set([
   "DELETE /v1/roles/:roleId/appearance/outfits/:outfitId/sprites/:assetId",
 ]);
 
-/** 全局服务写入：所有角色都须已停止。探测、试听、样图等只读动作不受限。 */
-export const GLOBAL_CONFIG_WRITES: ReadonlySet<string> = new Set([
-  "PATCH /v1/image-services/:serviceId",
-  "DELETE /v1/image-services/:serviceId",
-  "PATCH /v1/voice-services/:serviceId",
-  "DELETE /v1/voice-services/:serviceId",
-]);
+/** 媒体服务写入由服务维护协调器按依赖角色处理，不再要求所有角色停止。 */
+export const GLOBAL_CONFIG_WRITES: ReadonlySet<string> = new Set();
 
 /**
  * 资源写入：模型服务的修改与删除要求所有角色已停止（DL-148）；
