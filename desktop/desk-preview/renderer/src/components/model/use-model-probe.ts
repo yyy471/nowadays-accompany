@@ -16,6 +16,7 @@ export type ModelProbeTarget =
       kind: 'draft';
       config: {
         protocol: string;
+        provider?: string;
         baseUrl: string;
         secret?: string;
         /** 复用已保存服务的密钥；仅同协议、同 origin 时后端才放行。 */

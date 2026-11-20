@@ -95,6 +95,25 @@
   - `GET /v1/image-services`、`POST /v1/image-services`、`POST /v1/image-services/probe`、`POST /v1/image-services/:serviceId/probe`
   - `GET /v1/roles/:roleId/scene-image`、`POST /v1/roles/:roleId/scene-image/probe`、`POST /v1/roles/:roleId/scene-image/preview`、`POST /v1/roles/:roleId/scene-image/anchor-prompts`（注：`292-R07` 校验服饰属于当前角色且未删除，见第 5 节）。
 
+#### 2.3.1 模型服务商与候选来源
+
+设置页的「协议」可选择通用协议或指定服务商。指定服务商会填入官方基础地址，用户仍可改为自己的代理。新服务和已保存服务均可点击「读取列表」。角色配置里的对话模型和记忆模型使用所选资源的目录，也可以直接输入模型 ID。网络或鉴权失败时保留已有候选和输入值。「测试连接」单独发送简短生成请求。
+
+下表的入口核对日期为 **2026-11-20**。目录路径相对于所选基础地址。
+
+| 服务商 | 官方基础地址 | 模型候选与生成方式 |
+| --- | --- | --- |
+| OpenCode Go | `https://opencode.ai/inference/go` | 从 `/v1/models` 读取 Go 目录。文本模型走 `/openai/v1/chat/completions`。客户端以 Nowadays 标识自己，并为每个对话窗口发送稳定的 `x-opencode-session`。官方将此订阅用于编码代理工作负载。[Go 使用范围](https://opencode.ai/docs/console/go/) · [目录](https://opencode.ai/docs/console/api/models/) · [协议与会话头](https://opencode.ai/docs/console/harnesses) |
+| DeepSeek | `https://api.deepseek.com` | 用 Bearer 密钥读取 `/models`。带工具的 Chat Completions 请求按原次序回传本轮各批调用的 `reasoning_content`。[模型目录](https://api-docs.deepseek.com/api/list-models/) · [思考模式](https://api-docs.deepseek.com/guides/thinking_mode/) |
+| OpenRouter | `https://openrouter.ai/api/v1` | 有密钥时读取 `/models/user`，应用账户的供应商偏好与隐私设置。无密钥时读取公开的 `/models`。这两个入口默认返回文本输出模型。[账户模型](https://openrouter.ai/docs/api/api-reference/models/list-models-filtered-by-user-provider-preferences-privacy-settings-and-guardrails) · [公开模型](https://openrouter.ai/docs/api/api-reference/models/list-all-models-and-their-properties) · [推理续轮](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens) |
+| xAI | `https://api.x.ai/v1` | 用 Bearer 密钥读取 `/language-models` 的模型 ID 和别名，生成走 Responses，续轮携带加密推理块。[语言模型目录](https://docs.x.ai/developers/rest-api-reference/inference/models) · [推理模型调用](https://docs.x.ai/developers/model-capabilities/text/best-practices) |
+| Z.AI | `https://api.z.ai/api/paas/v4` | 用 Bearer 密钥读取 `/models`，生成走 Chat Completions。Coding Plan 用户可将基础地址改为 `https://api.z.ai/api/coding/paas/v4`，并填入对应套餐的密钥。[账户类型与端点](https://zcode.z.ai/en/docs/configuration) · [标准目录](https://api.z.ai/api/paas/v4/models) |
+| 小米 MiMo | `https://api.xiaomimimo.com/v1` | 用 `api-key` 读取 `/models` 和调用 Chat Completions。文本选择器过滤独立 ASR、TTS 模型。连续调用工具时完整回传各批推理字段。[模型目录](https://mimo.mi.com/docs/en-US/api/model/list-models) · [推理续轮](https://mimo.mi.com/docs/en-US/usage-guide/passing-back-reasoning_content) |
+| Google AI Studio | `https://generativelanguage.googleapis.com/v1beta` | 点击后按 `nextPageToken` 读取各页，只列出支持 `generateContent` 的候选。[模型目录](https://ai.google.dev/api/models#method:-models.list) |
+| Google Vertex AI Express | `https://aiplatform.googleapis.com/v1/publishers/google` | 此入口没有模型目录。点开模型名称即可选择预置的 `gemini-3.8-flash`、`gemini-3.5-flash`，或填写其他 ID。预置依据 Express 文档示例并与生命周期核对。[Express 概览](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/start/express-mode/overview) · [生成示例](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/samples/googlegenaisdk-vertexai-express-mode) · [生命周期](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions) |
+
+模型资源的可选 `provider` 标识服务商，`protocol` 记录实际传输协议。没有 `provider` 的既有资源继续使用原配置。凭据复用按服务商、协议和 origin 校验。服务商变化会使模型候选缓存和测试结果失效。角色只向同一资源、服务商、协议、地址和模型续传原生推理与签名。同一轮中各批原生调用与工具结果按产生顺序配对。DeepSeek 和 MiMo 启用工具时，本地保存的历史回复通过带角色标记的引用提供。
+
 ### 2.4 数据归属与凭据脱敏规则
 
 - **App 中心库（`AppStore`）**：持有角色索引与 `initStatus`、角色活动三态与停止边界记录（`role_activity`）、全局资源与模型测试摘要（`protocol` 或 `baseUrl` 变动时清除旧 `lastTest`）、全局语音与生图服务、加密凭据引用、两阶段删除待清理队列（`resource_deletions`、`role_deletions`）。

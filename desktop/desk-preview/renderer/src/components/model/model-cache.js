@@ -11,6 +11,7 @@ export function providerCacheKey(resource) {
   return [
     String(value.resourceId ?? ''),
     String(config.protocol ?? ''),
+    String(config.provider ?? ''),
     String(config.baseUrl ?? ''),
     credential
       ? `${String(credential.status ?? '')}:${String(credential.reference ?? '')}`

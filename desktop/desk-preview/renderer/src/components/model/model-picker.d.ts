@@ -1,4 +1,9 @@
 export const GOOGLE_GEMINI_DEFAULT_BASE_URL: string;
+export const MODEL_ADAPTER_OPTIONS: ReadonlyArray<{ value: string; label: string }>;
+export function modelAdapterOf(config: Record<string, unknown>): string;
+export function modelConnectionFields(adapter: string, baseUrl: string, savedProvider?: unknown): { protocol: string; provider?: string; baseUrl: string };
+export function modelCredentialScope(adapter: string, baseUrl: string, savedProvider?: unknown): string;
+export function modelPresets(protocol: unknown, baseUrl: unknown): readonly string[] | undefined;
 export const SECRET_MASK_SENTINEL: string;
 
 export interface ProbeNotice {
@@ -25,6 +30,7 @@ export function defaultModelBaseUrl(protocol: string): string;
 export function resolveModelBaseUrlOnProtocolChange(
   currentUrl: string,
   nextProtocol: string,
+  previousAdapter?: string,
 ): string;
 export function filterModelNames(
   models: readonly string[] | undefined,

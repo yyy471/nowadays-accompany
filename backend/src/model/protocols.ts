@@ -1,3 +1,6 @@
+import { createHash, randomUUID } from "node:crypto";
+import type { ModelProvider } from "../domain/model-providers.js";
+import { ChatReasoning } from "./chat-reasoning.js";
 import {
   ModelListIncompatibleError,
   ModelRedirectBlockedError,
@@ -54,9 +57,13 @@ export class HttpModelAdapter implements ModelPort {
         ...(signal === undefined ? {} : { signal }),
       });
     }
+    const { provider } = this.config;
+    const listPath = provider === "opencode-go" ? "/v1/models"
+      : provider === "xai" ? "/language-models"
+      : provider === "openrouter" && this.credential ? "/models/user" : "/models";
     const headers = this.baseHeaders("application/json");
     const response = await this.request(
-      endpoint(this.config.baseUrl, "/models"),
+      endpoint(this.config.baseUrl, listPath),
       { method: "GET", headers },
       { timeoutMs: this.listTimeoutMs, ...(signal === undefined ? {} : { signal }) },
     );
@@ -69,22 +76,23 @@ export class HttpModelAdapter implements ModelPort {
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
       throw new ModelListIncompatibleError("NOT_OBJECT");
     }
-    const data = (parsed as { data?: unknown }).data;
+    const data = provider === "xai" ? (parsed as { models?: unknown }).models : (parsed as { data?: unknown }).data;
     if (!Array.isArray(data)) {
-      throw new ModelListIncompatibleError("DATA_NOT_ARRAY");
+      throw new ModelListIncompatibleError(provider === "xai" ? "MODELS_NOT_ARRAY" : "DATA_NOT_ARRAY");
     }
-    const models = data
-      .map((item) =>
-        item !== null && typeof item === "object"
-          ? (item as { id?: unknown }).id
-          : undefined,
-      )
-      .filter((id): id is string => typeof id === "string" && id.length > 0);
-    if (models.length !== data.length) {
-      // 有条目但取不到 id 时按格式不兼容处理，不静默丢弃半个列表。
-      throw new ModelListIncompatibleError("ITEMS_WITHOUT_ID");
+    const models = new Set<string>();
+    for (const item of data) {
+      if (!isRecord(item) || typeof item.id !== "string" || !item.id.trim()) {
+        throw new ModelListIncompatibleError("ITEMS_WITHOUT_ID");
+      }
+      // MiMo 目录也含独立的语音识别与合成服务。
+      if (provider === "mimo" && /-(asr|tts)(?:-|$)/i.test(item.id)) continue;
+      models.add(item.id);
+      if (provider === "xai" && Array.isArray(item.aliases)) {
+        for (const alias of item.aliases) if (typeof alias === "string" && alias.trim()) models.add(alias);
+      }
     }
-    return models;
+    return [...models];
   }
 
   stream(request: ModelRequest): AsyncIterable<ModelEvent> {
@@ -97,11 +105,12 @@ export class HttpModelAdapter implements ModelPort {
     if (this.config.protocol === "google-gemini") {
       return streamGoogleGemini({
         baseUrl: this.config.baseUrl,
+        ...(this.config.provider === undefined ? {} : { provider: this.config.provider }),
         credential: this.credential,
         cacheRef: this.googleTokenCache,
         request,
         transport: this.googleTransport(),
-        serializedBody: serializeModelRequest("google-gemini", this.config.baseUrl, request),
+        serializedBody: serializeModelRequest("google-gemini", this.config.baseUrl, request, this.config.provider),
       });
     }
     return this.streamAnthropic(request);
@@ -112,19 +121,25 @@ export class HttpModelAdapter implements ModelPort {
       request: (url, init, options) => this.request(url, init, options),
       readSse: (response) => readSse(response),
       parseStreamJson,
-      continuationItems,
+      continuationItems: (message, protocol, model, base) => continuationItems(message, protocol, model, base, this.config.provider),
     };
   }
 
   private async *streamOpenAiChat(
     request: ModelRequest,
   ): AsyncGenerator<ModelEvent> {
+    const { provider, baseUrl } = this.config;
+    const headers = this.baseHeaders("text/event-stream");
+    if (provider === "opencode-go") {
+      const session = createHash("sha256").update(request.sessionId ?? randomUUID()).digest("hex");
+      headers["x-opencode-session"] = `ses_${session.slice(0, 32)}`;
+    }
     const response = await this.request(
-      endpoint(this.config.baseUrl, "/chat/completions"),
+      endpoint(baseUrl, provider === "opencode-go" ? "/openai/v1/chat/completions" : "/chat/completions"),
       {
         method: "POST",
-        headers: this.baseHeaders("text/event-stream"),
-        body: serializeModelRequest("openai-chat", this.config.baseUrl, request),
+        headers,
+        body: serializeModelRequest("openai-chat", baseUrl, request, provider),
         ...(request.signal ? { signal: request.signal } : {}),
       },
     );
@@ -134,6 +149,7 @@ export class HttpModelAdapter implements ModelPort {
       { callId: string; name: string; arguments: string }
     >();
     const rawResponse: unknown[] = [];
+    const reasoning = provider ? new ChatReasoning(provider) : null;
     let finishReason: string | null = null;
     let usage: ModelUsage | null = null;
     const sseState: SseState = { done: false };
@@ -153,19 +169,24 @@ export class HttpModelAdapter implements ModelPort {
                 tool_calls?: Array<{
                   index?: number;
                   id?: string;
-                  function?: { name?: string; arguments?: string };
+                  function?: { name?: string; arguments?: unknown };
                 }>;
               };
               finish_reason?: string | null;
             }>
           | undefined;
         const choice = choices?.[0];
+        if (data.error || choice?.finish_reason === "error") {
+          throw new ModelRequestFailedError("模型流返回服务错误", { reason: "STREAM_ERROR" });
+        }
+        if (choice?.delta) reasoning?.append(choice.delta);
         const content = choice?.delta?.content;
         if (typeof content === "string" && content.length > 0) {
           yield { type: "text_delta", text: content };
         }
-        for (const call of choice?.delta?.tool_calls ?? []) {
-          const index = call.index ?? toolBuffers.size;
+        for (const [position, call] of (choice?.delta?.tool_calls ?? []).entries()) {
+          const previous = call.id ? [...toolBuffers].find(([, value]) => value.callId === call.id) : undefined;
+          const index = call.index ?? previous?.[0] ?? (call.id ? toolBuffers.size : position);
           const existing = toolBuffers.get(index) ?? {
             callId: "",
             name: "",
@@ -173,7 +194,10 @@ export class HttpModelAdapter implements ModelPort {
           };
           existing.callId = call.id ?? existing.callId;
           existing.name = call.function?.name ?? existing.name;
-          existing.arguments += call.function?.arguments ?? "";
+          const args = call.function?.arguments;
+          if (typeof args === "string") existing.arguments += args;
+          else if (provider === "zai" && isRecord(args)) existing.arguments = JSON.stringify(args);
+          else if (args != null) throw new ModelToolArgumentsError(existing.name);
           toolBuffers.set(index, existing);
         }
         if (typeof choice?.finish_reason === "string") {
@@ -184,6 +208,7 @@ export class HttpModelAdapter implements ModelPort {
               prompt_tokens?: number;
               completion_tokens?: number;
               cached_tokens?: number;
+              prompt_cache_hit_tokens?: number;
               prompt_tokens_details?: { cached_tokens?: number };
             }
           | undefined;
@@ -191,6 +216,7 @@ export class HttpModelAdapter implements ModelPort {
           inputTokens: usageValue?.prompt_tokens,
           cachedTokens:
             usageValue?.prompt_tokens_details?.cached_tokens ??
+            usageValue?.prompt_cache_hit_tokens ??
             usageValue?.cached_tokens,
           outputTokens: usageValue?.completion_tokens,
         });
@@ -229,11 +255,15 @@ export class HttpModelAdapter implements ModelPort {
     }
     const incomplete =
       finishReason === "length" || finishReason === "content_filter";
+    const fields = reasoning?.fields() ?? {};
     yield {
       type: "completed",
       stopReason: finishReason,
       ...(incomplete ? { incomplete: true } : {}),
       rawResponse: rawResponse.length === 0 ? undefined : rawResponse,
+      ...(provider && (Object.keys(fields).length > 0 || parsedTools.length > 0) ? {
+        continuation: { protocol: "openai-chat", provider, baseUrl, modelName: request.modelName, items: [fields] },
+      } : {}),
     };
   }
 
@@ -245,7 +275,7 @@ export class HttpModelAdapter implements ModelPort {
       {
         method: "POST",
         headers: this.baseHeaders("text/event-stream"),
-        body: serializeModelRequest("openai-responses", this.config.baseUrl, request),
+        body: serializeModelRequest("openai-responses", this.config.baseUrl, request, this.config.provider),
         ...(request.signal ? { signal: request.signal } : {}),
       },
     );
@@ -423,6 +453,7 @@ export class HttpModelAdapter implements ModelPort {
         : {
             continuation: {
               protocol: this.config.protocol,
+              ...(this.config.provider === undefined ? {} : { provider: this.config.provider }),
               modelName: request.modelName,
               baseUrl: this.config.baseUrl,
               items: outputItems ?? [...finishedItems.entries()]
@@ -677,10 +708,13 @@ export class HttpModelAdapter implements ModelPort {
       "content-type": "application/json",
       accept,
     };
+    if (this.config.provider === "opencode-go") headers["user-agent"] = "Nowadays";
     if (this.credential !== undefined) {
       if (this.config.protocol === "anthropic-messages") {
         headers["x-api-key"] = this.credential;
         headers["anthropic-version"] = "2023-06-01";
+      } else if (this.config.provider === "mimo") {
+        headers["api-key"] = this.credential;
       } else {
         headers.authorization = `Bearer ${this.credential}`;
       }
@@ -752,11 +786,18 @@ export function serializeModelRequest(
   protocol: ModelServiceConfig["protocol"],
   baseUrl: string,
   request: ModelRequest,
+  provider?: ModelProvider,
 ): string {
+  const requiresChatReasoning = request.tools.length > 0 && (provider === "deepseek" || provider === "mimo");
   const messages = request.messages.map((message): ModelMessage => {
+    if (message.role === "assistant" && message.continuation?.resourceId !== undefined &&
+        message.continuation.resourceId !== request.resourceId) {
+      const { continuation: _previous, ...text } = message;
+      return text;
+    }
     if (message.role !== "tool" || message.source?.historical !== true) return message;
     return {
-      role: "assistant",
+      role: requiresChatReasoning ? "user" : "assistant",
       content: `已保存的工具事实 [${message.source.toolCallId ?? message.source.internalStepKey ?? message.toolCallId}]（${message.toolName ?? "工具"}）：${message.content}`,
     };
   });
@@ -766,7 +807,7 @@ export function serializeModelRequest(
         model: request.modelName,
         messages: [
           { role: "system", content: request.system },
-          ...messages.map(toOpenAiChatMessage),
+          ...messages.map(message => toOpenAiChatMessage(message, request.modelName, baseUrl, provider, requiresChatReasoning)),
         ],
         ...(request.tools.length === 0
           ? {}
@@ -784,16 +825,17 @@ export function serializeModelRequest(
           ? {}
           : { max_tokens: request.maxOutputTokens }),
         stream: true,
-        stream_options: { include_usage: true },
+        ...(provider === "zai" ? {} : { stream_options: { include_usage: true } }),
       });
     case "openai-responses":
       return JSON.stringify({
         model: request.modelName,
         instructions: request.system,
         input: messages.flatMap((message) =>
-          toOpenAiResponsesInput(message, request.modelName, baseUrl),
+          toOpenAiResponsesInput(message, request.modelName, baseUrl, provider),
         ),
         include: ["reasoning.encrypted_content"],
+        ...(provider === "xai" ? { store: false } : {}),
         ...(request.tools.length === 0
           ? {}
           : {
@@ -828,7 +870,8 @@ export function serializeModelRequest(
       });
     case "google-gemini":
       return JSON.stringify(buildGeminiGenerateBody(
-        { ...request, messages }, request.modelName, baseUrl, continuationItems,
+        { ...request, messages }, request.modelName, baseUrl,
+        (message, protocol, model, base) => continuationItems(message, protocol, model, base, provider),
       ));
   }
 }
@@ -837,7 +880,9 @@ function endpoint(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/, "")}${path}`;
 }
 
-function toOpenAiChatMessage(message: ModelMessage): unknown {
+function toOpenAiChatMessage(
+  message: ModelMessage, modelName: string, baseUrl: string, provider: ModelProvider | undefined, requiresReasoning: boolean,
+): unknown {
   if (message.role === "tool") {
     return {
       role: "tool",
@@ -847,7 +892,17 @@ function toOpenAiChatMessage(message: ModelMessage): unknown {
   }
   if (message.role === "assistant") {
     const calls = message.toolCalls ?? [];
+    const saved = provider ? continuationItems(message, "openai-chat", modelName, baseUrl, provider)?.[0] : undefined;
+    // 这些服务会校验历史 assistant 的推理。来自本地的历史正文以引用送入。
+    if (requiresReasoning && saved === undefined && calls.length === 0) {
+      return { role: "user", content: `[角色先前的回复]\n${message.content}` };
+    }
+    const reasoningContent = typeof saved?.reasoning_content === "string" ? saved.reasoning_content
+      : requiresReasoning ? "" : undefined;
     return {
+      ...(reasoningContent === undefined ? {} : { reasoning_content: reasoningContent }),
+      ...(Array.isArray(saved?.reasoning_details) ? { reasoning_details: saved.reasoning_details } : {}),
+      ...(typeof saved?.reasoning === "string" ? { reasoning: saved.reasoning } : {}),
       role: "assistant",
       content:
         message.content.length > 0
@@ -884,7 +939,7 @@ function toOpenAiChatMessage(message: ModelMessage): unknown {
   };
 }
 
-function toOpenAiResponsesInput(message: ModelMessage, modelName: string, baseUrl: string): unknown[] {
+function toOpenAiResponsesInput(message: ModelMessage, modelName: string, baseUrl: string, provider?: ModelProvider): unknown[] {
   if (message.role === "tool") {
     return [
       {
@@ -895,7 +950,7 @@ function toOpenAiResponsesInput(message: ModelMessage, modelName: string, baseUr
     ];
   }
   if (message.role === "assistant") {
-    const replay = continuationItems(message, "openai-responses", modelName, baseUrl);
+    const replay = continuationItems(message, "openai-responses", modelName, baseUrl, provider);
     if (replay) return replay;
     const items: unknown[] = [];
     const calls = message.toolCalls ?? [];
@@ -995,10 +1050,12 @@ export function continuationItems(
   protocol: ModelServiceConfig["protocol"],
   modelName: string,
   baseUrl: string,
+  provider?: ModelProvider,
 ): Record<string, unknown>[] | null {
   const continuation = message.continuation;
   // 配置变化时不向另一协议／服务／模型发送原服务的加密或签名块。
-  if (continuation?.protocol !== protocol || continuation.modelName !== modelName || continuation.baseUrl !== baseUrl) return null;
+  if (continuation?.protocol !== protocol || continuation.provider !== provider ||
+      continuation.modelName !== modelName || continuation.baseUrl !== baseUrl) return null;
   return continuation.items;
 }
 

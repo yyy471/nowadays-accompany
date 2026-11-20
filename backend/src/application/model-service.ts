@@ -8,6 +8,7 @@ import {
 } from "../domain/errors.js";
 import { isIncompleteCompletion } from "../domain/model.js";
 import { modelConfigSchema } from "../domain/resource.js";
+import { usesVertexExpressPresets, VERTEX_EXPRESS_MODELS } from "../domain/model-providers.js";
 import type {
   ModelEvent,
   ModelListResult,
@@ -63,6 +64,7 @@ export class ModelService {
     config: ModelServiceProbe,
     options: { signal?: AbortSignal } = {},
   ): Promise<ModelListResult> {
+    if (usesVertexExpressPresets(config.protocol, config.baseUrl)) return { models: [...VERTEX_EXPRESS_MODELS], source: "preset" };
     const adapter = this.probeAdapter(config);
     return {
       models: await adapter.listModels(options.signal),
@@ -86,6 +88,7 @@ export class ModelService {
     options: { signal?: AbortSignal } = {},
   ): Promise<ModelListResult> {
     const { config } = this.requireModelResource(resourceId);
+    if (usesVertexExpressPresets(config.protocol, config.baseUrl)) return { models: [...VERTEX_EXPRESS_MODELS], source: "preset" };
     const adapter = this.savedAdapter(resourceId, config);
     return {
       models: await adapter.listModels(options.signal),
@@ -239,8 +242,8 @@ export class ModelService {
   private probeAdapter(config: ModelServiceProbe): HttpModelAdapter {
     if (config.resourceId !== undefined && config.secret === undefined) {
       const { config: saved } = this.requireModelResource(config.resourceId);
-      const from = serviceIdentity(saved);
-      const to = serviceIdentity(config);
+      const from = modelServiceIdentity(saved);
+      const to = modelServiceIdentity(config);
       if (from !== to) {
         throw new ResourceCredentialStaleError({ from, to });
       }
@@ -318,12 +321,14 @@ export class ModelService {
   }
 }
 
-/** 协议相同且 origin 相同视为同一个服务；同站点换路径允许复用已存密钥。 */
-function serviceIdentity(config: ModelServiceConfig): string {
+/** 同一服务商、协议和 origin 内可复用凭据，路径可调。 */
+export function modelServiceIdentity(config: Record<string, unknown>): string {
+  const baseUrl = String(config.baseUrl ?? "");
+  const adapter = [config.provider, config.protocol].filter(Boolean).join(" ");
   try {
-    return `${config.protocol} ${new URL(config.baseUrl).origin}`;
+    return `${adapter} ${new URL(baseUrl).origin}`;
   } catch {
-    return `${config.protocol} ${config.baseUrl}`;
+    return `${adapter} ${baseUrl}`;
   }
 }
 
@@ -344,6 +349,7 @@ export function fingerprintOf(
     .update(
       JSON.stringify({
         protocol: config.protocol,
+        provider: config.provider,
         baseUrl: config.baseUrl,
         salt,
       }),

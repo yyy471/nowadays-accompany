@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { InvalidResourceConfigError } from "./errors.js";
+import { isModelProvider, MODEL_PROVIDERS, type ModelProvider } from "./model-providers.js";
 
 export const resourceKindSchema = z.enum(["model", "mcp", "skill"]);
 export type ResourceKind = z.infer<typeof resourceKindSchema>;
@@ -55,6 +56,7 @@ export function isModelBaseUrl(value: string): boolean {
 export const modelBaseConfigSchema = z
   .object({
     protocol: modelProtocolSchema,
+    provider: z.custom<ModelProvider>(isModelProvider, "未知模型服务商").optional(),
     baseUrl: modelBaseUrlSchema,
     /** 默认模型名称（选填，供设置界面回显与角色默认预填）。 */
     modelName: z.string().trim().min(1).max(200).optional(),
@@ -63,7 +65,10 @@ export const modelBaseConfigSchema = z
     maxInputChars: z.number().int().positive().max(10_000_000).optional(),
     maxOutputChars: z.number().int().positive().max(10_000_000).optional(),
   })
-  .strict();
+  .strict()
+  .refine((config) => !config.provider || MODEL_PROVIDERS[config.provider].protocol === config.protocol, {
+    path: ["protocol"], message: "协议与所选模型服务商不匹配",
+  });
 
 export const modelConfigSchema = modelBaseConfigSchema;
 

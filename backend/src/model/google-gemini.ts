@@ -1,4 +1,5 @@
 import { createHash, createSign, randomUUID } from "node:crypto";
+import { usesVertexExpressPresets, VERTEX_EXPRESS_MODELS, type ModelProvider } from "../domain/model-providers.js";
 import {
   ModelListIncompatibleError,
   ModelRequestFailedError,
@@ -200,6 +201,7 @@ export async function listGoogleModels(input: {
   timeoutMs: number;
   signal?: AbortSignal;
 }): Promise<string[]> {
+  if (usesVertexExpressPresets("google-gemini", input.baseUrl)) return [...VERTEX_EXPRESS_MODELS];
   const headers = await buildGoogleHeaders(
     input.credential,
     "application/json",
@@ -211,43 +213,46 @@ export async function listGoogleModels(input: {
     },
   );
   const cleanBase = input.baseUrl.replace(/\/+$/, "");
-  let response: Response;
-  try {
-    response = await input.transport.request(
-      `${cleanBase}/models`,
-      { method: "GET", headers },
-      {
-        timeoutMs: input.timeoutMs,
-        ...(input.signal === undefined ? {} : { signal: input.signal }),
-      },
-    );
-  } catch (error) {
-    if (error instanceof ModelRequestFailedError && isVertexPublisherBaseUrl(cleanBase)) {
-      const details = isPlainRecord(error.details) ? error.details : undefined;
-      const status = typeof details?.status === "number" ? details.status : undefined;
-      const isExpressAuth = headers.authorization === undefined;
-      if (status === 404 || (status === 401 && isExpressAuth)) {
-        // Vertex Express 仅开放推理与计数端点，不提供模型目录查询；返回明确提示方便用户手填模型名。
-        throw new ModelRequestFailedError(
-          `Vertex AI Express 不提供自动读取模型目录接口（HTTP ${String(status)}），请直接手填模型名称（如 gemini-3.8-flash、gemini-2.5-flash）后点击测试连接`,
-          error.details,
-        );
+  const url = new URL(`${cleanBase}/models`);
+  const models = new Set<string>();
+  const tokens = new Set<string>();
+  const timeout = AbortSignal.timeout(input.timeoutMs);
+  const signal = input.signal ? AbortSignal.any([timeout, input.signal]) : timeout;
+  for (;;) {
+    let response: Response;
+    try {
+      response = await input.transport.request(url.href, { method: "GET", headers }, { signal, timeoutMs: input.timeoutMs });
+    } catch (error) {
+      if (error instanceof ModelRequestFailedError && isVertexPublisherBaseUrl(cleanBase)) {
+        const status = isPlainRecord(error.details) ? error.details.status : undefined;
+        if (status === 404 || (status === 401 && !headers.authorization)) {
+          throw new ModelRequestFailedError(
+            `此 Vertex AI 地址未开放模型目录（HTTP ${String(status)}），使用官方 Vertex AI Express 地址可选择预置，也可直接手填模型名称`,
+            error.details,
+          );
+        }
       }
+      throw error;
     }
-    throw error;
+    let parsed: unknown;
+    try {
+      parsed = await response.json();
+    } catch {
+      throw new ModelListIncompatibleError("INVALID_JSON");
+    }
+    for (const name of parseGoogleModelsList(parsed)) models.add(name);
+    const next = isPlainRecord(parsed) ? parsed.nextPageToken : undefined;
+    if (next === undefined || next === "") return [...models];
+    if (typeof next !== "string" || tokens.has(next)) throw new ModelListIncompatibleError("INVALID_PAGE_TOKEN");
+    tokens.add(next);
+    url.searchParams.set("pageToken", next);
   }
-  let parsed: unknown;
-  try {
-    parsed = await response.json();
-  } catch {
-    throw new ModelListIncompatibleError("INVALID_JSON");
-  }
-  return parseGoogleModelsList(parsed);
 }
 
 /** 执行 Google Gemini / Vertex AI 原生 SSE 流式生成，并输出标准 `ModelEvent`。 */
 export async function* streamGoogleGemini(input: {
   baseUrl: string;
+  provider?: ModelProvider;
   credential: string | undefined;
   cacheRef: { current: GoogleOAuthTokenCache | undefined };
   request: ModelRequest;
@@ -420,6 +425,7 @@ export async function* streamGoogleGemini(input: {
       ? undefined
       : {
           protocol: "google-gemini",
+          ...(input.provider === undefined ? {} : { provider: input.provider }),
           modelName: request.modelName,
           baseUrl: input.baseUrl,
           items: accumulatedParts,

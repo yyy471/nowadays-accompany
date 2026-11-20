@@ -4,37 +4,73 @@
  * 手填始终可用；列表只用来提供候选，不限制最终提交的模型标识。
  */
 
-const MAX_CANDIDATES = 50;
+import {
+  GOOGLE_AI_STUDIO_URL, GOOGLE_VERTEX_EXPRESS_URL, isModelProvider, MODEL_PROVIDERS,
+  usesVertexExpressPresets, VERTEX_EXPRESS_MODELS,
+} from "../../../../../../backend/src/domain/model-providers.ts";
 
-export const GOOGLE_GEMINI_DEFAULT_BASE_URL =
-  "https://aiplatform.googleapis.com/v1/publishers/google";
+const MAX_CANDIDATES = 50;
+export const GOOGLE_GEMINI_DEFAULT_BASE_URL = GOOGLE_VERTEX_EXPRESS_URL;
+export const MODEL_ADAPTER_OPTIONS = [
+  { value: "openai-chat", label: "OpenAI Chat Completions" },
+  { value: "openai-responses", label: "OpenAI Responses" },
+  { value: "anthropic-messages", label: "Anthropic Messages" },
+  { value: "google-gemini", label: "Google Gemini / Vertex AI" },
+  ...Object.entries(MODEL_PROVIDERS).map(([value, { label }]) => ({ value, label })),
+];
+
+export function modelAdapterOf(config) {
+  if (isModelProvider(config.provider)) return config.provider;
+  if (config.protocol === "google-gemini" && String(config.baseUrl).replace(/\/+$/, "") === GOOGLE_AI_STUDIO_URL) return "google-ai-studio";
+  return String(config.protocol || "openai-chat");
+}
+
+export function modelConnectionFields(adapter, baseUrl, savedProvider) {
+  const address = baseUrl.trim();
+  const protocol = isModelProvider(adapter) ? MODEL_PROVIDERS[adapter].protocol : adapter;
+  // 旧版官方 Studio 资源已能从地址识别，保存时沿用其凭据身份。自定义 Studio 地址显式保存入口。
+  const implicitStudio = adapter === "google-ai-studio" && savedProvider !== adapter &&
+    address.replace(/\/+$/, "") === GOOGLE_AI_STUDIO_URL;
+  const provider = isModelProvider(adapter) && !implicitStudio ? adapter : undefined;
+  return { protocol, provider, baseUrl: address };
+}
+
+export function modelCredentialScope(adapter, baseUrl, savedProvider) {
+  const { protocol, provider } = modelConnectionFields(adapter, baseUrl, savedProvider);
+  let origin = baseUrl.trim();
+  try { origin = new URL(origin).origin; } catch { /* 允许正在输入的草稿地址。 */ }
+  return [provider, protocol, origin].join("|");
+}
+
+export function modelPresets(protocol, baseUrl) {
+  const wire = protocol === "google-ai-studio" ? "google-gemini" : protocol;
+  return usesVertexExpressPresets(wire, baseUrl) ? VERTEX_EXPRESS_MODELS : undefined;
+}
 
 /**
- * 按接口协议返回默认请求地址（当前 Gemini 官方路径固定，选择时自动补上）。
+ * 返回所选服务商或 Gemini 入口的默认地址，通用协议允许自行填写。
  * @param {string} protocol
  * @returns {string}
  */
 export function defaultModelBaseUrl(protocol) {
-  return protocol === "google-gemini" ? GOOGLE_GEMINI_DEFAULT_BASE_URL : "";
+  if (isModelProvider(protocol)) return MODEL_PROVIDERS[protocol].baseUrl;
+  return protocol === "google-gemini" ? GOOGLE_VERTEX_EXPRESS_URL : "";
 }
 
 /**
  * 切换接口协议时同步调整服务地址：
- * - 切到 Gemini 且当前为空时，自动补全官方请求路径；
- * - 切离 Gemini 且仍为自动补全的默认路径时，清空以免误请求；
- * - 用户已手填或改成其他地址时保持原样，不覆盖自定义内容。
+ * 明确选择服务商时填入官方地址，切换通用协议时保留用户输入的代理地址。
  * @param {string} currentUrl
  * @param {string} nextProtocol
  * @returns {string}
  */
-export function resolveModelBaseUrlOnProtocolChange(currentUrl, nextProtocol) {
+export function resolveModelBaseUrlOnProtocolChange(currentUrl, nextProtocol, previousAdapter) {
   const raw = String(currentUrl ?? "");
   const trimmed = raw.trim();
   const nextDefault = defaultModelBaseUrl(nextProtocol);
-  if (nextDefault) {
-    return trimmed.length === 0 ? nextDefault : raw;
-  }
-  return trimmed === GOOGLE_GEMINI_DEFAULT_BASE_URL ? "" : raw;
+  if (isModelProvider(nextProtocol)) return nextDefault;
+  const wasDefault = trimmed.replace(/\/+$/, "") === defaultModelBaseUrl(previousAdapter ?? "google-gemini");
+  return !trimmed || wasDefault ? nextDefault : raw;
 }
 
 /**

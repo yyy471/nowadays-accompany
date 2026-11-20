@@ -8,6 +8,7 @@ export interface ModelNamePickerProps {
   roleLayout?: 'service' | 'memory';
   onChange: (value: string) => void;
   models: readonly string[];
+  presets?: readonly string[];
   listBusy: boolean;
   listError: string;
   listLoaded: boolean;
@@ -36,6 +37,7 @@ export function ModelNamePicker({
   roleLayout,
   onChange,
   models,
+  presets,
   listBusy,
   listError,
   listLoaded,
@@ -55,8 +57,8 @@ export function ModelNamePicker({
   const [active, setActive] = useState(-1);
   // 打开时用搜索词筛选；关闭时保留已选/已填值。
   const filtered = useMemo(
-    () => filterModelNames(models, open ? query : value),
-    [models, open, query, value],
+    () => filterModelNames(presets ?? models, open ? query : value),
+    [models, presets, open, query, value],
   );
   const activeNotice = useMemo<ProbeNotice | null>(() => {
     if (notice !== undefined) {
@@ -135,7 +137,7 @@ export function ModelNamePicker({
       <Input
         value={value}
         disabled={disabled}
-        placeholder={roleLayout ? '从列表选择或手填' : settings ? '读取列表后选择，或直接手填' : '选择或输入模型名称'}
+        placeholder={presets ? '选择预置模型，或直接手填' : roleLayout ? '从列表选择或手填' : settings ? '读取列表后选择，或直接手填' : '选择或输入模型名称'}
         autoComplete="off"
         spellCheck={false}
         role="combobox"
@@ -152,7 +154,10 @@ export function ModelNamePicker({
           setActive(-1);
         }}
         onKeyDown={onKeyDown}
-        onBlur={() => { window.setTimeout(() => setOpen(false), 120); }}
+        onBlur={event => {
+          const input = event.currentTarget;
+          window.setTimeout(() => { if (document.activeElement !== input) setOpen(false); }, 120);
+        }}
       />
       {open && filtered.length > 0 ? <ul className="nd-model-options" id={listId} role="listbox" aria-label="模型候选">
         {filtered.map((name, index) => <li key={name} id={`${listId}-${index}`} role="option" aria-selected={value === name} data-active={index === active ? '' : undefined}>
@@ -164,7 +169,8 @@ export function ModelNamePicker({
       </ul> : null}
     </div>
     <div className="config-actions">
-      <Button size="sm" disabled={disabled || listBusy || testBusy} onClick={onRefresh}>{listBusy ? '正在读取…' : settings || roleLayout ? '读取列表' : '读取模型列表'}</Button>
+      {presets ? <span className="config-muted">预置模型</span> :
+        <Button size="sm" disabled={disabled || listBusy || testBusy} onClick={onRefresh}>{listBusy ? '正在读取…' : settings || roleLayout ? '读取列表' : '读取模型列表'}</Button>}
       {roleLayout !== 'service' && <Button size="sm" disabled={disabled || testBusy || testDisabled || listBusy} onClick={onTest}>{testBusy ? '正在测试…' : roleLayout ? '测试' : '测试连接'}</Button>}
     </div>
     </div>

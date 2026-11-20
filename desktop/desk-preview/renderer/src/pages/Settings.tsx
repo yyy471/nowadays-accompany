@@ -31,7 +31,12 @@ import { useModelProbe, type ModelProbeTarget } from '../components/model/use-mo
 import {
   applyRevealedSecret,
   createSecretDraft,
-  GOOGLE_GEMINI_DEFAULT_BASE_URL,
+  defaultModelBaseUrl,
+  MODEL_ADAPTER_OPTIONS,
+  modelAdapterOf,
+  modelConnectionFields,
+  modelCredentialScope,
+  modelPresets,
   hideUneditedSecret,
   nextSecretDraftOnInput,
   resolveModelBaseUrlOnProtocolChange,
@@ -66,18 +71,8 @@ type OpenSettingsOptions = {
 type Draft = { name: string; definition: string; revision: number; payload: Record<string, unknown>; isBuiltin: boolean; bio: string };
 const roleSections: Array<[RoleSection, string, string]> = [['profile', '设定', '关于这个人'], ['look', '外观', '立绘与服饰'], ['models', '模型', '对话与演出'], ['ext', '扩展', '工具与知识'], ['quota', '自主额度', '属于自己的时间'], ['done', '完成度', '慢慢补全']];
 const settingSections: Array<[SettingsSection, string, string]> = [['model', '模型', '服务与连接'], ['mcp', 'MCP', '工具服务'], ['skill', 'Skill', '方法与知识'], ['roles', '角色状态', '活动与停止'], ['local', '本机', '此设备的偏好']];
-const MODEL_PROTOCOL_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
-  { value: 'openai-chat', label: 'OpenAI Chat Completions' },
-  { value: 'openai-responses', label: 'OpenAI Responses' },
-  { value: 'anthropic-messages', label: 'Anthropic Messages' },
-  { value: 'google-gemini', label: 'Google Gemini / Vertex AI' },
-];
-const modelBaseUrlPlaceholder = (protocol: string) => protocol === 'google-gemini' ? GOOGLE_GEMINI_DEFAULT_BASE_URL : 'https://…/v1';
-const modelProtocolLabel = (protocol: string) => MODEL_PROTOCOL_OPTIONS.find(option => option.value === protocol)?.label ?? protocol;
-const modelBaseUrlHint = (protocol: string) =>
-  protocol === 'google-gemini'
-    ? '选择 Gemini 时已自动填入 Vertex Express 默认路径；若改用 AI Studio 请填 https://generativelanguage.googleapis.com/v1beta。使用 Vertex Express API Key 时不支持自动拉取列表，请直接手填模型名（如 gemini-3.8-flash）后点击测试。'
-    : undefined;
+const modelBaseUrlPlaceholder = (adapter: string) => defaultModelBaseUrl(adapter) || 'https://…/v1';
+const modelAdapterLabel = (adapter: string) => MODEL_ADAPTER_OPTIONS.find(option => option.value === adapter)?.label ?? adapter;
 const errorText = (e: unknown) => e instanceof Error ? e.message : String(e);
 
 type RoleDirty = { profile: boolean; models: boolean; voice: boolean; image: boolean; ext: boolean; quota: boolean };
@@ -166,7 +161,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
   const [modelName, setModelName] = useState('');
   const [newModelName, setNewModelName] = useState('');
   const [modelUrl, setModelUrl] = useState('');
-  const [modelProtocol, setModelProtocol] = useState('openai-chat');
+  const [modelAdapter, setModelAdapter] = useState('openai-chat');
   const [modelSecret, setModelSecret] = useState('');
   const [showNewSecret, setShowNewSecret] = useState(false);
   const [modelBusy, setModelBusy] = useState(false);
@@ -206,7 +201,28 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
       window.removeEventListener('nowadays:before-tray-hide', beforeTrayHide);
     };
   }, [navigationGuard]);
-  const newModelProbe = useModelProbe(`${modelProtocol}|${modelUrl}|${modelSecret}`);
+  const newModelProbe = useModelProbe(`${modelAdapter}|${modelUrl}|${modelSecret}`);
+  const changeNewModelAdapter = (next: string) => {
+    const url = resolveModelBaseUrlOnProtocolChange(modelUrl, next, modelAdapter);
+    if (modelCredentialScope(next, url) !== modelCredentialScope(modelAdapter, modelUrl)) {
+      setModelSecret('');
+      setShowNewSecret(false);
+    }
+    setModelAdapter(next);
+    setModelUrl(url);
+    newModelProbe.reset();
+  };
+  const closeNewModelDraft = () => {
+    setNewModel(false);
+    setModelName('');
+    setModelAdapter('openai-chat');
+    setModelUrl('');
+    setModelSecret('');
+    setShowNewSecret(false);
+    setNewModelName('');
+    setModelError('');
+    newModelProbe.reset();
+  };
   const [refreshVersion, setRefreshVersion] = useState(0);
   const roleActive = page === 'role-config';
   const settingsActive = page === 'settings';
@@ -305,8 +321,8 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
     // 跨页跳转后原按钮随角色页面卸载，焦点会落回 body；交给设置分区的标题（R12-1 同类）。
     focusSectionHeadingSoon();
   };
-  useEffect(() => setNewModelProbePrompt(null), [modelUrl, modelProtocol, modelSecret, newModelName, newModelVisible]);
-  const newModelTarget = (): ModelProbeTarget => ({ kind: 'draft', config: { protocol: modelProtocol, baseUrl: modelUrl.trim(), ...(modelSecret ? { secret: modelSecret } : {}) } });
+  useEffect(() => setNewModelProbePrompt(null), [modelUrl, modelAdapter, modelSecret, newModelName, newModelVisible]);
+  const newModelTarget = (): ModelProbeTarget => ({ kind: 'draft', config: { ...modelConnectionFields(modelAdapter, modelUrl), ...(modelSecret ? { secret: modelSecret } : {}) } });
   const runNewModelProbe = (action: 'test' | 'list', group: 'connection' | 'model' = 'model') => {
     setNewModelProbeGroup(group);
     const required = !modelUrl.trim() ? T16.needUrl : action === 'test' && !newModelName.trim() ? T16.needModel : '';
@@ -327,8 +343,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
     setModelBusy(true); setModelError('');
     try {
       const config: Record<string, unknown> = {
-        protocol: modelProtocol,
-        baseUrl: modelUrl.trim(),
+        ...modelConnectionFields(modelAdapter, modelUrl),
         ...(trimmedModel ? { modelName: trimmedModel } : {}),
       };
       const resource = await api<Resource>('/v1/resources', {
@@ -348,7 +363,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
       if (viewRef.current.settingsActive && viewRef.current.settingsSection === 'model' && viewRef.current.newModel) {
         sheetController.current?.closeNow(() => {
           selectAfterChange(resource.resourceId, true);
-          setNewModel(false);
+          closeNewModelDraft();
         });
       }
       announceLive(`${resource.name} 已添加`);
@@ -603,8 +618,32 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
             onRemoved={removedId => { removeCatalogItem(removedId); bumpImageServiceEpoch(removedId); setImageServices(previous => previous.filter(item => item.serviceId !== removedId)); setImageServiceVersion(v => v + 1); setRefreshVersion(v => v + 1); }}/>}
           {settingsActive && catalogKind === 'voice' && newVoiceService && <VoiceServiceCreate trigger={addTrigger.current} onCancel={() => setNewVoiceService(false)} onCreated={(service, tested) => { if (tested !== undefined) rememberTest(service.serviceId, tested); bumpVoiceServiceEpoch(service.serviceId); setVoiceServices(previous => [...previous.filter(item => item.serviceId !== service.serviceId), service]); selectAfterChange(service.serviceId, true); setNewVoiceService(false); setVoiceServiceVersion(v => v + 1); setRefreshVersion(v => v + 1); }}/>}
           {settingsActive && catalogKind === 'image' && newImageService && <ImageServiceCreate trigger={addTrigger.current} onCancel={() => setNewImageService(false)} onCreated={(service, tested) => { if (tested !== undefined) rememberTest(service.serviceId, tested); bumpImageServiceEpoch(service.serviceId); setImageServices(previous => [...previous.filter(item => item.serviceId !== service.serviceId), service]); selectAfterChange(service.serviceId, true); setNewImageService(false); setImageServiceVersion(v => v + 1); setRefreshVersion(v => v + 1); }}/>}
-          <NewModelSheet active={newModelVisible} trigger={addTrigger.current} count={[modelName.trim(), modelUrl.trim(), modelSecret, newModelName.trim(), modelProtocol !== 'openai-chat'].filter(Boolean).length} busy={modelBusy} invalid={!modelName.trim() ? T10.name : !modelUrl.trim() ? T10.url : ''} error={modelError} onSave={() => void createModel()} onCancel={() => { setNewModel(false); setModelName(''); setModelProtocol('openai-chat'); setModelUrl(''); setModelSecret(''); setShowNewSecret(false); setNewModelName(''); setModelError(''); newModelProbe.reset(); }}>
-            {group => <><MediaGroup title="名称" group={group}><div className="config-service-field-one"><Field label="模型服务名称"><Input disabled={modelBusy} value={modelName} maxLength={200} placeholder="起一个好认的名字" onChange={event => setModelName(event.target.value)}/></Field></div></MediaGroup><MediaGroup title="连接" group={group}><div className="config-connection"><Field label="协议"><Select disabled={modelBusy} value={modelProtocol} onChange={event => { const next = event.target.value; setModelProtocol(next); setModelUrl(previous => resolveModelBaseUrlOnProtocolChange(previous, next)); newModelProbe.reset(); }}>{MODEL_PROTOCOL_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</Select></Field><Field label="服务地址"><Input disabled={modelBusy} value={modelUrl} placeholder={modelBaseUrlPlaceholder(modelProtocol)} onChange={event => { setModelUrl(event.target.value); newModelProbe.reset(); }}/></Field></div><ServiceProbeAction disabled={modelBusy || newModelProbe.listBusy} busy={newModelProbe.testBusy} notice={newModelProbeGroup === 'connection' ? newModelNotice : null} onClick={() => runNewModelProbe('test', 'connection')}/><div className="config-connection-feedback"/></MediaGroup><MediaGroup title="密钥" group={group}><SecretInput aria-label="模型密钥" placeholder="选填" disabled={modelBusy} value={modelSecret} visible={showNewSecret} onToggleVisible={() => setShowNewSecret(previous => !previous)} onChange={next => { setModelSecret(next); newModelProbe.reset(); }}/></MediaGroup><MediaGroup title="模型" group={group}><ModelNamePicker settings value={newModelName} onChange={value => { setNewModelName(value); newModelProbe.invalidateTest(); }} models={newModelProbe.models} listBusy={newModelProbe.listBusy} listError={newModelProbe.listError} listLoaded={newModelProbe.listLoaded} testBusy={newModelProbe.testBusy} testNote={newModelProbe.testModel === newModelName ? newModelProbe.testNote : ''} notice={newModelProbeGroup === 'model' ? newModelNotice : null} onRefresh={() => runNewModelProbe('list')} onTest={() => runNewModelProbe('test')} disabled={modelBusy}/></MediaGroup></>}
+          <NewModelSheet active={newModelVisible} trigger={addTrigger.current}
+            count={[modelName.trim(), modelUrl.trim(), modelSecret, newModelName.trim(), modelAdapter !== 'openai-chat'].filter(Boolean).length}
+            busy={modelBusy} invalid={!modelName.trim() ? T10.name : !modelUrl.trim() ? T10.url : ''}
+            error={modelError} onSave={() => void createModel()} onCancel={closeNewModelDraft}>
+            {group => <>
+              <MediaGroup title="名称" group={group}>
+                <div className="config-service-field-one"><Field label="模型服务名称"><Input disabled={modelBusy} value={modelName} maxLength={200} placeholder="起一个好认的名字" onChange={event => setModelName(event.target.value)}/></Field></div>
+              </MediaGroup>
+              <MediaGroup title="连接" group={group}>
+                <ModelConnectionInputs adapter={modelAdapter} address={modelUrl} disabled={modelBusy} onAdapter={changeNewModelAdapter}
+                  onAddress={value => { setModelUrl(value); newModelProbe.reset(); }}/>
+                <ServiceProbeAction disabled={modelBusy || newModelProbe.listBusy} busy={newModelProbe.testBusy}
+                  notice={newModelProbeGroup === 'connection' ? newModelNotice : null} onClick={() => runNewModelProbe('test', 'connection')}/>
+                <div className="config-connection-feedback"/>
+              </MediaGroup>
+              <MediaGroup title="密钥" group={group}>
+                <SecretInput aria-label="模型密钥" placeholder="选填" disabled={modelBusy} value={modelSecret} visible={showNewSecret}
+                  onToggleVisible={() => setShowNewSecret(previous => !previous)} onChange={next => { setModelSecret(next); newModelProbe.reset(); }}/>
+              </MediaGroup>
+              <MediaGroup title="模型" group={group}>
+                <ModelNamePicker settings value={newModelName} onChange={value => { setNewModelName(value); newModelProbe.invalidateTest(); }}
+                  presets={modelPresets(modelAdapter, modelUrl)} models={newModelProbe.models} listBusy={newModelProbe.listBusy} listError={newModelProbe.listError}
+                  listLoaded={newModelProbe.listLoaded} testBusy={newModelProbe.testBusy} testNote={newModelProbe.testModel === newModelName ? newModelProbe.testNote : ''}
+                  notice={newModelProbeGroup === 'model' ? newModelNotice : null} onRefresh={() => runNewModelProbe('list')} onTest={() => runNewModelProbe('test')} disabled={modelBusy}/>
+              </MediaGroup>
+            </>}
           </NewModelSheet>
           {settingsActive && settingsSection === 'roles' && <RoleStatusCards roles={roles} activities={activities} loading={!activityReady || activityRefreshing} error={activityError}
             onRefresh={readActivities} onRolesChanged={onRefresh}
@@ -1111,8 +1150,7 @@ function ModelRow({ kind, bindings, resources, draft, loaded, onOpen }: { kind: 
   const modelName = kind === 'chat' ? draft.chatModel : draft.memoryModel;
   const resource = resources.find(item => item.resourceId === resourceId);
   const chatBinding = bindings.find(item => item.capability === 'chat_model');
-  const protocol = typeof resource?.config.protocol === 'string' ? resource.config.protocol : '';
-  const protocolLabel = MODEL_PROTOCOL_OPTIONS.find(item => item.value === protocol)?.label ?? protocol;
+  const protocolLabel = resource ? modelAdapterLabel(modelAdapterOf(resource.config)) : '';
   const follows = kind === 'memory' && resourceId === '';
   const deleted = resourceId !== '' && resource === undefined;
   const value = !loaded ? '正在读取…'
@@ -1215,7 +1253,7 @@ function ModelSheetHost({ active, draft, setDraft, resources, bindings, loaded, 
       {kind === 'chat' && !resourceId && <p className="config-sheet-note">{T1}</p>}
       {missing && <p className="config-sheet-error" role="alert">{T34.value}</p>}
       {service?.enabled === false && <p className="config-sheet-note" data-warning>{T33.selectedNote}</p>}
-      {service?.enabled && <ModelNamePicker roleLayout={kind === 'chat' ? 'service' : 'memory'} value={modelName} onChange={setName} models={probe.models} listBusy={probe.listBusy} listError={probe.listError} listLoaded={probe.listLoaded} testBusy={probe.testBusy} testNote={probe.testModel === modelName ? probe.testNote : ''} notice={kind === 'chat' && probe.notice?.source === 'test' ? null : probe.notice} onRefresh={() => void probe.refresh({ kind: 'saved', resourceId, cacheKey })} onTest={() => void probe.test({ kind: 'saved', resourceId, cacheKey }, modelName.trim())} testDisabled={!modelName.trim()} disabled={!loaded}/>}
+      {service?.enabled && <ModelNamePicker presets={modelPresets(service.config.protocol, service.config.baseUrl)} roleLayout={kind === 'chat' ? 'service' : 'memory'} value={modelName} onChange={setName} models={probe.models} listBusy={probe.listBusy} listError={probe.listError} listLoaded={probe.listLoaded} testBusy={probe.testBusy} testNote={probe.testModel === modelName ? probe.testNote : ''} notice={kind === 'chat' && probe.notice?.source === 'test' ? null : probe.notice} onRefresh={() => void probe.refresh({ kind: 'saved', resourceId, cacheKey })} onTest={() => void probe.test({ kind: 'saved', resourceId, cacheKey }, modelName.trim())} testDisabled={!modelName.trim()} disabled={!loaded}/>}
     </div>
   </div>;
   return <Sheet idPrefix="model:" enabled={active} footer={<RoleSaveActions count={count} pause={pause} busy={busy} invalid={!loaded || !!onReload || Boolean(resourceId && !modelName.trim())} error={error} onSave={() => void onSave('models')}/>}>
@@ -1300,6 +1338,18 @@ function WorkspaceSheets({ pendingSwitch, clearPendingSwitch, onSwitch, onCreate
       </div>}
     </Sheet>
   </>;
+}
+
+function ModelConnectionInputs({ adapter, address, disabled, onAdapter, onAddress }: {
+  adapter: string; address: string; disabled: boolean; onAdapter: (value: string) => void; onAddress: (value: string) => void;
+}) {
+  return <div className="config-connection">
+    <Field label="协议"><Select disabled={disabled} value={adapter} onChange={event => onAdapter(event.target.value)}>
+      {MODEL_ADAPTER_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+    </Select></Field>
+    <Field label="服务地址"><Input disabled={disabled} value={address} placeholder={modelBaseUrlPlaceholder(adapter)}
+      onChange={event => onAddress(event.target.value)}/></Field>
+  </div>;
 }
 
 function NewModelSheet({ active, trigger, count, busy, invalid, error, onSave, onCancel, children }: { active: boolean; trigger: HTMLElement | null; count: number; busy: boolean; invalid: string; error: string; onSave: () => void; onCancel: () => void; children: (group?: string) => ReactNode }) {
@@ -1433,7 +1483,7 @@ function ResourceDetail({ resource, roles, activities, active, canWrite, testedO
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [draftName, setDraftName] = useState(resource.name);
-  const [draftProtocol, setDraftProtocol] = useState(String(resource.config.protocol || 'openai-chat'));
+  const [draftAdapter, setDraftAdapter] = useState(modelAdapterOf(resource.config));
   const [draftUrl, setDraftUrl] = useState(String(resource.config.baseUrl || ''));
   const [secretDraft, setSecretDraft] = useState(() => createSecretDraft(resource.credential?.status));
   const secretStatusRef = useRef(resource.credential?.status);
@@ -1447,15 +1497,27 @@ function ResourceDetail({ resource, roles, activities, active, canWrite, testedO
   const [secretUpdated, setSecretUpdated] = useState(false);
   const [probePrompt, setProbePrompt] = useState<ReturnType<typeof serviceProbeNotice>>(null);
   const [probeGroup, setProbeGroup] = useState<'connection' | 'model'>('model');
-  const savedProtocol = String(resource.config.protocol || 'openai-chat');
+  const savedAdapter = modelAdapterOf(resource.config);
   const savedBaseUrl = String(resource.config.baseUrl || '');
   const savedKey = providerCacheKey(resource);
   const secretOp = secretOperationOf(secretDraft);
   const secretProbeKey = secretOp.action === 'replace' ? `replace:${secretOp.secret}` : secretOp.action;
-  const sameConnection = secretOp.action === 'keep' && draftProtocol === savedProtocol && draftUrl.trim() === savedBaseUrl;
-  const probe = useModelProbe(sameConnection ? savedKey : `${savedKey}|${secretProbeKey}|${draftProtocol}|${draftUrl}`, {
+  const sameConnection = secretOp.action === 'keep' && draftAdapter === savedAdapter && draftUrl.trim() === savedBaseUrl;
+  const probe = useModelProbe(sameConnection ? savedKey : `${savedKey}|${secretProbeKey}|${draftAdapter}|${draftUrl}`, {
     shared: sameConnection, onSavedList: () => onUpdated(), onSavedTest: () => onUpdated(),
   });
+  const changeDraftAdapter = (next: string) => {
+    const url = resolveModelBaseUrlOnProtocolChange(draftUrl, next, draftAdapter);
+    if (modelCredentialScope(next, url, resource.config.provider) !== modelCredentialScope(draftAdapter, draftUrl, resource.config.provider)) {
+      revealSeq.current += 1;
+      setSecretLoading(false);
+      setSecretVisible(false);
+      setSecretDraft(createSecretDraft(resource.credential?.status));
+    }
+    setDraftAdapter(next);
+    setDraftUrl(url);
+    probe.reset();
+  };
   useEffect(() => {
     if (sameConnection && probe.notice?.source === 'test' && probe.testModel === savedModelNameOf(resource)) {
       onTested(probe.notice.role === 'status');
@@ -1547,30 +1609,32 @@ function ResourceDetail({ resource, roles, activities, active, canWrite, testedO
   };
   // 未保存的修改用草稿探测；保留密钥时按资源解析（后端核对协议与 origin）。
   const probeTarget = (forTest = false): ModelProbeTarget => {
-    const base = { protocol: draftProtocol, baseUrl: draftUrl.trim() };
+    const base = modelConnectionFields(draftAdapter, draftUrl, resource.config.provider);
     // 未改动的配置走按资源接口，结果写回资源摘要；其余用草稿探测。
-    if (secretOp.action === 'keep' && draftProtocol === savedProtocol && draftUrl.trim() === savedBaseUrl && (!forTest || model.trim() === savedModelNameOf(resource))) {
+    if (secretOp.action === 'keep' && draftAdapter === savedAdapter && draftUrl.trim() === savedBaseUrl && (!forTest || model.trim() === savedModelNameOf(resource))) {
       return { kind: 'saved', resourceId: resource.resourceId, cacheKey: savedKey };
     }
     if (secretOp.action === 'replace') return { kind: 'draft', config: { ...base, secret: secretOp.secret } };
-    if (secretOp.action === 'clear') return { kind: 'draft', config: base };
+    if (secretOp.action === 'clear' || !secretDraft.hasExisting) return { kind: 'draft', config: base };
     return { kind: 'draft', config: { ...base, resourceId: resource.resourceId } };
   };
-  useEffect(() => setProbePrompt(null), [draftUrl, draftProtocol, secretProbeKey, model]);
+  useEffect(() => setProbePrompt(null), [draftUrl, draftAdapter, secretProbeKey, model]);
   const connectionDirty = !sameConnection;
   const activeDeps = (impact?.roles ?? []).filter(item => item.state !== 'stopped' && item.usages.some(usage => usage !== 'task'));
   const pauseNames = connectionDirty ? activeDeps.map(item => item.displayName) : [];
-  const staleSite = !!draftUrl.trim() && serviceHost(draftUrl) !== serviceHost(savedBaseUrl) && secretDraft.hasExisting && secretOp.action === 'keep';
+  const staleSite = !!draftUrl.trim() && secretDraft.hasExisting && secretOp.action === 'keep' &&
+    modelCredentialScope(draftAdapter, draftUrl, resource.config.provider) !== modelCredentialScope(savedAdapter, savedBaseUrl, resource.config.provider);
+  const credentialNotice = serviceHost(draftUrl) === serviceHost(savedBaseUrl) ? '服务商或协议已更换，请重新填写密钥。' : T12;
   const runProbe = (action: 'test' | 'list', group: 'connection' | 'model' = 'model') => {
     setProbeGroup(group);
-    const problem = !draftUrl.trim() ? T16.needUrl : action === 'test' && !model.trim() ? T16.needModel : staleSite ? T12 : '';
+    const problem = !draftUrl.trim() ? T16.needUrl : action === 'test' && !model.trim() ? T16.needModel : staleSite ? credentialNotice : '';
     setProbePrompt(problem ? { source: action, role: 'alert', text: problem } : null);
     if (problem) { probe.clearLog(); return; }
     if (action === 'list') void probe.refresh(probeTarget());
     else void probe.test(probeTarget(true), model.trim());
   };
   const probeNotice = probePrompt ?? serviceProbeNotice(probe.notice, probe.models.length);
-  const count = [draftName !== resource.name, draftProtocol !== savedProtocol, draftUrl.trim() !== savedBaseUrl, model.trim() !== savedModelNameOf(resource), secretOp.action !== 'keep'].filter(Boolean).length;
+  const count = [draftName !== resource.name, draftAdapter !== savedAdapter, draftUrl.trim() !== savedBaseUrl, model.trim() !== savedModelNameOf(resource), secretOp.action !== 'keep'].filter(Boolean).length;
   const save = async () => {
     if (busy || !canWrite || !count || !draftName.trim() || !draftUrl.trim() || staleSite) return;
     const finish = write.beginWrite(connectionDirty ? activeDeps.map(item => item.roleId) : []);
@@ -1582,7 +1646,7 @@ function ResourceDetail({ resource, roles, activities, active, canWrite, testedO
     const carriedResult = probe.notice?.source === 'test' && probe.testModel === trimmedModel ? probe.notice.role === 'status' : undefined;
     setBusy(true); setMessage('');
     try {
-      const config: Record<string, unknown> = { ...resource.config, protocol: draftProtocol, baseUrl: draftUrl.trim() };
+      const config: Record<string, unknown> = { ...resource.config, ...modelConnectionFields(draftAdapter, draftUrl, resource.config.provider) };
       if (trimmedModel) {
         config.modelName = trimmedModel;
       } else {
@@ -1612,7 +1676,7 @@ function ResourceDetail({ resource, roles, activities, active, canWrite, testedO
       savedModelRef.current = nextSavedModel;
       secretStatusRef.current = result.credential?.status;
       setDraftName(result.name);
-      setDraftProtocol(String(result.config.protocol || ''));
+      setDraftAdapter(modelAdapterOf(result.config));
       setDraftUrl(String(result.config.baseUrl || ''));
       setModel(nextSavedModel);
       setSecretDraft(createSecretDraft(result.credential?.status));
@@ -1633,12 +1697,12 @@ function ResourceDetail({ resource, roles, activities, active, canWrite, testedO
   };
   if (resource.kind !== 'model') return <ExtensionManagement resource={resource} roles={roles} activities={activities} active={active} onRemoved={onRemoved} onUpdated={onUpdated}/>;
   const open = (group?: string, trigger?: HTMLElement) => sheetApi.open({ id: sheetId, title: group ? `${resource.name} · ${group}` : `编辑「${resource.name}」`, shape: group ? 'compact' : 'full', group, anchor: trigger?.closest<HTMLElement>('.config-sum') ?? trigger, focusReturn: trigger?.matches('button') ? trigger : trigger?.querySelector<HTMLElement>('.config-sum-edit') });
-  const discard = () => { const saved = savedRef.current; setDraftName(saved.name); setDraftProtocol(String(saved.config.protocol || 'openai-chat')); setDraftUrl(String(saved.config.baseUrl || '')); setModel(savedModelNameOf(saved)); setSecretDraft(createSecretDraft(saved.credential?.status)); setSecretVisible(false); setSecretError(''); setMessage(''); probe.cancelPending(); };
+  const discard = () => { const saved = savedRef.current; setDraftName(saved.name); setDraftAdapter(modelAdapterOf(saved.config)); setDraftUrl(String(saved.config.baseUrl || '')); setModel(savedModelNameOf(saved)); setSecretDraft(createSecretDraft(saved.credential?.status)); setSecretVisible(false); setSecretError(''); setMessage(''); probe.cancelPending(); };
   const secretStatus = !resource.credential?.status || resource.credential.status === 'missing' ? 'none' : resource.credential?.status === 'unavailable' ? 'error' : 'ok';
   const tested = testedOverride !== undefined ? testedOverride : resource.lastTest && !resource.lastTest.stale ? resource.lastTest.ok : null;
   return <div hidden={!active} className="config-prose">
     <ServiceHeading title={resource.name} address={String(resource.config.baseUrl || '')} enabled={resource.enabled} tested={tested} onEdit={trigger => open(undefined, trigger)}/>
-    <ServiceRow label="连接" value={modelProtocolLabel(savedProtocol)} keys={[String(resource.config.baseUrl || '')]} onOpen={trigger => open('连接', trigger)}/>
+    <ServiceRow label="连接" value={modelAdapterLabel(savedAdapter)} keys={[String(resource.config.baseUrl || '')]} onOpen={trigger => open('连接', trigger)}/>
     <ServiceRow label="密钥" keys={secretUpdated ? ['刚刚更新'] : []} value={secretStatus === 'none' ? '未设置' : secretStatus === 'error' ? '不可用' : '已设置'} status={secretStatus} statusText={secretStatus === 'none' ? '未设置（选填）' : secretStatus === 'error' ? '密钥不可用' : '已设置'} onOpen={trigger => open('密钥', trigger)}/>
     <ServiceRow label="模型" value={savedModelNameOf(resource) || '未选择'} keys={sameConnection && probe.listLoaded ? [`${probe.models.length} 个可选`] : []} status={tested === null ? 'off' : tested ? 'ok' : 'error'} statusText={tested === null ? '尚未测试' : tested ? '连接正常' : '连接失败'} onOpen={trigger => open('模型', trigger)}/>
     <ModelManagement resource={resource} roles={roles} activities={activities} impact={impact} active={active} canWrite={canWrite} onRemoved={onRemoved} onUpdated={onUpdated}/>
@@ -1646,12 +1710,14 @@ function ResourceDetail({ resource, roles, activities, active, canWrite, testedO
       footer={<ServiceSheetActions count={count} busy={busy} invalid={!draftName.trim() ? T10.name : !draftUrl.trim() ? T10.url : !!staleSite} error={message} pauseNames={pauseNames} onSubmit={() => void save()}/>}>
       {group => <>
         <MediaGroup title="名称" group={group}><div className="config-service-field-one"><Field label="模型服务名称"><Input aria-label="模型服务名称" maxLength={200} disabled={busy} value={draftName} onChange={event => setDraftName(event.target.value)}/></Field></div></MediaGroup>
-        <MediaGroup title="连接" group={group}><div className="config-connection"><Field label="协议"><Select disabled={busy} value={draftProtocol} onChange={event => { const next = event.target.value; setDraftProtocol(next); setDraftUrl(previous => resolveModelBaseUrlOnProtocolChange(previous, next)); probe.reset(); }}>{MODEL_PROTOCOL_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</Select></Field><Field label="服务地址"><Input disabled={busy} value={draftUrl} placeholder={modelBaseUrlPlaceholder(draftProtocol)} onChange={event => { setDraftUrl(event.target.value); probe.reset(); }}/></Field></div>
+        <MediaGroup title="连接" group={group}>
+          <ModelConnectionInputs adapter={draftAdapter} address={draftUrl} disabled={busy} onAdapter={changeDraftAdapter}
+            onAddress={value => { setDraftUrl(value); probe.reset(); }}/>
           <ServiceProbeAction busy={probe.testBusy} disabled={busy || probe.listBusy} notice={probeGroup === 'connection' ? probeNotice : null} onClick={() => runProbe('test', 'connection')}/>
-          <div className="config-connection-feedback">{staleSite && <p className="config-service-form-note">{T12}</p>}<ServicePauseNotice names={pauseNames}/>
+          <div className="config-connection-feedback">{staleSite && <p className="config-service-form-note">{credentialNotice}</p>}<ServicePauseNotice names={pauseNames}/>
             {impactError && connectionDirty && <p role="alert">影响范围读取失败：{impactError}</p>}</div></MediaGroup>
         <MediaGroup title="密钥" group={group}><SecretInput aria-label="模型密钥" disabled={busy} loading={secretLoading} value={secretDraft.value} visible={secretVisible} placeholder={secretDraft.hasExisting ? '留空则保留原密钥' : '选填'} onFocus={event => { if (!secretDraft.dirty && secretDraft.baselineSecret === null && secretDraft.value === SECRET_MASK_SENTINEL) event.currentTarget.select(); }} onToggleVisible={() => void toggleSecretVisible()} onChange={nextValue => { setSecretDraft(previous => nextSecretDraftOnInput(previous, nextValue)); setSecretError(''); probe.reset(); }}/>{secretError && <p role="alert">{secretError}</p>}<ServicePauseNotice names={pauseNames}/></MediaGroup>
-        <MediaGroup title="模型" group={group}><ModelNamePicker settings value={model} onChange={value => { setModel(value); probe.invalidateTest(); }} models={probe.models} listBusy={probe.listBusy} listError={probe.listError} listLoaded={probe.listLoaded} testBusy={probe.testBusy} testNote={probe.testModel === model ? probe.testNote : ''} notice={probeGroup === 'model' ? probeNotice : null} onRefresh={() => runProbe('list')} onTest={() => runProbe('test')} disabled={busy}/></MediaGroup>
+        <MediaGroup title="模型" group={group}><ModelNamePicker settings presets={modelPresets(draftAdapter, draftUrl)} value={model} onChange={value => { setModel(value); probe.invalidateTest(); }} models={probe.models} listBusy={probe.listBusy} listError={probe.listError} listLoaded={probe.listLoaded} testBusy={probe.testBusy} testNote={probe.testModel === model ? probe.testNote : ''} notice={probeGroup === 'model' ? probeNotice : null} onRefresh={() => runProbe('list')} onTest={() => runProbe('test')} disabled={busy}/></MediaGroup>
       </>}
     </ServiceSheet>
   </div>;

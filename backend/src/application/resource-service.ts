@@ -30,8 +30,10 @@ import type { RoleStorage } from "../storage/role-storage.js";
 import { runWithDecisionCommit } from "../storage/transaction-group.js";
 import type { CredentialSummary, CredentialResolver } from "./credential-resolver.js";
 import type { ModelBindingResolver } from "./model-binding-resolver.js";
+import type { ModelServiceConfig } from "../domain/model.js";
 import {
   fingerprintOf,
+  modelServiceIdentity,
   probeSalt,
   summarizeModelTest,
   type ModelTestSummary,
@@ -190,7 +192,7 @@ export class ResourceService {
           config,
           expectedSalts: [
             probeSalt({
-              ...(config as { protocol: "openai-chat" | "openai-responses" | "anthropic-messages" | "google-gemini"; baseUrl: string; credentialRef?: string }),
+              ...(config as ModelServiceConfig),
               ...(input.secret === undefined ? {} : { secret: input.secret }),
             }),
           ],
@@ -291,7 +293,7 @@ export class ResourceService {
       }
       if (
         current.kind === "model" &&
-        (nextConfig.protocol !== current.config.protocol ||
+        (nextConfig.provider !== current.config.provider || nextConfig.protocol !== current.config.protocol ||
           nextConfig.baseUrl !== current.config.baseUrl)
       ) {
         // 地址或协议变了，旧测试结果不再对应当前服务。
@@ -384,8 +386,8 @@ export class ResourceService {
       throw new ResourceCredentialConflictError();
     }
     if (current.kind === "model") {
-      const from = serviceIdentityOf(current.config);
-      const to = serviceIdentityOf(nextConfig);
+      const from = modelServiceIdentity(current.config);
+      const to = modelServiceIdentity(nextConfig);
       if (from !== to) {
         // 换站点或换协议后，旧凭据会被发到未确认的新服务。
         // 直填密钥与 env:/file: 引用都要重新确认，不能只拦其中一种。
@@ -666,6 +668,7 @@ export class ResourceService {
         ? current.config
         : parseResourceConfig("model", input.config);
     const connectionChanged =
+      nextConfig.provider !== current.config.provider ||
       String(nextConfig.protocol) !== String(current.config.protocol) ||
       String(nextConfig.baseUrl) !== String(current.config.baseUrl) ||
       nextConfig.credentialRef !== current.config.credentialRef ||
@@ -1063,20 +1066,6 @@ export class ResourceService {
   }
 }
 
-/**
- * 判断资源是否仍指向同一个服务：协议相同且 origin 相同。
- * 同站点换路径（例如换 API 版本前缀）算同一个服务，允许保留已存密钥；
- * 换域名、端口或协议都算换服务，需要用户重新确认凭据。
- */
-function serviceIdentityOf(config: Record<string, unknown>): string {
-  const protocol = typeof config.protocol === "string" ? config.protocol : "";
-  const baseUrl = typeof config.baseUrl === "string" ? config.baseUrl : "";
-  try {
-    return `${protocol} ${new URL(baseUrl).origin}`;
-  } catch {
-    return `${protocol} ${baseUrl}`;
-  }
-}
 
 /** MCP 环境变量值不进入列表与选择器，只保留键名。 */
 function redactMcpEnv(config: Record<string, unknown>): {

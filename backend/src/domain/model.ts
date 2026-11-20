@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ModelProvider } from "./model-providers.js";
 import {
   modelBaseConfigSchema,
   modelProtocolSchema,
@@ -14,7 +15,7 @@ export type ModelServiceConfig = z.infer<typeof modelServiceConfigSchema>;
  * 候选配置探测：可以带一次性密钥，只用于本次列表或测试，不落库。
  * 已保存服务走按 resourceId 的接口，密钥从统一凭据解析读取。
  */
-export const modelServiceProbeSchema = modelBaseConfigSchema.extend({
+export const modelServiceProbeSchema = modelBaseConfigSchema.safeExtend({
   secret: z.string().min(1).max(4000).optional(),
   /**
    * 复用已保存服务的密钥：以资源为基准解析，仅当协议与 origin 一致时允许
@@ -25,7 +26,7 @@ export const modelServiceProbeSchema = modelBaseConfigSchema.extend({
 export type ModelServiceProbe = z.infer<typeof modelServiceProbeSchema>;
 
 export const modelServiceTestSchema = modelServiceProbeSchema
-  .extend({
+  .safeExtend({
     model: z.string().trim().min(1).max(300),
   })
   .strict();
@@ -40,6 +41,9 @@ export interface ModelToolCall {
 // 适配层的可序列化续轮材料；业务层保存和回传，不解释厂商内容块。
 export interface ModelContinuation {
   protocol: ModelProtocol;
+  provider?: ModelProvider;
+  /** 角色图写入实际调用的资源编号，供后续轮次核对同地址下的不同账户。 */
+  resourceId?: string;
   modelName: string;
   baseUrl: string;
   items: Record<string, unknown>[];
@@ -92,6 +96,9 @@ export interface ModelToolSpec {
 
 export interface ModelRequest {
   modelName: string;
+  resourceId?: string;
+  /** 一段对话的稳定标识，仅供要求会话请求头的网关使用。 */
+  sessionId?: string;
   system: string;
   messages: ModelMessage[];
   tools: ModelToolSpec[];
@@ -151,6 +158,7 @@ export function isIncompleteCompletion(event: {
 
 export interface ModelListResult {
   models: string[];
+  source?: "preset";
 }
 
 export interface ModelTestResult {

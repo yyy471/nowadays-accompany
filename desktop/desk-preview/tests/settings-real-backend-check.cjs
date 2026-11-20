@@ -3,6 +3,7 @@
 // 仓库根目录运行：临时后端数据目录 + Electron；不访问模型或外部服务。
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
+const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -21,6 +22,87 @@ async function ev(expression) { const result = await cmd('Runtime.evaluate', { e
 const { click, pickRole, tab, openSheet } = configControls(ev, until);
 async function request(route, options = {}) { const response = await fetch(base + route, options); const body = await response.json(); if (!response.ok) throw Error(`${response.status}: ${JSON.stringify(body)}`); return body; }
 const json = body => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+async function verifyModelProviders(roleId) {
+  let reads = 0;
+  const upstream = http.createServer((req, res) => {
+    if (req.url !== '/v1/models' || req.headers['api-key'] !== 'offline-test') {
+      res.writeHead(403).end();
+      return;
+    }
+    reads++;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ data: [{ id: 'mimo-offline-chat' }, { id: 'mimo-offline-tts' }] }));
+  });
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
+  try {
+    await click(element('.ui-menu-trigger'));
+    await click(button('设置', '.ui-menu-panel:not([inert])'));
+    await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings'"));
+    await tab('模型');
+    await openSheet(element('.config-index-new'));
+    const select = element(`${sheet} select`);
+    const address = element(`${sheet} .config-connection input`);
+    const name = element(`${sheet} .config-service-field-one input`);
+    const model = element(`${sheet} .nd-model-picker input`);
+    const option = element(`${sheet} [role=option] button`);
+    const openCandidates = expected => until(() => ev(`(() => {
+      const field=${model}, item=${option};
+      if (item?.getClientRects().length && item.textContent.trim()===${JSON.stringify(expected)}) return true;
+      if (field && !field.disabled && !field.closest('[inert]') && field.getClientRects().length) {
+        field.focus(); field.click();
+      }
+      return false;
+    })()`));
+    for (const provider of ['opencode-go','deepseek','openrouter','xai','zai','mimo']) {
+      await ev(setValue(select, provider));
+      await until(() => ev(`${select}.value===${JSON.stringify(provider)} && ${address}.value.startsWith('https://')`));
+      assert.ok(await ev(`!!${button('读取列表', sheet)}`), provider);
+    }
+    await ev(setValue(select, 'google-gemini'));
+    await until(() => ev(`${model}.placeholder.includes('预置')`));
+    assert.equal(await ev(`!!${button('读取列表', sheet)}`), false);
+    await openCandidates('gemini-3.8-flash');
+    await ev(setValue(select, 'google-ai-studio'));
+    await until(() => ev(`${address}.value.includes('generativelanguage.googleapis.com') && !!${button('读取列表', sheet)}`));
+    await ev(setValue(select, 'mimo'));
+    await ev(setValue(name, 'MiMo 联调'));
+    await ev(setValue(address, `http://127.0.0.1:${upstream.address().port}/v1`));
+    await ev(setValue(element(`${sheet} input[aria-label="模型密钥"]`), 'offline-test'));
+    assert.equal(reads, 0);
+    await click(button('读取列表', sheet));
+    await until(() => reads === 1);
+    await openCandidates('mimo-offline-chat');
+    await ev(`${option}.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}))`);
+    await click(element(`${sheet} .config-save-btn`));
+    const saved = await until(async () => (await request('/v1/resources')).items.find(item => item.name === 'MiMo 联调'));
+    assert.deepEqual([saved.config.provider, saved.config.protocol, saved.config.modelName], ['mimo','openai-chat','mimo-offline-chat']);
+    await until(() => ev(`!${element(sheet)}`));
+    await openSheet(element('.config-prose:not([hidden]) [data-service-group="连接"] .config-sum-edit'));
+    await until(() => ev(`${select}?.value==='mimo'`));
+    await click(element(`${sheet} button[aria-label="关闭"]`));
+    await until(() => ev(`!${element(sheet)}`));
+    await click(element('.ui-menu-trigger'));
+    await click(button('角色配置', '.ui-menu-panel:not([inert])'));
+    await pickRole(roleId);
+    await tab('模型');
+    for (const kind of ['chat', 'memory']) {
+      await openSheet(element(`${editor} [data-edit="model:${kind}"] .config-sum-edit`));
+      await until(() => ev(`[...${select}.options].some(option=>option.value===${JSON.stringify(saved.resourceId)})`));
+      await ev(setValue(select, saved.resourceId));
+      const previousReads = reads;
+      await click(button('读取列表', sheet));
+      await until(() => reads === previousReads + 1);
+      await openCandidates('mimo-offline-chat');
+      await ev(`${option}.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}))`);
+      await click(element(`${sheet} .config-save-btn`));
+      await until(async () => (await request(`/v1/roles/${roleId}/bindings`)).items
+        .some(item => item.capability === `${kind}_model` && item.resourceId === saved.resourceId && item.modelName === 'mimo-offline-chat'));
+      await until(() => ev(`!${element(sheet)}`));
+    }
+  } finally {
+    await new Promise(resolve => upstream.close(resolve));
+  }
+}
 async function run() {
   backend = spawn(node, ['--import', 'tsx', 'src/main.ts', '--app-root', path.join(temp, 'app'), '--port', '0'], { cwd: path.join(root, 'backend'), windowsHide: true });
   backend.stdout.on('data', data => backendLog += data); backend.stderr.on('data', data => backendLog += data);
@@ -94,8 +176,9 @@ async function run() {
   await pickRole(c.roleId);
   await until(() => ev("document.querySelector('.config-role-switch')?.selectedOptions[0]?.textContent.includes('联调丙')"));
   assert.equal(fs.existsSync(path.join(temp, 'app', 'data', 'roles', b.roleId)), false, '清理路径应删除角色目录');
+  await verifyModelProviders(c.roleId);
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ realBackend: true, rename: true, replaceHome: true, deleteSprite: true, deleteOutfit: true, deleteRoleKeepHistory: true, deleteRoleAndData: true, companionFallback: true, errors }, null, 2));
+  console.log(JSON.stringify({ realBackend: true, modelProviders: true, rename: true, replaceHome: true, deleteSprite: true, deleteOutfit: true, deleteRoleKeepHistory: true, deleteRoleAndData: true, companionFallback: true, errors }, null, 2));
 }
 run().catch(async error => {
   console.error(error, backendLog.slice(-1500), electronLog.slice(-1000));

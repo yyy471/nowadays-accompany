@@ -1,5 +1,6 @@
 import { AppError } from "../domain/errors.js";
 import type { ModelMessage, ModelProtocol, ModelRequest } from "../domain/model.js";
+import type { ModelProvider } from "../domain/model-providers.js";
 import { renderWebReadingPrefix, webReadingCandidates, webReadingRequest } from "../domain/web-reading.js";
 import { serializeModelRequest } from "../model/protocols.js";
 
@@ -24,6 +25,7 @@ export function selectAgentContext(input: {
   request: ModelRequest;
   prompt: AgentSystemPrompt;
   protocol: ModelProtocol;
+  provider?: ModelProvider;
   baseUrl: string;
   maxInputChars?: number;
   maxOutputChars?: number;
@@ -49,7 +51,7 @@ export function selectAgentContext(input: {
     ...request,
     messages: [...selected.entries()].sort(([a], [b]) => a - b).flatMap(([, messages]) => messages),
   });
-  const size = () => serializeModelRequest(input.protocol, input.baseUrl, withSelection()).length;
+  const size = () => serializeModelRequest(input.protocol, input.baseUrl, withSelection(), input.provider).length;
   const fits = () => size() + reserve <= maxInputChars;
   const minimumChars = size();
   if (minimumChars + reserve > maxInputChars) {
@@ -195,6 +197,7 @@ function groupMessages(
   messages: readonly ModelMessage[],
   input: {
     protocol: ModelProtocol;
+    provider?: ModelProvider;
     baseUrl: string;
     request: ModelRequest;
     resuming: boolean;
@@ -202,13 +205,22 @@ function groupMessages(
   },
 ): MessageGroup[] {
   const groups: MessageGroup[] = [];
+  const lastUser = messages.reduce((last, message, index) => message.role === "user" ? index : last, -1);
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index]!;
+    const continuation = message.role === "assistant" ? message.continuation : undefined;
+    const sameResource = input.originalModelResource !== false &&
+      (continuation?.resourceId === undefined || continuation.resourceId === input.request.resourceId);
     if (message.role !== "assistant" || !message.toolCalls?.length) {
-      const historical = message.role === "tool" && message.source?.historical !== true;
+      let projected = message;
+      if (message.role === "tool" && message.source?.historical !== true) projected = asHistoricalFact(message);
+      if (message.role === "assistant" && continuation && !sameResource) {
+        const { continuation: _previous, ...text } = message;
+        projected = text;
+      }
       groups.push({
         index,
-        messages: [historical ? asHistoricalFact(message) : message],
+        messages: [projected],
         required: message.role === "user" && (
           message.source?.currentUserRequest === true || message.source === undefined
         ),
@@ -224,16 +236,18 @@ function groupMessages(
       results.push(result);
       index = following;
     }
-    const continuation = message.continuation;
-    const original = continuation?.protocol === input.protocol &&
+    const original = continuation?.protocol === input.protocol && continuation.provider === input.provider &&
       continuation.modelName === input.request.modelName &&
       continuation.baseUrl === input.baseUrl && continuation.items.length > 0;
     const paired = results.length === message.toolCalls.length &&
       new Set(results.map((result) => result.toolCallId)).size === results.length &&
       message.toolCalls.every((call) => results.some((result) => result.toolCallId === call.callId));
-    // 较早调用回放为业务事实。只有本轮能够确认配对及厂商身份的续轮使用原生块。
-    if (paired && index === messages.length - 1 && input.originalModelResource !== false &&
-        (original || (!continuation && !input.resuming))) {
+    // 同一用户轮次可能连续调用多批工具。有签名或推理的原生调用必须与其结果整组保留。
+    const providerChain = (input.provider !== undefined || input.protocol === "google-gemini") &&
+      start > lastUser && original &&
+      (input.request.resourceId === undefined || continuation?.resourceId === input.request.resourceId);
+    const latest = index === messages.length - 1 && (original || (!continuation && !input.resuming));
+    if (paired && sameResource && (providerChain || latest)) {
       groups.push({ index: start, messages: [message, ...results], required: true, active: true });
       continue;
     }

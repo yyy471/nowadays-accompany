@@ -30,6 +30,7 @@ import {
   type ModelUsage,
 } from "../domain/model.js";
 import { webReadingReference } from "../domain/web-reading.js";
+import type { ModelProvider } from "../domain/model-providers.js";
 import type { ConversationStore } from "../storage/conversation-store.js";
 import type { RoleStore } from "../storage/role-store.js";
 import { decisionQuery, selectAgentContext, type AgentSystemPrompt } from "./agent-context.js";
@@ -39,6 +40,7 @@ export interface AgentModelHandle {
   resourceId: string;
   modelName: string;
   protocol: ModelProtocol;
+  provider?: ModelProvider;
   baseUrl?: string;
   maxInputChars?: number;
   maxOutputChars?: number;
@@ -321,6 +323,8 @@ export class AgentGraphRunner {
     const request = selectAgentContext({
       request: {
         modelName: current.modelName,
+        resourceId: current.resourceId,
+        sessionId: `${state.roleId}/${state.windowId}`,
         system: "",
         messages: this.deps.prepareModelMessages?.(messages) ?? messages,
         // 收尾仍提供工具定义；返回的调用一律不派发。
@@ -329,6 +333,7 @@ export class AgentGraphRunner {
       },
       prompt: typeof prompt === "string" ? { required: prompt, optional: [] } : prompt,
       protocol: current.protocol,
+      ...(current.provider === undefined ? {} : { provider: current.provider }),
       baseUrl: current.baseUrl ?? "",
       ...(current.maxInputChars === undefined ? {} : { maxInputChars: current.maxInputChars }),
       ...(current.maxOutputChars === undefined ? {} : { maxOutputChars: current.maxOutputChars }),
@@ -414,7 +419,7 @@ export class AgentGraphRunner {
             : { incomplete: event.incomplete }),
           ...(event.continuation === undefined
             ? {}
-            : { continuation: event.continuation }),
+            : { continuation: { ...event.continuation, resourceId: current.resourceId } }),
           ...(event.rawResponse === undefined
             ? {}
             : { rawResponse: event.rawResponse }),

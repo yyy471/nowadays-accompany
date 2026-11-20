@@ -83,6 +83,37 @@ test("点击日志按来源相互覆盖，并在更换未测模型名后隐藏�
   assert.equal(visibleProbeNotice(null, "gemini-2.5-flash"), null);
 });
 
+test("服务商选项回显官网地址、实际协议与独立的凭据范围", async () => {
+  const { MODEL_ADAPTER_OPTIONS, defaultModelBaseUrl, resolveModelBaseUrlOnProtocolChange,
+    modelAdapterOf, modelConnectionFields, modelCredentialScope, modelPresets } = await load();
+  const adapters = ["opencode-go", "deepseek", "openrouter", "xai", "zai", "mimo"];
+  for (const adapter of adapters) {
+    assert.ok(MODEL_ADAPTER_OPTIONS.some(entry => entry.value === adapter));
+    const url = resolveModelBaseUrlOnProtocolChange("https://previous.example/v1", adapter, "openai-chat");
+    const fields = modelConnectionFields(adapter, url);
+    assert.equal(fields.baseUrl, defaultModelBaseUrl(adapter));
+    assert.equal(fields.protocol, adapter === "xai" ? "openai-responses" : "openai-chat");
+    assert.equal(fields.provider, adapter);
+    assert.equal(modelAdapterOf(fields), adapter);
+    assert.equal(modelPresets(adapter, url), undefined);
+    assert.equal(resolveModelBaseUrlOnProtocolChange(url, "anthropic-messages", adapter), "");
+  }
+  const shared = "https://proxy.example/v1";
+  assert.notEqual(modelCredentialScope("mimo", shared), modelCredentialScope("deepseek", shared));
+  assert.equal(modelCredentialScope("mimo", shared), modelCredentialScope("mimo", shared + "/other"));
+  assert.equal(modelConnectionFields("openai-chat", shared).provider, undefined);
+  const studio = modelConnectionFields("google-ai-studio", defaultModelBaseUrl("google-ai-studio"));
+  assert.equal(modelAdapterOf(studio), "google-ai-studio");
+  assert.equal(studio.protocol, "google-gemini");
+  assert.equal(studio.provider, undefined);
+  const studioProxy = modelConnectionFields("google-ai-studio", shared);
+  assert.equal(modelAdapterOf(studioProxy), "google-ai-studio");
+  assert.equal(studioProxy.provider, "google-ai-studio");
+  assert.equal(modelPresets(studio.protocol, studio.baseUrl), undefined);
+  assert.deepEqual(modelPresets("google-gemini", defaultModelBaseUrl("google-gemini")), ["gemini-3.8-flash", "gemini-3.5-flash"]);
+  assert.equal(modelPresets("google-gemini", shared + "/publishers/google"), undefined);
+});
+
 test("模型密钥文本框草稿正确处理掩码、清空、替换、显隐与保存意图", async () => {
   const {
     SECRET_MASK_SENTINEL,

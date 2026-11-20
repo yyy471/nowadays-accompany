@@ -6,6 +6,7 @@
 
 | 模块 / 专项 | 当前状态（离线范围） | 核心证据 | 未决 / 下一阶段 |
 | --- | --- | --- | --- |
+| 文本模型服务商（DL-118） | 六家专用服务商支持点击读取，Vertex AI Express 提供预置。Electron 已验证新建、读取、保存及角色对话和记忆绑定。连续两批工具调用的原生推理回传与跨资源隔离已通过独立复验 | [适配矩阵](specs/role-config-and-activity.md#231-模型服务商与候选来源) · [协议回归](../backend/tests/model-providers.test.ts) | 使用账户密钥验证各厂商实际生成与工具续轮 |
 | 首轮后端原型（P0～P5） | 已收口并合入 `master` | [195 P5 复核](archive/01-backend-prototype/195-p5-independent-review.md) · [198 缺口复验](archive/01-backend-prototype/198-p5-capability-gaps-independent-review.md#r01-第三次补修的独立复验) | 远程 Streamable HTTP MCP 按 DL-115 排在桌面前端完成后 |
 | 角色外观与每日穿搭 | 首轮实施与离线复验通过（R01～R03 关闭） | [210](archive/03-appearance-and-performance/210-appearance-implementation-record.md) · [211](archive/03-appearance-and-performance/211-appearance-independent-review.md#r01-全帧校验补修独立复验) | 与真实服务、后续生图锚点联动 |
 | 对话演出与过场图（CG-01／02） | 第一包与 CG-01／02 通过离线复验 | [216](archive/03-appearance-and-performance/216-conversation-performance-independent-review.md#6-217-第-7-节补修独立复验) · [227](archive/03-appearance-and-performance/227-scene-image-independent-review.md#7-228-第-10-节-r06-独立复验) | 按 [223](archive/03-appearance-and-performance/223-conversation-performance-development-guide.md) 推进 CG-03 自动触发与恢复、CG-04 独立复核与真实适配 |
