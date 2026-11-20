@@ -133,9 +133,9 @@ export class AutonomyService {
     return wake;
   }
 
-  listWakes(roleId: string, limit = 100): AutonomyWakeRecord[] {
+  listWakes(roleId: string, limit = 100, offset = 0): AutonomyWakeRecord[] {
     return this.access.withStore(roleId, (storage) =>
-      this.store(storage.business.db, roleId).listWakes(limit),
+      this.store(storage.business.db, roleId).listWakes(limit, offset),
     );
   }
 
@@ -164,9 +164,15 @@ export class AutonomyService {
     );
   }
 
-  listActivities(roleId: string, limit = 100): AutonomyActivityRecord[] {
+  listActivities(roleId: string, limit = 100, offset = 0): AutonomyActivityRecord[] {
     return this.access.withStore(roleId, (storage) =>
-      this.store(storage.business.db, roleId).listActivities(limit),
+      this.store(storage.business.db, roleId).listActivities(limit, offset),
+    );
+  }
+
+  listActivitiesWithShares(roleId: string, limit = 100, offset = 0) {
+    return this.access.withStore(roleId, (storage) =>
+      this.store(storage.business.db, roleId).listActivitiesWithShares(limit, offset),
     );
   }
 

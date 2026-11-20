@@ -11,6 +11,7 @@ import { HomePage } from './pages/Home';
 import { Relations } from './Relations';
 import { SettingsWorkspace, type ConfigNavigationGuard } from './pages/Settings';
 import { ConversationPage } from './pages/Conversation';
+import { FeedPage } from './pages/Feed';
 import { RoleEntry } from './pages/RoleEntry';
 import { needsEntryPick } from './entry/role-entry.js';
 import { createStateVersionGate } from './state-version.js';
@@ -21,10 +22,20 @@ export function App() {
   const [scope] = useState(createMotionScope);
   const pageBody = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState('home');
+  const [conversationTarget, setConversationTarget] = useState<{ roleId: string; windowId: string; messageId?: string } | null>(null);
+  const [conversationFromFeed, setConversationFromFeed] = useState(false);
+  const [feedVisited, setFeedVisited] = useState(false);
+  const handleConversationTarget = useCallback(() => setConversationTarget(null), []);
+  useEffect(() => { if (page === 'feed') setFeedVisited(true); }, [page]);
+  useEffect(() => {
+    if (page !== 'conversation') { setConversationTarget(null); setConversationFromFeed(false); }
+  }, [page]);
   const [configFooterLeft, setConfigFooterLeft] = useState<HTMLDivElement | null>(null);
   const [configFooterRight, setConfigFooterRight] = useState<HTMLDivElement | null>(null);
   const configGuard = useRef<ConfigNavigationGuard | null>(null);
   const configSwap = useRef({ generation: 0, animations: [] as Animation[] });
+  const feedTransition = useRef<ViewTransition | null>(null);
+  const feedOrigin = useRef<{ eventId: string; roleId: string; messageId?: string } | null>(null);
   const applyPage = (next: string, after?: () => void) => {
     if (next === page) return;
     const apply = () => { after?.(); setPage(next); };
@@ -60,8 +71,62 @@ export function App() {
     if ((page === 'role-config' || page === 'settings') && configGuard.current) configGuard.current(next, proceed);
     else proceed();
   };
+  const navigateFeedChat = (next: 'feed' | 'conversation', target?: { roleId: string; windowId: string; messageId?: string; eventId: string }) => {
+    feedTransition.current?.skipTransition();
+    if (target) feedOrigin.current = { eventId: target.eventId, roleId: target.roleId, messageId: target.messageId };
+    const origin = feedOrigin.current;
+    const feedCard = () => [...document.querySelectorAll<HTMLElement>('[data-feed-chat]')]
+      .find(element => element.dataset.feedChat === origin?.eventId)?.closest<HTMLElement>('.feed-slip') ?? null;
+    const old = next === 'conversation' ? feedCard() : [...document.querySelectorAll<HTMLElement>('.dialogue-message[data-message-id]')]
+      .find(element => {
+        const host = element.closest('.dialogue-messages')?.getBoundingClientRect();
+        const rect = element.getBoundingClientRect();
+        return origin?.roleId === currentId && element.dataset.messageId === origin.messageId && !!host && rect.bottom > host.top && rect.top < host.bottom;
+      })?.querySelector<HTMLElement>('.dialogue-bubble') ?? null;
+    const preview = next === 'conversation' ? old?.querySelector('.feed-letter-text')?.textContent : null;
+    const apply = () => navigate(next, target ? () => { setCurrentId(target.roleId); setConversationTarget(target); setConversationFromFeed(true); } : undefined);
+    if (motion.reduced || !document.startViewTransition) { apply(); return; }
+    const scopeElement = old ?? pageBody.current;
+    if (!scopeElement) { apply(); return; }
+    document.documentElement.dataset.feedTransition = '';
+    document.documentElement.style.setProperty('--feed-transition-duration', `${readMotionTime(scopeElement, next === 'feed' ? '--nd-semantic-motion-page-exit' : '--nd-semantic-motion-page', next === 'feed' ? 260 : 360)}ms`);
+    document.documentElement.style.setProperty('--feed-transition-ease', readMotionValue(scopeElement, next === 'feed' ? '--nd-semantic-motion-ease-in' : '--nd-semantic-motion-ease-out', 'ease'));
+    if (old && origin?.messageId) old.style.viewTransitionName = 'feed-share';
+    let incoming: HTMLElement | null = null;
+    let proxyHost: HTMLElement | null = null;
+    const transition = document.startViewTransition(() => {
+      if (old) old.style.viewTransitionName = '';
+      flushSync(apply);
+      if (!old || !origin?.messageId) return;
+      if (next === 'feed') incoming = feedCard();
+      else if (preview) {
+        const pane = document.querySelector<HTMLElement>('.dialogue-pane');
+        proxyHost = pane ?? document.querySelector<HTMLElement>('.dialogue-host');
+        if (proxyHost) {
+          incoming = document.createElement('div');
+          incoming.className = `dialogue-bubble feed-transition-proxy${pane ? '' : ' feed-transition-proxy-fallback'}`;
+          incoming.setAttribute('aria-hidden', 'true');
+          incoming.textContent = preview;
+          if (!pane) proxyHost.classList.add('feed-transition-host');
+          proxyHost.append(incoming);
+        }
+      }
+      if (incoming) incoming.style.viewTransitionName = 'feed-share';
+    });
+    feedTransition.current = transition;
+    void transition.ready.catch(() => {}).finally(() => {
+      if (old) old.style.viewTransitionName = '';
+      if (incoming?.classList.contains('feed-transition-proxy')) incoming.remove();
+      else if (incoming) incoming.style.viewTransitionName = '';
+      proxyHost?.classList.remove('feed-transition-host');
+    });
+    void transition.finished.catch(() => {}).finally(() => {
+      if (feedTransition.current === transition) { feedTransition.current = null; delete document.documentElement.dataset.feedTransition; }
+    });
+  };
   useEffect(() => {
     if (motion.reduced) configSwap.current.animations.forEach(animation => animation.cancel());
+    if (motion.reduced) feedTransition.current?.skipTransition();
   }, [motion.reduced]);
   // 冷启动先选角（DL-147）；自动化脚本可用 NOWADAYS_SKIP_ROLE_PICKER 直入工作区。
   const [entered, setEntered] = useState(false);
@@ -235,22 +300,23 @@ export function App() {
     <UiThemeScope theme="xiacheng" className="studio-header-scope"><header className="studio-header">
       <ControlButton className="ui-studio-brand" aria-label="返回主页" onClick={() => navigate('home')}><BrandMark/><span>Nowadays<small>A NOTE FOR YOUR EVERYDAY.</small></span></ControlButton>
       <ThemeSwitcher/>
-      {page === 'role-config' || page === 'settings' ? <div className="studio-header-actions">
+      {page === 'role-config' || page === 'settings' || page === 'feed' ? <div className="studio-header-actions">
         <ControlButton className="config-motion-toggle" aria-pressed={motion.reduced} aria-label="减少动效" title="减少动效"
           onClick={() => motion.select(motion.reduced ? 'full' : 'reduced')}><Icon name="tune" size={13}/><span>减少动效</span></ControlButton>
       </div> : <div className="studio-header-actions" aria-hidden="true"/>}
     </header></UiThemeScope>
     <main className="studio-content" tabIndex={-1} aria-label="当前页面内容"><UiThemeProvider theme="xiacheng">
-      <div ref={pageBody} className={page === 'home' ? 'studio-home-content' : page === 'roles' ? 'studio-relations-content' : page === 'conversation' ? 'studio-conversation-content' : 'studio-legacy-page'}>
+      <div ref={pageBody} className={page === 'home' ? 'studio-home-content' : page === 'roles' ? 'studio-relations-content' : page === 'conversation' ? 'studio-conversation-content' : page === 'feed' ? 'studio-feed-content' : 'studio-legacy-page'}>
         {page === 'home' && <UiThemeScope theme="xiacheng"><HomePage accounts={accounts} selectedAccountId={currentId} outfitHomeUrl={outfitHomeUrl} outfitName={currentOutfit?.name ?? null} loading={!roles && !error} error={error} onRetry={() => refresh()} onGoWorkbench={() => setPage('roles')} onCreateRole={() => { issueWorkspaceRequest({ kind: 'create' }); setPage('role-config'); }}/></UiThemeScope>}
         {page === 'roles' && <Relations roles={roles || []} error={error} currentId={currentId} visit={rolesVisit} onSelect={setCurrentId} onOpenSettings={() => setPage('role-config')}/>}
-        {page === 'conversation' && <ConversationPage roles={roles || []} currentId={currentId} currentOutfit={currentOutfit} outfits={outfits} outfitHomeUrl={outfitHomeUrl} appearanceLoading={appearanceLoading} loading={!roles && !error} error={error} hideDock={hideConversationDock} onHideDockChange={setConversationDockHidden} onSelectRole={setCurrentId} onOpenRelations={() => setPage('roles')} onConfigureModel={() => { issueWorkspaceRequest({ kind: 'section', roleId: currentId, section: 'models' }); setPage('role-config'); }} onCreateRole={() => { issueWorkspaceRequest({ kind: 'create' }); setPage('role-config'); }} onRoleStateChanged={() => { void refresh(); }}/>}
+        {page === 'conversation' && <ConversationPage roles={roles || []} currentId={currentId} currentOutfit={currentOutfit} outfits={outfits} outfitHomeUrl={outfitHomeUrl} appearanceLoading={appearanceLoading} loading={!roles && !error} error={error} hideDock={hideConversationDock} onHideDockChange={setConversationDockHidden} onSelectRole={id => { setCurrentId(id); setConversationTarget(null); }} onOpenRelations={() => setPage('roles')} onConfigureModel={() => { issueWorkspaceRequest({ kind: 'section', roleId: currentId, section: 'models' }); setPage('role-config'); }} onCreateRole={() => { issueWorkspaceRequest({ kind: 'create' }); setPage('role-config'); }} onRoleStateChanged={() => { void refresh(); }} initialTarget={conversationTarget} onTargetHandled={handleConversationTarget} onReturnFeed={conversationFromFeed ? () => navigateFeedChat('feed') : undefined}/>}
+        {(page === 'feed' || feedVisited) && <div className="feed-mounted" hidden={page !== 'feed'}><FeedPage active={page === 'feed'} roles={roles || []} rolesLoading={!roles && !roleListError} roleError={roleListError} onRetryRoles={() => void refresh()} onOpenChat={target => navigateFeedChat('conversation', target)}/></div>}
         {settingsVisited && <SettingsWorkspace page={page} roles={roles || []} currentId={currentId} roleListError={roleListError} onRoleDeleted={removeRoleLocally} onRefresh={refresh} onNavigate={applyPage} navigationGuard={configGuard} footerLeft={configFooterLeft} footerRight={configFooterRight} workspaceRequest={workspaceRequest} onWorkspaceRequestHandled={handleWorkspaceRequestHandled} onStartConversation={roleId => navigate('conversation', () => setCurrentId(roleId))}/>}
       </div>
     </UiThemeProvider></main>
     {!dockHidden && <UiThemeScope theme="xiacheng" className="studio-footer-scope"><footer className="studio-footer">
-      {page === 'role-config' || page === 'settings' ? <div ref={setConfigFooterLeft} id="config-footer-left" className="config-footer-left"/> : <span className="studio-runtime">{error ? '连接状态待更新' : roles ? `${roles.length} 位角色 · 本地生活空间` : '正在连接'}</span>}
-      <PageDock page={page} onNavigate={next => navigate(next, () => { if (next === 'roles') setRolesVisit(value => value + 1); })}/>{page === 'role-config' || page === 'settings' ? <div ref={setConfigFooterRight} id="config-footer-right" className="config-footer-right"/> : <span className="studio-edition">CHARACTER STUDIO / 开发版</span>}
+      {page === 'role-config' || page === 'settings' ? <div ref={setConfigFooterLeft} id="config-footer-left" className="config-footer-left"/> : page === 'feed' ? <span/> : <span className="studio-runtime">{error ? '连接状态待更新' : roles ? `${roles.length} 位角色 · 本地生活空间` : '正在连接'}</span>}
+      <PageDock page={page} onNavigate={next => navigate(next, () => { if (next === 'roles') setRolesVisit(value => value + 1); })}/>{page === 'role-config' || page === 'settings' ? <div ref={setConfigFooterRight} id="config-footer-right" className="config-footer-right"/> : page === 'feed' ? <span/> : <span className="studio-edition">CHARACTER STUDIO / 开发版</span>}
     </footer></UiThemeScope>}
   </div>;
 }

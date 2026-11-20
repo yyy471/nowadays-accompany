@@ -2067,16 +2067,16 @@ export class MemoryStore {
     };
   }
 
-  listBatches(roleId: string, limit: number): MemoryBatchRecord[] {
+  listBatches(roleId: string, limit: number, offset = 0): MemoryBatchRecord[] {
     const rows = this.db
       .prepare(
         `SELECT batch_id, role_id, status, input_from_sequence, input_to_sequence,
                 context_budget_chars, output_reserve_chars, attempt_count,
                 last_error_code, started_at, finished_at, created_at
          FROM memory_batches WHERE role_id = ?
-         ORDER BY created_at DESC, batch_id DESC LIMIT ?`,
+         ORDER BY created_at DESC, batch_id DESC LIMIT ? OFFSET ?`,
       )
-      .all(roleId, limit) as BatchRow[];
+      .all(roleId, limit, offset) as BatchRow[];
     return rows.map(mapBatch);
   }
 

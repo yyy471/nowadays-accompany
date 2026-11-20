@@ -6,7 +6,7 @@ export function ThemeSwitcher({ disabled = false }: { disabled?: boolean }) {
   const { requestedPreset, select } = useThemePreset();
   const choices: ReadonlyArray<{ id: ThemePreset; label: string }> = [{ id: 'daylight', label: '白昼来信' }, { id: 'nightwave', label: '晚风电台' }];
   return <div className="ui-theme-switcher" role="group" aria-label="昼夜主题">
-    {choices.map(choice => <ControlButton key={choice.id} data-theme-choice={choice.id} aria-pressed={requestedPreset === choice.id} disabled={disabled} onClick={() => select(choice.id)}>
+    {choices.map(choice => <ControlButton key={choice.id} data-theme-choice={choice.id} aria-label={choice.label} aria-pressed={requestedPreset === choice.id} disabled={disabled} onClick={() => select(choice.id)}>
       <span className={`ui-theme-symbol is-${choice.id}`} aria-hidden="true">{choice.id === 'daylight' ? '☀' : '☾'}</span><span>{choice.label}</span>
     </ControlButton>)}
   </div>;

@@ -78,6 +78,10 @@ export interface AutonomyActivityRecord {
   updatedAt: string;
 }
 
+export interface AutonomyActivityWithShare extends AutonomyActivityRecord {
+  sharedMessage: { messageId: string; windowId: string; content: string; createdAt: string } | null;
+}
+
 interface BudgetRow {
   role_id: string;
   local_date: string;
@@ -687,15 +691,15 @@ export class AutonomyStore {
     return mapWake(row);
   }
 
-  listWakes(limit = 100): AutonomyWakeRecord[] {
+  listWakes(limit = 100, offset = 0): AutonomyWakeRecord[] {
     const rows = this.db
       .prepare(
         `SELECT * FROM autonomy_wakes
           WHERE role_id = ?
           ORDER BY created_at DESC, rowid DESC
-          LIMIT ?`,
+          LIMIT ? OFFSET ?`,
       )
-      .all(this.roleId, limit) as WakeRow[];
+      .all(this.roleId, limit, offset) as WakeRow[];
     return rows.map(mapWake);
   }
 
@@ -797,16 +801,39 @@ export class AutonomyStore {
       .run(now, reason, now, wakeId, this.roleId);
   }
 
-  listActivities(limit = 100): AutonomyActivityRecord[] {
+  listActivities(limit = 100, offset = 0): AutonomyActivityRecord[] {
     const rows = this.db
       .prepare(
         `SELECT * FROM autonomy_activities
           WHERE role_id = ?
           ORDER BY created_at DESC, rowid DESC
-          LIMIT ?`,
+          LIMIT ? OFFSET ?`,
       )
-      .all(this.roleId, limit) as ActivityRow[];
+      .all(this.roleId, limit, offset) as ActivityRow[];
     return rows.map(mapActivity);
+  }
+
+  listActivitiesWithShares(limit = 100, offset = 0): AutonomyActivityWithShare[] {
+    const rows = this.db.prepare(
+      `SELECT a.*, m.message_id AS share_message_id, m.window_id AS share_window_id,
+              m.content AS share_content, m.created_at AS share_created_at
+         FROM autonomy_activities a
+         LEFT JOIN messages m ON m.message_id = a.shared_message_id
+          AND m.window_id = (SELECT window_id FROM windows
+            WHERE role_id = a.role_id AND kind = 'main' ORDER BY rowid ASC LIMIT 1)
+        WHERE a.role_id = ?
+        ORDER BY a.created_at DESC, a.rowid DESC LIMIT ? OFFSET ?`,
+    ).all(this.roleId, limit, offset) as Array<ActivityRow & {
+      share_message_id: string | null; share_window_id: string | null;
+      share_content: string | null; share_created_at: string | null;
+    }>;
+    return rows.map(row => ({
+      ...mapActivity(row),
+      sharedMessage: row.share_message_id === null ? null : {
+        messageId: row.share_message_id, windowId: row.share_window_id!,
+        content: row.share_content!, createdAt: row.share_created_at!,
+      },
+    }));
   }
 
   hasPausedActivity(): boolean {

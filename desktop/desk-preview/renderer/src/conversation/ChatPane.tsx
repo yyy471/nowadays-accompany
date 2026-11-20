@@ -153,7 +153,9 @@ export function ChatPane({
     const host = scroller.current;
     if (!element || !host) return;
     const top = element.getBoundingClientRect().top - host.getBoundingClientRect().top + host.scrollTop - 18;
-    host.scrollTo({ top: Math.max(0, top), behavior: policy.reduced ? 'auto' : 'smooth' });
+    // 定位可能跨多页读取；立即落位避免滚动事件在平滑滚动途中重新开启跟随。
+    olderAnchor.current = null;
+    host.scrollTo({ top: Math.max(0, top), behavior: 'instant' });
     element.focus({ preventScroll: true });
   }, [locatedRowId, policy.reduced]);
 
@@ -270,9 +272,9 @@ export function ChatPane({
           </div>);
         }
         if (row.status === 'interrupted') parts.push(<div key={`status-${row.id}`} className="dialogue-status">未说完</div>);
-        return <article key={row.id} className={`dialogue-message ${row.role}`} data-segment-id={row.segmentId}
+        return <article key={row.id} className={`dialogue-message ${row.role}`} data-segment-id={row.segmentId} data-message-id={row.messageId}
           ref={element => { if (element) rows.current.set(row.id, element); else rows.current.delete(row.id); }}
-          tabIndex={located ? -1 : undefined}
+          tabIndex={-1}
           data-live={isLive ? '' : undefined} data-located={located ? '' : undefined}
           aria-label={`${row.role === 'user' ? '你' : '角色'}，${dateCaption(key)} ${timeLabel(row.createdAt)}`}>
           {divider ? <div className="dialogue-date" aria-hidden="true">{dateCaption(key)}</div> : null}

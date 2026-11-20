@@ -321,7 +321,8 @@ export function useWindowSession({
         emit({ reason: 'error', message: state.current.loadError });
         return;
       }
-      const wanted = preferred.current || result.items.find(item => item.kind === 'main')?.windowId || result.items[0]?.windowId || null;
+      const wanted = result.items.find(item => item.windowId === preferred.current)?.windowId
+        || result.items.find(item => item.kind === 'main')?.windowId || result.items[0]?.windowId || null;
       setWindowId(wanted);
     }).catch(error => {
       if (!active) return;
@@ -992,13 +993,24 @@ export function useWindowSession({
     return true;
   }, [build, loadOlder]);
 
+  const locateMessage = useCallback(async (messageId: string): Promise<number | null> => {
+    const generation = state.current.generation;
+    const targetRole = roleRef.current;
+    while (!state.current.messages.has(messageId)) {
+      if (state.current.generation !== generation || roleRef.current !== targetRole) return null;
+      if (!await loadOlder()) return null;
+    }
+    if (state.current.generation !== generation || roleRef.current !== targetRole) return null;
+    return build().messages.find(row => row.messageId === messageId)?.id ?? null;
+  }, [build, loadOlder]);
+
   const retry = useCallback(() => {
     if (windows.length === 0) setWindowsToken(value => value + 1);
     else setReloadToken(value => value + 1);
   }, [windows.length]);
 
   const noteTyping = useCallback(() => typing.current?.input(), []);
-  return { snapshot, windows, windowId, selectWindow, retry, send, retryWaiting, clearRejection, advance, advanceAll, requestScene, noteTyping, loadOlder, loadHistory, cancelHistory, ensureVisible };
+  return { snapshot, windows, windowId, selectWindow, retry, send, retryWaiting, clearRejection, advance, advanceAll, requestScene, noteTyping, loadOlder, loadHistory, cancelHistory, ensureVisible, locateMessage };
 }
 
 function mergeSceneTask(previous: SceneTaskView | undefined, payload: StreamEventView, windowId: string): SceneTaskView {

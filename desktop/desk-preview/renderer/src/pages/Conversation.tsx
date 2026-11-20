@@ -47,6 +47,9 @@ export function ConversationPage({
   onConfigureModel,
   onCreateRole,
   onRoleStateChanged,
+  initialTarget,
+  onTargetHandled,
+  onReturnFeed,
 }: {
   roles: RoleListItem[];
   currentId: string;
@@ -63,6 +66,9 @@ export function ConversationPage({
   onConfigureModel: () => void;
   onCreateRole: () => void;
   onRoleStateChanged?: () => void;
+  initialTarget?: { roleId: string; windowId: string; messageId?: string } | null;
+  onTargetHandled?: () => void;
+  onReturnFeed?: () => void;
 }) {
   const { preset } = useThemePreset();
   // 换光由本页接管：舞台光线 + 纸面逐行推进，不再退回整页天气动画。
@@ -164,10 +170,39 @@ export function ConversationPage({
   const handleEventRef = useRef<(snapshot: ConversationSnapshot, event: SessionEvent) => void>(() => {});
   const session = useWindowSession({
     roleId: currentId,
-    preferredWindowId: role?.defaultWindowId ?? null,
+    preferredWindowId: initialTarget?.roleId === currentId ? initialTarget.windowId : role?.defaultWindowId ?? null,
     onEvent: (snapshot, event) => handleEventRef.current(snapshot, event)
   });
   const snapshot = session.snapshot;
+  const targetRequest = useRef(false);
+  useEffect(() => {
+    if (!initialTarget || initialTarget.roleId !== currentId || !snapshot || snapshot.roleId !== currentId || snapshot.loading || snapshot.loadError || targetRequest.current) return;
+    if (snapshot.windowId !== initialTarget.windowId) {
+      showToast('无法打开原对话窗口。');
+      onTargetHandled?.();
+      return;
+    }
+    if (!initialTarget.messageId) { onTargetHandled?.(); return; }
+    targetRequest.current = true;
+    setFollow(false);
+    setHistoryLock(true);
+    let active = true;
+    void session.locateMessage(initialTarget.messageId).then(row => {
+      if (!active) return;
+      if (row === null) showToast('无法定位这条分享，请在对话中重试。');
+      else {
+        // 分页期间的滚动反馈可能恢复了跟随，定位完成后重新锁定阅读位置。
+        setFollow(false);
+        setHistoryLock(true);
+        setLocatedRow(row);
+        if (locatedTimer.current) window.clearTimeout(locatedTimer.current);
+        locatedTimer.current = window.setTimeout(() => setLocatedRow(null), 2200);
+      }
+      targetRequest.current = false;
+      onTargetHandled?.();
+    });
+    return () => { active = false; targetRequest.current = false; };
+  }, [initialTarget, currentId, snapshot?.roleId, snapshot?.windowId, snapshot?.loading, snapshot?.loadError, session.locateMessage, onTargetHandled, showToast]);
   // 办事任务可能在本页之外推进（自主唤醒、续行段），本轮只用 snapshot 判定刷新时机。
   useEffect(() => {
     if (!currentId) { setTask(null); return; }
@@ -470,6 +505,7 @@ export function ConversationPage({
         <section className="dialogue-pane" aria-label={historyOpen ? '历史消息' : `与 ${roleName} 的对话`}>
         <div className="dialogue-pane-toolbar" inert={historyOpen} aria-hidden={historyOpen || undefined}>
           <div className="dialogue-pane-switches">
+          {onReturnFeed && <ControlButton className="dialogue-role-button" onClick={onReturnFeed}><Icon name="chev-left" size={15}/><span>返回动态</span></ControlButton>}
           {roles.length > 1 ? <div className="dialogue-role-switch">
             <ControlButton type="button" className="dialogue-role-button" aria-label={`切换角色，当前${roleName}`} aria-expanded={roleMenuOpen} aria-haspopup="menu" onClick={() => setRoleMenuOpen(value => !value)}>
               <Icon name="person" size={15} /><span>换一位</span>

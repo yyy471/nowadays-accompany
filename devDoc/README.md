@@ -197,10 +197,10 @@ devDoc/
 
 </details>
 
-### 02 · 桌面基础重构、关系藏页与界面精简（`archive/02-desktop-ui-and-relations/`，`200`–`207`、`214`、`233`–`235`、`237`–`240`）
+### 02 · 桌面基础重构、关系藏页与动态页（`archive/02-desktop-ui-and-relations/`，含 `403`）
 
 <details>
-<summary>展开 02 专项 16 份文档索引（`200`–`207`、`214`、`233`–`235`、`237`–`240`）</summary>
+<summary>展开 02 专项文档索引</summary>
 
 | 文档 | 定位与状态 |
 | --- | --- |
@@ -220,6 +220,7 @@ devDoc/
 | [238 对话页顶部精简与布局调整](archive/02-desktop-ui-and-relations/238-dialogue-layout-refinement.md) | 对话框内工具图标、舞台上移和移除全局顶部设置入口（DL-144）；实现方自验，**独立复核待执行** |
 | [239 对话页 Dock 显示设置](archive/02-desktop-ui-and-relations/239-dialogue-dock-visibility.md) | 对话页可隐藏底部导航、其他页面保留导航及本地偏好（DL-145）；实现方自验，**独立复核待执行** |
 | [240 关系页顶部栏精简](archive/02-desktop-ui-and-relations/240-relations-header-removal.md) | 移除关系页顶部标题栏并将日夜装饰条移入书页右上方（DL-146）；2026-11-10 经用户确认通过 |
+| [403 动态页 v2 迁移](archive/02-desktop-ui-and-relations/403-feed-v2-migration.md) | 原型结构、数据适配、三项修复与 Electron 独立离线复验 |
 
 </details>
 

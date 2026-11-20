@@ -18,6 +18,7 @@
 | 模型配置与对话修复（268） | MR-01～MR-05 离线复验关闭；292-R05～R07 独立复验通过，含跨页失效与在途编辑 | [271](archive/05-model-settings-and-dialogue/271-model-settings-and-dialogue-independent-review.md) · [283 §29](archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#29-292-第-9-节独立复验) | 真实 ComfyUI 联调 |
 | 操作链路简化与首次体验修复（278 / 308） | 同页暂停保存、模型维护、删除与记忆整理通过既有离线复验；292-R09、settings-review-fixes-check 与 **308 §4 问题 #1～#6 及两项外观裁决**（[309](archive/06-workflow-simplification/309-308-startup-flow-fixes.md)）已完成实施自验与 Electron E2E（待独立复核） | [278](archive/06-workflow-simplification/278-project-workflow-simplification-fix-plan.md) · [283 §29](archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#29-292-第-9-节独立复验) · [308](archive/06-workflow-simplification/308-startup-and-connection-flow-audit.md) · [309](archive/06-workflow-simplification/309-308-startup-flow-fixes.md) | 292-R09 与 [309](archive/06-workflow-simplification/309-308-startup-flow-fixes.md) 待独立复核；308 §4 第 7 项通用引导文案优化与真实外部服务联调后置 |
 | 配置页 v6（400） | 角色六分区、五类服务、依赖维护和写入反馈通过主进程离线复核，三视口、昼夜主题与 NVDA 留证 | [400 展示与业务复核](archive/08-config-pages-v6/400-config-pages-v6-migration-progress.md#26-主进程复核与系统适配2026-11-20) | 真实外部服务及 Windows 安装包联调归第 3 项 |
+| 动态页 v2 迁移（403） | 分享缺失隔离、详情刷新、分页读取与三处动效通过 Terra 独立离线复验 | [403 动态页迁移记录](archive/02-desktop-ui-and-relations/403-feed-v2-migration.md) | 用户实际数据库的刷新性能待实测 |
 | 角色运行与单角色迁移（401） | DL-161～DL-166 已完成并通过主进程离线独立复核，覆盖首次思考、网页已读原文、单次上下文和时间线选择 | [401 实施与独立复核](archive/09-role-runtime-and-transfer/401-role-runtime-and-transfer.md#6-主进程独立复核) · [迁移命令](../backend/README.md#7-单角色迁移) | 角色成长与真实模型表现见 [402](archive/09-role-runtime-and-transfer/402-long-dialogue-quality.md) |
 | 桌面前端设计系统与样式门禁 | 全站样式改用 `--nd-*` 令牌，`lint:styles` / `tokens:check` 与 `design-tokens.test.cjs`（Windows 路径已修）均通过 | [前端设计规范](specs/frontend-design-system.md) · [check-design-tokens.mjs](../desktop/scripts/check-design-tokens.mjs) | 历史样式豁免收敛（旧调板颜色、页面艺术色、纸感阴影、TS 耦合时长等，见规范第 12 节） |
 | 预置默认助手夏澄（包 1） | R01（取消单事务回滚）、R02（`BUSINESS V22` `outfits.preset_key`）、R03（Chat/Responses/Anthropic 无效工具参数前吐出 `usage`）补修后经**独立复验通过**；`p2-extended` R07 阈值抖动改轮询后**独立复核通过**（6／6 稳定、负向对照仍判失败、两次全量 21／21） | [310 §8／8.1／8.2／8.4](archive/06-workflow-simplification/310-default-assistant-development-guide.md#8-包-1-独立复核) · [p19-preset-assistant-pack1.test.ts](../backend/tests/p19-preset-assistant-pack1.test.ts) | 已完成，后续缺口归包 2／3 |
@@ -36,6 +37,8 @@
 8. **角色长期成长的真实质量验证**。GLM 5.3 按现有样本收口。DeepSeek 与 Gemini 已通过正式入口测试十轮日常、受邀复述、跨窗关系、释怀、公开与私下、自主安排和同一分支的后续行动。64 条固定输入对照另行记录。系统修复了角色卡示例误入与旧消息发送日缺失；DeepSeek 的连续动作和个别时间错位仍可复现。结果与样本边界见 [402 五组实测](archive/09-role-runtime-and-transfer/402-long-dialogue-quality.md#五组真实边界测试与系统归因)。
 
 9. **角色成长与跨窗口回忆（DL-167～DL-181）**。402 已接入逐条记忆依据、跨窗已讲原文查询、按当前任务步骤取用实践经验。长期兴趣、释怀与形成习惯的真实行为需要更多独立经历检验。[产品决策](161-digital-life-direction-decisions.md#dl-167-角色可以在具体情境中按经历形成的新做法行动)
+
+10. **动态页 v2**。三项修复和三处动效已通过独立离线复验。实际用户库的刷新耗时另行留证。[403 修复与独立复验](archive/02-desktop-ui-and-relations/403-feed-v2-migration.md#2026-11-20-修复与独立复验)
 
 ## 3. 验收基线与命令
 

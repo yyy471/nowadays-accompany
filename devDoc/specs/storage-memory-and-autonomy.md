@@ -62,10 +62,14 @@
 | `GET /v1/roles` · `POST /v1/roles` · `POST /v1/roles/:roleId/initialize` | `displayName`, `definition{text,payload?}`, `state?` | 列表含 `status`(`initializing`/`ready`/`failed`) 与 `defaultWindowId`；初始化幂等重试（`ROLE_INITIALIZATION_FAILED`、`ROLE_NOT_READY`） |
 | `GET /v1/roles/:roleId` · `PATCH /v1/roles/:roleId/definition` · `GET/PUT /v1/roles/:roleId/state` | `expectedRevision` / `expectedVersion` | 受活动守卫的写路径校验详见规范 #1；版本冲突返回 `409 REVISION_CONFLICT` / `STATE_VERSION_CONFLICT` |
 | `GET /v1/roles/:roleId/executions/:executionId` · `GET /v1/roles/:roleId/tasks` · `GET .../tasks/:taskId` · `POST .../tasks/:taskId/finish` | `finish` 传 `{status:"completed"|"failed", endReason}` | `finish` 幂等重放；已按另一终态结束返回 `409 TASK_STATE_CONFLICT` |
-| `GET /v1/roles/:roleId/autonomy` · `GET/PUT .../autonomy/budget` · `GET/POST .../wakes` · `DELETE .../wakes/:wakeId` · `GET .../activities` | `dailyLimit`（`1..1_000_000`）, `unlimited`, `wakeAt`, `intent`, `taskId?` | 写预算受角色活动守卫；过去时间 `400 AUTONOMY_WAKE_TIME_PAST` |
+| `GET /v1/roles/:roleId/autonomy` · `GET/PUT .../autonomy/budget` · `GET/POST .../wakes` · `DELETE .../wakes/:wakeId` · `GET .../activities` | `dailyLimit`（`1..1_000_000`）, `unlimited`, `wakeAt`, `intent`, `taskId?`；两个列表支持 `limit`（默认 `100`，最大 `500`）和 `offset`（默认 `0`） | 写预算受角色活动守卫；过去时间 `400 AUTONOMY_WAKE_TIME_PAST` |
 | `POST /v1/roles/:roleId/memory/search` · `GET/PATCH .../events/:eventId` · `GET .../evidence/:evidenceId` · `GET/PATCH .../summaries/:summaryId` | `query`/`types`/标签/`dateFrom`/`dateTo`/`limit`; 纠错必带 `expectedVersion` | 手动查询不写 `memory_recalls`；版本过期返回 `409 MEMORY_VERSION_CONFLICT`；区分空列表与 `500 MEMORY_QUERY_FAILED` |
 | `GET/POST /v1/roles/:roleId/diaries` · `GET /v1/roles/:roleId/diaries/:diaryId` | `content`, `eventIds?`, `occurredAt?` | 创建写原子临时文件改名落盘；读取 `:diaryId` 同步刷新 Markdown 哈希快照（文件缺失 `500 DIARY_FILE_MISSING`） |
-| `GET /v1/roles/:roleId/memory/status` · `GET/POST /v1/roles/:roleId/memory/batches` | `limit?`（默认 `50`） | `GET` 查询状态与批次；`POST .../batches` 登记 `manual` 触发并做去重（角色删除中返回 `409 ROLE_DELETING`，否则异步返回 `202 { triggerId, duplicate }`；`MEMORY_BATCH_CONFLICT` 仅用于后台 `runBatch` 并发锁） |
+| `GET /v1/roles/:roleId/memory/status` · `GET/POST /v1/roles/:roleId/memory/batches` | `limit?`（默认 `50`，最大 `200`）、`offset?`（默认 `0`） | `GET` 查询状态与批次；`POST .../batches` 登记 `manual` 触发并做去重（角色删除中返回 `409 ROLE_DELETING`，否则异步返回 `202 { triggerId, duplicate }`；`MEMORY_BATCH_CONFLICT` 仅用于后台 `runBatch` 并发锁） |
+
+三个列表的 `offset` 范围为 `0..1_000_000_000`，按既有创建时间倒序分页。各页是独立读取，分页期间记录变化可能使结果重叠或暂时遗漏；动态页按标识去重并在后续刷新时重新读取。
+
+动态页读取 `GET /v1/roles/:roleId/autonomy/activities` 时可传 `includeSharedMessage=1`。每条活动会附带 `sharedMessage`，其中包含角色主窗口的消息编号、窗口编号、正文和创建时间。未找到对应原文时该字段为 `null`，活动记录及同页其他记录仍然返回。省略该参数时沿用原活动列表格式。
 
 ### 2.3 本领域主要错误码（[errors.ts](../../backend/src/domain/errors.ts#L17-L510)）
 

@@ -61,4 +61,4 @@ export function clearSubtractMask(element: HTMLElement): void {
 }
 
 /** 配置页的图框选择器族：立绘、服饰缩略、差分、试生图、角色状态卡画框。 */
-export const CONFIG_WELL_SELECTORS = '.config-portrait:has(img),.config-outfit-thumb:has(img),.config-outfit-hero-thumb:has(img),.config-face:has(img),.nd-outfit-thumb:has(img),.nd-import-thumb:has(img),.nd-image-figure:has(img),.ui-poster-well:has(img)';
+export const CONFIG_WELL_SELECTORS = '.config-portrait:has(img),.config-outfit-thumb:has(img),.config-outfit-hero-thumb:has(img),.config-face:has(img),.nd-outfit-thumb:has(img),.nd-import-thumb:has(img),.nd-image-figure:has(img),.ui-poster-well:has(img),.feed-face:has(img)';

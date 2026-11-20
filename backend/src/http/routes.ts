@@ -533,10 +533,11 @@ export function registerApiRoutes(
         max: 500,
         defaultValue: 100,
       });
+      const offset = queryInt(url, "offset", { min: 0, max: 1_000_000_000, defaultValue: 0 });
       return {
         status: 200,
         body: {
-          items: services.autonomy.listWakes(params.roleId ?? "", limit),
+          items: services.autonomy.listWakes(params.roleId ?? "", limit, offset),
         },
       };
     },
@@ -578,10 +579,13 @@ export function registerApiRoutes(
         max: 500,
         defaultValue: 100,
       });
+      const offset = queryInt(url, "offset", { min: 0, max: 1_000_000_000, defaultValue: 0 });
       return {
         status: 200,
         body: {
-          items: services.autonomy.listActivities(params.roleId ?? "", limit),
+          items: url.searchParams.get("includeSharedMessage") === "1"
+            ? services.autonomy.listActivitiesWithShares(params.roleId ?? "", limit, offset)
+            : services.autonomy.listActivities(params.roleId ?? "", limit, offset),
         },
       };
     },
@@ -952,10 +956,11 @@ export function registerApiRoutes(
         max: 200,
         defaultValue: 50,
       });
+      const offset = queryInt(url, "offset", { min: 0, max: 1_000_000_000, defaultValue: 0 });
       return {
         status: 200,
         body: {
-          items: services.memory.listBatches(params.roleId ?? "", limit),
+          items: services.memory.listBatches(params.roleId ?? "", limit, offset),
         },
       };
     },

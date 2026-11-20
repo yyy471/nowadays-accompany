@@ -417,9 +417,9 @@ export class MemoryQueryService {
     );
   }
 
-  listBatches(roleId: string, limit: number): MemoryBatchRecord[] {
+  listBatches(roleId: string, limit: number, offset = 0): MemoryBatchRecord[] {
     return this.access.withStore(roleId, (storage) =>
-      new MemoryStore(storage.business.db).listBatches(roleId, limit),
+      new MemoryStore(storage.business.db).listBatches(roleId, limit, offset),
     );
   }
 
