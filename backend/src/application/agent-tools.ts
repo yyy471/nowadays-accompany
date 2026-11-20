@@ -355,6 +355,7 @@ function memorySearchTool(
           return {
             status: "success",
             rawResponse: result,
+            memoryReads: result.items.map(({ type, id }) => ({ type, id, retrievalId: result.retrievalId })),
             adaptedResult: {
               status: result.items.length === 0 ? "no_match" : "succeeded",
               retrievalId: result.retrievalId,
@@ -469,14 +470,10 @@ function memoryEventTool(
         }
         try {
           const event = memory.getEvent(roleId, eventId);
-          memory.recordRecall(roleId, {
-            executionId: context.executionId,
-            type: "event",
-            id: eventId,
-          });
           return {
             status: "success",
             rawResponse: event,
+            memoryReads: [{ type: "event", id: eventId }],
             adaptedResult: truncateValue(event, TOOL_RESULT_LIMIT),
           };
         } catch (error) {
@@ -550,14 +547,10 @@ function memorySummaryTool(
         }
         try {
           const summary = memory.getSummary(roleId, summaryId);
-          memory.recordRecall(roleId, {
-            executionId: context.executionId,
-            type: "daily_summary",
-            id: summaryId,
-          });
           return {
             status: "success",
             rawResponse: summary,
+            memoryReads: [{ type: "daily_summary", id: summaryId }],
             adaptedResult: truncateValue(summary, TOOL_RESULT_LIMIT),
           };
         } catch (error) {
@@ -594,6 +587,8 @@ function memoryCorrectEventTool(
           },
         },
         addEvidenceIds: { type: "array", items: { type: "string" } },
+        supersedeClaimIds: { type: "array", items: { type: "string" }, description: "本次纠正涉及的已有线索编号，其他线索继续保留" },
+        claimReplacements: { type: "object", additionalProperties: { type: "string" }, description: "按上述线索编号提供替代文字；仅撤下时省略" },
         reason: { type: "string" },
       },
       required: ["eventId", "expectedVersion", "patch"],
@@ -613,6 +608,8 @@ function memoryCorrectEventTool(
           ...(Array.isArray(args.addEvidenceIds)
             ? { addEvidenceIds: args.addEvidenceIds }
             : {}),
+          ...(args.supersedeClaimIds === undefined ? {} : { supersedeClaimIds: args.supersedeClaimIds }),
+          ...(args.claimReplacements === undefined ? {} : { claimReplacements: args.claimReplacements }),
           ...(typeof args.reason === "string" ? { reason: args.reason } : {}),
         });
         if (!parsed.success) {
@@ -730,14 +727,10 @@ function memorySummaryEvidenceTool(
             ...(toSequence === null ? {} : { toSequence }),
             ...(limit === null ? {} : { limit }),
           });
-          memory.recordRecall(roleId, {
-            executionId: context.executionId,
-            type: "daily_summary",
-            id: summaryId,
-          });
           return {
             status: "success",
             rawResponse: { summaryId, items },
+            memoryReads: items.length ? [{ type: "daily_summary", id: summaryId }] : [],
             adaptedResult: truncateValue(
               {
                 summaryId,
@@ -866,7 +859,8 @@ function autonomyScheduleTool(
             wakeAt,
             intent,
             sourceExecutionId: context.executionId,
-            taskId: requestedTaskId ?? context.taskId,
+            // 只有明确带上任务编号才续原任务。独立计划应在本次活动完成后仍能到点执行。
+            taskId: requestedTaskId,
           });
           return {
             status: "success",
@@ -1283,18 +1277,10 @@ function memoryDiaryTool(
           fromChar,
           maxChars,
         });
-        try {
-          memory.recordRecall(roleId, {
-            executionId: context.executionId,
-            type: "diary",
-            id: diaryId,
-          });
-        } catch {
-          // 召回登记失败不影响读取结果。
-        }
         return {
           status: "success",
           rawResponse: segment,
+          memoryReads: segment.content ? [{ type: "diary", id: diaryId }] : [],
           adaptedResult: truncateValue(segment, TOOL_RESULT_LIMIT),
         };
       });

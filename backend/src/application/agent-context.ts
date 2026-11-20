@@ -1,10 +1,11 @@
 import { AppError } from "../domain/errors.js";
-import type { ModelMessage, ModelProtocol, ModelRequest } from "../domain/model.js";
+import type { MemoryDelivery, ModelMessage, ModelProtocol, ModelRequest } from "../domain/model.js";
 import type { ModelProvider } from "../domain/model-providers.js";
 import type { WorldbookMatch, WorldbookSelection } from "../domain/worldbook.js";
 import { renderWebReadingPrefix, webReadingCandidates, webReadingRequest } from "../domain/web-reading.js";
 import { serializeModelRequest } from "../model/protocols.js";
 import { createLocalDateFormatter } from "../storage/evidence.js";
+import { readsInExcerpt } from "./memory-read-projection.js";
 
 // 无显式绑定容量时，以 UTF-16 字符计量序列化后的生成请求和回复预留。
 export const DEFAULT_AGENT_INPUT_CHARS = 128_000;
@@ -12,7 +13,7 @@ export const DEFAULT_AGENT_OUTPUT_RESERVE_CHARS = 4_096;
 
 export interface AgentSystemPrompt {
   required: string;
-  optional: readonly string[];
+  optional: readonly (string | { text: string; recall: MemoryDelivery })[];
   worldbook?: readonly WorldbookMatch[];
   requiredFooter?: string;
   dialogueClock?: { today: string; timeZone: string | undefined };
@@ -37,7 +38,7 @@ export function selectAgentContext(input: {
   resuming: boolean;
   originalModelResource?: boolean;
   evidenceQuery: string;
-}): ModelRequest & { worldbookSelection: WorldbookSelection[] } {
+}): ModelRequest & { worldbookSelection: WorldbookSelection[]; memoryReads: MemoryDelivery[] } {
   const maxInputChars = input.maxInputChars ?? DEFAULT_AGENT_INPUT_CHARS;
   const reserve = input.maxOutputChars ?? DEFAULT_AGENT_OUTPUT_RESERVE_CHARS;
   const request = { ...input.request, system: input.prompt.required, messages: [] as ModelMessage[] };
@@ -149,17 +150,24 @@ export function selectAgentContext(input: {
     worldbookSelection.push({ revision: match.revision, bookId: match.bookId, entryId: match.entryId,
       messageIds: match.messageIds, status: included ? "included" : "budget_omitted" });
   }
-  for (const line of input.prompt.optional) {
+  const memoryReads: MemoryDelivery[] = [];
+  for (const part of input.prompt.optional) {
+    const line = typeof part === "string" ? part : part.text;
     const previous = request.system;
     request.system = `${previous}\n${line}`;
     if (!fits()) request.system = previous;
+    else if (typeof part !== "string") memoryReads.push(part.recall);
   }
   for (const group of optionalGroups.slice().reverse()) {
     if (!selected.has(group.index) && !addGroup(group, group.messages)) {
       addGroup(group, group.messages.map(referenceMessage));
     }
   }
-  return { ...withSelection(), worldbookSelection };
+  const final = withSelection();
+  for (const message of final.messages) {
+    if (message.source?.memoryReads) memoryReads.push(...message.source.memoryReads);
+  }
+  return { ...final, worldbookSelection, memoryReads };
 }
 
 function fitRelevantPartial(
@@ -173,6 +181,27 @@ function fitRelevantPartial(
     return;
   }
   if (!historyReference(message)) return;
+  const reads = message.source?.memoryReads;
+  if (message.role === "tool" && reads?.length && message.toolName === "memory_search") {
+    // 按完整搜索结果缩减，避免把被截掉的后排记录也计入召回。
+    const body = JSON.parse(message.content) as { result: { items: Array<{title: string; snippet: string}> } };
+    for (let count = reads.length - 1; count > 0; count--) {
+      const content = JSON.stringify({ ...body, result: { ...body.result, items: body.result.items.slice(0, count) } });
+      if (replace({ ...message, content, source: { ...message.source, memoryReads: reads.slice(0, count) } })) return;
+    }
+    const first = body.result.items[0];
+    if (!first) return;
+    const detail = first.snippet || first.title;
+    let low = 1, high = detail.length;
+    while (low <= high) {
+      const size = Math.floor((low + high) / 2);
+      const snippet = detail.slice(0, beforeSurrogatePair(detail, size));
+      const content = JSON.stringify({ ...body, result: { ...body.result, items: [{ type: reads[0]!.type, id: reads[0]!.id, snippet }] } });
+      if (snippet && replace({ ...message, content, source: { ...message.source, memoryReads: reads.slice(0,1) } })) low = size + 1;
+      else high = size - 1;
+    }
+    return;
+  }
   const matches = terms.flatMap((term) => {
     const pattern = new RegExp(term, "giu");
     const match = pattern.exec(message.content);
@@ -198,7 +227,10 @@ function fitRelevantPartial(
     const to = beforeSurrogatePair(message.content, end);
     const reference = historyReference(message, message.source?.messageId ? from : undefined);
     const content = `[原文摘录 UTF-16 ${from}–${to}；回查：${reference}]\n${message.content.slice(from, to)}`;
-    if (replace({ ...message, source: { ...message.source, summary: true }, content })) low = padding + 1;
+    const visible = reads?.length ? readsInExcerpt(message.content, message.role === "tool" ? message.toolName ?? "" : "", reads, from, to) : undefined;
+    // 太小的摘录可能只含编号。向两端扩展直到出现正文，或保留原来的回查提示。
+    if (visible && !visible.length) { low = padding + 1; continue; }
+    if (replace({ ...message, source: { ...message.source, summary: true, ...(visible && { memoryReads: visible }) }, content })) low = padding + 1;
     else high = padding - 1;
   }
 }
@@ -339,7 +371,7 @@ function referenceMessage(message: ModelMessage): ModelMessage {
     : `${Array.from(message.content.replace(/\s+/g, " ")).slice(0, 65).join("")}…`;
   return {
     ...message,
-    source: { ...source, summary: true },
+    source: { ...source, summary: true, ...(source?.memoryReads ? { memoryReads: [] } : {}) },
     content: `[内容摘要] ${summary}；原文回查：${reference}`,
   };
 }

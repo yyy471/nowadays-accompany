@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
-import type { ModelEvent } from "../src/domain/model.js";
+import type { ModelEvent, ModelRequest } from "../src/domain/model.js";
+import { historyLookupTool } from "../src/application/conversation-history.js";
+import { RoleAccess } from "../src/application/role-access.js";
+import { registerMessageEvidence } from "../src/storage/evidence.js";
 import {
   GatedChatModel,
   createFixture,
@@ -23,6 +26,119 @@ function submit(fixture: ReturnType<typeof createFixture>, content: string): str
   );
   return submissionId;
 }
+
+test("继承本机窗口的非本机消息不能使用 user_quote 回查其他直接对话", async () => {
+  const found: string[] = [];
+  const reply = (text: string): ModelEvent[] => [
+    { type: "text_delta", text }, { type: "completed", stopReason: "stop" },
+  ];
+  const lookup: ModelEvent[] = [
+    { type: "tool_call", callId: "look-up-ticket", name: "history_lookup", arguments: { scope: "user_quote", query: "西风票根" } },
+    { type: "completed", stopReason: "tool_calls" },
+  ];
+  const collect = (request: ModelRequest): ModelEvent[] => {
+    const outcome = request.messages.filter(message => message.role === "tool").at(-1);
+    assert.ok(outcome);
+    found.push(outcome.content);
+    return reply("查过了。");
+  };
+  const original = "西风票根的编号是六七一九。";
+  const fixture = createFixture([reply("记下了。"), lookup, collect, lookup, collect, lookup, collect]);
+  try {
+    const { app, roleId } = fixture;
+    submit(fixture, original);
+    await app.conversation.waitForIdle(roleId);
+    for (const platforms of [["qq"], ["nowadays", "qq", "nowadays"], ["nowadays"]]) {
+      const direct = app.services.roles.createWindow(roleId, { kind: "custom", source: "nowadays" });
+      withStorage(fixture, ({ business }) => {
+        for (const sourcePlatform of platforms.slice(0, -1)) {
+          business.submitMessage(roleId, direct.windowId, {
+            content: "同一批待处理的消息。", sourcePlatform, submissionId: randomUUID(),
+          });
+        }
+      });
+      app.conversation.submitMessage(roleId, direct.windowId, {
+        content: "请回查票根编号。", sourcePlatform: platforms.at(-1)!, submissionId: randomUUID(),
+      });
+      await app.conversation.waitForIdle(roleId);
+    }
+    assert.equal(found.length, 3);
+    assert.doesNotMatch(found[0]!, /六七一九/);
+    assert.doesNotMatch(found[1]!, /六七一九/);
+    assert.match(found[2]!, /西风票根的编号是六七一九/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("user_quote 只返回同角色、本机直接对话里已处理的用户原文", async () => {
+  const reply = (text: string): ModelEvent[] => [
+    { type: "text_delta", text }, { type: "completed", stopReason: "stop" },
+  ];
+  const fixture = createFixture([
+    reply("蓝签是我说过的角色台词。"), reply("收到一份对照。"), reply("收到。"), reply("收到。"), reply("我来查一下。"),
+  ]);
+  try {
+    const { app, roleId, windowId } = fixture;
+    const original = "蓝签是我姐姐选的，不是我。";
+    const submitTo = async (targetWindow: string, sourcePlatform: string, content: string) => {
+      const { message } = app.conversation.submitMessage(roleId, targetWindow, {
+        content, sourcePlatform, submissionId: randomUUID(),
+      });
+      await app.conversation.waitForIdle(roleId);
+      const record = withStorage(fixture, ({ business }) => business.db.prepare(`SELECT m.message_id AS id,
+        m.processed_by_execution_id AS executionId, e.evidence_id AS evidenceId
+        FROM messages m JOIN evidence_records e ON e.source_id=m.message_id AND e.source_kind='message'
+        WHERE m.message_id=?`).get(message.messageId) as { id: string; executionId: string; evidenceId: string } | undefined);
+      assert.ok(record?.executionId);
+      return record;
+    };
+    const makeWindow = (source: string) => app.services.roles.createWindow(roleId, { kind: "custom", source }).windowId;
+    const direct = makeWindow("nowadays");
+    const privateWindow = makeWindow("nowadays-autonomy");
+    const foreign = makeWindow("qq");
+    const saved = await submitTo(windowId, "nowadays", original);
+    await submitTo(windowId, "qq", "蓝签外部消息混入本机窗口。");
+    const privateCall = await submitTo(privateWindow, "nowadays", "蓝签在自主窗口的原文。");
+    const foreignCall = await submitTo(foreign, "qq", "蓝签在其他平台窗口说过。");
+    const directCall = await submitTo(direct, "nowadays", "请回查我以前说过的话。");
+    withStorage(fixture, ({ business }) => {
+      const { message } = business.submitMessage(roleId, windowId, {
+        content: "蓝签尚未确认处理。", submissionId: randomUUID(), sourcePlatform: "nowadays",
+      });
+      registerMessageEvidence(business.db, { roleId, messageIds: [message.messageId], executionId: saved.executionId });
+    });
+    const access = new RoleAccess(app.appStore, app.config.dataRoot);
+    const lookup = (target: string, window: string, executionId: string, args: Record<string, unknown>) =>
+      historyLookupTool(target, access).execute(args, {
+        roleId: target, windowId: window, executionId, taskId: null, signal: new AbortController().signal,
+      });
+    const search = { scope: "user_quote", query: "蓝签" };
+    const matches = (await lookup(roleId, direct, directCall.executionId, search)).adaptedResult as {
+      entries: Array<{ id: string; label: string; snippet: string }>;
+    };
+    assert.deepEqual(matches.entries.map(row => [row.id, row.label, row.snippet]), [[saved.id, "user", original]]);
+    for (const id of [saved.id, saved.evidenceId]) {
+      const result = (await lookup(roleId, direct, directCall.executionId, { scope: "user_quote", id })).adaptedResult as {
+        entry: { id: string; content: string; label: string };
+      };
+      assert.deepEqual([result.entry.id, result.entry.content, result.entry.label], [saved.id, original, "user"]);
+    }
+    for (const [window, executionId] of [
+      [privateWindow, privateCall.executionId], [foreign, foreignCall.executionId], [direct, randomUUID()], [direct, saved.executionId],
+    ] as const) {
+      assert.deepEqual((await lookup(roleId, window, executionId, search)).adaptedResult, { entries: [], nextOffset: null });
+    }
+    const other = app.services.roles.createRole({ displayName: "隔离角色", definition: { text: "另一位角色" } });
+    assert.deepEqual(
+      (await lookup(other.roleId, other.defaultWindowId, directCall.executionId, { scope: "user_quote", id: saved.id })).adaptedResult,
+      { entry: null, nextOffset: null },
+    );
+    assert.equal((await lookup(roleId, direct, directCall.executionId, { scope: "user_quote" })).diagnosticCode, "HISTORY_QUERY_REQUIRED");
+  } finally {
+    await fixture.close();
+  }
+});
 
 test("跨越业务本地午夜时为出站旧消息标记发送日，保留数据库和本轮原话", async () => {
   let now = "2026-11-20T15:59:59.000Z";

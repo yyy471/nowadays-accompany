@@ -1,0 +1,28 @@
+.memory-correction-fields {
+  display: grid;
+  gap: var(--nd-semantic-space-field-group);
+}
+
+.memory-correction-fields p {
+  margin: 0;
+}
+
+.memory-correction-fields fieldset,
+.memory-correction-fields section,
+.memory-correction-clue {
+  display: grid;
+  gap: var(--nd-semantic-space-icon-label);
+  min-width: 0;
+}
+
+.memory-correction-fields fieldset {
+  margin: var(--nd-semantic-space-icon-label) 0 0;
+  padding: var(--nd-semantic-space-field-group);
+  border: 1px solid var(--nd-semantic-color-line-control);
+  border-radius: var(--nd-semantic-radius-field);
+}
+
+.memory-correction-fields summary,
+.memory-correction-clue > label {
+  cursor: pointer;
+}

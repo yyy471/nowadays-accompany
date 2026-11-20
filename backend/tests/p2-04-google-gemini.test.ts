@@ -8,7 +8,7 @@ import test from "node:test";
 import Database from "better-sqlite3";
 import { createBackendApp, listen } from "../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths } from "../src/bootstrap/config.js";
-import { isIncompleteCompletion, type ModelEvent, type ModelMessage, type ModelToolSpec } from "../src/domain/model.js";
+import { APPLICATION_TRIGGER_INPUT, isIncompleteCompletion, type ModelEvent, type ModelMessage, type ModelToolSpec } from "../src/domain/model.js";
 import { HttpModelAdapter } from "../src/model/protocols.js";
 import { AppStore } from "../src/storage/app-store.js";
 import { RoleStore } from "../src/storage/role-store.js";
@@ -115,6 +115,33 @@ async function collectEvents(
   }
   return events;
 }
+
+test("Vertex 无用户新发言的历史工具事实仍由应用送入，原生工具续行的首尾均为 user", async () => {
+  const server = await startHttpMock(() => ({headers:{"content-type":"text/event-stream"},
+    body:sse({candidates:[{content:{role:"model",parts:[{text:"继续。"}]},finishReason:"STOP"}]})}));
+  try {
+    const adapter = new HttpModelAdapter({protocol:"google-gemini",baseUrl:server.baseUrl+"/v1/publishers/google"},"AQ.offline-key");
+    const fact: ModelMessage = {role:"tool",toolName:"workspace_read",toolCallId:"historical",
+      content:"已落盘的历史读数为九。",source:{historical:true}};
+    const liveCall: ModelMessage = {role:"assistant",content:"",toolCalls:[{callId:"new",name:"workspace_read",arguments:{path:"note.md"}}]};
+    const liveResult: ModelMessage = {role:"tool",toolName:"workspace_read",toolCallId:"new",content:'{"value":10}'};
+    for (const messages of [[fact],[fact,liveCall,liveResult],[{role:"assistant" as const,content:"先前的活动摘要"}]]) {
+      await collectEvents(adapter,messages,[SAMPLE_TOOL]);
+      const {contents} = server.requests.at(-1)!.jsonBody as {contents:Array<{role:string;parts:Array<{text?:string;functionCall?:unknown;functionResponse?:unknown}>}>};
+      assert.equal(contents[0]!.role,"user");
+      assert.equal(contents.at(-1)!.role,"user");
+      for (let i=1;i<contents.length;i++) assert.notEqual(contents[i-1]!.role,contents[i]!.role);
+      if (messages.includes(fact)) {
+        assert.ok(contents.some(turn=>turn.role==="user" && turn.parts.some(p=>p.text?.includes("历史读数为九"))));
+        assert.ok(!contents.some(turn=>turn.role==="model" && turn.parts.some(p=>p.text?.includes("历史读数为九"))));
+        assert.equal(contents.flatMap(v=>v.parts).filter(p=>p.functionResponse).length,messages.includes(liveResult)?1:0);
+        if (messages.includes(liveResult)) assert.deepEqual(contents.at(-1)!.parts[0]!.functionResponse,{name:"workspace_read",response:{value:10}});
+      } else {
+        assert.ok(contents.at(-1)!.parts.some(p=>p.text===APPLICATION_TRIGGER_INPUT));
+      }
+    }
+  } finally { await server.close(); }
+});
 
 test("google-gemini 适配 Vertex Express 路径、x-goog-api-key、思考过滤与用量合并", async () => {
   const server = await startHttpMock(() => ({
@@ -850,7 +877,7 @@ test("SQLite 老库迁移（v7->v8 与 v17->v18）及 ModelService / 资源创�
     const upgradedBiz = new RoleStore(paths.businessDatabasePath, { create: false });
     try {
       assert.equal(upgradedApp.schemaVersion, 11);
-      assert.equal(upgradedBiz.schemaVersion, 24);
+      assert.equal(upgradedBiz.schemaVersion, 25);
       const oldAppRow = upgradedApp.db
         .prepare("SELECT protocol FROM model_test_calls WHERE test_call_id = ?")
         .get(oldTestCallId) as { protocol: string } | undefined;

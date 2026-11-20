@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
 import { MemoryService } from "../src/application/memory-service.js";
+import { rebuildTransferMemorySearch } from "../src/application/role-transfer-data.js";
 import { localDateFromIso, registerMessageEvidence } from "../src/storage/evidence.js";
 import { MemoryStore } from "../src/storage/memory-store.js";
 import { RoleStore } from "../src/storage/role-store.js";
@@ -154,7 +155,7 @@ test("v1 business database migrates to the current schema and backfills evidence
     timeZone: "Asia/Shanghai",
   });
   try {
-    assert.equal(store.schemaVersion, 24);
+    assert.equal(store.schemaVersion, 25);
     const autonomyTables = store.db
       .prepare(
         `SELECT name FROM sqlite_master
@@ -1203,7 +1204,7 @@ test("claims preserve the speaker, partial knowledge and a cherished one-time de
     assert.equal(memory.getEvidenceDetail(fixture.roleId, evidenceId).sender, "user");
     assert.deepEqual(memory.listEventClaims(fixture.roleId, event.eventId).map(c => c.learnedAt), [at, at, null]);
     assert.equal(memory.listEventClaims(fixture.roleId, event.eventId)[0]?.quoteContext, quote);
-    assert.deepEqual(memory.listRefineCandidates(fixture.roleId, 500), []);
+    assert.deepEqual(memory.listRefineCandidates(fixture.roleId, 500).map(item => item.eventId), [event.eventId]);
     assert.match(memory.getSearchDocument(fixture.roleId, "event", event.eventId)!.body, /姐姐的联结/);
 
     const later = "2026-11-01T08:00:00.000Z";
@@ -1228,6 +1229,20 @@ test("claims preserve the speaker, partial knowledge and a cherished one-time de
     assert.equal(saved[4]?.sourceSender, "assistant");
     assert.match(memory.getSearchDocument(fixture.roleId, "event", event.eventId)!.body, /据角色当时的发言） 如今懂得/);
     assert.deepEqual(memory.listEventSources(fixture.roleId, event.eventId).map(item => item.sender), ["user", "assistant"]);
+    const refined = memory.refineEvent({roleId:fixture.roleId,events:[{eventId:event.eventId,expectedVersion:2}],
+      summary:"谈到一种花和家人的联结。",now:"2026-12-01T12:00:00.000Z"});
+    for (const rebuild of [false,true]) {
+      if (rebuild) {
+        fixture.store.db.exec("DELETE FROM memory_search_documents");
+        rebuildTransferMemorySearch(fixture.store.db);
+      }
+      const doc = memory.getSearchDocument(fixture.roleId,"event",event.eventId)!;
+      assert.match(doc.body,/栀子花与姐姐的联结/);
+      assert.doesNotMatch(doc.body,/如今懂得|说起那年的花|姐姐今天是否仍然喜欢/);
+      assert.ok(memory.getSearchDocument(fixture.roleId,"daily_summary",refined.summary.summaryId));
+      assert.equal(memory.getEvidenceDetail(fixture.roleId,evidenceId).content,quote);
+      assert.equal(memory.listEventClaims(fixture.roleId,event.eventId).length,5);
+    }
   } finally {
     fixture.store.close();
     fs.rmSync(fixture.root, { recursive: true, force: true });

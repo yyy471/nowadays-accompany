@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
+import { MemoryStore } from "../storage/memory-store.js";
+import { restoreAutonomyShareLinks } from "../storage/autonomy-store.js";
 
 export type TransferCell = string | number | null;
 export type TransferRow = Record<string, TransferCell>;
@@ -142,17 +144,10 @@ export function normalizeExecutionFacts(tables: TransferTables): void {
 }
 
 export function rebuildTransferMemorySearch(db: Database.Database): void {
-  db.exec(`INSERT INTO memory_search_documents
-      (role_id, record_type, record_id, title, body, updated_at)
-    SELECT role_id, 'event', event_id, title,
-           CASE WHEN subjective_experience = '' THEN summary
-                WHEN summary = '' THEN subjective_experience
-                ELSE summary || char(10) || subjective_experience END, updated_at
-      FROM memory_events
-    UNION ALL
-    SELECT role_id, 'daily_summary', summary_id,
-           CASE WHEN topic = '' THEN experience_date ELSE topic END, summary, updated_at
-      FROM daily_summaries`);
+  const memory = new MemoryStore(db);
+  memory.rebuildEventSearch();
+  memory.rebuildSummarySearch();
+  restoreAutonomyShareLinks(db);
   const insert = db.prepare(`INSERT INTO memory_search_documents
     (role_id, record_type, record_id, title, body, updated_at) VALUES (?, 'diary', ?, ?, ?, ?)`);
   for (const row of db.prepare("SELECT * FROM diaries").iterate() as Iterable<TransferRow>) {

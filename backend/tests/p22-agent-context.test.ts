@@ -8,6 +8,51 @@ import { createFixtureWithModel, ScriptedChatModel, withStorage, type Fixture } 
 
 const protocols: ModelProtocol[] = ["openai-chat", "openai-responses", "anthropic-messages", "google-gemini"];
 
+test("memory_search 在四种协议完整、部分及仅剩回查编号时按实际正文登记送达", () => {
+  const ids = [randomUUID(), randomUUID(), randomUUID()];
+  const retrievalId = randomUUID();
+  const snippet = "检索目标" + "木".repeat(360);
+  const reads = ids.map(id => ({ type: "event" as const, id, retrievalId }));
+  const messages = (count: number, text = snippet): ModelMessage[] => [
+    { role: "user", content: "检索目标", source: { currentUserRequest: true } },
+    {
+      role: "assistant", content: "",
+      toolCalls: [{ name: "memory_search", callId: "wire-search", arguments: { query: "检索目标" } }],
+    },
+    {
+      role: "tool", toolCallId: "wire-search", toolName: "memory_search",
+      source: { internalStepKey: "lookup-original", memoryReads: reads.slice(0, count) },
+      content: JSON.stringify({ status: "success", result: {
+        status: "succeeded", retrievalId, items: ids.slice(0, count).map(id => ({ id, type: "event", snippet: text })),
+      } }),
+    },
+  ];
+  for (const protocol of protocols) {
+    const baseUrl = "https://offline.invalid/v1";
+    const request = { modelName: "offline", system: "必要角色设定", tools: [], messages: messages(3) };
+    const input = {
+      request, prompt: { required: request.system, optional: [] }, protocol, baseUrl,
+      maxOutputChars: 100, resuming: false, evidenceQuery: "检索目标",
+    };
+    const budgetForOne = (text: string) => serializeModelRequest(protocol, baseUrl, {
+      ...request, messages: messages(1, text),
+    }).length + input.maxOutputChars;
+    assert.deepEqual(selectAgentContext(input).memoryReads, reads, protocol);
+    for (const [text, expected] of [[snippet, 1], [snippet.slice(0, 100), 1], ["", 0]] as const) {
+      const selected = selectAgentContext({ ...input, maxInputChars: budgetForOne(text) });
+      const wire = serializeModelRequest(protocol, baseUrl, selected);
+      assert.deepEqual(selected.memoryReads, reads.slice(0, expected), protocol);
+      assert.deepEqual(ids.filter(id => wire.includes(id)), ids.slice(0, expected), protocol);
+      if (expected === 0) {
+        assert.match(wire, /history_lookup/);
+      } else {
+        assert.ok(wire.includes("检索目标木"), protocol);
+        assert.equal(wire.includes(snippet), text === snippet, protocol);
+      }
+    }
+  }
+});
+
 test("DL-164 以四种协议实际写入 HTTP 的请求体验证容量，接受后才登记送达", async () => {
   const originalFetch = globalThis.fetch;
   try {

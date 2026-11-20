@@ -663,6 +663,62 @@ test("refinement turns a low-recall event into a searchable daily summary", asyn
   }
 });
 
+test("v24 旧库保留精炼档案、持久线索和证据，升级后校正在修订中保留来源", async () => {
+  const fixture = createFixture();
+  try {
+    const raw = "在紫椅七号见面，答应以后先私下确认。";
+    const saved = seedEvent(fixture,{content:raw,title:"紫椅七号",summary:raw,occurredAt:"2026-10-28T01:10:00.000Z"});
+    const role = fixture.roleId;
+    const {summaryId,oldRevisions} = withStorage(fixture,({business:{db}}) => {
+      const store = new MemoryStore(db);
+      store.updateEvent({roleId:role,eventId:saved.eventId,expectedVersion:1,patch:{},addEvidenceIds:[],
+        claims:[{kind:"commitment",text:"私下确认",evidenceId:saved.evidenceId,sourceSender:"user",sourceKind:"message",
+          sourceAt:saved.occurredAt,learnedAt:saved.occurredAt,recordedAt:saved.occurredAt}],
+        now:saved.occurredAt,currentRound:0});
+      const {summary} = store.refineEvent({roleId:role,events:[{eventId:saved.eventId,expectedVersion:2}],
+        summary:"讨论了介绍时的分寸。",now:saved.occurredAt});
+      // 旧版精炼删除事件索引，并把首个事件的标题留在摘要检索文档内。
+      db.prepare("DELETE FROM memory_search_documents WHERE record_id=?").run(saved.eventId);
+      db.prepare("UPDATE memory_search_documents SET title=? WHERE record_id=?").run("紫椅七号",summary.summaryId);
+      const revisions = db.prepare("SELECT * FROM memory_revisions ORDER BY revision_id").all();
+      const current = db.prepare("SELECT sql FROM sqlite_master WHERE name='memory_revisions'").get() as {sql:string};
+      const old = current.sql.replace(", 'user_correction'","");
+      assert.doesNotMatch(old,/user_correction/);
+      db.exec(`ALTER TABLE memory_revisions RENAME TO new_revisions; ${old};
+        INSERT INTO memory_revisions SELECT * FROM new_revisions; DROP TABLE new_revisions;`);
+      db.exec("ALTER TABLE memory_search_documents DROP COLUMN related_text");
+      db.pragma("user_version=24");
+      return {summaryId:summary.summaryId,oldRevisions:revisions};
+    });
+    const memory = fixture.app.services.memory;
+    withStorage(fixture,({business}) => {
+      assert.equal(business.schemaVersion,25);
+      assert.deepEqual(business.db.prepare("SELECT * FROM memory_revisions ORDER BY revision_id").all(),oldRevisions);
+    });
+    assert.deepEqual(memory.search(role,{query:"紫椅七号"}).items,[]);
+    assert.deepEqual(memory.search(role,{query:"私下确认"}).items.map(it=>it.id),[saved.eventId]);
+    assert.equal(memory.getEvent(role,saved.eventId).summary,raw);
+    assert.equal(memory.getEvidence(role,saved.evidenceId).content,raw);
+    const url = `http://127.0.0.1:${await listen(fixture.app.server,0,"127.0.0.1")}/v1/roles/${role}/memory`;
+    assert.equal((await requestJson(url,"PATCH","/events/"+saved.eventId,{
+      expectedVersion:3,patch:{summary:"现在的理解"},reason:"用户回看原文",
+    })).status,200);
+    assert.equal((await requestJson(url,"PATCH","/summaries/"+summaryId,{
+      expectedVersion:1,summary:"用户补充的概括",reason:"手动核对日期",
+    })).status,200);
+    memory.correctSummary(role,summaryId,{expectedVersion:2,summary:"后来核对的概括",reason:"角色再次核对"});
+    const rows = withStorage(fixture,({business:{db}})=>db.prepare(`SELECT change_source AS source,
+      json_extract(content_json,'$.reason') AS reason FROM memory_revisions
+      WHERE change_source IN ('agent_correction','user_correction') ORDER BY rowid`).all());
+    assert.deepEqual(rows,[
+      {source:"user_correction",reason:"用户回看原文"},
+      {source:"user_correction",reason:"手动核对日期"},
+      {source:"agent_correction",reason:"角色再次核对"},
+    ]);
+    assert.equal(memory.getEvidence(role,saved.evidenceId).content,raw);
+  } finally { await closeFixture(fixture); }
+});
+
 test("refinement aggregates same-date events and supplements an existing summary", async () => {
   const fixture = createFixture();
   const now = "2026-11-03T12:00:00.000Z";
@@ -1308,7 +1364,7 @@ async function runCli(baseUrl: string, args: readonly string[]): Promise<unknown
   });
 }
 
-test("agent search records deliveries and recalls once per execution", async () => {
+test("agent search candidates become delivered only after an accepted request, once per execution", async () => {
   const fixture = createFixture();
   try {
     const event = seedEvent(fixture, {
@@ -1325,11 +1381,25 @@ test("agent search records deliveries and recalls once per execution", async () 
       { mode: "agent", executionId: round.executionId },
     );
     assert.deepEqual(first.items.map((item) => item.id), [event.eventId]);
-    service.search(
+    const second = service.search(
       fixture.roleId,
       { query: "杭州" },
       { mode: "agent", executionId: round.executionId },
     );
+    withStorage(fixture, ({business}) => {
+      const db = business.db;
+      assert.deepEqual(db.prepare("SELECT delivered FROM retrieval_results ORDER BY rowid").all(), [
+        {delivered: 0}, {delivered: 0},
+      ]);
+      assert.deepEqual(db.prepare("SELECT count(*) AS n FROM memory_recalls").get(), {n: 0});
+      const store = new MemoryStore(db);
+      for (const retrievalId of [first.retrievalId, second.retrievalId, first.retrievalId]) {
+        store.recordDeliveries(fixture.roleId, round.executionId, [{type:"event", id:event.eventId, retrievalId}], "2026-11-03T12:40:00.000Z");
+      }
+      assert.deepEqual(db.prepare("SELECT delivered FROM retrieval_results ORDER BY rowid").all(), [
+        {delivered: 1}, {delivered: 1},
+      ]);
+    });
     const recalls = withStorage(fixture, (storage) =>
       storage.business.db
         .prepare("SELECT COUNT(*) AS count FROM memory_recalls")

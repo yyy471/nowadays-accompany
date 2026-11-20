@@ -801,7 +801,7 @@ export function serializeModelRequest(
     return {
       // Messages API 合并相邻 assistant 内容。历史回执若与当前原生调用相邻，
       // 会把无签名文本拼到 thinking 块之前；回执属于应用交给模型的数据。
-      role: protocol === "anthropic-messages" || requiresChatReasoning ? "user" : "assistant",
+      role: protocol === "anthropic-messages" || protocol === "google-gemini" || requiresChatReasoning ? "user" : "assistant",
       content: `已保存的工具事实 [${message.source.toolCallId ?? message.source.internalStepKey ?? message.toolCallId}]（${message.toolName ?? "工具"}）：${message.content}`,
     };
   });

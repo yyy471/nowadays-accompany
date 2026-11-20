@@ -1,16 +1,17 @@
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import type { ConversationTool } from "../domain/conversation.js";
-import type { ModelMessage } from "../domain/model.js";
+import type { MemoryDelivery, ModelMessage } from "../domain/model.js";
 import { SPOKEN_REPLY_SQL } from "../storage/evidence.js";
 import { contextTerms } from "./agent-context.js";
+import { readsInExcerpt, savedMemoryReads } from "./memory-read-projection.js";
 import type { RoleAccess } from "./role-access.js";
 
 const lookupSchema = z.object({
   kind: z.enum(["message", "tool", "internal", "evidence"]).optional(),
   id: z.string().min(1).max(512).optional(),
   query: z.string().trim().max(500).optional(),
-  scope: z.enum(["window", "task", "spoken"]).default("window"),
+  scope: z.enum(["window", "task", "spoken", "user_quote"]).default("window"),
   offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
 });
 
@@ -32,6 +33,7 @@ interface HistoryRow {
   content: string;
   occurredAt: string;
   background: 0 | 1;
+  memoryReads?: MemoryDelivery[];
 }
 
 // 可直接追溯业务主键；窗口与任务范围均以执行／消息归属关联表验证。
@@ -44,6 +46,10 @@ const historyRowsSql = `
         AND ev.source_id = m.message_id
      WHERE w.role_id = @roleId AND m.status <> 'generating' AND m.content <> ''
        AND ((@scope = 'spoken' AND ${SPOKEN_REPLY_SQL})
+         OR (@scope = 'user_quote' AND m.sender = 'user' AND m.source_platform = 'nowadays'
+           AND m.processed_by_execution_id IS NOT NULL AND ev.evidence_id IS NOT NULL
+           AND w.source = 'nowadays' AND EXISTS (SELECT 1 FROM windows cw
+             WHERE cw.role_id = @roleId AND cw.window_id = @windowId AND cw.source = 'nowadays'))
          OR (@scope = 'window' AND m.window_id = @windowId)
          OR (@scope = 'task' AND ev.task_id = @taskId)
          OR (@scope = 'task' AND EXISTS (
@@ -94,14 +100,14 @@ export function historyLookupTool(roleId: string, access: RoleAccess, webProject
   return {
     name: "history_lookup",
     source: "memory",
-    description: "分页查找本窗口或当前任务的历史，或跨窗口核对角色已经告诉用户的原话。可按文字搜索、按编号分页读原文。",
+    description: "回查历史。跨直接对话窗口核对用户原话用 user_quote，核对角色实际讲过什么用 spoken。支持关键词和原文编号。",
     inputSchema: {
       type: "object",
       properties: {
         kind: { enum: ["message", "tool", "internal", "evidence"] },
         id: { type: "string", description: "原消息、工具回执、内部操作或证据编号。省略则列举或搜索。" },
         query: { type: "string", description: "搜索词。省略则按时间逆序列举。" },
-        scope: { enum: ["window", "task", "spoken"], description: "window 查本窗口，task 查当前任务，spoken 跨窗口查实际发给用户的内容。中断回复只计已输出的部分。" },
+        scope: { enum: ["window", "task", "spoken", "user_quote"], description: "window 查本窗口，task 查当前任务。spoken 查角色实际发给用户的内容。user_quote 仅在本机直接对话按关键词或编号核对用户亲口说过的原文，可查尚未整理的发言。" },
         offset: { type: "integer", minimum: 0, description: "使用上次返回的 nextOffset。" },
       },
       additionalProperties: false,
@@ -112,21 +118,29 @@ export function historyLookupTool(roleId: string, access: RoleAccess, webProject
         return { status: "failed", diagnosticCode: "HISTORY_LOOKUP_INVALID" };
       }
       const { scope, kind, id, query, offset } = parsed.data;
+      if (scope === "user_quote" && !id && !query) {
+        return { status: "failed", diagnosticCode: "HISTORY_QUERY_REQUIRED" };
+      }
       if (scope === "task" && context.taskId === null) {
         return { status: "failed", diagnosticCode: "HISTORY_TASK_REQUIRED" };
       }
+      const memoryReads: MemoryDelivery[] = [];
       const result = access.withStore(roleId, ({ business }) => {
         const params = { roleId, windowId: context.windowId, taskId: context.taskId, scope };
+        if (scope === "user_quote" && !canReadUserQuotes(business.db, roleId, context.windowId, context.executionId)) {
+          return id ? { entry: null, nextOffset: null } : { entries: [], nextOffset: null };
+        }
         if (id !== undefined) {
           const row = business.db.prepare(`${historyRowsSql}
             SELECT * FROM matches WHERE (id = @id OR evidenceId = @id)
               AND (@kind IS NULL OR @kind = 'evidence' AND evidenceId = @id OR kind = @kind)
             LIMIT 1`).get({ ...params, id, kind: kind ?? null }) as HistoryRow | undefined;
           if (row === undefined) return { entry: null, nextOffset: null };
-          const { content, background: _background, ...entry } = projectRow(business.db, roleId, row, webProjection);
+          const { content, background: _background, memoryReads: reads, ...entry } = projectRow(business.db, roleId, row, webProjection);
           let end = Math.min(offset + 2_000, content.length);
           const finalUnit = content.charCodeAt(end - 1);
           if (end < content.length && finalUnit >= 0xd800 && finalUnit <= 0xdbff) end -= 1;
+          if (reads) memoryReads.push(...readsInExcerpt(content, entry.label, reads, offset, end));
           return {
             entry: { ...entry, content: content.slice(offset, end), offset },
             nextOffset: end < content.length ? end : null,
@@ -142,11 +156,12 @@ export function historyLookupTool(roleId: string, access: RoleAccess, webProject
         const search = query?.toLowerCase() ?? "";
         let matched = 0;
         for (const candidate of rows) {
-          const { content, background: _background, ...row } = projectRow(business.db, roleId, candidate as HistoryRow, webProjection);
+          const { content, background: _background, memoryReads: reads, ...row } = projectRow(business.db, roleId, candidate as HistoryRow, webProjection);
           if (search && !row.label.toLowerCase().includes(search) && !content.toLowerCase().includes(search)) continue;
           if (matched++ < offset) continue;
           const hit = search ? content.toLowerCase().indexOf(search) : -1;
           const start = Math.max(0, hit - 32);
+          if (reads && entries.length < pageSize) memoryReads.push(...readsInExcerpt(content, row.label, reads, start, start + 120));
           entries.push({ ...row, snippet: (start ? "…" : "") + content.slice(start, start + 120) });
           if (entries.length > pageSize) break;
         }
@@ -155,9 +170,28 @@ export function historyLookupTool(roleId: string, access: RoleAccess, webProject
           nextOffset: entries.length > pageSize ? offset + pageSize : null,
         };
       });
-      return { status: "success", adaptedResult: result };
+      return { status: "success", adaptedResult: result, ...(memoryReads.length && { memoryReads }) };
     },
   };
+}
+
+function canReadUserQuotes(db: Database.Database, roleId: string, windowId: string, executionId: string): boolean {
+  const row = db.prepare(`WITH caller AS (
+    SELECT x.execution_id, x.rowid AS ordinal, x.trigger_type FROM executions x JOIN windows w USING (window_id)
+    WHERE x.execution_id=? AND x.role_id=? AND x.window_id=? AND w.source='nowadays'
+  ), origin AS (
+    SELECT execution_id FROM caller
+    UNION SELECT prior.execution_id FROM caller c JOIN execution_tasks et USING (execution_id)
+      JOIN execution_tasks ancestor ON ancestor.task_id=et.task_id
+      JOIN executions prior ON prior.execution_id=ancestor.execution_id
+      WHERE c.trigger_type='tool_result' AND et.relation IN ('initiates','continues')
+        AND ancestor.relation IN ('initiates','continues') AND prior.role_id=? AND prior.rowid<=c.ordinal
+  )
+  SELECT COUNT(*) AS total, COUNT(CASE WHEN m.source_platform='nowadays' AND w.source='nowadays' THEN 1 END) AS direct
+    FROM origin JOIN executions x USING (execution_id)
+    JOIN messages m ON m.message_id=x.trigger_message_id OR m.claimed_by_execution_id=x.execution_id OR m.processed_by_execution_id=x.execution_id
+    JOIN windows w ON w.window_id=m.window_id WHERE m.sender='user'`).get(executionId,roleId,windowId,roleId) as {total:number; direct:number};
+  return row.total > 0 && row.direct === row.total;
 }
 
 /** 取回显式引用与匹配的原文，即使原文已早于运行时的近期窗口。 */
@@ -194,6 +228,8 @@ export function findAgentEvidence(
       const row = mayDeliver ? raw : projectRow(db, scope.roleId, raw, webProjection);
       const exact = identifiers.has(row.id) || (row.evidenceId !== null && identifiers.has(row.evidenceId));
       if (!exact && (row.kind === "evidence" || (row.kind === "internal" && row.label === "history_lookup"))) continue;
+      // 当前经历由记忆索引召回。旧工具回执只在续原任务或明确回查时使用，避免已纠正的快照再次混入日常对话。
+      if (!isSeed && !exact && row.kind === "internal" && row.memoryReads?.length) continue;
       const haystack = `${row.label}\n${row.content}`.toLowerCase();
       const relevance = exact ? 1000 : terms.filter((term) => haystack.includes(term)).length;
       if (isSeed || exact) selected.set(row.id, { row, scope: searchScope.scope });
@@ -213,6 +249,13 @@ export function findAgentEvidence(
 }
 
 function projectRow(db: Database.Database, roleId: string, row: HistoryRow, webProjection?: WebToolProjection): HistoryRow {
+  if (row.kind === "internal") {
+    const outcome = JSON.parse(row.content);
+    const reads = outcome.memoryReads ?? savedMemoryReads(row.label, outcome.rawResponse ?? outcome.adaptedResult);
+    const content = JSON.stringify({ status: outcome.status, ...(outcome.diagnosticCode && { diagnosticCode: outcome.diagnosticCode }),
+      result: outcome.adaptedResult ?? null });
+    return { ...row, content, ...(reads.length && { memoryReads: reads }) };
+  }
   if (row.kind !== "tool" && row.kind !== "evidence") return row;
   const content = webProjection?.(db, roleId, row.id);
   return content === undefined ? row : { ...row, content };
@@ -235,6 +278,7 @@ function historyMessage(row: HistoryRow, scope: HistoryScope["scope"], continuin
     source: {
       ...source,
       historical: true,
+      ...(row.memoryReads && { memoryReads: row.memoryReads }),
       ...(continuing && row.background === 1 && row.status === "success" ? { webPrefetch: true } : {}),
       ...(row.kind === "tool" ? { toolCallId: row.id } : row.kind === "internal" ? { internalStepKey: row.id } : {}),
     },

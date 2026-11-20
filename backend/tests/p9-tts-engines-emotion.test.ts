@@ -412,7 +412,7 @@ test("V18 database migrates to V19 while preserving voice config, messages and S
 
     const storage = RoleStorage.openExisting(paths);
     try {
-      assert.equal(storage.business.schemaVersion, 24);
+      assert.equal(storage.business.schemaVersion, 25);
     } finally {
       storage.close();
     }

@@ -60,6 +60,7 @@ import { RoleStorage } from "../storage/role-storage.js";
 import { prepareModelWebReadings, readWebHistoryProjection, recordAcceptedWebReadings } from "../storage/web-reading.js";
 import { matchWorldbooks } from "../domain/worldbook.js";
 import { readWorldbooks, recordWorldbookUsage } from "../storage/worldbook-store.js";
+import { MemoryStore } from "../storage/memory-store.js";
 import {
   AgentGraphRunner,
   CIRCUIT_FAILURE_THRESHOLD,
@@ -2345,6 +2346,7 @@ export class ConversationService {
           systemPrompt,
           prepareModelMessages: (messages) => prepareModelWebReadings(storage.business.db, roleId, messages),
           onModelAccepted: (accepted) => {
+            new MemoryStore(storage.business.db).recordDeliveries(roleId, accepted.executionId, accepted.memoryReads, this.now().toISOString());
             recordWorldbookUsage(storage.business.db, accepted);
             recordAcceptedWebReadings(storage.business.db, {
               ...accepted,
@@ -3119,6 +3121,7 @@ export class ConversationService {
       );
       return {
         briefs: result.items.map((item) => ({
+          retrievalId: result.retrievalId,
           type: item.type,
           id: item.id,
           title: item.title,
@@ -3294,7 +3297,7 @@ export class ConversationService {
     /** 本段已决定收尾时的原因；非空时追加收尾指令并禁止再调用工具。 */
     segmentHalt: AgentSegmentStopKind | null;
   }): AgentSystemPrompt {
-    const optional: string[] = [];
+    const optional: Array<AgentSystemPrompt["optional"][number]> = [];
     const userMessages = input.pendingMessages.map(message => message.content);
     const definition = Array.from(input.roleContext.isBuiltin ? input.roleContext.definitionText :
       roleCardForDialogue(input.roleContext.definitionText, userMessages));
@@ -3324,7 +3327,9 @@ export class ConversationService {
       optional.push(`设定附加信息：${payload}`);
     }
     lines.push(
-      "直接回应眼前的话。平常聊天可以只有台词，意思说完就停。确有动作值得让对方看见时，用星号标出。最近已反复出现的姿态和话尾可以省去，别换个近义词再演一遍。对方要听原话、约好的暗号，或人物有意重申自己的立场时，可以照说。",
+      input.autonomy === null
+        ? "直接回应眼前的话。平常聊天可以只有台词，意思说完就停。确有动作值得让对方看见时，用星号标出。最近已反复出现的姿态和话尾可以省去，别换个近义词再演一遍。对方要听原话、约好的暗号，或人物有意重申自己的立场时，可以照说。"
+        : "这次思考和收尾文字只记入自己的活动。想独处时可以安静结束，把心情留在私下；只有此刻确实想把某件事告诉对方，才另用主动分享工具发消息。",
       "角色卡给出性格底色。示例和未来阶段只供参考，眼前关系以实际经历为准；明确承诺当场算数，习惯要看后来怎样做。不要替用户说话、决定或描写其内心。",
       "按消息的说话人区分对方告知、自己观察和自己的猜测。对方纠正细节时沿用最新说法；要引用谁说过什么，先对得上那个人的原话。过去的回复只能证明自己说过；涉及第三方的细节，以用户原话或实际观察为依据。只听说过的事不要补成亲眼看见的细节。遇到已约定的线索，依约定中的分工和条件回应。",
       "想起的细节可以只影响今天的选择。要提旧事时，顾及眼前话题和已经讲过的部分；需要确认自己讲过什么时，用 history_lookup 的 spoken 范围按关键词查各窗口已发出的回复。区分事发时的感受与后来形成的理解，结合时间和后续经历判断此刻心情；已经放下的事，无须因场景相似再生气。",
@@ -3413,12 +3418,13 @@ export class ConversationService {
     if (input.recallBriefs.length > 0) {
       optional.push("自动召回的相关长期记忆概况（不是完整原文）：");
       for (const brief of input.recallBriefs) {
-        optional.push(
-          `- [${brief.type}] ${brief.title}${brief.experienceDate ? `〔经历日期 ${brief.experienceDate}〕` : ""}（id=${brief.id}）：${truncate(
+        optional.push({
+          recall: { type: brief.type, id: brief.id, ...(brief.retrievalId ? { retrievalId: brief.retrievalId } : {}) },
+          text: `- [${brief.type}] ${brief.title}${brief.experienceDate ? `〔经历日期 ${brief.experienceDate}〕` : ""}（id=${brief.id}）：${truncate(
             brief.snippet,
             500,
           )}`,
-        );
+        });
       }
       optional.push(
         "如果时间、已讲范围或事情经过会影响回答，先核对细节，调用 memory_event、memory_summary、memory_evidence 或 memory_search；不要仅凭概况编造原文。",
@@ -3440,7 +3446,7 @@ export class ConversationService {
     }
     lines.push(
       "可用工具规则：",
-      "- 旧消息和工具回执可用 history_lookup 搜索窗口或当前任务，也可按引用编号分页读取。",
+      "- 旧消息和工具回执可用 history_lookup 搜索窗口或任务。新窗口核对用户说过什么、谁帮谁，或事件标题与经过不一致时，用 scope=user_quote 取用户原话，以具体人和动作核对，摘要不足时保留未知。",
       "- 记忆检索成功但无结果与查询失败不同；未命中和失败都不等于事情没发生。",
       "- 外部 MCP 工具的实际调用会保存原始响应和结果；不要重复调用已经成功或结果未知的操作。",
       "- 需要更新角色当前状态时调用 state_update，补丁只在本轮正式提交时生效。",

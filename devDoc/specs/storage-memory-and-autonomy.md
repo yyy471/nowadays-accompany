@@ -46,7 +46,7 @@
 | --- | --- | --- |
 | `<app-root>/data/app.sqlite` | 全局索引库（V11） | 存角色索引、活动状态、预置身份、资源与加密凭据、删除队列，以及单角色迁移的基线、选择记录和发布日志 |
 | `<app-root>/secrets/master.key` | 本地主密钥盒（AES-256-GCM `v1`） | [secret-cipher.ts](../../backend/src/security/secret-cipher.ts#L20-L100) `0o700` 目录／`0o600` 密钥文件，竞争写使用 `flag: "wx"` |
-| `.../roles/<roleId>/business.sqlite` | 角色业务库（V23） | 保存身份与首次启用资格、窗口消息、任务、执行与计量、记忆证据、自主安排、外观与媒体。网页原文的实际送达区间由 `web_reading_deliveries` 保存 |
+| `.../roles/<roleId>/business.sqlite` | 角色业务库（V25） | 保存身份与首次启用资格、窗口消息、任务、执行与计量、记忆证据、自主安排、外观与媒体。网页原文的实际送达区间由 `web_reading_deliveries` 保存 |
 | `.../roles/<roleId>/execution.sqlite` | 图检查点库（`EXECUTION_SCHEMA_VERSION = 1`） | `@langchain/langgraph-checkpoint-sqlite` 的 `SqliteSaver` 专用 |
 | `.../roles/<roleId>/workspace/` | 角色独立工作空间 | 本地 MCP 根目录；日记落盘 `diaries/YYYY-MM-DD/<diaryId>.md`；外观／语音／过场图分置同级 `appearance/`、`voice/`、`scene-images/` |
 
@@ -103,10 +103,13 @@
 
 - **触发、串行与模型继承**：证据在消息入库与工具结算时写入 `evidence_records` 并按当时配置时区固定 `experience_date`。同一角色经 `idx_memory_batch_single_running` 与 [MemoryRuntime](../../backend/src/application/memory-runtime.ts#L60-L413) 双重约束保持单批串行且不阻塞聊天。触发条件为同窗待处理消息 `>=50`（`message_threshold`）、`>=30` 且停歇 `60s`（`idle`）、任务进入 `completed`/`failed` 或晚到工具结果补记（`task_end`）及 `manual`。模型通过 `resolveMemory` 取启用的 `memory_model`，未单独绑定则继承 `chat_model`；缺绑定、角色删除中或模型维护时保留触发与进度、暂不调度；失败按 `[30s, 2m, 10m, 1h]` 退避（之后维持 1 小时），**不自动换模型**；角色目录暂时缺失或 `SQLITE_BUSY` 时暂停轮询并保留启动恢复标记（[283 §26](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#26-306-补修独立复验)）。
 - **容量分批与严谨 JSON 校验（`GAP-04`／`R06`）**：[MemoryService](../../backend/src/application/memory-service.ts#L112-L345) 在绑定模型声明 `maxInputChars`／`maxOutputChars` 时，按完整请求（系统提示 ＋ `1000` 骨架冗余 ＋ 候选元数据 ＋ JSON 转义后证据分段 `memory_evidence_segments` ＋ 输出预留）核算预算并在发送前复检 `assertRequestCapacity`；未声明时使用保守默认（`DEFAULT_MEMORY_BUDGET_CHARS = 24_000`、`DEFAULT_OUTPUT_RESERVE_CHARS = 4_000`、`requestOverheadChars = 2_000`）。每子批校验严格 JSON schema 后原子提交并推进证据状态，任一操作失败整批回滚（已提交前序子批保留）。
-- **混合检索、召回与 100 轮精炼**：[MemoryQueryService](../../backend/src/application/memory-query-service.ts#L83-L600) 统一检索 `active` 事件、日常摘要与日记：`>=3` 字符词元走 `FTS5 trigram`（`bm25`），`1～2` 字符走转义 `LIKE`；支持 `今天`／`昨天`／`前天` 与 `YYYY-MM-DD` 相对日期及角色隔离。只有进入模型上下文的命中（`decision_round` 非空）才按 `(executionId, record)` 去重写入 `memory_recalls`；创建／最近补充起满 `>=100` 轮且最近 100 轮召回 `<=1` 次的 `active` 事件进入 `refineCandidates`，同日（`experienceDate`）可创建或经 `expectedSummaryVersion` 补充 `daily_summaries`，精炼后事件退为 `refined` 并删全文检索项、保留全部原始证据。
+- **混合检索与实际召回**。角色可按关键词、日期、人物和地点取回经历、日常摘要与日记。检索先登记候选，模型接受请求后按实际出站内容更新送达状态。自动概况、工具结果与原任务续行共用这套规则。同一次执行读同一条只计一次，容量裁掉的正文、仅供回查的编号及人工查找均不增加计数。[检索服务](../../backend/src/application/memory-query-service.ts) · [上下文裁选](../../backend/src/application/agent-context.ts)
+- **低频经历精炼**。自创建或最近补充至少经过 100 个决策轮，且近 100 轮实际召回至多一次的活跃事件可供整理器精炼。同日事件可归入日常摘要。精炼后，普通检索通过摘要或单独保留的珍惜细节、兴趣、承诺、实践及相关成长线索找到这段经历。原始事件、各次理解及证据仍可按编号核查。升级和角色迁移按同样规则重建索引。[记忆存储](../../backend/src/storage/memory-store.ts)
 - **日记文件与主观分离（`GAP-06`）**：日记写入工作空间 Markdown 文件，读取 `getDiary`／Agent 工具 `memory_diary`（经 `getDiarySegment` 按 Unicode 码点切片，默认 `4000`、上限 `20_000` 字符）时比对 SHA-256，外部修改实时回写快照与检索索引。角色 `state_update` 仅在决策提交同一事务内浅合并更新（乐观锁），后台整理不可直接改动当前状态；纠错仅改事件／摘要并写 `memory_revisions`。
 
 ### 3.4 自主活动调度与统一额度预算（`186`＋`190`）
+
+角色用 `autonomy_schedule` 自选未来时间。省略 `taskId` 会建立独立计划，显式带上当前任务编号可在到期后续做原任务。活动中转入后台的工具完成后，后续执行产生的主动分享归回当时的活动，主窗口消息与活动链接同时保存。首次思考选择安静结束时，系统保存私有活动记录。
 
 - **优先级与窗口**：调度优先处理待处理用户消息 → 到期或中断后待续任务（含带原 `taskId` 唤醒）→ 到期 `autonomy_wakes`；自主推进使用懒创建的 `nowadays-autonomy` 自定义窗口，仅当角色显式调用 `autonomy_share` 时向主窗口写入主动消息并推送 SSE。
 - **额度口径与跨日预留**：[AutonomyService](../../backend/src/application/autonomy-service.ts#L35-L475) 默认每日 `200` 点（可设 `unlimited`），在本地零点随 `localDate` 重置且不累计余额。**只有 `autonomous` 来源执行与其工具调用扣点**；由带原 `taskId` 唤醒续跑的 `origin="user"` 任务沿用 `user_chat / counted=0`（`198 R05`）。外部工具在连接建立前按派发时刻写入 `autonomy_tool_reservations`；实际派发立即提交（跨日重启补记仍归原 `localDate`），未派发失败则退还预留；额度耗尽时 `pauseForBudget` 保留原任务进度并自动安排次日零点 `budget_resume` 唤醒（`AUTONOMY_BUDGET_EXHAUSTED`）。
@@ -152,6 +155,10 @@
 实践经验记录适用情境和实际结果，同一方法按来源时间选择当前可检索的版本，旧版本仍可回查。相关经历可以在事件详情中双向追溯。值得珍惜的细节及搁置中的兴趣能在低频精炼中保留。角色怎样行动和是否开口，由当下对话或自主活动决定。
 
 自动召回从当前用户消息、明确承接的前文或当前任务步骤取得查询词，命中时带经历日期与相关片段。仅为核对已讲范围时，`history_lookup(scope="spoken")` 可查同角色其他用户可见窗口的回复；中断只计确实发出的部分，独处窗口的想法留在原处。[实现与验证](../archive/09-role-runtime-and-transfer/402-long-dialogue-quality.md)
+
+要核对用户本人说过什么，角色可用 `history_lookup(scope="user_quote")` 按关键词或消息、证据编号查找。原话保留发言人、时间与对应记录。当前执行及来源窗口须同属该角色的本机直接对话，且当时处理过相应发言。记忆整理仍在排队时也能回查。正常对话按需使用这项工具。
+
+桌面在「关系 → 经历」提供事件、日常摘要及历史关键词查找入口。用户可以修改正文，并明确选择要替换或撤下的线索。未选择的线索继续有效，替换文本注明更正来源。每次保存校验版本，冲突时用户可对照最新记录保留草稿。事件、摘要及原始消息各有自己的出处，人工更正和角色自行纠正分别写入修订记录。
 
 构造文本模型请求时，来自其他业务本地日期的聊天消息带上发送日。选中跨日消息时，系统另给出一次本轮当地日期，供角色理解原话中的“今天”“昨晚”。日期说明随被选中的消息一起计算上下文容量。业务消息、展示文字和原文回查保留当时的内容。发送日只标明说话的时间，事件发生时间仍看当时所说的内容及其证据。
 

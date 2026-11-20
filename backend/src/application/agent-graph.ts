@@ -20,6 +20,7 @@ import type {
 } from "../domain/conversation.js";
 import {
   isIncompleteCompletion,
+  type MemoryDelivery,
   type ModelContinuation,
   type ModelMessage,
   type ModelMessageSource,
@@ -77,6 +78,7 @@ export interface AgentGraphDeps {
   prepareModelMessages?: (messages: readonly ModelMessage[]) => ModelMessage[];
   onModelAccepted?: (input: {
     worldbookSelection: WorldbookSelection[];
+    memoryReads: MemoryDelivery[];
     roleId: string;
     windowId: string;
     taskId: string | null;
@@ -343,7 +345,7 @@ export class AgentGraphRunner {
           "SELECT 1 FROM model_calls WHERE model_call_id = ? AND role_id = ? AND resource_id = ?",
         ).get(state.modelCallId, state.roleId, current.resourceId) !== undefined
       : true;
-    const { worldbookSelection, ...request } = selectAgentContext({
+    const { worldbookSelection, memoryReads, ...request } = selectAgentContext({
       request: {
         modelName: current.modelName,
         resourceId: current.resourceId,
@@ -417,6 +419,7 @@ export class AgentGraphRunner {
         executionId: state.executionId,
         modelCallId: callId,
         messages: request.messages,
+        memoryReads,
         worldbookSelection,
       });
     };
@@ -1400,7 +1403,7 @@ function toolResultMessage(
     role: "tool",
     toolCallId: call.wireCallId,
     toolName: call.name,
-    ...(source === undefined ? {} : { source }),
+    ...(source === undefined ? {} : { source: { ...source, ...(outcome.memoryReads ? { memoryReads: outcome.memoryReads } : {}) } }),
     content: JSON.stringify({
         status: outcome.status,
         ...(outcome.diagnosticCode === undefined

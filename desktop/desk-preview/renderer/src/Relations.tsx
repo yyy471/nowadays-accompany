@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import type { RoleListItem } from './types';
-import { UiThemeScope, useMotionPolicy } from './ui';
+import { Button, UiThemeScope, useMotionPolicy } from './ui';
+import { MemoryCorrection, type MemoryTarget } from './relations/MemoryCorrection';
 import { useThemePreset, useThemeTransitionStrategy } from './ui/presets';
 import { createRoleRequestGate, initialRelationUi, profileModel, reduceRelation, splitDefinition, visiblePacket, type RelationUi } from './relations/dossier.js';
 import { loadRelationPacket } from './relations/load-dossier';
@@ -41,6 +42,9 @@ export function Relations({ roles, error, currentId, visit, onSelect, onOpenSett
   const [portraitFailed, setPortraitFailed] = useState(false);
   const [evidenceText, setEvidenceText] = useState('');
   const [evidenceError, setEvidenceError] = useState('');
+  const [correction, setCorrection] = useState<{ roleId: string; target: MemoryTarget | null; source: HTMLElement } | null>(null);
+  const [savedRevision, setSavedRevision] = useState(0);
+  const [correctionStatus, setCorrectionStatus] = useState('');
   const [fold, setFold] = useState({ on: false, reverse: false });
   const [enter, setEnter] = useState('');
   const gate = useRef(createRoleRequestGate());
@@ -85,8 +89,12 @@ export function Relations({ roles, error, currentId, visit, onSelect, onOpenSett
   }, []);
 
   useEffect(() => {
+    const changedRole = gate.current.currentRoleId() !== currentId;
     const ticket = gate.current.begin(currentId);
-    dispatch({ type: 'switch', roleId: currentId });
+    if (changedRole) {
+      dispatch({ type: 'switch', roleId: currentId });
+      setCorrection(null); setCorrectionStatus('');
+    }
     setPortraitFailed(false);
     setEvidenceText('');
     setEvidenceError('');
@@ -106,7 +114,7 @@ export function Relations({ roles, error, currentId, visit, onSelect, onOpenSett
       dispatch({ type: 'failed', roleId: currentId, error: reason instanceof Error ? reason.message : String(reason) });
     });
     return () => { controller.abort(); window.clearTimeout(motionTimer); };
-  }, [currentId, motion.reduced]);
+  }, [currentId, motion.reduced, savedRevision]);
 
   // 资料分批到达时 packet 会多次更新；依据只在目标变化时重取，避免重复请求和闪动。
   const evidenceRoleId = packet?.roleId ?? '';
@@ -172,6 +180,8 @@ export function Relations({ roles, error, currentId, visit, onSelect, onOpenSett
   </div>;
 
   return <UiThemeScope theme="xiacheng" preset={preset} motion={motion.reduced ? 'reduced' : 'full'} className="exlibris-host">
+    {correction?.roleId === currentId && <MemoryCorrection roleId={currentId} target={correction.target} source={correction.source}
+      onClose={() => setCorrection(null)} onSaved={() => { setCorrection(null); setCorrectionStatus('记忆更正已保存。'); setSavedRevision(n => n + 1); }} />}
     <div className={'exlibris' + (enter === 'home' ? ' home-enter' : '')} data-theme={night ? 'night' : 'day'} data-motion={motion.reduced ? 'reduced' : 'full'}>
     <div className="relationship-stage">
       <div className={'book collection' + (fold.on ? ' illuminating' : '') + (fold.reverse ? ' reverse' : '') + (turning ? '' : '')} data-view={ui.view} id="collection">
@@ -254,6 +264,8 @@ export function Relations({ roles, error, currentId, visit, onSelect, onOpenSett
               {profile.loading && !ui.error && <p className="status-line">正在读取这一页。</p>}
               {ui.view === 'experiences' && packet && <>
                 <p className="chapter-intro">整理之后留下的经历。点开一条，可以再看她当时写下的感受和依据。</p>
+                <Button size="sm" onClick={e => setCorrection({ roleId: currentId, target: null, source: e.currentTarget })}>查找并更正记忆</Button>
+                {correctionStatus && <p role="status">{correctionStatus}</p>}
                 {memoriesLoading && <p className="status-line">{packet.events.length || packet.summaries.length ? '还有记录正在整理。' : '正在整理经历。'}</p>}
                 {packet.memoryError && <p className="status-line error">{packet.memoryError}</p>}
                 {!packet.events.length && !packet.summaries.length && !packet.memoryError && !memoriesLoading && <p className="status-line">还没有整理出经历。</p>}
@@ -267,12 +279,14 @@ export function Relations({ roles, error, currentId, visit, onSelect, onOpenSett
                     {event.subjective && <p>她记下的感受：{event.subjective}</p>}
                     {!event.subjective && <p>{event.summary}</p>}
                     <button type="button" className="evidence-button" aria-expanded={ui.evidenceId === event.id} onClick={() => dispatch({ type: 'evidence', evidenceId: event.id })}>看依据</button>
+                    <Button size="sm" onClick={e => setCorrection({ roleId: currentId, target: { type: 'event', id: event.id }, source: e.currentTarget })}>更正经历</Button>
                     {ui.evidenceId === event.id && <div className="evidence">{evidenceError && <small>{evidenceError}</small>}{evidenceText && <blockquote>{evidenceText}</blockquote>}<cite>来自这条经历保存的原始记录。</cite></div>}
                   </div>}
                 </article>)}
                 {packet.summaries.map(summary => <article className="moment" key={summary.id}>
                   <div className="moment-open" aria-hidden="true"><time className="moment-date">{summary.date}</time><span><strong className="moment-title">{summary.title}</strong><span className="moment-summary">{summary.summary}</span></span></div>
                   <p className="status-line">日常概况</p>
+                  <Button size="sm" onClick={e => setCorrection({ roleId: currentId, target: { type: 'daily_summary', id: summary.id }, source: e.currentTarget })}>更正摘要</Button>
                 </article>)}
                 </div>
               </>}

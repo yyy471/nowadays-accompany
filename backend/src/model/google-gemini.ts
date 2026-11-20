@@ -581,7 +581,11 @@ function toGoogleGeminiContents(
       },
     ]);
   }
-  if (contents.length === 0) {
+  // 自主活动没有用户发言。延续首轮的应用触发标记，避免把历史助手文字当成本轮预填回复。
+  if (contents[0]?.role === "model") {
+    contents.unshift({ role: "user", parts: [{ text: APPLICATION_TRIGGER_INPUT }] });
+  }
+  if (contents.length === 0 || contents.at(-1)?.role === "model") {
     pushParts("user", [{ text: APPLICATION_TRIGGER_INPUT }]);
   }
   return contents;

@@ -47,7 +47,7 @@ devDoc/
 | 文档 | 定位 |
 | --- | --- |
 | [401 新角色首次思考、网页阅读与单角色迁移](archive/09-role-runtime-and-transfer/401-role-runtime-and-transfer.md) | DL-161～DL-166 的设计、方案审查、实施与验收记录 |
-| [402 长期对话、世界书与角色表现联调](archive/09-role-runtime-and-transfer/402-long-dialogue-quality.md) | 原卡对照、跨窗口记忆、两种人物风格、真实消息接口与桌面表情差分 |
+| [402 长期对话、世界书与角色表现联调](archive/09-role-runtime-and-transfer/402-long-dialogue-quality.md) | 原卡对照、跨窗口记忆、桌面表情与人工更正、193 轮自然整理、自主阅读到主动分享 |
 
 ### 08 · 角色配置与设置 v6 迁移（`archive/08-config-pages-v6/`，`400` 起）
 

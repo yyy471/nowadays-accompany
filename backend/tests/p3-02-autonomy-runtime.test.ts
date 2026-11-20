@@ -635,9 +635,13 @@ test("budget exhaustion pauses the activity and leaves the unexecuted tool reque
   }
 });
 
-test("user conversations can schedule later autonomy without spending autonomy points", { timeout: 20_000 }, async () => {
+test("user conversations can schedule independent future autonomy after the conversation task completes", { timeout: 20_000 }, async () => {
   const clock: Clock = { value: new Date("2026-11-04T02:00:00.000Z") };
   const model = new ScriptedChatModel([
+    (request): ModelEvent[] => [
+      {type:"tool_call",callId:"read-agenda",name:toolName(request,"workspace_read"),arguments:{path:"agenda.md"}},
+      {type:"completed",stopReason:"tool_calls"},
+    ],
     (request): ModelEvent[] => {
       assert.ok(
         request.tools.some((tool) => tool.name === "autonomy_schedule"),
@@ -663,9 +667,16 @@ test("user conversations can schedule later autonomy without spending autonomy p
       { type: "text_delta", text: "好，我晚点自己整理一下。" },
       { type: "completed", stopReason: "stop" },
     ],
+    (request): ModelEvent[] => {
+      assert.match(request.system,/这是一次自主活动/);
+      assert.match(request.system,/晚点整理今天聊到的旅行计划/);
+      return [{type:"text_delta",text:"补完了路线笔记。"},{type:"completed",stopReason:"stop"}];
+    },
   ]);
   const fixture = createAutonomyFixture(model, clock);
   try {
+    const workspace = addWorkspaceMcp(fixture);
+    fs.writeFileSync(path.join(workspace,"agenda.md"),"旅行计划尚待整理。","utf8");
     fixture.app.conversation.submitMessage(
       fixture.roleId,
       fixture.windowId,
@@ -682,6 +693,7 @@ test("user conversations can schedule later autonomy without spending autonomy p
     assert.equal(wakes[0]?.scheduledAt, "2026-11-04T05:00:00.000Z");
     assert.equal(wakes[0]?.intent, "晚点整理今天聊到的旅行计划");
     assert.ok(wakes[0]?.sourceExecutionId);
+    assert.equal(wakes[0].taskId,null);
     const budget = fixture.app.services.autonomy.getBudget(fixture.roleId);
     assert.equal(budget.usedPoints, 0);
     const stored = withStorage(fixture, (storage) =>
@@ -692,6 +704,18 @@ test("user conversations can schedule later autonomy without spending autonomy p
     assert.ok(
       stored.every((row) => row.purpose === "user_chat" && row.counted === 0),
     );
+    const sourceTask = withStorage(fixture, ({business:{db}}) => db.prepare(`SELECT t.task_id AS id,t.status
+      FROM execution_tasks x JOIN tasks t USING(task_id) WHERE x.execution_id=? AND x.relation='initiates'`).get(wakes[0]!.sourceExecutionId)) as {id:string;status:string};
+    assert.equal(sourceTask.status,"completed");
+    clock.value = new Date("2026-11-04T05:00:00.000Z");
+    assert.equal(fixture.app.conversation.runDueAutonomy(fixture.roleId),true);
+    await fixture.app.conversation.waitForIdle(fixture.roleId);
+    const activity = fixture.app.services.autonomy.getStatus(fixture.roleId).activities.find(a=>a.wakeId===wakes[0]!.wakeId);
+    assert.equal(activity?.status,"completed");
+    assert.ok(activity.taskId);
+    assert.notEqual(activity.taskId,sourceTask.id);
+    assert.notEqual(activity.executionId,wakes[0].sourceExecutionId);
+    assert.equal(model.requests.length,4);
   } finally {
     await fixture.close();
   }

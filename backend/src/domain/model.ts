@@ -59,6 +59,8 @@ export interface ModelImageAttachment {
 }
 
 export interface ModelMessageSource {
+  /** 本条实际包含的记忆，供出站确认记账，不进入厂商协议。 */
+  memoryReads?: MemoryDelivery[];
   messageId?: string;
   /** 原消息发送时间。跨日时用于本次出站投影，原文及回查引用保持独立。 */
   sentAt?: string;
@@ -72,6 +74,12 @@ export interface ModelMessageSource {
   webPrefetch?: boolean;
   summary?: boolean;
   currentUserRequest?: boolean;
+}
+
+export interface MemoryDelivery {
+  type: "event" | "daily_summary" | "diary";
+  id: string;
+  retrievalId?: string;
 }
 
 export type ModelMessage = { source?: ModelMessageSource } & (

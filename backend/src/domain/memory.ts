@@ -35,7 +35,13 @@ const claimSchema = z.object({
   message: "实践经验须包含稳定键、适用范围与实际结果",
 });
 export type MemoryClaim = z.infer<typeof claimSchema>;
-export interface MemoryClaimRecord extends MemoryClaim {
+export interface MemoryClaimRecord extends Omit<MemoryClaim, "kind"> {
+  kind: MemoryClaim["kind"] | "correction";
+  correctedKind?: MemoryClaim["kind"];
+  claimId?: string;
+  correctionSource?: MemoryCorrectionSource;
+  correctedPracticeKey?: string;
+  originalPracticeClaimId?: string;
   sourceKind?: MemorySourceKind;
   sourceSender?: EvidenceSender;
   learnedAt: string | null;
@@ -207,15 +213,19 @@ export interface MemorySearchOutcome {
   items: MemorySearchItem[];
 }
 
+const claimIdSchema = z.string().regex(/^v[1-9]\d*:\d+$/).max(40);
 export const eventCorrectionSchema = z
   .object({
     expectedVersion: z.number().int().min(1),
     patch: eventPatchSchema.default({}),
     addEvidenceIds: z.array(z.uuid()).max(50).optional(),
+    supersedeClaimIds: z.array(claimIdSchema).max(100).optional(),
+    claimReplacements: z.record(claimIdSchema, z.string().trim().min(1).max(2000)).optional(),
     reason: z.string().trim().max(2000).optional(),
   })
   .strict();
 export type EventCorrection = z.infer<typeof eventCorrectionSchema>;
+export type MemoryCorrectionSource = "user_correction" | "agent_correction";
 
 export const summaryCorrectionSchema = z
   .object({

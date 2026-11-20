@@ -109,6 +109,8 @@ node --import tsx src/cli.ts binding put --role $roleId --json '@.nowadays/bindi
 
 本地工具包含文件读写、目录检索、命令／脚本执行。Skill 目录使用通用 `目录名/SKILL.md`，正文按需加载。资源及角色绑定只提供 enabled 开关；关闭阻止新链使用，已执行原链保持资源至链结束。
 
+[阅读书架示例](examples/reading-shelf.mjs)也是本地 stdio MCP。将资源的 `command` 设为 Node 24 可执行文件，`args` 设为该示例文件的绝对路径，并在资源环境变量 `NOWADAYS_READING_SHELF` 中填入书目的 JSON 数组。例如 `[{"title":"信鸽协议","url":"https://www.rfc-editor.org/rfc/rfc1149.txt"}]`。书架从指定的 HTTPS 纯文本或 Markdown 原站读取，角色可选篇、选段和续读。另绑定工作空间工具即可由角色自行写笔记。角色库登记模型实际收到的原文、页面版本及 UTF-16 区间。书目与 MCP 配置无需模型密钥。
+
 ## 5. 对话与查询
 
 ```powershell

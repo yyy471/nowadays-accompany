@@ -858,6 +858,7 @@ export function registerApiRoutes(
           params.roleId ?? "",
           params.eventId ?? "",
           body,
+          "user_correction",
         ),
       };
     },
@@ -901,6 +902,7 @@ export function registerApiRoutes(
           params.roleId ?? "",
           params.summaryId ?? "",
           body,
+          "user_correction",
         ),
       };
     },

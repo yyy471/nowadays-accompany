@@ -6,6 +6,7 @@ import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { rolePaths } from "../src/bootstrap/config.js";
 import { DEFAULT_TOOL_FOREGROUND_WAIT_MS } from "../src/application/conversation-service.js";
+import { ConversationStore } from "../src/storage/conversation-store.js";
 import type { ModelEvent, ModelPort, ModelRequest } from "../src/domain/model.js";
 import {
   addBinding,
@@ -109,6 +110,101 @@ class BackgroundToolModel implements ModelPort {
 
 test("the default foreground wait window stays short and can be overridden", () => {
   assert.equal(DEFAULT_TOOL_FOREGROUND_WAIT_MS, 2_000);
+});
+
+test("同一任务两次唤醒在后台读完后，各自关联真实分享，并可从旧库恢复", { timeout: 60_000 }, async () => {
+  let now = new Date("2026-11-06T01:00:00.000Z");
+  const call = (name: string, arguments_: Record<string, unknown>): ModelEvent[] => [
+    { type: "tool_call", callId: randomUUID(), name, arguments: arguments_ },
+    { type: "completed", stopReason: "tool_calls" },
+  ];
+  const slowRead = (request: ModelRequest): ModelEvent[] => {
+    const tool = request.tools.find(candidate => candidate.name.includes("slow_op"));
+    assert.ok(tool);
+    return call(tool.name, {});
+  };
+  const reportReading = (content: string) => (request: ModelRequest): ModelEvent[] => {
+    assert.ok(request.messages.some(message => message.role === "tool" && String(message.content).includes("slow-result")));
+    return call("autonomy_share", { content });
+  };
+  const reply = (text: string): ModelEvent[] => [
+    { type: "text_delta", text }, { type: "completed", stopReason: "stop" },
+  ];
+  const excerpts = ["第一段提到了旧船票。", "第二段写的是返航的日期。"];
+  const fixture = createFixture([
+    slowRead, reportReading(excerpts[0]!), call("task_pause", { reason: "等第二段解封" }), reply("第一段已经读完。"),
+    slowRead, reportReading(excerpts[1]!), reply("两段都看完了。"),
+  ], { toolForegroundWaitMs: 100, now: () => now });
+  const role = fixture.roleId;
+  const autonomy = fixture.app.services.autonomy;
+  const workspace = rolePaths(fixture.app.config.dataRoot, role).workspaceDir;
+  const releaseFile = path.join(workspace, "bg-release");
+  try {
+    addSlowOpMcp(fixture, workspace);
+    let taskId: string | undefined;
+    const expected = [];
+    for (const [index, time] of ["2026-11-06T02:00:00Z", "2026-11-06T03:00:00Z"].entries()) {
+      const wake = autonomy.scheduleWake(role, {
+        wakeAt: time, intent: "读完两段旧航海日志", ...(taskId && { taskId }),
+      });
+      now = new Date(time);
+      assert.equal(fixture.app.conversation.runDueAutonomy(role), true);
+      await waitUntil(() => withStorage(fixture, ({ business }) =>
+        business.db.prepare("SELECT 1 FROM executions x JOIN autonomy_activities a ON a.execution_id=x.execution_id WHERE a.wake_id=? AND x.status='superseded'").get(wake.wakeId) !== undefined,
+      ));
+      fs.writeFileSync(releaseFile, "");
+      await fixture.app.conversation.waitForIdle(role);
+      fs.unlinkSync(releaseFile);
+      const current = autonomy.listActivities(role).find(activity => activity.wakeId === wake.wakeId);
+      assert.ok(current);
+      if (taskId) assert.equal(current.taskId, taskId);
+      taskId = current.taskId;
+      const messages = fixture.app.services.messages.list(role, fixture.windowId, 0, 20).items;
+      const share = messages.find(message => message.content === excerpts[index]);
+      assert.ok(share);
+      assert.equal(current.sharedMessageId, share.messageId);
+      const continuation = withStorage(fixture, ({ business }) =>
+        business.db.prepare(`SELECT x.execution_id AS id FROM executions x JOIN execution_stream_events s
+          ON x.execution_id=s.execution_id WHERE x.trigger_type='tool_result' AND s.event_type='message_completed'
+          AND json_extract(s.payload_json,'$.proactive')=1 AND json_extract(s.payload_json,'$.replyMessageId')=?`).get(share.messageId) as { id: string } | undefined,
+      );
+      assert.ok(continuation);
+      assert.notEqual(current.executionId, continuation.id);
+      expected.push({ activityId: current.activityId, shareId: share.messageId, continuationId: continuation.id });
+    }
+    const [first, second] = expected;
+    assert.ok(first && second && taskId);
+    const readingTask = taskId;
+    assert.notEqual(first.activityId, second.activityId);
+    assert.equal(autonomy.getActivityByExecution(role, first.continuationId)?.activityId, first.activityId);
+    const referenced = withStorage(fixture, ({ business }) => {
+      const execution = business.createExecution({ roleId: role, windowId: fixture.windowId, triggerType: "tool_result" });
+      business.linkExecutionTask({ roleId: role, executionId: execution.executionId, taskId: readingTask, relation: "references" });
+      return execution.executionId;
+    });
+    assert.equal(autonomy.getActivityByExecution(role, referenced), null);
+    autonomy.shareMessage(role, { executionId: referenced, content: "另一项任务仅引用航海日志。" });
+    assert.equal(autonomy.listActivities(role).find(a => a.activityId === second.activityId)?.sharedMessageId, second.shareId);
+    withStorage(fixture, ({ business }) => {
+      const conversation = new ConversationStore(business.db, role, "Asia/Shanghai");
+      // 旧库混有普通完成事件和分段事件；两者都不能覆盖第一次分享。
+      for (const [type, proactive] of [["message_completed", false], ["message_segments", true]] as const) {
+        conversation.appendStreamEvent({
+          type, executionId: first.continuationId, windowId: fixture.windowId,
+          payload: { replyMessageId: second.shareId, proactive },
+        });
+      }
+      business.db.prepare("UPDATE autonomy_activities SET shared_message_id=NULL").run();
+      business.db.pragma("user_version=24");
+    });
+    const restored = autonomy.listActivities(role);
+    for (const row of expected) {
+      assert.equal(restored.find(activity => activity.activityId === row.activityId)?.sharedMessageId, row.shareId);
+    }
+  } finally {
+    fs.writeFileSync(releaseFile, "");
+    await fixture.close();
+  }
 });
 
 test("a slow MCP tool moves to background, frees the role and returns the result to the original task", { timeout: 60_000 }, async () => {

@@ -7,10 +7,12 @@ import {
   SchemaMigrationError,
 } from "../domain/errors.js";
 import { backfillEvidence } from "./evidence.js";
+import { restoreAutonomyShareLinks } from "./autonomy-store.js";
+import { MemoryStore } from "./memory-store.js";
 import { retireLegacyWebPrefetchEvidence, WEB_READING_SCHEMA_SQL } from "./web-reading.js";
 
 export const APP_SCHEMA_VERSION = 11;
-export const BUSINESS_SCHEMA_VERSION = 24;
+export const BUSINESS_SCHEMA_VERSION = 25;
 export const EXECUTION_SCHEMA_VERSION = 1;
 
 export const APP_TABLES = [
@@ -305,6 +307,20 @@ CREATE TABLE IF NOT EXISTS task_resource_continuations (
 
 export const BUSINESS_SCHEMA_V1_SQL = BUSINESS_SCHEMA_SQL;
 
+const MEMORY_REVISIONS_SQL = `CREATE TABLE IF NOT EXISTS memory_revisions (
+  revision_id TEXT PRIMARY KEY,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  target_type TEXT NOT NULL CHECK (target_type IN ('event', 'daily_summary')),
+  target_id TEXT NOT NULL,
+  revision_number INTEGER NOT NULL,
+  base_revision INTEGER NOT NULL,
+  change_source TEXT NOT NULL CHECK (change_source IN ('memory_batch', 'agent_correction', 'user_correction')),
+  content_json TEXT NOT NULL,
+  evidence_ids_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (target_type, target_id, revision_number)
+);`;
+
 const BUSINESS_V2_SQL = `
 ALTER TABLE messages ADD COLUMN execution_id TEXT REFERENCES executions(execution_id);
 ALTER TABLE messages ADD COLUMN claimed_by_execution_id TEXT REFERENCES executions(execution_id);
@@ -510,19 +526,7 @@ CREATE TABLE IF NOT EXISTS diary_events (
   PRIMARY KEY (diary_id, event_id)
 );
 
-CREATE TABLE IF NOT EXISTS memory_revisions (
-  revision_id TEXT PRIMARY KEY,
-  role_id TEXT NOT NULL REFERENCES roles(role_id),
-  target_type TEXT NOT NULL CHECK (target_type IN ('event', 'daily_summary')),
-  target_id TEXT NOT NULL,
-  revision_number INTEGER NOT NULL,
-  base_revision INTEGER NOT NULL,
-  change_source TEXT NOT NULL CHECK (change_source IN ('memory_batch', 'agent_correction')),
-  content_json TEXT NOT NULL,
-  evidence_ids_json TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  UNIQUE (target_type, target_id, revision_number)
-);
+${MEMORY_REVISIONS_SQL}
 
 CREATE TABLE IF NOT EXISTS retrieval_queries (
   retrieval_id TEXT PRIMARY KEY,
@@ -629,6 +633,7 @@ CREATE TABLE IF NOT EXISTS memory_search_documents (
   record_id TEXT NOT NULL,
   title TEXT NOT NULL,
   body TEXT NOT NULL,
+  related_text TEXT NOT NULL DEFAULT '',
   updated_at TEXT NOT NULL,
   UNIQUE (role_id, record_type, record_id)
 );
@@ -685,6 +690,7 @@ interface RequiredColumns {
 }
 
 const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
+  { table: "memory_search_documents", columns: ["related_text"] },
   { table: "role_worldbooks", columns: ["role_id", "revision", "books_json"] },
   { table: "worldbook_usage", columns: ["role_id", "execution_id", "model_call_id", "revision", "book_id", "entry_id", "status", "matched_message_ids_json"] },
   {
@@ -2049,6 +2055,22 @@ export function openBusinessDatabase(
         retireLegacyWebPrefetchEvidence(db);
       },
       23: (db) => db.exec(BUSINESS_V24_SQL),
+      24: (db) => {
+        assertFtsIndex(db);
+        db.exec(`ALTER TABLE memory_revisions RENAME TO memory_revisions_v24;
+          ${MEMORY_REVISIONS_SQL}
+          INSERT INTO memory_revisions SELECT * FROM memory_revisions_v24;
+          DROP TABLE memory_revisions_v24;`);
+        if (!(db.pragma("table_info(memory_search_documents)") as Array<{ name: string }>).some(column => column.name === "related_text")) {
+          db.exec("ALTER TABLE memory_search_documents ADD COLUMN related_text TEXT NOT NULL DEFAULT ''");
+        }
+        const memory = new MemoryStore(db);
+        memory.rebuildEventSearch();
+        memory.rebuildSummarySearch();
+        if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='autonomy_activities'").get()) {
+          restoreAutonomyShareLinks(db);
+        }
+      },
     },
     BUSINESS_TABLES,
     BUSINESS_INDEXES,

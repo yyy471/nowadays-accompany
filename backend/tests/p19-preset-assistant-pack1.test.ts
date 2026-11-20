@@ -336,7 +336,7 @@ test("包1：Schema V9/V20 无损迁移升级至 V10/V23", async () => {
       assert.equal(upgraded.appStore.schemaVersion, 11);
       const bizStorage = RoleStorage.openExisting(paths);
       try {
-        assert.equal(bizStorage.business.schemaVersion, 24);
+        assert.equal(bizStorage.business.schemaVersion, 25);
         const migratedRole = bizStorage.business.getRole(role.roleId);
         assert.equal(migratedRole.displayName, "迁移旧角色");
         assert.equal(migratedRole.bioText, "");

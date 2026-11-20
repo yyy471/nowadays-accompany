@@ -36,13 +36,13 @@
 7. **配置页 v6 离线复核已完成**。三视口和昼夜主题下核对了纸笺、页头、摘要与状态卡，实际读屏、减少动效和本机后端另有运行记录。系统适配及验收边界见 [400 实施记录](archive/08-config-pages-v6/400-config-pages-v6-migration-progress.md#26-主进程复核与系统适配2026-11-20)。
 8. **角色长期成长的真实质量验证**。GLM 5.3 按现有样本收口。DeepSeek 与 Gemini 已通过正式入口测试十轮日常、受邀复述、跨窗关系、释怀、公开与私下、自主安排和同一分支的后续行动。64 条固定输入对照另行记录。系统修复了角色卡示例误入与旧消息发送日缺失；DeepSeek 的连续动作和个别时间错位仍可复现。结果与样本边界见 [402 五组实测](archive/09-role-runtime-and-transfer/402-long-dialogue-quality.md#五组真实边界测试与系统归因)。
 
-9. **角色成长与跨窗口回忆（DL-167～DL-181）**。402 已接入逐条记忆依据、跨窗已讲原文查询、按当前任务步骤取用实践经验。长期兴趣、释怀与形成习惯的真实行为需要更多独立经历检验。[产品决策](161-digital-life-direction-decisions.md#dl-167-角色可以在具体情境中按经历形成的新做法行动)
+9. **角色成长与自主生活（DL-43、DL-55、DL-167～DL-181）**。实际送达计数、逐条保留重要线索、跨窗用户原话和桌面更正已补齐。同一角色经正式入口完成 193 轮，后台自然形成日常摘要。已实测自行定时、按时阅读、记笔记、形成有来源的经历和主动分享。跨角色风格的成长质量、重复动作及安静休息时的模型选择仍需持续比较。[四处记忆缺口与自主生活实测](archive/09-role-runtime-and-transfer/402-long-dialogue-quality.md#四处记忆缺口与自主生活实测)
 
 10. **动态页 v2**。三项修复和三处动效已通过独立离线复验。实际用户库的刷新耗时另行留证。[403 修复与独立复验](archive/02-desktop-ui-and-relations/403-feed-v2-migration.md#2026-11-20-修复与独立复验)
 
 ## 3. 验收基线与命令
 
-- **402 后端离线复验**。Node 24 正式测试 523/523，交付校验 2/2，完整验收 21/21 步、81 个固定验收场景，真实驱动设计回归另有 3/3，`sourceUnchanged=true`。报告位于 `backend/test-results/p5-2026-11-20T11-44-57-169Z-443de9c4/summary.json`。真实模型、桌面显示和独立复核另见[长期对话专项](archive/09-role-runtime-and-transfer/402-long-dialogue-quality.md)。
+- **402 长程与自主生活复验**。Node 24 后端正式测试 536/536、交付校验 2/2、完整验收 21/21 步与 81 个固定场景，`sourceUnchanged=true`。报告位于 `backend/test-results/p5-2026-11-20T14-45-28-324Z-d240b411/summary.json`。桌面测试 161/161，渲染器检查、构建及 Electron 更正重启实测均通过。付费模型样本、失败记录和独立复核见[长期对话专项](archive/09-role-runtime-and-transfer/402-long-dialogue-quality.md#四处记忆缺口与自主生活实测)。
 
 - **后端正式测试与离线验收**：
   - `cd backend && npx -y node@24 ./node_modules/typescript/bin/tsc --noEmit`（通过）；

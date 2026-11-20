@@ -1,4 +1,4 @@
-import type { ModelMessage, ModelToolSpec } from "./model.js";
+import type { MemoryDelivery, ModelMessage, ModelToolSpec } from "./model.js";
 import type {
   ExecutionRecord,
   MessageRecord,
@@ -121,10 +121,8 @@ export interface ConversationContext {
   taskId: string | null;
 }
 
-export interface RecallBrief {
+export interface RecallBrief extends MemoryDelivery {
   experienceDate?: string;
-  type: "event" | "daily_summary" | "diary";
-  id: string;
   title: string;
   snippet: string;
 }
@@ -160,6 +158,7 @@ export interface ConversationToolContext {
 export type ToolOutcomeStatus = "success" | "failed" | "unknown";
 
 export interface ConversationToolOutcome {
+  memoryReads?: MemoryDelivery[];
   status: ToolOutcomeStatus;
   rawResponse?: unknown;
   adaptedResult?: unknown;

@@ -6,6 +6,27 @@ import type { ExecutionRecord } from "./role-store.js";
 
 export const DEFAULT_AUTONOMY_DAILY_LIMIT = 200;
 
+/** 多次唤醒可续同一任务；取分享发生时已经启动的最近一次活动。 */
+const activityForExecution = `SELECT a.activity_id
+  FROM execution_tasks et JOIN autonomy_activities a ON a.task_id = et.task_id AND a.role_id = x.role_id
+  JOIN executions first ON first.execution_id = a.execution_id
+  WHERE et.execution_id = x.execution_id AND et.relation IN ('initiates','continues') AND first.rowid <= x.rowid
+  ORDER BY first.rowid DESC LIMIT 1`;
+
+export function restoreAutonomyShareLinks(db: Database.Database): void {
+  db.exec(`WITH shares AS (
+    SELECT (${activityForExecution}) AS activity_id, m.message_id, s.stream_event_id
+    FROM execution_stream_events s JOIN executions x ON x.execution_id = s.execution_id AND x.role_id = s.role_id
+    JOIN messages m ON m.message_id = json_extract(s.payload_json,'$.replyMessageId') AND m.window_id = s.window_id
+    JOIN windows w ON w.window_id = m.window_id AND w.role_id = s.role_id AND w.kind = 'main'
+    WHERE s.event_type = 'message_completed' AND json_extract(s.payload_json,'$.proactive') = 1
+      AND m.sender = 'assistant' AND m.status = 'completed'
+  )
+  UPDATE autonomy_activities AS a SET shared_message_id = (
+    SELECT message_id FROM shares WHERE activity_id = a.activity_id ORDER BY stream_event_id DESC LIMIT 1
+  ) WHERE EXISTS (SELECT 1 FROM shares WHERE activity_id = a.activity_id)`);
+}
+
 export type AutonomyWakeKind = "scheduled" | "budget_resume";
 const FIRST_ACTIVATION_WAKE_PREFIX = "first-activation:";
 
@@ -879,10 +900,10 @@ export class AutonomyStore {
   getActivityByExecution(executionId: string): AutonomyActivityRecord | null {
     const row = this.db
       .prepare(
-        `SELECT * FROM autonomy_activities
-          WHERE role_id = ? AND execution_id = ?
-          ORDER BY created_at DESC, rowid DESC
-          LIMIT 1`,
+        `SELECT a.* FROM executions x JOIN autonomy_activities a
+          ON a.activity_id = COALESCE((SELECT own.activity_id FROM autonomy_activities own
+            WHERE own.execution_id = x.execution_id AND own.role_id = x.role_id LIMIT 1), (${activityForExecution}))
+          WHERE x.role_id = ? AND x.execution_id = ?`,
       )
       .get(this.roleId, executionId) as ActivityRow | undefined;
     return row === undefined ? null : mapActivity(row);

@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
+import type { MemoryDelivery } from "../domain/model.js";
 import {
   AppError,
   DiaryNotFoundError,
+  InvalidMemoryCorrectionError,
   MemoryBatchConflictError,
   MemoryEventNotFoundError,
   MemoryOperationInvalidError,
@@ -18,6 +20,7 @@ import type {
   MemoryBatchRecord,
   EvidenceSender,
   MemoryClaimRecord,
+  MemoryCorrectionSource,
   MemoryEventPatch,
   MemoryEventRecord,
   MemoryEventSourceRecord,
@@ -34,15 +37,20 @@ import type {
 } from "../domain/memory.js";
 import { SPOKEN_REPLY_SQL } from "./evidence.js";
 import { readWebEvidenceProjection } from "./web-reading.js";
+import { memoryQueryTokens } from "../domain/memory-query-tokens.js";
 
 const claimLabels: Record<MemoryClaimRecord["kind"], string> = {
   observation: "有据观察", interest: "个人兴趣", released: "当时已释怀",
   user_quote: "用户原话", impression: "角色当时的印象", past_feeling: "当时感受",
   reflection: "后来的理解", practice: "实践经验", cherished_detail: "珍惜的细节",
   shared_detail: "角色已讲原话", commitment: "角色承诺", unknown: "尚未知",
+  correction: "更正后的线索",
 };
 
 function claimSearchText(claim: MemoryClaimRecord): string {
+  if (claim.correctionSource) {
+    return `${claim.correctionSource === "user_correction" ? "用户更正" : "角色核验更正"}（${claim.recordedAt}） ${claim.text}`;
+  }
   const scope = claim.practice ? `；适用：${claim.practice.scope}；实际结果：${claim.practice.outcome}` : "";
   const origin = claim.sourceSender === "assistant" ? "，据角色当时的发言" :
     claim.sourceSender === "user" ? "，据用户当时的发言" :
@@ -51,17 +59,38 @@ function claimSearchText(claim: MemoryClaimRecord): string {
 }
 
 // 同一实践办法保留所有有据版本，检索正文只收录最新的适用范围和做法。
-function searchableClaimText(claims: MemoryClaimRecord[]): string[] {
+function currentPracticeKey(claim: MemoryClaimRecord): string | undefined {
+  return claim.practice?.key ?? claim.correctedPracticeKey;
+}
+
+function comparePracticeHistory(a: MemoryClaimRecord, b: MemoryClaimRecord): number {
+  const byEvidenceDate = Date.parse(a.sourceAt) - Date.parse(b.sourceAt);
+  if (byEvidenceDate) return byEvidenceDate;
+  const first = a.originalPracticeClaimId ?? a.claimId;
+  const second = b.originalPracticeClaimId ?? b.claimId;
+  if (!first || !second) return 0;
+  // 同一证据日期下沿用原修订号和行号，编辑旧做法不会改变它在实践历程中的顺序。
+  return first.localeCompare(second, "en", { numeric: true });
+}
+
+function searchableClaims(claims: MemoryClaimRecord[]): MemoryClaimRecord[] {
   const latest = new Map<string, MemoryClaimRecord>();
   for (const claim of claims) {
-    if (!claim.practice) continue;
-    const current = latest.get(claim.practice.key);
-    if (!current || Date.parse(claim.sourceAt) >= Date.parse(current.sourceAt)) {
-      latest.set(claim.practice.key, claim);
+    const key = currentPracticeKey(claim);
+    if (!key) continue;
+    const current = latest.get(key);
+    if (!current || comparePracticeHistory(claim, current) >= 0) {
+      latest.set(key, claim);
     }
   }
-  return claims.filter(claim => !claim.practice || latest.get(claim.practice.key) === claim)
-    .map(claimSearchText);
+  return claims.filter(claim => {
+    const key = currentPracticeKey(claim);
+    return !key || latest.get(key) === claim;
+  });
+}
+
+function searchableClaimText(claims: MemoryClaimRecord[]): string[] {
+  return searchableClaims(claims).map(claimSearchText);
 }
 
 interface EvidenceRow {
@@ -192,6 +221,8 @@ export interface CreateEventInput {
 
 export interface UpdateEventInput {
   claims?: MemoryClaimRecord[];
+  supersedeClaimIds?: string[];
+  claimReplacements?: Record<string, string>;
   roleId: string;
   eventId: string;
   expectedVersion: number;
@@ -200,7 +231,8 @@ export interface UpdateEventInput {
   currentRound: number;
   now: string;
   experienceDate?: string;
-  changeSource?: "memory_batch" | "agent_correction";
+  changeSource?: "memory_batch" | MemoryCorrectionSource;
+  reason?: string;
 }
 
 export interface MemoryStatus {
@@ -1149,20 +1181,27 @@ export class MemoryStore {
   }
 
   listRecentEvents(roleId: string, limit = 20, evidenceText = ""): RelatedEventBrief[] {
+    const evidence = evidenceText.toLowerCase();
+    const terms = memoryQueryTokens(evidence, "auto").filter(word => word.length >= 2);
     const rows = this.db
       .prepare(
-        `SELECT event_id, title, summary, experience_date, version,
+        `SELECT e.event_id, d.title, CASE WHEN e.lifecycle_status = 'active' THEN e.summary ELSE d.body END AS summary,
+           e.experience_date, e.version,
            (? <> '' AND (
            instr(?, lower(e.title)) > 0 OR EXISTS (
              SELECT 1 FROM memory_event_tags t WHERE t.event_id = e.event_id
                AND t.dimension IN ('topic','place') AND length(t.normalized_value) >= 2
                AND instr(?, t.normalized_value) > 0
-           )
+           ) OR (e.lifecycle_status='refined' AND EXISTS (
+             SELECT 1 FROM json_each(?) term WHERE instr(d.related_text,term.value)>0
+           ))
          )) AS relevant
-         FROM memory_events e WHERE role_id = ? AND lifecycle_status = 'active'
-         ORDER BY relevant DESC, updated_at DESC, event_id ASC LIMIT ?`,
+         FROM memory_events e JOIN memory_search_documents d
+           ON d.role_id=e.role_id AND d.record_type='event' AND d.record_id=e.event_id
+         WHERE e.role_id = ? AND (e.lifecycle_status = 'active' OR relevant)
+         ORDER BY relevant DESC, e.updated_at DESC, e.event_id ASC LIMIT ?`,
       )
-      .all(evidenceText, evidenceText, evidenceText, roleId, limit) as Array<{
+      .all(evidence, evidence, evidence, JSON.stringify(terms), roleId, limit) as Array<{
         event_id: string;
         title: string;
         summary: string;
@@ -1171,19 +1210,15 @@ export class MemoryStore {
         relevant: number;
       }>;
     return rows.map(row => {
-      const keys = row.relevant ? this.db.prepare(
-        `SELECT DISTINCT json_extract(c.value, '$.practice.key') AS key
-         FROM memory_revisions r, json_each(r.content_json, '$.claims') c
-         WHERE r.role_id = ? AND r.target_id = ? AND r.target_type = 'event'
-           AND json_extract(c.value, '$.kind') = 'practice' LIMIT 12`,
-      ).all(roleId, row.event_id) as { key: string }[] : [];
+      const keys = row.relevant ? [...new Set(this.listEventClaims(roleId, row.event_id)
+        .map(currentPracticeKey).filter((key): key is string => Boolean(key)))].slice(0, 12) : [];
       return {
         eventId: row.event_id,
         title: row.title,
         summary: row.summary,
         experienceDate: row.experience_date,
         version: row.version,
-        ...(keys.length ? { practiceKeys: keys.map(item => item.key) } : {}),
+        ...(keys.length ? { practiceKeys: keys } : {}),
       };
     });
   }
@@ -1291,6 +1326,7 @@ export class MemoryStore {
       });
     }
     const nextVersion = current.version + 1;
+    const changes = this.correctClaimLines(input);
     const experienceDate = input.experienceDate ?? current.experienceDate;
     this.db
       .prepare(
@@ -1333,6 +1369,7 @@ export class MemoryStore {
       baseRevision: current.version,
       changeSource: input.changeSource ?? "memory_batch",
       content: {
+        ...(input.reason ? { reason: input.reason } : {}),
         title,
         summary,
         subjectiveExperience,
@@ -1340,7 +1377,8 @@ export class MemoryStore {
         occurredAtEnd,
         experienceDate,
         tags,
-        claims: input.claims ?? [],
+        claims: [...(input.claims ?? []), ...changes.replacements],
+        ...(changes.withdrawn.size ? { supersedeClaimIds: [...changes.withdrawn] } : {}),
       },
       evidenceIds: input.addEvidenceIds,
       now: input.now,
@@ -1354,6 +1392,8 @@ export class MemoryStore {
         body: [summary, subjectiveExperience, ...searchableClaimText(this.listEventClaims(input.roleId, input.eventId))].filter(Boolean).join("\n"),
         now: input.now,
       });
+    } else {
+      this.indexRetainedDetails(input.roleId, input.eventId, input.now);
     }
     return this.getEvent(input.roleId, input.eventId);
   }
@@ -1364,6 +1404,11 @@ export class MemoryStore {
          SELECT r.target_id AS later, json_extract(c.value, '$.relatedEventId') AS earlier
          FROM memory_revisions r, json_each(r.content_json, '$.claims') c
          WHERE r.role_id = ? AND r.target_type = 'event' AND json_type(c.value, '$.relatedEventId') = 'text'
+           AND NOT EXISTS (
+             SELECT 1 FROM memory_revisions edit, json_each(edit.content_json, '$.supersedeClaimIds') old
+             WHERE edit.target_id=r.target_id AND edit.target_type='event' AND edit.role_id=r.role_id
+               AND old.value = 'v' || r.revision_number || ':' || c.key
+           )
        )
        SELECT earlier AS event_id FROM links WHERE later = ? AND earlier <> later
        UNION SELECT later AS event_id FROM links WHERE earlier = ? AND earlier <> later
@@ -1372,13 +1417,61 @@ export class MemoryStore {
     return rows.map(row => row.event_id);
   }
 
-  listEventClaims(roleId: string, eventId: string): MemoryClaimRecord[] {
+  private correctClaimLines(input: UpdateEventInput): { withdrawn: Set<string>; replacements: MemoryClaimRecord[] } {
+    const selected = new Set(input.supersedeClaimIds ?? []);
+    const withdrawn = new Set(selected);
+    const replacements: MemoryClaimRecord[] = [];
+    const textById = input.claimReplacements ?? {};
+    if (Object.keys(textById).some(id => !selected.has(id))) {
+      throw new InvalidMemoryCorrectionError("替换文字必须对应本次选中的线索");
+    }
+    if (!selected.size) return { withdrawn, replacements };
+    const source = input.changeSource;
+    if (source !== "user_correction" && source !== "agent_correction") {
+      throw new InvalidMemoryCorrectionError("需要指定更正来源");
+    }
+    const claims = this.listEventClaims(input.roleId, input.eventId);
+    for (const id of selected) {
+      const claim = claims.find(item => item.claimId === id);
+      if (!claim) throw new InvalidMemoryCorrectionError("所选线索已失效或不属于该事件", { claimId: id });
+      const key = currentPracticeKey(claim);
+      if (key) {
+        // 撤下现行做法时，旧的已被其覆盖的版本不能自动重新成为当前做法。
+        for (const item of claims) {
+          if (currentPracticeKey(item) === key && comparePracticeHistory(item, claim) <= 0) withdrawn.add(item.claimId);
+        }
+      }
+      const text = textById[id];
+      if (text === undefined) continue;
+      const correctedKind = claim.kind === "correction" ? claim.correctedKind : claim.kind;
+      replacements.push({
+        kind: "correction", ...(correctedKind ? { correctedKind } : {}), text,
+        evidenceId: claim.evidenceId, learnedAt: input.now, sourceAt: claim.sourceAt,
+        recordedAt: input.now, correctionSource: source,
+        ...(key ? { correctedPracticeKey: key, originalPracticeClaimId: claim.originalPracticeClaimId ?? claim.claimId } : {}),
+        ...(claim.relatedEventId ? { relatedEventId: claim.relatedEventId } : {}),
+      });
+    }
+    return { withdrawn, replacements };
+  }
+
+  listEventClaims(roleId: string, eventId: string): Array<MemoryClaimRecord & { claimId: string }> {
     const rows = this.db.prepare(
-      `SELECT json_extract(content_json, '$.claims') AS claims
-       FROM memory_revisions WHERE role_id = ? AND target_type = 'event' AND target_id = ?
-         AND json_type(content_json, '$.claims') = 'array' ORDER BY revision_number`,
-    ).all(roleId, eventId) as { claims: string }[];
-    return rows.flatMap(row => JSON.parse(row.claims) as MemoryClaimRecord[]);
+      `SELECT revision_number, json_extract(content_json, '$.claims') AS claims,
+              json_extract(content_json, '$.supersedeClaimIds') AS superseded
+         FROM memory_revisions WHERE role_id=? AND target_type='event' AND target_id=?
+         ORDER BY revision_number`,
+    ).all(roleId, eventId) as Array<{ revision_number: number; claims: string | null; superseded: string | null }>;
+    const current = new Map<string, MemoryClaimRecord & { claimId: string }>();
+    for (const row of rows) {
+      for (const id of row.superseded ? JSON.parse(row.superseded) as string[] : []) current.delete(id);
+      const claims = row.claims ? JSON.parse(row.claims) as MemoryClaimRecord[] : [];
+      for (const [index, claim] of claims.entries()) {
+        const claimId = `v${row.revision_number}:${index}`;
+        current.set(claimId, { ...claim, claimId });
+      }
+    }
+    return [...current.values()];
   }
 
   evidenceMessageContext(kind: MemorySourceKind, sourceId: string): { sender: EvidenceSender; publishedReply?: boolean } {
@@ -1608,12 +1701,6 @@ export class MemoryStore {
                 e.last_supplemented_round
          FROM memory_events e
          WHERE e.role_id = ? AND e.lifecycle_status = 'active'
-           AND NOT EXISTS (
-             SELECT 1 FROM memory_revisions r, json_each(r.content_json, '$.claims') claim
-              WHERE r.target_id = e.event_id AND r.target_type = 'event' AND r.role_id = e.role_id
-                AND (json_extract(claim.value, '$.kind') IN ('cherished_detail','interest','practice','commitment')
-                     OR json_type(claim.value, '$.relatedEventId') = 'text')
-           )
            AND ? - e.last_supplemented_round >= ?
            AND (
              SELECT COUNT(*)
@@ -1821,9 +1908,7 @@ export class MemoryStore {
             : target.topic.length > 0
               ? target.topic
               : (distinctTopics[0] ?? "");
-        summaryTitle =
-          this.getSearchDocument(input.roleId, "daily_summary", summaryId)
-            ?.title ?? firstEvent.title;
+        summaryTitle = topic || experienceDate;
         this.db
           .prepare(
             `UPDATE daily_summaries
@@ -1843,7 +1928,7 @@ export class MemoryStore {
         baseVersion = 0;
         summaryVersion = 1;
         topic = providedTopic.length > 0 ? providedTopic : (distinctTopics[0] ?? "");
-        summaryTitle = firstEvent.title;
+        summaryTitle = topic || experienceDate;
         this.db
           .prepare(
             `INSERT INTO daily_summaries
@@ -1906,12 +1991,7 @@ export class MemoryStore {
              WHERE event_id = ? AND role_id = ?`,
           )
           .run(summaryId, nextVersion, input.now, event.eventId, input.roleId);
-        this.db
-          .prepare(
-            `DELETE FROM memory_search_documents
-             WHERE role_id = ? AND record_type = 'event' AND record_id = ?`,
-          )
-          .run(input.roleId, event.eventId);
+        this.indexRetainedDetails(input.roleId, event.eventId, input.now);
         this.insertRevision({
           roleId: input.roleId,
           targetType: "event",
@@ -1973,6 +2053,8 @@ export class MemoryStore {
     summaryId: string;
     expectedVersion: number;
     summary: string;
+    changeSource?: MemoryCorrectionSource;
+    reason?: string;
     now: string;
   }): DailySummaryRecord {
     const current = this.getSummary(input.roleId, input.summaryId);
@@ -1991,16 +2073,11 @@ export class MemoryStore {
          WHERE summary_id = ? AND role_id = ?`,
       )
       .run(input.summary, nextVersion, input.now, input.summaryId, input.roleId);
-    const existingDocument = this.getSearchDocument(
-      input.roleId,
-      "daily_summary",
-      input.summaryId,
-    );
     this.upsertSearchDocument({
       roleId: input.roleId,
       recordType: "daily_summary",
       recordId: input.summaryId,
-      title: existingDocument?.title ?? current.experienceDate,
+      title: current.topic || current.experienceDate,
       body: input.summary,
       now: input.now,
     });
@@ -2010,8 +2087,9 @@ export class MemoryStore {
       targetId: input.summaryId,
       revisionNumber: nextVersion,
       baseRevision: current.version,
-      changeSource: "agent_correction",
+      changeSource: input.changeSource ?? "agent_correction",
       content: {
+        ...(input.reason ? { reason: input.reason } : {}),
         experienceDate: current.experienceDate,
         topic: current.topic,
         summary: input.summary,
@@ -2127,6 +2205,21 @@ export class MemoryStore {
           item.id,
           item.delivered ? 1 : 0,
         );
+      }
+    })();
+  }
+
+  /** 最终出站请求获得确认后登记。同一次决策内，概况和工具深查共用一次召回。 */
+  recordDeliveries(roleId: string, executionId: string, reads: readonly MemoryDelivery[], now: string): void {
+    if (reads.length === 0) return;
+    this.db.transaction(() => {
+      const mark = this.db.prepare(`UPDATE retrieval_results SET delivered = 1
+        WHERE retrieval_id = ? AND record_type = ? AND record_id = ? AND EXISTS (
+          SELECT 1 FROM retrieval_queries q WHERE q.retrieval_id = retrieval_results.retrieval_id
+            AND q.role_id = ? AND q.mode <> 'manual')`);
+      for (const read of reads) {
+        if (read.retrievalId) mark.run(read.retrievalId, read.type, read.id, roleId);
+        this.recordRecall({ roleId, executionId, recordType: read.type, recordId: read.id, now });
       }
     })();
   }
@@ -2496,7 +2589,7 @@ export class MemoryStore {
     targetId: string;
     revisionNumber: number;
     baseRevision: number;
-    changeSource: "memory_batch" | "agent_correction";
+    changeSource: "memory_batch" | MemoryCorrectionSource;
     content: unknown;
     evidenceIds: readonly string[];
     now: string;
@@ -2522,21 +2615,62 @@ export class MemoryStore {
       );
   }
 
+  /** 精炼后只有长期线索参与普通检索，事件档案、历次理解和原始证据继续供深查。 */
+  rebuildEventSearch(): void {
+    const rows = this.db.prepare("SELECT role_id,event_id FROM memory_events").all() as {role_id: string; event_id: string}[];
+    for (const row of rows) {
+      const event = this.getEvent(row.role_id, row.event_id);
+      if (event.lifecycleStatus === "refined") {
+        this.indexRetainedDetails(row.role_id, row.event_id, event.updatedAt);
+      } else {
+        this.upsertSearchDocument({ roleId: row.role_id, recordType: "event", recordId: row.event_id,
+          title: event.title, body: [event.summary, event.subjectiveExperience,
+            ...searchableClaimText(this.listEventClaims(row.role_id, row.event_id))].filter(Boolean).join("\n"), now: event.updatedAt });
+      }
+    }
+  }
+
+  rebuildSummarySearch(): void {
+    this.db.exec(`INSERT INTO memory_search_documents (role_id,record_type,record_id,title,body,updated_at)
+      SELECT role_id,'daily_summary',summary_id,coalesce(nullif(topic,''),experience_date),summary,updated_at
+      FROM daily_summaries WHERE true
+      ON CONFLICT(role_id,record_type,record_id) DO UPDATE SET
+        title=excluded.title, body=excluded.body, updated_at=excluded.updated_at`);
+  }
+
+  private indexRetainedDetails(roleId: string, eventId: string, now: string): void {
+    const claims = this.listEventClaims(roleId, eventId).filter(claim => claim.relatedEventId ||
+      ["cherished_detail", "interest", "practice", "commitment"].includes(claim.correctedKind ?? claim.kind));
+    if (claims.length === 0) {
+      this.db.prepare("DELETE FROM memory_search_documents WHERE role_id=? AND record_type='event' AND record_id=?")
+        .run(roleId, eventId);
+      return;
+    }
+    const visible = searchableClaims(claims);
+    const relatedText = visible.map(claim =>
+      [claim.quoteContext ?? claim.text, claim.practice?.scope, claim.practice?.outcome].filter(Boolean).join("\n"),
+    ).join("\n").toLowerCase();
+    this.upsertSearchDocument({ roleId, recordType: "event", recordId: eventId,
+      title: "保留的经历线索", body: visible.map(claimSearchText).join("\n"), relatedText, now });
+  }
+
   private upsertSearchDocument(input: {
     roleId: string;
     recordType: "event" | "daily_summary" | "diary";
     recordId: string;
     title: string;
     body: string;
+    relatedText?: string;
     now: string;
   }): void {
     this.db
       .prepare(
         `INSERT INTO memory_search_documents
-         (role_id, record_type, record_id, title, body, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+         (role_id, record_type, record_id, title, body, related_text, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (role_id, record_type, record_id)
-         DO UPDATE SET title = excluded.title, body = excluded.body, updated_at = excluded.updated_at`,
+         DO UPDATE SET title = excluded.title, body = excluded.body,
+           related_text=excluded.related_text, updated_at = excluded.updated_at`,
       )
       .run(
         input.roleId,
@@ -2544,6 +2678,7 @@ export class MemoryStore {
         input.recordId,
         input.title,
         input.body,
+        input.relatedText ?? "",
         input.now,
       );
   }

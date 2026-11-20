@@ -196,8 +196,11 @@ test("agent tools correct events by version and read summary evidence within the
           eventId: refs.eventId,
           expectedVersion: 2,
           patch: { summary: "修正后的经过" },
+          reason: "角色核对旧消息",
         },
       },
+      {type:"tool_call",callId:"wire-summary-correct",name:"memory_correct_summary",
+        arguments:{summaryId:refs.summaryId,expectedVersion:1,summary:"一起去过旧书店。",reason:"角色重新概括"}},
       { type: "completed", stopReason: "tool_calls" },
     ],
     (): ModelEvent[] => [
@@ -229,7 +232,7 @@ test("agent tools correct events by version and read summary evidence within the
     (request: ModelRequest): ModelEvent[] => {
       assert.equal(
         request.messages.filter((message) => message.role === "tool").length,
-        4,
+        5,
       );
       return [
         { type: "text_delta", text: "已核对记忆。" },
@@ -387,12 +390,19 @@ test("agent tools correct events by version and read summary evidence within the
           "SELECT COUNT(*) AS count FROM memory_recalls WHERE role_id = ? AND record_type = 'daily_summary' AND record_id = ?",
         )
         .get(fixture.roleId, refs.summaryId) as { count: number };
-      return { event, summary, original, recall };
+      const changes = storage.business.db.prepare(`SELECT target_type AS type,change_source AS actor,
+        json_extract(content_json,'$.reason') AS reason FROM memory_revisions
+        WHERE change_source='agent_correction' ORDER BY target_type`).all();
+      return { event, summary, original, recall, changes };
     });
     assert.equal(stored.event.summary, "修正后的经过");
     assert.equal(stored.event.version, 3);
-    assert.equal(stored.summary.summary, "那天我们一起去了旧书店。");
-    assert.equal(stored.summary.version, 1);
+    assert.equal(stored.summary.summary, "一起去过旧书店。");
+    assert.equal(stored.summary.version, 2);
+    assert.deepEqual(stored.changes,[
+      {type:"daily_summary",actor:"agent_correction",reason:"角色重新概括"},
+      {type:"event",actor:"agent_correction",reason:"角色核对旧消息"},
+    ]);
     assert.equal(stored.original.content, "我们上次在杭州旧书店买了旧诗集。");
     assert.ok(stored.recall.count > 0);
   } finally {

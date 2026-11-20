@@ -282,24 +282,18 @@ export class AutonomyService {
         roleId,
         this.timeZone,
       );
-      const message = store.appendProactiveMessage({
-        windowId: window.windowId,
-        content,
-        executionId: input.executionId,
-        now: this.now().toISOString(),
-      });
-      const activity = this.store(
-        storage.business.db,
-        roleId,
-      ).getActivityByExecution(input.executionId);
-      if (activity !== null) {
-        this.store(storage.business.db, roleId).updateActivity({
-          activityId: activity.activityId,
-          status: activity.status,
-          sharedMessageId: message.messageId,
-          now: this.now().toISOString(),
+      const now = this.now().toISOString();
+      const message = storage.business.db.transaction(() => {
+        const message = store.appendProactiveMessage({
+          windowId: window.windowId, content, executionId: input.executionId, now,
         });
-      }
+        const autonomy = this.store(storage.business.db, roleId);
+        const activity = autonomy.getActivityByExecution(input.executionId);
+        if (activity) autonomy.updateActivity({
+          activityId: activity.activityId, status: activity.status, sharedMessageId: message.messageId, now,
+        });
+        return message;
+      })();
       this.proactiveMessageListener?.({
         roleId,
         windowId: window.windowId,
