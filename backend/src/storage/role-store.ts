@@ -431,7 +431,7 @@ export class RoleStore {
       const now = new Date().toISOString();
       this.db
         .prepare(
-          "INSERT INTO roles (role_id, builtin_key, display_name, bio_text, definition_text, definition_payload_json, definition_revision, state_json, state_version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO roles (role_id, builtin_key, display_name, bio_text, definition_text, definition_payload_json, definition_revision, state_json, state_version, created_at, updated_at, first_activation_pending) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
         )
         .run(
           input.roleId,

@@ -6,10 +6,13 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
 import { createBackendApp, type BackendApp } from "../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths } from "../src/bootstrap/config.js";
+import { AppStore } from "../src/storage/app-store.js";
 import { ConversationStore } from "../src/storage/conversation-store.js";
 import { RoleStore } from "../src/storage/role-store.js";
 import { MemoryQueryService } from "../src/application/memory-query-service.js";
+import { RoleAccess } from "../src/application/role-access.js";
 import type { ModelEvent, ModelPort } from "../src/domain/model.js";
+import { serializeModelRequest } from "../src/model/protocols.js";
 import { ScriptedChatModel, createFixtureWithModel, addBinding, seedEvent, withStorage, type Fixture } from "../tests/p2-05-fixture.js";
 
 const output = path.resolve(process.env.NOWADAYS_REVIEW_OUTPUT ?? "test-results/p4-remaining");
@@ -101,15 +104,30 @@ async function crashWorker(mode: string, directory: string) {
   if (["result-db-failure", "internal-receipt-db-failure"].includes(mode)) { await f.app.conversation.waitForIdle(f.roleId); stopAt(directory, mode); }
 }
 async function correctionWorker(directory: string, name: string) {
-  const metadata = JSON.parse(fs.readFileSync(path.join(directory, "fixture.json"), "utf8"));
-  const app = createBackendApp(parseBackendConfig(["--app-root", metadata.root, "--port", "0"]), { disableMemoryRuntime: true, modelPortFactory: () => new ScriptedChatModel([]) });
-  fs.writeFileSync(path.join(directory, `ready-${name}`), "ready");
-  await until(() => fs.existsSync(path.join(directory, "go")));
-  let result: unknown;
-  try { result = { ok: true, value: app.services.memory.correctEvent(metadata.roleId, metadata.eventId, { expectedVersion: 1, patch: { title: `并发${name}`, summary: `胜出内容${name}`, tags: { place: [`地点${name}`] } } }) }; }
-  catch (error) { result = { ok: false, code: error instanceof Error && "code" in error ? error.code : String(error) }; }
-  fs.writeFileSync(path.join(directory, `result-${name}.json`), JSON.stringify(result));
-  await app.close();
+  const { root, roleId, eventId } = JSON.parse(fs.readFileSync(path.join(directory, "fixture.json"), "utf8"));
+  const config = parseBackendConfig(["--app-root", root]);
+  // 复验的并发边界是记忆纠错事务。两个进程各自打开存储，复用生产纠错服务。
+  const appStore = new AppStore(config.appDatabasePath);
+  try {
+    const memory = new MemoryQueryService(new RoleAccess(appStore, config.dataRoot));
+    const expectedVersion = memory.getEvent(roleId, eventId).version;
+    fs.writeFileSync(path.join(directory, `ready-${name}.json`), JSON.stringify({
+      name, pid: process.pid, expectedVersion,
+    }));
+    await until(() => fs.existsSync(path.join(directory, "go")));
+    let result: unknown;
+    try {
+      result = { name, ok: true, value: memory.correctEvent(roleId, eventId, {
+        expectedVersion,
+        patch: { title: `并发${name}`, summary: `胜出内容${name}`, tags: { place: [`地点${name}`] } },
+      }) };
+    } catch (error) {
+      result = { name, ok: false, code: error instanceof Error && "code" in error ? error.code : String(error) };
+    }
+    fs.writeFileSync(path.join(directory, `result-${name}.json`), JSON.stringify(result));
+  } finally {
+    appStore.close();
+  }
 }
 function launch(args: string[], directory: string) {
   const fd = fs.openSync(path.join(directory, `${args[0] ?? "worker"}-${args.at(-1)}.log`), "w");
@@ -172,7 +190,24 @@ else {
         else if (mode === "commit-before-task-finish") contractPassed = original?.status === "completed" && model.requests.length === 0 && after.tasks.every((t: any) => t.status === "completed") && after.wakes.every((w) => w.status === "completed") && after.activities.every((a) => a.status === "completed");
         else if (mode.startsWith("internal-intent") || mode === "internal-receipt-db-failure") {
           const unknown = after.internalReceipts.find((r) => r.event_type === "tool_result_saved" && JSON.parse(r.payload_json).outcome?.status === "unknown");
-          const seenByModel = unknown !== undefined && model.requests.some((r) => r.messages.some((m) => m.content.includes(JSON.parse(unknown.payload_json).internalStepKey) && m.content.includes('"status":"unknown"')));
+          const receipt = unknown === undefined ? undefined : JSON.parse(unknown.payload_json) as {
+            internalStepKey: string;
+            toolName: string;
+            outcome: { status: string; diagnosticCode?: string };
+          };
+          const seenByModel = receipt?.outcome.diagnosticCode === "PROCESS_INTERRUPTED" && model.requests.some((request) => {
+            const wire = JSON.parse(serializeModelRequest("openai-chat", "http://offline.invalid/v1", request)) as {
+              messages: Array<{ role: string; content: unknown }>;
+            };
+            return wire.messages.some(({ role, content }) =>
+              role === "assistant" &&
+              typeof content === "string" &&
+              content.includes(`[${receipt.internalStepKey}]`) &&
+              content.includes(receipt.toolName) &&
+              content.includes('"status":"unknown"') &&
+              content.includes('"diagnosticCode":"PROCESS_INTERRUPTED"'),
+            );
+          });
           const dayMetering = after.metering.filter((m) => m.counted === 1 && m.created_at.startsWith(restartAt.slice(0, 10))).length;
           contractPassed = after.diaries.length === 1 && after.budget.usedPoints === dayMetering && unknown !== undefined && (mode.startsWith("internal-intent") ? seenByModel && after.tasks.every((t: any) => t.status === "completed") : model.requests.length === 0 && after.tasks.every((t: any) => t.status === "failed"));
         }
@@ -224,7 +259,9 @@ else {
     } finally { await f.close(); }
   });
   await probe("two-process-memory-correction", async () => {
-    const directory = path.join(output, "two-process-memory-correction"); fs.mkdirSync(directory, { recursive: true });
+    const caseRoot = path.join(output, "two-process-memory-correction");
+    fs.mkdirSync(caseRoot, { recursive: true });
+    const directory = fs.mkdtempSync(path.join(caseRoot, "run-"));
     const f = createFixtureWithModel(new ScriptedChatModel([]));
     const children: ReturnType<typeof launch>[] = [];
     let app: BackendApp | undefined;
@@ -232,18 +269,42 @@ else {
       const event = seedEvent(f, { content: "并发纠错原始证据", title: "并发前事件", summary: "并发前摘要", occurredAt: "2026-11-05T02:00:00.000Z" });
       await f.app.close();
       fs.writeFileSync(path.join(directory, "fixture.json"), JSON.stringify({ root: f.root, roleId: f.roleId, eventId: event.eventId }));
-      children.push(launch(["--correct", directory, "A"], directory), launch(["--correct", directory, "B"], directory));
-      await until(() => ["A", "B"].every((name) => fs.existsSync(path.join(directory, `ready-${name}`))));
+      for (const name of ["A", "B"]) {
+        children.push(launch(["--correct", directory, name], directory));
+        await until(() => fs.existsSync(path.join(directory, `ready-${name}.json`)));
+      }
       fs.writeFileSync(path.join(directory, "go"), "go");
       await until(() => ["A", "B"].every((name) => fs.existsSync(path.join(directory, `result-${name}.json`))));
       await Promise.all(children.map((c) => c.exited));
-      const replies = ["A", "B"].map((name) => JSON.parse(fs.readFileSync(path.join(directory, `result-${name}.json`), "utf8")));
+      const readWorkers = (prefix: string) => ["A", "B"].map(
+        (name) => JSON.parse(fs.readFileSync(path.join(directory, `${prefix}-${name}.json`), "utf8")),
+      );
+      const workers = readWorkers("ready");
+      const replies = readWorkers("result");
       app = createBackendApp(parseBackendConfig(["--app-root", f.root, "--port", "0"]), { disableMemoryRuntime: true, modelPortFactory: () => new ScriptedChatModel([]) });
       const after = app.services.memory.getEvent(f.roleId, event.eventId);
-      const winner = after.title.slice(-1);
+      const winners = replies.filter((reply) => reply.ok === true);
+      const failures = replies.filter((reply) => reply.ok === false);
+      const winner = winners[0]?.name;
+      const loser = failures[0]?.name;
       const search = app.services.memory.search(f.roleId, { query: `胜出内容${winner}`, places: [`地点${winner}`] });
-      return { contractPassed: replies.filter((r) => r.ok).length === 1 && replies.filter((r) => !r.ok).length === 1 && after.version === 2 && search.items.some((i) => i.id === event.eventId) && app.services.memory.getEvidence(f.roleId, event.evidenceId).content === "并发纠错原始证据",
-        observed: { replies, after, search } };
+      const losingSearch = app.services.memory.search(f.roleId, { query: `胜出内容${loser}`, places: [`地点${loser}`] });
+      const indexed = withStorage(f, (s) => s.business.db.prepare(
+        "SELECT title, body FROM memory_search_documents WHERE record_type = 'event' AND record_id = ?",
+      ).get(event.eventId)) as { title: string; body: string } | undefined;
+      const evidence = app.services.memory.getEvidence(f.roleId, event.evidenceId);
+      return {
+        contractPassed: children.every((worker) => worker.child.exitCode === 0) &&
+          workers.every((worker) => worker.expectedVersion === 1) &&
+          workers[0].pid !== workers[1].pid && workers.every((worker) => worker.pid !== process.pid) &&
+          winners.length === 1 && failures.length === 1 && failures[0].code === "MEMORY_VERSION_CONFLICT" &&
+          winners[0].value.eventId === event.eventId && winners[0].value.version === 2 &&
+          after.version === 2 && after.title === `并发${winner}` && after.summary === `胜出内容${winner}` &&
+          after.tags.place?.join() === `地点${winner}` && indexed?.title === after.title && indexed.body.includes(after.summary) &&
+          search.items.some((item) => item.id === event.eventId) && !losingSearch.items.some((item) => item.id === event.eventId) &&
+          evidence.content === "并发纠错原始证据",
+        observed: { workers, replies, after, indexed, search, losingSearch, evidence },
+      };
     } finally { await Promise.all(children.map((c) => stop(c.child, c.exited))); for (const c of children) fs.closeSync(c.fd); await app?.close(); await f.close(); }
   });
   clearTimeout(watchdog); clearInterval(alive);

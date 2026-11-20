@@ -11,7 +11,7 @@
 
 1. **分库存储与密钥保护**：`<app-root>` 目录结构、全局 `app.sqlite` 与每角色独立分库（`business.sqlite`／`execution.sqlite`／`workspace/`）、SQLite PRAGMA 与事务迁移策略、`SecretCipher` 静态密钥封装与跨库提交顺序。
 2. **角色实例与初始化**：角色列表（`GET /v1/roles`）、创建及 4 步初始化、幂等重试、设定修订号、当前状态乐观锁，以及工作空间与历史目录维护。
-3. **LangGraph 执行、工具链与能力补齐**：对话／自主统一图循环、`ModelPort` 三协议与 `continuation` 续轮、慢工具自动转后台（`GAP-01`）、角色任务决定（`GAP-02`）、`unknown` 核查补录（`GAP-03`）、本地 stdio MCP 越界防护、Agent Skills 按需加载与随包脚本执行（`GAP-05`）。
+3. **LangGraph 执行、工具链与能力补齐**：对话／自主统一图循环、`ModelPort` 的四种协议与 `continuation` 续轮、慢工具自动转后台（`GAP-01`）、角色任务决定（`GAP-02`）、`unknown` 核查补录（`GAP-03`）、本地 stdio MCP 越界防护、Agent Skills 按需加载与随包脚本执行（`GAP-05`）。
 4. **记忆形成、检索与演化**：四类后台整理触发与同角色单批串行队列、模型绑定继承（`DL-124`）、按模型容量分批与超长分段（`GAP-04`）、`FTS5 trigram` ＋短词 `LIKE` 混合检索、100 轮低召回精炼、工作空间 Markdown 日记读写与码点分段（`GAP-06`）以及事件／摘要纠错。
 5. **自主执行与崩溃恢复**：优先队列与 `nowadays-autonomy` 自定义窗口、`autonomy_budget` 每日点数／工具预留与次日零点恢复、以及进程重启后的完整启动恢复链。
 6. **首次配置引导（`278 §4`）**：桌面空白态创建角色、模型绑定返回、`开始对话（先恢复活动）` 与对话页 `waitReason` 就地恢复入口。
@@ -44,9 +44,9 @@
 
 | 路径 | 职责与版本 | 关键约束 |
 | --- | --- | --- |
-| `<app-root>/data/app.sqlite` | 全局索引库（`APP_SCHEMA_VERSION = 9`，9 张表） | 存 `roles` 索引（`initializing`/`ready`/`failed`）、`resources`、`resource_secrets`、`model_test_calls`、`voice_services`、`image_services`、`role_activity`、`resource_deletions`、`role_deletions` |
+| `<app-root>/data/app.sqlite` | 全局索引库（V11） | 存角色索引、活动状态、预置身份、资源与加密凭据、删除队列，以及单角色迁移的基线、选择记录和发布日志 |
 | `<app-root>/secrets/master.key` | 本地主密钥盒（AES-256-GCM `v1`） | [secret-cipher.ts](../../backend/src/security/secret-cipher.ts#L20-L100) `0o700` 目录／`0o600` 密钥文件，竞争写使用 `flag: "wx"` |
-| `.../roles/<roleId>/business.sqlite` | 角色业务库（`BUSINESS_SCHEMA_VERSION = 20`，45 张表） | 含核心会话（`roles`/`windows`/`messages`/`tasks`/`executions`/`task_notes`）、工具计量（`tool_calls`/`tool_results`/`call_metering`）、记忆（`evidence_*`/`memory_*`/`daily_summaries`/`diaries`/`memory_search_fts`）、自主（`autonomy_*`）及外观／语音／生图演出表（分归规范 #1～#3） |
+| `.../roles/<roleId>/business.sqlite` | 角色业务库（V23） | 保存身份与首次启用资格、窗口消息、任务、执行与计量、记忆证据、自主安排、外观与媒体。网页原文的实际送达区间由 `web_reading_deliveries` 保存 |
 | `.../roles/<roleId>/execution.sqlite` | 图检查点库（`EXECUTION_SCHEMA_VERSION = 1`） | `@langchain/langgraph-checkpoint-sqlite` 的 `SqliteSaver` 专用 |
 | `.../roles/<roleId>/workspace/` | 角色独立工作空间 | 本地 MCP 根目录；日记落盘 `diaries/YYYY-MM-DD/<diaryId>.md`；外观／语音／过场图分置同级 `appearance/`、`voice/`、`scene-images/` |
 
@@ -54,7 +54,7 @@
 
 ### 2.2 核心 HTTP API 与 CLI 约定
 
-以下汇总本专项主控的 HTTP 路由（[routes.ts](../../backend/src/http/routes.ts#L111-L925)；其余活动、资源、窗口快照、SSE、TTS 与生图路由见规范 #1～#3）。所有路由监听 `127.0.0.1`（默认端口 `3210`），JSON 上限 `1 MiB`，错误统一为 `{ error: { code, message, details? } }`，不回传凭据或堆栈。CLI（[commands.ts](../../backend/src/cli/commands.ts#L6-L51)）仅调用本地 HTTP，不直接打开 SQLite。
+日常操作 CLI 通过本地 HTTP 使用下表中的接口。角色迁移使用单独的离线维护命令，与后端进程共用安装排他锁。HTTP 默认监听 `127.0.0.1:3210`，JSON 上限为 `1 MiB`，错误格式为 `{ error: { code, message, details? } }`。见[路由](../../backend/src/http/routes.ts)、[日常 CLI](../../backend/src/cli/commands.ts) 和[单角色迁移命令](../../backend/README.md#7-单角色迁移)。
 
 | 组别与路由 | 核心字段／查询 | 说明与典型校验／错误码 |
 | --- | --- | --- |
@@ -86,7 +86,7 @@
 
 ### 3.2 Agent 图执行、慢工具转后台与任务链决策（`GAP-01`～`GAP-03`、`GAP-05`）
 
-- **图编排与模型续轮**：[AgentGraphRunner](../../backend/src/application/agent-graph.ts#L159-L260) 构建 `START -> model <-> tools -> END` 双节点 `StateGraph`（以 `execution.sqlite` 持久化检查点，默认最多 `8` 轮模型／工具回合）。[ModelPort](../../backend/src/model/protocols.ts) 统一适配 `openai-chat`、`openai-responses` 与 `anthropic-messages`；相同 `protocol + baseUrl + modelName` 间原样回传厂商 `continuation` 块，配置变更则切回归一化历史；上游请求异常或提前 EOF 直接报错并保留已收到增量，**不自动切换其他模型**。
+- **图编排与模型续轮**：[AgentGraphRunner](../../backend/src/application/agent-graph.ts#L159-L260) 构建 `START -> model <-> tools -> END` 双节点 `StateGraph`（以 `execution.sqlite` 持久化检查点，默认最多 `8` 轮模型／工具回合）。[ModelPort](../../backend/src/model/protocols.ts) 统一适配 `openai-chat`、`openai-responses`、`anthropic-messages` 与 `google-gemini`；同一模型绑定中保留可合法续传的厂商 `continuation` 块，配置变更则切回归一化历史；上游请求异常或提前 EOF 直接报错并保留已收到增量，**不自动切换其他模型**。
 - **工具目录与本地 MCP 隔离**（[agent-tools.ts](../../backend/src/application/agent-tools.ts#L48-L1552)）：
   - **内部工具**：`memory_{search,event,evidence,summary,summary_evidence,correct_event,correct_summary,diary}`、`diary_write`、`state_update`、`autonomy_{schedule,share}`、`skill_{read,run}`、`task_{progress,pause,finish}`、`tool_reconcile`。
   - **本地 stdio MCP**（[local-server.ts](../../backend/src/mcp/local-server.ts#L21-L260)）：提供 `workspace_{read,write,search}` 与 `command_run`（`shell: false`、继承用户环境，不做额外内容审批或沙箱）；`safePath` 在读前和写建目录前校验 `realpath`（含最近存在祖先）严格位于 `workspace/` 内，拒绝经 junction／symlink 越界。
@@ -109,7 +109,7 @@
 
 ### 3.5 启动崩溃恢复顺序（`app.ts`＋`P4`＋`198 R01`＋`306`）
 
-进程启动时按 [app.ts](../../backend/src/bootstrap/app.ts#L244-L349) 固定顺序收敛上次异常退出遗留状态：
+启动先取得安装排他锁，按全局发布日志收敛中断的角色迁移，再初始化预置角色、记忆和调度服务。后续服务按以下顺序处理上次退出的状态。[启动实现](../../backend/src/bootstrap/app.ts)
 1. `memoryRuntime.recoverOnStartup()` 将 `running` 批次标记 `failed (PROCESS_INTERRUPTED)`，回退未提交 `processing` 证据保留已提交子批与待处理触发（目录暂不可用则登记 `pendingStartupRecoveryRoles` 待就绪后先补救）；
 2. [conversation.recoverOnStartup()](../../backend/src/application/conversation-service.ts#L653-L760) 逐角色检查 `execution.sqlite` 可续跑检查点生成 `resumableIds` → 清理中断 `model_calls` → `reconcileInterruptedInternalTools()` 将 started-only 内部操作归档 `unknown` 并按原日期补账 → `reconcileToolReservations()` 结算工具预留 → `recoverInterruptedExecutions()` 把非续跑执行转为失败／中断并按最新流标记分段保存半截输出为 `interrupted` 消息 → 将遗留外部工具标为 `unknown` → `reconcileCommittedGaps()` 应用尚未落实的 `task_decision_json`（按同任务最新执行择一且排除已有更晚主执行或续行记录的历史旧暂停，`198 R01`）→ 将仍为 `active` 的自主／用户任务重新入队恢复；
 3. `activity.reconcileStartup()` 收敛无在途工作的 `stopping` 记录 → `resourceService.reconcilePendingDeletions()` → `sceneImages.recoverOnStartup()` → `roleDeletion.reconcilePendingDeletions()`。
@@ -123,14 +123,32 @@
 
 ---
 
+### 3.7 首次自主思考与模型上下文（DL-161、DL-164）
+
+新建角色在自己的业务库登记一次首次思考资格。首次显式启用且对话模型就绪后，调度器在同一事务登记唤醒并消费资格。角色可选择行动、安排以后再做或继续等待。用户消息优先，额度与分享入口沿用 §3.4。凭据稍后就绪和进程重启都可补办资格。V22 及更早库中的已有角色升级后沿用原来的生活进度。
+
+每次回复、办事与恢复续轮都按本次绑定的协议计算最终请求体的 UTF-16 字符数。未配置时总容量为 128,000，输出预留为 4,096。工具定义、附件和原生续轮块计入容量。优先保留必要人设、状态、本轮要求、任务目标和当前步骤引用的证据。历史消息或回执可用 `history_lookup` 在当前窗口或任务中搜索、按编号分页取原文。最低必需输入仍超限时产生 `MODEL_CONTEXT_EXCEEDED`，该轮没有模型调用或扣点。任务跨轮累计用量继续按 DL-157 计算。[请求选择实现](../../backend/src/application/agent-context.ts)
+
+### 3.8 网页原文与续读（DL-162、DL-163）
+
+本地 MCP 可返回 HTTP(S) 文本资源或带页面来源、版本与可定位原文的结构化结果。原始工具回执保存预取内容。只有最终生成请求被提供方接受时，其中实际携带的原文区间才成为角色的阅读证据。每段记录 URL、页面版本、UTF-16 起止偏移、原文、工具及模型调用归属。明确拒绝的请求、仅有网址的结果和输入摘要均不推进位置。重叠阅读在同一页面版本内去重，换版和跳读保留各自区间。
+
+角色通过 `web_reading` 的 `positions` 查询读过的版本和区间，通过 `read` 按工具编号和偏移继续阅读。记忆形成、事件证据和历史回查使用已送达原文。历史库升级会撤下尚未整理的预取证据，保留已形成的事件和引用。[网页证据实现](../../backend/src/storage/web-reading.ts)
+
+### 3.9 单角色迁移（DL-165、DL-166）
+
+用户可在关闭后端后导出一个角色，预检包和目标服务，选择时间线并导入。版本化包保存角色业务事实、任务用量、工作空间笔记及受管素材。目标安装按其本地服务编号和用途重新绑定，用自己的密钥调用，缺失映射保持待配置。导入后角色处于停止状态，已派发但尚未决算的执行保留可查事实。目标启动前先恢复中断的发布。
+
+同一身份的两条时间线按持久化事实和共同基线比较。发生分化或证据不足时，预检要求用户明确选择。选择沿用本机只保留已有记录，采用包则发布该包的完整时间线。确认前会重验本机、包和服务映射。原包可留作独立副本。[操作与返回状态](../../backend/README.md#7-单角色迁移)
+
 ## 4. 已验证范围、未实现／未验证边界与验证命令
 
 ### 4.1 覆盖边界矩阵
 
 | 类别 | 范围与依据 |
 | --- | --- |
-| **已通过离线／本机假端点独立复验** | • P0～P5 全部后端链路（[184](../archive/01-backend-prototype/184-p2-06-acceptance-report.md)、[188](../archive/01-backend-prototype/188-p3-independent-review.md)、[190](../archive/01-backend-prototype/190-p4-recovery-acceptance-report.md)、[195](../archive/01-backend-prototype/195-p5-independent-review.md)）<br>• `GAP-01`～`GAP-06` 离线能力补齐（[198 第三轮复验](../archive/01-backend-prototype/198-p5-capability-gaps-independent-review.md#r01-第三次补修的独立复验) 关闭 `R01`～`R06`）<br>• 任务结束记忆整理与存储／目录异常恢复（[283 §26](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#26-306-补修独立复验)）<br>• 另：最新本地全量基线为 `407/407` 后端单测、`21/21` 步 `accept-offline.mjs`（`realServiceCalls=0`）、`125/125` 桌面逻辑测试（见 [STATUS.md](../STATUS.md#1-当前结论概览)） |
-| **已确认但未实现** | • `DL-115` 远程 Streamable HTTP MCP（排期于桌面端收口后）<br>• [196 管理与体验候选](../archive/01-backend-prototype/196-backend-capability-gap-plan.md#管理与体验候选) 13 项（角色导出导入、取消待处理消息、资源归档、MCP 测试连接、全量按用途 Token 统计、全局端口／目录 GUI 设置、诊断导出包、离开期间未读摘要、消息附件／图片理解、定时一致性备份与恢复）<br>• [196 `OPS-01`～`OPS-04`](../archive/01-backend-prototype/196-backend-capability-gap-plan.md#同类功能排查)（失败执行主动重试入口、窗口当前执行聚合快照、按角色独立暂停自主活动开关、任务／活动／日记游标分页与筛选） |
+| **已通过离线／本机假端点独立复验** | • P0～P5 全部后端链路（[184](../archive/01-backend-prototype/184-p2-06-acceptance-report.md)、[188](../archive/01-backend-prototype/188-p3-independent-review.md)、[190](../archive/01-backend-prototype/190-p4-recovery-acceptance-report.md)、[195](../archive/01-backend-prototype/195-p5-independent-review.md)）<br>• `GAP-01`～`GAP-06` 离线能力补齐（[198 第三轮复验](../archive/01-backend-prototype/198-p5-capability-gaps-independent-review.md#r01-第三次补修的独立复验) 关闭 `R01`～`R06`）<br>• 任务结束记忆整理与存储／目录异常恢复（[283 §26](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#26-306-补修独立复验)）<br>• 首次自主思考、网页送达证据、单次上下文与角色迁移见 [401](../archive/09-role-runtime-and-transfer/401-role-runtime-and-transfer.md)，当前全量计数见[验收基线](../STATUS.md#3-验收基线与命令) |
+| **后续决定与候选** | • `DL-115` 远程 Streamable HTTP MCP（排期于桌面端收口后）<br>• [196 管理与体验候选](../archive/01-backend-prototype/196-backend-capability-gap-plan.md#管理与体验候选)的其余候选（取消待处理消息、资源归档、MCP 测试连接、全量按用途 Token 统计、全局端口／目录 GUI 设置、诊断导出包、离开期间未读摘要、消息附件／图片理解、定时一致性备份与恢复）<br>• [196 `OPS-01`～`OPS-04`](../archive/01-backend-prototype/196-backend-capability-gap-plan.md#同类功能排查)（失败执行主动重试入口、窗口当前执行聚合快照、按角色独立暂停自主活动开关、任务／活动／日记游标分页与筛选） |
 | **已实现但待真实服务／端到端独立验收** | • `278 §4` 首次配置完整链路、自定义子窗口返回、重连恢复等待状态与模型失效重验（见 [279 §3](../archive/06-workflow-simplification/279-workflow-simplification-two-pass-review.md#3-第三轮端到端复核) 与 [283 §27](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#27-文档迁移与-292-第-67-节独立复核)）<br>• 非历史 DeepSeek Anthropic Messages 之外的真实模型服务兼容、真实上游流式中断＋续传恢复、真实第三方 Skill 环境依赖<br>• `toolForegroundWaitMs`（原型默认 `2000ms`）按真实工具延时校准、多后端并发与更广泛 SQLite 损坏场景 |
 
 ### 4.2 可运行验证命令

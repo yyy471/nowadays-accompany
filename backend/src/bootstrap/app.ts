@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import type http from "node:http";
 import {
   ConversationService,
@@ -42,6 +41,8 @@ import { FakeSceneImageGenerator } from "../scene/fake-generator.js";
 import { ConfiguredSceneImageGenerator } from "../scene/comfyui-generator.js";
 import { ModelSceneImagePlanner } from "../scene/model-planner.js";
 import type { BackendConfig } from "./config.js";
+import { checkAppDatabaseFiles, lockInstallation } from "../storage/installation-lock.js";
+import { recoverRoleTransfer } from "../application/role-transfer-publication.js";
 
 export interface BackendAppOptions {
   now?: () => Date;
@@ -78,9 +79,31 @@ export function createBackendApp(
   config: BackendConfig,
   options: BackendAppOptions = {},
 ): BackendApp {
-  fs.mkdirSync(config.dataRoot, { recursive: true });
+  const release = lockInstallation(config);
+  let appStore: AppStore | undefined;
+  try {
+    checkAppDatabaseFiles(config);
+    appStore = new AppStore(config.appDatabasePath);
+    recoverRoleTransfer(config, appStore);
+    const app = assembleBackendApp(config, appStore, options);
+    return {
+      ...app,
+      async close() {
+        try { await app.close(); }
+        finally { release(); }
+      },
+    };
+  } catch (error) {
+    try { appStore?.close(); }
+    finally { release(); }
+    throw error;
+  }
+}
+
+function assembleBackendApp(
+  config: BackendConfig, appStore: AppStore, options: BackendAppOptions,
+): BackendApp {
   const now = options.now ?? (() => new Date());
-  const appStore = new AppStore(config.appDatabasePath);
   const credentials = new CredentialResolver(
     config.appRoot,
     new SecretStore(appStore.db, new SecretCipher(config.appRoot)),
@@ -445,41 +468,36 @@ export function createBackendApp(
     roleDeletion,
     mediaMaintenance,
   };
-  let server: http.Server;
-  try {
-    if (options.disablePresetAssistant !== true) {
-      ensurePresetAssistant({
-        appStore,
-        roleService,
-        dataRoot: config.dataRoot,
-        presetAssetsDir: config.presetAssetsDir,
-        now,
-      });
-    }
-    server = createHttpServer({ version: "0.1.0", services });
-  } catch (error) {
-    appStore.close();
-    throw error;
+  if (options.disablePresetAssistant !== true) {
+    ensurePresetAssistant({
+      appStore,
+      roleService,
+      dataRoot: config.dataRoot,
+      presetAssetsDir: config.presetAssetsDir,
+      now,
+    });
   }
+  const server = createHttpServer({ version: "0.1.0", services });
 
-  let closed = false;
+  let closing: Promise<void> | undefined;
   return {
     config,
     appStore,
     services,
     conversation,
     server,
-    async close() {
-      if (closed) {
-        return;
-      }
-      closed = true;
-      await conversation.close();
-      await sceneImages.close();
-      if (server.listening) {
-        await closeServer(server);
-      }
-      appStore.close();
+    close() {
+      return closing ??= (async () => {
+        try {
+          if (server.listening) await closeServer(server);
+        } finally {
+          try { await conversation.close(); }
+          finally {
+            try { await sceneImages.close(); }
+            finally { appStore.close(); }
+          }
+        }
+      })();
     },
   };
 }

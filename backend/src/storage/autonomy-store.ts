@@ -7,6 +7,11 @@ import type { ExecutionRecord } from "./role-store.js";
 export const DEFAULT_AUTONOMY_DAILY_LIMIT = 200;
 
 export type AutonomyWakeKind = "scheduled" | "budget_resume";
+const FIRST_ACTIVATION_WAKE_PREFIX = "first-activation:";
+
+export function isFirstActivationWake(wakeId: string): boolean {
+  return wakeId.startsWith(FIRST_ACTIVATION_WAKE_PREFIX);
+}
 export type AutonomyWakeStatus = "pending" | "claimed" | "completed" | "cancelled";
 export type AutonomyActivityStatus = "running" | "completed" | "failed" | "paused";
 export type AutonomyToolReservationStatus =
@@ -598,7 +603,30 @@ export class AutonomyStore {
       );
   }
 
+  hasPendingFirstActivation(): boolean {
+    return this.db
+      .prepare("SELECT 1 FROM roles WHERE role_id = ? AND first_activation_pending = 1")
+      .get(this.roleId) !== undefined;
+  }
+
+  enqueueFirstActivation(now: string): void {
+    this.db.transaction(() => {
+      const claimed = this.db.prepare(
+        "UPDATE roles SET first_activation_pending = 0 WHERE role_id = ? AND first_activation_pending = 1",
+      ).run(this.roleId);
+      if (claimed.changes === 0) return;
+      this.createWake({
+        wakeId: `${FIRST_ACTIVATION_WAKE_PREFIX}${this.roleId}`,
+        kind: "scheduled",
+        scheduledAt: now,
+        intent: "你第一次开始活动。按照自己的设定想想现在是否有想做的事。你可以使用已经启用的能力采取行动、安排稍后的活动，也可以保持等待。只有确实想主动告诉用户的内容才用 autonomy_share 分享。",
+        now,
+      });
+    }).immediate();
+  }
+
   createWake(input: {
+    wakeId?: string;
     kind: AutonomyWakeKind;
     scheduledAt: string;
     intent: string;
@@ -624,7 +652,7 @@ export class AutonomyStore {
       );
     }
     const now = input.now ?? new Date().toISOString();
-    const wakeId = randomUUID();
+    const wakeId = input.wakeId ?? randomUUID();
     this.db
       .prepare(
         `INSERT INTO autonomy_wakes

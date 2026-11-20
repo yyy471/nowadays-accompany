@@ -8,6 +8,7 @@ import test from "node:test";
 import Database from "better-sqlite3";
 import { listen } from "../src/bootstrap/app.js";
 import { rolePaths } from "../src/bootstrap/config.js";
+import { BUSINESS_SCHEMA_VERSION } from "../src/storage/schema.js";
 import {
   TtsCanceledError,
   TtsProtocolInvalidError,
@@ -276,6 +277,8 @@ function downgradeVoiceSettingsToV10(fixture: Fixture): void {
   const paths = rolePaths(fixture.app.config.dataRoot, fixture.roleId);
   const db = new Database(paths.businessDatabasePath);
   try {
+    db.exec("DROP TABLE web_reading_deliveries");
+    db.exec("ALTER TABLE roles DROP COLUMN first_activation_pending");
     db.pragma("user_version = 10");
     db.exec(
       "ALTER TABLE role_voice_settings DROP COLUMN reference_mode_confirmed",
@@ -308,6 +311,8 @@ function simulatePreviousV11Migration(fixture: Fixture): void {
   const paths = rolePaths(fixture.app.config.dataRoot, fixture.roleId);
   const db = new Database(paths.businessDatabasePath);
   try {
+    db.exec("DROP TABLE web_reading_deliveries");
+    db.exec("ALTER TABLE roles DROP COLUMN first_activation_pending");
     db.pragma("user_version = 11");
     db.prepare(
       `UPDATE role_voice_settings
@@ -919,7 +924,7 @@ test("legacy voice rows stay readable as the reference source", async () => {
     }
     assert.equal(
       withStorage(fixture, (storage) => storage.business.schemaVersion),
-      22,
+      BUSINESS_SCHEMA_VERSION,
     );
   } finally {
     await fixture.close();
@@ -1204,6 +1209,8 @@ test("v9 voice rows migrate to v12 without touching messages, segments or SSE cu
     const paths = rolePaths(fixture.app.config.dataRoot, fixture.roleId);
     const raw = new Database(paths.businessDatabasePath);
     try {
+      raw.exec("DROP TABLE web_reading_deliveries");
+      raw.exec("ALTER TABLE roles DROP COLUMN first_activation_pending");
       raw.pragma("user_version = 9");
       for (const column of [
         "protocol",
@@ -1296,7 +1303,7 @@ test("v9 voice rows migrate to v12 without touching messages, segments or SSE cu
           .get() as { latest: number | null }
       ).latest,
     }));
-    assert.equal(countsAfter.schemaVersion, 22);
+    assert.equal(countsAfter.schemaVersion, 23);
     assert.equal(countsAfter.messages, countsBefore.messages);
     assert.equal(countsAfter.segments, countsBefore.segments);
     assert.equal(countsAfter.events, countsBefore.events);

@@ -51,7 +51,21 @@ export interface ModelImageAttachment {
   dataBase64: string;
 }
 
-export type ModelMessage =
+export interface ModelMessageSource {
+  messageId?: string;
+  toolCallId?: string;
+  internalStepKey?: string;
+  evidenceId?: string;
+  scope?: "window" | "task";
+  /** 历史事实以文本送出，只有当前合法调用组才发厂商工具结果。 */
+  historical?: boolean;
+  /** 同一原任务在续行中收取刚结算的后台网页结果。 */
+  webPrefetch?: boolean;
+  summary?: boolean;
+  currentUserRequest?: boolean;
+}
+
+export type ModelMessage = { source?: ModelMessageSource } & (
   | {
       role: "user";
       content: string;
@@ -68,7 +82,7 @@ export type ModelMessage =
       toolCallId: string;
       toolName?: string;
       content: string;
-    };
+    });
 
 export interface ModelToolSpec {
   name: string;
@@ -83,6 +97,8 @@ export interface ModelRequest {
   tools: ModelToolSpec[];
   maxOutputTokens?: number;
   signal?: AbortSignal;
+  /** 生成请求被提供方接收。可流式离线适配器也可显式通知。 */
+  onAccepted?: () => void;
 }
 
 export interface ModelUsage {

@@ -97,6 +97,10 @@ function putBindings(
 test("配置闭环：建角色、配服务、存绑定后可以对话", { timeout: 40_000 }, async () => {
   const model = new ScriptedChatModel([
     [
+      { type: "text_delta", text: "先安静等待。" },
+      { type: "completed", stopReason: "stop" },
+    ],
+    [
       { type: "text_delta", text: "配置完成" },
       { type: "completed", stopReason: "stop" },
     ],
@@ -136,6 +140,9 @@ test("配置闭环：建角色、配服务、存绑定后可以对话", { timeou
       (resumed.body.activity as { state: string }).state,
       "active",
     );
+    await fixture.app.conversation.waitForIdle(roleId);
+    assert.match(model.requests[0]!.system, /第一次开始活动/);
+    assert.equal(fixture.app.services.autonomy.listWakes(roleId)[0]?.status, "completed");
 
     const submitted = await api(
       base,
@@ -162,7 +169,7 @@ test("配置闭环：建角色、配服务、存绑定后可以对话", { timeou
       ),
       `配置闭环应收到回复：${JSON.stringify(items)}`,
     );
-    assert.equal(model.requests.length, 1);
+    assert.equal(model.requests.length, 2);
   } finally {
     await fixture.close();
   }

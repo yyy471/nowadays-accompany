@@ -156,6 +156,34 @@ send 只登记输入并返回执行关联，不等待完整答复；稍后查询
 npx -y node@24 scripts/accept-offline.mjs
 ```
 
-统一离线入口需在 Node 24 下运行（或确保当前 `node` 为 v24 后执行 `npm run accept:offline`），依次运行类型检查、交付回归、当前正式测试（最近实测 402 项；实际数量以当次报告为准）、真实进程／CLI 重启冒烟，以及 P2 20、P3 11、P4 28 项定向场景。脚本在新建 `test-results/p5-.../` 下保存 summary.json、源码哈希、逐步日志和业务报告；不会读取你的运行配置、调用真实模型、覆盖或清理旧验收目录。任何失败、报告缺失或用例数量不完整均返回非零退出码。
+统一离线入口在 Node 24 下运行，也可执行 `npm run accept:offline`。它依次运行类型检查、交付回归、当前正式测试、真实进程／CLI 重启冒烟，以及 P2、P3、P4 定向场景。每次运行在新的 `test-results/p5-.../` 下保存 summary.json、源码哈希、逐步日志和业务报告。失败、报告缺失或用例数量不完整均返回非零退出码。
 
-本命令会启动本地子进程和本机回环 HTTP 服务。运行输出属于忽略的证据，最新总体结论与待办见 [当前状态看板](../devDoc/STATUS.md)，首轮 P5 交付详情见 [194](../devDoc/archive/01-backend-prototype/194-p5-prototype-delivery-record.md)，最近一次离线验收基线见 [283 第 26 节](../devDoc/archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#26-306-补修独立复验)；独立复核与实现方自验分别记录。
+命令使用本机回环 HTTP、子进程和临时数据。最新报告见[当前状态看板](../devDoc/STATUS.md)，首轮交付与既往复验见 [194](../devDoc/archive/01-backend-prototype/194-p5-prototype-delivery-record.md) 和 [283 第 26 节](../devDoc/archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#26-306-补修独立复验)。
+
+## 7. 单角色迁移
+
+在 `backend/` 使用 Node 24。分别停止源端和目标端对应的后端进程。先在源安装导出，将生成的 JSON 文件带到目标安装，然后做一次预检。下列 PowerShell 示例中的目录和角色编号需换成实际值，导出目录应已存在。
+
+```powershell
+$sourceRoot = 'D:\Nowadays-Source'
+$targetRoot = 'D:\Nowadays-Target'
+$roleId = '<角色实例 ID>'
+$packageFile = 'D:\Transfer\role.json'
+npm --silent run role:transfer -- export --app-root $sourceRoot --role $roleId --out $packageFile
+$preview = npm --silent run role:transfer -- preflight --app-root $targetRoot --in $packageFile | ConvertFrom-Json
+$preview | Select-Object roleId, relation, requiresChoice
+$preview.bindings | Format-Table key, capability, sourceResourceId, modelName, enabled
+```
+
+若要重新绑定服务，创建 UTF-8 编码的 `mapping.json`。键是预检中该用途的完整 `bindings[].key`，值是目标安装已有的服务 ID。例如 `{"chat_model:<预检给出的摘要>":"<目标模型服务 ID>"}`。模型、MCP、Skill、语音与生图按类别检查。源端的模型或工具密钥由目标安装自行配置。省略映射的绑定在预检的 `unresolved` 中可见，导入后可在角色配置中补齐。
+
+```powershell
+$mapFile = 'D:\Transfer\mapping.json'
+$preview = npm --silent run role:transfer -- preflight --app-root $targetRoot --in $packageFile --map $mapFile | ConvertFrom-Json
+$preview | Select-Object relation, requiresChoice, unresolved
+npm --silent run role:transfer -- apply --app-root $targetRoot --in $packageFile --map $mapFile --token $preview.token
+```
+
+`new` 表示目标没有该角色，`same` 表示经历相同，`package-ahead`、`local-ahead` 表示可核验的单向发展。分化为 `diverged`，无法证明关系为 `unknown`。当 `requiresChoice` 为真时，阅读预检后在最后一条命令末尾加 `--choice local` 以沿用本机，或加 `--choice package` 以采用包中整条时间线。若不使用映射文件，预检和应用都省略 `--map`。
+
+预检后包、角色数据或映射服务发生变化会返回 `ROLE_TRANSFER_PREFLIGHT_STALE`，重新预检即可获得对应版本的确认令牌。`INSTALLATION_BUSY` 表示该安装的后端或另一条维护命令持有锁。导入角色保留原身份、窗口历史、笔记和受管素材，初始状态为停止。恢复活动后使用目标端绑定。已执行的调用和任务用量可查，在途执行按中断归档。发布意外中断后，下次启动或维护命令会按日志完成恢复。[设计与独立复核](../devDoc/archive/09-role-runtime-and-transfer/401-role-runtime-and-transfer.md)

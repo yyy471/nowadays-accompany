@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
+import { extractMcpWebFragments, parseWebJson } from "../domain/web-reading.js";
 
 interface MessageEvidenceRow {
   message_id: string;
@@ -16,6 +17,8 @@ interface ToolEvidenceRow {
   task_id: string;
   execution_id: string;
   window_id: string | null;
+  tool_name: string;
+  raw_response_json: string | null;
 }
 
 interface EvidenceInput {
@@ -104,7 +107,7 @@ export function registerToolResultEvidence(
 ): boolean {
   const row = db
     .prepare(
-      `SELECT tr.tool_call_id, tr.status, tr.saved_at, tc.task_id,
+      `SELECT tr.tool_call_id, tr.status, tr.saved_at, tr.raw_response_json, tc.task_id, tc.tool_name,
               tc.execution_id, e.window_id
        FROM tool_results tr
        JOIN tool_calls tc ON tc.tool_call_id = tr.tool_call_id
@@ -113,7 +116,7 @@ export function registerToolResultEvidence(
        WHERE tr.tool_call_id = ? AND t.role_id = ?`,
     )
     .get(input.toolCallId, input.roleId) as ToolEvidenceRow | undefined;
-  if (!row) {
+  if (!row || isWebResult(row)) {
     return false;
   }
   upsertEvidence(db, {
@@ -148,7 +151,7 @@ export function backfillEvidence(
     .all() as MessageEvidenceRow[];
   const tools = db
     .prepare(
-      `SELECT tr.tool_call_id, tr.status, tr.saved_at, tc.task_id,
+      `SELECT tr.tool_call_id, tr.status, tr.saved_at, tr.raw_response_json, tc.task_id, tc.tool_name,
               tc.execution_id, e.window_id
        FROM tool_results tr
        JOIN tool_calls tc ON tc.tool_call_id = tr.tool_call_id
@@ -164,7 +167,7 @@ export function backfillEvidence(
       kind: "message" as const,
       row,
     })),
-    ...tools.map((row) => ({
+    ...tools.filter((row) => !isWebResult(row)).map((row) => ({
       occurredAt: row.saved_at,
       kind: "tool_result" as const,
       row,
@@ -224,6 +227,34 @@ export function backfillEvidence(
       localDate: localDateFromIso(row.saved_at, timeZone),
     });
   }
+}
+
+function isWebResult(row: ToolEvidenceRow): boolean {
+  // 工具目录为 MCP 工具分配专用名称空间，历史调用也持久化了此名称。
+  return row.status === "success" && row.tool_name.startsWith("mcp_") &&
+    extractMcpWebFragments(parseWebJson(row.raw_response_json)).length > 0;
+}
+
+/** 网页证据使用不可变的送达批次，各次续读分别进入记忆形成。 */
+export function registerWebReadingEvidence(
+  db: Database.Database,
+  input: {
+    roleId: string;
+    sourceId: string;
+    windowId: string | null;
+    taskId: string | null;
+    executionId: string;
+    now: string;
+    timeZone?: string;
+  },
+): void {
+  upsertEvidence(db, {
+    ...input,
+    sourceKind: "tool_result",
+    sourceStatus: "success",
+    occurredAt: input.now,
+    localDate: localDateFromIso(input.now, input.timeZone),
+  }, input.now);
 }
 
 function upsertEvidence(

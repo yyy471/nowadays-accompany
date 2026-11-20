@@ -170,6 +170,18 @@ export class AutonomyService {
     );
   }
 
+  hasPendingFirstActivation(roleId: string): boolean {
+    return this.access.withStore(roleId, (storage) =>
+      this.store(storage.business.db, roleId).hasPendingFirstActivation(),
+    );
+  }
+
+  enqueueFirstActivation(roleId: string): void {
+    this.access.withStore(roleId, (storage) =>
+      this.store(storage.business.db, roleId).enqueueFirstActivation(this.now().toISOString()),
+    );
+  }
+
   nextPendingWake(roleId: string): AutonomyWakeRecord | null {
     return this.access.withStore(roleId, (storage) =>
       this.store(storage.business.db, roleId).nextPendingWake(),

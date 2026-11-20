@@ -25,6 +25,9 @@ import { XIA_CHENG_BUILTIN_KEY } from "./preset-assistant.js";
 import type { AppStore } from "../storage/app-store.js";
 import { AppearanceStore } from "../storage/appearance-store.js";
 import type { RoleAccess } from "./role-access.js";
+import { historyLookupTool, type WebToolProjection } from "./conversation-history.js";
+import { DEFAULT_WEB_PAGE_CHARS, extractMcpWebFragments, webPageUrl, type WebReadingRequest } from "../domain/web-reading.js";
+import { listWebReadingPositions, webSourceLocations } from "../storage/web-reading.js";
 
 export interface AgentToolCatalog {
   tools: ConversationTool[];
@@ -45,6 +48,7 @@ export interface LoadAgentToolsInput {
   workspaceDir: string;
   /** 预置默认助手（夏澄）专用：内部管理工具依赖的应用服务。 */
   admin?: AdminToolServices | null;
+  readWebToolProjection?: WebToolProjection;
 }
 
 const TOOL_RESULT_LIMIT = 8000;
@@ -55,6 +59,8 @@ export async function loadAgentTools(
   const warnings: string[] = [];
   const mcpPools: McpConnectionPool[] = [];
   const tools: ConversationTool[] = [
+    historyLookupTool(input.roleId, input.roleAccess, input.readWebToolProjection),
+    webReadingTool(input.roleId, input.roleAccess),
     memorySearchTool(input.roleId, input.memory),
     memoryEventTool(input.roleId, input.memory),
     memoryEvidenceTool(input.roleId, input.memory),
@@ -358,6 +364,81 @@ function memorySearchTool(
         } catch (error) {
           return failedOutcome(errorCode(error), safeMessage(error));
         }
+      });
+    },
+  };
+}
+
+function webReadingTool(roleId: string, access: RoleAccess): ConversationTool {
+  return {
+    name: "web_reading",
+    source: "memory",
+    description: "查网页已读版本和区间（positions），或按原工具编号和源偏移续读已取得的网页原文（read）。续读可使用结果中的 next；源偏移为 UTF-16。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        mode: { type: "string", enum: ["positions", "read"] },
+        toolCallId: { type: "string", description: "原始网页工具调用编号；read 必填。" },
+        url: { type: "string" },
+        pageVersion: { type: "string" },
+        offset: { type: "integer", minimum: 0 },
+        maxChars: { type: "integer", minimum: 2, maximum: DEFAULT_WEB_PAGE_CHARS },
+      },
+      additionalProperties: false,
+    },
+    async execute(args, context) {
+      return runTool(async () => {
+        const mode = args.mode ?? "positions";
+        const offset = args.offset ?? 0;
+        const url = webPageUrl(args.url);
+        const pageVersion = stringArg(args, "pageVersion") ?? undefined;
+        const reference = stringArg(args, "toolCallId");
+        const maxChars = args.maxChars ?? DEFAULT_WEB_PAGE_CHARS;
+        if ((mode !== "positions" && mode !== "read") ||
+          typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 0 ||
+          typeof maxChars !== "number" || !Number.isSafeInteger(maxChars) || maxChars < 2 || maxChars > DEFAULT_WEB_PAGE_CHARS ||
+          (args.url !== undefined && url === undefined) || (args.pageVersion !== undefined && !pageVersion) ||
+          (args.toolCallId !== undefined && !reference) || (mode === "read" && !reference)) {
+          return failedOutcome("WEB_READING_ARGUMENTS_INVALID", "网页回查参数不正确，续读需要指定原工具调用编号。");
+        }
+        return access.withStore(roleId, ({ business }) => {
+          const toolCallId = reference === null ? null : business.resolveToolCallReference({
+            roleId,
+            executionId: context.executionId,
+            reference,
+          });
+          const locations = toolCallId === null ? [] : webSourceLocations(business.db, roleId, toolCallId);
+          if (reference !== null && (toolCallId === null || locations.length === 0)) {
+            return failedOutcome("WEB_READING_SOURCE_NOT_FOUND", "找不到可续读的网页来源。");
+          }
+          if (mode === "read" && toolCallId !== null) {
+            const result: WebReadingRequest = {
+              kind: "web_reading",
+              sourceToolCallId: toolCallId,
+              request: {
+                offset,
+                maxChars,
+                ...(url !== undefined && { url }),
+                ...(pageVersion !== undefined && { pageVersion }),
+              },
+            };
+            return { status: "success", adaptedResult: result };
+          }
+          return {
+            status: "success",
+            adaptedResult: {
+              ...listWebReadingPositions(business.db, {
+                roleId,
+                offset,
+                limit: 8,
+                ...(toolCallId !== null && { toolCallId }),
+                ...(url !== undefined && { url }),
+                ...(pageVersion !== undefined && { pageVersion }),
+              }),
+              ...(toolCallId !== null && { sourceLocations: locations }),
+            },
+          };
+        });
       });
     },
   };
@@ -1646,12 +1727,12 @@ function mcpTool(
         context.checkDispatch?.();
         context.onDispatch?.();
         const result = await acquired.client.callTool(info.name, args);
-        const adapted = adaptMcpContent(result.content, result.structuredContent);
+        const web = extractMcpWebFragments(result);
         if (result.isError) {
           return {
             status: "failed",
             rawResponse: result,
-            adaptedResult: truncateText(adapted, TOOL_RESULT_LIMIT),
+            adaptedResult: truncateText(adaptMcpContent(result.content, result.structuredContent), TOOL_RESULT_LIMIT),
             diagnosticCode: "MCP_TOOL_ERROR",
             error: { message: "MCP 工具返回错误" },
           };
@@ -1659,7 +1740,9 @@ function mcpTool(
         return {
           status: "success",
           rawResponse: result,
-          adaptedResult: truncateText(adapted, TOOL_RESULT_LIMIT),
+          adaptedResult: web.length > 0
+            ? { kind: "web_reading", request: { offset: 0 } } satisfies WebReadingRequest
+            : truncateText(adaptMcpContent(result.content, result.structuredContent), TOOL_RESULT_LIMIT),
         };
       } catch (error) {
         if (

@@ -7,9 +7,10 @@ import {
   SchemaMigrationError,
 } from "../domain/errors.js";
 import { backfillEvidence } from "./evidence.js";
+import { retireLegacyWebPrefetchEvidence, WEB_READING_SCHEMA_SQL } from "./web-reading.js";
 
-export const APP_SCHEMA_VERSION = 10;
-export const BUSINESS_SCHEMA_VERSION = 22;
+export const APP_SCHEMA_VERSION = 11;
+export const BUSINESS_SCHEMA_VERSION = 23;
 export const EXECUTION_SCHEMA_VERSION = 1;
 
 export const APP_TABLES = [
@@ -22,6 +23,9 @@ export const APP_TABLES = [
   "image_services",
   "voice_services",
   "role_activity",
+  "role_transfer_snapshots",
+  "role_transfer_selections",
+  "role_transfer_publication",
 ] as const;
 export const BUSINESS_TABLES = [
   "roles",
@@ -69,6 +73,7 @@ export const BUSINESS_TABLES = [
   "scene_image_tasks",
   "scene_image_assets",
   "role_scene_image_settings",
+  "web_reading_deliveries",
 ] as const;
 
 const APP_V2_SQL = `
@@ -679,8 +684,13 @@ interface RequiredColumns {
 
 const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
   {
+    table: "web_reading_deliveries",
+    columns: ["role_id", "url", "page_version", "start_offset", "end_offset", "original_text",
+      "tool_call_id", "model_call_id", "window_id", "task_id", "execution_id", "accepted_at"],
+  },
+  {
     table: "roles",
-    columns: ["builtin_key", "bio_text"],
+    columns: ["builtin_key", "bio_text", "first_activation_pending"],
   },
   {
     table: "messages",
@@ -908,6 +918,10 @@ const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
 ];
 
 const BUSINESS_INDEXES: readonly RequiredIndex[] = [
+  { name: "idx_web_reading_role_page", table: "web_reading_deliveries",
+    columns: ["role_id", "url", "page_version", "start_offset"], unique: false, partial: false },
+  { name: "idx_web_reading_role_tool", table: "web_reading_deliveries",
+    columns: ["role_id", "tool_call_id", "url", "page_version", "start_offset"], unique: false, partial: false },
   {
     name: "idx_messages_window_submission",
     table: "messages",
@@ -1785,6 +1799,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_outfits_role_preset_key
   WHERE preset_key IS NOT NULL AND deleted_at IS NULL;
 `;
 
+const BUSINESS_V23_SQL = `
+ALTER TABLE roles ADD COLUMN first_activation_pending INTEGER NOT NULL DEFAULT 0
+  CHECK (first_activation_pending IN (0, 1));
+` + WEB_READING_SCHEMA_SQL;
+
 function migrateBusinessV22(db: Database.Database): void {
   addColumnIfMissing(db, "outfits", "preset_key", "TEXT");
   db.exec(`
@@ -1887,6 +1906,28 @@ const APP_INDEXES: readonly RequiredIndex[] = [
   },
 ];
 
+const APP_V11_SQL = `
+CREATE TABLE IF NOT EXISTS role_transfer_snapshots (
+  sequence INTEGER PRIMARY KEY,
+  role_id TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  facts_json TEXT NOT NULL,
+  UNIQUE (role_id, fingerprint)
+);
+CREATE TABLE IF NOT EXISTS role_transfer_selections (
+  role_id TEXT PRIMARY KEY,
+  package_digest TEXT NOT NULL,
+  target_fingerprint TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS role_transfer_publication (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  operation_id TEXT NOT NULL,
+  role_id TEXT NOT NULL,
+  had_local INTEGER NOT NULL CHECK (had_local IN (0, 1)),
+  phase TEXT NOT NULL CHECK (phase IN ('prepared', 'committed'))
+);
+`;
+
 export function openAppDatabase(dbPath: string): OpenedDatabase {
   return openVersionedDatabase(
     dbPath,
@@ -1900,7 +1941,8 @@ export function openAppDatabase(dbPath: string): OpenedDatabase {
       APP_V7_SQL +
       APP_V8_SQL +
       APP_V9_SQL +
-      APP_V10_SQL,
+      APP_V10_SQL +
+      APP_V11_SQL,
     {
       1: (db) => db.exec(APP_V2_SQL),
       2: (db) => db.exec(APP_V3_SQL),
@@ -1911,6 +1953,7 @@ export function openAppDatabase(dbPath: string): OpenedDatabase {
       7: (db) => db.exec(APP_V8_SQL),
       8: (db) => db.exec(APP_V9_SQL),
       9: migrateAppV10,
+      10: (db) => db.exec(APP_V11_SQL),
     },
     APP_TABLES,
     APP_INDEXES,
@@ -1919,14 +1962,7 @@ export function openAppDatabase(dbPath: string): OpenedDatabase {
   );
 }
 
-export function openBusinessDatabase(
-  dbPath: string,
-  options: DatabaseOpenOptions = {},
-): OpenedDatabase {
-  return openVersionedDatabase(
-    dbPath,
-    BUSINESS_SCHEMA_VERSION,
-    BUSINESS_SCHEMA_SQL +
+export const BUSINESS_SCHEMA_V22_SQL = BUSINESS_SCHEMA_SQL +
       BUSINESS_V2_SQL +
       BUSINESS_V3_SQL +
       BUSINESS_V4_SQL +
@@ -1947,7 +1983,16 @@ export function openBusinessDatabase(
       BUSINESS_V19_SQL +
       BUSINESS_V20_SQL +
       BUSINESS_V21_SQL +
-      BUSINESS_V22_SQL,
+      BUSINESS_V22_SQL;
+
+export function openBusinessDatabase(
+  dbPath: string,
+  options: DatabaseOpenOptions = {},
+): OpenedDatabase {
+  return openVersionedDatabase(
+    dbPath,
+    BUSINESS_SCHEMA_VERSION,
+    BUSINESS_SCHEMA_V22_SQL + BUSINESS_V23_SQL,
     {
       1: (db) => {
         db.exec(BUSINESS_V2_SQL);
@@ -1973,6 +2018,10 @@ export function openBusinessDatabase(
       19: (db) => db.exec(BUSINESS_V20_SQL),
       20: migrateBusinessV21,
       21: migrateBusinessV22,
+      22: (db) => {
+        db.exec(BUSINESS_V23_SQL);
+        retireLegacyWebPrefetchEvidence(db);
+      },
     },
     BUSINESS_TABLES,
     BUSINESS_INDEXES,
@@ -2008,8 +2057,9 @@ function openVersionedDatabase(
 ): OpenedDatabase {
   const create = options.create !== false;
   const db = openRawDatabase(dbPath, create);
-  const currentVersion = readUserVersion(db);
+  let currentVersion = 0;
   try {
+    currentVersion = readUserVersion(db);
     db.transaction(() => {
       ensureSchema(db, version, schemaSql, migrations, create);
       assertTables(db, requiredTables);
@@ -2054,10 +2104,15 @@ function openRawDatabase(dbPath: string, create: boolean): Database.Database {
   const db = create
     ? new Database(dbPath)
     : new Database(dbPath, { fileMustExist: true });
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
-  db.pragma("busy_timeout = 5000");
-  return db;
+  try {
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
+    db.pragma("busy_timeout = 5000");
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 }
 
 function ensureSchema(

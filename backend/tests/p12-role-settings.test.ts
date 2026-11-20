@@ -975,7 +975,12 @@ test("an app database from v2 upgrades to v3 and keeps resources", { timeout: 30
   const raw = new Database(config.appDatabasePath);
   try {
     raw.exec(
-      "DROP INDEX IF EXISTS idx_model_test_calls_resource; DROP TABLE resource_secrets; ALTER TABLE model_test_calls DROP COLUMN config_fingerprint;",
+      `DROP INDEX IF EXISTS idx_model_test_calls_resource;
+      DROP TABLE resource_secrets;
+      ALTER TABLE model_test_calls DROP COLUMN config_fingerprint;
+      DROP TABLE role_transfer_snapshots;
+      DROP TABLE role_transfer_selections;
+      DROP TABLE role_transfer_publication;`,
     );
     raw.pragma("user_version = 2");
   } finally {
@@ -984,7 +989,7 @@ test("an app database from v2 upgrades to v3 and keeps resources", { timeout: 30
 
   const reopened = new AppStore(config.appDatabasePath);
   try {
-    assert.equal(reopened.schemaVersion, 10);
+    assert.equal(reopened.schemaVersion, 11);
     assert.equal(reopened.getResource(resourceId).name, "旧版服务");
     const tables = reopened.db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")

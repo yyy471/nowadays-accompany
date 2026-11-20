@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 import Database from "better-sqlite3";
 import sharp from "sharp";
 import { configFetch } from "./config-write.js";
+import { createLegacyRole, seedLegacyPresetAssistant } from "./legacy-role-fixture.js";
 import {
   ScriptedChatModel,
   createFixtureWithModel,
@@ -267,7 +268,7 @@ test("包1：空目录启动预置夏澄（stopped/无图空态），中断恢�
   }
 });
 
-test("包1：Schema V9/V20 无损迁移升级至 V10/V22", async () => {
+test("包1：Schema V9/V20 无损迁移升级至 V10/V23", async () => {
   const root = tempRoot();
   const emptyPresetsDir = path.join(root, "presets");
   fs.mkdirSync(emptyPresetsDir, { recursive: true });
@@ -302,6 +303,9 @@ test("包1：Schema V9/V20 无损迁移升级至 V10/V22", async () => {
     rawApp.exec(`
       DROP INDEX IF EXISTS idx_app_roles_builtin_key;
       ALTER TABLE roles DROP COLUMN builtin_key;
+      DROP TABLE role_transfer_snapshots;
+      DROP TABLE role_transfer_selections;
+      DROP TABLE role_transfer_publication;
     `);
     rawApp.pragma("user_version = 9");
     rawApp.close();
@@ -322,15 +326,17 @@ test("包1：Schema V9/V20 无损迁移升级至 V10/V22", async () => {
       ALTER TABLE model_calls DROP COLUMN task_id;
       ALTER TABLE model_calls DROP COLUMN call_kind;
     `);
+    rawBiz.exec("DROP TABLE web_reading_deliveries");
+    rawBiz.exec("ALTER TABLE roles DROP COLUMN first_activation_pending");
     rawBiz.pragma("user_version = 20");
     rawBiz.close();
 
     const upgraded = createBackendApp(config, { disableMemoryRuntime: true });
     try {
-      assert.equal(upgraded.appStore.schemaVersion, 10);
+      assert.equal(upgraded.appStore.schemaVersion, 11);
       const bizStorage = RoleStorage.openExisting(paths);
       try {
-        assert.equal(bizStorage.business.schemaVersion, 22);
+        assert.equal(bizStorage.business.schemaVersion, 23);
         const migratedRole = bizStorage.business.getRole(role.roleId);
         assert.equal(migratedRole.displayName, "迁移旧角色");
         assert.equal(migratedRole.bioText, "");
@@ -383,6 +389,7 @@ test("包1：预置外观加载与锁定保护、自定义服饰自由增删改�
     "--port",
     "0",
   ]);
+  seedLegacyPresetAssistant(config);
   const app = createBackendApp(config, {
     disableMemoryRuntime: true,
     modelPortFactory: () => model,
@@ -522,7 +529,7 @@ test("包1：预置外观加载与锁定保护、自定义服饰自由增删改�
     assert.equal(app.services.roles.listRoles().length, 1);
 
     // 再次创建普通角色用于系统提示词对照。
-    const ordinary2 = app.services.roles.createRole({
+    const ordinary2 = createLegacyRole(app, {
       displayName: "普通对照",
       definition: { text: "普通对照设定" },
     });
@@ -719,6 +726,7 @@ test("包1：POST /v1/roles/:roleId/tasks/:taskId/cancel 可显式取消运行�
     "--port",
     "0",
   ]);
+  seedLegacyPresetAssistant(config);
   const app = createBackendApp(config, {
     disableMemoryRuntime: true,
     modelPortFactory: () => model,
@@ -892,7 +900,7 @@ test("包1：已完结（completed）任务再次调用 cancel 返回 409 TASK_S
   try {
     const port = await listen(app.server, 0, "127.0.0.1");
     const baseUrl = `http://127.0.0.1:${port}`;
-    const role = app.services.roles.createRole({
+    const role = createLegacyRole(app, {
       displayName: "完结任务冲突测试",
       definition: { text: "测试" },
     });
@@ -1259,6 +1267,7 @@ test("包1：任务用量汇总跨轮累计、保留失败前 usage、严格排�
     "--port",
     "0",
   ]);
+  seedLegacyPresetAssistant(config);
   const app = createBackendApp(config, {
     modelPortFactory: () => scriptedModel,
     memoryModelFactory: () => memoryModel,
@@ -2067,7 +2076,7 @@ test("包1 复核 R03：OpenAI Chat/Responses/Anthropic 工具参数无效时保
     try {
       const port = await listen(app.server, 0, "127.0.0.1");
       const baseUrl = `http://127.0.0.1:${port}`;
-      const role = app.services.roles.createRole({
+      const role = createLegacyRole(app, {
         displayName: "R03任务汇总角色",
         definition: { text: "test" },
       });

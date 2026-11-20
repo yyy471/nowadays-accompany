@@ -7,7 +7,7 @@
 
 | 入口分类 | 关心的问题 | 先看哪里 | 说明 |
 | --- | --- | --- | --- |
-| **项目** | 做什么、边界是什么、现在做到哪、下一步做什么 | [161 持续决策记录](161-digital-life-direction-decisions.md) · [当前状态看板](STATUS.md) | `161` 是已确认需求（`DL-01`～`DL-151`）唯一权威来源；`STATUS.md` 维护当前总表、待办与通过基线 |
+| **项目** | 做什么、边界是什么、现在做到哪、下一步做什么 | [161 持续决策记录](161-digital-life-direction-decisions.md) · [当前状态看板](STATUS.md) | `161` 收录已确认需求。`STATUS.md` 维护当前总表、待办与通过基线。 |
 | **开发** | 环境怎么起、接口/状态/报错怎么写、设计规范是什么 | [现行规范总览](specs/README.md) · [前端设计规范](specs/frontend-design-system.md) · [后端使用说明](../backend/README.md) · [美术资产生成指南](../desktop/desk-preview/ART-GENERATION-GUIDE.md) | 汇总 `specs/` 活规范、[`tokens.json`](design/character-studio/tokens.json) 与当前仍生效的契约章节；桌面端开发必读前端设计规范 |
 | **修复与验收** | 怎么复现、影响什么、改了什么、独立复验到了哪 | [当前待推进事项（Backlog）](STATUS.md#2-当前待推进事项backlog) · [验收基线与命令](STATUS.md#3-验收基线与命令) · [常用专项](#常用专项) | 复现、实施、自验与独立复验按专项追加在同一组文档内；查更早记录请展开下方[归档专项索引](#归档专项索引devdocarchive) |
 
@@ -40,6 +40,12 @@ devDoc/
 ---
 
 ## 归档专项索引（`devDoc/archive/`）
+
+### 09 · 角色运行与迁移
+
+| 文档 | 定位 |
+| --- | --- |
+| [401 新角色首次思考、网页阅读与单角色迁移](archive/09-role-runtime-and-transfer/401-role-runtime-and-transfer.md) | DL-161～DL-166 的设计、方案审查、实施与验收记录 |
 
 ### 08 · 角色配置与设置 v6 迁移（`archive/08-config-pages-v6/`，`400` 起）
 

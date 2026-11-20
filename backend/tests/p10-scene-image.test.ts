@@ -514,6 +514,8 @@ test("a v12 role database migrates to v13 and keeps messages, segments and event
       // v12 的库里没有 V17 的外观软删除与句段立绘快照，也没有 V19 的语音引擎与情感列。
       stripVoiceV19(raw);
       stripAppearanceV17(raw);
+      raw.exec("DROP TABLE web_reading_deliveries");
+      raw.exec("ALTER TABLE roles DROP COLUMN first_activation_pending");
       raw.pragma("user_version = 12");
     } finally {
       raw.close();
@@ -537,7 +539,7 @@ test("a v12 role database migrates to v13 and keeps messages, segments and event
     assert.equal(migrated.cursor, beforeEvents);
     assert.equal(
       withStorageFor(config, role.roleId, (storage) => storage.business.schemaVersion),
-      22,
+      23,
     );
     const tables = withStorageFor(config, role.roleId, (storage) =>
       (

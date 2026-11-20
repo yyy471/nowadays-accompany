@@ -27,6 +27,7 @@ import {
   WindowNotFoundError,
 } from "../domain/errors.js";
 import { registerMessageEvidence } from "./evidence.js";
+import { readWebToolProjection } from "./web-reading.js";
 import type { ModelProtocol, ModelUsage } from "../domain/model.js";
 import type {
   ExecutionRecord,
@@ -206,6 +207,7 @@ export class ConversationStore {
                 MAX(m.created_at) AS last_created_at, COUNT(*) AS message_count
            FROM messages m JOIN windows w ON w.window_id = m.window_id
           WHERE w.role_id = ? AND m.sender = 'user'
+            AND m.status <> 'transfer_interrupted'
             AND m.processed_by_execution_id IS NULL
             AND m.claimed_by_execution_id IS NULL
           GROUP BY m.window_id
@@ -261,6 +263,7 @@ export class ConversationStore {
          JOIN execution_tasks et ON et.execution_id = e.execution_id
          JOIN tasks t ON t.task_id = et.task_id
         WHERE m.window_id = ? AND e.role_id = ? AND m.sender = 'user'
+          AND m.status <> 'transfer_interrupted'
           AND m.processed_by_execution_id IS NULL
           AND m.claimed_by_execution_id IS NULL
           AND e.status = 'failed' AND t.status = 'active' AND t.origin = 'user'
@@ -360,6 +363,7 @@ export class ConversationStore {
           `SELECT m.message_id, m.window_id, m.content, m.sequence, m.created_at
              FROM messages m JOIN windows w ON w.window_id = m.window_id
             WHERE m.window_id = ? AND w.role_id = ? AND m.sender = 'user'
+              AND m.status <> 'transfer_interrupted'
               AND m.processed_by_execution_id IS NULL
               AND m.claimed_by_execution_id IS NULL
             ORDER BY m.sequence ASC`,
@@ -410,6 +414,7 @@ export class ConversationStore {
           `UPDATE messages
               SET execution_id = ?, claimed_by_execution_id = ?
             WHERE window_id = ? AND sender = 'user'
+              AND status <> 'transfer_interrupted'
               AND processed_by_execution_id IS NULL
               AND claimed_by_execution_id IS NULL`,
         )
@@ -575,22 +580,25 @@ export class ConversationStore {
         startedAt: row.started_at,
         finishedAt: row.finished_at,
       })),
-      toolResults: results.map((row) => ({
-        toolCallId: row.tool_call_id,
-        status: row.status,
-        rawResponse: parseJsonValue(row.raw_response_json),
-        adaptedResult: parseJsonValue(row.adapted_result_json),
-        diagnosticCode: row.diagnostic_code,
-        error: parseJsonValue(row.error_json),
-        savedAt: row.saved_at,
-        previousStatus: row.previous_status,
-        previousDiagnosticCode: row.previous_diagnostic_code,
-        previousRawResponse: parseJsonValue(row.previous_raw_response_json),
-        previousAdaptedResult: parseJsonValue(row.previous_adapted_result_json),
-        previousError: parseJsonValue(row.previous_error_json),
-        reconciledAt: row.reconciled_at,
-        reconciledByCallId: row.reconciled_by_call_id,
-      })),
+      toolResults: results.map((row) => {
+        const web = readWebToolProjection(this.db, this.roleId, row.tool_call_id);
+        return {
+          toolCallId: row.tool_call_id,
+          status: row.status,
+          rawResponse: web === undefined ? parseJsonValue(row.raw_response_json) : null,
+          adaptedResult: parseJsonValue(web ?? row.adapted_result_json),
+          diagnosticCode: row.diagnostic_code,
+          error: parseJsonValue(row.error_json),
+          savedAt: row.saved_at,
+          previousStatus: row.previous_status,
+          previousDiagnosticCode: row.previous_diagnostic_code,
+          previousRawResponse: parseJsonValue(row.previous_raw_response_json),
+          previousAdaptedResult: parseJsonValue(row.previous_adapted_result_json),
+          previousError: parseJsonValue(row.previous_error_json),
+          reconciledAt: row.reconciled_at,
+          reconciledByCallId: row.reconciled_by_call_id,
+        };
+      }),
       latestEvents: this.listLatestEvents(executionId, eventLimit),
     };
   }

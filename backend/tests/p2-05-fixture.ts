@@ -10,6 +10,7 @@ import { localDateFromIso, registerMessageEvidence } from "../src/storage/eviden
 import { MemoryStore } from "../src/storage/memory-store.js";
 import { RoleStorage } from "../src/storage/role-storage.js";
 import type { BindingCapability } from "../src/storage/role-store.js";
+import { createLegacyRole } from "./legacy-role-fixture.js";
 
 export class ScriptedChatModel implements ModelPort {
   readonly requests: ModelRequest[] = [];
@@ -95,7 +96,7 @@ export function createFixtureWithModel(
       ...options,
     },
   );
-  const role = app.services.roles.createRole({
+  const role = createLegacyRole(app, {
     displayName: "阿澄",
     definition: { text: "你是阿澄，记得与用户共同经历的事情。" },
     state: { mood: "平静" },
@@ -116,7 +117,7 @@ export function createFixtureWithModel(
       enabled: true,
     },
   ]);
-  // 新建角色默认 stopped（268 §4）：夹具显式开始活动，保持既有对话语义。
+  // 旧角色初始化完成后处于 stopped，夹具从正常活动入口恢复。
   app.services.activity.resume(role.roleId);
   return {
     app,

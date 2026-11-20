@@ -19,6 +19,7 @@ import {
   AppError,
   AutonomyBudgetExhaustedError,
   ExecutionSupersededError,
+  ModelCredentialUnavailableError,
   ModelRequestFailedError,
   RoleStopRequestedError,
   SseCursorInvalidError,
@@ -29,7 +30,7 @@ import {
   ROLE_STOP_TASK_END_REASON,
   type RoleActivityGate,
 } from "../domain/role-activity.js";
-import type { ModelPort } from "../domain/model.js";
+import type { ModelMessage, ModelPort } from "../domain/model.js";
 import { localDateFromIso } from "../storage/evidence.js";
 import { resolveCredential } from "../model/credentials.js";
 import { HttpModelAdapter } from "../model/protocols.js";
@@ -43,6 +44,7 @@ import {
 } from "../storage/conversation-store.js";
 import {
   AutonomyStore,
+  isFirstActivationWake,
   type AutonomyWakeRecord,
 } from "../storage/autonomy-store.js";
 import { AppearanceStore } from "../storage/appearance-store.js";
@@ -55,12 +57,15 @@ import type {
   TaskRecord,
 } from "../storage/role-store.js";
 import { RoleStorage } from "../storage/role-storage.js";
+import { prepareModelWebReadings, readWebHistoryProjection, recordAcceptedWebReadings } from "../storage/web-reading.js";
 import {
   AgentGraphRunner,
   CIRCUIT_FAILURE_THRESHOLD,
   DEFAULT_MAX_TOOL_ROUNDS,
   type AgentModelHandle,
 } from "./agent-graph.js";
+import type { AgentSystemPrompt } from "./agent-context.js";
+import { findAgentEvidence } from "./conversation-history.js";
 import { loadAgentTools, type AgentToolCatalog } from "./agent-tools.js";
 import type { AdminToolServices } from "./admin-tools.js";
 import type { AutonomyService } from "./autonomy-service.js";
@@ -83,6 +88,7 @@ export type ChatModelPortFactory = (binding: ResolvedModelBinding) => ModelPort;
 
 /** 外部工具前台等待窗口原型默认值；越过后自动转后台，等待时长仍待真实工具联调校准。 */
 export const DEFAULT_TOOL_FOREGROUND_WAIT_MS = 2_000;
+const FIRST_ACTIVATION_CREDENTIAL_RETRY_MS = 1_000;
 
 
 export interface ConversationServiceOptions {
@@ -161,6 +167,7 @@ export class ConversationService {
   private readonly maxToolRounds: number;
   private readonly toolForegroundWaitMs: number;
   private readonly modelFactory: ChatModelPortFactory;
+  private readonly usesHttpModel: boolean;
   private readonly credentials: CredentialResolver | null;
   private readonly segmentAnnotation: SegmentAnnotationService;
   private readonly memoryRuntime: MemoryRuntime | null;
@@ -188,6 +195,7 @@ export class ConversationService {
   /** 按任务计数的在途后台工具：任务终结后要等它们结算再释放资源（283 R03）。 */
   private readonly backgroundToolsByTask = new Map<string, number>();
   private readonly wakeTimers = new Map<string, NodeJS.Timeout>();
+  private readonly firstActivationCredentialTimers = new Map<string, NodeJS.Timeout>();
   private readonly dueWakeChecks = new Map<string, string>();
   private readonly pendingContinuations = new Map<
     string,
@@ -226,17 +234,13 @@ export class ConversationService {
     this.toolForegroundWaitMs =
       options.toolForegroundWaitMs ?? DEFAULT_TOOL_FOREGROUND_WAIT_MS;
     this.credentials = options.credentialResolver ?? null;
+    this.usesHttpModel = options.modelPortFactory === undefined;
     this.modelFactory =
       options.modelPortFactory ??
       ((binding) =>
         new HttpModelAdapter(
           binding.config,
-          this.credentials === null
-            ? resolveCredential(this.appRoot, binding.config.credentialRef)
-            : this.credentials.resolve(
-                binding.resourceId,
-                binding.config.credentialRef,
-              ),
+          this.resolveModelCredential(binding),
         ));
     this.memoryRuntime = options.memoryRuntime ?? null;
     this.autonomy = options.autonomy ?? null;
@@ -683,6 +687,7 @@ export class ConversationService {
       this.wakeTimers.delete(roleId);
     }
     this.dueWakeChecks.delete(roleId);
+    this.clearFirstActivationCredentialRetry(roleId);
     this.pendingContinuations.delete(roleId);
     this.backgroundToolsByRole.delete(roleId);
     this.segmentAnnotations.delete(roleId);
@@ -936,6 +941,7 @@ export class ConversationService {
             this.fallbackFromResume(index.roleId, item) || continuationQueued;
         }
         recovered += interrupted.length;
+        this.registerFirstActivation(index.roleId);
         this.armWakeTimer(index.roleId);
         if (continuationQueued || pendingUserRecovery || resumeFallback) {
           this.schedule(index.roleId);
@@ -1232,6 +1238,10 @@ export class ConversationService {
       clearTimeout(timer);
     }
     this.wakeTimers.clear();
+    for (const timer of this.firstActivationCredentialTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.firstActivationCredentialTimers.clear();
     this.dueWakeChecks.clear();
     for (const cleanup of [...this.activeStreams.keys()]) {
       cleanup();
@@ -1367,6 +1377,7 @@ export class ConversationService {
     if (this.activity !== null && !this.activity.canStart(roleId)) {
       return false;
     }
+    this.registerFirstActivation(roleId);
     let pending: ReturnType<ConversationStore["listPendingWindows"]>;
     try {
       pending = this.withConversationStore(roleId, (store) =>
@@ -1437,7 +1448,8 @@ export class ConversationService {
       clearTimeout(existing);
       this.wakeTimers.delete(roleId);
     }
-    if (this.closed || this.autonomy === null || this.running.has(roleId)) {
+    if (this.closed || this.autonomy === null || this.running.has(roleId) ||
+        this.activity?.canStart(roleId) === false) {
       return;
     }
     let next;
@@ -1561,6 +1573,9 @@ export class ConversationService {
     roleId: string,
     wake: AutonomyWakeRecord,
   ): boolean {
+    if (isFirstActivationWake(wake.wakeId)) {
+      return this.firstActivationModelReady(roleId);
+    }
     // 唤醒会接回原任务时按任务模型判断；否则按当前对话模型判断。
     if (this.chatTargetUnderMaintenance(roleId, wake.taskId)) {
       return false;
@@ -1572,6 +1587,58 @@ export class ConversationService {
       return this.bindings.hasChatForTask(roleId, wake.taskId);
     }
     return false;
+  }
+
+  private registerFirstActivation(roleId: string): void {
+    if (this.autonomy === null || this.activity?.canStart(roleId) !== true) {
+      return;
+    }
+    try {
+      if (this.autonomy.hasPendingFirstActivation(roleId) &&
+          this.firstActivationModelReady(roleId)) {
+        this.autonomy.enqueueFirstActivation(roleId);
+      }
+    } catch {
+      // 状态与唤醒落在不同的库；下次调度重新检查资格。
+    }
+  }
+
+  private resolveModelCredential(binding: ResolvedModelBinding): string | undefined {
+    const reference = binding.config.credentialRef;
+    return this.credentials === null
+      ? resolveCredential(this.appRoot, reference)
+      : this.credentials.resolve(binding.resourceId, reference);
+  }
+
+  private firstActivationModelReady(roleId: string): boolean {
+    this.clearFirstActivationCredentialRetry(roleId);
+    try {
+      const binding = this.bindings.resolveChat(roleId);
+      if (this.isResourceUnderMaintenance?.(binding.resourceId) === true) {
+        return false;
+      }
+      // 与实际调用走同一份本机凭据解析。注入的模型不依赖 HTTP 凭据。
+      if (this.usesHttpModel) this.resolveModelCredential(binding);
+      return true;
+    } catch (error) {
+      if (error instanceof ModelCredentialUnavailableError) {
+        // env:/file: 可独立于资源 API 就绪，给已激活的角色重新检查机会。
+        const timer = setTimeout(() => {
+          this.firstActivationCredentialTimers.delete(roleId);
+          this.schedule(roleId);
+        }, FIRST_ACTIVATION_CREDENTIAL_RETRY_MS);
+        timer.unref();
+        this.firstActivationCredentialTimers.set(roleId, timer);
+      }
+      return false;
+    }
+  }
+
+  private clearFirstActivationCredentialRetry(roleId: string): void {
+    const timer = this.firstActivationCredentialTimers.get(roleId);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    this.firstActivationCredentialTimers.delete(roleId);
   }
 
   private grantTaskResources(
@@ -2131,6 +2198,9 @@ export class ConversationService {
           resourceId: binding.resourceId,
           modelName: binding.modelName,
           protocol: binding.config.protocol,
+          baseUrl: binding.config.baseUrl,
+          ...(binding.config.maxInputChars === undefined ? {} : { maxInputChars: binding.config.maxInputChars }),
+          ...(binding.config.maxOutputChars === undefined ? {} : { maxOutputChars: binding.config.maxOutputChars }),
         };
       };
       const recent = store.listRecentMessages(windowId, 30);
@@ -2161,6 +2231,7 @@ export class ConversationService {
       } else {
         catalog = await loadAgentTools({
           roleId,
+          readWebToolProjection: readWebHistoryProjection,
           appStore: this.appStore,
           roleAccess: this.roleAccess,
           memory: this.memory,
@@ -2181,7 +2252,7 @@ export class ConversationService {
           });
         }
       }
-      const systemPrompt = (): string =>
+      const systemPrompt = (): AgentSystemPrompt =>
         this.buildSystemPrompt({
           roleContext: store.getRoleContext(),
           recallBriefs: recall.briefs,
@@ -2241,16 +2312,7 @@ export class ConversationService {
         return taskId;
       };
       ensureTaskForStop = ensureTask;
-      const messages = [
-        ...this.buildMessages(recent, pendingMessages),
-        ...(continuationTask === null
-          ? []
-          : this.buildContinuationToolMessages(
-              storage,
-              roleId,
-              continuationTask.taskId,
-            )),
-      ];
+      const messages = this.buildMessages(recent, pendingMessages);
       saver = SqliteSaver.fromConnString(storage.paths.executionDatabasePath);
       const runner = new AgentGraphRunner(
         {
@@ -2259,6 +2321,25 @@ export class ConversationService {
           resolveModel,
           tools: catalog.tools,
           systemPrompt,
+          prepareModelMessages: (messages) => prepareModelWebReadings(storage.business.db, roleId, messages),
+          onModelAccepted: (accepted) => recordAcceptedWebReadings(storage.business.db, {
+            ...accepted,
+            now: this.now().toISOString(),
+            ...(this.timeZone ? { timeZone: this.timeZone } : {}),
+          }),
+          evidenceQuery: () => [
+            ...pendingMessages.map((message) => message.content),
+            continuationTask?.goal ?? "",
+            autonomy?.intent ?? "",
+          ].join("\n"),
+          selectEvidence: (context) => findAgentEvidence(
+            storage.business.db,
+            { roleId, windowId, taskId: context.taskId, scope: "window" },
+            context.query,
+            context.messages,
+            context.initialRound && continuationTask !== null,
+            readWebHistoryProjection,
+          ),
           signal: running.controller.signal,
           checkRunning,
           checkStopBoundary,
@@ -3024,82 +3105,33 @@ export class ConversationService {
   private buildMessages(
     recent: readonly ConversationMessageView[],
     pendingMessages: readonly ClaimedMessage[],
-  ): import("../domain/model.js").ModelMessage[] {
-    const messages: import("../domain/model.js").ModelMessage[] = [];
-    const included = new Set<string>();
-    for (const message of recent) {
-      if (message.status === "generating") {
-        continue;
-      }
-      included.add(message.messageId);
-      if (message.sender === "user") {
-        messages.push({ role: "user", content: message.content });
-      } else {
-        messages.push({
-          role: "assistant",
-          content:
-            message.status === "interrupted"
-              ? `${message.content}\n[以上回复中断，未完成]`
-              : message.content,
-        });
-      }
-    }
-    for (const pending of pendingMessages) {
-      if (!included.has(pending.messageId)) {
-        messages.push({ role: "user", content: pending.content });
-      }
-    }
-    return messages;
-  }
-
-  private buildContinuationToolMessages(
-    storage: RoleStorage,
-    roleId: string,
-    taskId: string,
-  ): import("../domain/model.js").ModelMessage[] {
-    const messages: import("../domain/model.js").ModelMessage[] = [];
-    // 长任务只重放最近一段的调用证据，避免续行上下文无限膨胀。
-    const calls = storage.business.listTaskToolCalls(roleId, taskId).slice(-40);
-    for (const call of calls) {
-      let result: ReturnType<RoleStore["getToolResult"]>;
-      try {
-        result = storage.business.getToolResult(roleId, call.toolCallId);
-      } catch {
-        continue;
-      }
-      messages.push({
-        role: "assistant",
-        content: "",
-        toolCalls: [
-          {
-            callId: call.toolCallId,
-            name: call.toolName,
-            arguments: call.args,
-          },
-        ],
-      });
-      messages.push({
-        role: "tool",
-        toolCallId: call.toolCallId,
-        toolName: call.toolName,
-        content: JSON.stringify({
-          status: result.status,
-          ...(result.diagnosticCode === null
-            ? {}
-            : { diagnosticCode: result.diagnosticCode }),
-          result: result.adaptedResult ?? null,
-        }),
+  ): ModelMessage[] {
+    // 重试可能同时领取旧问题和新请求。按窗口序号合并，保留旧问题与中断回复的因果顺序。
+    const pendingIds = new Set(pendingMessages.map((message) => message.messageId));
+    const history = recent.flatMap((message): Array<{ sequence: number; model: ModelMessage }> => {
+      if (message.status === "generating" || pendingIds.has(message.messageId)) return [];
+      return [{
+        sequence: message.sequence,
+        model: {
+          role: message.sender,
+          content: message.status === "interrupted"
+            ? `${message.content}\n[以上回复中断，未完成]`
+            : message.content,
+          source: { messageId: message.messageId },
+        },
+      }];
+    });
+    for (const message of pendingMessages) {
+      history.push({
+        sequence: message.sequence,
+        model: {
+          role: "user",
+          content: message.content,
+          source: { messageId: message.messageId, currentUserRequest: true },
+        },
       });
     }
-    const internal = new ConversationStore(storage.business.db, roleId, this.timeZone)
-      .listTaskInternalToolFacts(taskId);
-    for (const fact of internal) {
-      messages.push({
-        role: "assistant",
-        content: `原任务已保存的内部操作记录：${truncate(JSON.stringify(fact), 8000)}`,
-      });
-    }
-    return messages;
+    return history.sort((a, b) => a.sequence - b.sequence).map(({ model }) => model);
   }
 
   /** 汇总当前任务的目标、状态、已保存调用与进度笔记，供角色决策任务收尾。 */
@@ -3225,7 +3257,10 @@ export class ConversationService {
     outfitBrief: OutfitBrief | null;
     /** 本段已决定收尾时的原因；非空时追加收尾指令并禁止再调用工具。 */
     segmentHalt: AgentSegmentStopKind | null;
-  }): string {
+  }): AgentSystemPrompt {
+    const optional: string[] = [];
+    const definition = Array.from(input.roleContext.definitionText);
+    const essentialDefinition = definition.slice(0, 2000).join("");
     const lines = input.roleContext.isBuiltin
       ? [
           `你是 Nowadays 系统的预置默认助手「${input.roleContext.displayName}」（${input.roleContext.builtinKey ?? "xiacheng"}），同时兼顾日常对话陪伴与严谨的办事执行能力。`,
@@ -3235,23 +3270,23 @@ export class ConversationService {
           "2. 任务延续与安全边界：复杂任务按步骤清晰推进并记录阶段笔记；需要用户关键澄清或拍板时停下确认；不得绕过系统保护私自改写预置身份、官方外观或违禁配置。",
           "3. 运行中自改禁区：用户要求修改我自己的设定、绑定、自主额度、语音、生图或外观，或修改我正在使用的模型服务连接与凭据、增删全局语音／生图服务时，不要尝试在对话内改动；应先说明影响与当前状态，再引导用户到「角色配置」或「设置」页面操作（管理工具会以 SELF_MODIFICATION_VIA_SETTINGS_ONLY 拒绝）。",
           "以下用户可维护的角色设定用于塑造你的日常交流风格与人格表达：",
-          truncate(input.roleContext.definitionText, 12_000),
+          essentialDefinition,
         ]
       : [
           `你是角色「${input.roleContext.displayName}」，始终以该角色的身份、经历和当前状态回应。`,
           "回复按自然句段换行。需要演出表情或动作时，用一行简短动作文字呈现，例如 *她轻轻点头*；动作和台词分行。",
           "以下角色设定是长期身份依据：",
-          truncate(input.roleContext.definitionText, 12_000),
+          essentialDefinition,
         ];
+    if (definition.length > 2_000) {
+      optional.push(`角色设定续文：${definition.slice(2_000).join("")}`);
+    }
     const payload = JSON.stringify(input.roleContext.definitionPayload);
     if (payload !== undefined && payload !== "{}") {
-      lines.push(`设定附加信息：${truncate(payload, 4000)}`);
+      optional.push(`设定附加信息：${payload}`);
     }
     lines.push(
-      `当前状态（版本 ${input.roleContext.stateVersion}）：${truncate(
-        JSON.stringify(input.roleContext.state),
-        6000,
-      )}`,
+      `当前状态（版本 ${input.roleContext.stateVersion}）：${JSON.stringify(input.roleContext.state)}`,
       `当前时间：${this.now().toISOString()}`,
     );
     if (input.autonomy === null) {
@@ -3264,31 +3299,22 @@ export class ConversationService {
     }
     if (input.continuation !== null) {
       lines.push(
-        `当前执行在继续原任务 ${input.continuation.taskId}，任务目标：${truncate(
-          input.continuation.goal,
-          1000,
-        )}。`,
-        "原任务已完成的工具调用和真实结果已附在对话历史中；不要重做已成功步骤，不要续写被中断的回复，按最新上下文继续推进原目标。",
+        `当前执行在继续原任务 ${input.continuation.taskId}，任务目标：${input.continuation.goal}。`,
+        "可按需调用 history_lookup 查找原任务已保存的工具结果；不要重做已成功步骤，不要续写被中断的回复，按最新上下文继续推进原目标。",
       );
     }
     if (input.taskBrief !== null && input.taskBrief.status === "active") {
       lines.push(
-        `当前任务（taskId=${input.taskBrief.taskId}）：目标「${truncate(
-          input.taskBrief.goal,
-          500,
-        )}」，状态 ${input.taskBrief.status}，来源 ${input.taskBrief.origin}。`,
+        `当前任务（taskId=${input.taskBrief.taskId}）：目标「${input.taskBrief.goal}」，状态 ${input.taskBrief.status}，来源 ${input.taskBrief.origin}。`,
       );
       if (input.taskBrief.toolCalls.length > 0) {
         const callSummary = input.taskBrief.toolCalls
           .map((call) => `${call.name}(${call.status})`)
           .join("、");
-        lines.push(`本任务已保存的工具调用（最近）：${callSummary}。`);
+        optional.push(`本任务已保存的工具调用（最近）：${callSummary}。`);
       }
       if (input.taskBrief.notes.length > 0) {
-        lines.push("任务进度笔记：");
-        for (const note of input.taskBrief.notes) {
-          lines.push(`- ${truncate(note, 300)}`);
-        }
+        optional.push(`任务进度笔记：\n${input.taskBrief.notes.map((note) => `- ${truncate(note, 300)}`).join("\n")}`);
       }
       lines.push(
         "任务决策：默认情况下回复完成后任务按「回复完成」结束；如果目标尚未完成、本轮只想先回复或需要延后处理，调用 task_pause 暂停任务（可用 autonomy_schedule 携带本任务编号安排唤醒，唤醒会接回同一任务继续）；如果任务已达成或确认失败，调用 task_finish 声明 completed 或 failed 及结束原因。",
@@ -3297,7 +3323,7 @@ export class ConversationService {
     if (input.autonomy !== null) {
       lines.push(
         "这是一次自主活动：你按自己的安排醒来，不是用户刚发来新消息。",
-        `本次自主安排的目标：${truncate(input.autonomy.intent, 2000)}`,
+        `本次自主安排的目标：${input.autonomy.intent}`,
         "可以实际使用已启用工具做事并保存真实成果；需要时调用 autonomy_share 主动分享到主对话，或调用 autonomy_schedule 安排下一次，也可以不调用工具。",
         "不要虚构用户发言、离线经历或未实际发生的工具结果。",
       );
@@ -3310,10 +3336,9 @@ export class ConversationService {
     if (input.outfitBrief !== null) {
       const outfit = input.outfitBrief;
       lines.push(`今日穿搭（业务本地日期 ${outfit.localDate}）：`);
-      lines.push("可用服饰：");
       for (const item of outfit.items) {
-        lines.push(
-          `- ${item.name}（id=${item.outfitId}）${item.description === null ? "" : `：${truncate(item.description, 200)}`}`,
+        optional.push(
+          `可用服饰 ${item.name}（id=${item.outfitId}）${item.description === null ? "" : `：${truncate(item.description, 200)}`}`,
         );
       }
       if (outfit.current === null) {
@@ -3334,35 +3359,36 @@ export class ConversationService {
       }
     }
     if (input.recallBriefs.length > 0) {
-      lines.push("自动召回的相关长期记忆概况（不是完整原文）：");
+      optional.push("自动召回的相关长期记忆概况（不是完整原文）：");
       for (const brief of input.recallBriefs) {
-        lines.push(
+        optional.push(
           `- [${brief.type}] ${brief.title}（id=${brief.id}）：${truncate(
             brief.snippet,
             500,
           )}`,
         );
       }
-      lines.push(
+      optional.push(
         "如果需要核对细节，调用 memory_event、memory_summary、memory_evidence 或 memory_search；不要仅凭概况编造原文。",
       );
     } else {
-      lines.push("本轮自动召回没有命中相关概况；未命中不代表事情从未发生，可以按需检索。");
+      optional.push("本轮自动召回没有命中相关概况；未命中不代表事情从未发生，可以按需检索。");
     }
     if (input.recallWarning !== null) {
-      lines.push(`自动召回本轮失败（${input.recallWarning}），不能把失败当作没有经历。`);
+      optional.push(`自动召回本轮失败（${input.recallWarning}），不能把失败当作没有经历。`);
     }
     if (input.skillBriefs.length > 0) {
-      lines.push("已启用 Skill（按需用 skill_read 读取正文或文件）：");
+      optional.push("已启用 Skill（按需用 skill_read 读取正文或文件）：");
       for (const skill of input.skillBriefs) {
-        lines.push(`- ${skill.name}：${truncate(skill.description, 300)}`);
+        optional.push(`- ${skill.name}：${truncate(skill.description, 300)}`);
       }
     }
     if (input.warnings.length > 0) {
-      lines.push(`扩展资源提示：${input.warnings.join("；")}`);
+      optional.push(`扩展资源提示：${input.warnings.join("；")}`);
     }
     lines.push(
       "可用工具规则：",
+      "- 旧消息和工具回执可用 history_lookup 搜索窗口或当前任务，也可按引用编号分页读取。",
       "- 记忆检索成功但无结果与查询失败不同；未命中和失败都不等于事情没发生。",
       "- 外部 MCP 工具的实际调用会保存原始响应和结果；不要重复调用已经成功或结果未知的操作。",
       "- 需要更新角色当前状态时调用 state_update，补丁只在本轮正式提交时生效。",
@@ -3374,9 +3400,9 @@ export class ConversationService {
     }
     const names = input.tools.map((tool) => tool.name);
     if (names.length > 0) {
-      lines.push(`可用工具：${names.join("、")}`);
+      optional.push(`可用工具：${names.join("、")}`);
     }
-    return lines.join("\n");
+    return { required: lines.join("\n"), optional };
   }
 
   private isIdle(roleId: string): boolean {

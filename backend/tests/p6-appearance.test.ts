@@ -1068,6 +1068,8 @@ test("旧库升级按句段服饰当时的主页立绘回填", { timeout: 60_000
     try {
       stripVoiceV19(raw);
       stripAppearanceV17(raw);
+      raw.exec("DROP TABLE web_reading_deliveries");
+      raw.exec("ALTER TABLE roles DROP COLUMN first_activation_pending");
       raw.pragma("user_version = 16");
     } finally {
       raw.close();

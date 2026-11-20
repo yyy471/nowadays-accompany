@@ -14,6 +14,7 @@ import type {
   ModelUsage,
 } from "../domain/model.js";
 import {
+  buildGeminiGenerateBody,
   listGoogleModels,
   mapGoogleErrorReason,
   streamGoogleGemini,
@@ -100,6 +101,7 @@ export class HttpModelAdapter implements ModelPort {
         cacheRef: this.googleTokenCache,
         request,
         transport: this.googleTransport(),
+        serializedBody: serializeModelRequest("google-gemini", this.config.baseUrl, request),
       });
     }
     return this.streamAnthropic(request);
@@ -122,33 +124,11 @@ export class HttpModelAdapter implements ModelPort {
       {
         method: "POST",
         headers: this.baseHeaders("text/event-stream"),
-        body: JSON.stringify({
-          model: request.modelName,
-          messages: [
-            { role: "system", content: request.system },
-            ...request.messages.map(toOpenAiChatMessage),
-          ],
-          ...(request.tools.length === 0
-            ? {}
-            : {
-                tools: request.tools.map((tool) => ({
-                  type: "function",
-                  function: {
-                    name: tool.name,
-                    description: tool.description,
-                    parameters: tool.inputSchema,
-                  },
-                })),
-              }),
-          ...(request.maxOutputTokens === undefined
-            ? {}
-            : { max_tokens: request.maxOutputTokens }),
-          stream: true,
-          stream_options: { include_usage: true },
-        }),
+        body: serializeModelRequest("openai-chat", this.config.baseUrl, request),
         ...(request.signal ? { signal: request.signal } : {}),
       },
     );
+    request.onAccepted?.();
     const toolBuffers = new Map<
       number,
       { callId: string; name: string; arguments: string }
@@ -265,31 +245,11 @@ export class HttpModelAdapter implements ModelPort {
       {
         method: "POST",
         headers: this.baseHeaders("text/event-stream"),
-        body: JSON.stringify({
-          model: request.modelName,
-          instructions: request.system,
-          input: request.messages.flatMap((message) =>
-            toOpenAiResponsesInput(message, request.modelName, this.config.baseUrl),
-          ),
-          include: ["reasoning.encrypted_content"],
-          ...(request.tools.length === 0
-            ? {}
-            : {
-                tools: request.tools.map((tool) => ({
-                  type: "function",
-                  name: tool.name,
-                  description: tool.description,
-                  parameters: tool.inputSchema,
-                })),
-              }),
-          ...(request.maxOutputTokens === undefined
-            ? {}
-            : { max_output_tokens: request.maxOutputTokens }),
-          stream: true,
-        }),
+        body: serializeModelRequest("openai-responses", this.config.baseUrl, request),
         ...(request.signal ? { signal: request.signal } : {}),
       },
     );
+    request.onAccepted?.();
     const toolBuffers = new Map<
       string,
       { callId: string; name: string; arguments: string }
@@ -481,25 +441,11 @@ export class HttpModelAdapter implements ModelPort {
       {
         method: "POST",
         headers: this.baseHeaders("text/event-stream"),
-        body: JSON.stringify({
-          model: request.modelName,
-          system: request.system,
-          messages: toAnthropicMessages(request.messages, request.modelName, this.config.baseUrl),
-          ...(request.tools.length === 0
-            ? {}
-            : {
-                tools: request.tools.map((tool) => ({
-                  name: tool.name,
-                  description: tool.description,
-                  input_schema: tool.inputSchema,
-                })),
-              }),
-          max_tokens: request.maxOutputTokens ?? 1024,
-          stream: true,
-        }),
+        body: serializeModelRequest("anthropic-messages", this.config.baseUrl, request),
         ...(request.signal ? { signal: request.signal } : {}),
       },
     );
+    request.onAccepted?.();
     const toolBuffers = new Map<
       number,
       { callId: string; name: string; arguments: string; initial: unknown }
@@ -801,6 +747,92 @@ export class HttpModelAdapter implements ModelPort {
   }
 }
 
+/** 与生成请求共用同一序列化路径，覆盖协议开销和合法续轮块。 */
+export function serializeModelRequest(
+  protocol: ModelServiceConfig["protocol"],
+  baseUrl: string,
+  request: ModelRequest,
+): string {
+  const messages = request.messages.map((message): ModelMessage => {
+    if (message.role !== "tool" || message.source?.historical !== true) return message;
+    return {
+      role: "assistant",
+      content: `已保存的工具事实 [${message.source.toolCallId ?? message.source.internalStepKey ?? message.toolCallId}]（${message.toolName ?? "工具"}）：${message.content}`,
+    };
+  });
+  switch (protocol) {
+    case "openai-chat":
+      return JSON.stringify({
+        model: request.modelName,
+        messages: [
+          { role: "system", content: request.system },
+          ...messages.map(toOpenAiChatMessage),
+        ],
+        ...(request.tools.length === 0
+          ? {}
+          : {
+              tools: request.tools.map((tool) => ({
+                type: "function",
+                function: {
+                  name: tool.name,
+                  description: tool.description,
+                  parameters: tool.inputSchema,
+                },
+              })),
+            }),
+        ...(request.maxOutputTokens === undefined
+          ? {}
+          : { max_tokens: request.maxOutputTokens }),
+        stream: true,
+        stream_options: { include_usage: true },
+      });
+    case "openai-responses":
+      return JSON.stringify({
+        model: request.modelName,
+        instructions: request.system,
+        input: messages.flatMap((message) =>
+          toOpenAiResponsesInput(message, request.modelName, baseUrl),
+        ),
+        include: ["reasoning.encrypted_content"],
+        ...(request.tools.length === 0
+          ? {}
+          : {
+              tools: request.tools.map((tool) => ({
+                type: "function",
+                name: tool.name,
+                description: tool.description,
+                parameters: tool.inputSchema,
+              })),
+            }),
+        ...(request.maxOutputTokens === undefined
+          ? {}
+          : { max_output_tokens: request.maxOutputTokens }),
+        stream: true,
+      });
+    case "anthropic-messages":
+      return JSON.stringify({
+        model: request.modelName,
+        system: request.system,
+        messages: toAnthropicMessages(messages, request.modelName, baseUrl),
+        ...(request.tools.length === 0
+          ? {}
+          : {
+              tools: request.tools.map((tool) => ({
+                name: tool.name,
+                description: tool.description,
+                input_schema: tool.inputSchema,
+              })),
+            }),
+        max_tokens: request.maxOutputTokens ?? 1024,
+        stream: true,
+      });
+    case "google-gemini":
+      return JSON.stringify(buildGeminiGenerateBody(
+        { ...request, messages }, request.modelName, baseUrl, continuationItems,
+      ));
+  }
+}
+
 function endpoint(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/, "")}${path}`;
 }
@@ -958,7 +990,7 @@ function toAnthropicMessages(messages: readonly ModelMessage[], modelName: strin
   return items;
 }
 
-function continuationItems(
+export function continuationItems(
   message: Extract<ModelMessage, { role: "assistant" }>,
   protocol: ModelServiceConfig["protocol"],
   modelName: string,

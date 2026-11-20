@@ -14,6 +14,7 @@ import type { ModelEvent, ModelPort, ModelRequest } from "../src/domain/model.js
 import type { VoiceCapabilities, VoiceEngineStatus } from "../src/domain/voice.js";
 import { RoleStorage } from "../src/storage/role-storage.js";
 import { configFetch } from "./config-write.js";
+import { createLegacyRole } from "./legacy-role-fixture.js";
 import {
   createFixture,
   createFixtureWithModel,
@@ -324,7 +325,7 @@ test("V18 database migrates to V19 while preserving voice config, messages and S
   let windowId = "";
   let messageId = "";
   try {
-    const role = app.services.roles.createRole({
+    const role = createLegacyRole(app, {
       displayName: "秧秧",
       definition: { text: "温柔细致的陪伴者。" },
       state: { mood: "平静" },
@@ -387,6 +388,8 @@ test("V18 database migrates to V19 while preserving voice config, messages and S
       db.exec("ALTER TABLE role_voice_settings DROP COLUMN engines_json");
       db.exec("ALTER TABLE role_voice_settings DROP COLUMN default_engine");
       db.exec("ALTER TABLE message_segments DROP COLUMN voice_emotion");
+      db.exec("DROP TABLE web_reading_deliveries");
+      db.exec("ALTER TABLE roles DROP COLUMN first_activation_pending");
       db.pragma("user_version = 18");
     } finally {
       db.close();
@@ -409,7 +412,7 @@ test("V18 database migrates to V19 while preserving voice config, messages and S
 
     const storage = RoleStorage.openExisting(paths);
     try {
-      assert.equal(storage.business.schemaVersion, 22);
+      assert.equal(storage.business.schemaVersion, 23);
     } finally {
       storage.close();
     }

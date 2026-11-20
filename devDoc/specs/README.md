@@ -13,7 +13,7 @@
 | 桌面前端设计系统 | [前端设计规范](frontend-design-system.md)（原 `307`） | 桌面渲染层字体、间距、圆角、阴影、颜色、动效、`ui/` 组件约定与 `lint:styles` 门禁；令牌唯一源在 [`design/character-studio/tokens.json`](../design/character-studio/tokens.json) |
 | 角色与美术资产生成 | [美术资产生成指南](../../desktop/desk-preview/ART-GENERATION-GUIDE.md) | 角色与书房背景生图基准、工作流与风格约束 |
 | 后端运行、API 与数据布局 | [后端使用与运行说明](../../backend/README.md) | Node 24 环境、CLI/HTTP/SSE 入口、语音/生图接口概要与 `accept:offline` 验收 |
-| 产品方向与持续决策 | [持续决策记录](../161-digital-life-direction-decisions.md) | 已确认的产品需求与边界（`DL-01`～`DL-159`） |
+| 产品方向与持续决策 | [持续决策记录](../161-digital-life-direction-decisions.md) | 已确认的产品需求与边界，按稳定的 `DL` 编号查阅 |
 
 ## 提炼完成说明
 

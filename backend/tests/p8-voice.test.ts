@@ -8,6 +8,7 @@ import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { listen } from "../src/bootstrap/app.js";
 import { rolePaths } from "../src/bootstrap/config.js";
+import { BUSINESS_SCHEMA_VERSION } from "../src/storage/schema.js";
 import { inspectAudio, isPcmWav } from "../src/application/audio-inspect.js";
 import {
   IndexTtsClient,
@@ -294,7 +295,7 @@ test("voice settings and reference audio persist with the current schema", async
     assert.deepEqual(tables, ["role_voice_settings", "voice_assets"]);
     assert.equal(
       withStorage(fixture, (storage) => storage.business.schemaVersion),
-      22,
+      BUSINESS_SCHEMA_VERSION,
     );
   } finally {
     await fixture.close();

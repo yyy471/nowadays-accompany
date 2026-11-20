@@ -252,6 +252,7 @@ export async function* streamGoogleGemini(input: {
   cacheRef: { current: GoogleOAuthTokenCache | undefined };
   request: ModelRequest;
   transport: GoogleGeminiTransport;
+  serializedBody?: string;
 }): AsyncGenerator<ModelEvent> {
   const { request, transport } = input;
   const headers = await buildGoogleHeaders(
@@ -266,7 +267,7 @@ export async function* streamGoogleGemini(input: {
     {
       method: "POST",
       headers,
-      body: JSON.stringify(
+      body: input.serializedBody ?? JSON.stringify(
         buildGeminiGenerateBody(
           request,
           request.modelName,
@@ -277,6 +278,7 @@ export async function* streamGoogleGemini(input: {
       ...(request.signal === undefined ? {} : { signal: request.signal }),
     },
   );
+  request.onAccepted?.();
 
   const accumulatedParts: Record<string, unknown>[] = [];
   const toolCalls: Array<{ callId: string; name: string; arguments: unknown }> = [];

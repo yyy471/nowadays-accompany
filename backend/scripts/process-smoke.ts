@@ -18,7 +18,10 @@ const launches: number[] = [];
 
 async function start(): Promise<number> {
   let stdout = "";
-  const child = spawn(process.execPath, ["--import", "tsx", "src/main.ts", "--app-root", appRoot, "--port", "0"], { cwd: backend, env: process.env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  const smokeEnv = { ...process.env };
+  // 固定示例绑定处于等待凭据状态，让本机外部配置不影响离线验收。
+  delete smokeEnv.NOWADAYS_MODEL_API_KEY;
+  const child = spawn(process.execPath, ["--import", "tsx", "src/main.ts", "--app-root", appRoot, "--port", "0"], { cwd: backend, env: smokeEnv, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   server = child;
   child.stdout!.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
   child.stderr!.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
@@ -151,6 +154,8 @@ try {
   assert.ok(fs.statSync(path.join(roleDir, "workspace")).isDirectory());
   const savedBindings = await cli(secondPort, ["binding", "get", "--role", roleId]);
   assert.equal((savedBindings.items as unknown[]).length, 4);
+  const wakes = await cli(secondPort, ["autonomy", "wake", "list", "--role", roleId]);
+  assert.deepEqual(wakes.items, []);
   assert.equal(fs.readFileSync(path.join(workspace, "notes/p5.md"), "utf8"), "交付样例实际写入");
   report = { id: "process-cli-restart", passed: true, observed: { role, restored, launches, appRoot, modelExamplesRegistered: models.length, savedBindings, activityBefore, activities, restoredActivity, note: "notes/p5.md" } };
 } catch (error) {

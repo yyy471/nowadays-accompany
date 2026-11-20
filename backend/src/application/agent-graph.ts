@@ -22,20 +22,26 @@ import {
   isIncompleteCompletion,
   type ModelContinuation,
   type ModelMessage,
+  type ModelMessageSource,
   type ModelPort,
   type ModelProtocol,
   type ModelToolCall,
   type ModelToolSpec,
   type ModelUsage,
 } from "../domain/model.js";
+import { webReadingReference } from "../domain/web-reading.js";
 import type { ConversationStore } from "../storage/conversation-store.js";
 import type { RoleStore } from "../storage/role-store.js";
+import { decisionQuery, selectAgentContext, type AgentSystemPrompt } from "./agent-context.js";
 
 export interface AgentModelHandle {
   model: ModelPort;
   resourceId: string;
   modelName: string;
   protocol: ModelProtocol;
+  baseUrl?: string;
+  maxInputChars?: number;
+  maxOutputChars?: number;
 }
 
 export interface AgentToolReservation {
@@ -55,7 +61,25 @@ export interface AgentGraphDeps {
   roleStore: RoleStore;
   resolveModel: () => AgentModelHandle;
   tools: ConversationTool[];
-  systemPrompt: () => string;
+  systemPrompt: () => string | AgentSystemPrompt;
+  evidenceQuery?: (taskId: string | null) => string;
+  selectEvidence?: (input: {
+    roleId: string;
+    windowId: string;
+    taskId: string | null;
+    query: string;
+    messages: readonly ModelMessage[];
+    initialRound: boolean;
+  }) => ModelMessage[];
+  prepareModelMessages?: (messages: readonly ModelMessage[]) => ModelMessage[];
+  onModelAccepted?: (input: {
+    roleId: string;
+    windowId: string;
+    taskId: string | null;
+    executionId: string;
+    modelCallId: string;
+    messages: readonly ModelMessage[];
+  }) => void;
   signal: AbortSignal;
   checkRunning: () => void;
   /** 可保存节点入口的停止检查；中途吐字不检查，避免半句落库。 */
@@ -187,6 +211,7 @@ export class AgentGraphRunner {
   private readonly maxToolRounds: number;
   private readonly graph: ReturnType<typeof buildGraph>;
   private resuming = false;
+  private firstModelBoundary = true;
   /** 本次执行开始时的任务编号；用于判断轮次上限后能否续行。 */
   private initialTaskId: string | null = null;
 
@@ -208,6 +233,7 @@ export class AgentGraphRunner {
     resume?: boolean;
   }): Promise<AgentRunResult> {
     this.resuming = input.resume === true;
+    this.firstModelBoundary = true;
     this.initialTaskId = input.taskId ?? null;
     const initialState: AgentGraphValue = {
       executionId: input.executionId,
@@ -265,6 +291,53 @@ export class AgentGraphRunner {
     this.deps.checkRunning();
     this.checkTask(state.roleId, state.taskId);
     const current = this.deps.resolveModel();
+    const prompt = this.deps.systemPrompt();
+    const evidenceQuery = this.deps.evidenceQuery?.(state.taskId) ?? "";
+    const evidence = this.deps.selectEvidence?.({
+      roleId: state.roleId,
+      windowId: state.windowId,
+      taskId: state.taskId,
+      query: decisionQuery(evidenceQuery, state.messages),
+      messages: state.messages,
+      initialRound: state.round === 0,
+    }) ?? [];
+    const currentIndex = state.messages.findIndex((message) =>
+      message.source?.currentUserRequest === true || (
+        message.role === "assistant" && message.toolCalls !== undefined
+      ),
+    );
+    const evidenceIndex = currentIndex < 0 ? state.messages.length : currentIndex;
+    const messages = [
+      ...state.messages.slice(0, evidenceIndex),
+      ...evidence,
+      ...state.messages.slice(evidenceIndex),
+    ];
+    const resuming = this.resuming && this.firstModelBoundary;
+    const originalModel = resuming && state.modelCallId !== null
+      ? this.deps.roleStore.db.prepare(
+          "SELECT 1 FROM model_calls WHERE model_call_id = ? AND role_id = ? AND resource_id = ?",
+        ).get(state.modelCallId, state.roleId, current.resourceId) !== undefined
+      : true;
+    const request = selectAgentContext({
+      request: {
+        modelName: current.modelName,
+        system: "",
+        messages: this.deps.prepareModelMessages?.(messages) ?? messages,
+        // 收尾仍提供工具定义；返回的调用一律不派发。
+        tools: this.toolSpecs(),
+        signal: this.deps.signal,
+      },
+      prompt: typeof prompt === "string" ? { required: prompt, optional: [] } : prompt,
+      protocol: current.protocol,
+      baseUrl: current.baseUrl ?? "",
+      ...(current.maxInputChars === undefined ? {} : { maxInputChars: current.maxInputChars }),
+      ...(current.maxOutputChars === undefined ? {} : { maxOutputChars: current.maxOutputChars }),
+      resuming,
+      originalModelResource: originalModel,
+      evidenceQuery,
+    });
+    this.firstModelBoundary = false;
+    this.deps.checkRunning();
     const counted = this.deps.meter?.consume("model") ?? false;
     const callId = this.deps.store.startModelCall({
       executionId: state.executionId,
@@ -278,6 +351,19 @@ export class AgentGraphRunner {
       now: this.deps.now().toISOString(),
     });
     let roundText = "";
+    let accepted = false;
+    const onAccepted = (): void => {
+      if (accepted) return;
+      accepted = true;
+      this.deps.onModelAccepted?.({
+        roleId: state.roleId,
+        windowId: state.windowId,
+        taskId: state.taskId,
+        executionId: state.executionId,
+        modelCallId: callId,
+        messages: request.messages,
+      });
+    };
     const calls: PendingToolCall[] = [];
     let usage: ModelUsage | null = null;
     let completed: {
@@ -287,14 +373,9 @@ export class AgentGraphRunner {
       rawResponse?: unknown;
     } | null = null;
     try {
-      for await (const event of current.model.stream({
-        modelName: current.modelName,
-        system: this.deps.systemPrompt(),
-        messages: state.messages,
-        // 收尾轮仍提供工具清单以保持模型上下文稳定，但返回的调用一律不派发。
-        tools: this.toolSpecs(),
-        signal: this.deps.signal,
-      })) {
+      for await (const event of current.model.stream({ ...request, onAccepted })) {
+        // 注入适配器以第一个已产生的事件证明已实际消费请求。
+        if (!this.deps.signal.aborted) onAccepted();
         if (event.type === "text_delta") {
           this.deps.emitDelta(event.text);
           roundText += event.text;
@@ -524,7 +605,9 @@ export class AgentGraphRunner {
           arguments: call.arguments,
           result: outcome,
         });
-        toolMessages.push(toolResultMessage(call, outcome));
+        toolMessages.push(toolResultMessage(call, outcome, {
+          internalStepKey: internalToolStepKey(state, index, call.name),
+        }));
         continue;
       }
       if (tool.source !== "mcp" && tool.recorded !== true) {
@@ -561,7 +644,9 @@ export class AgentGraphRunner {
           arguments: call.arguments,
           result: outcome,
         });
-        toolMessages.push(toolResultMessage(call, outcome));
+        toolMessages.push(toolResultMessage(call, outcome, {
+          internalStepKey: internalToolStepKey(state, index, call.name),
+        }));
         continue;
       }
       const args = asObject(call.arguments);
@@ -654,9 +739,9 @@ export class AgentGraphRunner {
         toolCallId,
         name: call.name,
         arguments: call.arguments,
-        result: outcome,
+        result: checkpointToolOutcome(outcome),
       });
-      toolMessages.push(toolResultMessage(resultCall, outcome));
+      toolMessages.push(toolResultMessage(resultCall, outcome, { toolCallId }));
       if (!begun.duplicate && outcome.status === "success") {
         successfulToolCalls += 1;
       }
@@ -1163,7 +1248,7 @@ export class AgentGraphRunner {
     index: number,
     checkDispatch: () => void,
   ): Promise<ConversationToolOutcome> {
-    const stepKey = `tool:${state.executionId}:${state.round}:${index}:${call.name}`;
+    const stepKey = internalToolStepKey(state, index, call.name);
     const previous = this.deps.store.getInternalToolReceipt(state.executionId, stepKey);
     if (previous?.outcome !== null && previous?.outcome !== undefined) return previous.outcome;
     const common = {
@@ -1248,22 +1333,32 @@ function skippedCode(kind: AgentSegmentStopKind): string {
 function toolResultMessage(
   call: PendingToolCall,
   outcome: ConversationToolOutcome,
+  source?: ModelMessageSource,
 ): ModelMessage {
   return {
     role: "tool",
     toolCallId: call.wireCallId,
     toolName: call.name,
-    content: truncate(
-      JSON.stringify({
+    ...(source === undefined ? {} : { source }),
+    content: JSON.stringify({
         status: outcome.status,
         ...(outcome.diagnosticCode === undefined
           ? {}
           : { diagnosticCode: outcome.diagnosticCode }),
         result: outcome.adaptedResult ?? null,
-      }),
-      8000,
-    ),
+    }),
   };
+}
+
+function checkpointToolOutcome(outcome: ConversationToolOutcome): ConversationToolOutcome {
+  if (outcome.status !== "success" || !webReadingReference(outcome.adaptedResult)) return outcome;
+  // 预取原文留在外部工具事实，图检查点仅保存可恢复的来源引用。
+  const { rawResponse: _rawResponse, ...record } = outcome;
+  return record;
+}
+
+function internalToolStepKey(state: AgentStateValue, index: number, toolName: string): string {
+  return `tool:${state.executionId}:${state.round}:${index}:${toolName}`;
 }
 
 function failedOutcome(
@@ -1342,11 +1437,4 @@ function asObject(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
-}
-
-function truncate(value: string, limit: number): string {
-  const chars = Array.from(value);
-  return chars.length <= limit
-    ? value
-    : `${chars.slice(0, limit).join("")}\n[内容已截断]`;
 }

@@ -30,6 +30,7 @@ import type {
   RelatedEventBrief,
   SummaryEvidenceItem,
 } from "../domain/memory.js";
+import { readWebEvidenceProjection } from "./web-reading.js";
 
 interface EvidenceRow {
   evidence_id: string;
@@ -1340,6 +1341,11 @@ export class MemoryStore {
       content: this.loadEvidenceContent(row),
     };
     if (row.source_kind === "tool_result") {
+      const web = readWebEvidenceProjection(this.db, roleId, row.source_id);
+      if (web !== undefined) {
+        detail.adaptedResult = parseOptionalJson(web);
+        return detail;
+      }
       const result = this.db
         .prepare(
           `SELECT raw_response_json, adapted_result_json, error_json
@@ -1488,6 +1494,7 @@ export class MemoryStore {
           occurredAt: row.occurred_at,
           roleSequence: row.role_sequence,
           content: this.loadEvidenceContent({
+            role_id: input.roleId,
             source_kind: row.source_kind,
             source_id: row.source_id,
           }),
@@ -2310,6 +2317,7 @@ export class MemoryStore {
   }
 
   private loadEvidenceContent(row: {
+    role_id: string;
     source_kind: MemorySourceKind;
     source_id: string;
   }): string {
@@ -2319,6 +2327,8 @@ export class MemoryStore {
         .get(row.source_id) as { content: string } | undefined;
       return message?.content ?? "";
     }
+    const web = readWebEvidenceProjection(this.db, row.role_id, row.source_id);
+    if (web !== undefined) return web;
     const result = this.db
       .prepare(
         `SELECT raw_response_json, adapted_result_json, error_json
