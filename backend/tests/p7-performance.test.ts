@@ -853,6 +853,49 @@ test("an outfit without sprites saves segments without calling the annotation mo
   }
 });
 
+test("标注为推理和完整 JSON 保留有限输出空间，尊重绑定的可见字符上限", { timeout: 30_000 }, async () => {
+  const pick = (request: ModelRequest) => {
+    const payload = JSON.parse(userContent(request)) as {
+      segments: Array<{ segmentId: string }>; sprites: Array<{ spriteAssetId: string }>;
+    };
+    return JSON.stringify({ segments: [{ segmentId: payload.segments[0]!.segmentId, spriteAssetId: payload.sprites[0]!.spriteAssetId }] });
+  };
+  const fixture = createFixture([
+    reply("进来坐坐。"),
+    request => {
+      assert.ok(request.maxOutputTokens && request.maxOutputTokens <= 4096);
+      if (request.maxOutputTokens < 1800) return [{ type: "completed", stopReason: "length" }];
+      return reply(pick(request));
+    },
+    reply("我看到你了。"),
+    request => {
+      assert.equal(request.maxOutputTokens, 512);
+      // 一个 token 可以包含多个字符，协议 token 上限本身不能保证可见正文的字符数。
+      return reply(" ".repeat(512) + pick(request));
+    },
+  ]);
+  try {
+    const outfit = await importOutfit(fixture, "日常", ["微笑"]);
+    fixture.app.services.roles.setState(fixture.roleId, { state: { outfitId: outfit.outfitId } });
+    submit(fixture, "我到了");
+    await fixture.app.conversation.waitForIdle(fixture.roleId);
+    const binding = fixture.app.services.resources.listBindings(fixture.roleId).find(item => item.capability === "chat_model")!;
+    fixture.app.appStore.updateResource({ resourceId: binding.resourceId, config: { protocol: "openai-chat", baseUrl: "http://offline.invalid/v1", maxOutputChars: 512 } });
+    submit(fixture, "门口见");
+    await fixture.app.conversation.waitForIdle(fixture.roleId);
+    const calls = withStorage(fixture, storage => storage.business.db.prepare(
+      "SELECT status, error_code AS error FROM model_calls WHERE call_kind = 'segment_annotation' ORDER BY rowid",
+    ).all());
+    assert.deepEqual(calls, [{ status: "succeeded", error: null }, { status: "failed", error: "ANNOTATION_OUTPUT_TOO_LONG" }]);
+    const list = fixture.app.services.messages.list(fixture.roleId, fixture.windowId, 0, 50);
+    const replies = list.items.filter(item => item.sender === "assistant");
+    assert.deepEqual(replies.map(item => item.content), ["进来坐坐。", "我看到你了。"]);
+    const pose = (messageId: string) => fixture.app.services.messages.get(fixture.roleId, fixture.windowId, messageId).segments[0]?.spriteAssetId;
+    assert.equal(pose(replies[0]!.messageId), outfit.sprites[0]!.assetId);
+    assert.equal(pose(replies[1]!.messageId), null);
+  } finally { await fixture.close(); }
+});
+
 test("window snapshot carries the SSE cursor across a reply that finishes before connect", { timeout: 30_000 }, async () => {
   const model = new GatedChatModel();
   const fixture = createFixtureWithModel(model);

@@ -118,7 +118,7 @@ test("Chat 工具续轮保留分片推理、签名与用量，切换服务商后
       const history: ModelRequest = { ...request, tools: [{ name: "read", description: "读取", inputSchema: { type: "object" } }],
         messages: [{ role: "assistant", content: "历史文本" }, { role: "assistant", content: "上次回答", continuation: end.continuation }] };
       const messages = JSON.parse(serializeModelRequest("openai-chat", baseUrl, history, provider)).messages;
-      assert.deepEqual(messages[1], { role: "user", content: "[角色先前的回复]\n历史文本" });
+      assert.deepEqual(messages[1], { role: "user", content: '[角色先前的回复]\n{"sender":"assistant","text":"历史文本"}' });
       assert.equal(messages[2].reasoning_content, "思考");
     }
     const switched: ModelRequest = { ...next, resourceId: "other-account", messages: [{
@@ -183,6 +183,8 @@ for (const provider of ["deepseek", "mimo", "openrouter"] as const) {
     assert.equal(sent.length, 4);
     if (provider !== "openrouter") {
       assert.ok(sent[3]!.some(m => m.role === "user" && m.content?.includes("[角色先前的回复]") && m.content.includes("核对完毕")));
+      assert.ok(sent[3]!.some(m => m.content === '[用户先前的发言]\n{"sender":"user","text":"请连续核对两次。"}'));
+      assert.equal(sent[3]!.at(-1)?.content, '[本轮用户消息]\n{"sender":"user","text":"收到。"}');
     }
   });
 }

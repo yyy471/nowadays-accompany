@@ -1,0 +1,837 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Nowadays · 单用户桌面数字生命架构",
+    "locale": "zh-CN",
+    "output": ".archify/architecture-nowadays-20261120-120000/architecture.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/yyy471/nowadays-accompany.git",
+      "revision": "3a4ac9abc05ebc82ac7689d8c8e753f3dc34a06a",
+      "provider": "github",
+      "link_mode": "web"
+    },
+    "views": [
+      {
+        "id": "desk",
+        "label": "桌面如何连到角色",
+        "focus": [
+          "ui",
+          "shell",
+          "api",
+          "dispatch",
+          "graph"
+        ],
+        "note": "启动时选角。主页、关系和对话共用当前角色，配置页另选编辑对象。关窗进入托盘，明确退出时停止受管后端。"
+      },
+      {
+        "id": "mem",
+        "label": "角色如何记住和行动",
+        "focus": [
+          "dispatch",
+          "life",
+          "business",
+          "graph",
+          "checkpoints",
+          "rolefiles"
+        ],
+        "note": "各窗口独立保存上下文，同一角色跨窗口共享长期记忆。业务库保存任务和调用事实，图检查点服务于执行续接。"
+      },
+      {
+        "id": "adapters",
+        "label": "角色可调用什么",
+        "focus": [
+          "graph",
+          "protocol",
+          "llm",
+          "tools",
+          "local",
+          "media",
+          "providers"
+        ],
+        "note": "角色按用途绑定模型，从已启用资源组装工具。用户委托和自主行动分别计量，整理记忆使用独立的后台任务。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "ui",
+      "type": "frontend",
+      "label": "桌面工作区",
+      "sublabel": "React · 多角色界面",
+      "pos": [
+        325,
+        48
+      ],
+      "size": [
+        185,
+        72
+      ],
+      "sources": [
+        {
+          "path": "desktop/desk-preview/renderer/src/App.tsx",
+          "line": 180,
+          "end_line": 203,
+          "label": "选角、书房、关系与对话"
+        },
+        {
+          "path": "desktop/desk-preview/renderer/src/conversation/use-window-session.ts",
+          "line": 433,
+          "end_line": 451,
+          "label": "按窗口订阅 SSE"
+        }
+      ]
+    },
+    {
+      "id": "shell",
+      "type": "frontend",
+      "label": "Electron 主进程",
+      "sublabel": "窗口、托盘、同源代理",
+      "pos": [
+        615,
+        48
+      ],
+      "size": [
+        185,
+        72
+      ],
+      "sources": [
+        {
+          "path": "desktop/desk-preview/main.cjs",
+          "line": 49,
+          "end_line": 92,
+          "label": "接管或启动本地后端"
+        },
+        {
+          "path": "desktop/desk-preview/main.cjs",
+          "line": 191,
+          "end_line": 207,
+          "label": "代理桌面 API 请求"
+        },
+        {
+          "path": "desktop/desk-preview/main.cjs",
+          "line": 229,
+          "end_line": 259,
+          "label": "关窗进托盘，退出停受管后台"
+        }
+      ]
+    },
+    {
+      "id": "cli",
+      "type": "external",
+      "label": "命令行客户端",
+      "sublabel": "CLI · 运维与查询",
+      "pos": [
+        905,
+        48
+      ],
+      "size": [
+        185,
+        72
+      ],
+      "sources": [
+        {
+          "path": "backend/src/cli/client.ts",
+          "line": 20,
+          "end_line": 55,
+          "label": "发起 HTTP 请求"
+        },
+        {
+          "path": "backend/src/cli/client.ts",
+          "line": 80,
+          "end_line": 108,
+          "label": "消费事件流"
+        }
+      ]
+    },
+    {
+      "id": "registry",
+      "type": "database",
+      "label": "应用公共库",
+      "sublabel": "app.sqlite",
+      "pos": [
+        36,
+        209
+      ],
+      "size": [
+        185,
+        72
+      ],
+      "sources": [
+        {
+          "path": "backend/src/storage/app-store.ts",
+          "line": 185,
+          "end_line": 201,
+          "label": "插入角色目录索引"
+        },
+        {
+          "path": "backend/src/storage/app-store.ts",
+          "line": 270,
+          "end_line": 289,
+          "label": "写入全局资源及开关"
+        },
+        {
+          "path": "backend/README.md",
+          "line": 143,
+          "end_line": 153,
+          "label": "数据库与本地密钥文件"
+        }
+      ]
+    },
+    {
+      "id": "config",
+      "type": "backend",
+      "label": "角色与资源管理",
+      "sublabel": "身份、绑定、启停守卫",
+      "pos": [
+        325,
+        209
+      ],
+      "size": [
+        185,
+        72
+      ],
+      "sources": [
+        {
+          "path": "devDoc/specs/role-config-and-activity.md",
+          "line": 11,
+          "end_line": 16,
+          "label": "受管理的角色及全局资源"
+        },
+        {
+          "path": "backend/src/bootstrap/app.ts",
+          "line": 80,
+          "end_line": 101,
+          "label": "装配应用库与活动守卫"
+        },
+        {
+          "path": "devDoc/specs/role-config-and-activity.md",
+          "line": 23,
+          "end_line": 32,
+          "label": "依赖影响和写入约束"
+        }
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "本地 HTTP API",
+      "sublabel": "/v1 · JSON 与 SSE",
+      "pos": [
+        615,
+        209
+      ],
+      "size": [
+        185,
+        72
+      ],
+      "sources": [
+        {
+          "path": "backend/src/http/routes.ts",
+          "line": 258,
+          "end_line": 279,
+          "label": "消息去重提交入口"
+        },
+        {
+          "path": "backend/src/http/routes.ts",
+          "line": 383,
+          "end_line": 399,
+          "label": "事件回放与订阅"
+        },
+        {
+          "path": "backend/src/bootstrap/app.ts",
+          "line": 420,
+          "end_line": 452,
+          "label": "路由服务装配与监听入口"
+        }
+      ]
+    },
+    {
+      "id": "media",
+      "type": "backend",
+      "label": "外观与对话演出",
+      "sublabel": "穿搭、句段、语音、过场",
+      "pos": [
+        905,
+        209
+      ],
+      "size": [
+        185,
+        72
+      ],
+      "sources": [
+        {
+          "path": "backend/src/bootstrap/app.ts",
+          "line": 140,
+          "end_line": 158,
+          "label": "外观和媒体服务装配"
+        },
+        {
+          "path": "backend/src/application/voice-service.ts",
+          "line": 637,
+          "end_line": 669,
+          "label": "按语音协议调用服务"
+        },
+        {
+          "path": "backend/src/application/scene-image-service.ts",
+          "line": 465,
+          "end_line": 509,
+          "label": "调用生图并保存结果"
+        }
+      ]
+    },
+    {
+      "id": "providers",
+      "type": "external",
+      "label": "语音与生图服务",
+      "sublabel": "TTS 桥接 · ComfyUI",
+      "pos": [
+        1195,
+        209
+      ],
+      "size": [
+        185,
+        72
+      ],
+      "sources": [
+        {
+          "path": "backend/README.md",
+          "line": 129,
+          "end_line": 139,
+          "label": "音色合成、文生图和未配回退"
+        },
+        {
+          "path": "devDoc/specs/tts-and-image-services.md",
+          "line": 1,
+          "end_line": 16,
+          "label": "双引擎和工作流接入范围"
+        }
+      ]
+    },
+    {
+      "id": "business",
+      "type": "database",
+      "label": "角色业务库",
+      "sublabel": "business.sqlite",
+      "pos": [
+        36,
+        378
+      ],
+      "size": [
+        185,
+        72
+      ],
+      "sources": [
+        {
+          "path": "backend/README.md",
+          "line": 141,
+          "end_line": 153,
+          "label": "角色身份、消息、记忆及任务"
+        },
+        {
+          "path": "backend/src/storage/role-storage.ts",
+          "line": 15,
+          "end_line": 31,
+          "label": "每个角色单独打开双库"
+        }
+      ]
+    },
+    {
+      "id": "life",
+      "type": "backend",
+      "label": "长期记忆与自主活动",
+      "sublabel": "后台整理、检索、唤醒",
+      "pos": [
+        325,
+        378
+      ],
+      "size": [
+        185,
+        72
+      ],
+      "sources": [
+        {
+          "path": "backend/src/application/memory-runtime.ts",
+          "line": 603,
+          "end_line": 645,
+          "label": "解析记忆模型并启动整理"
+        },
+        {
+          "path": "backend/src/application/autonomy-service.ts",
+          "line": 128,
+          "end_line": 148,
+          "label": "通过角色业务库访问唤醒"
+        },
+        {
+          "path": "devDoc/specs/storage-memory-and-autonomy.md",
+          "line": 11,
+          "end_line": 18,
+          "label": "记忆、日记、自主额度与恢复"
+        }
+      ]
+    },
+    {
+      "id": "dispatch",
+      "type": "backend",
+      "label": "角色调度器",
+      "sublabel": "窗口输入、任务续行与恢复",
+      "pos": [
+        615,
+        378
+      ],
+      "size": [
+        185,
+        72
+      ],
+      "sources": [
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 1362,
+          "end_line": 1418,
+          "label": "选择待处理窗口或自主安排"
+        },
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 2252,
+          "end_line": 2280,
+          "label": "打开检查点并创建图执行器"
+        },
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 2389,
+          "end_line": 2464,
+          "label": "提交整轮回复并通知记忆整理"
+        }
+      ]
+    },
+    {
+      "id": "rolefiles",
+      "type": "database",
+      "label": "角色文件区",
+      "sublabel": "workspace/ 与受管素材",
+      "pos": [
+        1195,
+        378
+      ],
+      "size": [
+        185,
+        72
+      ],
+      "sources": [
+        {
+          "path": "backend/README.md",
+          "line": 143,
+          "end_line": 153,
+          "label": "工作空间与媒体目录"
+        },
+        {
+          "path": "backend/src/application/memory-query-service.ts",
+          "line": 278,
+          "end_line": 301,
+          "label": "日记正文与索引"
+        },
+        {
+          "path": "backend/src/application/scene-image-service.ts",
+          "line": 480,
+          "end_line": 509,
+          "label": "校验并写入过场图文件"
+        }
+      ]
+    },
+    {
+      "id": "protocol",
+      "type": "backend",
+      "label": "模型协议适配",
+      "sublabel": "按角色和用途解析模型",
+      "pos": [
+        325,
+        547
+      ],
+      "size": [
+        185,
+        72
+      ],
+      "sources": [
+        {
+          "path": "backend/src/model/protocols.ts",
+          "line": 87,
+          "end_line": 106,
+          "label": "按模型协议分派流式请求"
+        },
+        {
+          "path": "backend/src/application/memory-runtime.ts",
+          "line": 601,
+          "end_line": 641,
+          "label": "记忆整理使用所解析的模型"
+        },
+        {
+          "path": "backend/src/bootstrap/app.ts",
+          "line": 320,
+          "end_line": 346,
+          "label": "过场图规划用模型或固定规划器"
+        }
+      ]
+    },
+    {
+      "id": "llm",
+      "type": "external",
+      "label": "模型服务",
+      "sublabel": "OpenAI 兼容、Anthropic、Gemini",
+      "pos": [
+        36,
+        547
+      ],
+      "size": [
+        185,
+        72
+      ],
+      "sources": [
+        {
+          "path": "backend/src/model/protocols.ts",
+          "line": 87,
+          "end_line": 106,
+          "label": "Chat、Responses、Messages 与 Gemini"
+        },
+        {
+          "path": "devDoc/specs/storage-memory-and-autonomy.md",
+          "line": 131,
+          "end_line": 135,
+          "label": "模型服务联调覆盖边界"
+        }
+      ]
+    },
+    {
+      "id": "graph",
+      "type": "backend",
+      "label": "LangGraph 执行图",
+      "sublabel": "模型、工具与收尾节点",
+      "pos": [
+        615,
+        547
+      ],
+      "size": [
+        185,
+        72
+      ],
+      "sources": [
+        {
+          "path": "backend/src/application/agent-graph.ts",
+          "line": 1217,
+          "end_line": 1231,
+          "label": "模型和工具循环与收尾分支"
+        },
+        {
+          "path": "backend/src/application/agent-graph.ts",
+          "line": 288,
+          "end_line": 305,
+          "label": "流式模型返回正文或调用"
+        },
+        {
+          "path": "backend/src/application/agent-graph.ts",
+          "line": 470,
+          "end_line": 496,
+          "label": "逐次校验并控制工具派发"
+        }
+      ]
+    },
+    {
+      "id": "tools",
+      "type": "backend",
+      "label": "工具与 Skill 目录",
+      "sublabel": "内建能力、stdio MCP、技能包",
+      "pos": [
+        905,
+        547
+      ],
+      "size": [
+        185,
+        72
+      ],
+      "sources": [
+        {
+          "path": "backend/src/application/agent-tools.ts",
+          "line": 150,
+          "end_line": 195,
+          "label": "角色绑定与 MCP 工具发现"
+        },
+        {
+          "path": "backend/src/application/agent-tools.ts",
+          "line": 981,
+          "end_line": 1003,
+          "label": "按需运行 Skill 包内脚本"
+        },
+        {
+          "path": "backend/src/application/agent-tools.ts",
+          "line": 1633,
+          "end_line": 1656,
+          "label": "转发到已连接的 MCP 服务"
+        }
+      ]
+    },
+    {
+      "id": "checkpoints",
+      "type": "database",
+      "label": "图执行检查点",
+      "sublabel": "execution.sqlite",
+      "pos": [
+        615,
+        701
+      ],
+      "size": [
+        185,
+        72
+      ],
+      "sources": [
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 2252,
+          "end_line": 2258,
+          "label": "在该角色执行库建立 SqliteSaver"
+        },
+        {
+          "path": "backend/src/application/agent-graph.ts",
+          "line": 1227,
+          "end_line": 1231,
+          "label": "将图绑定到检查点保存器"
+        },
+        {
+          "path": "backend/README.md",
+          "line": 144,
+          "end_line": 153,
+          "label": "执行库与业务库职责"
+        }
+      ]
+    },
+    {
+      "id": "local",
+      "type": "external",
+      "label": "本地 MCP 服务",
+      "sublabel": "工作空间文件与命令工具",
+      "pos": [
+        1195,
+        547
+      ],
+      "size": [
+        185,
+        72
+      ],
+      "sources": [
+        {
+          "path": "backend/src/mcp/client.ts",
+          "line": 25,
+          "end_line": 44,
+          "label": "启动已配置的 stdio 子进程"
+        },
+        {
+          "path": "backend/src/mcp/local-server.ts",
+          "line": 52,
+          "end_line": 80,
+          "label": "写入角色工作空间"
+        },
+        {
+          "path": "backend/src/mcp/local-server.ts",
+          "line": 172,
+          "end_line": 191,
+          "label": "角色目录下运行命令"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Electron 桌面端",
+      "wraps": [
+        "ui",
+        "shell"
+      ],
+      "pad": 18
+    },
+    {
+      "kind": "region",
+      "label": "本机单个 Node.js 24 / TypeScript 后端进程",
+      "wraps": [
+        "config",
+        "api",
+        "media",
+        "life",
+        "dispatch",
+        "protocol",
+        "graph",
+        "tools"
+      ],
+      "pad": 19
+    }
+  ],
+  "connections": [
+    {
+      "id": "ui-shell",
+      "from": "ui",
+      "to": "shell",
+      "label": "同源请求",
+      "variant": "emphasis"
+    },
+    {
+      "id": "shell-api",
+      "from": "shell",
+      "to": "api",
+      "label": "HTTP 代理",
+      "variant": "emphasis"
+    },
+    {
+      "id": "api-ui",
+      "from": "api",
+      "to": "ui",
+      "label": "SSE 事件"
+    },
+    {
+      "id": "cli-api",
+      "from": "cli",
+      "to": "api",
+      "label": "HTTP"
+    },
+    {
+      "id": "api-config",
+      "from": "api",
+      "to": "config",
+      "label": "配置与启停"
+    },
+    {
+      "id": "config-registry",
+      "from": "config",
+      "to": "registry",
+      "label": "读写目录"
+    },
+    {
+      "id": "api-media",
+      "from": "api",
+      "to": "media",
+      "label": "媒体请求"
+    },
+    {
+      "id": "media-providers",
+      "from": "media",
+      "to": "providers",
+      "label": "按配置调用"
+    },
+    {
+      "id": "media-rolefiles",
+      "from": "media",
+      "to": "rolefiles",
+      "label": "保存素材"
+    },
+    {
+      "id": "api-dispatch",
+      "from": "api",
+      "to": "dispatch",
+      "label": "提交消息",
+      "variant": "emphasis"
+    },
+    {
+      "id": "dispatch-life",
+      "from": "dispatch",
+      "to": "life",
+      "label": "召回与整理"
+    },
+    {
+      "id": "life-business",
+      "from": "life",
+      "to": "business",
+      "label": "记忆与安排"
+    },
+    {
+      "id": "dispatch-business",
+      "from": "dispatch",
+      "to": "business",
+      "label": "提交整轮"
+    },
+    {
+      "id": "dispatch-graph",
+      "from": "dispatch",
+      "to": "graph",
+      "label": "调度执行",
+      "variant": "emphasis"
+    },
+    {
+      "id": "life-protocol",
+      "from": "life",
+      "to": "protocol",
+      "label": "整理模型"
+    },
+    {
+      "id": "graph-protocol",
+      "from": "graph",
+      "to": "protocol",
+      "label": "流式生成"
+    },
+    {
+      "id": "protocol-llm",
+      "from": "protocol",
+      "to": "llm",
+      "label": "协议请求"
+    },
+    {
+      "id": "graph-tools",
+      "from": "graph",
+      "to": "tools",
+      "label": "按需派发"
+    },
+    {
+      "id": "tools-local",
+      "from": "tools",
+      "to": "local",
+      "label": "stdio"
+    },
+    {
+      "id": "local-rolefiles",
+      "from": "local",
+      "to": "rolefiles",
+      "label": "文件读写"
+    },
+    {
+      "id": "graph-checkpoints",
+      "from": "graph",
+      "to": "checkpoints",
+      "label": "保存进度"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "从桌面进入",
+      "items": [
+        "书房展示角色当前服饰；关系页浏览角色，对话按窗口保留历史。",
+        "句段随 SSE 刷新，桌面按句推进台词、表情与语音，可从已保存回复请求过场图。",
+        "命令行与桌面共用本机接口。桌面优先直连 SSE；取不到后端地址时走同源代理。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "一次回复之后",
+      "items": [
+        "调度器合并待处理消息并调用执行图。慢工具可转入后台，结果可追溯到原任务。",
+        "后台整理将原始证据归入事件、摘要与索引。角色可检索原文并写 Markdown 日记。",
+        "自主安排到时唤醒，可阅读、做笔记、向用户分享。自主额度按日管理；用户委托按任务累计 token，无累计上限。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "身份、权限与数据",
+      "items": [
+        "角色身份、状态、经历与任务按角色独立持久化。全局库管理角色索引、模型、服务及资源目录。",
+        "资源停用阻止新任务领取，原任务链延续既有授权。预置夏澄还可按活动守卫管理其他普通角色。",
+        "检查点参与恢复；已发出的外部调用须保留真实结果，未知状态需要核实。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "交付边界",
+      "items": [
+        "图中节点均有源码或契约。配置页 v6 整页验收、Windows 安装包实机启动仍待完成。",
+        "已有 DeepSeek 的 Anthropic Messages 联调及双 TTS 引擎本机脚本验证。其余模型兼容性、桌面实际播报与真实 ComfyUI 仍需分别验证。",
+        "远程 MCP、QQ／SnowLuma 后置。浏览器、视频共看与完整电脑接管属于已确认方向。"
+      ]
+    }
+  ]
+}

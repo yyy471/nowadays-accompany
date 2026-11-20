@@ -27,7 +27,10 @@ export interface MessageDetailResult extends MessageDetail {
 }
 
 export class MessageService {
-  constructor(private readonly access: RoleAccess) {}
+  constructor(
+    private readonly access: RoleAccess,
+    private readonly now: () => Date = () => new Date(),
+  ) {}
 
   submit(
     roleId: string,
@@ -35,7 +38,7 @@ export class MessageService {
     input: SubmitMessageInput,
   ): SubmitMessageResult {
     return this.access.withStore(roleId, (storage) =>
-      storage.business.submitMessage(roleId, windowId, input),
+      storage.business.submitMessage(roleId, windowId, input, this.now().toISOString()),
     );
   }
 

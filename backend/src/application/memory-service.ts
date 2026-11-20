@@ -7,6 +7,8 @@ import {
   memoryFormationResponseSchema,
   type DailySummaryBrief,
   type MemoryBatchRecord,
+  type MemoryClaim,
+  type MemoryClaimRecord,
   type MemoryFormationInput,
   type MemoryFormationResponse,
   type MemoryModelCapacity,
@@ -307,7 +309,7 @@ export class MemoryService {
     try {
       while (true) {
         // 候选与关联事件会随操作变化，逐轮按最新内容重测预算。
-        const context = this.prepareBatchContext(roleId);
+        const context = this.prepareBatchContext(roleId, batch.evidence.map(item => item.content.slice(0, 2000)).join("\n").slice(0, 16000).toLowerCase());
         let next: NextSegment[] = [];
         if (!batch.maintenance) {
           const budget = this.effectiveEvidenceBudget(
@@ -357,6 +359,7 @@ export class MemoryService {
             batch,
             next,
             response,
+            modelInput.relatedEvents,
             refineCandidates,
             summaryCandidates,
           );
@@ -499,7 +502,7 @@ export class MemoryService {
     return delays[index] ?? 3_600_000;
   }
 
-  private prepareBatchContext(roleId: string): BatchContext {
+  private prepareBatchContext(roleId: string, evidenceText = ""): BatchContext {
     const currentRound = this.store.getCurrentRound(roleId);
     const refineCandidates = this.store.listRefineCandidates(
       roleId,
@@ -513,7 +516,7 @@ export class MemoryService {
       currentRound,
       refineCandidates,
       summaryCandidates,
-      relatedEvents: this.store.listRecentEvents(roleId),
+      relatedEvents: this.store.listRecentEvents(roleId, 20, evidenceText),
     };
   }
 
@@ -532,6 +535,7 @@ export class MemoryService {
         return {
           evidenceId: item.evidence.evidenceId,
           sourceKind: item.evidence.sourceKind,
+          ...this.store.evidenceMessageContext(item.evidence.sourceKind, item.evidence.sourceId),
           sourceStatus: item.evidence.sourceStatus,
           windowId: item.evidence.windowId,
           occurredAt: item.evidence.occurredAt,
@@ -549,11 +553,61 @@ export class MemoryService {
     };
   }
 
+  private resolveClaims(
+    claims: MemoryClaim[] | undefined,
+    evidenceIds: readonly string[],
+    segments: NextSegment[],
+    relatedEvents: readonly RelatedEventBrief[],
+  ): MemoryClaimRecord[] {
+    return (claims ?? []).map(claim => {
+      if (claim.relatedEventId && !relatedEvents.some(event => event.eventId === claim.relatedEventId)) {
+        throw new MemoryOperationInvalidError("关联的成长经历不在本次整理上下文", { eventId: claim.relatedEventId });
+      }
+      let quoteContext: string | undefined;
+      const segment = segments.find(item => {
+        if (item.evidence.evidenceId !== claim.evidenceId) return false;
+        if (claim.kind !== "user_quote" && claim.kind !== "shared_detail") return true;
+        const message = this.store.evidenceMessageContext(item.evidence.sourceKind, item.evidence.sourceId);
+        if (claim.kind === "shared_detail" && !message.publishedReply) return false;
+        const expected = claim.kind === "user_quote" ? "user" : "assistant";
+        const visible = Array.from(item.content).slice(item.segment.fromChar, item.segment.toChar).join("");
+        const index = visible.indexOf(claim.text);
+        if (message.sender !== expected || index < 0) return false;
+        if (claim.kind === "user_quote") {
+          // 取原消息中的前后语句，保留被短引文截掉的主体、时间和否定限定。
+          const prefix = Array.from(item.content).slice(0, item.segment.fromChar).join("").length;
+          const from = prefix + index;
+          const end = from + claim.text.length;
+          const before = item.content.slice(Math.max(0, from - 240), from).match(/[^。！？!?\n]*$/u)?.[0] ?? "";
+          const after = /[。！？!?\n]$/u.test(claim.text) ? "" :
+            item.content.slice(end, end + 240).match(/^[^。！？!?\n]*[。！？!?]?/u)?.[0] ?? "";
+          quoteContext = before + claim.text + after;
+        }
+        return true;
+      });
+      if (!segment || !evidenceIds.includes(claim.evidenceId)) {
+        throw new MemoryOperationInvalidError("说法必须与当前片段的来源、原话和事件证据匹配", { kind: claim.kind, evidenceId: claim.evidenceId });
+      }
+      const sourceAt = segment.evidence.occurredAt;
+      // 知悉依据与后台整理各有时间；延迟运行整理不能改写角色历史。
+      return {
+        ...claim,
+        ...(quoteContext === undefined ? {} : { quoteContext }),
+        sourceKind: segment.evidence.sourceKind,
+        sourceSender: this.store.evidenceMessageContext(segment.evidence.sourceKind, segment.evidence.sourceId).sender,
+        sourceAt,
+        learnedAt: claim.kind === "unknown" ? null : sourceAt,
+        recordedAt: this.now().toISOString(),
+      };
+    });
+  }
+
   private applyResponse(
     roleId: string,
     batch: StartedBatch,
     next: NextSegment[],
     response: MemoryFormationResponse,
+    relatedEvents: readonly RelatedEventBrief[],
     refineCandidates: readonly { eventId: string }[],
     summaryCandidates: readonly { summaryId: string }[],
   ): void {
@@ -615,6 +669,7 @@ export class MemoryService {
           }
           if (
             Object.keys(operation.patch).length === 0 &&
+            !operation.claims?.length &&
             (operation.addEvidenceIds?.length ?? 0) === 0
           ) {
             throw new MemoryOperationInvalidError(
@@ -666,6 +721,7 @@ export class MemoryService {
         if (operation.op === "create_event") {
           this.store.createEvent({
             roleId,
+            claims: this.resolveClaims(operation.claims, operation.evidenceIds, next, relatedEvents),
             title: operation.title,
             summary: operation.summary,
             subjectiveExperience: operation.subjectiveExperience ?? "",
@@ -684,6 +740,7 @@ export class MemoryService {
             roleId,
             eventId: operation.eventId,
             expectedVersion: operation.expectedVersion,
+            claims: this.resolveClaims(operation.claims, operation.addEvidenceIds ?? [], next, relatedEvents),
             patch: operation.patch,
             addEvidenceIds: operation.addEvidenceIds ?? [],
             currentRound: this.store.getCurrentRound(roleId),

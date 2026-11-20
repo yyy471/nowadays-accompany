@@ -31,6 +31,7 @@ import {
 } from "../domain/model.js";
 import { webReadingReference } from "../domain/web-reading.js";
 import type { ModelProvider } from "../domain/model-providers.js";
+import type { WorldbookSelection } from "../domain/worldbook.js";
 import type { ConversationStore } from "../storage/conversation-store.js";
 import type { RoleStore } from "../storage/role-store.js";
 import { decisionQuery, selectAgentContext, type AgentSystemPrompt } from "./agent-context.js";
@@ -63,7 +64,7 @@ export interface AgentGraphDeps {
   roleStore: RoleStore;
   resolveModel: () => AgentModelHandle;
   tools: ConversationTool[];
-  systemPrompt: () => string | AgentSystemPrompt;
+  systemPrompt: (messages: readonly ModelMessage[], round: number) => string | AgentSystemPrompt;
   evidenceQuery?: (taskId: string | null) => string;
   selectEvidence?: (input: {
     roleId: string;
@@ -75,6 +76,7 @@ export interface AgentGraphDeps {
   }) => ModelMessage[];
   prepareModelMessages?: (messages: readonly ModelMessage[]) => ModelMessage[];
   onModelAccepted?: (input: {
+    worldbookSelection: WorldbookSelection[];
     roleId: string;
     windowId: string;
     taskId: string | null;
@@ -114,6 +116,23 @@ export const DEFAULT_MAX_TOOL_ROUNDS = 15;
 /** 同一工具／错误码连续失败达到该次数即熔断（DL-154）。 */
 export const CIRCUIT_FAILURE_THRESHOLD = 3;
 
+/** 角色有意重申的短句直接流出。只比较同一执行紧邻工具轮、已经发布的整段。 */
+const MIN_TOOL_ROUND_ECHO_CHARS = 48;
+
+function previousToolRoundText(state: AgentGraphValue): string {
+  if (state.round === 0 || state.messages.at(-1)?.role !== "tool") return "";
+  for (let i = state.messages.length - 1; i >= 0; i--) {
+    const message = state.messages[i]!;
+    if (message.role === "tool") continue;
+    if (message.role === "assistant" && message.toolCalls?.length &&
+        state.text.endsWith(message.content) && Array.from(message.content.trim()).length >= MIN_TOOL_ROUND_ECHO_CHARS) {
+      return message.content;
+    }
+    break;
+  }
+  return "";
+}
+
 interface PendingToolCall {
   wireCallId: string;
   name: string;
@@ -127,6 +146,7 @@ interface AgentGraphValue {
   round: number;
   messages: ModelMessage[];
   text: string;
+  lastRoundEchoOnly: boolean;
   pendingCalls: PendingToolCall[];
   statePatch: Record<string, unknown>;
   rounds: AgentRound[];
@@ -155,6 +175,7 @@ const AgentState = Annotation.Root({
     reducer: (_previous, next) => next,
     default: () => "",
   }),
+  lastRoundEchoOnly: Annotation<boolean>({ reducer: (_previous, next) => next, default: () => false }),
   pendingCalls: Annotation<PendingToolCall[]>({
     reducer: (_previous, next) => next,
     default: () => [],
@@ -244,6 +265,7 @@ export class AgentGraphRunner {
       round: 0,
       messages: input.messages,
       text: "",
+      lastRoundEchoOnly: false,
       pendingCalls: [],
       statePatch: {},
       rounds: [],
@@ -264,6 +286,7 @@ export class AgentGraphRunner {
     )) as AgentGraphValue;
     return {
       text: result.text,
+      lastRoundEchoOnly: result.lastRoundEchoOnly === true,
       statePatch: result.statePatch,
       rounds: result.rounds,
       taskId: result.taskId,
@@ -293,7 +316,7 @@ export class AgentGraphRunner {
     this.deps.checkRunning();
     this.checkTask(state.roleId, state.taskId);
     const current = this.deps.resolveModel();
-    const prompt = this.deps.systemPrompt();
+    const prompt = this.deps.systemPrompt(state.messages, state.round);
     const evidenceQuery = this.deps.evidenceQuery?.(state.taskId) ?? "";
     const evidence = this.deps.selectEvidence?.({
       roleId: state.roleId,
@@ -320,7 +343,7 @@ export class AgentGraphRunner {
           "SELECT 1 FROM model_calls WHERE model_call_id = ? AND role_id = ? AND resource_id = ?",
         ).get(state.modelCallId, state.roleId, current.resourceId) !== undefined
       : true;
-    const request = selectAgentContext({
+    const { worldbookSelection, ...request } = selectAgentContext({
       request: {
         modelName: current.modelName,
         resourceId: current.resourceId,
@@ -356,6 +379,33 @@ export class AgentGraphRunner {
       now: this.deps.now().toISOString(),
     });
     let roundText = "";
+    const previous = previousToolRoundText(state);
+    let comparingPrefix = previous.length > 0;
+    let echoChars = 0;
+    // 只暂存仍与上一轮相同的开头。第一次出现差异时，把暂存内容原样交付。
+    const publish = (chunk: string): void => {
+      const offset = roundText.length;
+      roundText += chunk;
+      if (!comparingPrefix) {
+        this.deps.emitDelta(chunk);
+        return;
+      }
+      const prefixLength = Math.min(previous.length - offset, chunk.length);
+      if (!previous.startsWith(chunk.slice(0, prefixLength), offset)) {
+        comparingPrefix = false;
+        this.deps.emitDelta(roundText);
+      } else if (roundText.length >= previous.length) {
+        comparingPrefix = false;
+        echoChars = previous.length;
+        const remainder = chunk.slice(prefixLength);
+        if (remainder) this.deps.emitDelta(remainder);
+      }
+    };
+    const flushPartialPrefix = (): void => {
+      if (!comparingPrefix || !roundText) return;
+      comparingPrefix = false;
+      this.deps.emitDelta(roundText);
+    };
     let accepted = false;
     const onAccepted = (): void => {
       if (accepted) return;
@@ -367,6 +417,7 @@ export class AgentGraphRunner {
         executionId: state.executionId,
         modelCallId: callId,
         messages: request.messages,
+        worldbookSelection,
       });
     };
     const calls: PendingToolCall[] = [];
@@ -382,8 +433,7 @@ export class AgentGraphRunner {
         // 注入适配器以第一个已产生的事件证明已实际消费请求。
         if (!this.deps.signal.aborted) onAccepted();
         if (event.type === "text_delta") {
-          this.deps.emitDelta(event.text);
-          roundText += event.text;
+          publish(event.text);
           continue;
         }
         if (event.type === "tool_call") {
@@ -425,6 +475,7 @@ export class AgentGraphRunner {
             : { rawResponse: event.rawResponse }),
         };
       }
+      flushPartialPrefix();
       if (completed === null) {
         throw new ModelRequestFailedError("模型流未收到完整终态", {
           reason: "STREAM_TRUNCATED",
@@ -456,10 +507,15 @@ export class AgentGraphRunner {
         ...(usage === null ? {} : { usage }),
         now: this.deps.now().toISOString(),
       });
+      // 未满整段即断流仍是部分有效正文。已被用户新消息打断时，旧执行禁止再吐字。
+      if (!this.deps.signal.aborted) flushPartialPrefix();
       throw error;
     }
     this.deps.checkRunning();
-    const text = state.text + roundText;
+    const delivery = {
+      text: state.text + roundText.slice(echoChars),
+      lastRoundEchoOnly: echoChars > 0 && echoChars === roundText.length,
+    };
     const toolCalls: ModelToolCall[] = calls.map((call) => ({
       callId: call.wireCallId,
       name: call.name,
@@ -476,7 +532,7 @@ export class AgentGraphRunner {
     if (calls.length === 0) {
       return {
         messages: [...state.messages, assistant],
-        text,
+        ...delivery,
         pendingCalls: [],
         modelCallId: callId,
         round: state.round + 1,
@@ -486,7 +542,7 @@ export class AgentGraphRunner {
       // 收尾轮模型仍想调用工具时不再派发：本轮只提交文字说明。
       return {
         messages: [...state.messages, { role: "assistant", content: roundText }],
-        text,
+        ...delivery,
         pendingCalls: [],
         modelCallId: callId,
         round: state.round + 1,
@@ -502,7 +558,7 @@ export class AgentGraphRunner {
       this.deps.onSegmentHalt?.("round_limit");
       return {
         messages: [...state.messages, assistant],
-        text,
+        ...delivery,
         pendingCalls: calls,
         modelCallId: callId,
         round: state.round + 1,
@@ -511,7 +567,7 @@ export class AgentGraphRunner {
     }
     return {
       messages: [...state.messages, assistant],
-      text,
+      ...delivery,
       pendingCalls: calls,
       modelCallId: callId,
       round: state.round + 1,

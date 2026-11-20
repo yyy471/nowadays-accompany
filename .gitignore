@@ -36,6 +36,12 @@ dist/
 /.workbuddy/
 /.workbuddy-ai/
 /.nowadays-review/
+/.archify/*/visual-check/
+/.archify/*/review-*/
+/.archify/*/*.browser-check.json
+/.archify/*/*.delivery.json
+/.archify/*/*.finalize.json
+/.archify/*/*.finalize-summary.json
 
 # Editor and operating-system files
 /.idea/

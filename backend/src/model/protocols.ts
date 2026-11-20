@@ -1,3 +1,4 @@
+import { APPLICATION_TRIGGER_INPUT } from "../domain/model.js";
 import { createHash, randomUUID } from "node:crypto";
 import type { ModelProvider } from "../domain/model-providers.js";
 import { ChatReasoning } from "./chat-reasoning.js";
@@ -472,7 +473,7 @@ export class HttpModelAdapter implements ModelPort {
       {
         method: "POST",
         headers: this.baseHeaders("text/event-stream"),
-        body: serializeModelRequest("anthropic-messages", this.config.baseUrl, request),
+        body: serializeModelRequest("anthropic-messages", this.config.baseUrl, request, this.config.provider),
         ...(request.signal ? { signal: request.signal } : {}),
       },
     );
@@ -693,6 +694,7 @@ export class HttpModelAdapter implements ModelPort {
         : {
             continuation: {
               protocol: this.config.protocol,
+              ...(this.config.provider === undefined ? {} : { provider: this.config.provider }),
               modelName: request.modelName,
               baseUrl: this.config.baseUrl,
               items: [...contentBlocks.entries()]
@@ -797,17 +799,22 @@ export function serializeModelRequest(
     }
     if (message.role !== "tool" || message.source?.historical !== true) return message;
     return {
-      role: requiresChatReasoning ? "user" : "assistant",
+      // Messages API 合并相邻 assistant 内容。历史回执若与当前原生调用相邻，
+      // 会把无签名文本拼到 thinking 块之前；回执属于应用交给模型的数据。
+      role: protocol === "anthropic-messages" || requiresChatReasoning ? "user" : "assistant",
       content: `已保存的工具事实 [${message.source.toolCallId ?? message.source.internalStepKey ?? message.toolCallId}]（${message.toolName ?? "工具"}）：${message.content}`,
     };
   });
+  const needsSpeakerLabels = protocol === "openai-chat" && requiresChatReasoning &&
+    messages.some(message => message.role === "assistant" && !message.toolCalls?.length &&
+      !continuationItems(message, protocol, request.modelName, baseUrl, provider)?.[0]);
   switch (protocol) {
     case "openai-chat":
       return JSON.stringify({
         model: request.modelName,
         messages: [
           { role: "system", content: request.system },
-          ...messages.map(message => toOpenAiChatMessage(message, request.modelName, baseUrl, provider, requiresChatReasoning)),
+          ...messages.map(message => toOpenAiChatMessage(message, request.modelName, baseUrl, provider, requiresChatReasoning, needsSpeakerLabels)),
         ],
         ...(request.tools.length === 0
           ? {}
@@ -855,7 +862,7 @@ export function serializeModelRequest(
       return JSON.stringify({
         model: request.modelName,
         system: request.system,
-        messages: toAnthropicMessages(messages, request.modelName, baseUrl),
+        messages: toAnthropicMessages(messages, request.modelName, baseUrl, provider),
         ...(request.tools.length === 0
           ? {}
           : {
@@ -881,7 +888,7 @@ function endpoint(baseUrl: string, path: string): string {
 }
 
 function toOpenAiChatMessage(
-  message: ModelMessage, modelName: string, baseUrl: string, provider: ModelProvider | undefined, requiresReasoning: boolean,
+  message: ModelMessage, modelName: string, baseUrl: string, provider: ModelProvider | undefined, requiresReasoning: boolean, needsSpeakerLabels: boolean,
 ): unknown {
   if (message.role === "tool") {
     return {
@@ -895,7 +902,7 @@ function toOpenAiChatMessage(
     const saved = provider ? continuationItems(message, "openai-chat", modelName, baseUrl, provider)?.[0] : undefined;
     // 这些服务会校验历史 assistant 的推理。来自本地的历史正文以引用送入。
     if (requiresReasoning && saved === undefined && calls.length === 0) {
-      return { role: "user", content: `[角色先前的回复]\n${message.content}` };
+      return { role: "user", content: `[角色先前的回复]\n${JSON.stringify({ sender: "assistant", text: message.content })}` };
     }
     const reasoningContent = typeof saved?.reasoning_content === "string" ? saved.reasoning_content
       : requiresReasoning ? "" : undefined;
@@ -924,13 +931,18 @@ function toOpenAiChatMessage(
           }),
     };
   }
+  let content = message.content;
+  if (needsSpeakerLabels && (message.source?.messageId || message.source?.currentUserRequest)) {
+    const marker = message.source.currentUserRequest ? "[本轮用户消息]" : "[用户先前的发言]";
+    content = `${marker}\n${JSON.stringify({ sender: "user", text: content })}`;
+  }
   if (!message.images?.length) {
-    return { role: "user", content: message.content };
+    return { role: "user", content };
   }
   return {
     role: "user",
     content: [
-      { type: "text", text: message.content },
+      { type: "text", text: content },
       ...message.images.map((image) => ({
         type: "image_url",
         image_url: { url: `data:${image.mediaType};base64,${image.dataBase64}` },
@@ -986,8 +998,17 @@ function toOpenAiResponsesInput(message: ModelMessage, modelName: string, baseUr
   ];
 }
 
-function toAnthropicMessages(messages: readonly ModelMessage[], modelName: string, baseUrl: string): unknown[] {
+function toAnthropicMessages(
+  messages: readonly ModelMessage[],
+  modelName: string,
+  baseUrl: string,
+  provider?: ModelProvider,
+): unknown[] {
   const items: Array<{ role: "user" | "assistant"; content: unknown[] }> = [];
+  // 自主触发可以没有用户消息。协议需要一项输入，由应用表明触发来源。
+  if (messages.length === 0) {
+    return [{ role: "user", content: [{ type: "text", text: APPLICATION_TRIGGER_INPUT }] }];
+  }
   let lastWasToolResult = false;
   for (const message of messages) {
     if (message.role === "tool") {
@@ -1006,7 +1027,7 @@ function toAnthropicMessages(messages: readonly ModelMessage[], modelName: strin
     }
     lastWasToolResult = false;
     if (message.role === "assistant") {
-      const replay = continuationItems(message, "anthropic-messages", modelName, baseUrl);
+      const replay = continuationItems(message, "anthropic-messages", modelName, baseUrl, provider);
       if (replay) {
         items.push({ role: "assistant", content: replay });
         continue;

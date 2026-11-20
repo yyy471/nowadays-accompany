@@ -16,6 +16,8 @@ import type {
   DiaryDetail,
   DiaryRecord,
   MemoryBatchRecord,
+  EvidenceSender,
+  MemoryClaimRecord,
   MemoryEventPatch,
   MemoryEventRecord,
   MemoryEventSourceRecord,
@@ -30,7 +32,37 @@ import type {
   RelatedEventBrief,
   SummaryEvidenceItem,
 } from "../domain/memory.js";
+import { SPOKEN_REPLY_SQL } from "./evidence.js";
 import { readWebEvidenceProjection } from "./web-reading.js";
+
+const claimLabels: Record<MemoryClaimRecord["kind"], string> = {
+  observation: "有据观察", interest: "个人兴趣", released: "当时已释怀",
+  user_quote: "用户原话", impression: "角色当时的印象", past_feeling: "当时感受",
+  reflection: "后来的理解", practice: "实践经验", cherished_detail: "珍惜的细节",
+  shared_detail: "角色已讲原话", commitment: "角色承诺", unknown: "尚未知",
+};
+
+function claimSearchText(claim: MemoryClaimRecord): string {
+  const scope = claim.practice ? `；适用：${claim.practice.scope}；实际结果：${claim.practice.outcome}` : "";
+  const origin = claim.sourceSender === "assistant" ? "，据角色当时的发言" :
+    claim.sourceSender === "user" ? "，据用户当时的发言" :
+    claim.sourceKind === "tool_result" ? "，据工具回执" : "";
+  return `${claimLabels[claim.kind]}（${claim.sourceAt}${origin}） ${claim.quoteContext ?? claim.text}${scope}`;
+}
+
+// 同一实践办法保留所有有据版本，检索正文只收录最新的适用范围和做法。
+function searchableClaimText(claims: MemoryClaimRecord[]): string[] {
+  const latest = new Map<string, MemoryClaimRecord>();
+  for (const claim of claims) {
+    if (!claim.practice) continue;
+    const current = latest.get(claim.practice.key);
+    if (!current || Date.parse(claim.sourceAt) >= Date.parse(current.sourceAt)) {
+      latest.set(claim.practice.key, claim);
+    }
+  }
+  return claims.filter(claim => !claim.practice || latest.get(claim.practice.key) === claim)
+    .map(claimSearchText);
+}
 
 interface EvidenceRow {
   evidence_id: string;
@@ -144,6 +176,7 @@ export interface NextSegment {
 }
 
 export interface CreateEventInput {
+  claims?: MemoryClaimRecord[];
   roleId: string;
   title: string;
   summary: string;
@@ -158,6 +191,7 @@ export interface CreateEventInput {
 }
 
 export interface UpdateEventInput {
+  claims?: MemoryClaimRecord[];
   roleId: string;
   eventId: string;
   expectedVersion: number;
@@ -755,6 +789,8 @@ export class MemoryStore {
       JSON.stringify({
         evidenceId: row.evidence_id,
         sourceKind: row.source_kind,
+        publishedReply: false,
+        sender: "assistant", // 为最长的发送者名称预留容量。
         sourceStatus: row.source_status,
         windowId: row.window_id,
         occurredAt: row.occurred_at,
@@ -1112,27 +1148,44 @@ export class MemoryStore {
     return rows.map(mapEvent);
   }
 
-  listRecentEvents(roleId: string, limit = 20): RelatedEventBrief[] {
+  listRecentEvents(roleId: string, limit = 20, evidenceText = ""): RelatedEventBrief[] {
     const rows = this.db
       .prepare(
-        `SELECT event_id, title, summary, experience_date, version
-         FROM memory_events WHERE role_id = ? AND lifecycle_status = 'active'
-         ORDER BY updated_at DESC, event_id ASC LIMIT ?`,
+        `SELECT event_id, title, summary, experience_date, version,
+           (? <> '' AND (
+           instr(?, lower(e.title)) > 0 OR EXISTS (
+             SELECT 1 FROM memory_event_tags t WHERE t.event_id = e.event_id
+               AND t.dimension IN ('topic','place') AND length(t.normalized_value) >= 2
+               AND instr(?, t.normalized_value) > 0
+           )
+         )) AS relevant
+         FROM memory_events e WHERE role_id = ? AND lifecycle_status = 'active'
+         ORDER BY relevant DESC, updated_at DESC, event_id ASC LIMIT ?`,
       )
-      .all(roleId, limit) as Array<{
+      .all(evidenceText, evidenceText, evidenceText, roleId, limit) as Array<{
         event_id: string;
         title: string;
         summary: string;
         experience_date: string;
         version: number;
+        relevant: number;
       }>;
-    return rows.map((row) => ({
-      eventId: row.event_id,
-      title: row.title,
-      summary: row.summary,
-      experienceDate: row.experience_date,
-      version: row.version,
-    }));
+    return rows.map(row => {
+      const keys = row.relevant ? this.db.prepare(
+        `SELECT DISTINCT json_extract(c.value, '$.practice.key') AS key
+         FROM memory_revisions r, json_each(r.content_json, '$.claims') c
+         WHERE r.role_id = ? AND r.target_id = ? AND r.target_type = 'event'
+           AND json_extract(c.value, '$.kind') = 'practice' LIMIT 12`,
+      ).all(roleId, row.event_id) as { key: string }[] : [];
+      return {
+        eventId: row.event_id,
+        title: row.title,
+        summary: row.summary,
+        experienceDate: row.experience_date,
+        version: row.version,
+        ...(keys.length ? { practiceKeys: keys.map(item => item.key) } : {}),
+      };
+    });
   }
 
   getEvent(roleId: string, eventId: string): MemoryEventRecord {
@@ -1197,6 +1250,7 @@ export class MemoryStore {
         occurredAtEnd: input.occurredAtEnd,
         experienceDate: input.experienceDate,
         tags: input.tags,
+        claims: input.claims ?? [],
       },
       evidenceIds: input.evidenceIds,
       now: input.now,
@@ -1206,7 +1260,7 @@ export class MemoryStore {
       recordType: "event",
       recordId: eventId,
       title: input.title,
-      body: [input.summary, input.subjectiveExperience].filter(Boolean).join("\n"),
+      body: [input.summary, input.subjectiveExperience, ...searchableClaimText(input.claims ?? [])].filter(Boolean).join("\n"),
       now: input.now,
     });
     return this.getEvent(input.roleId, eventId);
@@ -1286,6 +1340,7 @@ export class MemoryStore {
         occurredAtEnd,
         experienceDate,
         tags,
+        claims: input.claims ?? [],
       },
       evidenceIds: input.addEvidenceIds,
       now: input.now,
@@ -1296,11 +1351,43 @@ export class MemoryStore {
         recordType: "event",
         recordId: input.eventId,
         title,
-        body: [summary, subjectiveExperience].filter(Boolean).join("\n"),
+        body: [summary, subjectiveExperience, ...searchableClaimText(this.listEventClaims(input.roleId, input.eventId))].filter(Boolean).join("\n"),
         now: input.now,
       });
     }
     return this.getEvent(input.roleId, input.eventId);
+  }
+
+  listRelatedGrowthEvents(roleId: string, eventId: string): string[] {
+    const rows = this.db.prepare(
+      `WITH links AS (
+         SELECT r.target_id AS later, json_extract(c.value, '$.relatedEventId') AS earlier
+         FROM memory_revisions r, json_each(r.content_json, '$.claims') c
+         WHERE r.role_id = ? AND r.target_type = 'event' AND json_type(c.value, '$.relatedEventId') = 'text'
+       )
+       SELECT earlier AS event_id FROM links WHERE later = ? AND earlier <> later
+       UNION SELECT later AS event_id FROM links WHERE earlier = ? AND earlier <> later
+       ORDER BY event_id`,
+    ).all(roleId, eventId, eventId) as { event_id: string }[];
+    return rows.map(row => row.event_id);
+  }
+
+  listEventClaims(roleId: string, eventId: string): MemoryClaimRecord[] {
+    const rows = this.db.prepare(
+      `SELECT json_extract(content_json, '$.claims') AS claims
+       FROM memory_revisions WHERE role_id = ? AND target_type = 'event' AND target_id = ?
+         AND json_type(content_json, '$.claims') = 'array' ORDER BY revision_number`,
+    ).all(roleId, eventId) as { claims: string }[];
+    return rows.flatMap(row => JSON.parse(row.claims) as MemoryClaimRecord[]);
+  }
+
+  evidenceMessageContext(kind: MemorySourceKind, sourceId: string): { sender: EvidenceSender; publishedReply?: boolean } {
+    if (kind !== "message") return { sender: null };
+    const row = this.db.prepare(
+      `SELECT m.sender, (${SPOKEN_REPLY_SQL}) AS published
+       FROM messages m JOIN windows w ON w.window_id = m.window_id WHERE m.message_id = ?`,
+    ).get(sourceId) as { sender: EvidenceSender; published: number } | undefined;
+    return row?.sender === "assistant" ? { sender: row.sender, publishedReply: Boolean(row.published) } : { sender: row?.sender ?? null };
   }
 
   listEventSources(
@@ -1317,7 +1404,7 @@ export class MemoryStore {
          ORDER BY er.role_sequence ASC`,
       )
       .all(eventId, roleId) as EvidenceRow[];
-    return rows.map(mapEventSource);
+    return rows.map(row => ({ ...mapEventSource(row), sender: this.evidenceMessageContext(row.source_kind, row.source_id).sender }));
   }
 
   getEvidenceDetail(roleId: string, evidenceId: string): MemoryEvidenceDetail {
@@ -1336,6 +1423,7 @@ export class MemoryStore {
     }
     const detail: MemoryEvidenceDetail = {
       ...mapEvidence(row),
+      sender: this.evidenceMessageContext(row.source_kind, row.source_id).sender,
       processingStatus: row.processing_status,
       attemptCount: row.attempt_count,
       content: this.loadEvidenceContent(row),
@@ -1426,7 +1514,7 @@ export class MemoryStore {
         const rows = this.db
           .prepare(
             `SELECT er.evidence_id, er.source_kind, er.window_id, er.occurred_at,
-                    er.role_sequence, m.sequence, m.content
+                    er.role_sequence, m.sequence, m.content, m.sender
                FROM evidence_records er
                JOIN messages m
                  ON er.source_kind = 'message' AND m.message_id = er.source_id
@@ -1446,6 +1534,7 @@ export class MemoryStore {
           occurred_at: string;
           role_sequence: number;
           sequence: number;
+          sender: EvidenceSender;
           content: string;
         }>;
         for (const row of rows) {
@@ -1454,6 +1543,7 @@ export class MemoryStore {
             sourceKind: row.source_kind,
             windowId: row.window_id,
             sequence: row.sequence,
+            sender: row.sender,
             occurredAt: row.occurred_at,
             roleSequence: row.role_sequence,
             content: row.content,
@@ -1491,6 +1581,7 @@ export class MemoryStore {
           sourceKind: row.source_kind,
           windowId: row.window_id,
           sequence: null,
+          sender: null,
           occurredAt: row.occurred_at,
           roleSequence: row.role_sequence,
           content: this.loadEvidenceContent({
@@ -1517,6 +1608,12 @@ export class MemoryStore {
                 e.last_supplemented_round
          FROM memory_events e
          WHERE e.role_id = ? AND e.lifecycle_status = 'active'
+           AND NOT EXISTS (
+             SELECT 1 FROM memory_revisions r, json_each(r.content_json, '$.claims') claim
+              WHERE r.target_id = e.event_id AND r.target_type = 'event' AND r.role_id = e.role_id
+                AND (json_extract(claim.value, '$.kind') IN ('cherished_detail','interest','practice','commitment')
+                     OR json_type(claim.value, '$.relatedEventId') = 'text')
+           )
            AND ? - e.last_supplemented_round >= ?
            AND (
              SELECT COUNT(*)

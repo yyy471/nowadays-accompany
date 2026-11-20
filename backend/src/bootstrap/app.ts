@@ -111,7 +111,7 @@ function assembleBackendApp(
   const roleService = new RoleService(appStore, config.dataRoot);
   const roleAccess = new RoleAccess(appStore, config.dataRoot);
   const activity = new RoleActivityService(appStore, { now });
-  const messageService = new MessageService(roleAccess);
+  const messageService = new MessageService(roleAccess, now);
   // 模型解析同时服务运行时、影响报告与维护校验（283 R04）。
   const bindings = new ModelBindingResolver(appStore, roleAccess);  // 资源服务先于对话服务创建；唤醒回调在对话服务就绪后接入（R02）。
   let wakePendingWork: (roleId?: string) => void = () => undefined;

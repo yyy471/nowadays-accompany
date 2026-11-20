@@ -14,6 +14,52 @@ import {
   withStorage,
 } from "./p2-05-fixture.js";
 
+test("工具后从头重复已发布的长段只交付一次，原始模型轮次、短句和近似原文完整保留", async () => {
+  const passage = "我把读到第三页的稿子放在桌上，先用铅笔标出需要你念的段落。等会儿我来计时，轮到证人出场的时候，你照着原稿继续读就行。";
+  const short = "这句话要说两遍。";
+  const cases = [
+    { before: passage, after: [passage.slice(0, 13), passage.slice(13)], expected: passage },
+    { before: passage, after: [passage.slice(0, 11), passage.slice(11) + "还有", "最后一页。"], expected: passage + "还有最后一页。" },
+    { before: passage, after: [passage.slice(0, -2), "吗？"], expected: passage + passage.slice(0, -2) + "吗？" },
+    { before: passage, after: [passage.slice(0, 25)], expected: passage + passage.slice(0, 25) },
+    { before: short, after: [short], expected: short + short },
+    { before: "", after: [passage, passage], expected: passage + passage },
+  ];
+  const scripts = cases.flatMap(({ before, after }, i): ModelEvent[][] => [[
+    { type: "text_delta", text: before },
+    { type: "tool_call", callId: "echo-" + i, name: "state_update", arguments: { patch: { round: i } } },
+    { type: "completed", stopReason: "tool_calls", rawResponse: { visible: before } },
+  ], [
+    ...after.map(text => ({ type: "text_delta" as const, text })),
+    { type: "completed", stopReason: "stop", rawResponse: { visible: after.join("") } },
+  ]]);
+  const fixture = createFixture(scripts);
+  try {
+    for (const [i, item] of cases.entries()) {
+      fixture.app.conversation.submitMessage(fixture.roleId, fixture.windowId, {
+        content: "轮次 " + i, sourcePlatform: "nowadays", submissionId: randomUUID(),
+      });
+      await fixture.app.conversation.waitForIdle(fixture.roleId);
+      const page = fixture.app.services.messages.list(fixture.roleId, fixture.windowId, null, 100);
+      const response = page.items.at(-1)!;
+      assert.equal(response.content, item.expected, "message " + i);
+      for (const segment of page.segments.filter(s => s.messageId === response.messageId)) {
+        assert.equal(segment.text, response.content.slice(segment.startOffset, segment.endOffset));
+      }
+      withStorage(fixture, ({ business }) => {
+        const exec = business.db.prepare("SELECT execution_id FROM messages WHERE message_id = ?")
+          .get(response.messageId) as { execution_id: string };
+        const events = business.db.prepare(`SELECT json_extract(payload_json, '$.delta') AS delta FROM execution_stream_events
+          WHERE execution_id = ? AND event_type = 'message_delta' ORDER BY stream_event_id`).all(exec.execution_id) as { delta: string }[];
+        assert.equal(events.map(event => event.delta).join(""), item.expected, "SSE " + i);
+        const raw = business.db.prepare(`SELECT json_extract(raw_response_json, '$.rawResponse.visible') AS text
+          FROM model_calls WHERE execution_id = ? AND call_kind = 'primary_decision' ORDER BY rowid`).all(exec.execution_id);
+        assert.deepEqual(raw, [{ text: item.before }, { text: item.after.join("") }]);
+      });
+    }
+  } finally { await fixture.close(); }
+});
+
 test("user message runs a LangGraph decision and commits reply, state and stream events", { timeout: 15_000 }, async () => {
   const fixture = createFixture([
     [

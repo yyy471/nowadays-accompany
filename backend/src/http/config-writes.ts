@@ -11,6 +11,7 @@ export const ROLE_CONFIG_WRITES: ReadonlySet<string> = new Set([
   "DELETE /v1/roles/:roleId",
   "PATCH /v1/roles/:roleId/definition",
   "PUT /v1/roles/:roleId/bindings",
+  "PUT /v1/roles/:roleId/worldbooks",
   "PUT /v1/roles/:roleId/voice",
   "PUT /v1/roles/:roleId/voice/enabled",
   "POST /v1/roles/:roleId/voice/reference",

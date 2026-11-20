@@ -10,7 +10,7 @@ import { backfillEvidence } from "./evidence.js";
 import { retireLegacyWebPrefetchEvidence, WEB_READING_SCHEMA_SQL } from "./web-reading.js";
 
 export const APP_SCHEMA_VERSION = 11;
-export const BUSINESS_SCHEMA_VERSION = 23;
+export const BUSINESS_SCHEMA_VERSION = 24;
 export const EXECUTION_SCHEMA_VERSION = 1;
 
 export const APP_TABLES = [
@@ -74,6 +74,8 @@ export const BUSINESS_TABLES = [
   "scene_image_assets",
   "role_scene_image_settings",
   "web_reading_deliveries",
+  "role_worldbooks",
+  "worldbook_usage",
 ] as const;
 
 const APP_V2_SQL = `
@@ -683,6 +685,8 @@ interface RequiredColumns {
 }
 
 const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
+  { table: "role_worldbooks", columns: ["role_id", "revision", "books_json"] },
+  { table: "worldbook_usage", columns: ["role_id", "execution_id", "model_call_id", "revision", "book_id", "entry_id", "status", "matched_message_ids_json"] },
   {
     table: "web_reading_deliveries",
     columns: ["role_id", "url", "page_version", "start_offset", "end_offset", "original_text",
@@ -918,6 +922,8 @@ const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
 ];
 
 const BUSINESS_INDEXES: readonly RequiredIndex[] = [
+  { name: "idx_worldbook_usage_execution", table: "worldbook_usage",
+    columns: ["role_id", "execution_id"], unique: false, partial: false },
   { name: "idx_web_reading_role_page", table: "web_reading_deliveries",
     columns: ["role_id", "url", "page_version", "start_offset"], unique: false, partial: false },
   { name: "idx_web_reading_role_tool", table: "web_reading_deliveries",
@@ -1804,6 +1810,26 @@ ALTER TABLE roles ADD COLUMN first_activation_pending INTEGER NOT NULL DEFAULT 0
   CHECK (first_activation_pending IN (0, 1));
 ` + WEB_READING_SCHEMA_SQL;
 
+const BUSINESS_V24_SQL = `
+CREATE TABLE IF NOT EXISTS role_worldbooks (
+  role_id TEXT PRIMARY KEY REFERENCES roles(role_id),
+  revision INTEGER NOT NULL CHECK (revision > 0),
+  books_json TEXT NOT NULL CHECK (json_valid(books_json) AND json_type(books_json) = 'array')
+);
+CREATE TABLE IF NOT EXISTS worldbook_usage (
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  execution_id TEXT NOT NULL REFERENCES executions(execution_id),
+  model_call_id TEXT NOT NULL REFERENCES model_calls(model_call_id),
+  revision INTEGER NOT NULL CHECK (revision > 0),
+  book_id TEXT NOT NULL,
+  entry_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('included','budget_omitted')),
+  matched_message_ids_json TEXT NOT NULL CHECK (json_valid(matched_message_ids_json) AND json_type(matched_message_ids_json) = 'array'),
+  PRIMARY KEY (model_call_id, book_id, entry_id)
+);
+CREATE INDEX IF NOT EXISTS idx_worldbook_usage_execution ON worldbook_usage (role_id, execution_id);
+`;
+
 function migrateBusinessV22(db: Database.Database): void {
   addColumnIfMissing(db, "outfits", "preset_key", "TEXT");
   db.exec(`
@@ -1992,7 +2018,7 @@ export function openBusinessDatabase(
   return openVersionedDatabase(
     dbPath,
     BUSINESS_SCHEMA_VERSION,
-    BUSINESS_SCHEMA_V22_SQL + BUSINESS_V23_SQL,
+    BUSINESS_SCHEMA_V22_SQL + BUSINESS_V23_SQL + BUSINESS_V24_SQL,
     {
       1: (db) => {
         db.exec(BUSINESS_V2_SQL);
@@ -2022,6 +2048,7 @@ export function openBusinessDatabase(
         db.exec(BUSINESS_V23_SQL);
         retireLegacyWebPrefetchEvidence(db);
       },
+      23: (db) => db.exec(BUSINESS_V24_SQL),
     },
     BUSINESS_TABLES,
     BUSINESS_INDEXES,

@@ -1,0 +1,585 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Nowadays · 系统执行总图",
+    "locale": "zh-CN",
+    "output": ".archify/workflow-system-20261120-134147/system-flow.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/yyy471/nowadays-accompany.git",
+      "revision": "3a4ac9abc05ebc82ac7689d8c8e753f3dc34a06a",
+      "link_mode": "local-only"
+    },
+    "legend": {
+      "entries": {
+        "messagebus": {
+          "label": "唤醒与排队"
+        },
+        "security": {
+          "label": "等待与暂停"
+        },
+        "database": {
+          "label": "持久记录"
+        }
+      }
+    }
+  },
+  "lanes": [
+    {
+      "id": "startup",
+      "label": "启动与恢复"
+    },
+    {
+      "id": "desk",
+      "label": "桌面与用户"
+    },
+    {
+      "id": "role",
+      "label": "角色执行"
+    },
+    {
+      "id": "tasks",
+      "label": "办事任务"
+    },
+    {
+      "id": "memory",
+      "label": "长期记忆"
+    }
+  ],
+  "mainPath": [
+    "boot",
+    "choose",
+    "submit",
+    "queue",
+    "graph",
+    "commit",
+    "perform"
+  ],
+  "nodes": [
+    {
+      "id": "boot",
+      "lane": "startup",
+      "col": 1,
+      "type": "frontend",
+      "label": "打开桌面",
+      "sublabel": "连接或拉起本机后端",
+      "sources": [
+        {
+          "path": "desktop/desk-preview/main.cjs",
+          "line": 49,
+          "end_line": 93,
+          "label": "连接现有服务或启动子进程"
+        },
+        {
+          "path": "desktop/desk-preview/main.cjs",
+          "line": 233,
+          "end_line": 259,
+          "label": "关闭到托盘与显式退出"
+        }
+      ]
+    },
+    {
+      "id": "choose",
+      "lane": "desk",
+      "col": 1,
+      "type": "frontend",
+      "label": "选择角色",
+      "sublabel": "新角色先配置模型",
+      "sources": [
+        {
+          "path": "desktop/desk-preview/renderer/src/App.tsx",
+          "line": 179,
+          "end_line": 202,
+          "label": "冷启动选角及共享角色"
+        },
+        {
+          "path": "devDoc/specs/storage-memory-and-autonomy.md",
+          "line": 117,
+          "end_line": 123,
+          "label": "初次绑定模型与恢复活动"
+        }
+      ]
+    },
+    {
+      "id": "submit",
+      "lane": "desk",
+      "col": 2,
+      "type": "frontend",
+      "label": "发送窗口消息",
+      "sublabel": "同次重试沿用提交编号",
+      "sources": [
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 284,
+          "end_line": 320,
+          "label": "提交去重与替代同窗回复"
+        },
+        {
+          "path": "devDoc/specs/storage-memory-and-autonomy.md",
+          "line": 117,
+          "end_line": 124,
+          "label": "等待原因与恢复操作"
+        }
+      ]
+    },
+    {
+      "id": "perform",
+      "lane": "desk",
+      "col": 4,
+      "type": "frontend",
+      "label": "逐句呈现回复",
+      "sublabel": "快照与 SSE 事件",
+      "sources": [
+        {
+          "path": "desktop/desk-preview/renderer/src/conversation/use-window-session.ts",
+          "line": 335,
+          "end_line": 378,
+          "label": "取窗口快照"
+        },
+        {
+          "path": "desktop/desk-preview/renderer/src/conversation/use-window-session.ts",
+          "line": 433,
+          "end_line": 476,
+          "label": "从游标开始订阅事件"
+        },
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 2092,
+          "end_line": 2126,
+          "label": "生成中的增量与稳定句段"
+        }
+      ]
+    },
+    {
+      "id": "recover",
+      "lane": "startup",
+      "col": 3,
+      "type": "backend",
+      "label": "恢复遗留工作",
+      "sublabel": "检查点、在途工具和停机状态",
+      "sources": [
+        {
+          "path": "backend/src/bootstrap/app.ts",
+          "line": 306,
+          "end_line": 320,
+          "label": "核心启动恢复顺序"
+        },
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 823,
+          "end_line": 942,
+          "label": "分角色重整执行与待办"
+        },
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 1157,
+          "end_line": 1168,
+          "label": "沿原执行号恢复图检查点"
+        }
+      ]
+    },
+    {
+      "id": "wake",
+      "lane": "role",
+      "col": 1,
+      "type": "messagebus",
+      "label": "到期唤醒",
+      "sublabel": "角色计划或额度恢复",
+      "sources": [
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 1438,
+          "end_line": 1479,
+          "label": "到期定时唤醒"
+        },
+        {
+          "path": "backend/src/application/autonomy-service.ts",
+          "line": 366,
+          "end_line": 414,
+          "label": "额度耗尽与次日唤醒"
+        }
+      ]
+    },
+    {
+      "id": "queue",
+      "lane": "role",
+      "col": 2,
+      "type": "backend",
+      "label": "选择下一项",
+      "sublabel": "用户消息优先，角色内串行",
+      "sources": [
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 1362,
+          "end_line": 1419,
+          "label": "可执行检查与三类入口的优先级"
+        }
+      ]
+    },
+    {
+      "id": "graph",
+      "lane": "role",
+      "col": 3,
+      "type": "backend",
+      "label": "执行决策图",
+      "sublabel": "召回记忆，调用模型与工具",
+      "sources": [
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 2140,
+          "end_line": 2167,
+          "label": "准备自动召回的上下文"
+        },
+        {
+          "path": "backend/src/application/agent-graph.ts",
+          "line": 1217,
+          "end_line": 1231,
+          "label": "模型、工具与收尾节点"
+        },
+        {
+          "path": "backend/src/application/agent-graph.ts",
+          "line": 216,
+          "end_line": 244,
+          "label": "按执行编号保存图进度"
+        }
+      ]
+    },
+    {
+      "id": "commit",
+      "lane": "role",
+      "col": 4,
+      "type": "database",
+      "label": "提交本段结果",
+      "sublabel": "回复、状态变化及任务决定",
+      "sources": [
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 2360,
+          "end_line": 2434,
+          "label": "提交与应用任务决定"
+        },
+        {
+          "path": "backend/src/storage/conversation-store.ts",
+          "line": 1274,
+          "end_line": 1319,
+          "label": "保存句段并登记事件"
+        }
+      ]
+    },
+    {
+      "id": "more",
+      "lane": "tasks",
+      "col": 2,
+      "type": "messagebus",
+      "label": "原任务再入队",
+      "sublabel": "显式续行或达到单段上限",
+      "sources": [
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 2341,
+          "end_line": 2374,
+          "label": "切段与提交条件"
+        },
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 2408,
+          "end_line": 2427,
+          "label": "沿同一任务加入续行队列"
+        },
+        {
+          "path": "backend/src/application/agent-graph.ts",
+          "line": 85,
+          "end_line": 89,
+          "label": "单段上限及连续失败阈值"
+        }
+      ]
+    },
+    {
+      "id": "decision",
+      "lane": "tasks",
+      "col": 3,
+      "type": "backend",
+      "label": "落实任务决定",
+      "sublabel": "完成、续行或暂停",
+      "sources": [
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 2370,
+          "end_line": 2444,
+          "label": "提交后的任务决定处理"
+        },
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 2820,
+          "end_line": 2876,
+          "label": "连续无进展时强制暂停"
+        }
+      ]
+    },
+    {
+      "id": "pause",
+      "lane": "tasks",
+      "col": 4,
+      "type": "security",
+      "label": "暂停等候",
+      "sublabel": "同窗澄清可接回原任务",
+      "sources": [
+        {
+          "path": "backend/src/storage/conversation-store.ts",
+          "line": 310,
+          "end_line": 355,
+          "label": "同窗续接等待中的任务"
+        },
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 2830,
+          "end_line": 2898,
+          "label": "无进展暂停与用户反馈"
+        },
+        {
+          "path": "backend/src/application/agent-graph.ts",
+          "line": 544,
+          "end_line": 555,
+          "label": "图内暂停后停止派发"
+        }
+      ]
+    },
+    {
+      "id": "catalog",
+      "lane": "memory",
+      "col": 3,
+      "type": "database",
+      "label": "形成长期记忆",
+      "sublabel": "事件、摘要关联原始证据",
+      "sources": [
+        {
+          "path": "backend/src/application/memory-service.ts",
+          "line": 646,
+          "end_line": 710,
+          "label": "新建、补充与精炼"
+        },
+        {
+          "path": "backend/src/application/memory-query-service.ts",
+          "line": 98,
+          "end_line": 129,
+          "label": "筛选记忆与召回记录"
+        },
+        {
+          "path": "devDoc/specs/storage-memory-and-autonomy.md",
+          "line": 98,
+          "end_line": 103,
+          "label": "形成、精炼与索引"
+        }
+      ]
+    },
+    {
+      "id": "batch",
+      "lane": "memory",
+      "col": 4,
+      "type": "backend",
+      "label": "后台整理",
+      "sublabel": "阈值、空闲、任务或手动触发",
+      "sources": [
+        {
+          "path": "backend/src/application/memory-runtime.ts",
+          "line": 163,
+          "end_line": 206,
+          "label": "处理证据和任务结束通知"
+        },
+        {
+          "path": "backend/src/application/memory-service.ts",
+          "line": 179,
+          "end_line": 227,
+          "label": "登记触发及运行批次"
+        },
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 2447,
+          "end_line": 2465,
+          "label": "在提交后通知后台"
+        }
+      ]
+    },
+    {
+      "id": "finish",
+      "lane": "tasks",
+      "col": 1,
+      "type": "database",
+      "label": "结束任务",
+      "sublabel": "记录完成或失败的原因",
+      "sources": [
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 2794,
+          "end_line": 2806,
+          "label": "落实原任务终态"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "boot-choose",
+      "from": "boot",
+      "to": "choose",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "choose-submit",
+      "from": "choose",
+      "to": "submit",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "submit-queue",
+      "from": "submit",
+      "to": "queue",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "queue-graph",
+      "from": "queue",
+      "to": "graph",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "graph-commit",
+      "from": "graph",
+      "to": "commit",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "commit-perform",
+      "from": "commit",
+      "to": "perform",
+      "label": "对话窗终态",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "id": "boot-recover",
+      "from": "boot",
+      "to": "recover",
+      "label": "核心新启",
+      "role": "branch"
+    },
+    {
+      "id": "recover-queue",
+      "from": "recover",
+      "to": "queue",
+      "label": "待办或回退",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "id": "wake-queue",
+      "from": "wake",
+      "to": "queue",
+      "role": "async",
+      "variant": "dashed"
+    },
+    {
+      "id": "commit-decision",
+      "from": "commit",
+      "to": "decision",
+      "label": "有任务",
+      "role": "branch"
+    },
+    {
+      "id": "decision-more",
+      "from": "decision",
+      "to": "more",
+      "label": "续行",
+      "role": "branch"
+    },
+    {
+      "id": "more-queue",
+      "from": "more",
+      "to": "queue",
+      "role": "async",
+      "variant": "dashed"
+    },
+    {
+      "id": "decision-pause",
+      "from": "decision",
+      "to": "pause",
+      "label": "澄清或熔断",
+      "role": "branch"
+    },
+    {
+      "id": "commit-batch",
+      "from": "commit",
+      "to": "batch",
+      "label": "满足触发",
+      "role": "async",
+      "variant": "dashed"
+    },
+    {
+      "id": "batch-catalog",
+      "from": "batch",
+      "to": "catalog",
+      "role": "async",
+      "variant": "dashed"
+    },
+    {
+      "id": "recover-graph",
+      "from": "recover",
+      "to": "graph",
+      "label": "检查点可续接",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "id": "graph-perform",
+      "from": "graph",
+      "to": "perform",
+      "label": "对话窗稳定句段",
+      "role": "async",
+      "variant": "dashed"
+    },
+    {
+      "id": "decision-finish",
+      "from": "decision",
+      "to": "finish",
+      "label": "结案",
+      "role": "branch",
+      "variant": "default"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "三种入口共享角色调度",
+      "items": [
+        "有可处理的用户消息时先响应用户，其次处理原任务续行，再处理到期的自主唤醒。",
+        "角色冷启动后可以选角查看。新建角色默认停止，开始活动并具备可用的对话模型后才会执行对话。",
+        "关闭桌面窗口可驻留托盘。显式退出时，桌面停止自己启动的后端。",
+        "核心重启时，符合条件的检查点可沿原执行号直接续跑；待处理消息或回退任务另进队列，并重新设置唤醒计时器。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "同一任务可以经历多次图执行",
+      "items": [
+        "普通问答通常随本轮回复结束。委托显式续行或达到单段默认 15 轮后，保留原任务号。",
+        "连续 3 次同类工具失败或连续 3 个续行段无推进会熔断。用户可取消任务，已派发操作仍按真实结果结算。",
+        "用户委托的主链模型 token 跨段累计，无累计上限。自主活动按每日点数计量，记忆整理独立运行。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "回复、演出与记忆各有时机",
+      "items": [
+        "对话窗口在生成中通过 SSE 展示已经确定的句段，提交后再读回完整正文与最终状态。",
+        "自主活动在自己的窗口推进，显式分享才进入主对话。长期记忆以角色为单位，能为同一角色的下次对话提供证据。",
+        "后台模型提出整理结果，由程序校验并提交。日记与当前状态保留各自的来源和写入路径。"
+      ]
+    }
+  ]
+}

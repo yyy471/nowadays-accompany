@@ -10,6 +10,7 @@ import { SheetProvider, useSheet, type SheetContextValue } from '../components/c
 import { WriteProvider, useWrite } from '../components/config/write-runner';
 import { ConfigNotice } from '../components/config/ConfigNotice';
 import { RoleSheetHost } from '../components/config/role/RoleSheetHost';
+import { WorldbooksPanel } from '../components/config/role/WorldbooksPanel';
 import { Sheet } from '../components/config/sheet/Sheet';
 import { chatRowStatus, memoryRowStatus, quotaLimitBad, rowDotVisible } from '../components/config/summary.js';
 import { MediaGroup, MediaStateRow, RoleSaveActions, type MediaSummaryStatus } from '../components/config/MediaSheet';
@@ -700,6 +701,7 @@ function RoleEditor({ roleId, roleCount, active, activity, activityLoading = fal
   const openMemory = (anchor?: HTMLElement) => sheetApi.open({ id: 'model:memory', title: '记忆整理', shape: 'compact', anchor: anchor?.closest<HTMLElement>('.config-sum') ?? anchor, focusReturn: anchor });
   const [voiceDraft, setVoiceDraft] = useState<ConfigDraftState | null>(null);
   const [imageDraft, setImageDraft] = useState<ConfigDraftState | null>(null);
+  const [worldbookDraft, setWorldbookDraft] = useState<ConfigDraftState | null>(null);
   const [voiceSummary, setVoiceSummary] = useState<MediaSummaryStatus>();
   const [imageSummary, setImageSummary] = useState<MediaSummaryStatus>();
 
@@ -965,11 +967,11 @@ function RoleEditor({ roleId, roleCount, active, activity, activityLoading = fal
       setModelDraft({ chatResource: savedChat?.resourceId || '', chatModel: savedChat?.modelName || '', memoryResource: savedMemory?.resourceId || '', memoryModel: savedMemory?.modelName || '' });
       setExtensionDraft(Object.fromEntries(bindings.filter(item => item.capability === 'mcp' || item.capability === 'skill').map(item => [item.resourceId, item.enabled])));
       if (budget) setBudgetDraft({ dailyLimit: budget.dailyLimit, unlimited: budget.unlimited });
-      voiceDraft?.discard(); imageDraft?.discard();
+      voiceDraft?.discard(); imageDraft?.discard(); worldbookDraft?.discard();
       if (bindingRevision) setBindingError(''); setBudgetError('');
     };
-    onEditorState(roleId, { dirty: { profile: dirtyProfile, models: dirtyModels, voice: !!voiceDraft?.dirty, image: !!imageDraft?.dirty, ext: dirtyExt, quota: dirtyQuota }, busy: saveBusy || bindingBusy || budgetBusy || !!voiceDraft?.busy || !!imageDraft?.busy, profileCount, discardProfile, discard });
-  }, [roleId, onEditorState, dirtyProfile, dirtyModels, dirtyExt, dirtyQuota, saveBusy, bindingBusy, bindingRevision, budgetBusy, savedProfile, bindings, budget, voiceDraft, imageDraft]);
+    onEditorState(roleId, { dirty: { profile: dirtyProfile, models: dirtyModels, voice: !!voiceDraft?.dirty, image: !!imageDraft?.dirty, ext: dirtyExt || !!worldbookDraft?.dirty, quota: dirtyQuota }, busy: saveBusy || bindingBusy || budgetBusy || !!voiceDraft?.busy || !!imageDraft?.busy || !!worldbookDraft?.busy, profileCount, discardProfile, discard });
+  }, [roleId, onEditorState, dirtyProfile, dirtyModels, dirtyExt, dirtyQuota, saveBusy, bindingBusy, bindingRevision, budgetBusy, savedProfile, bindings, budget, voiceDraft, imageDraft, worldbookDraft]);
   useEffect(() => () => onEditorState(roleId, null), [roleId, onEditorState]);
   const footer = document.getElementById('config-leaf-actions');
   const needsBindingRead = !bindingRevision && (bindingLoaded || !!bindingError);
@@ -1023,6 +1025,7 @@ function RoleEditor({ roleId, roleCount, active, activity, activityLoading = fal
       {loaded.voice && <VoicePanel roleId={roleId} active={active && section === 'models'} serviceRefreshVersion={voiceServiceVersion} serviceEpochs={voiceServiceEpochs} onOpenVoiceSettings={target => sheetApi.requestClose(() => onOpenSettings('model', { modelKind: 'voice', ...(target?.serviceId ? { resourceId: target.serviceId } : {}), ...(target?.createNew ? { newVoiceService: true } : {}) }))} guardWrite={guardAction} pausedWrite={activity?.state !== 'stopped'} onSummaryStatus={setVoiceSummary} onDraftStateChange={setVoiceDraft} onChanged={() => { void onRefresh(); }}/>}
     </div>
     <div hidden={!active || section !== 'ext'} className="config-prose"><header className="config-sec-head"><h2 tabIndex={-1}>扩展</h2></header>
+      <WorldbooksPanel roleId={roleId} active={active && section === 'ext'} pausedWrite={activity?.state !== 'stopped'} guardWrite={guardAction} onDraftChange={setWorldbookDraft}/>
       {bindingAlert}
       {!firstReadError && (['mcp','skill'] as const).map(kind => <ExtensionRow key={kind} kind={kind} resources={resources.filter(item => item.kind === kind)} draft={extensionDraft} bindings={bindings} loaded={bindingLoaded} busy={bindingBusy || !bindingRevision || !!resourceError} onOpen={trigger => openExtension(kind, trigger)}/>)}
       {bindingNotice && <p role="status">{bindingNotice}</p>}

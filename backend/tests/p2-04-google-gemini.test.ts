@@ -850,7 +850,7 @@ test("SQLite 老库迁移（v7->v8 与 v17->v18）及 ModelService / 资源创�
     const upgradedBiz = new RoleStore(paths.businessDatabasePath, { create: false });
     try {
       assert.equal(upgradedApp.schemaVersion, 11);
-      assert.equal(upgradedBiz.schemaVersion, 23);
+      assert.equal(upgradedBiz.schemaVersion, 24);
       const oldAppRow = upgradedApp.db
         .prepare("SELECT protocol FROM model_test_calls WHERE test_call_id = ?")
         .get(oldTestCallId) as { protocol: string } | undefined;
@@ -1074,6 +1074,26 @@ test("google-gemini 在用户消息携带 images 时序列化为 inlineData 且�
         parts: [{ text: "再精简一下" }],
       },
     ]);
+  } finally {
+    await server.close();
+  }
+});
+
+test("Vertex 自主触发以应用输入满足 contents 协议且不修改业务消息", async () => {
+  const server = await startHttpMock(() => ({
+    headers: { "content-type": "text/event-stream" },
+    body: sse({ candidates: [{ content: { role: "model", parts: [{ text: "完成" }] }, finishReason: "STOP" }] }),
+  }));
+  try {
+    const adapter = new HttpModelAdapter({ protocol: "google-gemini", baseUrl: server.baseUrl + "/v1/publishers/google" }, "offline-key");
+    const messages: ModelMessage[] = [];
+    const events = await collectEvents(adapter, messages);
+    assert.ok(events.some(event => event.type === "completed"));
+    const wire = server.requests[0]!.jsonBody as { contents: { role: string; parts: { text: string }[] }[] };
+    assert.equal(wire.contents.length, 1);
+    assert.equal(wire.contents[0]!.role, "user");
+    assert.match(wire.contents[0]!.parts[0]!.text, /应用触发，无用户新发言/);
+    assert.deepEqual(messages, []);
   } finally {
     await server.close();
   }

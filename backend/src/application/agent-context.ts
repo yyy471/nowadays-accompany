@@ -1,8 +1,10 @@
 import { AppError } from "../domain/errors.js";
 import type { ModelMessage, ModelProtocol, ModelRequest } from "../domain/model.js";
 import type { ModelProvider } from "../domain/model-providers.js";
+import type { WorldbookMatch, WorldbookSelection } from "../domain/worldbook.js";
 import { renderWebReadingPrefix, webReadingCandidates, webReadingRequest } from "../domain/web-reading.js";
 import { serializeModelRequest } from "../model/protocols.js";
+import { createLocalDateFormatter } from "../storage/evidence.js";
 
 // 无显式绑定容量时，以 UTF-16 字符计量序列化后的生成请求和回复预留。
 export const DEFAULT_AGENT_INPUT_CHARS = 128_000;
@@ -11,6 +13,9 @@ export const DEFAULT_AGENT_OUTPUT_RESERVE_CHARS = 4_096;
 export interface AgentSystemPrompt {
   required: string;
   optional: readonly string[];
+  worldbook?: readonly WorldbookMatch[];
+  requiredFooter?: string;
+  dialogueClock?: { today: string; timeZone: string | undefined };
 }
 
 interface MessageGroup {
@@ -32,11 +37,22 @@ export function selectAgentContext(input: {
   resuming: boolean;
   originalModelResource?: boolean;
   evidenceQuery: string;
-}): ModelRequest {
+}): ModelRequest & { worldbookSelection: WorldbookSelection[] } {
   const maxInputChars = input.maxInputChars ?? DEFAULT_AGENT_INPUT_CHARS;
   const reserve = input.maxOutputChars ?? DEFAULT_AGENT_OUTPUT_RESERVE_CHARS;
   const request = { ...input.request, system: input.prompt.required, messages: [] as ModelMessage[] };
   const groups = groupMessages(input.request.messages, input);
+  // 原文里的“今天”指说话当天。将日期附到相应的出站消息，同时纳入各协议的容量计算。
+  const clock = input.prompt.dialogueClock;
+  const dateLabels = new Map<string, string>();
+  if (clock) {
+    const formatDate = createLocalDateFormatter(clock.timeZone);
+    for (const { source } of input.request.messages) {
+      if (!source?.messageId || !source.sentAt) continue;
+      const date = formatDate(source.sentAt);
+      if (date !== clock.today) dateLabels.set(source.messageId, `[消息发送日 ${date}]`);
+    }
+  }
   const selected = new Map<number, ModelMessage[]>();
   for (const group of groups) {
     if (group.active) {
@@ -47,10 +63,18 @@ export function selectAgentContext(input: {
       selected.set(group.index, group.messages);
     }
   }
-  const withSelection = (): ModelRequest => ({
-    ...request,
-    messages: [...selected.entries()].sort(([a], [b]) => a - b).flatMap(([, messages]) => messages),
-  });
+  const withSelection = (): ModelRequest => {
+    let hasDates = false;
+    const messages = [...selected.entries()].sort(([a], [b]) => a - b).flatMap(([, group]) => group).map(message => {
+      const label = message.source?.messageId && dateLabels.get(message.source.messageId);
+      if (!label) return message;
+      hasDates = true;
+      return { ...message, content: `${label}\n${message.content}` };
+    });
+    const dateNote = hasDates && clock ? `本轮当地日期 ${clock.today}。旧消息中相对日期以其发送日为准。` : "";
+    const system = [request.system, dateNote, input.prompt.requiredFooter].filter(Boolean).join("\n");
+    return { ...request, system, messages };
+  };
   const size = () => serializeModelRequest(input.protocol, input.baseUrl, withSelection(), input.provider).length;
   const fits = () => size() + reserve <= maxInputChars;
   const minimumChars = size();
@@ -101,6 +125,30 @@ export function selectAgentContext(input: {
     };
     if (!replace(message)) fitRelevantPartial(message, terms, true, replace);
   }
+  // 设定按整条取舍，同一次调用同时受设定上限和真实协议请求上限约束。
+  const worldbookSelection: WorldbookSelection[] = [];
+  let worldbookChars = 0;
+  let includedEntries = 0;
+  for (const match of input.prompt.worldbook ?? []) {
+    const heading = includedEntries === 0
+      ? "\n已知世界设定，只在合适时自然使用。原文明确的事实可以肯定地说，亲历需有经历作依据。未交代的具体规则、物件状态和他人经历保持未知，有理由推测时说出不确定。可以运用日常常识、演绎自己此刻的言行。"
+      : "";
+    const line = heading + "\n" + JSON.stringify({ 条目: match.title, 设定: match.content });
+    let included = false;
+    if (includedEntries < 6 && worldbookChars + line.length <= 4000) {
+      const previous = request.system;
+      request.system += line;
+      included = fits();
+      if (included) {
+        includedEntries++;
+        worldbookChars += line.length;
+      } else {
+        request.system = previous;
+      }
+    }
+    worldbookSelection.push({ revision: match.revision, bookId: match.bookId, entryId: match.entryId,
+      messageIds: match.messageIds, status: included ? "included" : "budget_omitted" });
+  }
   for (const line of input.prompt.optional) {
     const previous = request.system;
     request.system = `${previous}\n${line}`;
@@ -111,7 +159,7 @@ export function selectAgentContext(input: {
       addGroup(group, group.messages.map(referenceMessage));
     }
   }
-  return withSelection();
+  return { ...withSelection(), worldbookSelection };
 }
 
 function fitRelevantPartial(

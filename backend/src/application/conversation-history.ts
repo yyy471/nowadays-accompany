@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import { z } from "zod";
 import type { ConversationTool } from "../domain/conversation.js";
 import type { ModelMessage } from "../domain/model.js";
+import { SPOKEN_REPLY_SQL } from "../storage/evidence.js";
 import { contextTerms } from "./agent-context.js";
 import type { RoleAccess } from "./role-access.js";
 
@@ -9,7 +10,7 @@ const lookupSchema = z.object({
   kind: z.enum(["message", "tool", "internal", "evidence"]).optional(),
   id: z.string().min(1).max(512).optional(),
   query: z.string().trim().max(500).optional(),
-  scope: z.enum(["window", "task"]).default("window"),
+  scope: z.enum(["window", "task", "spoken"]).default("window"),
   offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
 });
 
@@ -41,8 +42,9 @@ const historyRowsSql = `
       FROM messages m JOIN windows w ON w.window_id = m.window_id
       LEFT JOIN evidence_records ev ON ev.role_id = w.role_id AND ev.source_kind = 'message'
         AND ev.source_id = m.message_id
-     WHERE w.role_id = @roleId AND m.status <> 'generating'
-       AND ((@scope = 'window' AND m.window_id = @windowId)
+     WHERE w.role_id = @roleId AND m.status <> 'generating' AND m.content <> ''
+       AND ((@scope = 'spoken' AND ${SPOKEN_REPLY_SQL})
+         OR (@scope = 'window' AND m.window_id = @windowId)
          OR (@scope = 'task' AND ev.task_id = @taskId)
          OR (@scope = 'task' AND EXISTS (
            SELECT 1 FROM executions x JOIN execution_tasks xt USING (execution_id)
@@ -92,14 +94,14 @@ export function historyLookupTool(roleId: string, access: RoleAccess, webProject
   return {
     name: "history_lookup",
     source: "memory",
-    description: "分页查找本窗口或当前任务的旧消息、已保存工具回执及内部操作。无需知道编号即可按文字搜索；按编号分页读原文。",
+    description: "分页查找本窗口或当前任务的历史，或跨窗口核对角色已经告诉用户的原话。可按文字搜索、按编号分页读原文。",
     inputSchema: {
       type: "object",
       properties: {
         kind: { enum: ["message", "tool", "internal", "evidence"] },
         id: { type: "string", description: "原消息、工具回执、内部操作或证据编号。省略则列举或搜索。" },
         query: { type: "string", description: "搜索词。省略则按时间逆序列举。" },
-        scope: { enum: ["window", "task"], description: "默认本窗口；可改查当前任务。" },
+        scope: { enum: ["window", "task", "spoken"], description: "window 查本窗口，task 查当前任务，spoken 跨窗口查实际发给用户的内容。中断回复只计已输出的部分。" },
         offset: { type: "integer", minimum: 0, description: "使用上次返回的 nextOffset。" },
       },
       additionalProperties: false,
@@ -143,7 +145,9 @@ export function historyLookupTool(roleId: string, access: RoleAccess, webProject
           const { content, background: _background, ...row } = projectRow(business.db, roleId, candidate as HistoryRow, webProjection);
           if (search && !row.label.toLowerCase().includes(search) && !content.toLowerCase().includes(search)) continue;
           if (matched++ < offset) continue;
-          entries.push({ ...row, snippet: content.slice(0, 120) });
+          const hit = search ? content.toLowerCase().indexOf(search) : -1;
+          const start = Math.max(0, hit - 32);
+          entries.push({ ...row, snippet: (start ? "…" : "") + content.slice(start, start + 120) });
           if (entries.length > pageSize) break;
         }
         return {
@@ -220,7 +224,7 @@ function historyMessage(row: HistoryRow, scope: HistoryScope["scope"], continuin
     return {
       role: row.label === "user" ? "user" : "assistant",
       content: row.status === "interrupted" ? `${row.content}\n[以上回复中断，未完成]` : row.content,
-      source: { ...source, messageId: row.id },
+      source: { ...source, messageId: row.id, sentAt: row.occurredAt },
     };
   }
   return {

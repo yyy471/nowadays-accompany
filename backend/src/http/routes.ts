@@ -75,6 +75,7 @@ import { registerSceneImageRoutes } from "./scene-image-routes.js";
 import { registerImageServiceRoutes } from "./image-service-routes.js";
 import { registerVoiceRoutes } from "./voice-routes.js";
 import { registerVoiceServiceRoutes } from "./voice-service-routes.js";
+import { putWorldbooksSchema } from "../domain/worldbook.js";
 
 import type { MediaMaintenance } from '../application/media-maintenance.js';
 
@@ -116,6 +117,19 @@ export function registerApiRoutes(
     return handler;
   });
   registerRoleActivityRoutes(router, activity);
+  router.add("GET", "/v1/roles/:roleId/worldbooks", ({ params }) => ({
+    status: 200, body: services.roles.getWorldbooks(params.roleId ?? ""),
+  }));
+  router.add("PUT", "/v1/roles/:roleId/worldbooks", async ({ params, request }) => {
+    // 支持最大 16 本、每本 64 条及 JSON 转义开销，其他接口维持原请求限额。
+    const { expectedRevision, books } = parseBody(putWorldbooksSchema, await readJsonBody(request, 24 * 1024 * 1024));
+    return { status: 200, body: services.roles.putWorldbooks(params.roleId ?? "", expectedRevision, books) };
+  });
+  router.add("GET", "/v1/roles/:roleId/worldbooks/usage", ({ params, url }) => {
+    const executionId = url.searchParams.get("executionId")?.trim();
+    if (!executionId) throw new HttpError(400, "INVALID_QUERY", "请指定 executionId");
+    return { status: 200, body: { items: services.roles.getWorldbookUsage(params.roleId ?? "", executionId) } };
+  });
   router.add("GET", "/v1/health", (): JsonResponse => ({
     status: 200,
     body: { status: "ok", version },

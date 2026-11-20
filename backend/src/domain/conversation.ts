@@ -122,6 +122,7 @@ export interface ConversationContext {
 }
 
 export interface RecallBrief {
+  experienceDate?: string;
   type: "event" | "daily_summary" | "diary";
   id: string;
   title: string;
@@ -242,6 +243,7 @@ export interface AgentSegmentSummary {
 
 export interface AgentRunResult {
   text: string;
+  lastRoundEchoOnly: boolean;
   statePatch: Record<string, unknown>;
   rounds: AgentRound[];
   taskId: string | null;

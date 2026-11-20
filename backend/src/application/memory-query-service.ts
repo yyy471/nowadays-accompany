@@ -17,6 +17,7 @@ import type {
   DiarySegmentView,
   EventCorrection,
   MemoryBatchRecord,
+  MemoryClaimRecord,
   MemoryEventRecord,
   MemoryEventSourceRecord,
   MemoryEvidenceDetail,
@@ -35,6 +36,7 @@ import {
 import { localDateFromIso, sha256 } from "../storage/evidence.js";
 import { MemoryStore, type MemoryStatus } from "../storage/memory-store.js";
 import type { RoleAccess } from "./role-access.js";
+import { eventWorldbookReferences, type EventWorldbookReference } from "../storage/worldbook-store.js";
 
 export interface MemoryQueryServiceOptions {
   timeZone?: string;
@@ -47,8 +49,11 @@ export interface SearchContext {
 }
 
 export interface EventDetail extends MemoryEventRecord {
+  worldbookEntries: EventWorldbookReference[];
   tags: MemoryTagValues;
   sources: MemoryEventSourceRecord[];
+  claims: MemoryClaimRecord[];
+  relatedGrowthEventIds: string[];
 }
 
 export interface SummaryDetail extends DailySummaryRecord {
@@ -56,6 +61,7 @@ export interface SummaryDetail extends DailySummaryRecord {
 }
 
 interface DocumentRow {
+  document_id: number;
   record_type: MemoryRecordType;
   record_id: string;
   title: string;
@@ -90,7 +96,7 @@ export class MemoryQueryService {
       const retrievalId = randomUUID();
       const now = this.now().toISOString();
       try {
-        const items = this.runSearch(store, roleId, request);
+        const items = this.runSearch(store, roleId, request, context.mode);
         const limited = items.slice(0, request.limit ?? 20).map((item, index) => ({
           ...item,
           rank: index + 1,
@@ -150,8 +156,11 @@ export class MemoryQueryService {
       const store = new MemoryStore(storage.business.db);
       return {
         ...store.getEvent(roleId, eventId),
+        worldbookEntries: eventWorldbookReferences(storage.business.db, roleId, eventId),
         tags: store.getTags(eventId),
         sources: store.listEventSources(roleId, eventId),
+        claims: store.listEventClaims(roleId, eventId),
+        relatedGrowthEventIds: store.listRelatedGrowthEvents(roleId, eventId),
       };
     });
   }
@@ -235,7 +244,7 @@ export class MemoryQueryService {
           experienceDate,
           changeSource: "agent_correction",
         });
-      })();
+      }).immediate();
       return {
         eventId: updated.eventId,
         version: updated.version,
@@ -259,7 +268,7 @@ export class MemoryQueryService {
           summary: input.summary,
           now: this.now().toISOString(),
         }),
-      )();
+      ).immediate();
       return {
         summaryId: updated.summaryId,
         version: updated.version,
@@ -455,19 +464,24 @@ export class MemoryQueryService {
     store: MemoryStore,
     roleId: string,
     request: MemorySearchRequest,
+    mode: SearchContext["mode"],
   ): MemorySearchItem[] {
     const db = store.getDatabase();
-    const tokens = tokenizeQuery(request.query ?? "");
+    const tokens = tokenizeQuery(request.query ?? "", mode);
+    if (request.query?.trim() && tokens.length === 0 && !request.dateFrom && !request.dateTo) return [];
     const matches = this.matchDocuments(db, roleId, tokens);
+    if (tokens.length && !matches.size) return [];
+    const filterByMatch = tokens.length > 0;
     const documents = db
       .prepare(
-        `SELECT record_type, record_id, title, body, updated_at
-         FROM memory_search_documents WHERE role_id = ?`,
+        `SELECT document_id, record_type, record_id, title, body, updated_at
+         FROM memory_search_documents WHERE role_id = ?
+         ${filterByMatch ? "AND document_id IN (SELECT value FROM json_each(?))" : ""}`,
       )
-      .all(roleId) as DocumentRow[];
+      .all(...(filterByMatch ? [roleId, JSON.stringify([...matches.keys()])] : [roleId])) as DocumentRow[];
     const wantedTypes = new Set(request.types ?? []);
     const tagFilters = tagFiltersOf(request);
-    const eventTags = this.loadEventTags(db, roleId);
+    const eventTags = tagFilters.length ? this.loadEventTags(db, roleId) : undefined;
     const items: Array<MemorySearchItem & {
       tokenMatches: number;
       ftsScore: number | null;
@@ -476,11 +490,7 @@ export class MemoryQueryService {
       updatedAt: string;
     }> = [];
     for (const document of documents) {
-      const key = `${document.record_type}:${document.record_id}`;
-      const match = matches.get(key);
-      if (tokens.length > 0 && !match) {
-        continue;
-      }
+      const match = matches.get(document.document_id);
       if (wantedTypes.size > 0 && !wantedTypes.has(document.record_type)) {
         continue;
       }
@@ -503,9 +513,9 @@ export class MemoryQueryService {
         if (document.record_type !== "event") {
           continue;
         }
-        const tags = eventTags.get(document.record_id) ?? new Map();
+        const tags = eventTags?.get(document.record_id);
         const matchesAll = tagFilters.every((filter) => {
-          const values = tags.get(filter.dimension);
+          const values = tags?.get(filter.dimension);
           return filter.values.some((value) =>
             values?.has(normalizeTag(value)) ?? false,
           );
@@ -532,11 +542,12 @@ export class MemoryQueryService {
       });
     }
     items.sort(compareSearchItems);
-    return items.map(({ type, id, title, snippet }) => ({
+    return items.map(({ type, id, title, snippet, experienceDate }) => ({
       type,
       id,
       title,
       snippet,
+      experienceDate,
       rank: 0,
     }));
   }
@@ -545,8 +556,8 @@ export class MemoryQueryService {
     db: Database.Database,
     roleId: string,
     tokens: readonly string[],
-  ): Map<string, MatchInfo> {
-    const matches = new Map<string, MatchInfo>();
+  ): Map<number, MatchInfo> {
+    const matches = new Map<number, MatchInfo>();
     if (tokens.length === 0) {
       return matches;
     }
@@ -558,18 +569,17 @@ export class MemoryQueryService {
         .join(" OR ");
       const rows = db
         .prepare(
-          `SELECT d.record_type, d.record_id, bm25(memory_search_fts) AS score
+          `SELECT d.document_id, bm25(memory_search_fts) AS score
            FROM memory_search_fts
            JOIN memory_search_documents d ON d.document_id = memory_search_fts.rowid
            WHERE memory_search_fts MATCH ? AND d.role_id = ?`,
         )
         .all(expression, roleId) as Array<{
-        record_type: MemoryRecordType;
-        record_id: string;
+        document_id: number;
         score: number;
       }>;
       for (const row of rows) {
-        matches.set(`${row.record_type}:${row.record_id}`, {
+        matches.set(row.document_id, {
           ftsScore: row.score,
           like: false,
         });
@@ -579,20 +589,18 @@ export class MemoryQueryService {
       const pattern = `%${token.replace(/[%_\\]/g, "\\$&")}%`;
       const rows = db
         .prepare(
-          `SELECT record_type, record_id FROM memory_search_documents
+          `SELECT document_id FROM memory_search_documents
            WHERE role_id = ? AND (title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')`,
         )
         .all(roleId, pattern, pattern) as Array<{
-        record_type: MemoryRecordType;
-        record_id: string;
+        document_id: number;
       }>;
       for (const row of rows) {
-        const key = `${row.record_type}:${row.record_id}`;
-        const existing = matches.get(key);
+        const existing = matches.get(row.document_id);
         if (existing) {
           existing.like = true;
         } else {
-          matches.set(key, { ftsScore: null, like: true });
+          matches.set(row.document_id, { ftsScore: null, like: true });
         }
       }
     }
@@ -668,15 +676,28 @@ export class MemoryQueryService {
   }
 }
 
-function tokenizeQuery(query: string): string[] {
-  const normalized = query.replace(
-    /(?<=[\u4e00-\u9fff])[的了和与及在](?=[\u4e00-\u9fff])/gu,
-    " ",
-  );
-  return normalized
-    .split(/[\s,，。.;；、:：!?！？()（）[\]【】\-—_/\\]+/u)
-    .map((token) => token.trim())
-    .filter((token) => token.length > 0);
+const wordSegmenter = new Intl.Segmenter("zh-CN", { granularity: "word" });
+// 口语问句里的时间、指代与寒暄独立命中时，通常不能定位到某件经历。
+const queryFillers = new Set(
+  "今天 明天 昨天 那天 当时 最近 后来 之前 以前 上次 这次 时候 我们 你们 他们 那个 这个 那些 这些 一下 一起 已经 是不是 有没有 还有 没有 怎么 怎样 什么 哪里 为什么 知道 记得 记不记得 我想 你有 你好 您好 哈喽 早安 晚安 谢谢 哈哈 你好呀 提过 说过".split(" "),
+);
+
+function tokenizeQuery(query: string, mode: SearchContext["mode"]): string[] {
+  const tokens = new Set<string>();
+  for (const clause of query.toLowerCase().match(/[\p{L}\p{M}\p{N}]+/gu) ?? []) {
+    if (mode === "auto" && queryFillers.has(clause)) continue;
+    if (!/\p{Script=Han}/u.test(clause) || clause.length <= 3) {
+      tokens.add(clause);
+      continue;
+    }
+    const words = Array.from(wordSegmenter.segment(clause))
+      .filter((word) => word.isWordLike && word.segment.length >= 2 && !queryFillers.has(word.segment))
+      .map((word) => word.segment);
+    // 保留整段作精确匹配；长问句还可用其中的专名和事物找到不同措辞的原文。
+    tokens.add(clause);
+    for (const word of words) tokens.add(word);
+  }
+  return [...tokens];
 }
 
 function normalizeTag(value: string): string {
@@ -746,18 +767,28 @@ function compareSearchItems(
 }
 
 function makeSnippet(body: string, tokens: readonly string[]): string {
-  const lower = body.toLowerCase();
-  let index = -1;
-  for (const token of tokens) {
-    const found = lower.indexOf(token.toLowerCase());
-    if (found >= 0 && (index < 0 || found < index)) {
-      index = found;
+  const width = 120;
+  let offset = 0;
+  let bestStart = 0;
+  let bestEnd = Math.min(body.length, width);
+  let bestScore = 0;
+  // 每条说法单独占一行。让同一段里同时出现的多个线索优先，并尽量留下段首的来源说明。
+  for (const line of body.split("\n")) {
+    for (let start = 0; start < line.length; start += width / 2) {
+      const slice = line.slice(start, start + width).toLowerCase();
+      const score = tokens.reduce((total, term) =>
+        total + (slice.includes(term) ? Math.min(term.length, 12) : 0), 0);
+      if (score > bestScore) {
+        bestScore = score;
+        bestStart = offset + start;
+        bestEnd = bestStart + slice.length;
+      }
+      if (start + width >= line.length) break;
     }
+    offset += line.length + 1;
   }
-  const start = index > 0 ? Math.max(0, index - 40) : 0;
-  const end = Math.min(body.length, start + 120);
-  const snippet = body.slice(start, end).replace(/\s+/g, " ").trim();
-  return `${start > 0 ? "…" : ""}${snippet}${end < body.length ? "…" : ""}`;
+  const snippet = body.slice(bestStart, bestEnd).replace(/\s+/g, " ").trim();
+  return `${bestStart > 0 ? "…" : ""}${snippet}${bestEnd < body.length ? "…" : ""}`;
 }
 
 function safeWorkspacePath(workspaceDir: string, relativePath: string): string {

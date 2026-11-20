@@ -92,6 +92,7 @@ export async function readMultipartForm(
 
 export async function readJsonBody(
   request: IncomingMessage,
+  maxBytes = MAX_BODY_BYTES,
 ): Promise<unknown> {
   const contentType = request.headers["content-type"];
   if (
@@ -110,8 +111,8 @@ export async function readJsonBody(
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += buffer.length;
-    if (size > MAX_BODY_BYTES) {
-      throw new HttpError(413, "PAYLOAD_TOO_LARGE", "请求体超过 1 MiB 上限");
+    if (size > maxBytes) {
+      throw new HttpError(413, "PAYLOAD_TOO_LARGE", `请求体超过 ${maxBytes / (1024 * 1024)} MiB 上限`);
     }
     chunks.push(buffer);
   }

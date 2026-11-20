@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ModelEvent, ModelMessage, ModelProtocol } from "../src/domain/model.js";
-import { HttpModelAdapter } from "../src/model/protocols.js";
+import { selectAgentContext } from "../src/application/agent-context.js";
+import { HttpModelAdapter, serializeModelRequest } from "../src/model/protocols.js";
 
 const sse = (data: unknown): string => `data: ${JSON.stringify(data)}\n\n`;
 async function collect(adapter: HttpModelAdapter, messages: ModelMessage[]): Promise<ModelEvent[]> {
@@ -78,3 +79,36 @@ for (const protocol of ["openai-responses", "anthropic-messages"] satisfies Mode
     }
   });
 }
+
+test("Anthropic autonomous entry and persisted multi-tool rounds keep valid Messages envelopes", () => {
+  const protocol = "anthropic-messages" as const;
+  const baseUrl = "https://api.deepseek.com/anthropic/v1";
+  const request = { modelName: "offline", system: "自主活动", messages: [] as ModelMessage[], tools: [] };
+  const first = JSON.parse(serializeModelRequest(protocol, baseUrl, request));
+  assert.equal(first.messages.length, 1);
+  assert.equal(first.messages[0].role, "user");
+  assert.match(first.messages[0].content[0].text, /应用触发，无用户新发言/);
+
+  const output = (id: string) => [
+    { type: "thinking", thinking: "offline-" + id, signature: "opaque-" + id },
+    { type: "tool_use", id, name: "read", input: {} },
+  ];
+  const pair = (id: string): ModelMessage[] => [{
+    role: "assistant", content: "", toolCalls: [{ callId: id, name: "read", arguments: {} }],
+    continuation: { protocol, modelName: "offline", baseUrl, items: output(id) },
+  }, { role: "tool", content: "回执" + id, toolCallId: id }];
+  const resumed = selectAgentContext({
+    request: { ...request, messages: JSON.parse(JSON.stringify([
+      { role: "user", content: "继续读" }, ...pair("first"), ...pair("second"),
+    ])) },
+    protocol, baseUrl, resuming: true, originalModelResource: true, evidenceQuery: "继续读",
+    prompt: { required: request.system, optional: [] },
+  });
+  const wire = JSON.parse(serializeModelRequest(protocol, baseUrl, resumed)).messages;
+  const activeIndex = wire.findIndex((item: { role: string }) => item.role === "assistant");
+  assert.equal(wire[activeIndex - 1].role, "user");
+  assert.match(wire[activeIndex - 1].content[0].text, /已保存的工具事实/);
+  assert.deepEqual(wire[activeIndex].content, output("second"));
+  assert.equal(wire[activeIndex + 1].content[0].tool_use_id, "second");
+  assert.doesNotMatch(JSON.stringify(wire), /opaque-first/);
+});

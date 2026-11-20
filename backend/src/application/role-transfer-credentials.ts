@@ -131,7 +131,7 @@ export class RoleTransferCredentialFilter {
   constructor(values: ReadonlySet<string>, tables: TransferTables) {
     const candidates = new Set(values);
     for (const table of TRANSFER_TABLES) {
-      for (const row of tables[table]) {
+      for (const row of tables[table] ?? []) {
         for (const [column, value] of Object.entries(row)) {
           if (column.endsWith("_json")) collectHistoricalCredentials(value, candidates);
         }
@@ -155,7 +155,7 @@ export class RoleTransferCredentialFilter {
 
   sanitizeTables(tables: TransferTables): void {
     for (const table of TRANSFER_TABLES) {
-      for (const [index, row] of tables[table].entries()) {
+      for (const [index, row] of (tables[table] ?? []).entries()) {
         for (const [column, value] of Object.entries(row)) {
           if (typeof value !== "string") continue;
           const sanitized = column.endsWith("_json") ? this.json(value) : this.text(value);

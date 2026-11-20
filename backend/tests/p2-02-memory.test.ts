@@ -154,7 +154,7 @@ test("v1 business database migrates to the current schema and backfills evidence
     timeZone: "Asia/Shanghai",
   });
   try {
-    assert.equal(store.schemaVersion, 23);
+    assert.equal(store.schemaVersion, 24);
     const autonomyTables = store.db
       .prepare(
         `SELECT name FROM sqlite_master
@@ -1176,5 +1176,185 @@ test("no threshold trigger below the 50-message boundary", () => {
   } finally {
     fixture.store.close();
     fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("claims preserve the speaker, partial knowledge and a cherished one-time detail across revisions", async () => {
+  const fixture = createRole();
+  const at = "2026-10-28T01:10:00.000Z";
+  try {
+    const quote = "那年是我姐姐喜欢栀子花。";
+    registerMessages(fixture, [addMessage(fixture, quote, at)]);
+    const memory = new MemoryStore(fixture.store.db);
+    const evidenceId = memory.listEvidence(fixture.roleId)[0]!.evidenceId;
+    const common = {
+      op: "create_event", localKey: "flower", title: "栀子花", summary: "说起那年的花",
+      occurredAtStart: at, experienceDate: "2026-10-28", evidenceIds: [evidenceId],
+    };
+    const claims = [
+      { kind: "user_quote", text: "喜欢栀子花", evidenceId },
+      { kind: "cherished_detail", text: "栀子花与姐姐的联结", evidenceId },
+      { kind: "unknown", text: "姐姐今天是否仍然喜欢", evidenceId },
+    ];
+    const first = createService(fixture, [{ operations: [{ ...common, claims }] }]);
+    assert.equal((await first.service.runBatch(fixture.roleId)).status, "completed");
+    assert.equal(first.model.requests[0]?.evidence[0]?.sender, "user");
+    const event = memory.listEvents(fixture.roleId)[0]!;
+    assert.equal(memory.getEvidenceDetail(fixture.roleId, evidenceId).sender, "user");
+    assert.deepEqual(memory.listEventClaims(fixture.roleId, event.eventId).map(c => c.learnedAt), [at, at, null]);
+    assert.equal(memory.listEventClaims(fixture.roleId, event.eventId)[0]?.quoteContext, quote);
+    assert.deepEqual(memory.listRefineCandidates(fixture.roleId, 500), []);
+    assert.match(memory.getSearchDocument(fixture.roleId, "event", event.eventId)!.body, /姐姐的联结/);
+
+    const later = "2026-11-01T08:00:00.000Z";
+    const reply = addMessage(fixture, "我还记得你说起的栀子花。", later);
+    fixture.store.db.prepare("UPDATE messages SET sender = 'assistant', status = 'completed' WHERE message_id = ?").run(reply);
+    registerMessages(fixture, [reply]);
+    const secondId = memory.listEvidence(fixture.roleId).find(item => item.sourceId === reply)!.evidenceId;
+    const second = createService(fixture, [{ operations: [{
+      op: "update_event", eventId: event.eventId, expectedVersion: 1, patch: {}, addEvidenceIds: [secondId],
+      claims: [
+        { kind: "shared_detail", text: "我还记得你说起的栀子花。", evidenceId: secondId },
+        { kind: "reflection", text: "如今懂得这是姐姐的回忆", evidenceId: secondId },
+      ],
+    }] }]);
+    assert.equal((await second.service.runBatch(fixture.roleId)).status, "completed");
+    const saved = memory.listEventClaims(fixture.roleId, event.eventId);
+    assert.equal(saved.length, 5);
+    assert.equal(saved[4]?.sourceAt, later);
+    assert.equal(saved[4]?.learnedAt, later);
+    assert.equal(saved[4]?.recordedAt, "2026-11-03T10:00:00.000Z");
+    assert.equal(saved[0]?.sourceSender, "user");
+    assert.equal(saved[4]?.sourceSender, "assistant");
+    assert.match(memory.getSearchDocument(fixture.roleId, "event", event.eventId)!.body, /据角色当时的发言） 如今懂得/);
+    assert.deepEqual(memory.listEventSources(fixture.roleId, event.eventId).map(item => item.sender), ["user", "assistant"]);
+  } finally {
+    fixture.store.close();
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("formation rejects invented quotations and misattributed assistant quotes atomically", async () => {
+  for (const sender of ["user", "assistant"]) {
+    const fixture = createRole();
+    try {
+      const at = "2026-10-28T01:10:00.000Z";
+      const id = addMessage(fixture, "那年是我姐姐喜欢栀子花。", at);
+      fixture.store.db.prepare("UPDATE messages SET sender = ? WHERE message_id = ?").run(sender, id);
+      registerMessages(fixture, [id]);
+      const memory = new MemoryStore(fixture.store.db);
+      const evidenceId = memory.listEvidence(fixture.roleId)[0]!.evidenceId;
+      const { service } = createService(fixture, [{ operations: [{
+        op: "create_event", localKey: "flower", title: "栀子花", summary: "回忆",
+        occurredAtStart: at, experienceDate: "2026-10-28", evidenceIds: [evidenceId],
+        claims: [{ kind: "user_quote", text: sender === "user" ? "我一直喜欢栀子花。" : "那年是我姐姐喜欢栀子花。", evidenceId }],
+      }] }]);
+      assert.equal((await service.runBatch(fixture.roleId)).status, "failed");
+      assert.deepEqual(memory.listEvents(fixture.roleId), []);
+    } finally {
+      fixture.store.close();
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("old growth episodes return by topic and later evidence revises a scoped practice", async () => {
+  const fixture = createRole();
+  try {
+    const at = "2026-10-28T01:10:00.000Z";
+    const later = "2026-11-02T08:00:00.000Z";
+    registerMessages(fixture, [addMessage(fixture, "旧书估价看版次，核对后查出了误差。", at)]);
+    const memory = new MemoryStore(fixture.store.db);
+    const evidenceId = memory.listEvidence(fixture.roleId)[0]!.evidenceId;
+    const first = createService(fixture, [{ operations: [{
+      op: "create_event", localKey: "pricing", title: "辨别版本", summary: "一次估价经历",
+      tags: { topic: ["旧书估价"] }, occurredAtStart: at, experienceDate: "2026-10-28",
+      evidenceIds: [evidenceId], claims: [{
+        kind: "practice", text: "先看版次", practice: { key: "版本核对", scope: "旧书估价", outcome: "解释了价差" }, evidenceId,
+      }, { kind: "interest", text: "好奇扉页落款是谁", evidenceId }],
+    }] }]);
+    assert.equal((await first.service.runBatch(fixture.roleId)).status, "completed");
+    const eventId = memory.listEvents(fixture.roleId)[0]!.eventId;
+    for (let i = 0; i < 21; i++) {
+      memory.createEvent({
+        roleId: fixture.roleId, title: "散步" + i, summary: "沿河岸散步", subjectiveExperience: "",
+        occurredAtStart: later, occurredAtEnd: null, experienceDate: "2026-11-02", tags: {},
+        evidenceIds: [], currentRound: 2, now: "2026-11-05T00:00:00.000Z",
+      });
+    }
+    assert.ok(!memory.listRecentEvents(fixture.roleId).some(item => item.eventId === eventId));
+    const source = addMessage(fixture, "旧书估价时，补拍版权页才分清印次。", later);
+    registerMessages(fixture, [source]);
+    const nextId = memory.listEvidence(fixture.roleId).find(item => item.sourceId === source)!.evidenceId;
+    const second = createService(fixture, [{ operations: [{
+      op: "update_event", eventId, expectedVersion: 1, patch: {}, addEvidenceIds: [nextId],
+      claims: [{ kind: "practice", text: "先核对版权页", practice: {
+        key: "版本核对", scope: "版权页不清时请补拍", outcome: "分清了印次",
+      }, evidenceId: nextId }],
+    }, {
+      op: "create_event", localKey: "new-interest", title: "查扉页的落款", summary: "重拾旧书上的疑问",
+      occurredAtStart: later, experienceDate: "2026-11-02", evidenceIds: [nextId],
+      claims: [{ kind: "reflection", text: "从估价经历追溯疑问的起点", relatedEventId: eventId, evidenceId: nextId }],
+    }] }]);
+    assert.equal((await second.service.runBatch(fixture.roleId)).status, "completed");
+    assert.deepEqual(second.model.requests[0]?.relatedEvents[0]?.practiceKeys, ["版本核对"]);
+    const searchBody = memory.getSearchDocument(fixture.roleId, "event", eventId)!.body;
+    assert.match(searchBody, /版权页不清时请补拍/);
+    assert.doesNotMatch(searchBody, /先看版次/);
+    const history = memory.listEventClaims(fixture.roleId, eventId);
+    assert.deepEqual(history.filter(claim => claim.practice).map(claim => claim.sourceAt), [at, later]);
+    const linked = memory.listEvents(fixture.roleId).find(event => event.title === "查扉页的落款")!;
+    assert.equal(memory.listEventClaims(fixture.roleId, linked.eventId)[0]!.relatedEventId, eventId);
+    assert.deepEqual(memory.listRelatedGrowthEvents(fixture.roleId, eventId), [linked.eventId]);
+    assert.deepEqual(memory.listRelatedGrowthEvents(fixture.roleId, linked.eventId), [eventId]);
+    // 迟到的旧证据仍写入历史，不能倒置今天实际采用的方法。
+    const oldAt = "2026-10-25T08:00:00.000Z";
+    const delayed = addMessage(fixture, "旧书估价，曾按封面辨别。", oldAt);
+    registerMessages(fixture, [delayed]);
+    const oldId = memory.listEvidence(fixture.roleId).find(item => item.sourceId === delayed)!.evidenceId;
+    const third = createService(fixture, [{ operations: [{
+      op: "update_event", eventId, expectedVersion: 2, patch: {}, addEvidenceIds: [oldId],
+      claims: [{ kind: "practice", text: "比较封面",
+        practice: { key: "版本核对", scope: "封面齐全时", outcome: "只辨认出书系" }, evidenceId: oldId }],
+    }] }]);
+    assert.equal((await third.service.runBatch(fixture.roleId)).status, "completed");
+    const current = memory.getSearchDocument(fixture.roleId, "event", eventId)!.body;
+    assert.match(current, /先核对版权页/);
+    assert.doesNotMatch(current, /比较封面/);
+    assert.ok(memory.listEventClaims(fixture.roleId, eventId).some(claim => claim.text === "比较封面"));
+  } finally {
+    fixture.store.close();
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("shared details only record the delivered part of replies in user-visible windows", async () => {
+  for (const [source, status, quote, allowed] of [
+    ["nowadays", "interrupted", "我只讲到这里", true],
+    ["nowadays", "interrupted", "尚未输出的下一句", false],
+    ["nowadays-autonomy", "completed", "我只讲到这里", false],
+    ["nowadays-autonomy", "interrupted", "我只讲到这里", false],
+  ] as const) {
+    const fixture = createRole();
+    try {
+      const window = fixture.store.getOrCreateWindow({ roleId: fixture.roleId, kind: "custom", source });
+      const at = "2026-11-03T08:00:00.000Z";
+      const id = addMessage(fixture, "我只讲到这里", at, window.windowId);
+      fixture.store.db.prepare("UPDATE messages SET sender='assistant', status=? WHERE message_id=?").run(status, id);
+      registerMessages(fixture, [id]);
+      const memory = new MemoryStore(fixture.store.db);
+      const evidenceId = memory.listEvidence(fixture.roleId)[0]!.evidenceId;
+      const { service, model } = createService(fixture, [{ operations: [{
+        op: "create_event", localKey: "shared", title: "已讲部分", summary: "当日对话",
+        occurredAtStart: at, experienceDate: "2026-11-03", evidenceIds: [evidenceId],
+        claims: [{ kind: "shared_detail", text: quote, evidenceId }],
+      }] }]);
+      assert.equal((await service.runBatch(fixture.roleId)).status, allowed ? "completed" : "failed");
+      assert.equal(model.requests[0]?.evidence[0]?.publishedReply, source === "nowadays");
+      assert.equal(memory.listEvents(fixture.roleId).length, allowed ? 1 : 0);
+    } finally {
+      fixture.store.close();
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
   }
 });

@@ -10,6 +10,8 @@ import { RoleStorage } from "../storage/role-storage.js";
 import { RoleActivityStore } from "../storage/role-activity-store.js";
 import type { RoleRecord, WindowRecord } from "../storage/role-store.js";
 import { RoleAccess } from "./role-access.js";
+import type { Worldbook } from "../domain/worldbook.js";
+import { readWorldbooks, replaceWorldbooks, readWorldbookUsage } from "../storage/worldbook-store.js";
 
 export interface RoleView {
   roleId: string;
@@ -73,6 +75,18 @@ export class RoleService {
       roleId,
       new Date().toISOString(),
     );
+  }
+
+  getWorldbooks(roleId: string) {
+    return this.access.withStore(roleId, storage => readWorldbooks(storage.business.db, roleId));
+  }
+
+  putWorldbooks(roleId: string, expectedRevision: number, books: Worldbook[]) {
+    return this.access.withStore(roleId, storage => replaceWorldbooks(storage.business.db, roleId, expectedRevision, books));
+  }
+
+  getWorldbookUsage(roleId: string, executionId: string) {
+    return this.access.withStore(roleId, storage => readWorldbookUsage(storage.business.db, roleId, executionId));
   }
 
   createRole(

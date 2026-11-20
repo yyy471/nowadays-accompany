@@ -8,6 +8,9 @@ import {
 
 export { modelProtocolSchema, type ModelProtocol };
 
+/** 仅用于要求至少一条输入的厂商协议，不写入窗口消息或记忆证据。 */
+export const APPLICATION_TRIGGER_INPUT = "〔应用触发，无用户新发言〕请按本次系统指令处理。";
+
 export const modelServiceConfigSchema = modelBaseConfigSchema;
 export type ModelServiceConfig = z.infer<typeof modelServiceConfigSchema>;
 
@@ -57,6 +60,8 @@ export interface ModelImageAttachment {
 
 export interface ModelMessageSource {
   messageId?: string;
+  /** 原消息发送时间。跨日时用于本次出站投影，原文及回查引用保持独立。 */
+  sentAt?: string;
   toolCallId?: string;
   internalStepKey?: string;
   evidenceId?: string;

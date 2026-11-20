@@ -610,7 +610,7 @@ export class ConversationStore {
     const rows = this.db
       .prepare(
         `SELECT * FROM (
-           SELECT * FROM messages WHERE window_id = ?
+           SELECT * FROM messages WHERE window_id = ? AND (sender = 'user' OR content <> '')
             ORDER BY sequence DESC LIMIT ?
          ) ORDER BY sequence ASC`,
       )
@@ -735,7 +735,7 @@ export class ConversationStore {
              FROM messages m JOIN windows w ON w.window_id = m.window_id
             WHERE m.window_id = ? AND w.role_id = ?
               AND m.sequence < ? AND m.sender IN ('user', 'assistant')
-              AND (m.sender = 'user' OR m.status IN ('completed', 'interrupted'))
+              AND (m.sender = 'user' OR (m.status IN ('completed', 'interrupted') AND m.content <> ''))
             ORDER BY m.sequence DESC LIMIT ?
          ) ORDER BY sequence ASC`,
       )
@@ -1305,7 +1305,7 @@ export class ConversationStore {
         roleId: this.roleId,
         messageIds: [
           ...userMessages.map((message) => message.message_id),
-          replyMessage.messageId,
+          ...(input.content ? [replyMessage.messageId] : []),
         ],
         executionId: input.executionId,
         ...(this.timeZone === undefined ? {} : { timeZone: this.timeZone }),
@@ -2179,6 +2179,13 @@ export class ConversationStore {
       replyContent: row.reply_content,
       taskDecision: parseTaskDecision(row.task_decision_json),
     }));
+  }
+
+  hasInterruptedOutput(executionId: string): boolean {
+    return this.db.prepare(
+      `SELECT 1 FROM execution_stream_events
+       WHERE role_id = ? AND execution_id = ? AND event_type = 'message_interrupted' LIMIT 1`,
+    ).get(this.roleId, executionId) !== undefined;
   }
 
   partialText(executionId: string): string {

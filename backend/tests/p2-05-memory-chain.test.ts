@@ -30,7 +30,8 @@ class TwoTurnChatModel implements ModelPort {
     const toolMessages = request.messages.filter(
       (message) => message.role === "tool",
     );
-    if (!recalled) {
+    // 深入回查按当前工具回执继续，不要求每一轮重复注入首次召回。
+    if (!recalled && toolMessages.length === 0) {
       assert.match(request.system, /自动召回没有命中/);
       yield { type: "text_delta", text: "我记住了，我们一起去了杭州旧书店。" };
       yield { type: "completed", stopReason: "stop" };
@@ -87,6 +88,29 @@ function formedEvent(input: MemoryFormationInput): unknown {
     ],
   };
 }
+
+test("role time applies to a later user's message and its evidence as well as the reply", async () => {
+  let instant = "2026-11-20T08:00:00.000Z";
+  const response: ModelEvent[] = [{ type: "text_delta", text: "收到了。" }, { type: "completed", stopReason: "stop" }];
+  const fixture = createFixture([response, response], { now: () => new Date(instant) });
+  try {
+    for (const date of [instant, "2027-02-18T08:00:00.000Z"]) {
+      instant = date;
+      const submission = fixture.app.conversation.submitMessage(fixture.roleId, fixture.windowId, {
+        content: "今天的安排", submissionId: randomUUID(), sourcePlatform: "nowadays",
+      });
+      await fixture.app.conversation.waitForIdle(fixture.roleId);
+      assert.equal(submission.message.createdAt, date);
+      const dates = withStorage(fixture, ({ business }) => business.db.prepare(
+        `SELECT m.sender, er.occurred_at AS at FROM evidence_records er JOIN messages m ON m.message_id=er.source_id
+         WHERE er.source_kind='message' AND er.occurred_at=? ORDER BY m.sequence`,
+      ).all(date));
+      assert.deepEqual(dates, [{ sender: "user", at: date }, { sender: "assistant", at: date }]);
+    }
+  } finally {
+    await fixture.close();
+  }
+});
 
 test("conversation-formed memory is recalled with original evidence in the next turn", { timeout: 20_000 }, async () => {
   const chat = new TwoTurnChatModel();
@@ -760,4 +784,23 @@ test("pending evidence and refine candidates share one maintenance input", { tim
   } finally {
     await fixture.close();
   }
+});
+
+test("DeepSeek Messages memory formation reserves output for reasoning and JSON", async () => {
+  const model: ModelPort = {
+    async *stream(request) {
+      assert.equal(request.maxOutputTokens, 8192);
+      assert.equal(request.messages[0]?.role, "user");
+      yield { type: "text_delta", text: '{"operations":[]}' };
+      yield { type: "completed", stopReason: "end_turn" };
+    },
+  };
+  const memory = new HttpMemoryModel(model, {
+    ...MEMORY_BINDING, config: { protocol: "anthropic-messages", baseUrl: "https://api.deepseek.com/anthropic/v1" },
+  });
+  const input: MemoryFormationInput = {
+    roleId: "role", batchId: "batch", currentRound: 1,
+    evidence: [], relatedEvents: [], refineCandidates: [], summaryCandidates: [],
+  };
+  assert.deepEqual(await memory.form(input), { operations: [] });
 });

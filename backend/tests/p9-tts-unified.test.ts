@@ -1303,7 +1303,7 @@ test("v9 voice rows migrate to v12 without touching messages, segments or SSE cu
           .get() as { latest: number | null }
       ).latest,
     }));
-    assert.equal(countsAfter.schemaVersion, 23);
+    assert.equal(countsAfter.schemaVersion, 24);
     assert.equal(countsAfter.messages, countsBefore.messages);
     assert.equal(countsAfter.segments, countsBefore.segments);
     assert.equal(countsAfter.events, countsBefore.events);

@@ -655,6 +655,7 @@ export class RoleStore {
     roleId: string,
     windowId: string,
     input: SubmitMessageInput,
+    now = new Date().toISOString(),
   ): SubmitMessageResult {
     return this.db.transaction(() => {
       this.getWindow(roleId, windowId);
@@ -680,7 +681,6 @@ export class RoleStore {
           .get(windowId) as { next_sequence: number }
       ).next_sequence;
       const messageId = randomUUID();
-      const now = new Date().toISOString();
       this.db
         .prepare(
           "INSERT INTO messages (message_id, window_id, sender, content, source_platform, status, sequence, submission_id, submission_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",

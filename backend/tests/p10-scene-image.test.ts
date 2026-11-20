@@ -539,7 +539,7 @@ test("a v12 role database migrates to v13 and keeps messages, segments and event
     assert.equal(migrated.cursor, beforeEvents);
     assert.equal(
       withStorageFor(config, role.roleId, (storage) => storage.business.schemaVersion),
-      23,
+      24,
     );
     const tables = withStorageFor(config, role.roleId, (storage) =>
       (

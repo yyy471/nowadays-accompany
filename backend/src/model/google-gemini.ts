@@ -1,3 +1,4 @@
+import { APPLICATION_TRIGGER_INPUT } from "../domain/model.js";
 import { createHash, createSign, randomUUID } from "node:crypto";
 import { usesVertexExpressPresets, VERTEX_EXPRESS_MODELS, type ModelProvider } from "../domain/model-providers.js";
 import {
@@ -579,6 +580,9 @@ function toGoogleGeminiContents(
         },
       },
     ]);
+  }
+  if (contents.length === 0) {
+    pushParts("user", [{ text: APPLICATION_TRIGGER_INPUT }]);
   }
   return contents;
 }

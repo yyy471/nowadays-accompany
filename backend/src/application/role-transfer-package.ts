@@ -6,6 +6,7 @@ import Database from "better-sqlite3";
 import { z } from "zod";
 import { rolePaths, type BackendConfig, type RolePaths } from "../bootstrap/config.js";
 import { BUSINESS_SCHEMA_VERSION, openBusinessDatabase } from "../storage/schema.js";
+import { worldbooksSchema } from "../domain/worldbook.js";
 import { RoleStorage } from "../storage/role-storage.js";
 import { XIA_CHENG_BUILTIN_KEY } from "./preset-assistant.js";
 import {
@@ -195,24 +196,37 @@ function validateRoleTransfer(value: unknown): RoleTransferPackage {
 }
 
 function validateOwnership(roleId: string, builtinKey: unknown, tables: TransferTables): void {
-  if (Object.keys(tables).length !== TRANSFER_TABLES.length ||
-      !TRANSFER_TABLES.every((table) => Object.hasOwn(tables, table))) throw new Error("ROLE_TRANSFER_TABLE_INVALID");
+  // 早期 v1 包尚无世界书；两表成对出现，新表为空时保持既有时间线指纹。
+  const hasBooks = Object.hasOwn(tables, "role_worldbooks");
+  const tableCount = TRANSFER_TABLES.length - (hasBooks ? 0 : 2);
+  if (Object.keys(tables).length !== tableCount || Object.hasOwn(tables, "worldbook_usage") !== hasBooks ||
+      !TRANSFER_TABLES.every(table => Object.hasOwn(tables, table) || isWorldbookTable(table))) {
+    throw new Error("ROLE_TRANSFER_TABLE_INVALID");
+  }
   if (tables.roles.length !== 1 || tables.roles[0]?.role_id !== roleId ||
       tables.roles[0].builtin_key !== builtinKey || (builtinKey !== null && builtinKey !== XIA_CHENG_BUILTIN_KEY)) {
     throw new Error("ROLE_TRANSFER_ROLE_OWNERSHIP_MISMATCH");
   }
   for (const table of TRANSFER_TABLES) {
     const columns = transferColumns(table);
-    for (const row of tables[table]) {
+    for (const row of tables[table] ?? []) {
       if (Object.keys(row).length !== columns.length || !columns.every((column) => Object.hasOwn(row, column))) {
         throw new Error(`ROLE_TRANSFER_COLUMNS_INVALID:${table}`);
       }
       if (Object.hasOwn(row, "role_id") && row.role_id !== roleId) throw new Error("ROLE_TRANSFER_ROLE_OWNERSHIP_MISMATCH");
+      if (table === "role_worldbooks") {
+        try { worldbooksSchema.parse(JSON.parse(String(row.books_json))); }
+        catch { throw new Error("ROLE_TRANSFER_WORLDBOOK_INVALID"); }
+      }
     }
   }
   if (builtinKey === null && [...tables.outfits, ...tables.outfit_assets].some((row) => row.is_preset !== 0)) {
     throw new Error("ROLE_TRANSFER_PRESET_OWNERSHIP_MISMATCH");
   }
+}
+
+function isWorldbookTable(table: string): boolean {
+  return table === "role_worldbooks" || table === "worldbook_usage";
 }
 
 export function roleTransferTimelineFingerprint(pkg: Pick<RoleTransferPackage, "roleId" | "tables" | "files">): string {
@@ -229,7 +243,8 @@ export function roleTransferWithAncestors(
 }
 
 function timelineProjection(pkg: Pick<RoleTransferPackage, "roleId" | "tables" | "files">) {
-  const tables = Object.fromEntries(TRANSFER_TABLES.filter((table) => table !== "execution_stream_events").map((table) => {
+  const tables = Object.fromEntries(TRANSFER_TABLES.filter((table) => table !== "execution_stream_events" &&
+    (!isWorldbookTable(table) || pkg.tables[table]?.length)).map((table) => {
     const rows = pkg.tables[table].map((row) => Object.fromEntries(Object.entries(row).filter(([column]) =>
       column !== "updated_at" && !(table === "model_calls" && column === "resource_id") &&
       !(table === "role_voice_settings" && column === "enabled"))));
@@ -264,7 +279,7 @@ function writeBusinessFacts(
       const { general, voice, image } = targetTransferSettings(pkg.tables, pkg.bindings, targets);
       for (const table of TRANSFER_TABLES) {
         if (table === "role_voice_settings" || table === "role_scene_image_settings") continue;
-        insertRows(db, table, pkg.tables[table]);
+        insertRows(db, table, pkg.tables[table] ?? []);
       }
       insertRows(db, "role_bindings", general);
       insertRows(db, "role_voice_settings", voice);
@@ -301,6 +316,14 @@ function insertRows(db: Database.Database, table: string, rows: TransferRow[]): 
 
 function assertTransferRelations(db: Database.Database): void {
   const bad = db.prepare(`
+    SELECT 1 FROM worldbook_usage u JOIN model_calls c ON c.model_call_id = u.model_call_id
+      WHERE c.execution_id IS NOT u.execution_id OR c.role_id <> u.role_id OR c.call_kind <> 'primary_decision'
+    UNION ALL
+    SELECT 1 FROM worldbook_usage u JOIN executions x ON x.execution_id = u.execution_id,
+      json_each(u.matched_message_ids_json) j
+      WHERE j.type <> 'text' OR NOT EXISTS
+        (SELECT 1 FROM messages m WHERE m.message_id = j.value AND m.window_id = x.window_id AND m.sender = 'user')
+    UNION ALL
     SELECT 1 FROM message_segments s JOIN messages m ON m.message_id = s.message_id WHERE s.window_id <> m.window_id
     UNION ALL
     SELECT 1 FROM scene_image_tasks t JOIN messages m ON m.message_id = t.message_id

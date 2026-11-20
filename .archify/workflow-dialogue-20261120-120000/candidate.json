@@ -1,0 +1,560 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "一条消息怎样成为角色的回复与经历",
+    "locale": "zh-CN",
+    "output": ".archify/workflow-dialogue-20261120-120000/dialogue.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/yyy471/nowadays-accompany.git",
+      "revision": "3a4ac9abc05ebc82ac7689d8c8e753f3dc34a06a",
+      "link_mode": "local-only"
+    },
+    "legend": {
+      "entries": {
+        "frontend": {
+          "label": "桌面交互"
+        },
+        "backend": {
+          "label": "角色运行逻辑"
+        },
+        "messagebus": {
+          "label": "事件与等待"
+        },
+        "database": {
+          "label": "持久化数据"
+        }
+      }
+    }
+  },
+  "lanes": [
+    {
+      "id": "desk",
+      "label": "桌面窗口"
+    },
+    {
+      "id": "round",
+      "label": "对话主线"
+    },
+    {
+      "id": "branch",
+      "label": "条件分支"
+    },
+    {
+      "id": "async",
+      "label": "后台工作"
+    }
+  ],
+  "phases": [
+    {
+      "id": "accept",
+      "label": "消息接收与排队",
+      "fromCol": 0,
+      "toCol": 1
+    },
+    {
+      "id": "decide",
+      "label": "准备上下文与角色决策",
+      "fromCol": 2,
+      "toCol": 3
+    },
+    {
+      "id": "settle",
+      "label": "提交、演出与记忆",
+      "fromCol": 4,
+      "toCol": 5
+    }
+  ],
+  "nodes": [
+    {
+      "id": "send",
+      "lane": "desk",
+      "col": 0,
+      "type": "frontend",
+      "label": "发送消息",
+      "sublabel": "指定角色与窗口",
+      "sources": [
+        {
+          "path": "desktop/desk-preview/renderer/src/conversation/use-window-session.ts",
+          "line": 764,
+          "end_line": 774,
+          "label": "携带提交编号发送"
+        }
+      ]
+    },
+    {
+      "id": "intake",
+      "lane": "round",
+      "col": 0,
+      "type": "database",
+      "label": "按提交编号去重",
+      "sublabel": "新消息写入角色库",
+      "sources": [
+        {
+          "path": "backend/src/storage/role-store.ts",
+          "line": 659,
+          "end_line": 706,
+          "label": "同窗口提交幂等"
+        },
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 284,
+          "end_line": 315,
+          "label": "返回回执并请求调度"
+        },
+        {
+          "path": "devDoc/specs/conversation-performance-and-scene-images.md",
+          "line": 97,
+          "end_line": 101,
+          "label": "角色停用守卫与原编号找回"
+        }
+      ]
+    },
+    {
+      "id": "replace",
+      "lane": "branch",
+      "col": 0,
+      "type": "backend",
+      "label": "中断旧回复",
+      "sublabel": "保留已生成的片段",
+      "sources": [
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 3412,
+          "end_line": 3439,
+          "label": "新消息替代的范围"
+        },
+        {
+          "path": "devDoc/specs/conversation-performance-and-scene-images.md",
+          "line": 103,
+          "end_line": 106,
+          "label": "部分回复与在途工具"
+        }
+      ]
+    },
+    {
+      "id": "queue",
+      "lane": "round",
+      "col": 1,
+      "type": "backend",
+      "label": "调度角色",
+      "sublabel": "每个角色串行决策",
+      "sources": [
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 1362,
+          "end_line": 1407,
+          "label": "角色、模型与输入态检查"
+        },
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 1871,
+          "end_line": 1919,
+          "label": "领取消息并启动执行"
+        }
+      ]
+    },
+    {
+      "id": "wait",
+      "lane": "branch",
+      "col": 1,
+      "type": "messagebus",
+      "label": "等待可执行",
+      "sublabel": "条件恢复后重新调度",
+      "sources": [
+        {
+          "path": "devDoc/specs/conversation-performance-and-scene-images.md",
+          "line": 84,
+          "end_line": 89,
+          "label": "回执等待原因"
+        },
+        {
+          "path": "devDoc/specs/conversation-performance-and-scene-images.md",
+          "line": 95,
+          "end_line": 102,
+          "label": "输入态过期与原编号重试"
+        },
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 1392,
+          "end_line": 1407,
+          "label": "模型维护与打字等待"
+        }
+      ]
+    },
+    {
+      "id": "context",
+      "lane": "round",
+      "col": 2,
+      "type": "backend",
+      "label": "组装本轮上下文",
+      "sublabel": "窗口近况与角色共享记忆",
+      "sources": [
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 2138,
+          "end_line": 2198,
+          "label": "召回概况、工具与角色上下文"
+        },
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 3336,
+          "end_line": 3368,
+          "label": "按需核查原始证据"
+        },
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 2248,
+          "end_line": 2267,
+          "label": "开启图检查点"
+        }
+      ]
+    },
+    {
+      "id": "model",
+      "lane": "round",
+      "col": 3,
+      "type": "backend",
+      "label": "模型决定下一步",
+      "sublabel": "LangGraph 保存检查点",
+      "sources": [
+        {
+          "path": "backend/src/application/agent-graph.ts",
+          "line": 289,
+          "end_line": 311,
+          "label": "区分流式文本与工具调用"
+        },
+        {
+          "path": "backend/src/application/agent-graph.ts",
+          "line": 1217,
+          "end_line": 1231,
+          "label": "模型、工具与收尾的图路由"
+        },
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 2335,
+          "end_line": 2355,
+          "label": "执行段结束条件"
+        }
+      ]
+    },
+    {
+      "id": "tools",
+      "lane": "branch",
+      "col": 3,
+      "type": "backend",
+      "label": "按请求执行工具",
+      "sublabel": "记忆检索、MCP、Skill",
+      "sources": [
+        {
+          "path": "devDoc/specs/storage-memory-and-autonomy.md",
+          "line": 94,
+          "end_line": 96,
+          "label": "工具结算与按需加载 Skill"
+        },
+        {
+          "path": "backend/src/application/agent-graph.ts",
+          "line": 84,
+          "end_line": 89,
+          "label": "分段轮数与熔断门槛"
+        },
+        {
+          "path": "backend/src/application/agent-graph.ts",
+          "line": 1217,
+          "end_line": 1231,
+          "label": "结果回到模型或进入收尾"
+        }
+      ]
+    },
+    {
+      "id": "late",
+      "lane": "async",
+      "col": 3,
+      "type": "messagebus",
+      "label": "慢工具转后台",
+      "sublabel": "结算原调用与真实结果",
+      "sources": [
+        {
+          "path": "backend/src/application/agent-graph.ts",
+          "line": 1075,
+          "end_line": 1108,
+          "label": "超时释放前台执行"
+        },
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 2690,
+          "end_line": 2735,
+          "label": "保存原始与适配结果"
+        },
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 2742,
+          "end_line": 2761,
+          "label": "活动任务重新排队"
+        }
+      ]
+    },
+    {
+      "id": "commit",
+      "lane": "round",
+      "col": 4,
+      "type": "database",
+      "label": "事务提交整条回复",
+      "sublabel": "状态补丁与任务决定",
+      "sources": [
+        {
+          "path": "backend/src/storage/conversation-store.ts",
+          "line": 1192,
+          "end_line": 1259,
+          "label": "状态版本及正式消息"
+        },
+        {
+          "path": "backend/src/storage/conversation-store.ts",
+          "line": 1274,
+          "end_line": 1318,
+          "label": "句段、证据与完成事件"
+        },
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 2389,
+          "end_line": 2422,
+          "label": "提交后标注并按需续行"
+        }
+      ]
+    },
+    {
+      "id": "events",
+      "lane": "desk",
+      "col": 4,
+      "type": "messagebus",
+      "label": "窗口事件流",
+      "sublabel": "快照与 SSE 游标衔接",
+      "sources": [
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 2092,
+          "end_line": 2101,
+          "label": "流式增量写入存储"
+        },
+        {
+          "path": "devDoc/specs/conversation-performance-and-scene-images.md",
+          "line": 108,
+          "end_line": 116,
+          "label": "稳定句段与异步标注"
+        },
+        {
+          "path": "desktop/desk-preview/renderer/src/conversation/use-window-session.ts",
+          "line": 434,
+          "end_line": 464,
+          "label": "按窗口游标订阅 SSE"
+        }
+      ]
+    },
+    {
+      "id": "present",
+      "lane": "desk",
+      "col": 5,
+      "type": "frontend",
+      "label": "逐句演出",
+      "sublabel": "点击推进与按句播音",
+      "sources": [
+        {
+          "path": "devDoc/specs/conversation-performance-and-scene-images.md",
+          "line": 121,
+          "end_line": 132,
+          "label": "推进、播音与断线恢复"
+        },
+        {
+          "path": "devDoc/specs/conversation-performance-and-scene-images.md",
+          "line": 113,
+          "end_line": 119,
+          "label": "表情与立绘回退"
+        },
+        {
+          "path": "devDoc/specs/conversation-performance-and-scene-images.md",
+          "line": 172,
+          "end_line": 177,
+          "label": "手动过场图与自动触发边界"
+        }
+      ]
+    },
+    {
+      "id": "memory",
+      "lane": "async",
+      "col": 4,
+      "type": "database",
+      "label": "整理经历",
+      "sublabel": "保留原始证据供召回",
+      "sources": [
+        {
+          "path": "backend/src/application/conversation-service.ts",
+          "line": 2461,
+          "end_line": 2464,
+          "label": "通知记忆运行时"
+        },
+        {
+          "path": "backend/src/application/memory-runtime.ts",
+          "line": 729,
+          "end_line": 741,
+          "label": "按角色与待处理触发执行"
+        },
+        {
+          "path": "devDoc/specs/storage-memory-and-autonomy.md",
+          "line": 98,
+          "end_line": 104,
+          "label": "后台触发、事件与索引"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "send-intake",
+      "from": "send",
+      "to": "intake",
+      "label": "HTTP"
+    },
+    {
+      "id": "intake-queue",
+      "from": "intake",
+      "to": "queue"
+    },
+    {
+      "id": "intake-replace",
+      "from": "intake",
+      "to": "replace",
+      "label": "存在可抢占回复",
+      "role": "branch"
+    },
+    {
+      "id": "queue-wait",
+      "from": "queue",
+      "to": "wait",
+      "label": "暂缓启动",
+      "role": "branch"
+    },
+    {
+      "id": "queue-context",
+      "from": "queue",
+      "to": "context",
+      "variant": "emphasis"
+    },
+    {
+      "id": "context-model",
+      "from": "context",
+      "to": "model",
+      "variant": "emphasis"
+    },
+    {
+      "id": "model-tools",
+      "from": "model",
+      "to": "tools",
+      "label": "请求工具",
+      "role": "branch"
+    },
+    {
+      "id": "tools-model",
+      "from": "tools",
+      "to": "model",
+      "label": "带回结果",
+      "role": "return"
+    },
+    {
+      "id": "tools-late",
+      "from": "tools",
+      "to": "late",
+      "label": "外部慢调用",
+      "role": "async",
+      "variant": "dashed"
+    },
+    {
+      "id": "model-commit",
+      "from": "model",
+      "to": "commit",
+      "label": "生成正文",
+      "variant": "emphasis"
+    },
+    {
+      "id": "model-events",
+      "from": "model",
+      "to": "events",
+      "label": "稳定句段"
+    },
+    {
+      "id": "commit-events",
+      "from": "commit",
+      "to": "events",
+      "label": "终态与标注",
+      "variant": "dashed"
+    },
+    {
+      "id": "events-present",
+      "from": "events",
+      "to": "present",
+      "label": "SSE"
+    },
+    {
+      "id": "commit-memory",
+      "from": "commit",
+      "to": "memory",
+      "label": "证据待整理",
+      "role": "async",
+      "variant": "dashed"
+    },
+    {
+      "id": "wait-queue",
+      "from": "wait",
+      "to": "queue",
+      "label": "条件恢复",
+      "role": "branch",
+      "route": "auto"
+    },
+    {
+      "id": "late-wait",
+      "from": "late",
+      "to": "wait",
+      "label": "原任务仍活动",
+      "role": "return",
+      "variant": "dashed",
+      "fromSide": "left",
+      "toSide": "right"
+    }
+  ],
+  "mainPath": [
+    "send",
+    "intake",
+    "queue",
+    "context",
+    "model",
+    "commit",
+    "events",
+    "present"
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "打字、重试与插话",
+      "items": [
+        "停止输入 1 秒后，等待的回复可以启动。实际发出新消息才抢占同窗前台回复，或抢占该角色正在执行的自主回复。其他窗口的普通对话排队。",
+        "同一提交编号和内容可找回原消息。编号相同而内容改变会冲突。角色已停用时，新的提交在入库前被拒绝。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "回复结束后，任务仍可能继续",
+      "items": [
+        "模型可直接回复，也可调用工具。外部调用超过前台等待时间后转入后台。晚到的结果按原调用结算，只有仍活动的任务才排队续行。工具结果未知时先核查。",
+        "办事任务默认每段最多 15 轮。到达上限或模型请求续行后保存进度，再按原任务调度。暂停、熔断或需要澄清时先停止派发。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "演出与记忆各自推进",
+      "items": [
+        "生成中即可通过 SSE 显示稳定句段。正式提交后异步补表情和语音情绪。手动过场图按句段区间呈现，自动触发尚待实现。",
+        "消息积累、交流停歇、任务结束或手动请求可触发后台整理。同一角色一次处理一批，后续窗口可以检索事件概况并追溯原始证据。"
+      ]
+    }
+  ]
+}

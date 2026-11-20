@@ -35,6 +35,8 @@ const PROJECTION = {
   execution_stream_events: "stream_event_id role_id window_id execution_id event_type payload_json created_at",
   model_calls: "model_call_id role_id execution_id batch_id purpose resource_id model_name protocol status error_code started_at finished_at usage_json raw_response_json task_id call_kind",
   web_reading_deliveries: "role_id url page_version start_offset end_offset original_text tool_call_id model_call_id window_id task_id execution_id accepted_at",
+  role_worldbooks: "role_id revision books_json",
+  worldbook_usage: "role_id execution_id model_call_id revision book_id entry_id status matched_message_ids_json",
   call_metering: "metering_id role_id execution_id task_id batch_id call_kind call_id purpose counted created_at",
   autonomy_budget: "role_id local_date used_points daily_limit unlimited updated_at",
   autonomy_wakes: "wake_id role_id kind scheduled_at intent status source_execution_id task_id activity_id claimed_at completed_at last_error_code created_at updated_at",

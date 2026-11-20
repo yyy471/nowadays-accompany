@@ -21,6 +21,31 @@ const tagValuesSchema = z.object({
   source: z.array(z.string().trim().min(1).max(200)).optional(),
 }).strict();
 
+const claimSchema = z.object({
+  kind: z.enum(["observation", "interest", "released", "user_quote", "impression", "past_feeling", "reflection", "practice", "cherished_detail", "shared_detail", "commitment", "unknown"]),
+  text: z.string().trim().min(1).max(2000),
+  evidenceId: z.uuid(),
+  relatedEventId: z.uuid().optional(),
+  practice: z.object({
+    key: z.string().trim().min(1).max(100),
+    scope: z.string().trim().min(1).max(500),
+    outcome: z.string().trim().min(1).max(500),
+  }).strict().optional(),
+}).strict().refine(value => (value.kind === "practice") === Boolean(value.practice), {
+  message: "实践经验须包含稳定键、适用范围与实际结果",
+});
+export type MemoryClaim = z.infer<typeof claimSchema>;
+export interface MemoryClaimRecord extends MemoryClaim {
+  sourceKind?: MemorySourceKind;
+  sourceSender?: EvidenceSender;
+  learnedAt: string | null;
+  sourceAt: string;
+  recordedAt: string;
+  quoteContext?: string;
+}
+const claimsSchema = z.array(claimSchema).max(30).optional();
+export type EvidenceSender = "user" | "assistant" | null;
+
 export const eventPatchSchema = z.object({
   title: z.string().trim().min(1).max(500).optional(),
   summary: z.string().trim().min(1).max(20_000).optional(),
@@ -33,6 +58,7 @@ export const eventPatchSchema = z.object({
 export const memoryOperationSchema = z.discriminatedUnion("op", [
   z.object({
     op: z.literal("create_event"),
+    claims: claimsSchema,
     localKey: z.string().trim().min(1).max(100),
     title: z.string().trim().min(1).max(500),
     summary: z.string().trim().min(1).max(20_000),
@@ -45,6 +71,7 @@ export const memoryOperationSchema = z.discriminatedUnion("op", [
   }).strict(),
   z.object({
     op: z.literal("update_event"),
+    claims: claimsSchema,
     eventId: z.uuid(),
     expectedVersion: z.number().int().min(1),
     patch: eventPatchSchema,
@@ -98,6 +125,8 @@ export type MemoryTagValues = z.infer<typeof tagValuesSchema>;
 export type MemoryEventPatch = z.infer<typeof eventPatchSchema>;
 
 export interface MemoryEvidenceInput {
+  publishedReply?: boolean;
+  sender?: EvidenceSender;
   evidenceId: string;
   sourceKind: MemorySourceKind;
   sourceStatus: string;
@@ -110,6 +139,7 @@ export interface MemoryEvidenceInput {
 }
 
 export interface RelatedEventBrief {
+  practiceKeys?: string[];
   eventId: string;
   title: string;
   summary: string;
@@ -168,6 +198,7 @@ export interface MemorySearchItem {
   id: string;
   title: string;
   snippet: string;
+  experienceDate?: string;
   rank: number;
 }
 
@@ -205,6 +236,7 @@ export const diaryCreateSchema = z
 export type DiaryCreateInput = z.infer<typeof diaryCreateSchema>;
 
 export interface MemoryEventSourceRecord {
+  sender?: EvidenceSender;
   evidenceId: string;
   sourceKind: MemorySourceKind;
   sourceId: string;
@@ -218,6 +250,7 @@ export interface MemoryEventSourceRecord {
 }
 
 export interface MemoryEvidenceDetail extends MemoryEvidenceRecord {
+  sender?: EvidenceSender;
   processingStatus: string;
   attemptCount: number;
   content: string;
@@ -248,6 +281,7 @@ export interface DailySummarySourceRecord {
 }
 
 export interface SummaryEvidenceItem {
+  sender?: EvidenceSender;
   evidenceId: string;
   sourceKind: MemorySourceKind;
   windowId: string | null;

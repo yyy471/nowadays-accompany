@@ -2,6 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import { extractMcpWebFragments, parseWebJson } from "../domain/web-reading.js";
 
+/** 查询方将 messages、windows 分别命名为 m、w；整理和跨窗口回查共用实际发表条件。 */
+export const SPOKEN_REPLY_SQL = `w.source <> 'nowadays-autonomy' AND m.sender = 'assistant'
+  AND m.status IN ('completed', 'interrupted') AND length(trim(m.content)) > 0`;
+
 interface MessageEvidenceRow {
   message_id: string;
   window_id: string;
@@ -38,20 +42,24 @@ export function sha256(value: string): string {
 }
 
 export function localDateFromIso(iso: string, timeZone?: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) {
-    throw new Error(`INVALID_TIMESTAMP:${iso}`);
-  }
+  return createLocalDateFormatter(timeZone)(iso);
+}
+
+export function createLocalDateFormatter(timeZone?: string): (iso: string) => string {
   const formatter = new Intl.DateTimeFormat("en-US", {
     ...(timeZone ? { timeZone } : {}),
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
   });
-  const parts = formatter.formatToParts(date);
-  const value = (type: Intl.DateTimeFormatPartTypes): string =>
-    parts.find((part) => part.type === type)?.value ?? "";
-  return `${value("year")}-${value("month")}-${value("day")}`;
+  return (iso) => {
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) throw new Error(`INVALID_TIMESTAMP:${iso}`);
+    const parts = formatter.formatToParts(date);
+    const value = (type: Intl.DateTimeFormatPartTypes): string =>
+      parts.find((part) => part.type === type)?.value ?? "";
+    return `${value("year")}-${value("month")}-${value("day")}`;
+  };
 }
 
 export function registerMessageEvidence(
@@ -146,7 +154,8 @@ export function backfillEvidence(
   const messages = db
     .prepare(
       `SELECT message_id, window_id, status, sequence, created_at
-       FROM messages ORDER BY created_at ASC, window_id ASC, sequence ASC`,
+       FROM messages WHERE sender = 'user' OR content <> ''
+       ORDER BY created_at ASC, window_id ASC, sequence ASC`,
     )
     .all() as MessageEvidenceRow[];
   const tools = db

@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
 import { AgentGraphRunner } from "../src/application/agent-graph.js";
@@ -642,3 +644,93 @@ test(
     }
   },
 );
+
+async function verifyRecoveredToolRound(suffix: string) {
+  const fixture = createFixtureWithModel(new ScriptedChatModel([]), { now: () => new Date(startAt) });
+  let restored: BackendApp | null = null;
+  try {
+    await fixture.app.close();
+    const earlier = "河边展馆今天提前闭馆。我把门口告示和你发来的时间表放在一起核对过了，两个落款日期不同。我们先去看街对面的展，再回来问工作人员。";
+    // 直接停在第二轮已输出首个 delta 的进程上，保留真实 SQLite 和 LangGraph 检查点。
+    const script = `
+      import { createBackendApp } from "./src/bootstrap/app.ts";
+      import { parseBackendConfig } from "./src/bootstrap/config.ts";
+      const [root, roleId, windowId, now] = process.argv.slice(1);
+      let round = 0;
+      const model = { async *stream() {
+        if (++round === 1) {
+          yield { type: "text_delta", text: ${JSON.stringify(earlier)} };
+          yield { type: "tool_call", callId: "state-before-crash", name: "state_update", arguments: { patch: { mood: "已核对" } } };
+          yield { type: "completed", stopReason: "tool_calls" };
+          return;
+        }
+        yield { type: "text_delta", text: "断在半句" };
+        process.exit(77);
+      }};
+      const app = createBackendApp(parseBackendConfig(["--app-root", root, "--port", "0"]), {
+        modelPortFactory: () => model, disablePresetAssistant: true, disableMemoryRuntime: true,
+        now: () => new Date(now), timeZone: "Asia/Shanghai",
+      });
+      app.conversation.submitMessage(roleId, windowId, {
+        content: "帮我核对", submissionId: crypto.randomUUID(), sourcePlatform: "nowadays",
+      });
+      await app.conversation.waitForIdle(roleId);
+    `;
+    const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval",
+      script, fixture.root, fixture.roleId, fixture.windowId, wakeAt], {
+      cwd: fileURLToPath(new URL("../", import.meta.url)), encoding: "utf8", timeout: 15_000,
+    });
+    assert.equal(child.status, 77, child.stderr);
+    const cursor = rows<{ id: number }>(fixture,
+      "SELECT MAX(stream_event_id) AS id FROM execution_stream_events WHERE window_id=?", fixture.windowId)[0]!.id;
+    const model = new ScriptedChatModel([
+      [
+        { type: "text_delta", text: earlier.slice(0, 7) },
+        { type: "text_delta", text: earlier.slice(7) },
+        ...(suffix ? [{ type: "text_delta" as const, text: suffix }] : []),
+        { type: "completed", stopReason: "stop" },
+      ],
+      done(earlier),
+    ]);
+    restored = reopen(fixture, model, restartAt);
+    await restored.conversation.waitForIdle(fixture.roleId);
+    assert.equal(model.requests.length, 1);
+    assert.deepEqual(rows<{ content: string; status: string }>(fixture,
+      "SELECT content, status FROM messages WHERE sender='assistant' AND window_id=? ORDER BY sequence", fixture.windowId),
+    [
+      { content: earlier + "断在半句", status: "interrupted" },
+      { content: suffix, status: "completed" },
+    ]);
+    const deltas = rows<{ delta: string }>(fixture,
+      "SELECT json_extract(payload_json,'$.delta') AS delta FROM execution_stream_events WHERE window_id=? AND stream_event_id>? AND event_type='message_delta' ORDER BY stream_event_id",
+      fixture.windowId, cursor);
+    assert.equal(deltas.map(row => row.delta).join(""), suffix);
+    if (!suffix) {
+      const completion = rows<{ messageId: string; status: string }>(fixture,
+        "SELECT m.message_id AS messageId, e.status FROM messages m JOIN executions e ON e.execution_id=m.execution_id WHERE m.window_id=? AND m.sender='assistant' AND m.status='completed'",
+        fixture.windowId)[0]!;
+      assert.equal(completion.status, "completed");
+      assert.deepEqual(rows(fixture, "SELECT segment_id FROM message_segments WHERE message_id=?", completion.messageId), []);
+      assert.deepEqual(rows(fixture, "SELECT evidence_id FROM evidence_records WHERE source_kind='message' AND source_id=?", completion.messageId), []);
+    }
+    assert.equal(restored.services.roles.getState(fixture.roleId).state.mood, "已核对");
+    // 新消息明确要求复述时，应能正常发布与旧执行完全相同的长段。
+    restored.conversation.submitMessage(fixture.roleId, fixture.windowId, {
+      content: "请把刚才关于河边展馆那一整段原样再说一遍。", submissionId: crypto.randomUUID(), sourcePlatform: "nowadays",
+    });
+    await restored.conversation.waitForIdle(fixture.roleId);
+    assert.equal(model.requests.length, 2);
+    assert.deepEqual(rows<{ content: string; status: string }>(fixture,
+      "SELECT content, status FROM messages WHERE sender='assistant' AND window_id=? ORDER BY sequence DESC LIMIT 1", fixture.windowId),
+    [{ content: earlier, status: "completed" }]);
+  } finally {
+    await restored?.close();
+    await fixture.close();
+  }
+}
+
+test("process exit in a later model round delivers checkpoint text once across message boundaries",
+  { timeout: 25_000 }, () => verifyRecoveredToolRound("恢复后的结论。"));
+
+test("recovery completes an entirely echoed round without another visible segment or memory evidence",
+  { timeout: 25_000 }, () => verifyRecoveredToolRound(""));

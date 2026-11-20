@@ -24,6 +24,112 @@ function submit(fixture: ReturnType<typeof createFixture>, content: string): str
   return submissionId;
 }
 
+test("跨越业务本地午夜时为出站旧消息标记发送日，保留数据库和本轮原话", async () => {
+  let now = "2026-11-20T15:59:59.000Z";
+  const answer = (text: string): ModelEvent[] => [{ type: "text_delta", text }, { type: "completed", stopReason: "stop" }];
+  const fixture = createFixture([
+    request => {
+      assert.equal(request.messages.at(-1)?.content, "今天我按约来了。");
+      return answer("今天确实见到了。");
+    },
+    request => {
+      const label = "[消息发送日 2026-11-20]\n";
+      assert.equal(request.system.split("本轮当地日期 2026-11-21").length - 1, 1);
+      assert.ok(request.messages.some(m => m.role === "user" && m.content === label + "今天我按约来了。"));
+      assert.ok(request.messages.some(m => m.role === "assistant" && m.content === label + "今天确实见到了。"));
+      assert.equal(request.messages.at(-1)?.content, "那是今天的事吗？");
+      return answer("昨天。");
+    },
+  ], { now: () => new Date(now), timeZone: "Asia/Shanghai" });
+  try {
+    submit(fixture, "今天我按约来了。");
+    await fixture.app.conversation.waitForIdle(fixture.roleId);
+    now = "2026-11-20T16:00:01.000Z";
+    submit(fixture, "那是今天的事吗？");
+    await fixture.app.conversation.waitForIdle(fixture.roleId);
+    const items = fixture.app.services.messages.list(fixture.roleId, fixture.windowId, 0, 10).items;
+    assert.deepEqual(items.map(message => message.content), ["今天我按约来了。", "今天确实见到了。", "那是今天的事吗？", "昨天。"]);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("recall follows topic changes and spoken lookup only returns published role replies across windows", { timeout: 20_000 }, async () => {
+  const reply = (text: string): ModelEvent[] => [
+    { type: "text_delta", text }, { type: "completed", stopReason: "stop" },
+  ];
+  let lookup = "";
+  const fixture = createFixture([
+    reply("旧地图上有一道折痕。"), reply("今晚吃面。"), reply("加点葱。"),
+    [
+      { type: "tool_call", callId: "lookup-spoken", name: "history_lookup", arguments: { scope: "spoken", query: "旧地图" } },
+      { type: "completed", stopReason: "tool_calls" },
+    ],
+    (request) => {
+      lookup = String(request.messages.find((message) => message.role === "tool")?.content);
+      return reply("我讲过折痕。");
+    },
+  ]);
+  try {
+    for (const user of ["旧地图上我还写过个秘密。", "今晚吃什么？", "然后呢？"]) {
+      submit(fixture, user);
+      await fixture.app.conversation.waitForIdle(fixture.roleId);
+    }
+    const queries = withStorage(fixture, ({ business }) => business.db.prepare(
+      "SELECT json_extract(query_json, '$.query') AS query FROM retrieval_queries WHERE mode='auto' ORDER BY rowid",
+    ).all()) as Array<{ query: string }>;
+    assert.equal(queries[1]?.query, "今晚吃什么？");
+    assert.match(queries[2]!.query, /今晚吃面/);
+    assert.doesNotMatch(queries[2]!.query, /旧地图/);
+    const privateWindow = fixture.app.services.roles.createWindow(fixture.roleId, { kind: "custom", source: "nowadays-autonomy" });
+    withStorage(fixture, ({ business }) => {
+      const seed = business.db.prepare(`INSERT INTO messages
+        (message_id, window_id, sender, content, source_platform, status, sequence, created_at, updated_at)
+        VALUES (?, ?, 'assistant', ?, 'nowadays', ?, 100, '2026-10-01', '2026-10-01')`);
+      seed.run(randomUUID(), fixture.windowId, "旧地图的背面有铅笔字", "interrupted");
+      seed.run(randomUUID(), privateWindow.windowId, "旧地图上的密印只在独处时想过", "completed");
+    });
+    const second = fixture.app.services.roles.createWindow(fixture.roleId, { kind: "custom", source: "nowadays" });
+    fixture.app.conversation.submitMessage(fixture.roleId, second.windowId, {
+      content: "你刚才讲过地图哪部分？", submissionId: randomUUID(), sourcePlatform: "nowadays",
+    });
+    await fixture.app.conversation.waitForIdle(fixture.roleId);
+    assert.match(lookup, /一道折痕/);
+    assert.match(lookup, /背面有铅笔字/);
+    assert.doesNotMatch(lookup, /写过个秘密|密印/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("ordinary role output rules follow a long card and preserve an explicitly requested JSON reply", async () => {
+  const body = '{"items":["地图"]}';
+  let prompt = "";
+  const fixture = createFixture([(request) => {
+    prompt = request.system;
+    return [{ type: "text_delta", text: body }, { type: "completed", stopReason: "stop" }];
+  }]);
+  try {
+    fixture.app.services.activity.requestStop(fixture.roleId);
+    fixture.app.services.roles.updateDefinition(fixture.roleId, {
+      definition: { text: "她曾在旧书店工作。".repeat(260) + "每次展示卡片状态面板。",
+        payload: { data: { mes_example: "把围巾留在码头", first_mes: "在码头等船", description: "向往海岛" } } },
+    });
+    fixture.app.services.activity.resume(fixture.roleId);
+    submit(fixture, "请用 JSON 列出物品");
+    await fixture.app.conversation.waitForIdle(fixture.roleId);
+    assert.ok(prompt.includes("每次展示卡片状态面板。"));
+    assert.match(prompt, /向往海岛/);
+    assert.doesNotMatch(prompt, /码头/);
+    assert.ok(prompt.indexOf("普通角色对话的可见回复") > prompt.indexOf("每次展示卡片状态面板。"));
+    assert.match(prompt, /示例用户的动作、台词、物品归属和约定，只有在实际对话发生过才算双方经历/);
+    assert.match(prompt, /本轮明确索要 JSON/);
+    assert.equal(fixture.app.services.messages.list(fixture.roleId, fixture.windowId, 0, 20).items.at(-1)?.content, body);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("typing state delays the decision and multiple pending messages share one turn", { timeout: 15_000 }, async () => {
   // 输入窗口留出余量，避免满载并行测试时在两次提交之间提前到期。
   const fixture = createFixture(
@@ -36,6 +142,8 @@ test("typing state delays the decision and multiple pending messages share one t
     // 输入状态窗口留足余量：满载并行时两次提交加一次查询也可能超过三秒。
     { typingMs: 15_000 },
   );
+  const earlier = "第一句".repeat(200);
+  const latest = "第二句".repeat(200) + "最终更正";
   try {
     fixture.app.conversation.updateInputState({
       roleId: fixture.roleId,
@@ -43,8 +151,8 @@ test("typing state delays the decision and multiple pending messages share one t
       clientId: "client-1",
       typing: true,
     });
-    submit(fixture, "第一句");
-    submit(fixture, "第二句");
+    submit(fixture, earlier);
+    submit(fixture, latest);
     const before = withStorage(fixture, (storage) =>
       storage.business.db
         .prepare("SELECT COUNT(*) AS count FROM executions WHERE role_id = ?")
@@ -68,18 +176,20 @@ test("typing state delays the decision and multiple pending messages share one t
     assert.deepEqual(
       messages.items.map((message) => [message.sender, message.content]),
       [
-        ["user", "第一句"],
-        ["user", "第二句"],
+        ["user", earlier],
+        ["user", latest],
         ["assistant", "我一起回应。"],
       ],
     );
     const model = fixture.model as unknown as { requests: Array<{ messages: Array<{ role: string; content: string }> }> };
+    const row = withStorage(fixture, ({ business }) => business.db.prepare("SELECT query_json AS json FROM retrieval_queries WHERE mode = 'auto'").get()) as { json: string };
+    assert.match(JSON.parse(row.json).query, /最终更正$/);
     assert.equal(model.requests.length, 1);
     assert.deepEqual(
       model.requests[0]?.messages.map((message) => [message.role, message.content]),
       [
-        ["user", "第一句"],
-        ["user", "第二句"],
+        ["user", earlier],
+        ["user", latest],
       ],
     );
   } finally {
@@ -435,6 +545,85 @@ test("decisions across windows stay serial in earliest-message order", { timeout
   }
 });
 
+test("only an explicit user self-correction gets a source attribution note", async () => {
+  const notes: boolean[] = [];
+  const fixture = createFixture(Array.from({ length: 3 }, () => (request: import("../src/domain/model.js").ModelRequest): ModelEvent[] => {
+    notes.push(request.system.includes("用户明确更正自己的前述说法"));
+    return [{ type: "text_delta", text: "知道了。" }, { type: "completed", stopReason: "stop" }];
+  }));
+  try {
+    for (const content of ["我刚才说错了，是下周一。", "我刚才说错了吗？", "他说：我刚才说错了。"]) {
+      submit(fixture, content);
+      await fixture.app.conversation.waitForIdle(fixture.roleId);
+    }
+    assert.deepEqual(notes, [true, false, false]);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a two-character cue in a fresh window retrieves the agreed roles without other chat history", async () => {
+  let prompt = "";
+  const fixture = createFixture([(request) => {
+    prompt = request.system;
+    assert.deepEqual(request.messages.filter(m => m.role === "user").map(m => m.content), ["乌桕。"]);
+    return [{ type: "text_delta", text: "稿子给你。"}, { type: "completed", stopReason: "stop" }];
+  }]);
+  try {
+    seedEvent(fixture, {
+      content: "我们说好：我报乌桕，你把讲稿递给我。", title: "排练的约定",
+      summary: "两人约好用户报乌桕，角色把讲稿递给用户。", occurredAt: "2026-10-01T03:00:00.000Z",
+    });
+    const second = fixture.app.services.roles.createWindow(fixture.roleId, { kind: "custom", source: "nowadays" });
+    fixture.app.conversation.submitMessage(fixture.roleId, second.windowId, {
+      content: "乌桕。", submissionId: randomUUID(), sourcePlatform: "nowadays",
+    });
+    await fixture.app.conversation.waitForIdle(fixture.roleId);
+    assert.match(prompt, /用户报乌桕，角色把讲稿递给用户/);
+    assert.match(prompt, /先对得上那个人的原话/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a newly declared task step brings relevant dated experience into its next model request", { timeout: 15_000 }, async () => {
+  const prompts: string[] = [];
+  const fixture = createFixture([
+    (request) => {
+      prompts.push(request.system);
+      return [
+        { type: "tool_call", callId: "declare-step", name: "task_progress", arguments: { note: "检查版权页版次" } },
+        { type: "completed", stopReason: "tool_calls" },
+      ];
+    },
+    (request) => {
+      prompts.push(request.system);
+      return [
+        { type: "tool_call", callId: "another-step", name: "state_update", arguments: { patch: { mood: "平静" } } },
+        { type: "completed", stopReason: "tool_calls" },
+      ];
+    },
+    (request) => {
+      prompts.push(request.system);
+      return [{ type: "text_delta", text: "我先看版次。" }, { type: "completed", stopReason: "stop" }];
+    },
+  ]);
+  try {
+    seedEvent(fixture, {
+      content: "检查版权页版次时发现封面被换过。", title: "版权页版次",
+      summary: "检查版权页版次再估价。", occurredAt: "2026-11-04T03:00:00.000Z",
+    });
+    submit(fixture, "整理礼物清单");
+    await fixture.app.conversation.waitForIdle(fixture.roleId);
+    assert.equal(prompts.length, 3);
+    assert.doesNotMatch(prompts[0]!, /版权页版次/);
+    assert.match(prompts[1]!, /版权页版次〔经历日期 2026-11-04〕/);
+    assert.doesNotMatch(prompts[2]!, /版权页版次〔经历日期/);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("automatic recall and agent deep search use real events and original evidence", { timeout: 20_000 }, async () => {
   const contextual: import("../src/domain/model.js").ModelPort = {
     stream: async function* (request) {
@@ -443,10 +632,8 @@ test("automatic recall and agent deep search use real events and original eviden
       const toolMessages = request.messages.filter(
         (message) => message.role === "tool",
       );
-      if (!system.includes("杭州旧书店") || match === null) {
-        throw new Error("AUTO_RECALL_MISSING");
-      }
       if (toolMessages.length === 0) {
+        if (!system.includes("杭州旧书店") || match === null) throw new Error("AUTO_RECALL_MISSING");
         yield {
           type: "tool_call",
           callId: "wire-memory-event",

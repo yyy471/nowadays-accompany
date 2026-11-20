@@ -22,6 +22,65 @@ async function ev(expression) { const result = await cmd('Runtime.evaluate', { e
 const { click, pickRole, tab, openSheet } = configControls(ev, until);
 async function request(route, options = {}) { const response = await fetch(base + route, options); const body = await response.json(); if (!response.ok) throw Error(`${response.status}: ${JSON.stringify(body)}`); return body; }
 const json = body => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+async function verifyWorldbooks(roleId, otherRoleId) {
+  const route = `/v1/roles/${roleId}/worldbooks`;
+  const openBooks = () => openSheet(element(`${editor} button[aria-label="编辑世界书"]`), '编辑世界书');
+  const field = label => `[...document.querySelectorAll('.config-sheet .field-label')].find(node=>node.textContent===${JSON.stringify(label)})?.control`;
+  const fill = async (label, value) => {
+    const control = field(label);
+    await until(() => ev(`!!(${control})`));
+    await ev(setValue(control, value));
+  };
+  const save = () => click(element(`${sheet} .config-save-btn`));
+  const closed = () => until(() => ev(`!${element(sheet)}`));
+  await tab('扩展');
+  await openBooks();
+  await click(button('添加世界书', sheet));
+  await fill('书名', '海岸记录');
+  await click(button('添加条目', sheet));
+  await fill('条目标题', '海港');
+  await fill('关键词', '海港\n灯塔');
+  await fill('设定正文', '潮汐表贴在门边');
+  await click(button('添加条目', sheet));
+  assert.equal(await ev(`${element(`${sheet} .config-save-btn`)}.disabled`), true);
+  await fill('条目标题', '暗号');
+  await fill('关键词', '灯塔');
+  await fill('设定正文', '作者笔记');
+  await fill('角色知情范围', 'author_only');
+  await click(element(`${sheet} [aria-label="启用此条目"]`));
+  await save();
+  await closed();
+  const first = await request(route);
+  assert.equal(first.books[0].name, '海岸记录');
+  const [known, secret] = first.books[0].entries;
+  assert.deepEqual(known.keywords, ['海港', '灯塔']);
+  assert.deepEqual([known.visibility, secret.visibility, secret.enabled], ['known', 'author_only', false]);
+  assert.deepEqual((await request(`/v1/roles/${otherRoleId}/worldbooks`)).books, []);
+  await openBooks();
+  await click(element(`${sheet} [aria-label="启用整本世界书"]`));
+  await fill('选择条目', secret.id);
+  await click(button('移除条目', sheet));
+  await save();
+  await closed();
+  const second = await request(route);
+  assert.equal(second.books[0].enabled, false);
+  assert.deepEqual(second.books[0].entries, [known]);
+  await openBooks();
+  await fill('书名', '未保存的书名');
+  await request(route, { ...json({ expectedRevision: second.revision, books: [{ ...second.books[0], name: '另一窗口的书名' }] }), method: 'PUT' });
+  await save();
+  await until(() => ev(`!!${button('读取最新版本', sheet)}`));
+  assert.equal(await ev(`(${field('书名')}).value`), '未保存的书名');
+  await click(button('读取最新版本', sheet));
+  await click(element('.config-sheet-confirm .danger'));
+  await closed();
+  await openBooks();
+  await until(() => ev(`(${field('书名')})?.value==='另一窗口的书名'`));
+  await click(button('移除这本书', sheet));
+  await save();
+  await closed();
+  assert.deepEqual((await request(route)).books, []);
+}
 async function verifyModelProviders(roleId) {
   let reads = 0;
   const upstream = http.createServer((req, res) => {
@@ -135,6 +194,7 @@ async function run() {
   await until(() => ev(`!!${element(`${editor} textarea[aria-label="角色设定"]`)}?.value`));
   await pickRole(a.roleId);
   await until(() => ev("document.querySelector('.config-role-switch')?.selectedOptions[0]?.textContent.includes('联调甲')"));
+  await verifyWorldbooks(a.roleId, b.roleId);
   await tab('外观');
   const outfitCard = (name) => element(`${editor} .config-outfit-card[aria-label="编辑服饰：${name}"]`);
   await openSheet(outfitCard('春装'), '编辑服饰');
@@ -178,7 +238,7 @@ async function run() {
   assert.equal(fs.existsSync(path.join(temp, 'app', 'data', 'roles', b.roleId)), false, '清理路径应删除角色目录');
   await verifyModelProviders(c.roleId);
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ realBackend: true, modelProviders: true, rename: true, replaceHome: true, deleteSprite: true, deleteOutfit: true, deleteRoleKeepHistory: true, deleteRoleAndData: true, companionFallback: true, errors }, null, 2));
+  console.log(JSON.stringify({ realBackend: true, worldbooks: true, worldbookConflict: true, roleIsolation: true, modelProviders: true, rename: true, replaceHome: true, deleteSprite: true, deleteOutfit: true, deleteRoleKeepHistory: true, deleteRoleAndData: true, companionFallback: true, errors }, null, 2));
 }
 run().catch(async error => {
   console.error(error, backendLog.slice(-1500), electronLog.slice(-1000));

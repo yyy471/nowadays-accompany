@@ -90,6 +90,9 @@ export interface SegmentAnnotationPick {
   voiceEmotion?: string | null;
 }
 
+// 推理与可见 JSON 共用供应商的输出 token 配额；未声明容量时也保持单次调用有界。
+const MAX_ANNOTATION_TOKENS = 4096;
+
 /**
  * 回复提交后为句段选择表情差分。
  * 标注晚于正文保存，失败不影响已保存的回复；结果按句段写回并发布事件。
@@ -258,12 +261,14 @@ export class SegmentAnnotationService {
           }
         : {}),
     });
+    const maxVisibleChars = binding.config.maxOutputChars;
     const modelRequest: ModelRequest = {
       modelName: binding.modelName,
       system: prompt.system,
       messages: [{ role: "user", content: prompt.user }],
       tools: [],
-      maxOutputTokens: 1200,
+      // 字符声明只保守收紧请求；可见文本的字符上限由接收端另按实际长度校验。
+      maxOutputTokens: Math.min(MAX_ANNOTATION_TOKENS, maxVisibleChars ?? MAX_ANNOTATION_TOKENS),
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     };
     let output = "";
@@ -274,7 +279,11 @@ export class SegmentAnnotationService {
     try {
       for await (const event of model.stream(modelRequest)) {
         if (event.type === "text_delta") {
-          output += event.text;
+          if (maxVisibleChars !== undefined && output.length + event.text.length > maxVisibleChars) {
+            failureCode = "ANNOTATION_OUTPUT_TOO_LONG";
+          } else if (failureCode === null) {
+            output += event.text;
+          }
         } else if (event.type === "usage") {
           usage = {
             ...(event.inputTokens === undefined
@@ -289,7 +298,7 @@ export class SegmentAnnotationService {
           rawResponse = event.rawResponse;
         }
       }
-      if (!completed) {
+      if (!completed && failureCode === null) {
         failureCode = "INCOMPLETE_RESPONSE";
       }
     } catch (error) {

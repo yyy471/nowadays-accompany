@@ -224,6 +224,45 @@ test("memory search uses FTS for long Chinese terms and LIKE for short terms", a
   }
 });
 
+test("a conversational Chinese question recalls a dated event without matching greetings or filler alone", async () => {
+  const fixture = createFixture();
+  try {
+    const ticket = seedEvent(fixture, {
+      content: "毕业那天我把蓝色公交票夹在了书里。",
+      title: "毕业时留下的车票",
+      summary: "那张蓝色公交票一直夹在旧书里。",
+      occurredAt: "2026-06-03T08:00:00.000Z",
+    });
+    seedEvent(fixture, {
+      content: "我后来发了条消息说你好。",
+      title: "问候",
+      summary: "后来只是在聊天时说了你好。",
+      occurredAt: "2026-09-17T08:00:00.000Z",
+    });
+    const search = (query: string) => fixture.app.services.memory.search(
+      fixture.roleId, { query }, { mode: "auto" },
+    ).items;
+    const found = search("我后来跟你提过蓝色公交票是从哪里来的吗？");
+    assert.deepEqual(found.map(({ id, experienceDate }) => [id, experienceDate]), [
+      [ticket.eventId, "2026-06-03"],
+    ]);
+    assert.deepEqual(search("你好！"), []);
+    assert.deepEqual(search("后来呢？"), []);
+    assert.deepEqual(search("？！"), []);
+    const practice = seedEvent(fixture, {
+      content: "查版次得看版权页。",
+      title: "在旧书店核对一本书",
+      summary: "逛旧书店。".repeat(33),
+      subjectiveExperience: "实践所得：旧书估价前先翻版权页核对版次。",
+      occurredAt: "2026-06-04T08:00:00.000Z",
+    });
+    const result = search("旧书 版权页 版次").find(item => item.id === practice.eventId);
+    assert.match(result?.snippet ?? "", /实践所得：旧书估价前先翻版权页核对版次/);
+  } finally {
+    await closeFixture(fixture);
+  }
+});
+
 test("memory search stays inside the role and returns success for empty matches", async () => {
   const first = createFixture();
   const second = createFixture();
