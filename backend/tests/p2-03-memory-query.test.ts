@@ -301,8 +301,11 @@ test("memory search stays inside the role and returns success for empty matches"
     );
     assert.equal(status.status, "succeeded");
   } finally {
-    await closeFixture(first);
-    await closeFixture(second);
+    try {
+      await closeFixture(first);
+    } finally {
+      await closeFixture(second);
+    }
   }
 });
 

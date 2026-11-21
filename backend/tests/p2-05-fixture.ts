@@ -93,6 +93,7 @@ export function createFixtureWithModel(
       timeZone: "Asia/Shanghai",
       modelPortFactory: () => model,
       disableMemoryRuntime: true,
+      disablePresetAssistant: true,
       ...options,
     },
   );

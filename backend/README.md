@@ -20,7 +20,7 @@ npm run typecheck
 本工作区可临时使用 P0 下载的独立 Node；这不是交付时必须依赖的目录：
 
 ```powershell
-$nodeDir = (Resolve-Path '..\prototypes\p0\.runtime\node-v24.22.2-win-x64').Path
+$nodeDir = (Resolve-Path '..\.tools\node-v24').Path
 $env:PATH = "$nodeDir;$env:PATH"
 node --version
 ```

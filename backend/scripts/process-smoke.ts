@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -11,7 +12,7 @@ const outputValue = process.env.NOWADAYS_REVIEW_OUTPUT;
 if (!outputValue) throw new Error("SMOKE_OUTPUT_REQUIRED");
 const output = path.resolve(outputValue);
 fs.mkdirSync(output, { recursive: true });
-const appRoot = path.join(output, "app");
+const appRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nowadays-process-smoke-"));
 let server: ChildProcess | undefined;
 let stderr = "";
 const launches: number[] = [];
@@ -95,7 +96,7 @@ async function configCli(
   }
 }
 
-let report: Record<string, unknown>;
+let report: Record<string, unknown> = { id: "process-cli-restart", passed: false, appRoot };
 try {
   const port = await start();
   assert.equal((await cli(port, ["health"])).status, "ok");
@@ -159,11 +160,24 @@ try {
   assert.equal(fs.readFileSync(path.join(workspace, "notes/p5.md"), "utf8"), "交付样例实际写入");
   report = { id: "process-cli-restart", passed: true, observed: { role, restored, launches, appRoot, modelExamplesRegistered: models.length, savedBindings, activityBefore, activities, restoredActivity, note: "notes/p5.md" } };
 } catch (error) {
-  report = { id: "process-cli-restart", passed: false, error: error instanceof Error ? (error.stack ?? error.message) : String(error) };
+  report = { id: "process-cli-restart", passed: false, appRoot, error: error instanceof Error ? (error.stack ?? error.message) : String(error) };
   process.exitCode = 1;
 } finally {
-  await stop();
+  try {
+    await stop();
+  } catch (error) {
+    report = { ...report, passed: false, appRoot, stopError: error instanceof Error ? (error.stack ?? error.message) : String(error) };
+    process.exitCode = 1;
+  }
   fs.writeFileSync(path.join(output, "server-stderr.log"), stderr);
+}
+if (report.passed) {
+  try {
+    fs.rmSync(appRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 });
+  } catch (error) {
+    report = { ...report, passed: false, appRoot, cleanupError: error instanceof Error ? (error.stack ?? error.message) : String(error) };
+    process.exitCode = 1;
+  }
 }
 fs.writeFileSync(path.join(output, "smoke-report.json"), JSON.stringify([report], null, 2));
 console.log(JSON.stringify({ id: report.id, passed: report.passed }));

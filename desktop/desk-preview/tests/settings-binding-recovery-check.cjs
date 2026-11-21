@@ -6,10 +6,12 @@ const os = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { resolveElectronExecutable } = require('./electron-executable.cjs');
+const { resolveBackendLayout, resolveNodeExecutable } = require('../backend-paths.cjs');
 const { button, configControls, editor, element, setValue, sheet } = require('./config-page-controls.cjs');
 const root = path.resolve(__dirname, '../../..');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'nowadays-ui-real-'));
-const node = path.join(root, 'prototypes/p0/.runtime/node-v24.22.2-win-x64/node.exe');
+const layout = resolveBackendLayout({ isPackaged: false, dirname: path.resolve(__dirname, '..'), env: process.env });
+const node = resolveNodeExecutable({ layout, env: process.env, exists: fs.existsSync });
 const imagePath = path.join(root, 'desktop/desk-preview/renderer/src/assets/themes/xiacheng/character.png');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(fn) { let last; for (const start = Date.now(); Date.now() - start < 25000;) { try { const value = await fn(); if (value) return value; } catch (error) { last = error; } await delay(100); } throw Error(`等待超时: ${last || ''}`); }

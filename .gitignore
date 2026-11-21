@@ -8,6 +8,7 @@ dist/
 *.tsbuildinfo
 
 # Test results and local tool caches; test/ contains versioned source
+/.tools/
 /test-results/
 /coverage/
 /playwright-report/

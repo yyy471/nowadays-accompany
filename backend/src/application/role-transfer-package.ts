@@ -114,22 +114,34 @@ export function writeRoleTransferPackage(filePath: string, pkg: RoleTransferPack
   const temporary = path.join(parent, `.role-transfer-${randomUUID()}.tmp`);
   try {
     fs.writeFileSync(temporary, canonicalJson(pkg), { flag: "wx", mode: 0o600, flush: true });
-    // 同目录硬链接发布完整文件，不覆盖已有包。
-    try {
-      fs.linkSync(temporary, resolved);
-    } catch (error) {
-      // 禁止硬链接的文件系统仍可用独占复制导出，读入时会校验整个包。
-      if (!["EPERM", "ENOTSUP", "EOPNOTSUPP", "ENOSYS"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
-      fs.copyFileSync(temporary, resolved, fs.constants.COPYFILE_EXCL);
-    }
+    // 独占复制发布完整文件，不覆盖已有包。此前的“临时文件 + 硬链接”在 Windows
+    // 杀软/索引器持有句柄时会短时间保持 nlink=2，读入端的硬链接防护因此误判；
+    // 迁移包本身由摘要与结构校验兜底，复制发布不降低读取安全性。
+    fs.copyFileSync(temporary, resolved, fs.constants.COPYFILE_EXCL);
   } finally {
     fs.rmSync(temporary, { force: true });
   }
 }
 
+/**
+ * 读取迁移包。
+ *
+ * 包发布使用“临时文件 + 同目录硬链接”，Windows 在杀软或索引器持有句柄时，
+ * 极短时间内仍可能看到 nlink=2。这里只对 UNSAFE_PATH 做短暂重试，最终仍按
+ * 同一路径规则拒绝；不会放过符号链接、越界路径或持久的多硬链接文件。
+ */
 export function readRoleTransferPackage(filePath: string): RoleTransferPackage {
   const resolved = path.resolve(filePath);
-  assertRegularPath(path.dirname(resolved), path.basename(resolved), false);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      assertRegularPath(path.dirname(resolved), path.basename(resolved), false);
+      break;
+    } catch (error) {
+      const retryable = error instanceof Error && error.message === "ROLE_TRANSFER_UNSAFE_PATH";
+      if (!retryable || attempt >= 20) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    }
+  }
   let candidate: unknown;
   try {
     candidate = JSON.parse(fs.readFileSync(resolved, "utf8")) as unknown;

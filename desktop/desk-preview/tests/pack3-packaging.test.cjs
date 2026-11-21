@@ -15,6 +15,7 @@ test("开发仓库：后端在仓库内，预置素材指向 backend/assets/pres
   assert.equal(layout.backendRoot, path.resolve(dirname, "..", "..", "backend"));
   assert.equal(layout.entry, path.join(layout.backendRoot, "src", "main.ts"));
   assert.equal(layout.presetAssetsDir, path.join(layout.backendRoot, "assets", "presets"));
+  assert.equal(layout.nodeRuntime, path.resolve(dirname, "..", "..", ".tools", "node-v24", "node.exe"));
 });
 
 test("打包产物：后端与预置素材都从 resources 读取", () => {
@@ -40,9 +41,37 @@ test("显式覆盖优先于开发与打包布局，预置素材可单独指定",
   assert.equal(layout.presetAssetsDir, path.join("D:", "tmp", "presets"));
 });
 
-test("Node 运行时按包内 → 环境变量 → PATH 的顺序回退", () => {
-  const layout = { nodeRuntime: path.join("C:", "runtime", "node.exe") };
+test("打包 Node 运行时按包内 → 环境变量 → PATH 的顺序回退", () => {
+  const layout = resolveBackendLayout({ isPackaged: true, resourcesPath: path.join("C:", "resources"), dirname, env: {} });
+  const envNode = path.join("D:", "node24", "node.exe");
+  const bothExist = candidate => candidate === layout.nodeRuntime || candidate === envNode;
+  assert.equal(resolveNodeExecutable({ layout, env: { NOWADAYS_NODE_PATH: envNode }, exists: bothExist }), layout.nodeRuntime);
+  assert.equal(resolveNodeExecutable({ layout, env: { NOWADAYS_NODE_PATH: envNode }, exists: candidate => candidate === envNode }), envNode);
   assert.equal(resolveNodeExecutable({ layout, env: {}, exists: candidate => candidate === layout.nodeRuntime }), layout.nodeRuntime);
-  assert.equal(resolveNodeExecutable({ layout, env: { NOWADAYS_NODE_PATH: "/opt/node24/bin/node" }, exists: candidate => candidate === "/opt/node24/bin/node" }), "/opt/node24/bin/node");
-  assert.equal(resolveNodeExecutable({ layout, env: {}, exists: noExists }), "node");
+  assert.equal(resolveNodeExecutable({ layout, env: { NOWADAYS_NODE_PATH: envNode }, exists: noExists }), "node");
+});
+
+test("开发 Node 运行时按环境变量 → 仓库工具目录 → PATH 的顺序回退", () => {
+  const layout = resolveBackendLayout({ isPackaged: false, dirname, env: {} });
+  const envNode = path.join("D:", "node24", "node.exe");
+  const bothExist = candidate => candidate === layout.nodeRuntime || candidate === envNode;
+  assert.equal(resolveNodeExecutable({ layout, env: { NOWADAYS_NODE_PATH: envNode }, exists: bothExist }), envNode);
+  assert.equal(resolveNodeExecutable({ layout, env: {}, exists: candidate => candidate === layout.nodeRuntime }), layout.nodeRuntime);
+  assert.equal(resolveNodeExecutable({ layout, env: { NOWADAYS_NODE_PATH: envNode }, exists: candidate => candidate === layout.nodeRuntime }), layout.nodeRuntime);
+  assert.equal(resolveNodeExecutable({ layout, env: { NOWADAYS_NODE_PATH: envNode }, exists: noExists }), "node");
+});
+
+test("显式覆盖布局保留开发与打包各自的 Node 优先级", () => {
+  const envNode = path.join("D:", "node24", "node.exe");
+  for (const isPackaged of [false, true]) {
+    const layout = resolveBackendLayout({
+      isPackaged,
+      resourcesPath: path.join("C:", "resources"),
+      dirname,
+      env: { NOWADAYS_BACKEND_ROOT: path.join("D:", "backend") },
+    });
+    const bothExist = candidate => candidate === layout.nodeRuntime || candidate === envNode;
+    const expected = isPackaged ? layout.nodeRuntime : envNode;
+    assert.equal(resolveNodeExecutable({ layout, env: { NOWADAYS_NODE_PATH: envNode }, exists: bothExist }), expected);
+  }
 });

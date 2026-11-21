@@ -139,7 +139,7 @@ if (process.argv[2] === "--worker") {
       const system = model.requests[0]?.system ?? "";
       return { contractPassed: model.requests.length === 1 && system.includes("最新蓝色角色设定") && system.includes("期待重启") && savedWake?.status === "completed" && status.budget.dailyLimit === 7 && status.budget.usedPoints === 1,
         observed: { calls: model.requests.length, latestDefinition: system.includes("最新蓝色角色设定"), latestState: system.includes("期待重启"), wake: savedWake, status } };
-    } finally { await restored?.close(); await fixture.app.close(); }
+    } finally { await restored?.close(); await fixture.close(); }
   });
 
   await probe("A02-budget-pause-restart-disabled-original-chain", async () => {
@@ -172,7 +172,7 @@ if (process.argv[2] === "--worker") {
       await pause(50);
       return { contractPassed: after.status === "completed" && diaries.length === 1 && model.requests.length === 2 && status.budget.usedPoints === 3 && !newTaskStarted,
         observed: { originalTask: task, after, diaries, calls: model.requests.length, newTaskStarted, status } };
-    } finally { await restored?.close(); await fixture.app.close(); }
+    } finally { await restored?.close(); await fixture.close(); }
   });
 
   for (const mode of ["saved", "unknown", "partial", "superseded"] as const) {
@@ -250,7 +250,7 @@ if (process.argv[2] === "--worker") {
       const original = restored.services.memory.getEvidence(fixture.roleId, event.evidenceId);
       return { contractPassed: conflict === "MEMORY_VERSION_CONFLICT" && after.version === before.version + 1 && after.summary === "新摘要正确地点" && search.items.some((i) => i.id === event.eventId) && !oldSearch.items.some((i) => i.id === event.eventId) && original.content === "原文说旧地点",
         observed: { conflict, after, search: search.items, oldSearch: oldSearch.items, original } };
-    } finally { await restored?.close(); await fixture.app.close(); }
+    } finally { await restored?.close(); await fixture.close(); }
   });
 
   await probe("A07-ended-budget-paused-task-stays-ended-after-restart", async () => {
@@ -274,7 +274,7 @@ if (process.argv[2] === "--worker") {
       const tasks = restored.conversation.listTasks(fixture.roleId);
       const wakes = restored.services.autonomy.listWakes(fixture.roleId);
       return { contractPassed: model.requests.length === 0 && tasks.length === 1 && tasks[0]?.taskId === original.taskId && tasks[0]?.status === "completed" && !wakes.some((w) => w.status === "pending" || w.status === "claimed"), observed: { tasks, wakes, calls: model.requests.length } };
-    } finally { await restored?.close(); await fixture.app.close(); }
+    } finally { await restored?.close(); await fixture.close(); }
   });
   clearTimeout(watchdog);
   clearInterval(alive);
