@@ -1,3 +1,4 @@
+import { BUSINESS_SCHEMA_VERSION } from "../src/storage/schema.js";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -412,7 +413,7 @@ test("V18 database migrates to V19 while preserving voice config, messages and S
 
     const storage = RoleStorage.openExisting(paths);
     try {
-      assert.equal(storage.business.schemaVersion, 25);
+      assert.equal(storage.business.schemaVersion, BUSINESS_SCHEMA_VERSION);
     } finally {
       storage.close();
     }

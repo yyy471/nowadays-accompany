@@ -13,7 +13,7 @@
 3. **句段切分与异步表情标注**：单条助手消息持久化，按自然句段切分为 `speech` / `narration`、流式部分句段与终态重对账、异步差分标注、历史服饰与主页立绘回退链。
 4. **SSE 事件流与前端会话同步**：`execution` 事件流（13 种 `ConversationStreamType`）、`after` 与 `Last-Event-ID` 游标协商、15 秒注释心跳、请求期事件暂存与重连恢复。
 5. **桌面对话演出与语音协同**：点击／`Enter`／`Space` 逐句推进、输入框隐藏与恢复、旁白跳过语音与在播台词切段不早停、按句合成消费与预取、历史定位与舞台冻结、`237～239` 布局与换光现状。
-6. **过场图任务与受管素材（当前仅手动触发与文生图）**：已保存助手消息上的手动过场图创建、幂等复用、模型／固定画面规划、`background` 与 `full_scene` 图层约束、历史服饰参考图、受管落盘与读取、启动故障结算。
+6. **过场图任务与受管素材（含自动触发与文生图／图生图）**：已保存助手消息上的手动与回复后自动过场图创建、幂等复用、模型／固定画面规划（`draw` 开关决策）、`background` 与 `full_scene` 图层与参考图隔离约束、服饰图生图参考与历史锚点、受管落盘与读取、启动恢复与未知结算。
 
 ### 1.2 边界分工（不在此处重复）
 
@@ -46,7 +46,8 @@
 | `POST /v1/roles/:roleId/windows` | JSON：`windowSchema` | `201` 创建新窗口 | 按 [routes.ts](../../backend/src/http/routes.ts#L224-L240) 写入窗口记录 |
 | `GET /v1/roles/:roleId/windows` | — | `200 { items }` | 角色目录与 `initStatus` 校验（`RoleAccess`） |
 | `POST /v1/roles/:roleId/windows/:windowId/messages` | JSON：`{ content, submissionId, source }` | `201` 新消息 / `200` 重复提交；均含 `{ message, duplicate, decisionScheduled, waitReason }` | 先执行 `findSubmittedMessage`，**之后**才检查 `activity.assertCanStart(roleId)`；同 `submissionId` 不同内容返回 `409 SUBMISSION_CONFLICT`；未入库新消息遇到角色停用返回 `409 ROLE_ACTIVITY_STOPPED` |
-| `GET /v1/roles/:roleId/windows/:windowId/messages` | `?after=` 或 `?before=`（互斥），`limit`（`1..200`，默认 `50`） | `200 { items, hasMore, nextAfter, nextBefore, segments, activeReply, cursor, sceneImages }` | `after` 与 `before` 同传或非整数越界返回 `400 INVALID_QUERY`；单读事务采集全字段与 `cursor`，确保快照与 SSE 无缝衔接 |
+| `POST /v1/roles/:roleId/windows/:windowId/messages/:messageId/retry` | JSON：`{ executionId }` | `200` 与 `POST .../messages` 同结构提交结果 | 仅重派当前 `getFailedReply(windowId)` 指向的最新失败尝试，沿用原 `submissionId` 且不复制用户消息、不重派已保存回复对应的既有工具；状态过期返回 `409 REPLY_RETRY_STALE` |
+| `GET /v1/roles/:roleId/windows/:windowId/messages` | `?after=` 或 `?before=`（互斥），`limit`（`1..200`，默认 `50`） | `200 { items, hasMore, nextAfter, nextBefore, segments, activeReply, failedReply, awaitingReply, cursor, sceneImages }` | `after` 与 `before` 同传或非整数越界返回 `400 INVALID_QUERY`；单读事务采集全字段、失败／待恢复锚点与 `cursor`，确保快照、重载与 SSE 无缝衔接 |
 | `GET /v1/roles/:roleId/windows/:windowId/messages/:messageId` | — | `200 { message, segments, sceneImages }` | 窗口与消息归属不匹配返回 `404 WINDOW_NOT_FOUND` / `404 MESSAGE_NOT_FOUND` |
 | `POST /v1/roles/:roleId/windows/:windowId/input-state` | JSON：`{ clientId, typing }` | `200` 输入态或清空确认 | 请求体结构校验失败（空或空白 `clientId`、非布尔 `typing`、缺少 `typing` 或多余字段，[schemas.ts](../../backend/src/http/schemas.ts#L130-L135)）返回 `400 INVALID_REQUEST`；省略 `clientId` 或空白路径标识触发输入态业务校验（`InputStateInvalidError`，[input-state.ts](../../backend/src/application/input-state.ts#L144-L154)）返回 `400 INPUT_STATE_INVALID`；更新内存态并在 `typing=false` 时顺带触发 `schedule` |
 | `DELETE /v1/roles/:roleId/windows/:windowId/input-state` | `?clientId=`（必填） | `200 { cleared: true }` | `clientId` 缺失或为空返回 `400 INPUT_STATE_INVALID`；清理指定客户端状态并触发 `schedule` |
@@ -68,10 +69,10 @@
 
 | 存储层级 | 具体载体 | 归属与生命周期说明 |
 | --- | --- | --- |
-| **每角色业务库**（`BUSINESS_SCHEMA_VERSION = 20`，见 [schema.ts](../../backend/src/storage/schema.ts)） | `windows`、`messages`、`executions`、`message_segments`、`execution_stream_events`、`scene_image_tasks`、`scene_image_assets`、`model_calls` | 一轮回复在 `messages` 保持一条；`message_segments` 记录 `segment_id`、`ordinal`、`kind`（`speech` / `narration`）、字符起止偏移、`outfit_id`、`home_asset_id`、`sprite_asset_id`、`voice_emotion`（V19 新增，仅 `speech` 句段写入）、`annotated_at`；`scene_image_tasks` 记录锚点消息／执行、`trigger_source`（`manual` / `auto`）、`layer_mode`、`start_segment_id`～`end_segment_id`、`attempt_no`、`config_json`（固定服务与锚点快照）；`scene_image_assets` 按 `task_id` 唯一索引约束每任务最多一张成图 |
-| **每角色文件系统** | `<roleDir>/scene-images/<assetId>.<ext>` | 仅通过 `readAsset(roleId, assetId)` 校验路径与魔数读取，相对路径不通过 HTTP 暴露 |
-| **后端进程内存态** | `InputStateRegistry`（[input-state.ts](../../backend/src/application/input-state.ts#L12)）与 `blockedWindows` | 输入状态 1 秒自动过期，重启动清空，不持久化；执行异常写入 `blockedWindows` 直到该窗口收到新消息或用户显式重试（`283 R02`） |
-| **桌面渲染器内存与本地存储** | `useWindowSession` 会话状态与 `drafts`；`localStorage` | `drafts` 按 `${roleId}:${windowId}` 分键隔离；`nowadays-dialogue-voice` / `nowadays-dialogue-scene` 与 `nowadays-dialogue-dock`（见 [Conversation.tsx](../../desktop/desk-preview/renderer/src/pages/Conversation.tsx#L22-L27)）记录演出本地偏好；音频缓存（`MAX_CACHE = 48`）通过 `URL.createObjectURL` 驻留并在切换角色／窗口／卸载时释放 |
+| **每角色业务库**（`BUSINESS_SCHEMA_VERSION = 27`，见 [schema.ts](../../backend/src/storage/schema.ts)） | `windows`、`messages`、`executions`、`message_segments`、`execution_stream_events`、`scene_image_tasks`、`scene_image_assets`、`role_scene_references`、`model_calls` | 一轮回复在 `messages` 保持一条；`message_segments` 记录 `segment_id`、`ordinal`、`kind`（`speech` / `narration`）、字符起止偏移、`outfit_id`、`home_asset_id`、`sprite_asset_id`、`voice_emotion`（V19 新增，仅 `speech` 句段写入）、`annotated_at`；`scene_image_tasks` 记录锚点消息／执行、`trigger_source`（`manual` / `auto`，`idx_scene_image_auto_attempt` 约束同消息至多一条自动单号）、`layer_mode`、`start_segment_id`～`end_segment_id`、`attempt_no`、`config_json`（固定服务、自动配置与锚点快照）；`scene_image_assets` 按 `task_id` 唯一索引约束每任务最多一张成图；`role_scene_references`（V27）保存 `img2img` 每套服饰专属参考图元数据 |
+| **每角色文件系统** | `<roleDir>/scene-images/<assetId>.<ext>`、`<roleDir>/appearance/<assetId>.<ext>` | 过场图成图仅通过 `readAsset(roleId, assetId)` 校验路径与魔数读取，相对路径不通过 HTTP 暴露；`img2img` 服饰参考图存放于 `<roleDir>/appearance/<assetId>.<ext>` 并通过受管路由存取 |
+| **后端进程内存态** | `InputStateRegistry`（[input-state.ts](../../backend/src/application/input-state.ts#L12)）与 `blockedWindows` | 输入状态 1 秒自动过期，重启动清空，不持久化；执行异常写入 `blockedWindows`（同时排除因进程中断 `PROCESS_INTERRUPTED` 结算的历史异常），直到该窗口收到新消息或用户显式重试（`retryFailedReply`） |
+| **桌面渲染器内存与本地存储** | `useWindowSession` 会话状态与 `drafts`；`localStorage` | `drafts` 按 `${roleId}:${windowId}` 分键隔离；失败回复保留 `failedReply`（结合 SSE `execution_failed.failedMessageId` 与快照 `failedReply`/`awaitingReply`）在 `ChatPane` 渲染原地重试入口；`nowadays-dialogue-voice` / `nowadays-dialogue-scene` 与 `nowadays-dialogue-dock`（见 [Conversation.tsx](../../desktop/desk-preview/renderer/src/pages/Conversation.tsx#L22-L27)）记录演出本地偏好；音频缓存（`MAX_CACHE = 48`）通过 `URL.createObjectURL` 驻留并在切换角色／窗口／卸载时释放 |
 
 ### 2.4 SSE 事件类型与消息接收等待原因
 
@@ -139,14 +140,15 @@
   - 进入 ComfyUI 生成前核对快照站点标识与当前服务记录站点标识：若跨站点／改地址，直接结算失败 `409 SCENE_IMAGE_SERVICE_CHANGED`（避免将新站点令牌发往旧地址 `CG-R05`）；同站点更新路径或轮换令牌则继续沿用快照地址与新令牌完成生成。
 - **规划输入与图层约束**（[scene-image-service.ts](../../backend/src/application/scene-image-service.ts#L335-L450)、[scene-image-store.ts](../../backend/src/storage/scene-image-store.ts#L154-L200)）：
   - 上下文取锚点消息之前最多 4 条已结束消息；`outfitForMessage` 只读取目标轮句段固化的 `outfit_id`，不回退角色当前穿着（`227 R04`）。
-  - 默认注入 `ModelSceneImagePlanner`（以 `FixedSceneImagePlanner` 为缺绑定兜底）：无对话模型时回退固定规划（首段到末段 + 请求图层）；有模型但模型调用失败、登记 `model_calls` 失败或返回非法／与手动冲突的图层模式时直接以 `SCENE_IMAGE_PLAN_FAILED` / `SCENE_IMAGE_PLAN_INVALID` / `SCENE_IMAGE_PLAN_UNAVAILABLE` 失败，不回退掩盖错误（`227 R02/R03`）。
-  - `background`：严格禁止拼入角色／服饰锚点且不附带参考图（`CG-R01`）；`full_scene`：传入历史服饰 `home` 参考图（经魔数与大小校验 `<= 8 MiB`，缺失或损坏时降级为无参考继续出图）。
+  - 默认注入 `ModelSceneImagePlanner`（以 `FixedSceneImagePlanner` 为缺绑定兜底）：无对话模型时，手动任务回退固定规划（首段到末段 + 请求图层）；有模型但模型调用失败、登记 `model_calls` 失败或返回非法／与手动冲突的图层模式时直接以 `SCENE_IMAGE_PLAN_FAILED` / `SCENE_IMAGE_PLAN_INVALID` / `SCENE_IMAGE_PLAN_UNAVAILABLE` 失败，不回退掩盖错误（`227 R02/R03`）。
+  - `CG-03` **回复后自动过场图**：角色开启 `autoGenerateEnabled` 时，仅正式回复提交触发自动任务捕获与单窗口顺序调度（`dispatchAutomatic`），无可用服务时按 `SCENE_IMAGE_AUTO_NO_SERVICE` 结算为 `skipped`；同一窗口处于 `autoCooldownMinutes` 冷却期时按 `SCENE_IMAGE_AUTO_COOLDOWN` 结算为 `skipped`；`ModelSceneImagePlanner` 对自动任务可输出 `draw: false` 并以 `SCENE_IMAGE_AUTO_NOT_SELECTED`（`skipped`）跳过而不产生图片；自动图生图会固定读取对应服饰的 `role_scene_references` 参考图，且生成纯 `background` 时按工作流分支隔离参考图输入。
+  - `background`：严格禁止拼入角色／服饰锚点且不附带参考图（`CG-R01`；`img2img` 若自定义工作流无无参考图的 `SaveImage` 纯背景分支，非内置 MOSS 工作流返回 `422 SCENE_BACKGROUND_WORKFLOW_REQUIRED`）；`full_scene`：`text2img` 传入历史服饰 `home` 参考图，`img2img` 读取对应 `role_scene_references` 上传至 ComfyUI `/upload/image` 并注入 `LoadImage`/`ImageScale` 分支（校验 `<= 8 MiB`）。
 - **超时竞争、中断清理与启动恢复**：
   - 使用服务侧外层超时（`generator` 固定超时期限或默认 180 秒）+ `AbortSignal` 与 `raceWithSignal` 双重竞争，范围同时覆盖生图请求**与图片像素校验解码**，落盘前再次复查取消状态；ComfyUI 轮询遇到中止时会请求一次 `/queue` 清理远端排队（`CG-R04`）。
   - 写入受管文件采用排他打开 `fs.openSync(..., "wx")` 并立即登记清理路径；中途 `ENOSPC` 等失败会删去半写入文件，即使清理被 `EPERM` 拒绝仍按原失败原因持久化任务终态与 SSE 通知并打警告日志（`227 R05/R06`）。
-  - 进程启动执行 `recoverOnStartup()`，将未结束的 `scene_image_tasks` 统一结算为 `failed`（`SCENE_IMAGE_INTERRUPTED`）。
+  - 进程启动执行 `recoverOnStartup()`：`auto` 且尚处于 `queued` 的待触发任务保留队列并恢复调度；`auto` 且处于 `generating` 的任务结算为 `failed`（`SCENE_IMAGE_GENERATION_OUTCOME_UNKNOWN`）；其余未结束任务统一结算为 `failed`（`SCENE_IMAGE_INTERRUPTED`）。
 - **前端展示与晚到归属**：
-  - 前端只认任务的 `startSegmentId` 挂载操作入口（查看／生成中／失败）；若引用句段不在当前列表则展示于独立「未找到对应句段」栏（`FE-R03`）；当 `sceneAuto` 开启、未被用户手动「收起过场图」（`dismissed`）且当前 `stageLive` 句段序号落在 `[start, end]` 时自动演示。
+  - 前端只认任务的 `startSegmentId` 挂载操作入口（查看／生成中／失败）；`sceneView` 自动隐藏 `skipped` 与尚处于规划／排队的 `auto` 任务；若引用句段不在当前列表则展示于独立「未找到对应句段」栏（`FE-R03`）；当 `sceneAuto` 开启、未被用户手动「收起过场图」（`dismissed`）且当前 `stageLive` 句段序号落在 `[start, end]` 时自动演示。
 
 ---
 
@@ -171,10 +173,10 @@
 
 ### 4.3 未实现能力与真实联调缺口
 
-- **尚未实现的能力**：
-  - `CG-03` **完成回复后自动触发过场图**：当前 [conversation-service.ts](../../backend/src/application/conversation-service.ts) 与 `SceneImageService` 之间没有任何自动调用挂钩，仅实现了显式 `requestManual`；冷却时间、间隔频率、`skipped` 决策阈值等策略未实施。
-  - `CG-04` **过场图增量独立复核与真实服务适配**（[223 §2](../archive/03-appearance-and-performance/223-conversation-performance-development-guide.md)）：已完成基于模拟服务的后端自验、MOSS-Image 设置接入与 `CG-R01～R05` 测试，尚待结合 `223` 汇总开展过场图增量独立复核与真实生图服务联调。
-  - **ComfyUI 图生图与服饰锚点图上传**（[248 §10](../archive/04-role-settings-and-media/248-comfyui-adaptation.md#10-未完成与后续)）：目前仅接入 MOSS-Image 文生图工作流，图生图与参考图上传作为后续能力单列。
+- **已通过独立复核与本机实时媒体联调的增量能力（2026-11-21）**：
+  - `CG-03` 自动过场图、ComfyUI `img2img` 服饰参考图上传与纯背景分支隔离、桌面失败回复原地重试（`retryFailedReply`）与分段音频播放切窗清理均已通过独立代码复核、全量离线回归及本机实时 `nowadays-tts-v1`（`cosyvoice`/`indextts`）与 ComfyUI `MOSS-Image`（自动 `background` + 手动 `img2img` `full_scene`）Electron E2E（文本对话使用确定性桩）。
+- **剩余能力与真实联调缺口**：
+  - 真实多模态 LLM 对话流全栈串联、多语种长句 TTS、ComfyUI 长等待取消清队列／8 MiB 与 32 MiB 实机上限，以及设置页 `img2img`／`OutfitReferences` 专属 UI 交互 E2E 仍待后续补测。
   - **生图配置未就绪占位 vs 失败策略**：当前未配置真实生图服务时仍沿用 `FakeSceneImageGenerator` 产出样例图（`248 §10` 指出正式版需收口为明确失败或开关边界）。
   - **服务端历史按日期统计与关键词检索接口**：当前桌面 `HistoryPanel` 通过循环 `before` 分页拉取全部历史并在前端 [history.js](../../desktop/desk-preview/renderer/src/conversation/history.js) 建立索引（`231 §1`）。
   - **半写入残留自动清扫任务**：当前依赖单次失败删除及管理员／日志定位，`227 §7` 遗留后台清扫尚未实施。

@@ -84,8 +84,16 @@ export interface MessagePageView {
   nextBefore: number | null;
   segments: SegmentView[];
   activeReply: { messageId: string; executionId: string; text: string } | null;
+  failedReply?: FailedReplyView | null;
+  awaitingReply?: { executionId: string; messageId: string } | null;
   cursor: number;
   sceneImages?: SceneTaskView[];
+}
+
+export interface FailedReplyView {
+  messageId: string;
+  executionId: string;
+  errorCode: string;
 }
 
 export interface MessageDetailView {

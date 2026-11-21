@@ -1,6 +1,8 @@
 export interface ImageSettingsView {
   serviceId: string;
-  modelType: "text2img";
+  modelType: "text2img" | "img2img";
+  autoGenerateEnabled: boolean;
+  autoCooldownMinutes: number;
   modelPath: string;
   basePrompt: string;
   negativePrompt: string;

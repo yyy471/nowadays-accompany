@@ -22,6 +22,7 @@ import {
   type ImageSettingsViewPayload,
 } from '../../image-config.js';
 import { ImageModelPicker } from './ImageModelPicker';
+import { OutfitReferences } from './OutfitReferences';
 import { imageServiceCacheKey } from './image-cache.js';
 import { useImageProbe } from './use-image-probe';
 
@@ -381,6 +382,8 @@ export function ImagePanel({
     if (next.serviceId !== undefined && next.serviceId !== form.serviceId) {
       imageProbe.clearLog();
       invalidatePreview(true);
+    } else if (next.workflow !== undefined) {
+      imageProbe.clearLog();
     }
     updateForm(previous => ({ ...previous, ...next }));
   };
@@ -689,6 +692,26 @@ export function ImagePanel({
       {disabledSelectedService && <p role="alert" className="nd-appearance-hint nd-image-warn">{T33.selectedNote}</p>}
     </Field>
 
+    <Field label="生成方式"><Select value={form.modelType} disabled={busy} onChange={e => patch({ modelType: e.target.value as ImageForm['modelType'] })}>
+      <option value="text2img">文生图</option><option value="img2img">图生图</option>
+    </Select></Field>
+    <Field label="ComfyUI 工作流" hint={form.workflow ? '已导入自定义工作流，可重新选择 API 格式 JSON。' :
+      form.modelType === 'img2img' ? '需导入 API 格式 JSON，选定图片输出须接有一个 LoadImage 参考图节点。' : '当前使用内置 MOSS-Image 文生图工作流。'}>
+      <Input type="file" accept=".json,application/json" disabled={busy} onChange={async e => {
+        const file = e.target.files?.[0]; e.target.value = ''; if (!file) return;
+        const token = roleToken.current;
+        try {
+          const workflow = JSON.parse(await file.text());
+          if (isStale(token)) return;
+          if (!workflow || typeof workflow !== 'object' || Array.isArray(workflow) || !Object.keys(workflow).length ||
+            !Object.values(workflow).every(node => node && typeof node === 'object' && 'class_type' in node && 'inputs' in node)) throw Error('请选择 ComfyUI 导出的 API 格式工作流 JSON。');
+          patch({ workflow, outputNodeId: null }); setError('');
+        } catch (reason) { if (!isStale(token)) setError(reason instanceof Error ? reason.message : String(reason)); }
+      }}/>
+    </Field>
+    {form.workflow && <><Field label="输出节点 ID" hint="留空使用首个 SaveImage。">
+      <Input value={form.outputNodeId ?? ''} disabled={busy} onChange={e => patch({ outputNodeId: e.target.value.trim() || null })}/></Field>
+      <Button size="sm" disabled={busy} onClick={() => patch({ workflow: null, outputNodeId: null })}>清除工作流</Button></>}
     <ImageModelPicker
       label="模型名称或目录"
       testAnnouncedExternally
@@ -747,7 +770,8 @@ export function ImagePanel({
       {anchorNotes.base && <p className="nd-image-source-note">{anchorNotes.base}</p>}
     </section>
 
-    <section className="nd-image-section" aria-label="服饰锚点提示词">
+    {form.modelType === 'img2img' ? <OutfitReferences key={roleId} roleId={roleId} outfits={outfits} guardWrite={guardWrite}
+      onChanged={() => invalidatePreview(true)} /> : <section className="nd-image-section" aria-label="服饰锚点提示词">
       <div className="nd-image-section-title">
         <h3>服饰锚点提示词</h3>
         <p className="nd-appearance-hint">生成含人物画面时接在基础提示词之后；每套服饰均可读取对应立绘交由对话模型反复生成。</p>
@@ -818,8 +842,7 @@ export function ImagePanel({
           })}
         </div>
       )}
-    </section>
-
+    </section>}
 
       <Field label="负向提示词" hint="留空也可出图；人物或复杂场景可填入防崩坏词提升稳定性。">
         <Input
@@ -846,6 +869,11 @@ export function ImagePanel({
             onChange={event => patch({ seed: event.target.value === '' ? null : Number(event.target.value) })}
           />
         </Field>
+        <Field label="自动生成过场图"><Select value={form.autoGenerateEnabled ? 'on' : 'off'} disabled={busy} onChange={e => patch({ autoGenerateEnabled: e.target.value === 'on' })}>
+          <option value="off">关闭</option><option value="on">开启</option></Select></Field>
+        {form.autoGenerateEnabled && <Field label="同一窗口冷却时间（分钟）" hint="0 表示不限制间隔。">
+          <Input type="number" min={0} max={10080} step={1} value={form.autoCooldownMinutes} disabled={busy} onChange={e => patch({autoCooldownMinutes: Number(e.target.value)})}/>
+        </Field>}
       </div>
     </MediaGroup><MediaGroup title="试生图" group={group}><div className="nd-image-preview">
       {activePreview && <figure className="nd-image-figure">
@@ -871,7 +899,7 @@ export function ImagePanel({
               setPreviewOutfitId(event.target.value);
             }}
           >
-            <option value="">不带服饰提示词</option>
+            <option value="">{form.modelType === 'img2img' ? '请选择已上传参考图的服饰' : '不带服饰提示词'}</option>
             {outfits.map(outfit => <option key={outfit.outfitId} value={outfit.outfitId}>{outfit.name}</option>)}
           </Select>
         </Field>

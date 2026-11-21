@@ -85,8 +85,19 @@ function captureTables(db: Database.Database): TransferTables {
     if (table === "web_reading_deliveries" && !db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(table)) {
       return [table, []];
     }
-    const columns = transferColumns(table).map((column) => `"${column}"`).join(", ");
-    return [table, db.prepare(`SELECT ${columns} FROM "${table}"`).all()];
+    let columns = transferColumns(table);
+    if (table === "role_scene_image_settings" && !db.prepare(
+      "SELECT 1 FROM pragma_table_info('role_scene_image_settings') WHERE name='auto_generate_enabled'",
+    ).get()) columns = columns.filter(column => !column.startsWith("auto_"));
+    const rows = db.prepare(`SELECT ${columns.map(column => `"${column}"`).join(", ")} FROM "${table}"`).all() as TransferRow[];
+    // 默认配置沿用早期 v1 的投影，旧时间线不会仅因升级而分叉。
+    if (table === "role_scene_image_settings") for (const row of rows) {
+      if (row.auto_generate_enabled === 0 && row.auto_cooldown_minutes === 30) {
+        delete row.auto_generate_enabled;
+        delete row.auto_cooldown_minutes;
+      }
+    }
+    return [table, rows];
   })) as TransferTables;
 }
 
@@ -198,9 +209,9 @@ function validateRoleTransfer(value: unknown): RoleTransferPackage {
 function validateOwnership(roleId: string, builtinKey: unknown, tables: TransferTables): void {
   // 早期 v1 包尚无世界书；两表成对出现，新表为空时保持既有时间线指纹。
   const hasBooks = Object.hasOwn(tables, "role_worldbooks");
-  const tableCount = TRANSFER_TABLES.length - (hasBooks ? 0 : 2);
+  const tableCount = TRANSFER_TABLES.length - (hasBooks ? 0 : 2) - (Object.hasOwn(tables, "role_scene_references") ? 0 : 1);
   if (Object.keys(tables).length !== tableCount || Object.hasOwn(tables, "worldbook_usage") !== hasBooks ||
-      !TRANSFER_TABLES.every(table => Object.hasOwn(tables, table) || isWorldbookTable(table))) {
+      !TRANSFER_TABLES.every(table => Object.hasOwn(tables, table) || isWorldbookTable(table) || table === "role_scene_references")) {
     throw new Error("ROLE_TRANSFER_TABLE_INVALID");
   }
   if (tables.roles.length !== 1 || tables.roles[0]?.role_id !== roleId ||
@@ -208,8 +219,10 @@ function validateOwnership(roleId: string, builtinKey: unknown, tables: Transfer
     throw new Error("ROLE_TRANSFER_ROLE_OWNERSHIP_MISMATCH");
   }
   for (const table of TRANSFER_TABLES) {
-    const columns = transferColumns(table);
     for (const row of tables[table] ?? []) {
+      const columns = transferColumns(table).filter(column =>
+        !(table === "role_scene_image_settings" && !Object.hasOwn(row, "auto_generate_enabled") &&
+          !Object.hasOwn(row, "auto_cooldown_minutes") && column.startsWith("auto_")));
       if (Object.keys(row).length !== columns.length || !columns.every((column) => Object.hasOwn(row, column))) {
         throw new Error(`ROLE_TRANSFER_COLUMNS_INVALID:${table}`);
       }
@@ -244,7 +257,7 @@ export function roleTransferWithAncestors(
 
 function timelineProjection(pkg: Pick<RoleTransferPackage, "roleId" | "tables" | "files">) {
   const tables = Object.fromEntries(TRANSFER_TABLES.filter((table) => table !== "execution_stream_events" &&
-    (!isWorldbookTable(table) || pkg.tables[table]?.length)).map((table) => {
+    (!(isWorldbookTable(table) || table === "role_scene_references") || pkg.tables[table]?.length)).map((table) => {
     const rows = pkg.tables[table].map((row) => Object.fromEntries(Object.entries(row).filter(([column]) =>
       column !== "updated_at" && !(table === "model_calls" && column === "resource_id") &&
       !(table === "role_voice_settings" && column === "enabled"))));
@@ -333,6 +346,9 @@ function assertTransferRelations(db: Database.Database): void {
     UNION ALL
     SELECT 1 FROM scene_image_assets a JOIN scene_image_tasks t ON t.task_id = a.task_id
       WHERE a.message_id <> t.message_id OR a.window_id <> t.window_id
+    UNION ALL
+    SELECT 1 FROM role_scene_references r JOIN outfits o ON o.outfit_id = r.outfit_id
+      WHERE r.role_id <> o.role_id OR o.deleted_at IS NOT NULL
     LIMIT 1`).get();
   if (bad) throw new Error("ROLE_TRANSFER_RELATION_INVALID");
 }

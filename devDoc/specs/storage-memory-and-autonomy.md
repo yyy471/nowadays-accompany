@@ -46,7 +46,7 @@
 | --- | --- | --- |
 | `<app-root>/data/app.sqlite` | 全局索引库（V11） | 存角色索引、活动状态、预置身份、资源与加密凭据、删除队列，以及单角色迁移的基线、选择记录和发布日志 |
 | `<app-root>/secrets/master.key` | 本地主密钥盒（AES-256-GCM `v1`） | [secret-cipher.ts](../../backend/src/security/secret-cipher.ts#L20-L100) `0o700` 目录／`0o600` 密钥文件，竞争写使用 `flag: "wx"` |
-| `.../roles/<roleId>/business.sqlite` | 角色业务库（V25） | 保存身份与首次启用资格、窗口消息、任务、执行与计量、记忆证据、自主安排、外观与媒体。网页原文的实际送达区间由 `web_reading_deliveries` 保存 |
+| `.../roles/<roleId>/business.sqlite` | 角色业务库（V27） | 保存身份与首次启用资格、窗口消息、任务、执行与计量、记忆证据、自主安排、外观与媒体（含 V26 自动过场图／图生图设置与 V27 `role_scene_references`）。网页原文的实际送达区间由 `web_reading_deliveries` 保存 |
 | `.../roles/<roleId>/execution.sqlite` | 图检查点库（`EXECUTION_SCHEMA_VERSION = 1`） | `@langchain/langgraph-checkpoint-sqlite` 的 `SqliteSaver` 专用 |
 | `.../roles/<roleId>/workspace/` | 角色独立工作空间 | 本地 MCP 根目录；日记落盘 `diaries/YYYY-MM-DD/<diaryId>.md`；外观／语音／过场图分置同级 `appearance/`、`voice/`、`scene-images/` |
 
@@ -118,14 +118,14 @@
 
 启动先取得安装排他锁，按全局发布日志收敛中断的角色迁移，再初始化预置角色、记忆和调度服务。后续服务按以下顺序处理上次退出的状态。[启动实现](../../backend/src/bootstrap/app.ts)
 1. `memoryRuntime.recoverOnStartup()` 将 `running` 批次标记 `failed (PROCESS_INTERRUPTED)`，回退未提交 `processing` 证据保留已提交子批与待处理触发（目录暂不可用则登记 `pendingStartupRecoveryRoles` 待就绪后先补救）；
-2. [conversation.recoverOnStartup()](../../backend/src/application/conversation-service.ts#L653-L760) 逐角色检查 `execution.sqlite` 可续跑检查点生成 `resumableIds` → 清理中断 `model_calls` → `reconcileInterruptedInternalTools()` 将 started-only 内部操作归档 `unknown` 并按原日期补账 → `reconcileToolReservations()` 结算工具预留 → `recoverInterruptedExecutions()` 把非续跑执行转为失败／中断并按最新流标记分段保存半截输出为 `interrupted` 消息 → 将遗留外部工具标为 `unknown` → `reconcileCommittedGaps()` 应用尚未落实的 `task_decision_json`（按同任务最新执行择一且排除已有更晚主执行或续行记录的历史旧暂停，`198 R01`）→ 将仍为 `active` 的自主／用户任务重新入队恢复；
-3. `activity.reconcileStartup()` 收敛无在途工作的 `stopping` 记录 → `resourceService.reconcilePendingDeletions()` → `sceneImages.recoverOnStartup()` → `roleDeletion.reconcilePendingDeletions()`。
+2. `conversation.recoverOnStartup()` 逐角色检查 `execution.sqlite` 可续跑检查点生成 `resumableIds` → 清理中断 `model_calls` → `reconcileInterruptedInternalTools()` 将 started-only 内部操作归档 `unknown` 并按原日期补账 → `reconcileToolReservations()` 结算工具预留 → `recoverInterruptedExecutions()` 把非续跑执行转为失败／中断并按最新流标记分段保存半截输出为 `interrupted` 消息 → 将遗留外部工具标为 `unknown` → `reconcileCommittedGaps()` 应用尚未落实的 `task_decision_json`（按同任务最新执行择一且排除已有更晚主执行或续行记录的历史旧暂停，`198 R01`）→ 将仍为 `active` 的自主／用户任务重新入队恢复；进程启动恢复 `blockedWindows` 时排除以 `PROCESS_INTERRUPTED` 结算的异常，避免重启后锁死窗口；
+3. `activity.reconcileStartup()` 收敛无在途工作的 `stopping` 记录 → `resourceService.reconcilePendingDeletions()` → `sceneImages.recoverOnStartup()`（保留 `auto`+`queued` 恢复调度、将 `auto`+`generating` 结算为 `SCENE_IMAGE_GENERATION_OUTCOME_UNKNOWN`，其余未结束任务结算为 `SCENE_IMAGE_INTERRUPTED`）→ `roleDeletion.reconcilePendingDeletions()`。
 
 ### 3.6 首次配置引导与对话恢复流（`278 §4`）
 
 1. **空白态创建角色**：[Home.tsx](../../desktop/desk-preview/renderer/src/pages/Home.tsx#L75) 与 [Conversation.tsx](../../desktop/desk-preview/renderer/src/pages/Conversation.tsx#L382-L386) 在无角色时渲染 `创建角色` 按钮打开 [Settings.tsx](../../desktop/desk-preview/renderer/src/pages/Settings.tsx#L224) 新建表单；新建后角色活动默认 `stopped` 以便先配置绑定。
 2. **对话模型绑定与启动入口**：在角色配置「模型 → 对话」选中保存服务与模型名（`Settings.tsx#L600-L602`）且存在已启用 `chat_model` 后，展示 `开始对话（先恢复活动）`／`开始对话` 按钮，必要时调用 `/activity/resume` 并跳转到对话页（[App.tsx#L155](../../desktop/desk-preview/renderer/src/App.tsx#L155)）。
-3. **对话页 `waitReason` 与就地恢复**：[ChatPane.tsx#L300-L315](../../desktop/desk-preview/renderer/src/conversation/ChatPane.tsx#L300-L315) 与 [use-window-session.ts#L816-L829](../../desktop/desk-preview/renderer/src/conversation/use-window-session.ts#L816-L829) 区分三类等待与拒绝：`MODEL_MISSING` 提供 `配置对话模型`＋`重试`；`ROLE_STOPPED` 与发送被拒（`ROLE_ACTIVITY_STOPPED`）保留当前草稿并提供 `恢复活动` 按钮（前者随后自动以原 `submissionId` 重试，后者清除拒收提示由用户重发）；`WINDOW_BLOCKED` 提示当前窗口不可继续。
+3. **对话页 `waitReason` 与失败回复就地恢复**：[ChatPane.tsx](../../desktop/desk-preview/renderer/src/conversation/ChatPane.tsx) 与 [use-window-session.ts](../../desktop/desk-preview/renderer/src/conversation/use-window-session.ts) 区分等待与拒绝态：`MODEL_MISSING` 提供 `配置对话模型`＋`重试`；`ROLE_STOPPED` 与发送被拒（`ROLE_ACTIVITY_STOPPED`）保留当前草稿并提供 `恢复活动` 按钮；`WINDOW_BLOCKED` 提示当前窗口不可继续；当回复在生字或恢复前失败且快照／`execution_failed` 给出当前 `failedReply`（或重启前遗留未回 `awaitingReply`）时，桌面端就地显示恢复横幅并提供 `重新回复`，经 `POST .../messages/:messageId/retry`（`{ executionId }`）以原 `submissionId` 重派，不复制用户消息、不重派已保存半截回复对应工具、不丢失本地输入草稿。
 4. **已知实现与目标差异**：当前从 `Conversation` 点击 `配置对话模型` 进入设置再点 `开始对话` 会重置到该角色的 `defaultWindowId`（因切页卸载 `ConversationPage`，未保留原自定义子窗口 ID），属于 `283 §3` 标出的待联调项之一。
 
 ---
@@ -144,7 +144,7 @@
 
 ### 3.9 单角色迁移（DL-165、DL-166）
 
-用户可在关闭后端后导出一个角色，预检包和目标服务，选择时间线并导入。版本化包保存角色业务事实、任务用量、工作空间笔记及受管素材。目标安装按其本地服务编号和用途重新绑定，用自己的密钥调用，缺失映射保持待配置。导入后角色处于停止状态，已派发但尚未决算的执行保留可查事实。目标启动前先恢复中断的发布。
+用户可在关闭后端后导出一个角色，预检包和目标服务，选择时间线并导入。版本化包保存角色业务事实（含可选 `role_scene_references` 与空表时的 v1 时间线指纹兼容）、任务用量、工作空间笔记及受管素材。目标安装按其本地服务编号和用途重新绑定，用自己的密钥调用，缺失映射保持待配置。导入后角色处于停止状态，已派发但尚未决算的执行保留可查事实。目标启动前先恢复中断的发布。
 
 同一身份的两条时间线按持久化事实和共同基线比较。发生分化或证据不足时，预检要求用户明确选择。选择沿用本机只保留已有记录，采用包则发布该包的完整时间线。确认前会重验本机、包和服务映射。原包可留作独立副本。[操作与返回状态](../../backend/README.md#7-单角色迁移)
 

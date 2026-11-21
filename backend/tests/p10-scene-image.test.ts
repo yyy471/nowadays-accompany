@@ -1,3 +1,4 @@
+import { BUSINESS_SCHEMA_VERSION } from "../src/storage/schema.js";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -539,7 +540,7 @@ test("a v12 role database migrates to v13 and keeps messages, segments and event
     assert.equal(migrated.cursor, beforeEvents);
     assert.equal(
       withStorageFor(config, role.roleId, (storage) => storage.business.schemaVersion),
-      25,
+      BUSINESS_SCHEMA_VERSION,
     );
     const tables = withStorageFor(config, role.roleId, (storage) =>
       (

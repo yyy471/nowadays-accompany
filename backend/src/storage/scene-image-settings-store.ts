@@ -5,6 +5,8 @@ import type {
 } from "../domain/scene-image-settings.js";
 
 interface SettingsRow {
+  auto_generate_enabled: number;
+  auto_cooldown_minutes: number;
   role_id: string;
   service_id: string;
   model_type: string;
@@ -36,7 +38,8 @@ export class SceneImageSettingsStore {
       .prepare(
         `SELECT role_id, service_id, model_type, model_path, base_prompt,
                 negative_prompt, outfit_prompts_json, width, height, steps, cfg,
-                sampler, scheduler, seed, workflow_json, output_node_id, updated_at
+                sampler, scheduler, seed, workflow_json, output_node_id, updated_at,
+                auto_generate_enabled, auto_cooldown_minutes
            FROM role_scene_image_settings WHERE role_id = ?`,
       )
       .get(this.roleId) as SettingsRow | undefined;
@@ -63,9 +66,11 @@ export class SceneImageSettingsStore {
         `INSERT INTO role_scene_image_settings
            (role_id, service_id, model_type, model_path, base_prompt, negative_prompt,
             outfit_prompts_json, width, height, steps, cfg, sampler, scheduler,
-            seed, workflow_json, output_node_id, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            seed, workflow_json, output_node_id, updated_at, auto_generate_enabled, auto_cooldown_minutes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(role_id) DO UPDATE SET
+           auto_generate_enabled=excluded.auto_generate_enabled,
+           auto_cooldown_minutes=excluded.auto_cooldown_minutes,
            service_id = excluded.service_id,
            model_type = excluded.model_type,
            model_path = excluded.model_path,
@@ -101,6 +106,8 @@ export class SceneImageSettingsStore {
         input.workflow === null ? null : JSON.stringify(input.workflow),
         input.outputNodeId,
         now,
+        input.autoGenerateEnabled ? 1 : 0,
+        input.autoCooldownMinutes ?? 30,
       );
     return this.get()!;
   }
@@ -109,6 +116,8 @@ export class SceneImageSettingsStore {
 function mapRow(row: SettingsRow): SceneImageSettingsRecord {
   return {
     roleId: row.role_id,
+    autoGenerateEnabled: row.auto_generate_enabled === 1,
+    autoCooldownMinutes: row.auto_cooldown_minutes,
     serviceId: row.service_id,
     modelType: row.model_type as SceneImageSettingsRecord["modelType"],
     modelPath: row.model_path,

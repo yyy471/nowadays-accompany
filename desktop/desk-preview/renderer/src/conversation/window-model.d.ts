@@ -23,7 +23,7 @@ export function applySegmentAnnotations(
   }>,
   now?: string
 ): SegmentView[];
-export function sceneView(task: SceneTaskView, segmentsByMessage: Map<string, SegmentView[]>, roleId: string): PerfScene;
+export function sceneView(task: SceneTaskView, segmentsByMessage: Map<string, SegmentView[]>, roleId: string): PerfScene | null;
 export function groupSegments(segments: SegmentView[]): Map<string, SegmentView[]>;
 export function isSubmissionConfirmed(
   record: { submissionId: string } | null | undefined,

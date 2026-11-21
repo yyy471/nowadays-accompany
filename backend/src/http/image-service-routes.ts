@@ -34,6 +34,24 @@ export function registerImageServiceRoutes(
     body: { items: services.imageServices.list() },
   }));
 
+  const referenceRoute = "/v1/roles/:roleId/scene-image/outfits/:outfitId/reference";
+  router.add("GET", "/v1/roles/:roleId/scene-image/references", ({ params }) => ({
+    status: 200, body: services.sceneImageSettings.listReferences(params.roleId ?? ""),
+  }));
+  router.add("GET", referenceRoute, ({ params }) => {
+    const ref = services.sceneImageSettings.readReference(params.roleId ?? "", params.outfitId ?? "");
+    return { status: 200, contentType: ref.mediaType, body: ref.data, cacheControl: "no-store" };
+  });
+  router.add("PUT", referenceRoute, async ({ params, request }) => {
+    const form = await readMultipartForm(request);
+    const images = form.files.get("image") ?? [];
+    if (images.length !== 1 || form.files.size !== 1) throw new HttpError(400, "SCENE_REFERENCE_REQUIRED", "请上传一张服饰参考图");
+    return { status: 200, body: await services.sceneImageSettings.uploadReference(params.roleId ?? "", params.outfitId ?? "", images[0]!) };
+  });
+  router.add("DELETE", referenceRoute, ({ params }) => {
+    services.sceneImageSettings.deleteReference(params.roleId ?? "", params.outfitId ?? "");
+    return { status: 200, body: { removed: true } };
+  });
   router.add(
     "POST",
     "/v1/image-services",

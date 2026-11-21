@@ -164,6 +164,11 @@ export interface SubmitConversationResult extends SubmitMessageResult {
 }
 
 export class ConversationService {
+  private autoScenes: import("./scene-image-service.js").SceneImageService | null = null;
+
+  setSceneImageService(service: import("./scene-image-service.js").SceneImageService): void {
+    this.autoScenes = service;
+  }
   readonly inputStates: InputStateRegistry;
   private readonly now: () => Date;
   private readonly timeZone: string | undefined;
@@ -323,7 +328,22 @@ export class ConversationService {
     };
   }
 
-  /** 只读找回已接收的消息：角色已停止时仍能确认原提交是否入库。 */
+  /** 只重派当前失败尝试所对应的已收消息，过时的按钮不能唤醒其他消息。 */
+  retryFailedReply(roleId: string, windowId: string, messageId: string, executionId: string): SubmitConversationResult {
+    const message = this.withConversationStore(roleId, (store) => {
+      const { message } = store.getMessageDetail(windowId, messageId);
+      const failed = store.getFailedReply(windowId);
+      if (failed?.messageId !== messageId || failed.executionId !== executionId || !message.submissionId) {
+        throw new AppError(409, "REPLY_RETRY_STALE", "这条消息的处理状态已更新，请查看最新回复。");
+      }
+      return message;
+    });
+    return this.submitMessage(roleId, windowId, {
+      submissionId: message.submissionId!, content: message.content, sourcePlatform: message.sourcePlatform,
+    });
+  }
+
+  /** 角色已停止时仍能确认原提交是否入库。 */
   findSubmittedMessage(
     roleId: string,
     windowId: string,
@@ -897,9 +917,11 @@ export class ConversationService {
             index.roleId,
             now,
           );
-          pendingUserRecovery = store.listPendingWindows().some(
-            (window) => store.findInterruptedUserTask(window.windowId) !== null,
-          );
+          for (const { windowId } of store.listPendingWindows()) {
+            const failed = store.getFailedReply(windowId);
+            if (failed && failed.errorCode !== "PROCESS_INTERRUPTED") this.blockedWindows.add(windowKey(index.roleId, windowId));
+            if (store.findInterruptedUserTask(windowId) !== null) pendingUserRecovery = true;
+          }
         } finally {
           storage.close();
         }
@@ -1949,6 +1971,8 @@ export class ConversationService {
         roleId,
         this.timeZone,
       );
+      const failed = store.getFailedReply(windowId);
+      const replyToolSource = failed && failed.errorCode !== "PROCESS_INTERRUPTED" ? store.replyToolSource(failed.executionId) : null;
       const begun = store.beginExecution({
         windowId,
         now: this.now().toISOString(),
@@ -1977,6 +2001,7 @@ export class ConversationService {
           windowId,
           triggerType: begun.execution.triggerType,
           messageIds: begun.messages.map((message) => message.messageId),
+          ...(replyToolSource ? { replyToolSource } : {}),
         },
         now: this.now().toISOString(),
       });
@@ -2209,6 +2234,10 @@ export class ConversationService {
         };
       };
       const recent = store.listRecentMessages(windowId, 30);
+      // 补答遇到已派发的工具时只读取回执；即便模型再次要求执行，也没有工具可派发。
+      const replyToolSource = store.savedReplyToolSource(execution.executionId);
+      const replyToolTask = replyToolSource ? store.getPrimaryExecutionTask(replyToolSource)?.taskId ?? null : null;
+      const replyToolKeys = replyToolSource ? store.recoveryToolKeys(replyToolSource) : [];
       const continuationTask =
         input.taskId === null ||
         input.taskId === undefined ||
@@ -2228,7 +2257,9 @@ export class ConversationService {
         store.getRoleContext().state,
         roundLocalDate,
       );
-      if (
+      if (replyToolSource) {
+        catalog = { tools: [], skillBriefs: [], warnings: [], close: async () => {} };
+      } else if (
         cachedCatalog !== undefined &&
         cachedCatalog.roleId === roleId
       ) {
@@ -2300,6 +2331,7 @@ export class ConversationService {
           outfitBrief,
           segmentHalt: haltKind,
         });
+        if (replyToolSource) prompt.required += "\n上次回答中断，本轮只补答原消息。已派发操作以保存的回执为据，结果未确认的如实说明。未提交的角色状态以当前状态为准。";
         return { ...prompt, worldbook };
       };
       const ensureTask = (): string => {
@@ -2356,15 +2388,16 @@ export class ConversationService {
           },
           evidenceQuery: () => [
             ...pendingMessages.map((message) => message.content),
+            ...replyToolKeys,
             continuationTask?.goal ?? "",
             autonomy?.intent ?? "",
           ].join("\n"),
           selectEvidence: (context) => findAgentEvidence(
             storage.business.db,
-            { roleId, windowId, taskId: context.taskId, scope: "window" },
+            { roleId, windowId, taskId: replyToolTask ?? context.taskId, scope: "window" },
             context.query,
             context.messages,
-            context.initialRound && continuationTask !== null,
+            context.initialRound && (continuationTask !== null || replyToolTask !== null),
             readWebHistoryProjection,
           ),
           signal: running.controller.signal,
@@ -2499,7 +2532,10 @@ export class ConversationService {
           };
         }
       }
+      const automaticScene = !completionOnly && autonomy === null && content.trim()
+        ? this.autoScenes?.captureAutomaticConfig(roleId, storage.business.db) ?? null : null;
       const committed = store.commitConversation({
+        automaticScene,
         executionId: execution.executionId,
         content,
         statePatch: this.validateOutfitStatePatch(
@@ -2511,6 +2547,7 @@ export class ConversationService {
         taskDecision,
         now: this.now().toISOString(),
       });
+      if (automaticScene) this.autoScenes?.dispatchAutomatic(roleId, windowId);
       if (!completionOnly) this.queueSegmentAnnotation({
         roleId,
         windowId,

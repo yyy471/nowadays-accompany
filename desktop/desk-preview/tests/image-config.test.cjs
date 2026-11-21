@@ -334,3 +334,52 @@ test("syncImageFormServices 自动选中首个可用生图服务并补全默认�
   const missing = createImageForm({ ...initial, serviceId: "img-missing" });
   assert.equal(syncImageFormServices(missing, services), missing);
 });
+
+test("img2img、自动生成配置校验、摘要与参考图错误文案正确", async () => {
+  const { createImageForm, toImagePayload, validateImageForm, describeImageSummary, describeImageFailure } = await load();
+  const img2imgSaved = {
+    ...saved,
+    modelType: "img2img",
+    autoGenerateEnabled: true,
+    autoCooldownMinutes: 15,
+    workflow: { "1": { class_type: "LoadImage", inputs: { image: "a.png" } } },
+    outputNodeId: "1",
+  };
+  const form = createImageForm(img2imgSaved);
+  assert.equal(form.modelType, "img2img");
+  assert.equal(form.autoGenerateEnabled, true);
+  assert.equal(form.autoCooldownMinutes, 15);
+  const payload = toImagePayload(form);
+  assert.equal(payload.modelType, "img2img");
+  assert.equal(payload.autoGenerateEnabled, true);
+  assert.equal(payload.autoCooldownMinutes, 15);
+  assert.deepEqual(validateImageForm(form), []);
+
+  const missingWorkflow = validateImageForm({ ...form, workflow: null }).map(issue => issue.code);
+  assert.ok(missingWorkflow.includes("SCENE_REFERENCE_WORKFLOW_REQUIRED"));
+  const badCooldown = validateImageForm({ ...form, autoCooldownMinutes: 10081 }).map(issue => issue.code);
+  assert.ok(badCooldown.includes("INVALID_AUTO_COOLDOWN"));
+  const negativeCooldown = validateImageForm({ ...form, autoCooldownMinutes: -1 }).map(issue => issue.code);
+  assert.ok(negativeCooldown.includes("INVALID_AUTO_COOLDOWN"));
+
+  assert.equal(
+    describeImageSummary({
+      settings: img2imgSaved,
+      service: { serviceId: "svc-1", name: "本机 ComfyUI", enabled: true, baseUrl: "http://127.0.0.1:8188" },
+      configured: true,
+    }),
+    "本机 ComfyUI · 图生图 · 768×1024 · 40 steps",
+  );
+
+  for (const code of [
+    "SCENE_REFERENCE_WORKFLOW_REQUIRED",
+    "SCENE_REFERENCE_MISSING",
+    "SCENE_REFERENCE_UNAVAILABLE",
+    "SCENE_REFERENCE_TOO_LARGE",
+    "SCENE_BACKGROUND_WORKFLOW_REQUIRED",
+  ]) {
+    const text = describeImageFailure(code, "fallback");
+    assert.notEqual(text, "fallback");
+    assert.ok(text.length > 0);
+  }
+});

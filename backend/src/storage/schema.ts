@@ -12,7 +12,7 @@ import { MemoryStore } from "./memory-store.js";
 import { retireLegacyWebPrefetchEvidence, WEB_READING_SCHEMA_SQL } from "./web-reading.js";
 
 export const APP_SCHEMA_VERSION = 11;
-export const BUSINESS_SCHEMA_VERSION = 25;
+export const BUSINESS_SCHEMA_VERSION = 27;
 export const EXECUTION_SCHEMA_VERSION = 1;
 
 export const APP_TABLES = [
@@ -75,6 +75,7 @@ export const BUSINESS_TABLES = [
   "scene_image_tasks",
   "scene_image_assets",
   "role_scene_image_settings",
+  "role_scene_references",
   "web_reading_deliveries",
   "role_worldbooks",
   "worldbook_usage",
@@ -759,9 +760,12 @@ const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
       "enabled",
     ],
   },
+  { table: "role_scene_references", columns: ["role_id", "outfit_id", "asset_id", "relative_path", "media_type", "updated_at"] },
   {
     table: "role_scene_image_settings",
     columns: [
+      "auto_generate_enabled",
+      "auto_cooldown_minutes",
       "service_id",
       "model_type",
       "model_path",
@@ -1573,6 +1577,33 @@ ALTER TABLE scene_image_tasks
   ADD COLUMN config_json TEXT;
 `;
 
+const BUSINESS_V27_SQL = `
+CREATE TABLE IF NOT EXISTS role_scene_references (
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  outfit_id TEXT PRIMARY KEY REFERENCES outfits(outfit_id),
+  asset_id TEXT NOT NULL UNIQUE, relative_path TEXT NOT NULL UNIQUE,
+  media_type TEXT NOT NULL, updated_at TEXT NOT NULL
+);`;
+
+const BUSINESS_V26_SQL = `
+CREATE TABLE role_scene_image_settings_v26 (
+  role_id TEXT PRIMARY KEY REFERENCES roles(role_id), service_id TEXT NOT NULL,
+  model_type TEXT NOT NULL CHECK (model_type IN ('text2img','img2img')), model_path TEXT NOT NULL,
+  base_prompt TEXT NOT NULL, negative_prompt TEXT NOT NULL, outfit_prompts_json TEXT NOT NULL,
+  width INTEGER NOT NULL, height INTEGER NOT NULL, steps INTEGER NOT NULL, cfg REAL NOT NULL,
+  sampler TEXT NOT NULL, scheduler TEXT NOT NULL, seed INTEGER, workflow_json TEXT, output_node_id TEXT,
+  updated_at TEXT NOT NULL, auto_generate_enabled INTEGER NOT NULL DEFAULT 0 CHECK (auto_generate_enabled IN (0,1)),
+  auto_cooldown_minutes INTEGER NOT NULL DEFAULT 30 CHECK (auto_cooldown_minutes BETWEEN 0 AND 10080)
+);
+INSERT INTO role_scene_image_settings_v26
+  (role_id,service_id,model_type,model_path,base_prompt,negative_prompt,outfit_prompts_json,width,height,
+   steps,cfg,sampler,scheduler,seed,workflow_json,output_node_id,updated_at)
+  SELECT role_id,service_id,model_type,model_path,base_prompt,negative_prompt,outfit_prompts_json,width,height,
+   steps,cfg,sampler,scheduler,seed,workflow_json,output_node_id,updated_at FROM role_scene_image_settings;
+DROP TABLE role_scene_image_settings;
+ALTER TABLE role_scene_image_settings_v26 RENAME TO role_scene_image_settings;
+`;
+
 const BUSINESS_V17_SQL = `
 -- V17：服饰与素材支持软删除，句段保存主页立绘（standee）素材快照（DL-151）。
 -- 删除后的服饰从衣柜、管理列表和 Agent 候选移除，但历史句段仍按素材标识读图。
@@ -2024,7 +2055,7 @@ export function openBusinessDatabase(
   return openVersionedDatabase(
     dbPath,
     BUSINESS_SCHEMA_VERSION,
-    BUSINESS_SCHEMA_V22_SQL + BUSINESS_V23_SQL + BUSINESS_V24_SQL,
+    BUSINESS_SCHEMA_V22_SQL + BUSINESS_V23_SQL + BUSINESS_V24_SQL + BUSINESS_V26_SQL + BUSINESS_V27_SQL,
     {
       1: (db) => {
         db.exec(BUSINESS_V2_SQL);
@@ -2071,6 +2102,8 @@ export function openBusinessDatabase(
           restoreAutonomyShareLinks(db);
         }
       },
+      25: (db) => db.exec(BUSINESS_V26_SQL),
+      26: (db) => db.exec(BUSINESS_V27_SQL),
     },
     BUSINESS_TABLES,
     BUSINESS_INDEXES,

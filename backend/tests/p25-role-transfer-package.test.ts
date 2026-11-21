@@ -17,6 +17,9 @@ import { AppStore } from "../src/storage/app-store.js";
 import { RoleActivityStore } from "../src/storage/role-activity-store.js";
 import { RoleStorage } from "../src/storage/role-storage.js";
 import { SceneImageSettingsStore } from "../src/storage/scene-image-settings-store.js";
+import { readSceneReference, saveSceneReference } from "../src/storage/scene-reference.js";
+import { inspectImage } from "../src/application/image-inspect.js";
+import sharp from "sharp";
 
 const NOW = "2026-11-20T00:00:00.000Z";
 const roleInput = { displayName: "阿临", definition: { text: "喜欢下雨时读书" } };
@@ -35,6 +38,45 @@ function removeInstallation(config: ReturnType<typeof installation>): void {
 }
 
 const options = { disablePresetAssistant: true, disableMemoryRuntime: true };
+
+test("按服饰往返两张参考图，旧包无参考表仍保留原指纹", async (t) => {
+  const source = installation();
+  const target = installation();
+  const app = createBackendApp(source, options);
+  t.after(async () => { await app.close(); removeInstallation(source); removeInstallation(target); });
+  const roleId = app.services.roles.createRole(roleInput).roleId;
+  const legacy = captureRoleTransfer(source, roleId);
+  Reflect.deleteProperty(legacy.tables, "role_scene_references");
+  assert.equal(legacy.timelineFingerprint, roleTransferTimelineFingerprint(legacy));
+  const { digest: _digest, ...body } = legacy;
+  const legacyPath = path.join(source.appRoot, "legacy.json");
+  fs.writeFileSync(legacyPath, canonicalJson({ ...body, digest: sha256(canonicalJson(body)) }));
+  assert.equal(readRoleTransferPackage(legacyPath).timelineFingerprint, legacy.timelineFingerprint);
+  const storage = RoleStorage.openExisting(rolePaths(source.dataRoot, roleId));
+  const outfits = [randomUUID(), randomUUID()];
+  const images = [];
+  try {
+    for (const [index, outfitId] of outfits.entries()) {
+      storage.business.db.prepare("INSERT INTO outfits(outfit_id,role_id,name,created_at,updated_at) VALUES(?,?,?,?,?)")
+        .run(outfitId, roleId, "穿搭" + index, NOW, NOW);
+      const image = await sharp({ create: { width: 3, height: 3, channels: 3, background: index ? "blue" : "red" } }).png().toBuffer();
+      images.push(image);
+      saveSceneReference(storage, roleId, outfitId, { fileName: "衣服.png", data: image }, await inspectImage(image, "衣服.png"));
+    }
+  } finally { storage.close(); }
+  const current = captureRoleTransfer(source, roleId);
+  assert.notEqual(current.timelineFingerprint, legacy.timelineFingerprint);
+  const targetPaths = rolePaths(target.dataRoot, roleId);
+  stageRoleTransfer(targetPaths, current, resolveRoleTransferBindings(target, current, {}));
+  const restored = RoleStorage.openExisting(targetPaths);
+  try {
+    for (const [index, outfitId] of outfits.entries()) {
+      assert.deepEqual(readSceneReference(restored, roleId, outfitId).data, images[index]);
+      assert.throws(() => readSceneReference(restored, randomUUID(), outfitId), /参考图/);
+    }
+  } finally { restored.close(); }
+  assert.equal(captureRoleTransfer(target, roleId).timelineFingerprint, current.timelineFingerprint);
+});
 
 test("两套安装走本地凭据，迁移历史和素材且不重放待处理消息", { timeout: 20_000 }, async (t) => {
   const source = installation();

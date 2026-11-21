@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   ImageGenerationFailedError,
   ImageGenerationTimeoutError,
@@ -181,6 +182,24 @@ export class ComfyUiClient {
     return promptId;
   }
 
+  async uploadReference(data: Buffer, mediaType: string, signal?: AbortSignal): Promise<string> {
+    const extension = ({ "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" } as Record<string, string>)[mediaType];
+    if (!extension) throw new ImageWorkflowInvalidError("参考图格式不受支持");
+    const fileName = createHash("sha256").update(data).digest("hex") + "." + extension;
+    const form = new FormData();
+    form.append("image", new Blob([new Uint8Array(data)], { type: mediaType }), fileName);
+    form.append("type", "input");
+    form.append("subfolder", "nowadays");
+    const response = await this.send("POST", "/upload/image", { body: form, signal });
+    assertOk(response.status, "上传服饰参考图");
+    const uploaded = await readJson(response);
+    if (uploaded.type !== "input" || uploaded.subfolder !== "nowadays" || typeof uploaded.name !== "string" ||
+        !/^[\w ().-]+$/.test(uploaded.name) || uploaded.name.startsWith(".")) {
+      throw new ImageWorkflowInvalidError("ComfyUI 未返回有效的服饰图片名称");
+    }
+    return "nowadays/" + uploaded.name;
+  }
+
   /** 取消排队或执行中的任务；失败只影响服务端资源，不改变本地结论。 */
   async cancel(promptId: string): Promise<void> {
     try {
@@ -261,7 +280,7 @@ export class ComfyUiClient {
   private async send(
     method: string,
     path: string,
-    init: { body?: string; signal?: AbortSignal | undefined },
+    init: { body?: string | FormData; signal?: AbortSignal | undefined },
   ): Promise<Response> {
     const timeout = AbortSignal.timeout(this.requestTimeoutMs);
     const signal =
@@ -273,7 +292,7 @@ export class ComfyUiClient {
         method,
         redirect: "manual",
         headers: {
-          ...(init.body === undefined
+            ...(typeof init.body !== "string"
             ? {}
             : { "content-type": "application/json" }),
           ...(this.token === undefined

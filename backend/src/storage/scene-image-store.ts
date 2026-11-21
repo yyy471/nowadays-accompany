@@ -380,6 +380,19 @@ export class SceneImageStore {
     return rows.map(mapTask);
   }
 
+  nextAutomatic(windowId: string): SceneImageTaskRecord | null {
+    const row = this.db.prepare(`${TASK_SELECT} WHERE t.role_id=? AND t.window_id=? AND t.trigger_source='auto'
+      AND t.status='queued' ORDER BY t.created_at,t.rowid LIMIT 1`).get(this.roleId,windowId) as TaskRow | undefined;
+    return row ? mapTask(row) : null;
+  }
+
+  previousAutomaticGeneration(windowId: string): string | null {
+    const row = this.db.prepare(`SELECT max(updated_at) AS last FROM scene_image_tasks
+      WHERE role_id=? AND window_id=? AND trigger_source='auto' AND plan_json IS NOT NULL
+        AND status IN ('generating','succeeded','failed')`).get(this.roleId,windowId) as {last: string | null};
+    return row.last;
+  }
+
   markPlanning(taskId: string, now: string): SceneImageTaskRecord | null {
     return this.db.transaction(() => {
       const result = this.db
@@ -407,12 +420,13 @@ export class SceneImageStore {
       const result = this.db
         .prepare(
           `UPDATE scene_image_tasks
-              SET status = 'generating', plan_json = ?, start_segment_id = ?,
+              SET status = 'generating', plan_json = ?, layer_mode = ?, start_segment_id = ?,
                   end_segment_id = ?, updated_at = ?
             WHERE task_id = ? AND role_id = ? AND status = 'planning'`,
         )
         .run(
           JSON.stringify(plan),
+          plan.layerMode,
           plan.startSegmentId,
           plan.endSegmentId,
           now,
@@ -477,17 +491,18 @@ export class SceneImageStore {
     errorCode: string,
     errorSummary: string,
     now: string,
+    status: "failed" | "skipped" = "failed",
   ): SceneImageTaskRecord | null {
     return this.db.transaction(() => {
       const result = this.db
         .prepare(
           `UPDATE scene_image_tasks
-              SET status = 'failed', error_code = ?, error_summary = ?,
+              SET status = ?, error_code = ?, error_summary = ?,
                   updated_at = ?
             WHERE task_id = ? AND role_id = ?
               AND status IN ('queued', 'planning', 'generating')`,
         )
-        .run(errorCode, errorSummary, now, taskId, this.roleId);
+        .run(status, errorCode, errorSummary, now, taskId, this.roleId);
       if (result.changes === 0) {
         return null;
       }

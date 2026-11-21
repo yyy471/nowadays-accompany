@@ -1,10 +1,6 @@
 import { z } from "zod";
 
-/**
- * 首版只做文生图：MOSS-Image 是文生图模型，图生图需要锚点图上传与
- * 角色服饰关联，留给下一包（236 §6.3）。
- */
-export const SCENE_IMAGE_MODEL_TYPES = ["text2img"] as const;
+export const SCENE_IMAGE_MODEL_TYPES = ["text2img", "img2img"] as const;
 export type SceneImageModelType = (typeof SCENE_IMAGE_MODEL_TYPES)[number];
 
 const promptSchema = z.string().trim().max(2000);
@@ -13,6 +9,8 @@ const promptSchema = z.string().trim().max(2000);
 export const sceneImageSettingsCandidateShape = {
   serviceId: z.string().trim().min(1).max(100),
   modelType: z.enum(SCENE_IMAGE_MODEL_TYPES),
+  autoGenerateEnabled: z.boolean(),
+  autoCooldownMinutes: z.number().int().min(0).max(10080),
   /** MOSS-Image 的本地模型目录，写入工作流加载节点的 model_path。 */
   modelPath: z.string().trim().min(1).max(2000),
   /** 角色基础锚点提示词：脸型、发型、发色、瞳色等跨场景特征。 */
@@ -40,6 +38,8 @@ export const sceneImageSettingsCandidateShape = {
 export const SCENE_IMAGE_CANDIDATE_KEYS = [
   "serviceId",
   "modelType",
+  "autoGenerateEnabled",
+  "autoCooldownMinutes",
   "modelPath",
   "basePrompt",
   "negativePrompt",
@@ -58,6 +58,10 @@ export const SCENE_IMAGE_CANDIDATE_KEYS = [
 export const sceneImageSettingsSchema = z
   .object({
     ...sceneImageSettingsCandidateShape,
+    autoGenerateEnabled:
+      sceneImageSettingsCandidateShape.autoGenerateEnabled.default(false),
+    autoCooldownMinutes:
+      sceneImageSettingsCandidateShape.autoCooldownMinutes.default(30),
     basePrompt: promptSchema.default(""),
     negativePrompt: promptSchema.default(""),
     outfitPrompts: sceneImageSettingsCandidateShape.outfitPrompts.default({}),
@@ -73,7 +77,10 @@ export const sceneImageSettingsSchema = z
   })
   .strict();
 
-export type SceneImageSettingsInput = z.infer<typeof sceneImageSettingsSchema>;
+type ParsedSceneImageSettings = z.infer<typeof sceneImageSettingsSchema>;
+type AutoSettingsKeys = "autoGenerateEnabled" | "autoCooldownMinutes";
+export type SceneImageSettingsInput = Omit<ParsedSceneImageSettings, AutoSettingsKeys> &
+  Partial<Pick<ParsedSceneImageSettings, AutoSettingsKeys>>;
 
 export interface SceneImageSettingsRecord extends SceneImageSettingsInput {
   roleId: string;

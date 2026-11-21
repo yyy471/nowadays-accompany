@@ -10,7 +10,7 @@ import { parseBackendConfig, rolePaths } from "../src/bootstrap/config.js";
 import { AppStore } from "../src/storage/app-store.js";
 import { RoleStore } from "../src/storage/role-store.js";
 import { RoleStorage } from "../src/storage/role-storage.js";
-import { openAppDatabase } from "../src/storage/schema.js";
+import { BUSINESS_SCHEMA_VERSION, openAppDatabase } from "../src/storage/schema.js";
 
 function tempRoot(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "nowadays-p1-02-"));
@@ -98,7 +98,7 @@ test("app and role stores initialize, persist and reopen", async () => {
 
     const paths = rolePaths(config.dataRoot, randomUUID());
     role = new RoleStorage(paths);
-    assert.equal(role.business.schemaVersion, 25);
+    assert.equal(role.business.schemaVersion, BUSINESS_SCHEMA_VERSION);
     assert.equal(role.checkpoint.schemaVersion, 1);
     assert.ok(fs.existsSync(paths.workspaceDir));
     const businessTables = tableNames(role.business.db);
@@ -115,7 +115,7 @@ test("app and role stores initialize, persist and reopen", async () => {
     const reopenedRole = new RoleStorage(paths);
     try {
       assert.equal(reopenedApp.schemaVersion, 11);
-      assert.equal(reopenedRole.business.schemaVersion, 25);
+      assert.equal(reopenedRole.business.schemaVersion, BUSINESS_SCHEMA_VERSION);
       assert.equal(reopenedRole.checkpoint.schemaVersion, 1);
       assert.ok(fs.existsSync(paths.businessDatabasePath));
       assert.ok(fs.existsSync(paths.executionDatabasePath));

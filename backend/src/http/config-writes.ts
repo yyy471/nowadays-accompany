@@ -19,6 +19,8 @@ export const ROLE_CONFIG_WRITES: ReadonlySet<string> = new Set([
   // 自主额度属于角色配置：运行或正在停止时拒绝修改（RA-R04）。
   "PUT /v1/roles/:roleId/autonomy/budget",
   "PUT /v1/roles/:roleId/scene-image",
+  "PUT /v1/roles/:roleId/scene-image/outfits/:outfitId/reference",
+  "DELETE /v1/roles/:roleId/scene-image/outfits/:outfitId/reference",
   "POST /v1/roles/:roleId/appearance/outfits",
   "PATCH /v1/roles/:roleId/appearance/outfits/:outfitId",
   "POST /v1/roles/:roleId/appearance/outfits/:outfitId/home",

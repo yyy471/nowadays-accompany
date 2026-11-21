@@ -247,8 +247,8 @@ test("过场图任务映射到同轮句段区间与素材地址", async () => {
   assert.equal(generating.assetUrl, null);
 
   const skipped = sceneView({ ...base, status: "skipped", result: null }, grouped, "r1");
-  assert.equal(skipped.status, "failed");
-  assert.equal(skipped.taskStatus, "skipped");
+  assert.equal(skipped, null);
+  assert.equal(sceneView({ ...base, trigger: "auto", status: "planning" }, grouped, "r1"), null);
 
   const missing = sceneView({ ...base, startSegmentId: "unknown", endSegmentId: "unknown", status: "failed" }, grouped, "r1");
   assert.equal(missing.start, -1);

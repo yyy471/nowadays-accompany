@@ -1,5 +1,6 @@
 import { randomInt } from "node:crypto";
 import {
+  AppError,
   ImageServiceDisabledError,
   SceneImageNotConfiguredError,
   SceneImageServiceChangedError,
@@ -14,13 +15,16 @@ import type {
   SceneImageGenerationInput,
   SceneImageGeneratorPort,
   SceneImageLayerMode,
+  SceneImageReferenceImage,
 } from "../domain/scene-image.js";
 import type { SceneImageSettingsRecord } from "../domain/scene-image-settings.js";
 import { ComfyUiClient } from "./comfyui-client.js";
 import {
   applyWorkflowParams,
+  backgroundBranch,
   defaultComfyWorkflow,
   parseComfyWorkflow,
+  referenceWorkflow,
   type ComfyWorkflow,
 } from "./comfyui-workflow.js";
 
@@ -102,12 +106,25 @@ export class ComfyUiImageGenerator {
     runtime: SceneImageRuntime,
     prompt: string,
     signal?: AbortSignal,
+    reference?: SceneImageReferenceImage,
+    layer: SceneImageLayerMode = "full_scene",
   ): Promise<GeneratedSceneImage> {
     const { settings, service } = runtime;
-    const workflow: ComfyWorkflow =
-      settings.workflow === null
-        ? defaultComfyWorkflow()
-        : parseComfyWorkflow(settings.workflow);
+    const img2img = settings.modelType === "img2img";
+    if (img2img && layer === "full_scene" && !settings.workflow) {
+      throw new AppError(422, "SCENE_REFERENCE_WORKFLOW_REQUIRED", "图生图需要导入带 LoadImage 的 ComfyUI API 工作流");
+    }
+    if (img2img && layer === "full_scene" && !reference) {
+      throw new AppError(422, "SCENE_REFERENCE_MISSING", "目标回复的服饰没有可用的图生图参考图");
+    }
+    const background = img2img && layer === "background";
+    const configured = settings.workflow && parseComfyWorkflow(settings.workflow);
+    const bg = background && configured ? backgroundBranch(configured, settings.outputNodeId) : undefined;
+    if (background && !bg && !/moss/i.test(settings.modelPath)) {
+      throw new AppError(422, "SCENE_BACKGROUND_WORKFLOW_REQUIRED", "该模型未配置独立的纯背景输出，请在工作流中增加不读取角色参考图的 SaveImage 分支");
+    }
+    const referenceBranch = img2img && !background && configured ? referenceWorkflow(configured, settings.outputNodeId) : undefined;
+    const workflow: ComfyWorkflow = (background ? bg?.workflow : referenceBranch?.workflow ?? configured) ?? defaultComfyWorkflow();
     const patched = applyWorkflowParams(
       workflow,
       {
@@ -122,7 +139,7 @@ export class ComfyUiImageGenerator {
         seed: settings.seed ?? randomInt(0, 2_147_483_647),
         modelPath: settings.modelPath,
       },
-      settings.outputNodeId,
+      background ? bg?.output ?? null : referenceBranch?.output ?? settings.outputNodeId,
     );
     const client = new ComfyUiClient({
       baseUrl: service.config.baseUrl,
@@ -130,6 +147,18 @@ export class ComfyUiImageGenerator {
       generationTimeoutMs:
         service.config.timeoutMs ?? DEFAULT_GENERATION_TIMEOUT_MS,
     });
+    if (referenceBranch && reference) {
+      const [imageId, imageNode] = Object.entries(patched.workflow).find(
+        ([, node]) => node.class_type === "LoadImage" && typeof node.inputs.image === "string",
+      )!;
+      imageNode.inputs.image = await client.uploadReference(reference.data, reference.mediaType, signal);
+      for (const node of Object.values(patched.workflow)) {
+        if (node.class_type === "ImageScale" && Array.isArray(node.inputs.image) && node.inputs.image[0] === imageId) {
+          node.inputs.width = settings.width;
+          node.inputs.height = settings.height;
+        }
+      }
+    }
     const image = await client.run(patched.workflow, {
       signal,
       outputNodeId: patched.outputNodeId,
@@ -192,7 +221,7 @@ export class ConfiguredSceneImageGenerator
     }
     const outfitId = input.outfit.outfitId;
     const outfitPrompt =
-      input.layerMode === "full_scene" && outfitId !== null
+      runtime.settings.modelType === "text2img" && input.layerMode === "full_scene" && outfitId !== null
         ? (runtime.settings.outfitPrompts[outfitId] ?? "")
         : "";
     const prompt = composeSceneImagePrompt(
@@ -201,7 +230,7 @@ export class ConfiguredSceneImageGenerator
       outfitPrompt,
       input.prompt,
     );
-    return this.comfy.generate(runtime, prompt, input.signal);
+    return this.comfy.generate(runtime, prompt, input.signal, input.references?.[0], input.layerMode);
   }
 
   /**

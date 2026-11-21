@@ -79,6 +79,8 @@ export const submitMessageSchema = z
   })
   .strict();
 
+export const retryReplySchema = z.object({ executionId: z.uuid() }).strict();
+
 export const createResourceSchema = z
   .object({
     kind: resourceKindSchema,

@@ -8,6 +8,7 @@ import {
   SceneImagePlannerUnavailableError,
 } from "../domain/errors.js";
 import { isIncompleteCompletion } from "../domain/model.js";
+import { SceneImageNotSelected } from "../domain/scene-image.js";
 import type { ModelPort, ModelRequest } from "../domain/model.js";
 import type {
   SceneImageLayerMode,
@@ -222,6 +223,13 @@ export class ModelSceneImagePlanner implements SceneImagePlannerPort {
         code: failureCode,
       });
     }
+    if (input.trigger === "auto") {
+      const decision = parsePlanObject(output);
+      if (decision?.draw === false && nonEmptyString(decision.reason)) {
+        throw new SceneImageNotSelected(String(decision.reason).trim().slice(0, 500));
+      }
+      if (decision?.draw !== true) throw new SceneImagePlanInvalidError("自动判图缺少明确决定");
+    }
     const parsed = parseSceneImagePlanOutput(output);
     if (parsed === null) {
       throw new SceneImagePlanInvalidError("规划模型没有返回有效的画面方案");
@@ -259,7 +267,7 @@ export class ModelSceneImagePlanner implements SceneImagePlannerPort {
     input: SceneImagePlannerInput,
     signal?: AbortSignal,
   ): Promise<SceneImagePlanRecord> {
-    if (this.fallback === null) {
+    if (this.fallback === null || input.trigger === "auto") {
       throw new SceneImagePlannerUnavailableError();
     }
     return this.fallback.plan(input, signal);
@@ -294,6 +302,10 @@ export function buildSceneImagePlanPrompt(
     referenceLine,
     "只输出 JSON 对象，不要代码块和解释，格式：",
     '{"description":"...","layerMode":"background|full_scene","startSegmentId":"...","endSegmentId":"..."}',
+    ...(input.trigger === "auto" ? [
+      "这是自动判图。结合前文判断本轮是否确有明显场景变化或值得纪念且能够用画面表达的情节。",
+      '普通闲聊、重复场景请返回 {"draw":false,"reason":"本轮具体原因"}。值得画时在上述方案增加 "draw":true。',
+    ] : []),
     "规则：",
     "- description 用中文描述画面主体、动作、环境、光线、构图和氛围，不写台词，不出现文字、字幕、对话气泡或界面元素，不超过 800 字。",
     layerRule,
@@ -332,6 +344,19 @@ export interface ParsedSceneImagePlan {
 export function parseSceneImagePlanOutput(
   text: string,
 ): ParsedSceneImagePlan | null {
+  const record = parsePlanObject(text);
+  if (!record) return null;
+  const description = nonEmptyString(record.description);
+  if (!description) return null;
+  return {
+    description,
+    layerMode: record.layerMode === "background" || record.layerMode === "full_scene" ? record.layerMode : null,
+    startSegmentId: nonEmptyString(record.startSegmentId),
+    endSegmentId: nonEmptyString(record.endSegmentId),
+  };
+}
+
+function parsePlanObject(text: string): Record<string, unknown> | null {
   const trimmed = text.trim();
   const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(trimmed);
   const raw = fenced?.[1]?.trim() ?? trimmed;
@@ -349,22 +374,7 @@ export function parseSceneImagePlanOutput(
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     return null;
   }
-  const record = parsed as Record<string, unknown>;
-  const description =
-    typeof record.description === "string" ? record.description.trim() : "";
-  if (description.length === 0) {
-    return null;
-  }
-  const layerMode =
-    record.layerMode === "background" || record.layerMode === "full_scene"
-      ? record.layerMode
-      : null;
-  return {
-    description,
-    layerMode,
-    startSegmentId: nonEmptyString(record.startSegmentId),
-    endSegmentId: nonEmptyString(record.endSegmentId),
-  };
+  return parsed as Record<string, unknown>;
 }
 
 function nonEmptyString(value: unknown): string | null {

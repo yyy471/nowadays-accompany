@@ -46,6 +46,7 @@ export function ChatPane({
   onResumeRole,
   onConfigureModel,
   onRetryWaiting,
+  onRetryFailedReply,
 }: {
   snapshot: ConversationSnapshot;
   playingId: number | null;
@@ -83,6 +84,7 @@ export function ChatPane({
   onResumeRole: () => void;
   onConfigureModel: () => void;
   onRetryWaiting: () => void;
+  onRetryFailedReply: () => void;
 }) {
   const policy = useMotionPolicy();
   const scroller = useRef<HTMLDivElement>(null);
@@ -301,6 +303,10 @@ export function ChatPane({
     </button>
     </div>
     <div className="dialogue-zone">
+      {snapshot.failedReply && !advancing && !waitReason && <div className="dialogue-wait-notice" role="status" data-failed-message-id={snapshot.failedReply.messageId}>
+        <span>上一条消息已保存，回复中断了。<small>（{snapshot.failedReply.errorCode}）</small></span>
+        <button type="button" onClick={onRetryFailedReply} disabled={stoppedNotice}>重新回复</button>
+      </div>}
       {waitReason || roleStopped || snapshot.roleRejected ? <div className="dialogue-wait-notice" role="status">
         <span>{waitReason === 'MODEL_MISSING'
           ? '消息已接收，但还没有可用的对话模型。'

@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
+import { SceneImageStore } from "./scene-image-store.js";
 import type {
   ClaimedMessage,
   ConversationActiveReply,
   ConversationExecutionDetail,
+  FailedReply,
   ConversationMessageView,
   ConversationStreamEvent,
   ConversationStreamType,
@@ -110,6 +112,7 @@ export interface CommitConversationTaskDecision {
 }
 
 export interface CommitConversationInput {
+  automaticScene?: import("../domain/scene-image.js").SceneImageConfigSnapshot | null;
   executionId: string;
   content: string;
   statePatch: Record<string, unknown>;
@@ -710,6 +713,64 @@ export class ConversationStore {
       executionId: row.execution_id,
       text: this.partialText(row.execution_id),
     };
+  }
+
+  getAwaitingReply(windowId: string): { executionId: string; messageId: string } | null {
+    const row = this.db.prepare(`SELECT e.execution_id AS executionId, m.message_id AS messageId
+      FROM messages m JOIN executions e ON e.execution_id = m.claimed_by_execution_id
+      WHERE e.role_id = ? AND e.window_id = ? AND m.window_id = e.window_id
+        AND e.status = 'running' AND m.sender = 'user' AND m.processed_by_execution_id IS NULL
+      ORDER BY m.sequence DESC LIMIT 1`).get(this.roleId, windowId) as { executionId: string; messageId: string } | undefined;
+    return row ?? null;
+  }
+
+  getFailedReply(windowId: string): FailedReply | null {
+    // 先选窗口最后一条用户消息，再检查领取状态。发了新话、已答或正在重试时旧按钮自然失效。
+    const row = this.db.prepare(`
+      WITH latest AS (
+        SELECT m.* FROM messages m JOIN windows w ON w.window_id = m.window_id
+         WHERE m.window_id = ? AND w.role_id = ? AND m.sender = 'user'
+         ORDER BY m.sequence DESC LIMIT 1
+      )
+      SELECT m.message_id AS messageId, e.execution_id AS executionId,
+             COALESCE((SELECT json_extract(payload_json, '$.errorCode') FROM execution_stream_events
+               WHERE execution_id = e.execution_id AND event_type = 'execution_failed'
+               ORDER BY stream_event_id DESC LIMIT 1), 'EXECUTION_FAILED') AS errorCode
+        FROM latest m JOIN executions e ON e.execution_id = m.execution_id
+       WHERE e.role_id = ? AND e.window_id = m.window_id AND e.status = 'failed'
+         AND m.processed_by_execution_id IS NULL AND m.claimed_by_execution_id IS NULL
+         AND m.status <> 'transfer_interrupted' AND m.submission_id IS NOT NULL
+    `).get(windowId, this.roleId, this.roleId) as FailedReply | undefined;
+    return row ?? null;
+  }
+
+  /** 一次补答可多次失败，始终沿用最早已派发工具的执行及其真实回执。 */
+  savedReplyToolSource(executionId: string): string | null {
+    const previous = this.db.prepare(`
+      SELECT json_extract(payload_json, '$.replyToolSource') AS source FROM execution_stream_events
+       WHERE role_id = ? AND execution_id = ? AND event_type = 'execution_started'
+         AND json_type(payload_json, '$.replyToolSource') = 'text'
+       ORDER BY stream_event_id DESC LIMIT 1
+    `).get(this.roleId, executionId) as { source: string | null } | undefined;
+    return previous?.source ?? null;
+  }
+
+  replyToolSource(executionId: string): string | null {
+    const previous = this.savedReplyToolSource(executionId);
+    if (previous) return previous;
+    const dispatched = this.db.prepare(`
+      SELECT 1 FROM execution_stream_events WHERE role_id = ? AND execution_id = ? AND event_type = 'tool_started'
+      UNION ALL SELECT 1 FROM execution_tasks et JOIN tool_calls c ON c.task_id = et.task_id
+        WHERE et.execution_id = ? AND et.relation IN ('initiates', 'continues') LIMIT 1
+    `).get(this.roleId, executionId, executionId);
+    return dispatched ? executionId : null;
+  }
+
+  recoveryToolKeys(executionId: string): string[] {
+    return (this.db.prepare(`
+      SELECT DISTINCT json_extract(payload_json, '$.toolCallId') AS id FROM execution_stream_events
+       WHERE role_id = ? AND execution_id = ? AND event_type = 'tool_started' ORDER BY stream_event_id DESC LIMIT 40
+    `).all(this.roleId, executionId) as { id: string }[]).map(row => row.id);
   }
 
   /** 读取指定回复之前的最近若干条已完成消息，供情绪与动作标注参考上下文。 */
@@ -1325,6 +1386,14 @@ export class ConversationStore {
         },
         now,
       });
+      if (round !== null && input.automaticScene?.settings?.autoGenerateEnabled && segments.length > 0) {
+        // 与正式回复同事务登记，即使完成后进程立即退出，待判图任务也不会丢失。
+        new SceneImageStore(this.db, this.roleId).createTask({
+          roleId: this.roleId, windowId, messageId: replyMessage.messageId, executionId: input.executionId,
+          trigger: "auto", layerMode: "full_scene", startSegmentId: segments[0]!.segmentId,
+          endSegmentId: segments.at(-1)!.segmentId, idempotencyKey: null, attempt: 1, config: input.automaticScene, now,
+        });
+      }
       return {
         execution: this.getExecution(input.executionId),
         replyMessage: this.getMessage(replyMessage.messageId),
@@ -1445,10 +1514,12 @@ export class ConversationStore {
       if (input.keepClaimedMessages !== true) {
         this.db
           .prepare(
-            "UPDATE messages SET claimed_by_execution_id = NULL, updated_at = ? WHERE claimed_by_execution_id = ? AND processed_by_execution_id IS NULL",
+            `UPDATE messages SET execution_id = CASE WHEN ? = 'failed' THEN claimed_by_execution_id ELSE execution_id END,
+               claimed_by_execution_id = NULL, updated_at = ? WHERE claimed_by_execution_id = ? AND processed_by_execution_id IS NULL`,
           )
-          .run(now, input.executionId);
+          .run(input.status, now, input.executionId);
       }
+      const failedReply = input.status === "failed" && execution.windowId !== null ? this.getFailedReply(execution.windowId) : null;
       events.push(
         this.appendStreamEventInternal({
           windowId: execution.windowId,
@@ -1469,6 +1540,7 @@ export class ConversationStore {
               : {
                   executionId: input.executionId,
                   errorCode: input.errorCode ?? "EXECUTION_FAILED",
+                  ...(failedReply?.executionId === input.executionId ? { failedMessageId: failedReply.messageId } : {}),
                 },
           now,
         }),

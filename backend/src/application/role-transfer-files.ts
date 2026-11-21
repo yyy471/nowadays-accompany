@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { sha256, type TransferTables } from "./role-transfer-data.js";
 import type { RoleTransferCredentialFilter } from "./role-transfer-credentials.js";
+import { detectImageFormat } from "./image-inspect.js";
+import { MAX_SCENE_REFERENCE_BYTES } from "../storage/scene-reference.js";
 
 export type TransferFile =
   | { path: string; kind: "directory" }
@@ -38,11 +40,16 @@ export function assertRegularPath(root: string, relative: string, directory: boo
 function materialPaths(tables: TransferTables): Set<string> {
   const paths = new Set<string>();
   for (const [table, root] of [
-    ["outfit_assets", "appearance"], ["voice_assets", "voice"], ["scene_image_assets", "scene-images"],
+    ["outfit_assets", "appearance"], ["role_scene_references", "appearance"], ["voice_assets", "voice"], ["scene_image_assets", "scene-images"],
   ] as const) {
-    for (const row of tables[table]) {
+    for (const row of tables[table] ?? []) {
       const relative = row.relative_path;
       if (typeof relative !== "string" || !relative.startsWith(`${root}/`) || components(relative).length < 2) badPath();
+      if (table === "role_scene_references") {
+        const extension = row.media_type === "image/png" ? "png" : row.media_type === "image/jpeg" ? "jpg" : row.media_type === "image/webp" ? "webp" : null;
+        if (!extension || typeof row.asset_id !== "string" || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(row.asset_id) ||
+            relative !== `appearance/${row.asset_id}.${extension}`) badPath();
+      }
       if (paths.has(relative)) throw new Error("ROLE_TRANSFER_DUPLICATE_FILE");
       paths.add(relative);
     }
@@ -81,6 +88,7 @@ function comparePath(a: string, b: string): number { return a < b ? -1 : a > b ?
 
 export function validateTransferFiles(files: TransferFile[], tables: TransferTables): void {
   const required = materialPaths(tables);
+  const references = new Map((tables.role_scene_references ?? []).map(row => [row.relative_path, row.media_type]));
   const registry = new Map<string, { path: string; kind: TransferFile["kind"]; seen: boolean }>();
   for (const entry of files) {
     const parts = components(entry.path);
@@ -102,6 +110,9 @@ export function validateTransferFiles(files: TransferFile[], tables: TransferTab
       const data = Buffer.from(entry.data, "base64");
       if (data.length !== entry.byteSize || data.toString("base64") !== entry.data || sha256(data) !== entry.sha256) {
         throw new Error("ROLE_TRANSFER_FILE_DIGEST_MISMATCH");
+      }
+      if (references.has(entry.path) && (data.length > MAX_SCENE_REFERENCE_BYTES || detectImageFormat(data)?.mediaType !== references.get(entry.path))) {
+        throw new Error("ROLE_TRANSFER_REFERENCE_INVALID");
       }
     }
   }

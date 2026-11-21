@@ -185,6 +185,38 @@ export function requiredNodeTypes(workflow: ComfyWorkflow): string[] {
   return [...new Set(Object.values(workflow).map((node) => node.class_type))].sort();
 }
 
+/** 只保留选定输出的依赖，避免另一个输出分支读取与本次服饰无关的图片。 */
+function outputBranch(graph: ComfyWorkflow, output: string) {
+  const workflow: ComfyWorkflow = Object.create(null) as ComfyWorkflow;
+  const pending = [output];
+  while (pending.length) {
+    const id = pending.pop()!;
+    if (Object.hasOwn(workflow, id)) continue;
+    const node = graph[id];
+    if (!node) throw new ImageWorkflowInvalidError("工作流引用了不存在的节点");
+    workflow[id] = node;
+    for (const value of Object.values(node.inputs)) {
+      if (Array.isArray(value) && value.length === 2 && typeof value[0] === "string" && Number.isInteger(value[1])) pending.push(value[0]);
+    }
+  }
+  return workflow;
+}
+export function backgroundBranch(graph: ComfyWorkflow, fullOutput: string | null) {
+  const branches = Object.entries(graph).filter(([id, node]) => id !== fullOutput && node.class_type === "SaveImage")
+    .map(([output]) => ({ output, workflow: outputBranch(graph, output) }))
+    .filter(branch => Object.values(branch.workflow).every(node => node.class_type !== "LoadImage"));
+  if (branches.length > 1) throw new ImageWorkflowInvalidError("工作流中有多个纯背景输出，请只保留一个");
+  return branches[0];
+}
+export function referenceWorkflow(graph: ComfyWorkflow, outputNodeId: string | null) {
+  const output = outputNodeId ?? Object.keys(graph).find(id => graph[id]?.class_type === "SaveImage");
+  if (!output || !graph[output]) throw new ImageWorkflowInvalidError("图生图工作流缺少选定的图片输出节点");
+  const workflow = outputBranch(graph, output);
+  const loaders = Object.values(workflow).filter(node => node.class_type === "LoadImage" && typeof node.inputs.image === "string");
+  if (loaders.length !== 1) throw new ImageWorkflowInvalidError("所选图生图输出的上游必须有一个明确的 LoadImage 服饰参考输入");
+  return { workflow, imageNode: loaders[0]!, output };
+}
+
 export interface SceneImageWorkflowParams {
   prompt: string;
   negativePrompt: string;

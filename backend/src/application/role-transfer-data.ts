@@ -52,7 +52,8 @@ const PROJECTION = {
   role_voice_settings: "role_id reference_asset_id language speed emo_alpha created_at updated_at voice_source reference_mode reference_text preset_voice_id reference_mode_confirmed enabled tts_engine",
   scene_image_tasks: "task_id role_id window_id message_id execution_id trigger_source layer_mode start_segment_id end_segment_id status idempotency_key attempt_no plan_json error_code error_summary created_at updated_at",
   scene_image_assets: "asset_id task_id role_id window_id message_id media_type relative_path width height byte_size created_at",
-  role_scene_image_settings: "role_id model_type base_prompt negative_prompt outfit_prompts_json width height steps cfg sampler scheduler seed updated_at",
+  role_scene_references: "role_id outfit_id asset_id relative_path media_type updated_at",
+  role_scene_image_settings: "role_id model_type base_prompt negative_prompt outfit_prompts_json width height steps cfg sampler scheduler seed updated_at auto_generate_enabled auto_cooldown_minutes",
 } as const;
 
 export type TransferTable = keyof typeof PROJECTION;

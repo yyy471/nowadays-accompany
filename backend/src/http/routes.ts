@@ -60,6 +60,7 @@ import {
   putBindingsSchema,
   putStateSchema,
   resourceModelTestSchema,
+  retryReplySchema,
   submitMessageSchema,
   summaryCorrectionBodySchema,
   taskCancelBodySchema,
@@ -296,6 +297,17 @@ export function registerApiRoutes(
         status: result.duplicate ? 200 : 201,
         body: result,
       };
+    },
+  );
+
+  router.add(
+    "POST",
+    "/v1/roles/:roleId/windows/:windowId/messages/:messageId/retry",
+    async ({ request, params }): Promise<JsonResponse> => {
+      const { executionId } = parseBody(retryReplySchema, await readJsonBody(request));
+      return { status: 200, body: services.conversation.retryFailedReply(
+        params.roleId ?? "", params.windowId ?? "", params.messageId ?? "", executionId,
+      ) };
     },
   );
 

@@ -16,6 +16,7 @@ import { ScriptedMemoryModel } from "../src/model/offline-memory.js";
 import { localDateFromIso, registerMessageEvidence, sha256 } from "../src/storage/evidence.js";
 import { MemoryStore } from "../src/storage/memory-store.js";
 import { RoleStorage } from "../src/storage/role-storage.js";
+import { BUSINESS_SCHEMA_VERSION } from "../src/storage/schema.js";
 
 interface Fixture {
   root: string;
@@ -692,7 +693,7 @@ test("v24 旧库保留精炼档案、持久线索和证据，升级后校正在�
     });
     const memory = fixture.app.services.memory;
     withStorage(fixture,({business}) => {
-      assert.equal(business.schemaVersion,25);
+      assert.equal(business.schemaVersion, BUSINESS_SCHEMA_VERSION);
       assert.deepEqual(business.db.prepare("SELECT * FROM memory_revisions ORDER BY revision_id").all(),oldRevisions);
     });
     assert.deepEqual(memory.search(role,{query:"紫椅七号"}).items,[]);

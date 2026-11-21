@@ -24,6 +24,22 @@ class SpeechRequestError extends Error {
   }
 }
 
+function releasePlayer(element: HTMLAudioElement) {
+  element.onplaying = null;
+  element.onended = null;
+  element.onerror = null;
+  const releaseSource = () => {
+    element.removeAttribute('src');
+    element.load();
+  };
+  if (element.paused) {
+    releaseSource();
+  } else {
+    element.addEventListener('pause', releaseSource, { once: true });
+    element.pause();
+  }
+}
+
 async function fetchSpeech(
   roleId: string,
   windowId: string,
@@ -81,10 +97,7 @@ export function useSegmentVoice({ roleId, windowId, onToast }: { roleId: string;
     const element = candidate.current;
     candidate.current = null;
     if (!element) return;
-    element.onplaying = null;
-    element.onerror = null;
-    element.pause();
-    element.src = '';
+    releasePlayer(element);
   }, []);
 
   const releaseAll = useCallback(() => {
@@ -96,8 +109,7 @@ export function useSegmentVoice({ roleId, windowId, onToast }: { roleId: string;
     discardCandidate();
     const element = audio.current;
     if (element) {
-      element.pause();
-      element.src = '';
+      releasePlayer(element);
       audio.current = null;
     }
     for (const url of cache.current.values()) URL.revokeObjectURL(url);
@@ -198,8 +210,7 @@ export function useSegmentVoice({ roleId, windowId, onToast }: { roleId: string;
     cancelPending();
     const element = audio.current;
     if (element) {
-      element.pause();
-      element.src = '';
+      releasePlayer(element);
       audio.current = null;
     }
     setPlayingId(null);
@@ -221,7 +232,7 @@ export function useSegmentVoice({ roleId, windowId, onToast }: { roleId: string;
           candidate.current = null;
           const previous = audio.current;
           audio.current = element;
-          if (previous) { previous.pause(); previous.src = ''; }
+          if (previous) releasePlayer(previous);
           setPlayingId(row.id);
         };
         const finish = () => { if (audio.current === element) { audio.current = null; setPlayingId(null); } };

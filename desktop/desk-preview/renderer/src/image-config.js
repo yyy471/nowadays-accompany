@@ -3,7 +3,6 @@
  * 与 voice-config.js 同一约定——不依赖 React，可直接用 node --test 验证。
  */
 
-/** 后端首版只支持文生图，图生图要等锚点图上传。 */
 export const IMAGE_MODEL_TYPE_LABEL = "文生图";
 
 const MIN_SIZE = 256;
@@ -14,7 +13,9 @@ export function createImageForm(settings) {
   const source = settings ?? {};
   return {
     serviceId: source.serviceId ?? "",
-    modelType: "text2img",
+    modelType: source.modelType ?? "text2img",
+    autoGenerateEnabled: source.autoGenerateEnabled ?? false,
+    autoCooldownMinutes: source.autoCooldownMinutes ?? 30,
     modelPath: source.modelPath ?? "",
     basePrompt: source.basePrompt ?? "",
     negativePrompt: source.negativePrompt ?? "",
@@ -41,6 +42,8 @@ export function toImagePayload(form) {
   return {
     serviceId: form.serviceId,
     modelType: form.modelType,
+    autoGenerateEnabled: form.autoGenerateEnabled,
+    autoCooldownMinutes: form.autoCooldownMinutes,
     modelPath: String(form.modelPath ?? "").trim(),
     basePrompt: String(form.basePrompt ?? "").trim(),
     negativePrompt: String(form.negativePrompt ?? "").trim(),
@@ -135,6 +138,12 @@ export function withOutfitPrompt(form, outfitId, text) {
 export function validateImageForm(form) {
   const issues = [];
   const push = (field, code, message) => issues.push({ field, code, message });
+  if (!Number.isInteger(form.autoCooldownMinutes) || form.autoCooldownMinutes < 0 || form.autoCooldownMinutes > 10080) {
+    push("autoCooldownMinutes", "INVALID_AUTO_COOLDOWN", "自动生成冷却时间应为 0 至 10080 分钟");
+  }
+  if (form.modelType === "img2img" && !form.workflow) {
+    push("workflow", "SCENE_REFERENCE_WORKFLOW_REQUIRED", "图生图需要导入带 LoadImage 的 ComfyUI API 工作流");
+  }
 
   if (!form.serviceId) {
     push("serviceId", "SERVICE_REQUIRED", "先选择或新建一个生图服务");
@@ -193,7 +202,8 @@ export function describeImageSummary(view) {
   const settings = view.settings;
   const serviceName = view.service === null ? "服务已被删除" : view.service.name;
   const state = view.configured ? "" : "不可用 · ";
-  return `${state}${serviceName} · ${IMAGE_MODEL_TYPE_LABEL} · ${settings.width}×${settings.height} · ${settings.steps} steps`;
+  const modeLabel = settings.modelType === "img2img" ? "图生图" : IMAGE_MODEL_TYPE_LABEL;
+  return `${state}${serviceName} · ${modeLabel} · ${settings.width}×${settings.height} · ${settings.steps} steps`;
 }
 
 export function summarizeImageProbe(probe) {
@@ -262,6 +272,11 @@ const FAILURE_TEXT = {
   RESOURCE_CREDENTIAL_CONFLICT: "直填密钥与引用只能二选一。",
   ROLES_NOT_STOPPED: "还有角色处于活动状态，请先暂停相关角色后再修改全局生图服务。",
   OUTFIT_NOT_FOUND: "当前选择的服饰不存在，刷新后重试。",
+  SCENE_REFERENCE_WORKFLOW_REQUIRED: "图生图需要导入带 LoadImage 的 ComfyUI API 工作流。",
+  SCENE_REFERENCE_MISSING: "目标服饰还没有上传图生图参考图，请先上传后再试。",
+  SCENE_REFERENCE_UNAVAILABLE: "保存的服饰参考图不可读，请重新上传。",
+  SCENE_REFERENCE_TOO_LARGE: "服饰参考图超过 8 MiB 上限。",
+  SCENE_BACKGROUND_WORKFLOW_REQUIRED: "该模型未配置独立的纯背景输出，请在工作流中增加不读取参考图的 SaveImage 分支。",
 };
 
 /** 生成服务状态与连接配置的快照键，用于跨页返回或刷新时判定探测/预览是否已过期。 */

@@ -10,7 +10,7 @@ import { rebuildTransferMemorySearch } from "../src/application/role-transfer-da
 import { localDateFromIso, registerMessageEvidence } from "../src/storage/evidence.js";
 import { MemoryStore } from "../src/storage/memory-store.js";
 import { RoleStore } from "../src/storage/role-store.js";
-import { BUSINESS_SCHEMA_V1_SQL } from "../src/storage/schema.js";
+import { BUSINESS_SCHEMA_VERSION, BUSINESS_SCHEMA_V1_SQL } from "../src/storage/schema.js";
 import { ScriptedMemoryModel } from "../src/model/offline-memory.js";
 import type { MemoryFormationInput } from "../src/domain/memory.js";
 
@@ -155,7 +155,7 @@ test("v1 business database migrates to the current schema and backfills evidence
     timeZone: "Asia/Shanghai",
   });
   try {
-    assert.equal(store.schemaVersion, 25);
+    assert.equal(store.schemaVersion, BUSINESS_SCHEMA_VERSION);
     const autonomyTables = store.db
       .prepare(
         `SELECT name FROM sqlite_master

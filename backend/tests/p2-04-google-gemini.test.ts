@@ -1,3 +1,4 @@
+import { BUSINESS_SCHEMA_VERSION } from "../src/storage/schema.js";
 import assert from "node:assert/strict";
 import { createVerify, generateKeyPairSync, randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -877,7 +878,7 @@ test("SQLite 老库迁移（v7->v8 与 v17->v18）及 ModelService / 资源创�
     const upgradedBiz = new RoleStore(paths.businessDatabasePath, { create: false });
     try {
       assert.equal(upgradedApp.schemaVersion, 11);
-      assert.equal(upgradedBiz.schemaVersion, 25);
+      assert.equal(upgradedBiz.schemaVersion, BUSINESS_SCHEMA_VERSION);
       const oldAppRow = upgradedApp.db
         .prepare("SELECT protocol FROM model_test_calls WHERE test_call_id = ?")
         .get(oldTestCallId) as { protocol: string } | undefined;

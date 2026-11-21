@@ -228,13 +228,13 @@ export function ConversationPage({
   // 预取当前台词与后续已就绪句段；失败静默，点播时再提示。
   const prefetchIds = [snapshot?.current?.id ?? 0, ...(snapshot?.upcoming ?? []).slice(0, 2).map(row => row.id)].join(',');
   useEffect(() => {
-    if (!snapshot) return;
+    if (!snapshot || snapshot.roleId !== currentId || snapshot.windowId !== session.windowId) return;
     const rows: PerfRow[] = [];
     if (snapshot.current) rows.push(snapshot.current);
     rows.push(...(snapshot.upcoming ?? []).slice(0, 2));
     prefetchRef.current(rows.slice(0, 3));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentId, session.windowId, prefetchIds]);
+  }, [currentId, session.windowId, snapshot?.roleId, snapshot?.windowId, prefetchIds]);
 
   // 切换角色或窗口后重置页面阅读与演出状态。
   useEffect(() => {
@@ -303,12 +303,12 @@ export function ConversationPage({
       frozenScene.current = null;
       setDismissed(new Set());
       setAnnounce('对话窗口已载入。');
-    } else if (event.reason === 'send') {
+    } else if (event.reason === 'send' || event.reason === 'retryReply') {
       setLiveRowId(null);
       voice.cancelPending();
-      if (session.windowId) draftRecovery.current.delete(`${currentId}:${session.windowId}`);
+      if (event.reason === 'send' && session.windowId) draftRecovery.current.delete(`${currentId}:${session.windowId}`);
       if (!followRef.current) setHasNew(true);
-      setAnnounce('消息已发送，等对方开口。');
+      setAnnounce(event.reason === 'retryReply' ? '正在为原消息重新请求回复。' : '消息已发送，等对方开口。');
     } else if (event.reason === 'segment') {
       const row = event.row;
       setLiveRowId(row?.id ?? null);
@@ -563,6 +563,7 @@ export function ConversationPage({
                   onResumeRole={resumeRole}
                   onConfigureModel={onConfigureModel}
                   onRetryWaiting={() => { session.retryWaiting(); }}
+                  onRetryFailedReply={() => { session.retryFailedReply(); }}
                   onSpeaker={row => voice.play(row, false)} onGenerateScene={messageId => { setSceneTarget(messageId); setSceneOpen(true); }}
                   onOpenScene={openScene} />}
           </div>

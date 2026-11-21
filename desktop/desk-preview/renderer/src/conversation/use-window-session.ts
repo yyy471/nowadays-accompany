@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../api';
 import type {
+  FailedReplyView,
   MessageDetailView,
   MessagePageView,
   MessageView,
@@ -18,7 +19,7 @@ import { applySegmentAnnotations, createRowIdRegistry, groupSegments, isSubmissi
 import { createTypingState } from './typing-state.js';
 
 export type ConnectionState = 'connecting' | 'open' | 'retrying' | 'closed';
-export type SessionEventReason = 'load' | 'send' | 'segment' | 'ready' | 'annotation' | 'terminal' | 'scene' | 'error' | 'connection' | 'history';
+export type SessionEventReason = 'load' | 'send' | 'retryReply' | 'segment' | 'ready' | 'annotation' | 'terminal' | 'scene' | 'error' | 'connection' | 'history';
 
 export interface SessionEvent {
   reason: SessionEventReason;
@@ -45,6 +46,7 @@ export interface ConversationSnapshot extends PerformanceSnapshot {
   historyError: string;
   /** 已收下但未安排回复的原因；null 表示正常排队或正在生成。 */
   waitReason: string | null;
+  failedReply: FailedReplyView | null;
   /** 最近一次发送因角色停止被拒绝：消息未入库，恢复后由用户再提交。 */
   roleRejected: boolean;
   /** 快照确认某条原提交已入库：页面据此收敛失败后恢复的草稿（283 §8 R02）。 */
@@ -97,7 +99,9 @@ interface SessionState {
     content: string;
     /** 原消息标识：对应执行真正开始后清除等待（283 §4 R02）。 */
     messageId: string;
+    failedReply?: FailedReplyView;
   } | null;
+  failedReply: FailedReplyView | null;
   /** 发送被角色停止拒绝：消息未入库，保留草稿与原提交标识。 */
   roleRejected: boolean;
   /** 快照确认的原提交；同一窗口重新载入时据此清除重复草稿。 */
@@ -130,6 +134,7 @@ function emptyState(): SessionState {
     historyLoading: false,
     historyError: '',
     wait: null,
+    failedReply: null,
     roleRejected: false,
     confirmedDraft: null
   };
@@ -138,6 +143,14 @@ function emptyState(): SessionState {
 function describeError(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function pendingSubmission(): PendingReply {
+  return {
+    executionId: null, replyMessageId: null, replySequence: null, replyCreatedAt: null,
+    submittedMessageId: null, messageRecord: null, segments: [], shown: 0, terminal: null,
+    error: '', awaitingExecution: true, startedAt: Date.now(), awaitingSubmission: true, bufferedEvents: []
+  };
 }
 
 function rememberScene(current: SessionState, task: SceneTaskView): void {
@@ -250,7 +263,7 @@ export function useWindowSession({
       }
     }
     const currentRow = current.current ?? lastRowOf(rows);
-    const scenes = [...current.scenes.values()].map(task => sceneView(task, segmentsByMessage, roleId));
+    const scenes = [...current.scenes.values()].map(task => sceneView(task, segmentsByMessage, roleId)).filter(scene => scene !== null);
     const availableRounds = new Set(
       entries
         .filter(entry => entry.record.sender === 'assistant' && entry.record.status !== 'generating')
@@ -280,6 +293,7 @@ export function useWindowSession({
       historyComplete: current.historyBefore === null,
       historyError: current.historyError,
       waitReason: current.wait?.reason ?? null,
+      failedReply: current.failedReply,
       roleRejected: current.roleRejected,
       confirmedDraft: current.confirmedDraft
     };
@@ -305,6 +319,7 @@ export function useWindowSession({
     let active = true;
     state.current.windows = [];
     state.current.pending = null;
+    state.current.failedReply = null;
     state.current.messages = new Map();
     state.current.scenes = new Map();
     state.current.error = '';
@@ -381,6 +396,7 @@ export function useWindowSession({
 
   function ingestPage(page: MessagePageView): void {
     const current = state.current;
+    current.failedReply = page.failedReply ?? null;
     // 读取快照时对照原提交：同一提交标识的消息已入库就结束重试记录，
     // 并通知页面收敛失败后恢复的草稿（283 §7 R02、§8 R02）。
     const submissionKey = JSON.stringify([roleRef.current, current.windowId]);
@@ -402,7 +418,7 @@ export function useWindowSession({
           replyMessageId: message.messageId,
           replySequence: message.sequence,
           replyCreatedAt: message.createdAt,
-          submittedMessageId: null,
+          submittedMessageId: page.awaitingReply?.messageId ?? null,
           messageRecord: message,
           segments,
           shown: segments.length,
@@ -418,6 +434,10 @@ export function useWindowSession({
         continue;
       }
       current.messages.set(message.messageId, { record: message, segments });
+    }
+    if (!current.pending && page.awaitingReply) {
+      current.pending = { ...pendingSubmission(), executionId: page.awaitingReply.executionId,
+        submittedMessageId: page.awaitingReply.messageId, awaitingSubmission: false, awaitingExecution: false };
     }
     current.sceneImagesAvailable = Array.isArray(page.sceneImages);
     for (const task of page.sceneImages ?? []) rememberScene(current, task);
@@ -517,6 +537,11 @@ export function useWindowSession({
       case 'execution_started': {
         const messageIds = Array.isArray(payload.messageIds) ? payload.messageIds.filter(item => typeof item === 'string') as string[] : [];
         const triggerType = typeof payload.triggerType === 'string' ? payload.triggerType : '';
+        if (current.failedReply && messageIds.includes(current.failedReply.messageId) && triggerType === 'user_message') {
+          current.pending ??= { ...pendingSubmission(), submittedMessageId: current.failedReply.messageId, awaitingSubmission: false };
+          current.failedReply = null;
+          current.error = '';
+        }
         // 原消息对应的执行真正开始：清除「等待处理」提示。其他窗口或自主
         // 消息不会出现在本窗口的 messageIds 里，不会提前清除（283 §4 R02）。
         let clearedWait = false;
@@ -539,7 +564,7 @@ export function useWindowSession({
             pending.awaitingExecution = false;
           }
         }
-        if (clearedWait) emit({ reason: 'ready' });
+        if (clearedWait || pending?.executionId === payload.executionId) emit({ reason: 'ready' });
         return;
       }
       case 'message_delta': {
@@ -641,8 +666,13 @@ export function useWindowSession({
       case 'execution_paused':
       case 'execution_failed': {
         const pending = current.pending;
-        if (pending === null) return;
         const executionId = typeof payload.executionId === 'string' ? payload.executionId : null;
+        if (payload.type === 'execution_failed' && executionId && typeof payload.failedMessageId === 'string') {
+          current.failedReply = { executionId, messageId: payload.failedMessageId,
+            errorCode: typeof payload.errorCode === 'string' ? payload.errorCode : 'EXECUTION_FAILED' };
+          if (pending?.executionId !== executionId) emit({ reason: 'ready' });
+        }
+        if (pending === null) return;
         if (pending.executionId === null || executionId !== pending.executionId) return;
         if (payload.type === 'execution_superseded') {
           pending.terminal = 'superseded';
@@ -653,7 +683,7 @@ export function useWindowSession({
         } else {
           pending.terminal = 'failed';
           const code = typeof payload.errorCode === 'string' ? payload.errorCode : 'EXECUTION_FAILED';
-          if (pending.segments.length === 0) pending.error = `这轮回复暂时没有送达（${code}）。`;
+          if (pending.segments.length === 0 && !current.failedReply) pending.error = `这轮回复暂时没有送达（${code}）。`;
         }
         settlePending();
         return;
@@ -737,40 +767,26 @@ export function useWindowSession({
     }
   }
 
-  const send = useCallback((text: string): boolean => {
+  const send = useCallback((text: string, failed?: FailedReplyView): boolean => {
     const targetRole = roleRef.current;
     const targetWindow = state.current.windowId;
     const content = text.trim();
-    if (!targetRole || !targetWindow || !content || state.current.pending !== null) return false;
+    if (!targetRole || !targetWindow || (!content && !failed) || state.current.pending !== null) return false;
     state.current.error = '';
     state.current.wait = null;
-    const pending: PendingReply = {
-      executionId: null,
-      replyMessageId: null,
-      replySequence: null,
-      replyCreatedAt: null,
-      submittedMessageId: null,
-      messageRecord: null,
-      segments: [],
-      shown: 0,
-      terminal: null,
-      error: '',
-      awaitingExecution: true,
-      startedAt: Date.now(),
-      awaitingSubmission: true,
-      bufferedEvents: []
-    };
+    const pending = pendingSubmission();
     state.current.pending = pending;
-    emit({ reason: 'send' });
+    emit({ reason: failed ? 'retryReply' : 'send' });
     const submissionKey = JSON.stringify([targetRole, targetWindow]);
-    const previous = submissions.current.get(submissionKey);
+    const previous = failed ? undefined : submissions.current.get(submissionKey);
     const submissionId = previous?.content === content ? previous.submissionId : makeUuid();
     const startCursor = previous?.content === content ? previous.startCursor : state.current.cursor;
-    submissions.current.set(submissionKey, { content, submissionId, startCursor });
+    if (!failed) submissions.current.set(submissionKey, { content, submissionId, startCursor });
     const generation = state.current.generation;
-    void api<SubmitMessageView>(`/v1/roles/${encodeURIComponent(targetRole)}/windows/${encodeURIComponent(targetWindow)}/messages`, {
+    const messagesUrl = `/v1/roles/${encodeURIComponent(targetRole)}/windows/${encodeURIComponent(targetWindow)}/messages`;
+    void api<SubmitMessageView>(failed ? `${messagesUrl}/${encodeURIComponent(failed.messageId)}/retry` : messagesUrl, {
       method: 'POST',
-      body: { content, submissionId, source: 'nowadays' }
+      body: failed ? { executionId: failed.executionId } : { content, submissionId, source: 'nowadays' }
     }).then(result => {
       if (state.current.windowId !== targetWindow || state.current.generation !== generation || roleRef.current !== targetRole) return;
       const waitReason = result.waitReason ?? null;
@@ -782,6 +798,7 @@ export function useWindowSession({
         state.current.messages.set(message.messageId, { record: message, segments: [] });
       }
       if (state.current.pending === pending) {
+        state.current.failedReply = null;
         pending.submittedMessageId = message.messageId;
         pending.awaitingSubmission = false;
         // 响应晚于 SSE 时，缓冲里可能已经有原消息对应的执行与回复。
@@ -793,18 +810,19 @@ export function useWindowSession({
         );
         const waitRejected = releaseWaiting && !bufferedHasExecution;
         state.current.roleRejected = false;
-        if (!waitRejected && submissions.current.get(submissionKey)?.submissionId === submissionId) submissions.current.delete(submissionKey);
+        if (!failed && !waitRejected && submissions.current.get(submissionKey)?.submissionId === submissionId) submissions.current.delete(submissionKey);
         if (waitRejected) {
           // 消息已收下但没有安排回复：显示原因、释放输入区，保留原提交标识供重试。
           state.current.wait = {
             reason: waitReason as ConversationWaitReason,
-            submissionId,
-            content,
-            messageId: message.messageId
+            submissionId: message.submissionId ?? submissionId,
+            content: message.content,
+            messageId: message.messageId,
+            ...(failed ? { failedReply: failed } : {})
           };
           state.current.pending = null;
           pending.bufferedEvents = [];
-        } else if (!bufferedHasExecution && result.duplicate) {
+        } else if (!failed && !bufferedHasExecution && result.duplicate) {
           // 上次请求可能已提交但响应丢失，重放原提交之前的游标以恢复执行归属。
           source.current?.close();
           source.current = null;
@@ -826,6 +844,17 @@ export function useWindowSession({
         state.current.pending = null;
         for (const event of pending.bufferedEvents) handleStreamEvent(event);
       }
+      if (failed) {
+        // 另一处已经领取或应答，以及已提交但回执丢失时，以窗口快照和其游标重新接续。
+        if (error instanceof ApiError && error.code === 'REPLY_RETRY_STALE') {
+          setReloadToken(value => value + 1);
+        } else {
+          state.current.failedReply ??= failed;
+          state.current.error = describeError(error);
+          emit({ reason: 'error', message: state.current.error });
+        }
+        return;
+      }
       // 角色已停止会拒绝新消息：消息未入库，保留草稿并给出就地恢复入口（283 R07）。
       if (error instanceof ApiError && error.code === 'ROLE_ACTIVITY_STOPPED') {
         state.current.roleRejected = true;
@@ -841,7 +870,12 @@ export function useWindowSession({
     const wait = state.current.wait;
     if (wait === null) return false;
     state.current.wait = null;
-    return send(wait.content);
+    return send(wait.content, wait.failedReply);
+  }, [send]);
+
+  const retryFailedReply = useCallback((): boolean => {
+    const failed = state.current.failedReply;
+    return failed !== null && send('', failed);
   }, [send]);
 
   /** 恢复活动成功后清掉「发送被拒绝」提示；消息仍由用户自己重新提交。 */
@@ -1010,7 +1044,7 @@ export function useWindowSession({
   }, [windows.length]);
 
   const noteTyping = useCallback(() => typing.current?.input(), []);
-  return { snapshot, windows, windowId, selectWindow, retry, send, retryWaiting, clearRejection, advance, advanceAll, requestScene, noteTyping, loadOlder, loadHistory, cancelHistory, ensureVisible, locateMessage };
+  return { snapshot, windows, windowId, selectWindow, retry, send, retryWaiting, retryFailedReply, clearRejection, advance, advanceAll, requestScene, noteTyping, loadOlder, loadHistory, cancelHistory, ensureVisible, locateMessage };
 }
 
 function mergeSceneTask(previous: SceneTaskView | undefined, payload: StreamEventView, windowId: string): SceneTaskView {

@@ -125,6 +125,7 @@ export function applySegmentAnnotations(segments, items, now = new Date().toISOS
 
 /** 把过场图任务映射为舞台区间；起止句段取同轮已读句段的首尾序号。 */
 export function sceneView(task, segmentsByMessage, roleId) {
+  if (task.status === 'skipped' || (task.trigger === 'auto' && ['queued', 'planning'].includes(task.status))) return null;
   const segments = segmentsByMessage.get(task.messageId) ?? [];
   const start = segments.find(segment => segment.segmentId === task.startSegmentId);
   const end = segments.find(segment => segment.segmentId === task.endSegmentId);
@@ -139,7 +140,7 @@ export function sceneView(task, segmentsByMessage, roleId) {
     end: endOrdinal,
     startSegmentId: task.startSegmentId,
     endSegmentId: task.endSegmentId,
-    status: task.status === 'succeeded' ? 'succeeded' : task.status === 'failed' || task.status === 'skipped' ? 'failed' : 'generating',
+    status: task.status === 'succeeded' ? 'succeeded' : task.status === 'failed' ? 'failed' : 'generating',
     source: task.trigger,
     taskStatus: task.status,
     errorCode: task.errorCode,

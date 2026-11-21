@@ -88,6 +88,7 @@ export interface SceneImageOutfitInput {
 }
 
 export interface SceneImagePlannerInput {
+  trigger?: SceneImageTrigger;
   roleId: string;
   windowId: string;
   messageId: string;
@@ -100,6 +101,8 @@ export interface SceneImagePlannerInput {
 }
 
 /** 画面规划端口。模型规划与固定规划都实现该端口，缺绑定时可回退。 */
+export class SceneImageNotSelected extends Error {}
+
 export interface SceneImagePlannerPort {
   plan(
     input: SceneImagePlannerInput,

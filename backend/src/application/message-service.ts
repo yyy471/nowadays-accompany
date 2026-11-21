@@ -1,5 +1,6 @@
 import type {
   ConversationActiveReply,
+  FailedReply,
   MessageDetail,
   MessageSegmentRecord,
 } from "../domain/conversation.js";
@@ -16,6 +17,8 @@ import { RoleAccess } from "./role-access.js";
 export interface MessagePageResult extends ListMessagesResult {
   segments: MessageSegmentRecord[];
   activeReply: ConversationActiveReply | null;
+  failedReply: FailedReply | null;
+  awaitingReply: { executionId: string; messageId: string } | null;
   /** 与本次读取同一快照边界的 SSE 游标。 */
   cursor: number;
   /** 本页消息关联的过场图任务与结果引用。 */
@@ -65,6 +68,8 @@ export class MessageService {
           ...page,
           segments: store.listMessageSegmentsForMessages(windowId, messageIds),
           activeReply: store.getActiveReply(windowId),
+          failedReply: store.getFailedReply(windowId),
+          awaitingReply: store.getAwaitingReply(windowId),
           cursor: store.latestEventId(windowId),
           sceneImages: new SceneImageStore(db, roleId).listForMessages(
             windowId,

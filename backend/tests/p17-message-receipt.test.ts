@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { listen } from "../src/bootstrap/app.js";
-import { createFixture, type Fixture } from "./p2-05-fixture.js";
+import { createFixture, createFixtureWithModel, deferred, type Fixture } from "./p2-05-fixture.js";
+import type { ModelEvent } from "../src/domain/model.js";
 
 interface ApiResult {
   status: number;
@@ -35,6 +36,58 @@ async function api(
 function errorCode(result: ApiResult): string {
   return (result.body.error as { code?: string } | undefined)?.code ?? "";
 }
+
+test("失败可按原消息恢复，保留已展示的半句，过期及跨窗口点击不会重复调度", { timeout: 30_000 }, async () => {
+  const release = deferred<void>();
+  let calls = 0;
+  const fixture = createFixtureWithModel({
+    async *stream(): AsyncIterable<ModelEvent> {
+      if (++calls === 1) {
+        yield { type: "text_delta", text: "我已经看到书签了。" };
+        throw Error("offline interruption");
+      }
+      await release.promise;
+      yield { type: "text_delta", text: "在扉页，我找到了。" };
+      yield { type: "completed", stopReason: "stop" };
+    },
+  });
+  try {
+    const { roleId, windowId } = fixture;
+    const base = await start(fixture);
+    const windows = `/v1/roles/${roleId}/windows`;
+    const route = `${windows}/${windowId}/messages`;
+    const submissionId = randomUUID();
+    const received = await submit(base, roleId, windowId, { content: "书签还在吗？", submissionId });
+    const messageId = (received.body.message as { messageId: string }).messageId;
+    await fixture.app.conversation.waitForIdle(roleId);
+    const page = (await api(base, "GET", route)).body;
+    const failed = page.failedReply as { executionId: string; messageId: string; errorCode: string };
+    assert.equal(failed.messageId, messageId);
+    assert.ok(failed.errorCode);
+    assert.ok((page.items as {content: string; status: string}[]).some(m => m.status === "interrupted" && m.content === "我已经看到书签了。"));
+    const retry = route + "/" + messageId + "/retry";
+    const other = fixture.app.services.roles.createWindow(roleId, { kind: "custom", source: "nowadays" });
+    assert.equal(errorCode(await api(base, "POST", `${windows}/${other.windowId}/messages/${messageId}/retry`, { executionId: failed.executionId })), "MESSAGE_NOT_FOUND");
+    assert.equal(errorCode(await api(base, "POST", retry, { executionId: randomUUID() })), "REPLY_RETRY_STALE");
+    const result = await api(base, "POST", retry, { executionId: failed.executionId });
+    assert.equal(result.status, 200);
+    assert.equal((result.body.message as { submissionId: string }).submissionId, submissionId);
+    const running = (await api(base, "GET", route)).body;
+    assert.equal(running.failedReply, null);
+    assert.equal((running.awaitingReply as {messageId: string}).messageId, messageId);
+    assert.equal(errorCode(await api(base, "POST", retry, { executionId: failed.executionId })), "REPLY_RETRY_STALE");
+    release.resolve();
+    await fixture.app.conversation.waitForIdle(roleId);
+    const done = (await api(base, "GET", route)).body;
+    assert.equal(done.failedReply, null);
+    assert.equal(done.awaitingReply, null);
+    const messages = done.items as { sender: string; status: string }[];
+    assert.equal(messages.filter(m => m.sender === "user").length, 1);
+    assert.deepEqual(messages.filter(m => m.sender === "assistant").map(m => m.status), ["interrupted", "completed"]);
+    assert.equal(errorCode(await api(base, "POST", retry, { executionId: failed.executionId })), "REPLY_RETRY_STALE");
+    assert.equal(calls, 2);
+  } finally { release.resolve(); await fixture.close(); }
+});
 
 async function submit(
   base: string,

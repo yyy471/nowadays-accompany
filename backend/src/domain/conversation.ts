@@ -90,6 +90,13 @@ export interface ConversationActiveReply {
   text: string;
 }
 
+/** 原消息仍待处理，指向最近一次失败尝试。 */
+export interface FailedReply {
+  messageId: string;
+  executionId: string;
+  errorCode: string;
+}
+
 export interface ConversationExecutionDetail {
   execution: ExecutionRecord;
   triggerMessages: MessageRecord[];

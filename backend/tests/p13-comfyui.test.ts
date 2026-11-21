@@ -91,7 +91,15 @@ async function startFakeComfy(): Promise<FakeComfy> {
     for await (const chunk of request) {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     }
-    const raw = Buffer.concat(chunks).toString("utf8");
+    const bytes = Buffer.concat(chunks);
+    if (request.method === "POST" && request.url?.endsWith("/upload/image")) {
+      const form = await new Response(new Uint8Array(bytes), { headers: { "content-type": String(request.headers["content-type"]) } }).formData();
+      const file = form.get("image") as File;
+      state.requests.push({ method: "POST", url: "/upload/image", body: Buffer.from(await file.arrayBuffer()), authorization: request.headers.authorization ?? null });
+      respondJson(response, 200, { name: file.name, type: form.get("type"), subfolder: form.get("subfolder") });
+      return;
+    }
+    const raw = bytes.toString("utf8");
     const body = raw.length === 0 ? null : (JSON.parse(raw) as unknown);
     state.requests.push({
       method: request.method ?? "",
@@ -339,6 +347,145 @@ async function createTestOutfit(
   );
   return outfit.outfitId;
 }
+
+test("outfit references are owned, replaceable and sent to the connected img2img node only", {timeout: 30_000}, async () => {
+  const context = await setup();
+  try {
+    const role = context.fixture.roleId;
+    const base = "/v1/roles/" + role + "/scene-image";
+    const first = await createTestOutfit(context, "晴天");
+    const second = await createTestOutfit(context, "雨天");
+    const foreignRole = context.fixture.app.services.roles.createRole({ displayName: "另一个角色", definition: { text: "测试" } });
+    const foreign = await createTestOutfit(context, "其他人的服饰", foreignRole.roleId);
+    const picture = await sharp({create:{width:16,height:24,channels:3,background:"red"}}).png().toBuffer();
+    const nextPicture = await sharp({create:{width:24,height:16,channels:3,background:"blue"}}).png().toBuffer();
+    const endpoint = (outfit: string) => base + "/outfits/" + outfit + "/reference";
+    async function upload(outfit: string, bytes: Buffer) {
+      const form = new FormData(); form.append("image", new Blob([new Uint8Array(bytes)], {type:"image/png"}), "图.png");
+      return configFetch(context.base + endpoint(outfit), { method: "PUT", body: form });
+    }
+    assert.equal((await upload(first, picture)).status, 200);
+    assert.equal((await upload(foreign, nextPicture)).status, 404);
+    assert.equal((await upload(first, Buffer.from("bad png"))).status, 400);
+    assert.deepEqual(Buffer.from(await (await fetch(context.base + endpoint(first))).arrayBuffer()), picture);
+    const invalid = await api(context.base, "PUT", base, settingsBody(context, {modelType:"img2img"}));
+    assert.equal((invalid.body.error as {code: string}).code, "SCENE_REFERENCE_WORKFLOW_REQUIRED");
+    const graph = defaultComfyWorkflow();
+    graph["12"] = {class_type:"LoadImage", inputs:{ image:"stored.png" }};
+    let invalidGraph = await api(context.base, "PUT", base, settingsBody(context, {modelType:"img2img", workflow:graph}));
+    assert.equal(invalidGraph.status, 400, "unconnected LoadImage cannot satisfy the workflow");
+    graph["13"] = {class_type:"VAEEncode",inputs:{pixels:["12",0],vae:["3",0]}};
+    graph["9"]!.inputs.latent_image=["13",0];
+    assert.equal((await api(context.base, "PUT", base, settingsBody(context, {modelType:"img2img", workflow:graph}))).status, 200);
+    const missing = await api(context.base, "POST", base + "/preview", {outfitId:second});
+    assert.equal((missing.body.error as {code:string}).code, "SCENE_REFERENCE_MISSING");
+    assert.equal(context.comfy.workflows.length,0);
+    await upload(first, nextPicture);
+    const preview = await api(context.base, "POST", base + "/preview", {outfitId:first, prompt:"秋天"});
+    assert.equal(preview.status,200, JSON.stringify(preview.body));
+    assert.deepEqual(context.comfy.requests.filter(r=>r.url==="/upload/image").map(r=>r.body),[nextPicture]);
+    const submitted = context.comfy.workflows.at(-1) as typeof graph;
+    assert.match(String(submitted["12"]?.inputs.image), /^nowadays\/[a-f0-9]{64}\.png$/);
+    assert.equal(submitted["6"], undefined);
+    assert.deepEqual(submitted["9"]?.inputs.latent_image,["13",0]);
+    assert.equal((await api(context.base,"DELETE",endpoint(first))).status,200);
+    assert.equal((await fetch(context.base + endpoint(first))).status,404);
+    assert.deepEqual((await api(context.base,"GET",base+"/references")).body.items,[]);
+  } finally { await context.close(); }
+});
+
+test("img2img 保存校验多纯背景分支，生成纯背景按需隔离参考图或报缺", { timeout: 30_000 }, async () => {
+  const context = await setup();
+  try {
+    const roleId = context.fixture.roleId;
+    const base = "/v1/roles/" + roleId + "/scene-image";
+    const multiBg = defaultComfyWorkflow();
+    multiBg["12"] = { class_type: "LoadImage", inputs: { image: "stored.png" } };
+    multiBg["13"] = { class_type: "VAEEncode", inputs: { pixels: ["12", 0], vae: ["3", 0] } };
+    multiBg["9"]!.inputs.latent_image = ["13", 0];
+    multiBg["20"] = { class_type: "EmptyFlux2LatentImage", inputs: { width: 512, height: 512, batch_size: 1 } };
+    multiBg["21"] = { class_type: "KSampler", inputs: { model: ["8", 0], positive: ["4", 0], negative: ["5", 0], latent_image: ["20", 0], seed: 1, steps: 4, cfg: 2.5, sampler_name: "er_sde", scheduler: "simple", denoise: 1 } };
+    multiBg["22"] = { class_type: "VAEDecode", inputs: { samples: ["21", 0], vae: ["3", 0] } };
+    multiBg["23"] = { class_type: "SaveImage", inputs: { images: ["22", 0], filename_prefix: "bg-a" } };
+    multiBg["24"] = { class_type: "SaveImage", inputs: { images: ["22", 0], filename_prefix: "bg-b" } };
+    const duplicateBg = await api(context.base, "PUT", base, settingsBody(context, {
+      modelType: "img2img",
+      modelPath: "custom-flux.safetensors",
+      workflow: multiBg,
+      outputNodeId: "11",
+    }));
+    assert.equal(duplicateBg.status, 400);
+    assert.equal((duplicateBg.body.error as { code: string }).code, "IMAGE_WORKFLOW_INVALID");
+
+    const noBg = defaultComfyWorkflow();
+    noBg["12"] = { class_type: "LoadImage", inputs: { image: "stored.png" } };
+    noBg["13"] = { class_type: "VAEEncode", inputs: { pixels: ["12", 0], vae: ["3", 0] } };
+    noBg["9"]!.inputs.latent_image = ["13", 0];
+    assert.equal((await api(context.base, "PUT", base, settingsBody(context, {
+      modelType: "img2img",
+      modelPath: "custom-flux.safetensors",
+      workflow: noBg,
+      outputNodeId: "11",
+    }))).status, 200);
+
+    const replyId = await createReply(context);
+    const missingBg = await api(
+      context.base,
+      "POST",
+      `/v1/roles/${roleId}/windows/${context.fixture.windowId}/messages/${replyId}/scene-images`,
+      { idempotencyKey: "bg-missing", layerMode: "background" },
+    );
+    assert.equal(missingBg.status, 201);
+    const missingTaskId = (missingBg.body.task as SceneImageTaskRecord).taskId;
+    await context.fixture.app.services.sceneImages.waitForIdle(roleId);
+    const failedDetail = await api(
+      context.base,
+      "GET",
+      `/v1/roles/${roleId}/windows/${context.fixture.windowId}/scene-images/${missingTaskId}`,
+    );
+    assert.equal((failedDetail.body.task as SceneImageTaskRecord).status, "failed");
+    assert.equal((failedDetail.body.task as SceneImageTaskRecord).errorCode, "SCENE_BACKGROUND_WORKFLOW_REQUIRED");
+
+    const singleBg = defaultComfyWorkflow();
+    singleBg["12"] = { class_type: "LoadImage", inputs: { image: "stored.png" } };
+    singleBg["13"] = { class_type: "VAEEncode", inputs: { pixels: ["12", 0], vae: ["3", 0] } };
+    singleBg["9"]!.inputs.latent_image = ["13", 0];
+    singleBg["23"] = { class_type: "SaveImage", inputs: { images: ["10", 0], filename_prefix: "full" } };
+    singleBg["20"] = { class_type: "EmptyFlux2LatentImage", inputs: { width: 512, height: 512, batch_size: 1 } };
+    singleBg["21"] = { class_type: "KSampler", inputs: { model: ["8", 0], positive: ["4", 0], negative: ["5", 0], latent_image: ["20", 0], seed: 1, steps: 4, cfg: 2.5, sampler_name: "er_sde", scheduler: "simple", denoise: 1 } };
+    singleBg["22"] = { class_type: "VAEDecode", inputs: { samples: ["21", 0], vae: ["3", 0] } };
+    singleBg["11"] = { class_type: "SaveImage", inputs: { images: ["22", 0], filename_prefix: "bg-only" } };
+    assert.equal((await api(context.base, "PUT", base, settingsBody(context, {
+      modelType: "img2img",
+      modelPath: "custom-flux.safetensors",
+      workflow: singleBg,
+      outputNodeId: "23",
+    }))).status, 200);
+
+    const okBg = await api(
+      context.base,
+      "POST",
+      `/v1/roles/${roleId}/windows/${context.fixture.windowId}/messages/${replyId}/scene-images`,
+      { idempotencyKey: "bg-single", layerMode: "background" },
+    );
+    assert.equal(okBg.status, 201);
+    const okTaskId = (okBg.body.task as SceneImageTaskRecord).taskId;
+    await context.fixture.app.services.sceneImages.waitForIdle(roleId);
+    const okDetail = await api(
+      context.base,
+      "GET",
+      `/v1/roles/${roleId}/windows/${context.fixture.windowId}/scene-images/${okTaskId}`,
+    );
+    const okTask = okDetail.body.task as SceneImageTaskRecord;
+    assert.equal(okTask.status, "succeeded");
+    assert.equal(context.comfy.requests.filter(r => r.url === "/upload/image").length, 0);
+    const submittedBg = context.comfy.workflows.at(-1) as Record<string, { inputs?: Record<string, unknown> }>;
+    assert.equal(submittedBg["12"], undefined);
+    assert.equal(submittedBg["23"], undefined);
+    assert.ok(submittedBg["11"] && submittedBg["21"]);
+    assert.equal(submittedBg["21"]?.inputs?.steps, 40);
+  } finally { await context.close(); }
+});
 
 test("the built-in workflow is a MOSS-Image graph that can be patched by class type", () => {
   const workflow = defaultComfyWorkflow();
@@ -1665,5 +1812,29 @@ test("anchor-prompts invokes bound chat model with outfit or uploaded image and 
     assert.equal(savedAfter.body.settings, null);
   } finally {
     await fixture.close();
+  }
+});
+
+test("POST /scene-image/preview 接受包含 autoGenerateEnabled 与 autoCooldownMinutes 的完整设置草稿", async () => {
+  const context = await setup();
+  try {
+    const res = await api(
+      context.base,
+      "POST",
+      `/v1/roles/${context.fixture.roleId}/scene-image/preview`,
+      {
+        prompt: "雨夜街角咖啡馆",
+        settings: {
+          ...settingsBody(context),
+          autoGenerateEnabled: true,
+          autoCooldownMinutes: 15,
+        },
+      },
+    );
+    assert.equal(res.status, 200);
+    assert.equal(typeof res.body.dataBase64, "string");
+    assert.ok((res.body.dataBase64 as string).length > 0);
+  } finally {
+    await context.close();
   }
 });

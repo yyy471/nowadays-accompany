@@ -345,7 +345,15 @@ function assembleBackendApp(
   activity.reconcileStartup();
   // 完成上一次删除中断留下的角色绑定清理（RP-R05）。
   resourceService.reconcilePendingDeletions();
+  const configuredSceneGenerator = new ConfiguredSceneImageGenerator({
+    source: sceneImageSettings.source, fallback: new FakeSceneImageGenerator(),
+  });
   const sceneImages = new SceneImageService(appStore, roleAccess, config.dataRoot, {
+    captureImageService: roleId => {
+      const config = configuredSceneGenerator.lock(roleId);
+      if (!config?.settings || !sceneImageSettings.source.findServiceRecord(config.settings.serviceId)?.enabled) return null;
+      return config;
+    },
     now,
     mediaMaintenance,
     planner:
@@ -374,12 +382,7 @@ function assembleBackendApp(
         },
         fallback: new FixedSceneImagePlanner(),
       }),
-    generator:
-      options.sceneImageGenerator ??
-      new ConfiguredSceneImageGenerator({
-        source: sceneImageSettings.source,
-        fallback: new FakeSceneImageGenerator(),
-      }),
+    generator: options.sceneImageGenerator ?? configuredSceneGenerator,
     ...(options.sceneImageGenerationTimeoutMs === undefined
       ? {}
       : { generationTimeoutMs: options.sceneImageGenerationTimeoutMs }),
@@ -388,6 +391,7 @@ function assembleBackendApp(
       : { imageInspector: options.sceneImageInspector }),
     isRoleDeleting: (roleId) => isRoleDeleting(roleId),
   });
+  conversation.setSceneImageService(sceneImages);
   sceneImages.recoverOnStartup();
   const waitForMemoryIdle = async (
     roleId: string,

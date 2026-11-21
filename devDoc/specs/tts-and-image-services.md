@@ -11,7 +11,7 @@
 
 1. **全局语音服务与角色语音接入**：全局 `voice_services` CRUD 与探测、`nowadays-tts-v1` 服务能力探测、多引擎选择与预置／参考克隆双音源、旧 `indextts` 本机桥接兼容、角色单份语音配置保存与启停、受管参考音频资产与临时暂存试听。
 2. **全局生图服务管理（ComfyUI）**：全局 `image_services` CRUD、直填密钥或 `env:`／`file:` 引用与换站重验、连接与工作流节点探测（含草稿探测）。
-3. **角色文生图配置与推理生成**：`role_scene_image_settings` 参数校验、内置 MOSS-Image 默认工作流、自定义 ComfyUI 工作流按 `class_type` 打补丁、角色草稿探测／测试出图及过场图生成时的运行时解析边界。
+3. **角色文生图／图生图配置、参考图管理与推理生成**：`role_scene_image_settings`（含 `model_type: "text2img" | "img2img"` 与自动过场图字段）、`role_scene_references` 服饰参考图存取、内置 MOSS-Image 默认工作流、自定义 ComfyUI 工作流按 `class_type` 打补丁与 `LoadImage`/纯背景分支隔离、角色草稿探测／测试出图及过场图生成时的运行时解析边界。
 
 ### 1.2 边界分工（不在此处重复）
 
@@ -27,7 +27,7 @@
 | [DL-140](../161-digital-life-direction-decisions.md#dl-140-tts-统一接入音色克隆与预置音色) | 同一套界面随服务能力切换参考克隆与预置音色；试听与配置不写多余历史 | `nowadays-tts-v1` 协议按 `/health` 声明动态渲染与校验 |
 | [DL-143](../161-digital-life-direction-decisions.md#dl-143-统一语音桥接支持可选情绪指令) | 统一语音桥接支持可选情绪指令（`emotion` 不自动映射立绘差分名） | 句段标注写入 `message_segments.voice_emotion`（仅 `speech`）；`/speech` 自动消费并等待标注障栅，`/preview` 与 `/speech` 均支持可选 `emotion` |
 | [DL-149](../161-digital-life-direction-decisions.md#dl-149-角色语音只保留当前一份配置) | 每个角色只保留当前一份语音配置；停用保留原配置，新配置直接覆盖 | `role_voice_settings` 主键 `role_id`；`PUT /voice` 不改 `enabled` |
-| [DL-150](../161-digital-life-direction-decisions.md#dl-150-生图首版适配-comfyui先测-moss-image) | 生图首版适配 ComfyUI，先测 MOSS-Image；按节点类型打参数补丁 | 仅支持 `modelType: "text2img"`；图生图与锚点上传作为后续能力单列（`CG-04` 按 [223](../archive/03-appearance-and-performance/223-conversation-performance-development-guide.md) 指过场图独立复核与真实生图适配） |
+| [DL-150](../161-digital-life-direction-decisions.md#dl-150-生图首版适配-comfyui先测-moss-image) | 生图首版适配 ComfyUI，先测 MOSS-Image；按节点类型打参数补丁 | 已支持 `modelType: "text2img" | "img2img"` 与自定义工作流 `LoadImage` 服饰参考图上传；`CG-04` 按 [223](../archive/03-appearance-and-performance/223-conversation-performance-development-guide.md) 指过场图增量独立复核与真实生图适配 |
 | [DL-152](../161-digital-life-direction-decisions.md#dl-152-全局管理语音服务角色从设置中选择服务并配置专属音色与试听) | 设置「模型 -> 语音」全局管理语音服务；角色选择全局服务并配音色 | `app.sqlite`（APP V9）维护全局 `voice_services`；`role_voice_settings`（V20）增 `service_id` 且启动自动回填已有角色地址；保留直连 HTTP API 向后兼容 |
 
 ---
@@ -61,9 +61,11 @@
 | `POST /v1/image-services/probe` | 无写锁；JSON | `{ serviceId?, config, secret?, workflow? }`（草稿探测，不落库） | `409 RESOURCE_CREDENTIAL_STALE`、`401 IMAGE_SERVICE_AUTH_FAILED`、`502 IMAGE_SERVICE_UNAVAILABLE` |
 | `POST /v1/image-services/:serviceId/probe` | 无写锁 | 探测已保存服务与内置 MOSS-Image 工作流节点齐全度 | `404 IMAGE_SERVICE_NOT_FOUND`、`502 IMAGE_SERVICE_UNAVAILABLE` |
 | `GET /v1/roles/:roleId/scene-image` | 无写锁 | 返回 `{ settings, service, configured }`（`service` 含 `modelName?` 展示字段，不解析凭据） | `404 ROLE_NOT_FOUND` |
-| `PUT /v1/roles/:roleId/scene-image` | **角色守卫**；JSON | 保存 `sceneImageSettingsSchema` 校验后的角色生图配置 | `404 IMAGE_SERVICE_NOT_FOUND`、`409 IMAGE_SERVICE_DISABLED`、`400 IMAGE_WORKFLOW_INVALID` |
+| `PUT /v1/roles/:roleId/scene-image` | **角色守卫**；JSON | 保存 `sceneImageSettingsSchema` 校验后的角色生图配置（`img2img` 须导入包含单一 `LoadImage` 上游与至多一个纯背景分支的自定义工作流） | `404 IMAGE_SERVICE_NOT_FOUND`、`409 IMAGE_SERVICE_DISABLED`、`400 IMAGE_WORKFLOW_INVALID`、`400 SCENE_REFERENCE_WORKFLOW_REQUIRED` |
+| `GET /v1/roles/:roleId/scene-image/references` | 无写锁；— | 列出角色 `role_scene_references` 中全部服饰的 `img2img` 参考图元数据 | — |
+| `GET/PUT/DELETE /v1/roles/:roleId/scene-image/outfits/:outfitId/reference` | `PUT/DELETE` 须**角色守卫**；`PUT` 为 `multipart/form-data`（单文件 `image`） | 读取／上传替换／删除指定服饰的 `img2img` 参考图（校验解码与 `<= 8 MiB` 上限） | `400 SCENE_REFERENCE_REQUIRED`、`404 OUTFIT_NOT_FOUND`、`413 SCENE_REFERENCE_TOO_LARGE`、`404 SCENE_REFERENCE_MISSING` |
 | `POST /v1/roles/:roleId/scene-image/probe` | 无写锁；JSON | `{ serviceId?, serviceDraft?, workflow? }`（`serviceId` 与 `serviceDraft` 互斥） | `409 SCENE_IMAGE_NOT_CONFIGURED`、`400 IMAGE_WORKFLOW_INVALID` |
-| `POST /v1/roles/:roleId/scene-image/preview` | 无写锁；JSON | `{ prompt?, outfitId?, serviceDraft?, settings?\|平铺草稿 }`；返回 `dataBase64` 样图（不入历史） | `400 IMAGE_WORKFLOW_INVALID`（含样图超 8 MiB）、`409 SCENE_IMAGE_NOT_CONFIGURED`/`IMAGE_SERVICE_DISABLED` |
+| `POST /v1/roles/:roleId/scene-image/preview` | 无写锁；JSON | `{ prompt?, outfitId?, serviceDraft?, settings?\|平铺草稿 }`（`settings` 兼容完整 `autoGenerateEnabled`/`autoCooldownMinutes` 表单字段）；返回 `dataBase64` 样图（不入历史） | `400 IMAGE_WORKFLOW_INVALID`（含样图超 8 MiB）、`409 SCENE_IMAGE_NOT_CONFIGURED`/`IMAGE_SERVICE_DISABLED`、`400 SCENE_REFERENCE_WORKFLOW_REQUIRED`、`422 SCENE_REFERENCE_MISSING` |
 | `POST /v1/roles/:roleId/scene-image/anchor-prompts` | 无写锁；JSON 或 `multipart/form-data`（`payload`+可选图片 `image`） | 调用角色已绑定且启用的 `chat_model` 视觉能力提炼 `base` 或指定 `outfitId` 的锚点提示词，支持传 `previousPrompt` 反复重生成；返回 `{ target, outfitId, prompt, source }` | `400 SCENE_IMAGE_ANCHOR_IMAGE_REQUIRED`/`IMAGE_DECODE_FAILED`/`MULTIPLE_ANCHOR_IMAGES`、`404 OUTFIT_NOT_FOUND`、`409 SCENE_IMAGE_CHAT_MODEL_REQUIRED`/`RESOURCE_MAINTENANCE`、`502 MODEL_REQUEST_FAILED` |
 
 ### 2.2 外部上游协议规范
@@ -76,7 +78,7 @@
    - 仅支持参考音频来源（禁止预置），`POST /tts` 发送 JSON：`{ text, lang, spk_audio_path, emo_audio_path: null, emo_vector: null, emo_alpha, duration_factor }`；限制 `lang ∈ {zh, en, ja, es, ar}`、`speed ∈ [0.5, 2]`（映射为 `duration_factor = clamp(1 / speed, 0.5, 2)`）、`emoAlpha ∈ [0, 1]`。`spk_audio_path` 要求本地绝对路径（对未保存临时试听，后端写入系统临时目录并在 `finally` 删除，见 [voice-service.ts](../../backend/src/application/voice-service.ts#L670-L691)）。
 3. **ComfyUI 协议 `comfyui`**（[comfyui-client.ts](../../backend/src/scene/comfyui-client.ts#L29-L350)）：
    - 探测：依次请求 `GET /system_stats` 与 `GET /object_info`，核对工作流 `requiredNodeTypes` 是否存在（给出 `missingNodes`、`workflowReady`），并从 `CheckpointLoaderSimple.ckpt_name`、`MOSSImageUNETLoader.unet_name`、`UNETLoader.unet_name` 提取模型下拉候选（支持数组与 `["COMBO", { options }]` 两种结构）。
-   - 执行：向 `POST /prompt` 提交 `{ prompt: workflow, client_id: "nowadays" }`（HTTP 400 -> `400 IMAGE_WORKFLOW_INVALID`）；每 **750ms** 轮询 `GET /history/{promptId}`（单次 HTTP 超时 **20 秒**，整体生成默认上限 **180 秒**、可配 **5～900 秒**）；从指定 `outputNodeId` 或首个非 `type: "temp"` 输出取图，经 `GET /view?...` 读取 PNG／JPEG／WebP（服务端读图上限 **32 MiB**；测试预览图在应用层再限 **8 MiB**）。超时或取消时 best-effort 调用 `POST /queue`（`{ delete: [promptId] }`）。全部请求设置 `redirect: "manual"`，禁止跟随重定向，支持可选 `Bearer <token>`（401/403 -> `401 IMAGE_SERVICE_AUTH_FAILED`）。
+   - 执行：当 `img2img` 含参考图分支时先经 `POST /upload/image` 上传参考图并将文件名与宽高写入 `LoadImage`/`ImageScale`；向 `POST /prompt` 提交 `{ prompt: workflow, client_id: "nowadays" }`（HTTP 400 -> `400 IMAGE_WORKFLOW_INVALID`）；每 **750ms** 轮询 `GET /history/{promptId}`（单次 HTTP 超时 **20 秒**，整体生成默认上限 **180 秒**、可配 **5～900 秒**）；从指定 `outputNodeId` 或首个非 `type: "temp"` 输出取图，经 `GET /view?...` 读取 PNG／JPEG／WebP（服务端读图上限 **32 MiB**；测试预览图在应用层再限 **8 MiB**）。超时或取消时 best-effort 调用 `POST /queue`（`{ delete: [promptId] }`）。全部请求设置 `redirect: "manual"`，禁止跟随重定向，支持可选 `Bearer <token>`（401/403 -> `401 IMAGE_SERVICE_AUTH_FAILED`）。
 
 ### 2.3 数据存储与受管文件（物理文件名见 [config.ts](../../backend/src/bootstrap/config.ts#L68-L84) 与 [存储规范](storage-memory-and-autonomy.md#21-应用目录与-sqlite-分库规范)）
 
@@ -86,7 +88,7 @@
 | `<app-root>/data/app.sqlite`（全局库） | `image_services`（V4，[schema.ts](../../backend/src/storage/schema.ts)） | `service_id`、`name`、`enabled`、`config_json`（`{ protocol: "comfyui", baseUrl, modelName?, credentialRef?, timeoutMs? }`）；密钥存共享 `resource_secrets` |
 | `.../roles/<roleId>/business.sqlite`（角色业务库） | `voice_assets`（V9，[schema.ts](../../backend/src/storage/schema.ts)） | 受管参考音频元数据（支持 WAV/MP3/FLAC/OGG，单文件上限 **32 MiB**），物理路径落在 `<roleDir>/voice/<assetId>.<ext>` |
 | `.../roles/<roleId>/business.sqlite`（角色业务库） | `role_voice_settings`（V9→V20，[schema.ts](../../backend/src/storage/schema.ts)） | 主键 `role_id` 仅存一份配置；含 `service_id`（V20 新增，可空兼容直连与删后重选）、`protocol`、`base_url`、`voice_source`、`reference_asset_id`、`reference_mode`、`reference_text`、`preset_voice_id`、`capabilities_json`（严格保持纯净）、`tts_engine`、`engines_json`、`default_engine`（V19 新增多引擎持久化列）、`reference_mode_confirmed`（V12 回填修复）、`enabled`（V14 新增默认 1，`saveSettings` UPSERT 刻意跳过以保留停用态） |
-| `.../roles/<roleId>/business.sqlite`（角色业务库） | `role_scene_image_settings`（V15，[schema.ts](../../backend/src/storage/schema.ts#L1477-L1495)） | 主键 `role_id`：绑定全局 `service_id`、`model_type='text2img'`、`model_path`、`base_prompt`、`negative_prompt`、`outfit_prompts_json`、`width`/`height`（`256..2048` 步长 16，默认 `1024`）、`steps`（`1..150`，默认 `25`）、`cfg`（`0..30`，默认 `2.5`）、`sampler`（默认 `er_sde`）、`scheduler`（默认 `simple`）、`seed`（`0..2147483647\|null`）、`workflow_json`、`output_node_id` |
+| `.../roles/<roleId>/business.sqlite`（角色业务库） | `role_scene_image_settings`（V26，[schema.ts](../../backend/src/storage/schema.ts)）、`role_scene_references`（V27） | `role_scene_image_settings` 主键 `role_id`：绑定全局 `service_id`、`model_type IN ('text2img','img2img')`、`auto_generate_enabled`、`auto_cooldown_minutes`（`0..10080` 默认 `30`）、`model_path`、`base_prompt`、`negative_prompt`、`outfit_prompts_json`、`width`/`height`（`256..2048` 步长 16，默认 `1024`）、`steps`（`1..150`，默认 `25`）、`cfg`（`0..30`，默认 `2.5`）、`sampler`（默认 `er_sde`）、`scheduler`（默认 `simple`）、`seed`（`0..2147483647\|null`）、`workflow_json`、`output_node_id`；`role_scene_references` 保存 `img2img` 每套服饰专属参考图路径与校验元数据 |
 
 ---
 
@@ -148,16 +150,15 @@
 
 ### 4.2 未实现或待设计功能（来自 `246 §6` 与 `248 §10`）
 
-1. **ComfyUI 图生图与服饰锚点图上传**（[248 §10](../archive/04-role-settings-and-media/248-comfyui-adaptation.md#10-未完成与后续)）：`scene_image_model_types` 目前仅包含 `text2img`，工作流尚无加载角色／服饰参考图（`LoadImage`）与对应的资产存储／绑定关系；该项作为后续生图能力单列，`CG-04` 则按 [223](../archive/03-appearance-and-performance/223-conversation-performance-development-guide.md) 指过场图增量独立复核与真实生图适配（见 [STATUS.md](../STATUS.md)）。
-2. **对话页语音停用状态同步**（[246 §6](../archive/04-role-settings-and-media/246-role-voice-toggle.md#6-未完成与后续)）：对话页顶栏／菜单目前不展示「语音已停用」常驻标识；在设置页重新启用语音后，已打开的对话窗口需通过手动点播、切角色或刷新清除 `voiceDisabled` 缓存，尚未按实时配置版本号自动刷新并发起预取。
-3. **未配置真实生图服务失败策略**（[248 §10](../archive/04-role-settings-and-media/248-comfyui-adaptation.md#10-未完成与后续)）：正式发布前需按产品开关将 `ConfiguredSceneImageGenerator` 在无配置时的默认行为从「回退占位图」切换或可选切换为「提示先配置生图服务」。
-4. **多模型扩展工作流模板**：Flux / SDXL 等模型虽可通过自定义工作流 API JSON 接入，但尚无内置模板选择器。
+1. **对话页语音停用状态同步**（[246 §6](../archive/04-role-settings-and-media/246-role-voice-toggle.md#6-未完成与后续)）：对话页顶栏／菜单目前不展示「语音已停用」常驻标识；在设置页重新启用语音后，已打开的对话窗口需通过手动点播、切角色或刷新清除 `voiceDisabled` 缓存，尚未按实时配置版本号自动刷新并发起预取。
+2. **未配置真实生图服务失败策略**（[248 §10](../archive/04-role-settings-and-media/248-comfyui-adaptation.md#10-未完成与后续)）：正式发布前需按产品开关将 `ConfiguredSceneImageGenerator` 在无配置时的默认行为从「回退占位图」切换或可选切换为「提示先配置生图服务」。
+3. **多模型扩展工作流模板**：Flux / SDXL 等模型虽可通过自定义工作流 API JSON 接入，但尚无内置模板选择器。
 
 ### 4.3 已实机联调与尚未实机验证项
 
-- **已在本机 WSL 联调（脚本级 E2E）**：通过后端 HTTP 路由与真实 WSL `nowadays-tts-v1` 桥接（`http://127.0.0.1:9890`）完成 `CosyVoice3-0.5B` 与 `IndexTTS-2.5` 的 `/voice/probe`、配置切换、带 `emotion` 试听与对话 `segment_annotations -> /speech` 双向切引擎合成实测（对话 LLM 采用测试脚手架响应；WSL 桥接与服务脚本改动位于宿主机目录并留有 `.bak-pre-emotion` 备份）。
-- **尚未实机验证（仍待补充）**：真实多语种长句、桌面 Electron 界面内真实扬声器播放试听与参考音频实时上传回归、真实多模态 LLM 对话流全栈串联。
-- **真实 ComfyUI + MOSS-Image**：本地大模型目录（`MOSS-Image-Base`）加载、显卡 VRAM 峰值与实际推理耗时、长等待取消是否真实清出 ComfyUI 队列、并发任务与 8 MiB／32 MiB 上限实测。
+- **离线与本机实时媒体 Electron E2E（已通过独立复核，2026-11-21）**：[media-live-check.mjs](../../desktop/desk-preview/tests/media-live-check.mjs) 已顺序完成 `sample sample`、`cosyvoice sample`（`127.0.0.1:9890`，`duration=3.64s`、`rms=0.106`）、`indextts sample`（`127.0.0.1:9890`，`duration=2.635s`、`rms=0.121`）与 `sample comfy`（`127.0.0.1:8188`，ComfyUI `0.45.0` + `MOSS-Image`，自动 `background` 与上传服饰参考图 `img2img` `full_scene` `512×512` 出图及截图目视核验），验证表情差分切换、分段语音播放与波形解码、`pause` 清理防串窗、过场图渲染及重载恢复（文本模型为确定性桩）。
+- **已在本机 WSL 联调（脚本级 E2E）**：既往通过后端 HTTP 路由与真实 WSL `nowadays-tts-v1` 桥接（`http://127.0.0.1:9890`）完成 `CosyVoice3-0.5B` 与 `IndexTTS-2.5` 的 `/voice/probe`、配置切换、带 `emotion` 试听与对话 `segment_annotations -> /speech` 双向切引擎合成实测。
+- **尚未实机验证（仍待补充）**：真实多语种长句、Electron 设置页内 `img2img`／参考音频实时上传 UI 交互回归、真实多模态 LLM 对话流全栈串联，以及 ComfyUI 长等待取消清队列、并发任务与 8 MiB／32 MiB 上限实测。
 
 ### 4.4 可执行验证命令
 

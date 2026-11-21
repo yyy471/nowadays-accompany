@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { discardReferenceFile, removeSceneReference } from "../storage/scene-reference.js";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { AppError, PresetAppearanceLockedError } from "../domain/errors.js";
@@ -218,7 +219,7 @@ export class AppearanceService {
       }
       const now = new Date().toISOString();
       let assets: OutfitAssetRecord[] = [];
-      storage.business.db.transaction(() => {
+      const previousReference = storage.business.db.transaction(() => {
         assets = store.deleteOutfit(outfitId, now);
         new SceneImageSettingsStore(
           storage.business.db,
@@ -234,7 +235,9 @@ export class AppearanceService {
           delete nextState.outfitReviewedOn;
           storage.business.setState({ roleId, state: nextState });
         }
+        return removeSceneReference(storage, roleId, outfitId);
       })();
+      discardReferenceFile(storage, previousReference);
 
       let removedAssets = 0;
       let retainedAssets = 0;

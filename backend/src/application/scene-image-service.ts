@@ -1,6 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import type Database from "better-sqlite3";
+import { SceneImageNotSelected } from "../domain/scene-image.js";
+import { SceneImageSettingsStore } from "../storage/scene-image-settings-store.js";
 import {
   AppError,
   MessageNotFoundError,
@@ -29,6 +32,7 @@ import type {
 import { rolePaths } from "../bootstrap/config.js";
 import type { AppStore } from "../storage/app-store.js";
 import { ConversationStore } from "../storage/conversation-store.js";
+import { readSceneReference } from "../storage/scene-reference.js";
 import {
   SceneImageStore,
   type SceneImageCharacterReference,
@@ -49,6 +53,7 @@ const INTERRUPTED_CODE = "SCENE_IMAGE_INTERRUPTED";
 import type { MediaMaintenance } from './media-maintenance.js';
 
 export interface SceneImageServiceOptions {
+  captureImageService?: (roleId: string) => SceneImageConfigSnapshot | null;
   mediaMaintenance?: MediaMaintenance;
   now?: () => Date;
   planner?: SceneImagePlannerPort;
@@ -77,6 +82,8 @@ export interface SceneImageAssetFile {
 }
 
 export class SceneImageService {
+  private readonly automaticWindows = new Set<string>();
+  private readonly captureImageService: SceneImageServiceOptions["captureImageService"];
   private readonly mediaMaintenance: MediaMaintenance | undefined;
   private readonly now: () => Date;
   private readonly planner: SceneImagePlannerPort;
@@ -96,12 +103,54 @@ export class SceneImageService {
     options: SceneImageServiceOptions = {},
   ) {
     this.mediaMaintenance = options.mediaMaintenance;
+    this.captureImageService = options.captureImageService;
     this.now = options.now ?? (() => new Date());
     this.planner = options.planner ?? new FixedSceneImagePlanner();
     this.generator = options.generator ?? new FakeSceneImageGenerator();
     this.generationTimeoutOverride = options.generationTimeoutMs ?? null;
     this.inspect = options.imageInspector ?? inspectImage;
     this.isRoleDeleting = options.isRoleDeleting ?? (() => false);
+  }
+
+  captureAutomaticConfig(roleId: string, db: Database.Database): SceneImageConfigSnapshot | null {
+    const settings = new SceneImageSettingsStore(db, roleId).get();
+    if (!settings?.autoGenerateEnabled || this.closed || this.isRoleDeleting(roleId)) return null;
+    // 无可用服务也保存该轮的明确决定；不允许自动任务使用手动占位图。
+    try {
+      const captured = this.captureImageService?.(roleId);
+      if (captured?.settings?.serviceId === settings.serviceId && captured.service) return captured;
+    } catch { /* 服务目录或配置当前不可用。 */ }
+    return { version: 1, settings, service: null };
+  }
+
+  dispatchAutomatic(roleId: string, windowId: string): void {
+    if (this.closed || this.isRoleDeleting(roleId) || this.automaticWindows.has(windowId)) return;
+    const queued = this.roleAccess.withStore(roleId, storage => {
+      const store = new SceneImageStore(storage.business.db, roleId);
+      const task = store.nextAutomatic(windowId);
+      return task ? { task, config: store.getTaskConfig(task.taskId) } : null;
+    });
+    if (!queued) return;
+    const { task, config } = queued;
+    this.automaticWindows.add(windowId);
+    let release: (() => void) | undefined;
+    if (config?.service && config.settings) {
+      try {
+        release = this.mediaMaintenance?.claim("image", config.settings.serviceId, roleId);
+      } catch (error) {
+        try {
+          this.settle(roleId, task.taskId, errorCodeOf(error, "SCENE_IMAGE_SERVICE_UNAVAILABLE"), messageOf(error));
+        } finally {
+          this.automaticWindows.delete(windowId);
+        }
+        this.dispatchAutomatic(roleId, windowId);
+        return;
+      }
+    }
+    void this.start(roleId, windowId, task.taskId, release).finally(() => {
+      this.automaticWindows.delete(windowId);
+      this.dispatchAutomatic(roleId, windowId);
+    });
   }
 
   /**
@@ -228,6 +277,7 @@ export class SceneImageService {
 
   /** 启动时把上次未完成的任务结算为可追溯的失败，避免永久停留在执行中。 */
   recoverOnStartup(): number {
+    const queues = new Map<string,string>();
     let settled = 0;
     for (const index of this.appStore.listRoleIndexes()) {
       if (index.initStatus !== "ready") {
@@ -238,10 +288,14 @@ export class SceneImageService {
           const store = new SceneImageStore(storage.business.db, index.roleId);
           let count = 0;
           for (const task of store.listUnfinished()) {
+            if (task.trigger === "auto" && task.status === "queued") {
+              queues.set(task.windowId, index.roleId);
+              continue;
+            }
             const failed = store.failTask(
               task.taskId,
-              INTERRUPTED_CODE,
-              "服务重启，未完成的过场图任务已终止",
+              task.trigger === "auto" && task.status === "generating" ? "SCENE_IMAGE_GENERATION_OUTCOME_UNKNOWN" : INTERRUPTED_CODE,
+              task.status === "generating" ? "生成阶段中断，外部是否已出图尚未确认" : "服务重启，未完成的过场图任务已终止",
               this.nowIso(),
             );
             if (failed !== null) {
@@ -254,6 +308,7 @@ export class SceneImageService {
         // 单个角色库不可读时跳过，不阻塞其他角色启动。
       }
     }
+    for (const [windowId, roleId] of queues) this.dispatchAutomatic(roleId, windowId);
     return settled;
   }
 
@@ -293,11 +348,11 @@ export class SceneImageService {
     }
   }
 
-  private start(roleId: string, windowId: string, taskId: string, release?: () => void): void {
+  private start(roleId: string, windowId: string, taskId: string, release?: () => void): Promise<void> {
     if (this.closed) {
       this.settle(roleId, taskId, INTERRUPTED_CODE, "服务已关闭，任务未开始");
       release?.();
-      return;
+      return Promise.resolve();
     }
     const controller = new AbortController();
     this.controllers.add(controller);
@@ -332,6 +387,7 @@ export class SceneImageService {
     const tasks = this.inFlight.get(roleId) ?? new Set<Promise<void>>();
     tasks.add(promise);
     this.inFlight.set(roleId, tasks);
+    return promise;
   }
 
   private async run(
@@ -345,14 +401,35 @@ export class SceneImageService {
       const db = storage.business.db;
       const store = new SceneImageStore(db, roleId);
       const task = store.getTask(windowId, taskId);
-      if (task === null) {
+      if (task?.status !== "queued") {
         return null;
+      }
+      const config = store.getTaskConfig(taskId);
+      if (task.trigger === "auto") {
+        if (!config?.service || !config.settings) {
+          store.failTask(taskId, "SCENE_IMAGE_AUTO_NO_SERVICE", "未绑定可用的生图服务", this.nowIso(), "skipped");
+          return null;
+        }
+        const last = store.previousAutomaticGeneration(windowId);
+        const cool = (config.settings.autoCooldownMinutes ?? 30) * 60_000;
+        if (last && cool > 0 && Date.parse(task.createdAt) < Date.parse(last) + cool) {
+          store.failTask(taskId, "SCENE_IMAGE_AUTO_COOLDOWN", "本窗口仍在自动生成冷却时间内", this.nowIso(), "skipped");
+          return null;
+        }
       }
       const anchor = store.getAnchor(windowId, task.messageId);
       if (anchor === null) {
         return null;
       }
       const outfit = store.outfitForMessage(windowId, task.messageId);
+      const img2img = config?.settings?.modelType === "img2img";
+      let pinnedReference: SceneImageReferenceImage | undefined;
+      let referenceError: unknown;
+      if (outfit && img2img && (task.trigger !== "manual" || task.layerMode === "full_scene")) {
+        // 在第一次异步规划前固定当时的服饰图；之后更换参考图不会改变这一轮。
+        try { pinnedReference = readSceneReference(storage, roleId, outfit.outfitId); }
+        catch (error) { referenceError = error; }
+      }
       return {
         task,
         content: anchor.content,
@@ -360,8 +437,9 @@ export class SceneImageService {
           task.messageId,
         ),
         outfit,
+        pinnedReference, referenceError,
         reference:
-          outfit === null
+          outfit === null || img2img
             ? null
             : store.characterReferenceForOutfit(outfit.outfitId),
         context: store.listContextMessages(
@@ -369,7 +447,7 @@ export class SceneImageService {
           anchor.sequence,
           MAX_CONTEXT_MESSAGES,
         ),
-        config: store.getTaskConfig(taskId),
+        config,
         appearanceDir: storage.paths.appearanceDir,
       };
     });
@@ -408,7 +486,7 @@ export class SceneImageService {
             outfitId: prepared.outfit.outfitId,
             name: prepared.outfit.name,
             description: prepared.outfit.description,
-            hasCharacterReference: prepared.reference !== null,
+            hasCharacterReference: !!prepared.pinnedReference || prepared.reference !== null,
           };
     const context: SceneImageContextMessage[] = prepared.context;
     let plan: SceneImagePlanRecord;
@@ -420,6 +498,7 @@ export class SceneImageService {
               roleId,
               windowId,
               messageId: task.messageId,
+              trigger: task.trigger,
               executionId: task.executionId,
               content: prepared.content,
               segments,
@@ -436,6 +515,11 @@ export class SceneImageService {
         segments,
       );
     } catch (error) {
+      if (task.trigger === "auto" && error instanceof SceneImageNotSelected) {
+        this.roleAccess.withStore(roleId, storage => new SceneImageStore(storage.business.db, roleId).failTask(
+          taskId, "SCENE_IMAGE_AUTO_NOT_SELECTED", error.message, this.nowIso(), "skipped"));
+        return;
+      }
       this.settle(
         roleId,
         taskId,
@@ -460,7 +544,7 @@ export class SceneImageService {
     // 纯背景图不带角色参考；整幅图在服饰素材可读时才附带，缺失时降级为无参考。
     const references: SceneImageReferenceImage[] =
       plan.layerMode === "full_scene"
-        ? this.loadReferenceImages(prepared.reference, prepared.appearanceDir)
+        ? (prepared.pinnedReference ? [prepared.pinnedReference] : this.loadReferenceImages(prepared.reference, prepared.appearanceDir))
         : [];
     // 外层等待上限采用任务接收时固定的服务超时，与客户端内部上限保持一致；
     // 未配置真实服务或旧任务没有快照时用默认值。
@@ -483,6 +567,7 @@ export class SceneImageService {
     try {
       // 服务侧竞速：生成器不理会 AbortSignal 时，超时或关闭也能立即结算，
       // 生成器之后返回的结果不再写盘或改变任务状态。
+      if (plan.layerMode === "full_scene" && prepared.referenceError) throw prepared.referenceError;
       const generatingCall = this.generator.generate({
           roleId,
           prompt: plan.description,

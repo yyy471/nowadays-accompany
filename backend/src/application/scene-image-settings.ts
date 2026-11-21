@@ -34,6 +34,7 @@ import { resolveCredential } from "../model/credentials.js";
 import { HttpModelAdapter } from "../model/protocols.js";
 import { AppearanceStore } from "../storage/appearance-store.js";
 import { SceneImageSettingsStore } from "../storage/scene-image-settings-store.js";
+import { discardReferenceFile, MAX_SCENE_REFERENCE_BYTES, readSceneReference, removeSceneReference, requireReferenceOutfit, saveSceneReference } from "../storage/scene-reference.js";
 import {
   buildScenePrompt,
   ComfyUiImageGenerator,
@@ -42,7 +43,9 @@ import {
   type SceneImageRuntimeSource,
 } from "../scene/comfyui-generator.js";
 import {
+  backgroundBranch,
   defaultComfyWorkflow,
+  referenceWorkflow,
   validateComfyWorkflow,
   type ComfyWorkflow,
 } from "../scene/comfyui-workflow.js";
@@ -163,6 +166,33 @@ export class SceneImageSettingsService {
     };
   }
 
+  listReferences(roleId: string) {
+    return this.roleAccess.withStore(roleId, storage => ({ items: storage.business.db.prepare(
+      "SELECT outfit_id AS outfitId, asset_id AS assetId, media_type AS mediaType FROM role_scene_references WHERE role_id=? ORDER BY outfit_id"
+    ).all(roleId) }));
+  }
+
+  async uploadReference(roleId: string, outfitId: string, image: UploadedImage) {
+    if (image.data.length > MAX_SCENE_REFERENCE_BYTES) throw new AppError(413, "SCENE_REFERENCE_TOO_LARGE", "服饰参考图上限为 8 MiB");
+    this.roleAccess.withStore(roleId, storage => requireReferenceOutfit(storage, roleId, outfitId));
+    const info = await inspectImage(image.data, image.fileName);
+    return this.roleAccess.withStore(roleId, storage => saveSceneReference(storage, roleId, outfitId, image, info));
+  }
+
+  readReference(roleId: string, outfitId: string) {
+    return this.roleAccess.withStore(roleId, storage => {
+      requireReferenceOutfit(storage, roleId, outfitId);
+      return readSceneReference(storage, roleId, outfitId);
+    });
+  }
+
+  deleteReference(roleId: string, outfitId: string) {
+    this.roleAccess.withStore(roleId, storage => {
+      requireReferenceOutfit(storage, roleId, outfitId);
+      discardReferenceFile(storage, removeSceneReference(storage, roleId, outfitId));
+    });
+  }
+
   get(roleId: string): SceneImageSettingsView {
     const settings = this.read(roleId);
     if (settings === null) {
@@ -198,9 +228,16 @@ export class SceneImageSettingsService {
     if (!service.enabled && existingServiceId !== input.serviceId) {
       throw new ImageServiceDisabledError(input.serviceId);
     }
+    if (input.modelType === "img2img" && !input.workflow) {
+      throw new AppError(400, "SCENE_REFERENCE_WORKFLOW_REQUIRED", "图生图需要导入带 LoadImage 的 ComfyUI API 工作流");
+    }
     if (input.workflow !== null) {
       // 自定义工作流在保存时就校验形状，别等生成时才失败。
-      validateComfyWorkflow(input.workflow, input.outputNodeId);
+      const graph = validateComfyWorkflow(input.workflow, input.outputNodeId);
+      if (input.modelType === "img2img") {
+        const ref = referenceWorkflow(graph, input.outputNodeId);
+        backgroundBranch(graph, ref.output);
+      }
     }
     this.roleAccess.withStore(roleId, (storage) =>
       new SceneImageSettingsStore(storage.business.db, roleId).save(
@@ -277,7 +314,7 @@ export class SceneImageSettingsService {
       }
     }
     const outfitPrompt =
-      outfitId === null ? "" : (runtime.settings.outfitPrompts[outfitId] ?? "");
+      outfitId === null || runtime.settings.modelType === "img2img" ? "" : (runtime.settings.outfitPrompts[outfitId] ?? "");
     const prompt = buildScenePrompt(
       runtime.settings,
       outfitPrompt,
@@ -286,7 +323,10 @@ export class SceneImageSettingsService {
     const signal = AbortSignal.timeout(this.previewTimeoutMs);
     const release = this.mediaMaintenance?.claim('image', runtime.settings.serviceId, roleId);
     let generated;
-    try { generated = await this.generator.generate(runtime, prompt, signal); }
+    try {
+      const reference = runtime.settings.modelType === "img2img" && outfitId ? this.readReference(roleId, outfitId) : undefined;
+      generated = await this.generator.generate(runtime, prompt, signal, reference);
+    }
     finally { release?.(); }
     if (generated.data.length > MAX_PREVIEW_BYTES) {
       throw new AppError(400, "IMAGE_WORKFLOW_INVALID", "测试样图超过 8 MiB 上限", {
@@ -569,6 +609,8 @@ export class SceneImageSettingsService {
         : {
             serviceId: saved.serviceId,
             modelType: saved.modelType,
+            autoGenerateEnabled: saved.autoGenerateEnabled,
+            autoCooldownMinutes: saved.autoCooldownMinutes,
             modelPath: saved.modelPath,
             basePrompt: saved.basePrompt,
             negativePrompt: saved.negativePrompt,
@@ -597,8 +639,15 @@ export class SceneImageSettingsService {
         })),
       });
     }
+    if (parsed.data.modelType === "img2img" && parsed.data.workflow === null) {
+      throw new AppError(400, "SCENE_REFERENCE_WORKFLOW_REQUIRED", "图生图需要导入带 LoadImage 的 ComfyUI API 工作流");
+    }
     if (parsed.data.workflow !== null) {
-      validateComfyWorkflow(parsed.data.workflow, parsed.data.outputNodeId);
+      const graph = validateComfyWorkflow(parsed.data.workflow, parsed.data.outputNodeId);
+      if (parsed.data.modelType === "img2img") {
+        const ref = referenceWorkflow(graph, parsed.data.outputNodeId);
+        backgroundBranch(graph, ref.output);
+      }
     }
     const settings: SceneImageSettingsRecord = {
       ...parsed.data,

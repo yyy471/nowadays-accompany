@@ -112,6 +112,49 @@ test("the default foreground wait window stays short and can be overridden", () 
   assert.equal(DEFAULT_TOOL_FOREGROUND_WAIT_MS, 2_000);
 });
 
+test("工具派发后连续两次模型中断，补答读取原回执且不重复执行工具", { timeout: 45_000 }, async () => {
+  const fixture = createFixture([
+    (request) => {
+      const tool = request.tools.find(item => item.name.includes("slow_op"));
+      assert.ok(tool);
+      return [{ type: "tool_call", callId: "check-once", name: tool.name, arguments: {} }, { type: "completed", stopReason: "tool_calls" }];
+    },
+    () => { throw Error("connection interrupted after tool"); },
+    (request) => {
+      assert.equal(request.tools.length, 0);
+      assert.match(JSON.stringify(request.messages), /slow-result/);
+      throw Error("second interruption");
+    },
+    (request) => {
+      assert.equal(request.tools.length, 0);
+      assert.match(JSON.stringify(request.messages), /slow-result/);
+      return [{ type: "text_delta", text: "拿到了，结果还在。" }, { type: "completed", stopReason: "stop" }];
+    },
+  ], { toolForegroundWaitMs: 10_000 });
+  try {
+    const { roleId, windowId } = fixture;
+    const workspace = rolePaths(fixture.app.config.dataRoot, roleId).workspaceDir;
+    fs.writeFileSync(path.join(workspace, "bg-release"), "");
+    addSlowOpMcp(fixture, workspace);
+    submit(fixture, "取一次结果给我。");
+    const page = () => fixture.app.services.messages.list(roleId, windowId, null, 30);
+    const failures = new Set<string>();
+    for (let i = 0; i < 2; i++) {
+      await fixture.app.conversation.waitForIdle(roleId);
+      const failed = page().failedReply;
+      assert.ok(failed);
+      failures.add(failed.executionId);
+      fixture.app.conversation.retryFailedReply(roleId, windowId, failed.messageId, failed.executionId);
+    }
+    await fixture.app.conversation.waitForIdle(roleId);
+    assert.equal(failures.size, 2);
+    assert.equal(page().failedReply, null);
+    assert.equal(page().items.filter(message => message.sender === "user").length, 1);
+    assert.equal(page().items.at(-1)?.content, "拿到了，结果还在。");
+    assert.equal(withStorage(fixture, ({business}) => business.db.prepare("SELECT tool_call_id FROM tool_calls").all().length), 1);
+  } finally { await fixture.close(); }
+});
+
 test("同一任务两次唤醒在后台读完后，各自关联真实分享，并可从旧库恢复", { timeout: 60_000 }, async () => {
   let now = new Date("2026-11-06T01:00:00.000Z");
   const call = (name: string, arguments_: Record<string, unknown>): ModelEvent[] => [
