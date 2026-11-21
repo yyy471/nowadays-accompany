@@ -1,4 +1,4 @@
-import { BUSINESS_SCHEMA_VERSION } from "../src/storage/schema.js";
+import { APP_SCHEMA_VERSION, BUSINESS_SCHEMA_VERSION } from "../src/storage/schema.js";
 import assert from "node:assert/strict";
 import { createVerify, generateKeyPairSync, randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -823,6 +823,8 @@ test("SQLite 老库迁移（v7->v8 与 v17->v18）及 ModelService / 资源创�
       DROP TABLE role_transfer_snapshots;
       DROP TABLE role_transfer_selections;
       DROP TABLE role_transfer_publication;
+      DROP TABLE token_usage_records;
+      DROP TABLE token_usage_meta;
     `);
     rawApp.pragma("user_version = 7");
     rawApp.close();
@@ -877,7 +879,7 @@ test("SQLite 老库迁移（v7->v8 与 v17->v18）及 ModelService / 资源创�
     const upgradedApp = new AppStore(migrateAppConfig.appDatabasePath);
     const upgradedBiz = new RoleStore(paths.businessDatabasePath, { create: false });
     try {
-      assert.equal(upgradedApp.schemaVersion, 11);
+      assert.equal(upgradedApp.schemaVersion, APP_SCHEMA_VERSION);
       assert.equal(upgradedBiz.schemaVersion, BUSINESS_SCHEMA_VERSION);
       const oldAppRow = upgradedApp.db
         .prepare("SELECT protocol FROM model_test_calls WHERE test_call_id = ?")

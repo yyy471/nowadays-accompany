@@ -10,11 +10,13 @@ import {
   DEFAULT_MEMORY_BUDGET_CHARS,
   DEFAULT_MEMORY_RETRY_DELAYS_MS,
   DEFAULT_OUTPUT_RESERVE_CHARS,
+  type MemoryFormationCallOptions,
   type MemoryFormationInput,
   type MemoryModelCapacity,
   type MemoryModelPort,
 } from "../domain/memory.js";
-import { isIncompleteCompletion, type ModelPort } from "../domain/model.js";
+import { isIncompleteCompletion, type ModelPort, type ModelUsage } from "../domain/model.js";
+import { mergeModelUsage, type TokenUsageCallEvent } from "../domain/token-usage.js";
 import { resolveCredential } from "../model/credentials.js";
 import { HttpModelAdapter } from "../model/protocols.js";
 import { rolePaths } from "../bootstrap/config.js";
@@ -42,6 +44,8 @@ export interface MemoryRuntimeOptions {
   onIdle?: (roleId: string) => void;
   /** 角色删除收尾期间不再接收新的整理任务（283 §16）。 */
   isRoleDeleting?: (roleId: string) => boolean;
+  /** 模型调用结束时上报全局 Token 账本（DL-183）。 */
+  onModelCallFinished?: (event: TokenUsageCallEvent) => void;
 }
 
 interface QueueState {
@@ -72,6 +76,7 @@ export class MemoryRuntime {
   private readonly maintenance: (resourceId: string) => boolean;
   private readonly onIdle: (roleId: string) => void;
   private readonly isRoleDeleting: (roleId: string) => boolean;
+  private readonly onModelCallFinished: ((event: TokenUsageCallEvent) => void) | undefined;
   /** 角色当前正在整理的模型服务；维护等待按目标服务判断在途调用（283 §6 R01）。 */
   private readonly activeResources = new Map<string, string>();
   /** 删除保护期间或触发写入失败时暂存的任务结束通知，待后续对账／唤醒恢复（283 §18/§22）。 */
@@ -104,6 +109,7 @@ export class MemoryRuntime {
     this.maintenance = options.maintenance ?? (() => false);
     this.onIdle = options.onIdle ?? (() => undefined);
     this.isRoleDeleting = options.isRoleDeleting ?? (() => false);
+    this.onModelCallFinished = options.onModelCallFinished;
     this.customModelFactory = options.modelFactory !== undefined;
     this.modelFactory =
       options.modelFactory ??
@@ -635,6 +641,7 @@ export class MemoryRuntime {
         const capacity = memoryCapacityOf(binding);
         const service = new MemoryService(store, model, {
           modelInfo: {
+            resourceId: binding.resourceId,
             modelName: binding.modelName,
             protocol: binding.config.protocol,
           },
@@ -643,6 +650,9 @@ export class MemoryRuntime {
           idleMs: this.idleWakeMs,
           ...(this.timeZone === undefined ? {} : { timeZone: this.timeZone }),
           now: this.now,
+          ...(this.onModelCallFinished === undefined
+            ? {}
+            : { onModelCallFinished: this.onModelCallFinished }),
         });
         const nowIso = this.now().toISOString();
         // 启动阶段若因角色库暂不可用跳过了中断批次恢复，在任何触发入队或批次启动前补齐；
@@ -792,8 +802,14 @@ class RefreshingMemoryModel implements MemoryModelPort {
     private readonly create: (binding: ResolvedModelBinding) => MemoryModelPort,
   ) {}
 
-  form(input: MemoryFormationInput): Promise<unknown> {
-    return this.create(this.resolveBinding()).form(input);
+  form(input: MemoryFormationInput, options?: MemoryFormationCallOptions): Promise<unknown> {
+    const binding = this.resolveBinding();
+    options?.onModelInfo?.({
+      resourceId: binding.resourceId,
+      modelName: binding.modelName,
+      protocol: binding.config.protocol,
+    });
+    return this.create(binding).form(input, options);
   }
 }
 
@@ -822,27 +838,40 @@ export class HttpMemoryModel implements MemoryModelPort {
     private readonly binding: ResolvedModelBinding,
   ) {}
 
-  async form(input: MemoryFormationInput): Promise<unknown> {
+  async form(input: MemoryFormationInput, options?: MemoryFormationCallOptions): Promise<unknown> {
+    options?.onModelInfo?.({
+      resourceId: this.binding.resourceId,
+      modelName: this.binding.modelName,
+      protocol: this.binding.config.protocol,
+    });
     let text = "";
     let completed = false;
     let incomplete = false;
+    let usage: ModelUsage | null = null;
     const config = this.binding.config;
     // 官方兼容接口把思考与可见 JSON 共计入 max_tokens。角色的整理容量仍按字符单独核算。
     const deepSeekMessages = config.protocol === "anthropic-messages" &&
       new URL(config.baseUrl).hostname === "api.deepseek.com";
-    for await (const event of this.model.stream({
-      modelName: this.binding.modelName,
-      system: MEMORY_SYSTEM_PROMPT,
-      ...(deepSeekMessages ? { maxOutputTokens: 8192 } : {}),
-      messages: [{ role: "user", content: JSON.stringify(input) }],
-      tools: [],
-    })) {
-      if (event.type === "text_delta") {
-        text += event.text;
+    try {
+      for await (const event of this.model.stream({
+        modelName: this.binding.modelName,
+        system: MEMORY_SYSTEM_PROMPT,
+        ...(deepSeekMessages ? { maxOutputTokens: 8192 } : {}),
+        messages: [{ role: "user", content: JSON.stringify(input) }],
+        tools: [],
+      })) {
+        if (event.type === "text_delta") {
+          text += event.text;
+        } else if (event.type === "usage") {
+          usage = mergeModelUsage(usage, event);
+        } else if (event.type === "completed") {
+          completed = true;
+          incomplete = isIncompleteCompletion(event);
+        }
       }
-      if (event.type === "completed") {
-        completed = true;
-        incomplete = isIncompleteCompletion(event);
+    } finally {
+      if (usage !== null) {
+        options?.onUsage?.(usage);
       }
     }
     if (!completed) {

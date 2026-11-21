@@ -9,7 +9,8 @@ import {
 } from "../domain/errors.js";
 import { isIncompleteCompletion } from "../domain/model.js";
 import { SceneImageNotSelected } from "../domain/scene-image.js";
-import type { ModelPort, ModelRequest } from "../domain/model.js";
+import type { ModelPort, ModelRequest, ModelUsage } from "../domain/model.js";
+import { mergeModelUsage, type TokenUsageCallEvent } from "../domain/token-usage.js";
 import type {
   SceneImageLayerMode,
   SceneImagePlanRecord,
@@ -50,6 +51,8 @@ export interface ModelSceneImagePlannerOptions {
   claim?: {
     claim(roleId: string, resourceId: string): ModelCallClaim;
   } | null;
+  /** 模型调用结束时上报全局 Token 账本（DL-183）。 */
+  onModelCallFinished?: (event: TokenUsageCallEvent) => void;
 }
 
 /**
@@ -168,7 +171,7 @@ export class ModelSceneImagePlanner implements SceneImagePlannerPort {
     };
     let output = "";
     let completed = false;
-    let usage: { inputTokens?: number; outputTokens?: number } | null = null;
+    let usage: ModelUsage | null = null;
     let rawResponse: unknown;
     let failureCode: string | null = null;
     try {
@@ -176,14 +179,7 @@ export class ModelSceneImagePlanner implements SceneImagePlannerPort {
         if (event.type === "text_delta") {
           output += event.text;
         } else if (event.type === "usage") {
-          usage = {
-            ...(event.inputTokens === undefined
-              ? {}
-              : { inputTokens: event.inputTokens }),
-            ...(event.outputTokens === undefined
-              ? {}
-              : { outputTokens: event.outputTokens }),
-          };
+          usage = mergeModelUsage(usage, event);
         } else if (event.type === "completed") {
           completed = !isIncompleteCompletion(event);
           rawResponse = event.rawResponse;
@@ -195,6 +191,8 @@ export class ModelSceneImagePlanner implements SceneImagePlannerPort {
     } catch (error) {
       failureCode = errorCodeOf(error);
     }
+    const finishedAt = this.now().toISOString();
+    const status: "succeeded" | "failed" = failureCode === null ? "succeeded" : "failed";
     if (modelCallId !== null) {
       try {
         this.access.withStore(input.roleId, (storage) => {
@@ -204,16 +202,27 @@ export class ModelSceneImagePlanner implements SceneImagePlannerPort {
             this.timeZone,
           ).finishModelCall({
             modelCallId,
-            status: failureCode === null ? "succeeded" : "failed",
+            status,
             errorCode: failureCode,
             usage,
             ...(rawResponse === undefined ? {} : { rawResponse }),
-            now: this.now().toISOString(),
+            now: finishedAt,
           });
         });
       } catch {
         // 记录失败不阻断已取得的规划结果。
       }
+      this.options.onModelCallFinished?.({
+        sourceCallId: `role:${input.roleId}:${modelCallId}`,
+        roleId: input.roleId,
+        resourceId: binding.resourceId,
+        modelName: binding.modelName,
+        protocol: binding.config.protocol,
+        category: "scene_plan",
+        status,
+        occurredAt: finishedAt,
+        usage,
+      });
     }
     if (signal?.aborted === true) {
       throw new SceneImageCanceledError();

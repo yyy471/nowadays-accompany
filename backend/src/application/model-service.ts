@@ -16,7 +16,9 @@ import type {
   ModelServiceProbe,
   ModelServiceTest,
   ModelTestResult,
+  ModelUsage,
 } from "../domain/model.js";
+import { mergeModelUsage, type TokenUsageCallEvent } from "../domain/token-usage.js";
 import { resolveCredential } from "../model/credentials.js";
 import { HttpModelAdapter } from "../model/protocols.js";
 import type { AppStore, ModelTestCallRecord } from "../storage/app-store.js";
@@ -27,6 +29,8 @@ export interface ModelServiceOptions {
   credentialResolver?: CredentialResolver;
   /** 主动连接测试的等待上限；超时按可追溯的失败记录。 */
   testTimeoutMs?: number;
+  /** 模型调用结束时上报全局 Token 账本（DL-183）。 */
+  onModelCallFinished?: (event: TokenUsageCallEvent) => void;
 }
 
 export interface ModelTestSummary {
@@ -49,6 +53,7 @@ export class ModelService {
   private readonly now: () => Date;
   private readonly credentials: CredentialResolver | null;
   private readonly testTimeoutMs: number;
+  private readonly onModelCallFinished: ((event: TokenUsageCallEvent) => void) | undefined;
 
   constructor(
     private readonly appStore: AppStore,
@@ -58,6 +63,7 @@ export class ModelService {
     this.now = options.now ?? (() => new Date());
     this.credentials = options.credentialResolver ?? null;
     this.testTimeoutMs = options.testTimeoutMs ?? DEFAULT_TEST_TIMEOUT_MS;
+    this.onModelCallFinished = options.onModelCallFinished;
   }
 
   async listModels(
@@ -142,11 +148,10 @@ export class ModelService {
     let status: "succeeded" | "failed" = "failed";
     let errorCode: string | null = null;
     let errorMessage: string | null = null;
-    let usageJson: string | null = null;
+    let usage: ModelUsage | null = null;
     const testTimeout = AbortSignal.timeout(this.testTimeoutMs);
     try {
       const adapter = input.createAdapter();
-      let usage: { inputTokens?: number; outputTokens?: number } | null = null;
       let sawOutput = false;
       let completed = false;
       let incomplete = false;
@@ -165,14 +170,7 @@ export class ModelService {
           sawOutput = true;
         }
         if (event.type === "usage") {
-          usage = {
-            ...(event.inputTokens === undefined
-              ? {}
-              : { inputTokens: event.inputTokens }),
-            ...(event.outputTokens === undefined
-              ? {}
-              : { outputTokens: event.outputTokens }),
-          };
+          usage = mergeModelUsage(usage, event);
         }
         if (event.type === "completed") {
           completed = true;
@@ -191,7 +189,6 @@ export class ModelService {
         });
       }
       status = "succeeded";
-      usageJson = usage === null ? null : JSON.stringify(usage);
     } catch (error) {
       if (testTimeout.aborted) {
         errorCode = "MODEL_REQUEST_TIMEOUT";
@@ -203,6 +200,7 @@ export class ModelService {
           error instanceof Error ? error.message : "模型请求失败";
       }
     }
+    const usageJson = usage === null ? null : JSON.stringify(usage);
     const finishedAt = this.now();
     const testCallId = this.appStore.saveModelTestCall({
       resourceId: input.resourceId,
@@ -214,6 +212,18 @@ export class ModelService {
       startedAt: startedAt.toISOString(),
       finishedAt: finishedAt.toISOString(),
       usageJson,
+    });
+    this.onModelCallFinished?.({
+      sourceCallId: `test:${testCallId}`,
+      roleId: null,
+      resourceId: input.resourceId,
+      provider: input.config.provider ?? null,
+      modelName: input.model,
+      protocol: input.config.protocol,
+      category: "connection_test",
+      status,
+      occurredAt: finishedAt.toISOString(),
+      usage,
     });
     if (status === "succeeded") {
       return {

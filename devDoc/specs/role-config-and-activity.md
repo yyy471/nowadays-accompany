@@ -30,6 +30,7 @@
 | [DL-149](../161-digital-life-direction-decisions.md#dl-149-角色语音只保留当前一份配置) | 每角色只保留一份语音配置；停用保留配置，新配置覆盖旧配置 | `PUT /v1/roles/:roleId/voice` 与 `/voice/enabled` |
 | [DL-152](../161-digital-life-direction-decisions.md#dl-152-全局管理语音服务角色从设置中选择服务并配置专属音色与试听) | 设置「模型 -> 语音」全局管理语音服务（协议、地址、可选默认引擎、启停与删除受全局守卫）；角色选服务配音色 | `/v1/voice-services*` 与 `PATCH/DELETE` 入 `GLOBAL_CONFIG_WRITES` |
 | [DL-151](../161-digital-life-direction-decisions.md#dl-151-删除不做归档) | 删除角色、外观或资源直接执行不做归档；受管外观副本按保留历史引用按需留存或清理；用户源目录始终保留 | 软删除服饰 + 无历史引用素材清理 + `role_deletions` / `resource_deletions` |
+| [DL-183](../161-digital-life-direction-decisions.md#dl-183-全局设置页提供持久-token-消耗统计) | 全局设置「用量」分区只读展示本机持久累计的 7 类模型 Token 消耗（不计本地 TTS／生图），删角色／模型服务后保留历史并暂不提供手动清零 | `GET /v1/usage/tokens` ＋ 全局设置「用量」分区（[TokenUsageSection](../../desktop/desk-preview/renderer/src/components/config/TokenUsageSection.tsx)） |
 
 ### 1.3 依赖规范
 
@@ -94,6 +95,7 @@
   - `GET /v1/voice-services`、`POST /v1/voice-services`、`POST /v1/voice-services/probe`、`POST /v1/voice-services/:serviceId/probe`
   - `GET /v1/image-services`、`POST /v1/image-services`、`POST /v1/image-services/probe`、`POST /v1/image-services/:serviceId/probe`
   - `GET /v1/roles/:roleId/scene-image`、`POST /v1/roles/:roleId/scene-image/probe`、`POST /v1/roles/:roleId/scene-image/preview`、`POST /v1/roles/:roleId/scene-image/anchor-prompts`（注：`292-R07` 校验服饰属于当前角色且未删除，见第 5 节）。
+- **全局 Token 用量只读查询与展示（`DL-183`）**：`GET /v1/usage/tokens`（支持 `range=today|7d|30d|all`、`roleKey`、`category`、`modelKey`，非法参数返回 `400 INVALID_QUERY`）；桌面端在全局设置「用量」分区只读展示（无手动清零入口），使用 `BigInt` 聚合超 64 位整数字符串并自适应换算 `K` / `M` / `B` / `T`（悬停提示精确整数）。
 
 #### 2.3.1 模型服务商与候选来源
 

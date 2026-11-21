@@ -30,6 +30,7 @@ import {
   type ModelToolSpec,
   type ModelUsage,
 } from "../domain/model.js";
+import { mergeModelUsage, type TokenUsageCallEvent } from "../domain/token-usage.js";
 import { webReadingReference } from "../domain/web-reading.js";
 import type { ModelProvider } from "../domain/model-providers.js";
 import type { WorldbookSelection } from "../domain/worldbook.js";
@@ -110,6 +111,8 @@ export interface AgentGraphDeps {
   registerBackgroundTool?: (settlement: Promise<void>, roleId: string) => void;
   /** 本段即将收尾（轮次上限、显式续行、暂停或熔断）时通知服务调整系统提示。 */
   onSegmentHalt?: (kind: AgentSegmentStopKind) => void;
+  /** 模型调用结束时上报全局 Token 账本（DL-183）。 */
+  onModelCallFinished?: (event: TokenUsageCallEvent) => void;
 }
 
 /** 办事任务单段执行上限；达到后提交进度回复并自动切段续行（DL-154）。 */
@@ -431,6 +434,7 @@ export class AgentGraphRunner {
       continuation?: ModelContinuation;
       rawResponse?: unknown;
     } | null = null;
+    let streamFailure: { error: unknown } | null = null;
     try {
       for await (const event of current.model.stream({ ...request, onAccepted })) {
         // 注入适配器以第一个已产生的事件证明已实际消费请求。
@@ -448,21 +452,7 @@ export class AgentGraphRunner {
           continue;
         }
         if (event.type === "usage") {
-          usage = {
-            ...(usage ?? {}),
-            ...(event.inputTokens === undefined
-              ? {}
-              : { inputTokens: event.inputTokens }),
-            ...(event.cachedTokens === undefined
-              ? {}
-              : { cachedTokens: event.cachedTokens }),
-            ...(event.outputTokens === undefined
-              ? {}
-              : { outputTokens: event.outputTokens }),
-            ...(event.cacheCreationTokens === undefined
-              ? {}
-              : { cacheCreationTokens: event.cacheCreationTokens }),
-          };
+          usage = mergeModelUsage(usage, event);
           continue;
         }
         completed = {
@@ -490,29 +480,59 @@ export class AgentGraphRunner {
           stopReason: completed.stopReason,
         });
       }
-      this.deps.store.finishModelCall({
-        modelCallId: callId,
-        status: "succeeded",
-        errorCode: null,
-        usage,
-        rawResponse: completed.rawResponse,
-        continuation: completed.continuation,
-        now: this.deps.now().toISOString(),
-      });
     } catch (error) {
-      this.deps.store.finishModelCall({
-        modelCallId: callId,
-        status: "failed",
-        errorCode:
-          error instanceof Error && "code" in error
-            ? String((error as { code?: unknown }).code)
-            : "MODEL_REQUEST_FAILED",
-        ...(usage === null ? {} : { usage }),
-        now: this.deps.now().toISOString(),
+      streamFailure = { error };
+    }
+    const finishedAt = this.deps.now().toISOString();
+    const callStatus: "succeeded" | "failed" =
+      streamFailure === null && completed !== null ? "succeeded" : "failed";
+    // 角色库 finishModelCall 与全局账本上报相互隔离：避免角色并发删除或写库异常吞掉已发生的消耗，也防止成功调用误报 failed。
+    try {
+      if (streamFailure === null && completed !== null) {
+        this.deps.store.finishModelCall({
+          modelCallId: callId,
+          status: "succeeded",
+          errorCode: null,
+          usage,
+          rawResponse: completed.rawResponse,
+          continuation: completed.continuation,
+          now: finishedAt,
+        });
+      } else {
+        const failureError = streamFailure?.error;
+        this.deps.store.finishModelCall({
+          modelCallId: callId,
+          status: "failed",
+          errorCode:
+            failureError instanceof Error && "code" in failureError
+              ? String((failureError as { code?: unknown }).code)
+              : "MODEL_REQUEST_FAILED",
+          ...(usage === null ? {} : { usage }),
+          now: finishedAt,
+        });
+      }
+    } finally {
+      this.deps.onModelCallFinished?.({
+        sourceCallId: `role:${state.roleId}:${callId}`,
+        roleId: state.roleId,
+        resourceId: current.resourceId,
+        modelName: current.modelName,
+        protocol: current.protocol,
+        category: this.deps.purpose === "autonomous" ? "autonomy" : "dialogue",
+        status: callStatus,
+        occurredAt: finishedAt,
+        usage,
       });
+    }
+    if (streamFailure !== null) {
       // 未满整段即断流仍是部分有效正文。已被用户新消息打断时，旧执行禁止再吐字。
       if (!this.deps.signal.aborted) flushPartialPrefix();
-      throw error;
+      throw streamFailure.error;
+    }
+    if (completed === null) {
+      throw new ModelRequestFailedError("模型流未收到完整终态", {
+        reason: "STREAM_TRUNCATED",
+      });
     }
     this.deps.checkRunning();
     const delivery = {

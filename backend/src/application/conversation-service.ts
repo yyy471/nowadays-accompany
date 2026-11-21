@@ -87,6 +87,7 @@ import {
   SegmentAnnotationService,
   type SegmentAnnotationServiceOptions,
 } from "./segment-annotation-service.js";
+import type { TokenUsageCallEvent } from "../domain/token-usage.js";
 
 export type ChatModelPortFactory = (binding: ResolvedModelBinding) => ModelPort;
 
@@ -124,6 +125,8 @@ export interface ConversationServiceOptions {
   resolveVoiceRuntime?: SegmentAnnotationServiceOptions["resolveVoiceRuntime"];
   /** 预置默认助手（夏澄）内部管理工具依赖的应用服务（DL-159）。 */
   adminServices?: AdminToolServices | null;
+  /** 模型调用结束时上报全局 Token 账本（DL-183）。 */
+  onModelCallFinished?: (event: TokenUsageCallEvent) => void;
 }
 
 interface RunningExecution {
@@ -188,6 +191,7 @@ export class ConversationService {
     | null;
   private readonly hasExternalWork: (roleId: string) => boolean;
   private readonly adminServices: AdminToolServices | null;
+  private readonly onModelCallFinished: ((event: TokenUsageCallEvent) => void) | undefined;
   private readonly running = new Map<string, RunningExecution>();
   /** 正在使用某个模型服务的执行：维护等待按目标服务直接查询（283 §7 R01）。 */
   private readonly inflightResources = new Map<
@@ -259,6 +263,7 @@ export class ConversationService {
     this.waitForMaintenanceEnd = options.waitForMaintenanceEnd ?? null;
     this.hasExternalWork = options.hasExternalWork ?? (() => false);
     this.adminServices = options.adminServices ?? null;
+    this.onModelCallFinished = options.onModelCallFinished;
     this.segmentAnnotation = new SegmentAnnotationService(
       this.roleAccess,
       this.bindings,
@@ -283,6 +288,9 @@ export class ConversationService {
         ...(options.resolveVoiceRuntime === undefined
           ? {}
           : { resolveVoiceRuntime: options.resolveVoiceRuntime }),
+        ...(this.onModelCallFinished === undefined
+          ? {}
+          : { onModelCallFinished: this.onModelCallFinished }),
       },
     );
     this.inputStates = new InputStateRegistry({
@@ -2411,6 +2419,9 @@ export class ConversationService {
           maxToolRounds: this.maxToolRounds,
           purpose,
           meter,
+          ...(this.onModelCallFinished === undefined
+            ? {}
+            : { onModelCallFinished: this.onModelCallFinished }),
           toolForegroundWaitMs: this.toolForegroundWaitMs,
           onBackgroundToolSettled: (settlement) =>
             this.handleBackgroundToolSettled(settlement),

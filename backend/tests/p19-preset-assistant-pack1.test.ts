@@ -1,4 +1,4 @@
-import { BUSINESS_SCHEMA_VERSION } from "../src/storage/schema.js";
+import { APP_SCHEMA_VERSION, BUSINESS_SCHEMA_VERSION } from "../src/storage/schema.js";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -307,6 +307,8 @@ test("包1：Schema V9/V20 无损迁移升级至 V10/V23", async () => {
       DROP TABLE role_transfer_snapshots;
       DROP TABLE role_transfer_selections;
       DROP TABLE role_transfer_publication;
+      DROP TABLE token_usage_records;
+      DROP TABLE token_usage_meta;
     `);
     rawApp.pragma("user_version = 9");
     rawApp.close();
@@ -334,7 +336,7 @@ test("包1：Schema V9/V20 无损迁移升级至 V10/V23", async () => {
 
     const upgraded = createBackendApp(config, { disableMemoryRuntime: true });
     try {
-      assert.equal(upgraded.appStore.schemaVersion, 11);
+      assert.equal(upgraded.appStore.schemaVersion, APP_SCHEMA_VERSION);
       const bizStorage = RoleStorage.openExisting(paths);
       try {
         assert.equal(bizStorage.business.schemaVersion, BUSINESS_SCHEMA_VERSION);

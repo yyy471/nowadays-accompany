@@ -28,6 +28,8 @@ import type {
   NextSegment,
   StartedBatch,
 } from "../storage/memory-store.js";
+import type { ModelUsage } from "../domain/model.js";
+import type { TokenUsageCallEvent } from "../domain/token-usage.js";
 
 export interface MemoryServiceOptions {
   modelInfo?: MemoryModelInfo;
@@ -41,6 +43,7 @@ export interface MemoryServiceOptions {
   idleMs?: number;
   timeZone?: string;
   now?: () => Date;
+  onModelCallFinished?: (event: TokenUsageCallEvent) => void;
 }
 
 /** 整理请求中除证据片段以外的固定与上下文内容。 */
@@ -79,6 +82,7 @@ export class MemoryService {
   private readonly idleMs: number;
   private readonly timeZone: string | undefined;
   private readonly now: () => Date;
+  private readonly onModelCallFinished: ((event: TokenUsageCallEvent) => void) | undefined;
 
   constructor(
     store: MemoryStore,
@@ -103,6 +107,7 @@ export class MemoryService {
     this.idleMs = options.idleMs ?? 60_000;
     this.timeZone = options.timeZone;
     this.now = options.now ?? (() => new Date());
+    this.onModelCallFinished = options.onModelCallFinished;
   }
 
   /**
@@ -331,7 +336,11 @@ export class MemoryService {
           batch.batch,
           this.now().toISOString(),
         );
-        let response: MemoryFormationResponse;
+        let response: MemoryFormationResponse | null = null;
+        let callUsage: ModelUsage | null = null;
+        let callMeta: MemoryModelInfo = this.modelInfo;
+        let modelInvoked = false;
+        let failureCode: string | null = null;
         try {
           const modelInput = this.buildModelInput(
             roleId,
@@ -342,7 +351,15 @@ export class MemoryService {
           this.assertRequestCapacity(modelInput);
           const refineCandidates = modelInput.refineCandidates;
           const summaryCandidates = modelInput.summaryCandidates;
-          const raw = await this.model.form(modelInput);
+          modelInvoked = true;
+          const raw = await this.model.form(modelInput, {
+            onUsage: (usage) => {
+              callUsage = usage;
+            },
+            onModelInfo: (info) => {
+              callMeta = info;
+            },
+          });
           const parsed = memoryFormationResponseSchema.safeParse(raw);
           if (!parsed.success) {
             throw new MemoryOperationInvalidError(
@@ -363,24 +380,21 @@ export class MemoryService {
             refineCandidates,
             summaryCandidates,
           );
-          this.finishModelCall(callId, "succeeded", null);
-          operations += response.operations.length;
-          if (batch.maintenance) {
-            break;
-          }
         } catch (error) {
-          const code =
+          failureCode =
             error instanceof MemoryOperationInvalidError ||
             error instanceof MemoryVersionConflictError ||
             isCapacityExceeded(error)
               ? error.code
               : "MEMORY_MODEL_FAILED";
-          this.finishModelCall(callId, "failed", code);
+        }
+        if (failureCode !== null) {
+          this.finishModelCall(roleId, callId, "failed", failureCode, callUsage, callMeta, modelInvoked);
           this.store.finishBatch({
             roleId,
             batchId: batch.batch.batchId,
             status: "failed",
-            errorCode: code,
+            errorCode: failureCode,
             nextRetryAt: new Date(
               this.now().getTime() + this.retryDelayForBatch(batch),
             ).toISOString(),
@@ -391,9 +405,14 @@ export class MemoryService {
             status: "failed",
             operations,
             evidenceProcessed: 0,
-            errorCode: code,
+            errorCode: failureCode,
             maintenance: batch.maintenance,
           };
+        }
+        this.finishModelCall(roleId, callId, "succeeded", null, callUsage, callMeta, modelInvoked);
+        operations += response?.operations.length ?? 0;
+        if (batch.maintenance) {
+          break;
         }
       }
       this.store.finishBatch({
@@ -821,11 +840,12 @@ export class MemoryService {
        (model_call_id, role_id, execution_id, batch_id, task_id, call_kind,
         purpose, resource_id, model_name, protocol, status, error_code,
         started_at, finished_at, usage_json, raw_response_json)
-       VALUES (?, ?, NULL, ?, NULL, 'memory_maintenance', 'memory_maintenance', NULL, ?, ?, 'running', NULL, ?, NULL, NULL, NULL)`,
+       VALUES (?, ?, NULL, ?, NULL, 'memory_maintenance', 'memory_maintenance', ?, ?, ?, 'running', NULL, ?, NULL, NULL, NULL)`,
     ).run(
       callId,
       roleId,
       batch.batchId,
+      this.modelInfo.resourceId ?? null,
       this.modelInfo.modelName,
       this.modelInfo.protocol,
       now,
@@ -840,14 +860,48 @@ export class MemoryService {
   }
 
   private finishModelCall(
+    roleId: string,
     callId: string,
     status: "succeeded" | "failed",
     errorCode: string | null,
+    usage: ModelUsage | null,
+    meta: MemoryModelInfo,
+    recordGlobalUsage = true,
   ): void {
-    this.store.getDatabase().prepare(
-      `UPDATE model_calls SET status = ?, error_code = ?, finished_at = ?
-       WHERE model_call_id = ?`,
-    ).run(status, errorCode, this.now().toISOString(), callId);
+    const finishedAt = this.now().toISOString();
+    const resourceId = meta.resourceId ?? this.modelInfo.resourceId ?? null;
+    try {
+      this.store.getDatabase().prepare(
+        `UPDATE model_calls
+            SET status = ?, error_code = ?, finished_at = ?, usage_json = ?,
+                resource_id = ?, model_name = ?, protocol = ?
+         WHERE model_call_id = ?`,
+      ).run(
+        status,
+        errorCode,
+        finishedAt,
+        usage === null ? null : JSON.stringify(usage),
+        resourceId,
+        meta.modelName,
+        meta.protocol,
+        callId,
+      );
+    } finally {
+      // 未真正向模型发起调用（如本地容量预检拦截）不计入全局调用；已调用则隔离角色库写失败。
+      if (recordGlobalUsage) {
+        this.onModelCallFinished?.({
+          sourceCallId: `role:${roleId}:${callId}`,
+          roleId,
+          resourceId,
+          modelName: meta.modelName,
+          protocol: meta.protocol,
+          category: "memory",
+          status,
+          occurredAt: finishedAt,
+          usage,
+        });
+      }
+    }
   }
 }
 

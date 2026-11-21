@@ -50,6 +50,7 @@ import type { ConfigDraftState } from '../components/config-draft';
 import { savedImageModelOf } from '../image-config.js';
 import { useThemePreset } from '../ui/presets';
 import { ConfigThemeTransition } from '../ui/config-theme-transition';
+import { TokenUsageSection } from '../components/config/TokenUsageSection';
 
 type Resource = { resourceId: string; kind: 'model' | 'mcp' | 'skill'; name: string; enabled: boolean; config: Record<string, unknown>; credential?: { status: string; reference?: string | null; resolvable: boolean }; lastTest?: { ok: boolean; stale: boolean; modelName: string } | null };
 
@@ -62,7 +63,7 @@ function savedModelNameOf(resource: Resource): string {
 type Binding = { capability: string; resourceId: string; modelName: string | null; enabled: boolean };
 type Activity = { roleId: string; state: 'active' | 'stopping' | 'stopped'; running: boolean; initStatus: string };
 type RoleSection = 'profile' | 'look' | 'models' | 'ext' | 'quota' | 'done';
-type SettingsSection = 'model' | 'mcp' | 'skill' | 'roles' | 'local';
+type SettingsSection = 'model' | 'mcp' | 'skill' | 'roles' | 'usage' | 'local';
 type OpenSettingsOptions = {
   modelKind?: 'model' | 'voice' | 'image';
   resourceId?: string;
@@ -71,7 +72,7 @@ type OpenSettingsOptions = {
 };
 type Draft = { name: string; definition: string; revision: number; payload: Record<string, unknown>; isBuiltin: boolean; bio: string };
 const roleSections: Array<[RoleSection, string, string]> = [['profile', '设定', '关于这个人'], ['look', '外观', '立绘与服饰'], ['models', '模型', '对话与演出'], ['ext', '扩展', '工具与知识'], ['quota', '自主额度', '属于自己的时间'], ['done', '完成度', '慢慢补全']];
-const settingSections: Array<[SettingsSection, string, string]> = [['model', '模型', '服务与连接'], ['mcp', 'MCP', '工具服务'], ['skill', 'Skill', '方法与知识'], ['roles', '角色状态', '活动与停止'], ['local', '本机', '此设备的偏好']];
+const settingSections: Array<[SettingsSection, string, string]> = [['model', '模型', '服务与连接'], ['mcp', 'MCP', '工具服务'], ['skill', 'Skill', '方法与知识'], ['roles', '角色状态', '活动与停止'], ['usage', '用量', 'Token 消耗'], ['local', '本机', '此设备的偏好']];
 const modelBaseUrlPlaceholder = (adapter: string) => defaultModelBaseUrl(adapter) || 'https://…/v1';
 const modelAdapterLabel = (adapter: string) => MODEL_ADAPTER_OPTIONS.find(option => option.value === adapter)?.label ?? adapter;
 const errorText = (e: unknown) => e instanceof Error ? e.message : String(e);
@@ -411,7 +412,9 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
       const currentSection = roleActive ? roleSection : settingsSection;
       if (currentSection === id) return;
       const content = contentRef.current;
-      const full = settingsActive && (currentSection === 'roles' || id === 'roles');
+      const currentWide = currentSection === 'roles' || currentSection === 'usage';
+      const nextWide = id === 'roles' || id === 'usage';
+      const full = settingsActive && currentWide !== nextWide;
       const targets = () => full ? [...document.querySelectorAll<HTMLElement>('.studio-shell:not(.config-theme-veil) :is(.config-stage,.config-index,.config-tabs,.config-leaf,#config-footer-left,#config-footer-right)')].filter(item => item.offsetParent !== null) : content ? [content] : [];
       const sequence = ++sectionSequence.current;
       sectionAnimations.current.forEach(animation => animation.cancel());
@@ -572,7 +575,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
       {roles.map(role => { const state = activities.find(item => item.roleId === role.roleId)?.state; return <option key={role.roleId} value={role.roleId}>{role.displayName}{state === 'stopped' ? '（已停止）' : ''}</option>; })}
       <option value="__new">＋ 新建角色…</option>
     </select></div>, footerRight)}
-    <div className="config-book" data-layout={settingsActive && settingsSection === 'roles' ? 'wide' : settingsActive ? 'catalog' : 'role'}>
+    <div className="config-book" data-layout={settingsActive && (settingsSection === 'roles' || settingsSection === 'usage') ? 'wide' : settingsActive ? 'catalog' : 'role'}>
       <div className="config-book-surface" aria-hidden="true"><div className="config-paper-left"/><div className="config-gutter"/><div className="config-paper-right"/><div className="config-grain"/><div className="config-thread"><i/><i/></div></div>
       {roleActive ? <aside className="config-stage"><figure className="config-plate"><div className="config-plate-mat"/><div className="config-stage-label" data-testid="stage-label" title={stageOutfitName}><span>{stageOutfitName}</span></div>
         <RolePortrait roleId={editId} version={refreshVersion} previewAssetId={stagePreview?.roleId === editId && roleSection === 'look' ? stagePreview.assetId : undefined} onOutfitName={setStageOutfitName} />
@@ -650,6 +653,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
             onRefresh={readActivities} onRolesChanged={onRefresh}
             onChanged={item => { activityRead.current += 1; setActivityRefreshing(false); setActivities(previous => [...previous.filter(value => value.roleId !== item.roleId), item]); }}
             onConfigure={roleId => { setEditId(roleId); setRoleSection('profile'); onNavigate('role-config'); focusSectionHeadingSoon(); }}/>}
+          {settingsActive && settingsSection === 'usage' && <TokenUsageSection active={true} />}
           {settingsActive && settingsSection === 'local' && <div className="config-prose config-local-page"><header className="config-sec-head"><h2 tabIndex={-1}>本机</h2></header>
             <div className="config-grp" id="config-local-appearance"><div className="config-grp-label"><b>外观与动效</b></div><div className="config-grp-fields"><Field label="动效偏好"><Select value={motion.preference} onChange={event => motion.select(event.target.value as MotionPreference)}><option value="system">跟随系统</option><option value="reduced">减少动效</option><option value="full">完整动效</option></Select></Field></div></div>
             <div className="config-grp" id="config-local-connection"><div className="config-grp-label"><b>版本与连接</b></div><div className="config-grp-fields config-local-values">

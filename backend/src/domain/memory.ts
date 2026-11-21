@@ -339,11 +339,17 @@ export interface MemoryModelCapacity {
   source: "declared" | "conservative_default";
 }
 
+export interface MemoryFormationCallOptions {
+  onUsage?: (usage: import("./model.js").ModelUsage) => void;
+  onModelInfo?: (info: MemoryModelInfo) => void;
+}
+
 export interface MemoryModelPort {
-  form(input: MemoryFormationInput): Promise<unknown>;
+  form(input: MemoryFormationInput, options?: MemoryFormationCallOptions): Promise<unknown>;
 }
 
 export interface MemoryModelInfo {
+  resourceId?: string | null;
   modelName: string;
   protocol: ModelProtocol;
 }

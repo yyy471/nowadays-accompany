@@ -33,6 +33,7 @@
 | [DL-16](../161-digital-life-direction-decisions.md#dl-16-记忆基础以经历事件组织记忆关联原始证据)～[DL-30](../161-digital-life-direction-decisions.md#dl-30-重启恢复结合当前情况重新评估安排) · [DL-100](../161-digital-life-direction-decisions.md#dl-100-记忆并发修改旧结果不覆盖新版本受影响内容重新处理) | 证据→事件→100 轮低召回日摘要＋工作空间 Markdown 日记；模型判语义、程序校验版本号并保存，保留全部原始证据 | 纠错只改事件／摘要并写修订；不改原始对话与工具观测（`DL-57`） |
 | [DL-101](../161-digital-life-direction-decisions.md#dl-101-新消息替代旧回复新决策重新组织回答原任务与工具独立延续)～[DL-111](../161-digital-life-direction-decisions.md#dl-111-混合模型调用按发起目的计一次后续工具分别归属) | 插话替代前台回复但不中断原任务／已派发工具；自主任务每次模型与外部工具调用各扣 1 点（每日 200／不限，本地零点重置），用户任务与记忆维护豁免 | `autonomy_budget` ＋ `autonomy_tool_reservations` |
 | [DL-116](../161-digital-life-direction-decisions.md#dl-116-真实模型首轮联调p2-完整链路具备后单独验证) · [DL-124](../161-digital-life-direction-decisions.md#dl-124-记忆整理模型默认继承对话模型支持角色单独绑定)～[DL-127](../161-digital-life-direction-decisions.md#dl-127-整理容量按可用上下文分批超长记录分段且原文完整保留) | 记忆继承对话模型或独立绑定；失败后台退避重试且**不自动换模型**；按模型可用容量分批分段 | `ModelBindingResolver.resolveMemory` ＋ `MemoryService` 序列化预算校验 |
+| [DL-183](../161-digital-life-direction-decisions.md#dl-183-全局设置页提供持久-token-消耗统计) | 全局持久 Token 消耗台账按 7 类模型请求累计；删角色与删模型服务保留历史；一次性回填本机历史且单角色导入不叠入本机账单；采用大整数防溢出与只读展示 | `app.sqlite` V12（`token_usage_records`、`token_usage_meta`）＋ `TokenUsageService` ＋ `GET /v1/usage/tokens` |
 
 ---
 
@@ -44,7 +45,7 @@
 
 | 路径 | 职责与版本 | 关键约束 |
 | --- | --- | --- |
-| `<app-root>/data/app.sqlite` | 全局索引库（V11） | 存角色索引、活动状态、预置身份、资源与加密凭据、删除队列，以及单角色迁移的基线、选择记录和发布日志 |
+| `<app-root>/data/app.sqlite` | 全局索引库（V12） | 存角色索引、活动状态、预置身份、资源与加密凭据、删除队列、单角色迁移的基线／选择记录／发布日志，以及全局持久 Token 用量台账（`token_usage_records`、`token_usage_meta`，含本机历史一次性回填；删除角色或模型服务保留名称快照，不随单角色迁移导入外部历史，`DL-183`） |
 | `<app-root>/secrets/master.key` | 本地主密钥盒（AES-256-GCM `v1`） | [secret-cipher.ts](../../backend/src/security/secret-cipher.ts#L20-L100) `0o700` 目录／`0o600` 密钥文件，竞争写使用 `flag: "wx"` |
 | `.../roles/<roleId>/business.sqlite` | 角色业务库（V27） | 保存身份与首次启用资格、窗口消息、任务、执行与计量、记忆证据、自主安排、外观与媒体（含 V26 自动过场图／图生图设置与 V27 `role_scene_references`）。网页原文的实际送达区间由 `web_reading_deliveries` 保存 |
 | `.../roles/<roleId>/execution.sqlite` | 图检查点库（`EXECUTION_SCHEMA_VERSION = 1`） | `@langchain/langgraph-checkpoint-sqlite` 的 `SqliteSaver` 专用 |
@@ -66,6 +67,7 @@
 | `POST /v1/roles/:roleId/memory/search` · `GET/PATCH .../events/:eventId` · `GET .../evidence/:evidenceId` · `GET/PATCH .../summaries/:summaryId` | `query`/`types`/标签/`dateFrom`/`dateTo`/`limit`; 纠错必带 `expectedVersion` | 手动查询不写 `memory_recalls`；版本过期返回 `409 MEMORY_VERSION_CONFLICT`；区分空列表与 `500 MEMORY_QUERY_FAILED` |
 | `GET/POST /v1/roles/:roleId/diaries` · `GET /v1/roles/:roleId/diaries/:diaryId` | `content`, `eventIds?`, `occurredAt?` | 创建写原子临时文件改名落盘；读取 `:diaryId` 同步刷新 Markdown 哈希快照（文件缺失 `500 DIARY_FILE_MISSING`） |
 | `GET /v1/roles/:roleId/memory/status` · `GET/POST /v1/roles/:roleId/memory/batches` | `limit?`（默认 `50`，最大 `200`）、`offset?`（默认 `0`） | `GET` 查询状态与批次；`POST .../batches` 登记 `manual` 触发并做去重（角色删除中返回 `409 ROLE_DELETING`，否则异步返回 `202 { triggerId, duplicate }`；`MEMORY_BATCH_CONFLICT` 仅用于后台 `runBatch` 并发锁） |
+| `GET /v1/usage/tokens` | `range=today\|7d\|30d\|all`、`roleKey?`、`category?`、`modelKey?` | 全局只读 Token 消耗统计（7 类用途／角色／模型／本机自然日，计数以十进制整数字符串返回，未回报用量单独计数）；非法查询返回 `400 INVALID_QUERY` |
 
 三个列表的 `offset` 范围为 `0..1_000_000_000`，按既有创建时间倒序分页。各页是独立读取，分页期间记录变化可能使结果重叠或暂时遗漏；动态页按标识去重并在后续刷新时重新读取。
 
@@ -177,7 +179,7 @@
 | 类别 | 范围与依据 |
 | --- | --- |
 | **已通过离线／本机假端点独立复验** | • P0～P5 全部后端链路（[184](../archive/01-backend-prototype/184-p2-06-acceptance-report.md)、[188](../archive/01-backend-prototype/188-p3-independent-review.md)、[190](../archive/01-backend-prototype/190-p4-recovery-acceptance-report.md)、[195](../archive/01-backend-prototype/195-p5-independent-review.md)）<br>• `GAP-01`～`GAP-06` 离线能力补齐（[198 第三轮复验](../archive/01-backend-prototype/198-p5-capability-gaps-independent-review.md#r01-第三次补修的独立复验) 关闭 `R01`～`R06`）<br>• 任务结束记忆整理与存储／目录异常恢复（[283 §26](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#26-306-补修独立复验)）<br>• 首次自主思考、网页送达证据、单次上下文与角色迁移见 [401](../archive/09-role-runtime-and-transfer/401-role-runtime-and-transfer.md)，当前全量计数见[验收基线](../STATUS.md#3-验收基线与命令) |
-| **后续决定与候选** | • `DL-115` 远程 Streamable HTTP MCP（排期于桌面端收口后）<br>• [196 管理与体验候选](../archive/01-backend-prototype/196-backend-capability-gap-plan.md#管理与体验候选)的其余候选（取消待处理消息、资源归档、MCP 测试连接、全量按用途 Token 统计、全局端口／目录 GUI 设置、诊断导出包、离开期间未读摘要、消息附件／图片理解、定时一致性备份与恢复）<br>• [196 `OPS-01`～`OPS-04`](../archive/01-backend-prototype/196-backend-capability-gap-plan.md#同类功能排查)（失败执行主动重试入口、窗口当前执行聚合快照、按角色独立暂停自主活动开关、任务／活动／日记游标分页与筛选） |
+| **后续决定与候选** | • `DL-115` 远程 Streamable HTTP MCP（排期于桌面端收口后）<br>• [196 管理与体验候选](../archive/01-backend-prototype/196-backend-capability-gap-plan.md#管理与体验候选)的其余候选（取消待处理消息、资源归档、MCP 测试连接、全局端口／目录 GUI 设置、诊断导出包、离开期间未读摘要、消息附件／图片理解、定时一致性备份与恢复）<br>• [196 `OPS-01`～`OPS-04`](../archive/01-backend-prototype/196-backend-capability-gap-plan.md#同类功能排查)（失败执行主动重试入口、窗口当前执行聚合快照、按角色独立暂停自主活动开关、任务／活动／日记游标分页与筛选） |
 | **已实现但待真实服务／端到端独立验收** | • `278 §4` 首次配置完整链路、自定义子窗口返回、重连恢复等待状态与模型失效重验（见 [279 §3](../archive/06-workflow-simplification/279-workflow-simplification-two-pass-review.md#3-第三轮端到端复核) 与 [283 §27](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#27-文档迁移与-292-第-67-节独立复核)）<br>• 非历史 DeepSeek Anthropic Messages 之外的真实模型服务兼容、真实上游流式中断＋续传恢复、真实第三方 Skill 环境依赖<br>• `toolForegroundWaitMs`（原型默认 `2000ms`）按真实工具延时校准、多后端并发与更广泛 SQLite 损坏场景 |
 
 ### 4.2 可运行验证命令

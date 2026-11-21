@@ -1,3 +1,4 @@
+import { APP_SCHEMA_VERSION } from "../src/storage/schema.js";
 import assert from "node:assert/strict";
 import { configFetch } from "./config-write.js";
 import { randomUUID } from "node:crypto";
@@ -980,7 +981,9 @@ test("an app database from v2 upgrades to v3 and keeps resources", { timeout: 30
       ALTER TABLE model_test_calls DROP COLUMN config_fingerprint;
       DROP TABLE role_transfer_snapshots;
       DROP TABLE role_transfer_selections;
-      DROP TABLE role_transfer_publication;`,
+      DROP TABLE role_transfer_publication;
+      DROP TABLE token_usage_records;
+      DROP TABLE token_usage_meta;`,
     );
     raw.pragma("user_version = 2");
   } finally {
@@ -989,7 +992,7 @@ test("an app database from v2 upgrades to v3 and keeps resources", { timeout: 30
 
   const reopened = new AppStore(config.appDatabasePath);
   try {
-    assert.equal(reopened.schemaVersion, 11);
+    assert.equal(reopened.schemaVersion, APP_SCHEMA_VERSION);
     assert.equal(reopened.getResource(resourceId).name, "旧版服务");
     const tables = reopened.db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")

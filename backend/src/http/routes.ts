@@ -38,6 +38,13 @@ import type { VoiceService } from "../application/voice-service.js";
 import type { GlobalVoiceService } from "../application/global-voice-service.js";
 import type { RoleActivityService } from "../application/role-activity-service.js";
 import type { RoleDeletionService } from "../application/role-deletion-service.js";
+import type { TokenUsageService } from "../application/token-usage-service.js";
+import {
+  TOKEN_USAGE_CATEGORIES,
+  TOKEN_USAGE_RANGES,
+  type TokenUsageCategory,
+  type TokenUsageRange,
+} from "../domain/token-usage.js";
 import { registerRoleActivityRoutes } from "./role-activity-routes.js";
 import { globalWrite, roleWrite } from "./write-guard.js";
 import {
@@ -97,6 +104,7 @@ export interface ApiServices {
   activity: RoleActivityService;
   roleDeletion: RoleDeletionService;
   mediaMaintenance: MediaMaintenance;
+  tokenUsage: TokenUsageService;
 }
 
 export function registerApiRoutes(
@@ -1026,6 +1034,35 @@ export function registerApiRoutes(
       return {
         status: 200,
         body: await services.modelServices.test(body),
+      };
+    },
+  );
+
+  router.add(
+    "GET",
+    "/v1/usage/tokens",
+    ({ url }): JsonResponse => {
+      const rangeRaw = url.searchParams.get("range")?.trim() || "7d";
+      if (!(TOKEN_USAGE_RANGES as readonly string[]).includes(rangeRaw)) {
+        throw new HttpError(400, "INVALID_QUERY", "range 必须为 today、7d、30d 或 all");
+      }
+      const categoryRaw = url.searchParams.get("category")?.trim() || null;
+      if (
+        categoryRaw !== null &&
+        !(TOKEN_USAGE_CATEGORIES as readonly string[]).includes(categoryRaw)
+      ) {
+        throw new HttpError(400, "INVALID_QUERY", "不支持的用量用途分类");
+      }
+      const roleKey = url.searchParams.get("roleKey")?.trim() || null;
+      const modelKey = url.searchParams.get("modelKey")?.trim() || null;
+      return {
+        status: 200,
+        body: services.tokenUsage.getSummary({
+          range: rangeRaw as TokenUsageRange,
+          roleKey,
+          category: categoryRaw as TokenUsageCategory | null,
+          modelKey,
+        }),
       };
     },
   );

@@ -10,7 +10,7 @@ import { parseBackendConfig, rolePaths } from "../src/bootstrap/config.js";
 import { AppStore } from "../src/storage/app-store.js";
 import { RoleStore } from "../src/storage/role-store.js";
 import { RoleStorage } from "../src/storage/role-storage.js";
-import { BUSINESS_SCHEMA_VERSION, openAppDatabase } from "../src/storage/schema.js";
+import { APP_SCHEMA_VERSION, BUSINESS_SCHEMA_VERSION, openAppDatabase } from "../src/storage/schema.js";
 
 function tempRoot(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "nowadays-p1-02-"));
@@ -78,7 +78,7 @@ test("app and role stores initialize, persist and reopen", async () => {
     assert.equal(config.dataRoot, path.join(path.resolve(root), "data"));
 
     app = createBackendApp(config);
-    assert.equal(app.appStore.schemaVersion, 11);
+    assert.equal(app.appStore.schemaVersion, APP_SCHEMA_VERSION);
     assert.equal(app.appStore.db.pragma("foreign_keys", { simple: true }), 1);
     assert.equal(app.appStore.db.pragma("journal_mode", { simple: true }), "wal");
     assert.deepEqual(tableNames(app.appStore.db), [
@@ -93,6 +93,8 @@ test("app and role stores initialize, persist and reopen", async () => {
       "role_transfer_selections",
       "role_transfer_snapshots",
       "roles",
+      "token_usage_meta",
+      "token_usage_records",
       "voice_services",
     ]);
 
@@ -114,7 +116,7 @@ test("app and role stores initialize, persist and reopen", async () => {
     const reopenedApp = new AppStore(config.appDatabasePath);
     const reopenedRole = new RoleStorage(paths);
     try {
-      assert.equal(reopenedApp.schemaVersion, 11);
+      assert.equal(reopenedApp.schemaVersion, APP_SCHEMA_VERSION);
       assert.equal(reopenedRole.business.schemaVersion, BUSINESS_SCHEMA_VERSION);
       assert.equal(reopenedRole.checkpoint.schemaVersion, 1);
       assert.ok(fs.existsSync(paths.businessDatabasePath));

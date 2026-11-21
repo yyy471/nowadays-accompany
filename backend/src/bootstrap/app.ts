@@ -24,6 +24,7 @@ import { RoleService } from "../application/role-service.js";
 import { RolesNotStoppedError } from "../domain/errors.js";
 import { RoleActivityService } from "../application/role-activity-service.js";
 import { RoleDeletionService } from "../application/role-deletion-service.js";
+import { TokenUsageService } from "../application/token-usage-service.js";
 import { ensurePresetAssistant } from "../application/preset-assistant.js";
 import type { AdminToolServices } from "../application/admin-tools.js";
 import { AppError } from "../domain/errors.js";
@@ -176,6 +177,21 @@ function assembleBackendApp(
     credentialResolver: credentials,
     now,
   });
+  const tokenUsage = new TokenUsageService(appStore, roleAccess, {
+    now,
+    ...(options.timeZone === undefined ? {} : { timeZone: options.timeZone }),
+    listLiveRoles: () =>
+      roleService
+        .listRoles()
+        .filter((item) => item.status === "ready")
+        .map((item) => ({
+          roleId: item.roleId,
+          displayName: item.displayName,
+        })),
+  });
+  const onModelCallFinished = (event: import("../domain/token-usage.js").TokenUsageCallEvent) => {
+    tokenUsage.recordCall(event);
+  };
   const sceneImageSettings = new SceneImageSettingsService(
     roleAccess,
     imageServices,
@@ -198,6 +214,7 @@ function assembleBackendApp(
         claim: (roleId, resourceId) =>
           resourceService.claimModelCall(roleId, resourceId),
       },
+      onModelCallFinished,
     },
   );
   const memoryService = new MemoryQueryService(roleAccess, {
@@ -207,6 +224,7 @@ function assembleBackendApp(
   const modelService = new ModelService(appStore, config.appRoot, {
     now,
     credentialResolver: credentials,
+    onModelCallFinished,
   });
   const autonomy = new AutonomyService(roleAccess, {
     now,
@@ -238,6 +256,7 @@ function assembleBackendApp(
           onIdle: (roleId) => externalIdle(roleId),
           // 删除收尾期间不再接收新的记忆整理（283 §16）。
           isRoleDeleting: (roleId) => isRoleDeleting(roleId),
+          onModelCallFinished,
         },
       );
   // 管理工具需要反向引用对话服务（任务查询与记忆触发），构造完成后再补上。
@@ -293,6 +312,7 @@ function assembleBackendApp(
         resourceService.claimModelCall(roleId, resourceId),
       // 预置默认助手的内部管理工具直接复用应用服务（DL-159）。
       adminServices,
+      onModelCallFinished,
       resolveVoiceRuntime: (settings) => {
         if (!settings.serviceId) {
           return {
@@ -340,6 +360,8 @@ function assembleBackendApp(
   });
   memoryRuntime?.recoverOnStartup();
   conversation.recoverOnStartup();
+  // 中断调用收敛后再一次性回填历史 Token 账本，避免重复统计或漏计已结算调用（DL-183）。
+  tokenUsage.backfillOnce();
   // 执行记录恢复后再核对持久化的停止请求：已无在途执行或后台工具的
   // stopping 记录自动收敛为 stopped，避免重启后卡在正在停止（RA-R05）。
   activity.reconcileStartup();
@@ -380,6 +402,7 @@ function assembleBackendApp(
           claim: (roleId, resourceId) =>
             resourceService.claimModelCall(roleId, resourceId),
         },
+        onModelCallFinished,
         fallback: new FixedSceneImagePlanner(),
       }),
     generator: options.sceneImageGenerator ?? configuredSceneGenerator,
@@ -471,6 +494,7 @@ function assembleBackendApp(
     activity,
     roleDeletion,
     mediaMaintenance,
+    tokenUsage,
   };
   if (options.disablePresetAssistant !== true) {
     ensurePresetAssistant({

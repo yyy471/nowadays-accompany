@@ -1,7 +1,8 @@
 import type { OutfitRecord } from "../domain/appearance.js";
 import type { MessageSegmentRecord } from "../domain/conversation.js";
-import type { ModelPort, ModelRequest } from "../domain/model.js";
+import type { ModelPort, ModelRequest, ModelUsage } from "../domain/model.js";
 import { isIncompleteCompletion } from "../domain/model.js";
+import { mergeModelUsage, type TokenUsageCallEvent } from "../domain/token-usage.js";
 import type { MessageSegmentKind } from "../domain/message-segments.js";
 import type { VoiceProtocol, VoiceSettingsRecord } from "../domain/voice.js";
 import { AppearanceStore } from "../storage/appearance-store.js";
@@ -43,6 +44,8 @@ export interface SegmentAnnotationServiceOptions {
     enabled: boolean;
     ttsEngine: string | null;
   };
+  /** 模型调用结束时上报全局 Token 账本（DL-183）。 */
+  onModelCallFinished?: (event: TokenUsageCallEvent) => void;
 }
 
 export interface SegmentAnnotationRequest {
@@ -109,6 +112,7 @@ export class SegmentAnnotationService {
   private readonly resolveVoiceRuntime:
     | SegmentAnnotationServiceOptions["resolveVoiceRuntime"]
     | undefined;
+  private readonly onModelCallFinished: ((event: TokenUsageCallEvent) => void) | undefined;
   private readonly activeMessages = new Map<string, Set<Promise<number>>>();
 
   constructor(
@@ -123,6 +127,7 @@ export class SegmentAnnotationService {
     this.maintenance = options.maintenance ?? null;
     this.claim = options.claim ?? null;
     this.resolveVoiceRuntime = options.resolveVoiceRuntime;
+    this.onModelCallFinished = options.onModelCallFinished;
   }
 
   /** 若指定消息的句段标注仍在执行，最多等待 timeoutMs 让语音首句拿到情绪指令。 */
@@ -273,7 +278,7 @@ export class SegmentAnnotationService {
     };
     let output = "";
     let completed = false;
-    let usage: { inputTokens?: number; outputTokens?: number } | null = null;
+    let usage: ModelUsage | null = null;
     let rawResponse: unknown;
     let failureCode: string | null = null;
     try {
@@ -285,14 +290,7 @@ export class SegmentAnnotationService {
             output += event.text;
           }
         } else if (event.type === "usage") {
-          usage = {
-            ...(event.inputTokens === undefined
-              ? {}
-              : { inputTokens: event.inputTokens }),
-            ...(event.outputTokens === undefined
-              ? {}
-              : { outputTokens: event.outputTokens }),
-          };
+          usage = mergeModelUsage(usage, event);
         } else if (event.type === "completed") {
           completed = !isIncompleteCompletion(event);
           rawResponse = event.rawResponse;
@@ -304,6 +302,8 @@ export class SegmentAnnotationService {
     } catch (error) {
       failureCode = errorCodeOf(error);
     }
+    const finishedAt = this.now().toISOString();
+    const status: "succeeded" | "failed" = failureCode === null ? "succeeded" : "failed";
     try {
       this.access.withStore(input.roleId, (storage) => {
         new ConversationStore(
@@ -312,16 +312,27 @@ export class SegmentAnnotationService {
           this.timeZone,
         ).finishModelCall({
           modelCallId,
-          status: failureCode === null ? "succeeded" : "failed",
+          status,
           errorCode: failureCode,
           usage,
           ...(rawResponse === undefined ? {} : { rawResponse }),
-          now: this.now().toISOString(),
+          now: finishedAt,
         });
       });
     } catch {
       // 记录失败不阻断已取得的标注结果；未闭合的调用由后续清理处理。
     }
+    this.onModelCallFinished?.({
+      sourceCallId: `role:${input.roleId}:${modelCallId}`,
+      roleId: input.roleId,
+      resourceId: binding.resourceId,
+      modelName: binding.modelName,
+      protocol: binding.config.protocol,
+      category: "annotation",
+      status,
+      occurredAt: finishedAt,
+      usage,
+    });
     if (failureCode !== null) {
       return 0;
     }

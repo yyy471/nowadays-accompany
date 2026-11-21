@@ -6,6 +6,7 @@
 
 | 模块 / 专项 | 当前状态（离线范围） | 核心证据 | 未决 / 下一阶段 |
 | --- | --- | --- | --- |
+| 全局 Token 消耗统计（DL-183） | `app.sqlite` V12 持久记录 7 类独立模型调用用量，支持一次性回填本机历史且单角色迁移不叠入外部历史；删角色与删模型服务保留快照；全局设置「用量」分区按 `BigInt` 只读聚合与自适应单位展示（无手动清零）。**离线自验与两轮复核补修通过**。 | [404 实施与复核记录](archive/08-config-pages-v6/404-token-usage-statistics.md) · [存储与接口](specs/storage-memory-and-autonomy.md#21-应用目录与-sqlite-分库规范) · [设置与用量查询](specs/role-config-and-activity.md#23-新建只读与草稿探测入口不触发停机守卫) · [p26-token-usage.test.ts](../backend/tests/p26-token-usage.test.ts) · [token-usage-check.cjs](../desktop/desk-preview/tests/token-usage-check.cjs) | 真实上游模型服务 `usage`／缓存字段实测 |
 | 角色世界书与对话展示（DL-182） | 角色独立保存作者设定，按关键词与知情范围投递。Electron 已实测编辑、角色隔离、冲突保留草稿，真实桌面发消息后逐句显示并恢复差分。 | [世界书与个人经历](specs/storage-memory-and-autonomy.md#311-世界书与个人经历dl-182) · [真实消息与桌面联调](archive/09-role-runtime-and-transfer/402-long-dialogue-quality.md#世界书接入后的正式消息与桌面联调) | 各卡的跨窗行为、模型误答与范围分别记录在联调报告中 |
 | 文本模型服务商（DL-118） | 六家专用服务商支持点击读取，Vertex AI Express 提供预置。Electron 已验证新建、读取、保存及角色对话和记忆绑定。连续两批工具调用的原生推理回传与跨资源隔离已通过独立复验 | [适配矩阵](specs/role-config-and-activity.md#231-模型服务商与候选来源) · [协议回归](../backend/tests/model-providers.test.ts) | 使用账户密钥验证各厂商实际生成与工具续轮 |
 | 首轮后端原型（P0～P5） | 已收口并合入 `master` | [195 P5 复核](archive/01-backend-prototype/195-p5-independent-review.md) · [198 缺口复验](archive/01-backend-prototype/198-p5-capability-gaps-independent-review.md#r01-第三次补修的独立复验) | 远程 Streamable HTTP MCP 按 DL-115 排在桌面前端完成后 |
@@ -41,6 +42,18 @@
 10. **动态页 v2**。三项修复和三处动效已通过独立离线复验。实际用户库的刷新耗时另行留证。[403 修复与独立复验](archive/02-desktop-ui-and-relations/403-feed-v2-migration.md#2026-11-20-修复与独立复验)
 
 ## 3. 验收基线与命令
+
+- **2026-11-21 全局 Token 消耗统计（DL-183）二次复核与补修复验（通过，离线与本地模拟端点范围）**：
+  - 后端（Node 24）：`cd backend && npx -y node@24 ./node_modules/typescript/bin/tsc --noEmit` 通过；`npx -y node@24 --import tsx --test tests/*.test.ts` **551／551** 通过（0 失败，0 跳过，p26 **6／6**）；`npx -y node@24 scripts/accept-offline.mjs` **21／21 步**通过（`delivery-tests` 2／2、`tests` 551／551、`realServiceCalls=0`、`sourceUnchanged=true`，报告：`backend/test-results/p5-2026-11-21T13-11-21-968Z-cfbceea9/summary.json`）。
+  - 桌面与 Electron E2E（Node 24）：渲染器 `npm run check`（28 CSS 零违规）与 `npm run build`（160 模块）通过；`desktop/desk-preview` 逻辑单测 **164／164** 通过（0 失败，0 跳过）；[token-usage-check.cjs](../desktop/desk-preview/tests/token-usage-check.cjs)（含双主题 × 三视口 1280/900/720 无溢出）、[settings-v6-behavior-check.cjs](../desktop/desk-preview/tests/settings-v6-behavior-check.cjs)、[settings-workspace-check.cjs](../desktop/desk-preview/tests/settings-workspace-check.cjs)、[workflow-real-backend-chain-check.cjs](../desktop/desk-preview/tests/workflow-real-backend-chain-check.cjs) 均通过；详见 [404 §5.2](archive/08-config-pages-v6/404-token-usage-statistics.md#52-二次复核与补修2026-11-21已修复)。
+
+- **2026-11-21 全局 Token 消耗统计（DL-183）首轮独立复核与补修（通过）**：
+  - 修复删除角色／模型服务后晚到结算被 `getResource()` 异常吞掉而漏记的问题；新增晚到结算留存回归测试（[p26-token-usage.test.ts](../backend/tests/p26-token-usage.test.ts)）。
+  - 后端（Node 24）：`cd backend && npx -y node@24 ./node_modules/typescript/bin/tsc --noEmit` 通过；`npx -y node@24 --import tsx --test tests/*.test.ts` **549／549** 通过（0 失败，0 跳过，p26 4／4）；`npx -y node@24 scripts/accept-offline.mjs` **21／21 步**通过（`realServiceCalls=0`、`sourceUnchanged=true`，报告位于 `backend/test-results/p5-2026-11-21T12-13-56-290Z-e7a713bf/summary.json`）；复核记录见 [404 §5](archive/08-config-pages-v6/404-token-usage-statistics.md)。
+
+- **2026-11-21 全局 Token 消耗统计（DL-183）离线自验通过（待独立复核与真实上游模型服务联调）**：
+  - 后端（Node 24）：`cd backend && npx -y node@24 ./node_modules/typescript/bin/tsc --noEmit` 通过；`npx -y node@24 --import tsx --test tests/*.test.ts` **548／548** 通过（0 失败，0 跳过，含 [p26-token-usage.test.ts](../backend/tests/p26-token-usage.test.ts)）；`npx -y node@24 scripts/accept-offline.mjs` **21／21 步**通过（`delivery-tests` 2／2、`tests` 548／548、`realServiceCalls=0`、`sourceUnchanged=true`，报告位于 `backend/test-results/p5-2026-11-21T06-46-17-194Z-d3b7c196/summary.json`）。
+  - 桌面离线与 Electron E2E（Node 24）：渲染器 `npm run check`（`tokens:check`、`lint:styles` 28 个 CSS 违规 0、`tsc --noEmit`）与 `npm run build`（160 模块）通过；`desktop/desk-preview` 逻辑单测 **164／164** 通过（0 失败，0 跳过，含 [token-usage.test.cjs](../desktop/desk-preview/tests/token-usage.test.cjs)）；[token-usage-check.cjs](../desktop/desk-preview/tests/token-usage-check.cjs)、[settings-v6-behavior-check.cjs](../desktop/desk-preview/tests/settings-v6-behavior-check.cjs)、[settings-workspace-check.cjs](../desktop/desk-preview/tests/settings-workspace-check.cjs)、[workflow-real-backend-chain-check.cjs](../desktop/desk-preview/tests/workflow-real-backend-chain-check.cjs) 均通过（离线 OpenAI 桩／本地假端点，无未捕获异常与横向溢出）。
 
 - **2026-11-21 桌面失败恢复与表情／语音／生图齐平独立复核与实机补测（通过）**：
   - 后端（Node 24）：`cd backend && npx -y node@24 ./node_modules/typescript/bin/tsc --noEmit` 通过；`npx -y node@24 --import tsx --test tests/*.test.ts` **545／545** 通过（0 失败，0 跳过）；`npx -y node@24 scripts/accept-offline.mjs` **21／21 步**通过（`realServiceCalls=0`、`sourceUnchanged=true`，复核报告位于 `backend/test-results/p5-2026-11-21T00-58-20-746Z-b0cdf897/summary.json`）。

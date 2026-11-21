@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import {
   AppError,
@@ -20,7 +21,9 @@ import {
   type ModelImageAttachment,
   type ModelPort,
   type ModelRequest,
+  type ModelUsage,
 } from "../domain/model.js";
+import { mergeModelUsage, type TokenUsageCallEvent } from "../domain/token-usage.js";
 import {
   sceneImageSettingsSchema,
   type AnchorPromptTarget,
@@ -92,6 +95,8 @@ export interface SceneImageSettingsServiceOptions {
   claim?: {
     claim(roleId: string, resourceId: string): ModelCallClaim;
   } | null;
+  /** 模型调用结束时上报全局 Token 账本（DL-183）。 */
+  onModelCallFinished?: (event: TokenUsageCallEvent) => void;
 }
 
 export interface GenerateAnchorPromptInput {
@@ -126,6 +131,7 @@ export class SceneImageSettingsService {
   private readonly modelFactory: AnchorPromptModelFactory;
   private readonly maintenance: SceneImageSettingsServiceOptions["maintenance"];
   private readonly claim: SceneImageSettingsServiceOptions["claim"];
+  private readonly onModelCallFinished: ((event: TokenUsageCallEvent) => void) | undefined;
   readonly source: SceneImageRuntimeSource;
 
   constructor(
@@ -159,6 +165,7 @@ export class SceneImageSettingsService {
       });
     this.maintenance = options.maintenance ?? null;
     this.claim = options.claim ?? null;
+    this.onModelCallFinished = options.onModelCallFinished;
     this.source = {
       getSettings: (roleId) => this.read(roleId),
       findServiceRecord: (serviceId) => this.imageServices.findRecord(serviceId),
@@ -460,49 +467,70 @@ export class SceneImageSettingsService {
       let output = "";
       let completed = false;
       let stopReason: string | undefined;
+      let usage: ModelUsage | null = null;
+      let succeeded = false;
+      const callId = randomUUID();
       try {
-        for await (const event of model.stream(request)) {
-          if (event.type === "text_delta") {
-            output += event.text;
-          } else if (event.type === "completed") {
-            if (isIncompleteCompletion(event)) {
-              stopReason = event.stopReason;
-            } else {
-              completed = true;
+        try {
+          for await (const event of model.stream(request)) {
+            if (event.type === "text_delta") {
+              output += event.text;
+            } else if (event.type === "usage") {
+              usage = mergeModelUsage(usage, event);
+            } else if (event.type === "completed") {
+              if (isIncompleteCompletion(event)) {
+                stopReason = event.stopReason;
+              } else {
+                completed = true;
+              }
             }
           }
+        } catch (error) {
+          if (signal?.aborted === true) {
+            throw new AppError(499, "SCENE_IMAGE_ANCHOR_CANCELED", "锚点提示词生成已取消");
+          }
+          if (error instanceof AppError) {
+            throw error;
+          }
+          throw new ModelRequestFailedError("对话模型生成锚点提示词失败", {
+            message: error instanceof Error ? error.message : String(error),
+          });
         }
-      } catch (error) {
-        if (signal?.aborted === true) {
-          throw new AppError(499, "SCENE_IMAGE_ANCHOR_CANCELED", "锚点提示词生成已取消");
-        }
-        if (error instanceof AppError) {
-          throw error;
-        }
-        throw new ModelRequestFailedError("对话模型生成锚点提示词失败", {
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
 
-      if (!completed) {
-        throw new ModelRequestFailedError("对话模型未完整返回锚点提示词", {
-          ...(stopReason === undefined ? {} : { stopReason }),
+        if (!completed) {
+          throw new ModelRequestFailedError("对话模型未完整返回锚点提示词", {
+            ...(stopReason === undefined ? {} : { stopReason }),
+          });
+        }
+        const maxChars =
+          input.target === "outfit"
+            ? MAX_OUTFIT_PROMPT_CHARS
+            : MAX_BASE_PROMPT_CHARS;
+        const prompt = cleanGeneratedAnchorPrompt(output, maxChars);
+        if (prompt.length === 0) {
+          throw new ModelRequestFailedError("对话模型没有返回可用的锚点提示词");
+        }
+        succeeded = true;
+        return {
+          target: input.target,
+          outfitId: input.target === "outfit" ? requestedOutfitId : null,
+          prompt,
+          source: anchorImage.source,
+        };
+      } finally {
+        this.onModelCallFinished?.({
+          sourceCallId: `anchor:${roleId}:${callId}`,
+          roleId,
+          roleName: context.displayName,
+          resourceId: claimed.binding.resourceId,
+          modelName: claimed.binding.modelName,
+          protocol: claimed.binding.config.protocol,
+          category: "anchor_prompt",
+          status: succeeded ? "succeeded" : "failed",
+          occurredAt: this.now().toISOString(),
+          usage,
         });
       }
-      const maxChars =
-        input.target === "outfit"
-          ? MAX_OUTFIT_PROMPT_CHARS
-          : MAX_BASE_PROMPT_CHARS;
-      const prompt = cleanGeneratedAnchorPrompt(output, maxChars);
-      if (prompt.length === 0) {
-        throw new ModelRequestFailedError("对话模型没有返回可用的锚点提示词");
-      }
-      return {
-        target: input.target,
-        outfitId: input.target === "outfit" ? requestedOutfitId : null,
-        prompt,
-        source: anchorImage.source,
-      };
     } finally {
       claimed.release();
     }

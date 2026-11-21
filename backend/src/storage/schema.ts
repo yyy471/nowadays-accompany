@@ -11,7 +11,7 @@ import { restoreAutonomyShareLinks } from "./autonomy-store.js";
 import { MemoryStore } from "./memory-store.js";
 import { retireLegacyWebPrefetchEvidence, WEB_READING_SCHEMA_SQL } from "./web-reading.js";
 
-export const APP_SCHEMA_VERSION = 11;
+export const APP_SCHEMA_VERSION = 12;
 export const BUSINESS_SCHEMA_VERSION = 27;
 export const EXECUTION_SCHEMA_VERSION = 1;
 
@@ -28,6 +28,8 @@ export const APP_TABLES = [
   "role_transfer_snapshots",
   "role_transfer_selections",
   "role_transfer_publication",
+  "token_usage_records",
+  "token_usage_meta",
 ] as const;
 export const BUSINESS_TABLES = [
   "roles",
@@ -1956,6 +1958,28 @@ const APP_COLUMNS: readonly RequiredColumns[] = [
     table: "roles",
     columns: ["builtin_key"],
   },
+  {
+    table: "token_usage_records",
+    columns: [
+      "source_call_id",
+      "local_date",
+      "occurred_at",
+      "role_id",
+      "role_name",
+      "resource_id",
+      "resource_name",
+      "provider",
+      "protocol",
+      "model_name",
+      "category",
+      "status",
+      "usage_reported",
+      "input_tokens",
+      "cached_tokens",
+      "cache_creation_tokens",
+      "output_tokens",
+    ],
+  },
 ];
 
 const APP_INDEXES: readonly RequiredIndex[] = [
@@ -1966,6 +1990,20 @@ const APP_INDEXES: readonly RequiredIndex[] = [
     unique: true,
     partial: true,
     predicate: "builtin_key IS NOT NULL",
+  },
+  {
+    name: "idx_token_usage_date",
+    table: "token_usage_records",
+    columns: ["local_date", "occurred_at"],
+    unique: false,
+    partial: false,
+  },
+  {
+    name: "idx_token_usage_role_date",
+    table: "token_usage_records",
+    columns: ["role_id", "local_date"],
+    unique: false,
+    partial: false,
   },
 ];
 
@@ -1991,6 +2029,40 @@ CREATE TABLE IF NOT EXISTS role_transfer_publication (
 );
 `;
 
+const APP_V12_SQL = `
+-- V12：全局持久 Token 消耗账本（DL-183），角色与服务删除后历史消耗继续保留。
+CREATE TABLE IF NOT EXISTS token_usage_records (
+  source_call_id TEXT PRIMARY KEY,
+  local_date TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  role_id TEXT,
+  role_name TEXT NOT NULL DEFAULT '',
+  resource_id TEXT,
+  resource_name TEXT NOT NULL DEFAULT '',
+  provider TEXT,
+  protocol TEXT NOT NULL,
+  model_name TEXT NOT NULL,
+  category TEXT NOT NULL CHECK (category IN (
+    'dialogue', 'autonomy', 'memory', 'annotation', 'scene_plan', 'anchor_prompt', 'connection_test'
+  )),
+  status TEXT NOT NULL CHECK (status IN ('succeeded', 'failed', 'unknown')),
+  usage_reported INTEGER NOT NULL CHECK (usage_reported IN (0, 1)),
+  input_tokens INTEGER NOT NULL DEFAULT 0 CHECK (input_tokens >= 0),
+  cached_tokens INTEGER NOT NULL DEFAULT 0 CHECK (cached_tokens >= 0),
+  cache_creation_tokens INTEGER NOT NULL DEFAULT 0 CHECK (cache_creation_tokens >= 0),
+  output_tokens INTEGER NOT NULL DEFAULT 0 CHECK (output_tokens >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_token_usage_date
+  ON token_usage_records (local_date, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_token_usage_role_date
+  ON token_usage_records (role_id, local_date);
+CREATE TABLE IF NOT EXISTS token_usage_meta (
+  meta_key TEXT PRIMARY KEY,
+  meta_value TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+`;
+
 export function openAppDatabase(dbPath: string): OpenedDatabase {
   return openVersionedDatabase(
     dbPath,
@@ -2005,7 +2077,8 @@ export function openAppDatabase(dbPath: string): OpenedDatabase {
       APP_V8_SQL +
       APP_V9_SQL +
       APP_V10_SQL +
-      APP_V11_SQL,
+      APP_V11_SQL +
+      APP_V12_SQL,
     {
       1: (db) => db.exec(APP_V2_SQL),
       2: (db) => db.exec(APP_V3_SQL),
@@ -2017,6 +2090,7 @@ export function openAppDatabase(dbPath: string): OpenedDatabase {
       8: (db) => db.exec(APP_V9_SQL),
       9: migrateAppV10,
       10: (db) => db.exec(APP_V11_SQL),
+      11: (db) => db.exec(APP_V12_SQL),
     },
     APP_TABLES,
     APP_INDEXES,
