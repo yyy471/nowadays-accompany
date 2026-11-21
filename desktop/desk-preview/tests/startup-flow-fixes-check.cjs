@@ -60,18 +60,22 @@ function startFakeOpenAi(getTargetOutfitId) {
       const body = raw ? JSON.parse(raw) : {};
       const sys = String(body.messages?.[0]?.content || '');
       const hasToolResult = Array.isArray(body.messages) && body.messages.some(m => m.role === 'tool');
+      const isConnectionProbe = Array.isArray(body.messages) && body.messages.some(m =>
+        String(m?.content || '').includes('Reply with the single word pong.'));
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
-      if (sys.includes('pong')) {
+      if (sys.includes('pong') || isConnectionProbe) {
         res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'pong' } }] })}\n\n`);
         res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] })}\n\n`);
         res.write('data: [DONE]\n\n');
         res.end();
         return;
       }
-      if (!hasToolResult) state.chatTurn += 1;
+      if (!hasToolResult && !isConnectionProbe) state.chatTurn += 1;
+      const lastUser = [...(body.messages || [])].reverse().find(m => m?.role === 'user');
+      const isFirstTurn = String(lastUser?.content || '') === '你好呀';
       // 第 1 轮先返回多段台词（验证推进控制条 + 全部展开 + 不误插第 2 轮前面）；
       // 第 2 轮先调用 state_update 选穿角色服饰，再返回台词。
-      if (state.chatTurn >= 2 && !hasToolResult && getTargetOutfitId()) {
+      if (!isFirstTurn && state.chatTurn >= 2 && !hasToolResult && getTargetOutfitId()) {
         res.write(`data: ${JSON.stringify({
           choices: [{
             delta: {
@@ -92,7 +96,7 @@ function startFakeOpenAi(getTargetOutfitId) {
         res.end();
         return;
       }
-      const reply = state.chatTurn === 1
+      const reply = isFirstTurn
         ? '第一句说完啦。\n（她抬手拢了拢袖口）\n第二句轻轻落下。\n第三句才正式开口。'
         : '换好春衫来见你了。';
       res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: reply } }] })}\n\n`);

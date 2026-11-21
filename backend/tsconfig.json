@@ -11,6 +11,8 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "noEmit": true,
+    "incremental": true,
+    "tsBuildInfoFile": "../.tools/tsbuildinfo/backend.tsbuildinfo",
     "types": ["node"]
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"]

@@ -8,7 +8,9 @@
     "types": ["vite/client"],
     "strict": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    "incremental": true,
+    "tsBuildInfoFile": "../../../.tools/tsbuildinfo/renderer.tsbuildinfo"
   },
   "files": ["src/main.tsx", "src/bridge.d.ts"]
 }

@@ -14,6 +14,8 @@ const { button, configControls, element, setValue } = require('./config-page-con
 
 const root = path.resolve(__dirname, '../../..');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'nowadays-token-usage-e2e-'));
+const emptyPresets = path.join(temp, 'presets');
+fs.mkdirSync(emptyPresets, { recursive: true });
 const node = process.execPath;
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -150,7 +152,7 @@ async function run() {
   // 2) 启动真实后端并构造连通性测试 + 角色对话 + 删角留存数据
   backend = spawn(
     node,
-    ['--import', 'tsx', 'src/main.ts', '--app-root', path.join(temp, 'app'), '--port', '0'],
+    ['--import', 'tsx', 'src/main.ts', '--app-root', path.join(temp, 'app'), '--port', '0', '--preset-assets-dir', emptyPresets],
     { cwd: path.join(root, 'backend'), windowsHide: true },
   );
   backend.stdout.on('data', (data) => {

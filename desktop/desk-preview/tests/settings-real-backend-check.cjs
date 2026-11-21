@@ -11,6 +11,8 @@ const { resolveElectronExecutable } = require('./electron-executable.cjs');
 const { button, configControls, editor, element, setValue, sheet } = require('./config-page-controls.cjs');
 const root = path.resolve(__dirname, '../../..');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'nowadays-ui-real-'));
+const emptyPresets = path.join(temp, 'presets');
+fs.mkdirSync(emptyPresets, { recursive: true });
 const node = process.execPath;
 const imagePath = path.join(root, 'desktop/desk-preview/renderer/src/assets/themes/xiacheng/character.png');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -163,7 +165,7 @@ async function verifyModelProviders(roleId) {
   }
 }
 async function run() {
-  backend = spawn(node, ['--import', 'tsx', 'src/main.ts', '--app-root', path.join(temp, 'app'), '--port', '0'], { cwd: path.join(root, 'backend'), windowsHide: true });
+  backend = spawn(node, ['--import', 'tsx', 'src/main.ts', '--app-root', path.join(temp, 'app'), '--port', '0', '--preset-assets-dir', emptyPresets], { cwd: path.join(root, 'backend'), windowsHide: true });
   backend.stdout.on('data', data => backendLog += data); backend.stderr.on('data', data => backendLog += data);
   const port = await until(() => { const match = /"event":"listening","host":"[^"]+","port":(\d+)/.exec(backendLog); return match?.[1]; });
   base = `http://127.0.0.1:${port}`;

@@ -1,0 +1,17 @@
+{
+  "name": "nowadays",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Nowadays 数字生命项目",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "verify:fast": "node scripts/verify.mjs fast",
+    "verify:unit": "node scripts/verify.mjs unit",
+    "verify:gate": "node scripts/verify.mjs gate",
+    "verify:e2e": "node scripts/verify.mjs e2e",
+    "check:docs": "node scripts/check-docs.mjs",
+    "clean:artifacts": "node scripts/clean-artifacts.mjs"
+  }
+}
