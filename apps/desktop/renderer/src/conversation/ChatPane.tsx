@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { Icon, useMotionPolicy } from '../ui';
-import { dayKey, dateLabel } from './history.js';
-import type { PerfRow } from './history.js';
-import type { PerfScene } from './performance.js';
+import { dayKey, dateLabel } from './history';
+import type { PerfRow } from './history';
+import type { PerfScene } from './performance';
 import type { ConversationSnapshot } from './use-window-session';
-import { shouldAdvanceFromClick, shouldAdvanceFromKey } from './advance.js';
+import { shouldAdvanceFromClick, shouldAdvanceFromKey } from './advance';
 
 function timeLabel(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });

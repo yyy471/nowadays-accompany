@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | EX-R01 | 角色、近况、服饰先发布；经历、日常概况、日记各自返回即更新，日记按 8 篇一批发布；慢的一篇只延后自己 | [loadRelationPacket](../../../apps/desktop/renderer/src/relations/load-dossier.ts#L27) · [分批发布](../../../apps/desktop/renderer/src/relations/load-dossier.ts#L128) |
 | EX-R02 | 角色选项改为自适应网格，单列不小于 104 像素，超出可用高度滚动；名字单行省略，不再挤压 | [person-options](../../../apps/desktop/renderer/src/styles/relations-exlibris.css#L11) |
-| EX-R03 | 打开即聚焦当前角色；Esc、× 与选中后焦点回到「换一位」 | [聚焦当前角色](../../../apps/desktop/renderer/src/Relations.tsx#L70) · [关闭归还焦点](../../../apps/desktop/renderer/src/Relations.tsx#L134) |
+| EX-R03 | 打开即聚焦当前角色；Esc、× 与选中后焦点回到「换一位」 | [聚焦当前角色](../../../apps/desktop/renderer/src/pages/Relations.tsx#L70) · [关闭归还焦点](../../../apps/desktop/renderer/src/pages/Relations.tsx#L134) |
 
 ## 2. EX-R01 分批发布
 
@@ -80,7 +80,7 @@
 
 | 编号 | 修复 | 证据 |
 | --- | --- | --- |
-| EX-R04 | 日记详情改为固定并发 8 的滑动窗口，单篇返回即按列表顺序落位发布；补入靠前日记时按 id 保持当前选中 | [日记滑动窗口](../../../apps/desktop/renderer/src/relations/load-dossier.ts#L125) · [选中保持](../../../apps/desktop/renderer/src/relations/dossier.js#L48) |
+| EX-R04 | 日记详情改为固定并发 8 的滑动窗口，单篇返回即按列表顺序落位发布；补入靠前日记时按 id 保持当前选中 | [日记滑动窗口](../../../apps/desktop/renderer/src/relations/load-dossier.ts#L125) · [选中保持](../../../apps/desktop/renderer/src/relations/dossier.ts#L48) |
 | EX-R05 | 二级页弹层不再向上展开，改为贴书页内侧、按书页可用高度展开，选项在面板内滚动 | [in-rail 弹层](../../../apps/desktop/renderer/src/styles/relations-exlibris.css#L81) |
 
 ### 7.1 EX-R04 同批慢日记

@@ -3,7 +3,7 @@ import { Icon, createMotionScope, readMotionPx, readMotionTime, readMotionValue,
 import scene from '../../assets/themes/xiacheng/scene-ink.png';
 import nightScene from '../../assets/themes/xiacheng/scene-night.png';
 import { useThemePreset } from '../../ui/presets';
-import { createOutfitDisplay, type DisplayedOutfit } from '../../outfit-display.js';
+import { createOutfitDisplay, type DisplayedOutfit } from '../../outfit-display';
 
 export function HomeScene({ outfitHomeUrl, outfitName }: { outfitHomeUrl?: string | null; outfitName?: string | null }) {
   const { preset } = useThemePreset();

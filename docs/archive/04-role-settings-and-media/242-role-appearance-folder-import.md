@@ -14,7 +14,7 @@
 
 ## 2. 目录识别与布局判定
 
-- 扫描入口 `scanAppearanceFolder`（[appearance-import.js](../../../apps/desktop/renderer/src/appearance-import.js)）只读路径字符串，不读文件内容、不碰 DOM，可在 `node:test` 里直接构造目录树。
+- 扫描入口 `scanAppearanceFolder`（[appearance-import.js](../../../apps/desktop/renderer/src/appearance-import.ts)）只读路径字符串，不读文件内容、不碰 DOM，可在 `node:test` 里直接构造目录树。
 - 角色根目录直属的 `standees` 或 `expressions` 用于识别新素材库，`outfits/` 下的文件记为 `OUTFITS_SKIPPED`，根目录散图和其他子目录也会跳过。两者都没有时回退旧格式，按 `outfits/<服饰名>/home.<ext>` 与 `outfits/<服饰名>/sprites/**` 识别。
 - 这样处理是因为 §5 要求「跳过 `outfits` 锚点图」，而 208 又要求「旧格式 `outfits/<服饰名>/home.*` 继续兼容」。同一个目录名在两种素材库里含义不同，用「是否存在 `standees`／`expressions`」区分，比检查 `outfits` 内部结构更稳定。
 - 文件选择器应选中角色自己的目录。一次选到多个可识别的角色根时给出 `MULTIPLE_ROOTS`，只处理第一个角色的素材。

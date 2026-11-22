@@ -5,15 +5,15 @@ import {
   evaluateImageConnectionTest,
   toImageServiceProbePayload,
   type ImageProbeResult,
-} from '../../image-config.js';
-import type { ProbeNotice } from '../model/model-picker.js';
+} from '../../image-config';
+import type { ProbeNotice } from '../model/model-picker';
 import {
   getImageModelCacheEpoch,
   getImageModelCacheVersion,
   readImageModelCache,
   subscribeImageModelCache,
   writeImageModelCache,
-} from './image-cache.js';
+} from './image-cache';
 
 export type ImageProbeTarget =
   | {

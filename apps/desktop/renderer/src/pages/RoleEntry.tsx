@@ -3,7 +3,7 @@ import type { RoleListItem } from '../types';
 import { Button, BrandMark, UiThemeScope, useMotionPolicy } from '../ui';
 import { useThemePreset } from '../ui/presets';
 import { RolePortrait } from '../components/RolePortrait';
-import { defaultEntryChoice, entryBadge, entryRoles, entrySubtitle, resolveEntryChoice } from '../entry/role-entry.js';
+import { defaultEntryChoice, entryBadge, entryRoles, entrySubtitle, resolveEntryChoice } from '../entry/role-entry';
 
 /**
  * 冷启动选角页（DL-147）：进入工作区前先选一位角色。

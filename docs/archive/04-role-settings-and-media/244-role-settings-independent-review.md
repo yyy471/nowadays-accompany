@@ -18,7 +18,7 @@
 
 ### RS-R04 · P2 · 更换参考录音后会提交原录音的参考文本
 
-打开一个要求参考文本的克隆模式，把参考录音从 A 切到 B，然后保存。请求包含 B 的素材 ID 和 A 的原文。后端原有行为是音频变化且请求未提供新文本时清空旧文本，但页面始终主动发送表单旧值。上传新的录音和从列表切换都需要清理旧文本，要求用户按新录音重新填写。 [录音选择](../../../apps/desktop/renderer/src/components/voice/VoicePanel.tsx#L272) · [提交载荷](../../../apps/desktop/renderer/src/voice-config.js#L74)
+打开一个要求参考文本的克隆模式，把参考录音从 A 切到 B，然后保存。请求包含 B 的素材 ID 和 A 的原文。后端原有行为是音频变化且请求未提供新文本时清空旧文本，但页面始终主动发送表单旧值。上传新的录音和从列表切换都需要清理旧文本，要求用户按新录音重新填写。 [录音选择](../../../apps/desktop/renderer/src/components/voice/VoicePanel.tsx#L272) · [提交载荷](../../../apps/desktop/renderer/src/voice-config.ts#L74)
 
 ### RS-R05 · P2 · 导入完成后把当前角色切回旧角色
 
@@ -65,7 +65,7 @@
 
 ### RS-R02 补充 · P2 · 克隆音色仍沿用旧服务的参考模式
 
-当前 `withVoiceService` 换服务时清空预置音色 ID 和能力声明，保留 `referenceMode`。在模拟声音页把地址从 A 改为 B，不探测 B 就点击保存，提交载荷含 B 的地址和 A 的参考模式。独立后端接口复验中，切换地址的保存返回 200，再读仍是旧模式。新服务若不支持该模式，保存后的配置会继续向新服务传旧模式。应在换服务时使参考模式失效，保留本地录音及其对应文本，让新服务的能力决定可选模式。 [表单服务切换](../../../apps/desktop/renderer/src/voice-config.js#L246) · [后端保存](../../../apps/backend/src/application/voice-service.ts#L155)
+当前 `withVoiceService` 换服务时清空预置音色 ID 和能力声明，保留 `referenceMode`。在模拟声音页把地址从 A 改为 B，不探测 B 就点击保存，提交载荷含 B 的地址和 A 的参考模式。独立后端接口复验中，切换地址的保存返回 200，再读仍是旧模式。新服务若不支持该模式，保存后的配置会继续向新服务传旧模式。应在换服务时使参考模式失效，保留本地录音及其对应文本，让新服务的能力决定可选模式。 [表单服务切换](../../../apps/desktop/renderer/src/voice-config.ts#L246) · [后端保存](../../../apps/backend/src/application/voice-service.ts#L155)
 
 前后端类型检查、桌面生产构建、后端 300 项和桌面 87 项测试通过。复验使用本地模拟服务、隔离角色数据与 Chromium 音频替身，结果位于 `apps/backend/test-results/review-245-followup/`，真实服务联调待验。
 
@@ -75,11 +75,11 @@
 
 ### RS-R06 · P2 · 已保存服务的新探测结果无法提供参考模式
 
-更换服务后先保存地址，再点击「测试连接」。探测摘要显示新服务有 1 种参考模式，表单却仍显示缺少能力声明，且没有模式选择器。复现时已保存配置的 `capabilities` 为 `null`。地址和协议相同时，`resolveCapabilities` 优先返回已保存的 `null`，把当前服务的最新探测结果挡在后面。应优先使用和当前表单匹配的新探测，缺少有效探测时才用已保存的能力声明。 [能力来源解析](../../../apps/desktop/renderer/src/voice-config.js#L270)
+更换服务后先保存地址，再点击「测试连接」。探测摘要显示新服务有 1 种参考模式，表单却仍显示缺少能力声明，且没有模式选择器。复现时已保存配置的 `capabilities` 为 `null`。地址和协议相同时，`resolveCapabilities` 优先返回已保存的 `null`，把当前服务的最新探测结果挡在后面。应优先使用和当前表单匹配的新探测，缺少有效探测时才用已保存的能力声明。 [能力来源解析](../../../apps/desktop/renderer/src/voice-config.ts#L270)
 
 ### RS-R07 · P2 · 服务明确不支持克隆时仍可保存参考音频配置
 
-换到模拟服务 C，探测成功且只支持预置音色。页面提示「不能使用参考音频音色」，点击保存仍发出参考音频配置。桌面校验在已知参考模式列表为空时跳过该分支，提交又没有携带探测到的能力。用隔离后端复验同一请求，省略能力声明返回 200，附上探测声明则返回 400 `VOICE_REFERENCE_MODE_UNSUPPORTED`。应拒绝已探测为不支持的音色来源，并覆盖已知不支持与能力未知的区别。 [表单校验](../../../apps/desktop/renderer/src/voice-config.js#L134) · [提交载荷](../../../apps/desktop/renderer/src/voice-config.js#L59)
+换到模拟服务 C，探测成功且只支持预置音色。页面提示「不能使用参考音频音色」，点击保存仍发出参考音频配置。桌面校验在已知参考模式列表为空时跳过该分支，提交又没有携带探测到的能力。用隔离后端复验同一请求，省略能力声明返回 200，附上探测声明则返回 400 `VOICE_REFERENCE_MODE_UNSUPPORTED`。应拒绝已探测为不支持的音色来源，并覆盖已知不支持与能力未知的区别。 [表单校验](../../../apps/desktop/renderer/src/voice-config.ts#L134) · [提交载荷](../../../apps/desktop/renderer/src/voice-config.ts#L59)
 
 前后端类型检查、生产构建、后端 300 项和桌面 87 项测试通过。浏览器使用隔离数据、模拟接口与音频替身，后端边界由独立本地实例验证。证据位于 `apps/backend/test-results/review-245-reference/`，真实 TTS 联调待验。
 
@@ -94,7 +94,7 @@
 
 ### RS-R08 · P3 · 地址改回后显示的能力声明未随请求提交
 
-在尚未保存的服务 B 探测成功，临时把地址改为 C 再改回 B。页面会重新采用 B 的探测结果，并据此展示和校验参考模式。此时选择 B 的模式后，浏览器实测保存和试听请求都带新模式，但缺少 `capabilities`。原因是地址编辑清空了表单中的声明，而请求构造读取表单，展示和校验则读取解析出的有效声明。对首次保存的服务，缺少该字段会失去能力持久化，需要再次探测。建议保存和试听使用与校验同一份有效声明。本项不影响正常探测后直接保存的已验流程。 [保存校验与请求](../../../apps/desktop/renderer/src/components/voice/VoicePanel.tsx#L257) · [载荷构造](../../../apps/desktop/renderer/src/voice-config.js#L60)
+在尚未保存的服务 B 探测成功，临时把地址改为 C 再改回 B。页面会重新采用 B 的探测结果，并据此展示和校验参考模式。此时选择 B 的模式后，浏览器实测保存和试听请求都带新模式，但缺少 `capabilities`。原因是地址编辑清空了表单中的声明，而请求构造读取表单，展示和校验则读取解析出的有效声明。对首次保存的服务，缺少该字段会失去能力持久化，需要再次探测。建议保存和试听使用与校验同一份有效声明。本项不影响正常探测后直接保存的已验流程。 [保存校验与请求](../../../apps/desktop/renderer/src/components/voice/VoicePanel.tsx#L257) · [载荷构造](../../../apps/desktop/renderer/src/voice-config.ts#L60)
 
 前后端类型检查、桌面生产构建、后端 301 项和桌面 88 项测试通过。证据位于 `apps/backend/test-results/review-245-capabilities/`。本轮使用隔离浏览器、模拟接口与本地后端，真实 TTS 联调待验。
 

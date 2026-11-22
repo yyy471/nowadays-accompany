@@ -10,9 +10,9 @@ import {
 import { useMediaOccupancy } from '../config/use-media-occupancy';
 import { captureSavedSummary } from '../config/sheet/save-feedback';
 import { useSheet } from '../config/sheet/sheet-context';
-import { T10, T15, T16, T32 } from '../config/config-texts.js';
-import { describeVoiceFailure, toVoiceServiceConfig, validateVoiceServiceDraft, type VoiceProtocol, type VoiceServiceItem } from '../../voice-config.js';
-import { clearVoiceProbeCache, voiceServiceCacheKey, writeVoiceProbeCache } from './voice-cache.js';
+import { T10, T15, T16, T32 } from '../config/config-texts';
+import { describeVoiceFailure, toVoiceServiceConfig, validateVoiceServiceDraft, type VoiceProtocol, type VoiceServiceItem } from '../../voice-config';
+import { clearVoiceProbeCache, voiceServiceCacheKey, writeVoiceProbeCache } from './voice-cache';
 import { useVoiceProbe, type VoiceProbeTarget } from './use-voice-probe';
 import { useWrite } from '../config/write-runner';
 

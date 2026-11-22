@@ -1,6 +1,6 @@
 import { useId, useMemo, useState, type KeyboardEvent } from 'react';
 import { Button, Field, Input } from '../../ui';
-import { filterModelNames, visibleProbeNotice, type ProbeNotice } from '../model/model-picker.js';
+import { filterModelNames, visibleProbeNotice, type ProbeNotice } from '../model/model-picker';
 
 export interface ImageModelPickerProps {
   value: string;

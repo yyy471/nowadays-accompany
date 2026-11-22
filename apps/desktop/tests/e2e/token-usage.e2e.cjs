@@ -80,7 +80,7 @@ const json = (body, method = 'POST') => ({
 
 async function run() {
   const tokenFmt = await import(
-    pathToFileURL(path.join(root, 'apps/desktop/renderer/src/token-usage.js')).href
+    pathToFileURL(path.join(root, 'apps/desktop/renderer/src/token-usage.ts')).href
   );
 
   // 1) 启动离线 OpenAI Chat Completions 桩端点，稳定回报 input / cached / output token 用量。

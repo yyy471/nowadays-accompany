@@ -34,7 +34,7 @@
 
 ## 4. 桌面端实现
 
-- **类型与摘要。** `VoiceConfigView` 加 `enabled: boolean`；`describeVoiceSummary` 在停用时加「已停用 · 」前缀，列表和页头一眼能看出状态。[voice-config.js](../../../apps/desktop/renderer/src/voice-config.js)
+- **类型与摘要。** `VoiceConfigView` 加 `enabled: boolean`；`describeVoiceSummary` 在停用时加「已停用 · 」前缀，列表和页头一眼能看出状态。[voice-config.js](../../../apps/desktop/renderer/src/voice-config.ts)
 - **开关。** 声音页在配置摘要下加「启用角色语音」勾选框：没有配置时禁用并提示「保存配置后可以启用或停用」，停用时提示「对话不再合成语音，这份配置保留」。保存中、启停中都禁用，避免并发。[VoicePanel.tsx](../../../apps/desktop/renderer/src/components/voice/VoicePanel.tsx)
 - **令牌保护。** `toggleVoiceEnabled` 捕获 `roleToken`，晚到的响应不写当前角色状态；`toggleBusy` 与 `busy` 分别驱动两个控件的禁用态，保存与启停按 [249](./249-role-voice-toggle-review-fixes.md) 改为双向互斥（同一时刻只允许一个写入），切换角色时随其他忙碌标记一起复位。
 - **对话页静默跳过。** `use-segment-voice.ts` 新增 `SpeechRequestError`（带 `code`）与 `voiceDisabled` 标记：命中 `VOICE_DISABLED` 后预取与自动播放直接返回，不再发请求也不再弹提示；手动点播视为显式重试，先清标记再请求一次，仍被拒时提示「角色语音已停用，启用后才能播放对话语音」。切换角色、窗口或卸载时随 `releaseAll` 复位。[use-segment-voice.ts](../../../apps/desktop/renderer/src/conversation/use-segment-voice.ts)

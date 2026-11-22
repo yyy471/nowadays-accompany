@@ -44,32 +44,8 @@ for (const target of ["test-results", ".tools", "node_modules"]) {
   }
 }
 
-// 前端保留 24 个既有 JS 模块的声明配对；新增必须直接写 .ts，不再扩大配对数量。
-const JS_DTS_BASELINE = new Set([
-  "appearance-import",
-  "components/appearance/preset-lock",
-  "components/config/config-texts",
-  "components/config/summary",
-  "components/image/image-cache",
-  "components/model/binding-merge",
-  "components/model/model-cache",
-  "components/model/model-picker",
-  "components/voice/voice-cache",
-  "conversation/advance",
-  "conversation/history",
-  "conversation/performance",
-  "conversation/task-actions",
-  "conversation/typing-state",
-  "conversation/window-model",
-  "entry/role-entry",
-  "image-config",
-  "outfit-display",
-  "relations/dossier",
-  "relations/fold-marks",
-  "state-version",
-  "token-usage",
-  "voice-config",
-]);
+// 前端保留既有的 JS/声明配对基线（已在 Wave 4 归零；新增必须直接写 .ts）。
+const JS_DTS_BASELINE = new Set([]);
 
 function walk(directory, out = []) {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {

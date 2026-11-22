@@ -2,7 +2,7 @@ import {
   summarizeProbe,
   type VoiceEngineStatus,
   type VoiceProbeResult,
-} from '../../voice-config.js';
+} from '../../voice-config';
 import { Field, Input, Select } from '../../ui';
 
 export function formatVoiceEngineLabel(

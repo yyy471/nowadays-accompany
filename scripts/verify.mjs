@@ -76,6 +76,10 @@ function desktopUnitTestFiles() {
   return walkFiles(path.join(desktopDir, "tests", "unit"), ".test.cjs", desktopDir);
 }
 
+function rendererUnitTestFiles() {
+  return walkFiles(path.join(rendererDir, "tests"), ".test.ts", rendererDir);
+}
+
 function targetedBackendTests(files) {
   const all = backendTestFiles();
   if (files.includes("package.json")) return all;
@@ -159,6 +163,15 @@ const commands = {
       cwd: desktopDir,
     };
   },
+  rendererTests(tests = rendererUnitTestFiles()) {
+    const allCount = rendererUnitTestFiles().length;
+    return {
+      name: tests.length === allCount ? "renderer-tests" : `renderer-tests:${tests.length}`,
+      cmd: process.execPath,
+      args: ["--import", "../node_modules/tsx/dist/loader.mjs", "--test", ...tests],
+      cwd: rendererDir,
+    };
+  },
   feedIntegration() {
     return {
       name: "feed-integration",
@@ -238,10 +251,12 @@ async function fastCommands(files, keywords = []) {
   if (keywords.length > 0) {
     const backendMatches = filterByKeywords(backendTestFiles(), keywords);
     const desktopMatches = filterByKeywords(desktopUnitTestFiles(), keywords);
+    const rendererMatches = filterByKeywords(rendererUnitTestFiles(), keywords);
     const list = [commands.docs(), commands.hygiene(), commands.backendTypecheck(), commands.rendererCheck()];
     if (backendMatches.length > 0) list.push(commands.backendTests(backendMatches));
     if (desktopMatches.length > 0) list.push(commands.desktopTests(desktopMatches));
-    if (backendMatches.length === 0 && desktopMatches.length === 0) {
+    if (rendererMatches.length > 0) list.push(commands.rendererTests(rendererMatches));
+    if (backendMatches.length === 0 && desktopMatches.length === 0 && rendererMatches.length === 0) {
       console.error(`[verify] 未匹配到包含关键字 [${keywords.join(", ")}] 的单测文件`);
       process.exit(2);
     }
@@ -249,7 +264,7 @@ async function fastCommands(files, keywords = []) {
   }
 
   if (files.length === 0) {
-    return [commands.docs(), commands.hygiene(), commands.backendTypecheck(), commands.rendererCheck(), commands.desktopTests()];
+    return [commands.docs(), commands.hygiene(), commands.backendTypecheck(), commands.rendererCheck(), commands.desktopTests(), commands.rendererTests()];
   }
   const list = [commands.docs(), commands.hygiene()];
   const rootInfraChanged = files.some((file) => ["package.json", "scripts/repo-paths.mjs", "scripts/ensure-tools.mjs"].includes(file));
@@ -271,8 +286,11 @@ async function fastCommands(files, keywords = []) {
     const tests = targetedBackendTests(files);
     if (tests.length) list.push(commands.backendTests(tests));
   }
-  if (rendererChanged) list.push(commands.rendererCheck());
-  if (desktopChanged || rendererChanged) list.push(commands.desktopTests());
+  if (rendererChanged) {
+    list.push(commands.rendererCheck());
+    list.push(commands.rendererTests());
+  }
+  if (desktopChanged) list.push(commands.desktopTests());
   if (files.some((file) => file.startsWith("apps/desktop/tests/integration/") || file.startsWith("apps/desktop/renderer/src/feed/"))) {
     list.push(commands.feedIntegration());
   }
@@ -288,6 +306,7 @@ async function unitCommands() {
     commands.rendererCheck(),
     commands.rendererBuild(),
     commands.desktopTests(),
+    commands.rendererTests(),
     commands.feedIntegration(),
   ]);
   const backend = await run(commands.backendTests());
@@ -306,6 +325,7 @@ async function gateCommands() {
     commands.docs(),
     commands.hygiene(),
     commands.desktopTests(),
+    commands.rendererTests(),
     commands.feedIntegration(),
   ]);
   const acceptance = await run(commands.acceptance());

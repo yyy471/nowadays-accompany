@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import type { PerformanceSnapshot, PerfScene, SceneLayerMode } from './performance.js';
-import type { PerfRow } from './history.js';
-import { spriteForRow } from './window-model.js';
+import type { PerformanceSnapshot, PerfScene, SceneLayerMode } from './performance';
+import type { PerfRow } from './history';
+import { spriteForRow } from './window-model';
 import { Icon, useMotionPolicy } from '../ui';
 
 export interface StageSources {

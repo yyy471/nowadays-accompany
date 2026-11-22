@@ -56,7 +56,7 @@
 按 `DL-153` 修订，必须消除现行前端「用夏澄主题图给所有无衣柜角色兜底」的耦合：
 
 1. [HomeScene.tsx](../../../apps/desktop/renderer/src/components/home/HomeScene.tsx#L101) 与 [Conversation.tsx](../../../apps/desktop/renderer/src/pages/Conversation.tsx#L307-L314)：当选中角色衣柜为空或未选定有效 `home` 立绘时，**普通角色保持空态**（仅呈现书房／背景与空状态提示），不再回退展示夏澄主题人物插画。
-2. [Relations.tsx](../../../apps/desktop/renderer/src/Relations.tsx#L295-L300) 与 [load-dossier.ts](../../../apps/desktop/renderer/src/relations/load-dossier.ts#L37-L47)：
+2. [Relations.tsx](../../../apps/desktop/renderer/src/pages/Relations.tsx#L295-L300) 与 [load-dossier.ts](../../../apps/desktop/renderer/src/relations/load-dossier.ts#L37-L47)：
    - 关系页「角色介绍」对内置角色优先展示只读预置介绍 `bioText`（可附带展示当前设定摘要），避免用户编辑性格正文后覆盖官方介绍；
    - 夏澄初始化时自动激活默认预置服饰（写入初始 `state.outfitId`），防止进入对话时误触发 `awaitingInitialOutfit` 卡在「正在换装」或因无 `home` 图在关系页显示空白。
 3. **日夜切换与预置差分协同**：在夏澄新立绘与服饰重做完成前，首版预置默认服饰与差分复用现有夏澄资源注册进后端受管目录（复用 [AppearanceService](../../../apps/backend/src/application/appearance-service.ts#L76) 与 [SegmentAnnotationService](../../../apps/backend/src/application/segment-annotation-service.ts#L385)）；同时明确日夜主题与句段差分的取图协同——当仅命中基础形象而非特定句段差分时，支持夏澄按日夜主题切换对应基础立绘，后续重做正式服饰资产时直接替换预置资源目录并按 `is_preset = 1` 同步更新受管副本。
@@ -76,7 +76,7 @@
    - 应用冷启动进入主工作区前，先展示全屏「选择角色」入口页（视觉与交互参考 [Settings.tsx](../../../apps/desktop/renderer/src/pages/Settings.tsx#L398-L410) 的藏书票墙弹窗并进一步精修排版与材质表现，严格使用 [前端设计规范](../../specs/frontend-design-system.md) `--nd-*` 令牌并通过 `npm run check`）。
    - 列表展示全部已建角色，夏澄带内置默认助手标识与快捷进入高亮；允许直接在入口页触发「创建角色」。用户选定某角色后进入系统主界面。
 2. **全站移除「陪伴」概念与共享当前角色**：
-   - 移除 [App.tsx](../../../apps/desktop/renderer/src/App.tsx#L174) 的 `onSelectCompanion`、[Settings.tsx](../../../apps/desktop/renderer/src/pages/Settings.tsx#L369-L404) 的「当前陪伴 / 设为当前陪伴 / 设为陪伴」标签与操作按钮、[Relations.tsx](../../../apps/desktop/renderer/src/Relations.tsx#L225) 涉及「陪伴」的残留文案及对应样式类（`.config-companion`）。
+   - 移除 [App.tsx](../../../apps/desktop/renderer/src/App.tsx#L174) 的 `onSelectCompanion`、[Settings.tsx](../../../apps/desktop/renderer/src/pages/Settings.tsx#L369-L404) 的「当前陪伴 / 设为当前陪伴 / 设为陪伴」标签与操作按钮、[Relations.tsx](../../../apps/desktop/renderer/src/pages/Relations.tsx#L225) 涉及「陪伴」的残留文案及对应样式类（`.config-companion`）。
    - 进入系统后，主页、关系页与对话页**共享**当前选中角色 `currentId`（可通过关系页「换一位」或对话页右上角色切换变更）；设置页维持仅修改当前编辑对象 `editId` 的隔离机制。
    - 角色配置页（[Settings.tsx](../../../apps/desktop/renderer/src/pages/Settings.tsx#L700-L780)）对夏澄显示「内置助手 · 不可删除」说明与只读显示名／只读人物介绍／预置服饰锁定标识，但允许编辑角色卡正文、添加自定义服饰、配置对话模型、MCP／Skill 开关、自主额度与语音／生图。
 3. **对话内轻量任务取消**：在存在运行中或暂停待答复的可续行办事任务时，对话栏提供轻量的「取消任务」操作调用第 5.3 节取消接口（不违背 `DL-141` 移除普通流式输出打断「停止」按钮的约定）。
@@ -375,7 +375,7 @@
 ### 11.1 冷启动选角页与共享当前角色（DL-147）
 
 1. **入口页**：新增 [RoleEntry.tsx](../../../apps/desktop/renderer/src/pages/RoleEntry.tsx) 与 [role-entry.css](../../../apps/desktop/renderer/src/styles/role-entry.css)，全屏展示已建角色（立绘缩略、姓名、只读介绍）、内置助手标识（`data-builtin` + 「内置助手」徽标）、新建角色入口与「进入书房」；样式全部走 `--nd-*` 令牌，通过 `npm run check`。
-2. **排序与选中**：纯逻辑抽到 [role-entry.js](../../../apps/desktop/renderer/src/entry/role-entry.js)，内置夏澄优先、其余保持创建顺序；默认焦点落在内置助手，编号失效时回退第一位。
+2. **排序与选中**：纯逻辑抽到 [role-entry.js](../../../apps/desktop/renderer/src/entry/role-entry.ts)，内置夏澄优先、其余保持创建顺序；默认焦点落在内置助手，编号失效时回退第一位。
 3. **冷启动门槛**：`App.tsx` 在启动配置读取完成后按 `needsEntryPick` 决定停在入口页还是直入工作区；选定角色后写入共享 `currentId`，主页、关系、对话三页同步（设置页仍只改 `editId`）。启动配置未读完前只渲染极短占位，避免入口页在跳过模式下闪现。
 4. **自动化开关**：桌面壳 `api-config.json` 增加 `skipRolePicker`（读 `NOWADAYS_SKIP_ROLE_PICKER=1`），供既有 Electron 脚本直入工作区；产品冷启动默认始终显示入口页。
 5. **立绘组件抽取**：`RolePortrait` 从 `Settings.tsx` 移到 [RolePortrait.tsx](../../../apps/desktop/renderer/src/components/RolePortrait.tsx)，入口页、藏书票墙与状态页共用；无主页图时显示明确空态。
@@ -385,18 +385,18 @@
 1. **移除陪伴概念**：删除设置页「当前陪伴／设为当前陪伴／设为陪伴」标签与按钮、`onSelectCompanion` 回调及 `.config-companion` 样式；藏书票墙脚注改为内置标识；关系页「不必给陪伴打分」改为「不必给相处打分」，离线演出样例同步改写。全站已无「陪伴」文案。
 2. **主页空态**：[HomeScene.tsx](../../../apps/desktop/renderer/src/components/home/HomeScene.tsx) 不再把夏澄主题人物图作为无衣柜角色的兜底，仅保留日夜书房背景与「这个角色还没有主页立绘」空态卡片；预解码与视差逻辑不变。
 3. **对话空态**：[Conversation.tsx](../../../apps/desktop/renderer/src/pages/Conversation.tsx) 的 `sources.themeUrl` 恒为 `null`，舞台只显示背景；无衣柜时在输入区提示去外观添加服饰，不再闪现主题人物。
-4. **关系页只读介绍**：[load-dossier.ts](../../../apps/desktop/renderer/src/relations/load-dossier.ts) 携带 `bioText` 与 `isBuiltin`，[Relations.tsx](../../../apps/desktop/renderer/src/Relations.tsx) 对内置角色先展示「内置助手 · 官方介绍」只读段落，再展示可编辑角色卡正文；普通角色不出现该段。
+4. **关系页只读介绍**：[load-dossier.ts](../../../apps/desktop/renderer/src/relations/load-dossier.ts) 携带 `bioText` 与 `isBuiltin`，[Relations.tsx](../../../apps/desktop/renderer/src/pages/Relations.tsx) 对内置角色先展示「内置助手 · 官方介绍」只读段落，再展示可编辑角色卡正文；普通角色不出现该段。
 
 ### 11.3 夏澄只读介绍与预置服饰锁定（DL-153）
 
 1. **角色配置页**：内置角色显示「内置助手 · 不可删除」说明块、只读显示名（附固定原因）与只读「官方介绍」；角色卡正文仍可编辑；显示名只读、保存不会产生显示名变更（实现仍提交同值 `displayName`，但输入框已禁用、值不变）；删除区替换为不可删除说明，不再出现删除流程。
-2. **衣柜**：新增纯策略 [preset-lock.js](../../../apps/desktop/renderer/src/components/appearance/preset-lock.js)，`isPreset = 1` 的服饰禁用改名、替换主页立绘、删除与补传差分，卡片标注「预置 · 只读」，补传目标下拉跳过预置项；自定义服饰全部操作保持开放。
+2. **衣柜**：新增纯策略 [preset-lock.js](../../../apps/desktop/renderer/src/components/appearance/preset-lock.ts)，`isPreset = 1` 的服饰禁用改名、替换主页立绘、删除与补传差分，卡片标注「预置 · 只读」，补传目标下拉跳过预置项；自定义服饰全部操作保持开放。
 3. **错误映射**：`PRESET_APPEARANCE_LOCKED` 在前端映射为「预置服饰与素材随应用交付，不能改名、替换或删除；可以新增自己的服饰」，与后端 409 契约一致。
 
 ### 11.4 对话内轻量取消任务（DL-154）
 
 1. **入口**：对话页 toolbar 在存在可取消任务时显示轻量「取消任务／取消等待中的任务」按钮，点击弹出确认，确认后调用 `POST /v1/roles/:roleId/tasks/:taskId/cancel`（`reason = USER_CANCELLED`），成功即刷新角色状态。
-2. **选择规则**：纯逻辑 [task-actions.js](../../../apps/desktop/renderer/src/conversation/task-actions.js) 只挑 `origin = user` 且 `active` 或 `paused + continuable` 的任务，进行中优先、同状态取最近更新；自主／记忆任务与已终态任务不出现。
+2. **选择规则**：纯逻辑 [task-actions.js](../../../apps/desktop/renderer/src/conversation/task-actions.ts) 只挑 `origin = user` 且 `active` 或 `paused + continuable` 的任务，进行中优先、同状态取最近更新；自主／记忆任务与已终态任务不出现。
 3. **刷新时机**：切换角色、执行中状态变化与每 5 秒轮询（页面隐藏时暂停），不干扰对话 SSE 与流式演出。
 
 ### 11.5 打包产物与预置素材路径（310 §3.2）
@@ -408,7 +408,7 @@
 ### 11.6 自验证据
 
 - 渲染器：`npm run check` 通过（令牌最新、23 个 CSS 零违规、`tsc --noEmit` 通过）；`npm run build` 通过。
-- 桌面单测：`node --test tests/*.test.cjs` **146／146**，新增 [pack3-entry.test.cjs](../../../apps/desktop/tests/unit/pack3-entry.test.cjs)（6 项：排序／标识／冷启动门槛／取消任务选择／文案／预置锁定）与 [pack3-packaging.test.cjs](../../../apps/desktop/tests/unit/pack3-packaging.test.cjs)（4 项：三种布局与运行时回退）。
+- 桌面单测：`node --test tests/*.test.cjs` **146／146**，新增 [pack3-entry.test.cjs](../../../apps/desktop/renderer/tests/pack3-entry.test.ts)（6 项：排序／标识／冷启动门槛／取消任务选择／文案／预置锁定）与 [pack3-packaging.test.cjs](../../../apps/desktop/tests/unit/pack3-packaging.test.cjs)（4 项：三种布局与运行时回退）。
 - 冷启动 E2E：新增 [pack3-entry-check.cjs](../../../apps/desktop/tests/e2e/pack3-entry.e2e.cjs)，真实 Electron + 本地后端验证「先入选角页 → 内置标识与只读介绍 → 进入主页 → 关系页仍是同一位角色 → 全站无『陪伴』」，通过且无页面异常。
 - 后端：`tsc --noEmit` 通过；全量正式测试 **444／444**；`node scripts/accept-offline.mjs` **21／21** 步（`realServiceCalls = 0`、`sourceUnchanged = true`、正式测试 444／444），报告 `apps/backend/test-results/p5-2026-11-17T15-22-27-980Z-d02c569a/summary.json`；`node scripts/check-docs.mjs` 0 错误 0 警告。
 - **遗留（不阻塞包 3 范围）**：`startup-flow-fixes-check.cjs` 与 `workflow-real-backend-chain-check.cjs` 以「初始 0 角色」为前置，与包 1「启动即创建夏澄」冲突，首步 `home-create-btn` 无法出现；该漂移早于包 3，需另行改写为「已有内置助手时从角色配置新建」。真实安装包（`package:win`）实机启动与 Node 运行时随包交付仍待真实打包联调。
@@ -444,7 +444,7 @@
 
 ### 12.3 观察项（不阻塞，建议处理）——五项均已处理
 
-1. **冷启动错误态不可达**：`needsEntryPick` 在「后端出错且无角色」时返回 `false`，App 直接进入工作区；`RoleEntry` 的 `error && cards.length === 0` 分支与 `onRetry` 因此永远走不到，且 [role-entry.js](../../../apps/desktop/renderer/src/entry/role-entry.js) 的注释「出错且没有任何角色时仍停在入口页」与实现相反。建议二选一：让错误态停留在入口页（保留注释语义），或改正注释并删除死分支。**已处理（见 §12.5）：采用前者，错误态停留入口页，错误分支与重试可达。**
+1. **冷启动错误态不可达**：`needsEntryPick` 在「后端出错且无角色」时返回 `false`，App 直接进入工作区；`RoleEntry` 的 `error && cards.length === 0` 分支与 `onRetry` 因此永远走不到，且 [role-entry.js](../../../apps/desktop/renderer/src/entry/role-entry.ts) 的注释「出错且没有任何角色时仍停在入口页」与实现相反。建议二选一：让错误态停留在入口页（保留注释语义），或改正注释并删除死分支。**已处理（见 §12.5）：采用前者，错误态停留入口页，错误分支与重试可达。**
 2. **打包交付未完成**：`extraResources` 未包含 `node-runtime`，`resolveNodeExecutable` 最终回退到 PATH 上的 `node`（本机 PATH 为 v22，后端要求 Node 24）；`appRoot` 默认落在安装目录 `resources/backend/.nowadays-desktop`，在 `Program Files` 类只读安装位会写失败。§11.6 已列为遗留，建议在 STATUS 中明确写为「打包交付待联调」，不要表述为已完成。**部分处理（见 §12.5）：打包态 `appRoot` 改到用户数据目录；`node-runtime` 因目录被 gitignore 未强行纳入，STATUS 已明确「打包交付待联调」。**
 3. **预置素材重复打包**：`extraResources` 既复制 `apps/backend/assets/presets` 又单独复制到 `preset-assets`，运行期只用后者，多占约 59MB；建议从 backend filter 去掉 `assets/presets/**/*`。**已处理（见 §12.5）。**
 4. **取消任务缺 E2E**：目前只有纯逻辑单测覆盖「选哪一条」，没有覆盖「按钮出现 → 确认 → 实际取消 → 任务终态」。建议在既有 Electron 脚本里补一条最短路径。**已处理（见 §12.5）：`startup-flow-fixes-check` 新增该最短路径。**
@@ -467,7 +467,7 @@
 
 **观察项 1 · 冷启动错误态**
 
-[role-entry.js](../../../apps/desktop/renderer/src/entry/role-entry.js) 的 `needsEntryPick` 增加 `error` 参数：无角色且读取失败时返回 `true`，冷启动停在入口页并由 `RoleEntry` 呈现错误与「重试」；[App.tsx](../../../apps/desktop/renderer/src/App.tsx) 传入 `error`，`role-entry.d.ts` 同步签名；[pack3-entry.test.cjs](../../../apps/desktop/tests/unit/pack3-entry.test.cjs) 补充「无角色+错误→停留」「有角色+错误→仍进入」断言。
+[role-entry.js](../../../apps/desktop/renderer/src/entry/role-entry.ts) 的 `needsEntryPick` 增加 `error` 参数：无角色且读取失败时返回 `true`，冷启动停在入口页并由 `RoleEntry` 呈现错误与「重试」；[App.tsx](../../../apps/desktop/renderer/src/App.tsx) 传入 `error`，`role-entry.d.ts` 同步签名；[pack3-entry.test.cjs](../../../apps/desktop/renderer/tests/pack3-entry.test.ts) 补充「无角色+错误→停留」「有角色+错误→仍进入」断言。
 
 **观察项 2/3/5 · 打包与表述**
 
@@ -615,8 +615,8 @@
 #### 12.9.2 修复内容
 
 1. **分离本地状态守卫与跨页提交通知**：在 [VoiceServiceEditor.tsx](../../../apps/desktop/renderer/src/components/voice/VoiceServiceEditor.tsx)（`VoiceServiceCreate`、`VoiceServiceDetail`）与 [Settings.tsx](../../../apps/desktop/renderer/src/pages/Settings.tsx)（`ImageServiceCreate`、`ImageServiceDetail`）中，后端写删成功后**无条件**完成共享探测／模型缓存写入及 `onCreated`／`onUpdated`／`onRemoved` 父级回调，`live.current` 仅保护本地组件状态更新（`setBusy`、`setError`、`setMessage` 等）。
-2. **统一服务列表同步与序号保序**：将表单自动选中与地址/协议/默认模型同步抽为纯函数 [syncVoiceFormServices](../../../apps/desktop/renderer/src/voice-config.js) 与 [syncImageFormServices](../../../apps/desktop/renderer/src/image-config.js)（无变化时返回原引用，不打断草稿）；[VoicePanel.tsx](../../../apps/desktop/renderer/src/components/voice/VoicePanel.tsx) 与 [ImagePanel.tsx](../../../apps/desktop/renderer/src/components/image/ImagePanel.tsx) 引入 `serviceSyncSeq` 保序并在 `serviceRefreshVersion` 变更或 `active` 由 `false` 切为 `true` 时执行同步，同时避免严格模式首次挂载重复拉取。
-3. **回归覆盖**：[voice-config.test.cjs](../../../apps/desktop/tests/unit/voice-config.test.cjs) 与 [image-config.test.cjs](../../../apps/desktop/tests/unit/image-config.test.cjs) 新增纯函数单测；[settings-workspace-check.cjs](../../../apps/desktop/tests/e2e/settings-workspace.e2e.cjs#L558-L574) 新增「挂起 `POST /v1/voice-services` → 返回角色配置卸载添加页 → 释放响应 → 自动选中且保留探测结果并可跳转管理」的确定性复现断言。
+2. **统一服务列表同步与序号保序**：将表单自动选中与地址/协议/默认模型同步抽为纯函数 [syncVoiceFormServices](../../../apps/desktop/renderer/src/voice-config.ts) 与 [syncImageFormServices](../../../apps/desktop/renderer/src/image-config.ts)（无变化时返回原引用，不打断草稿）；[VoicePanel.tsx](../../../apps/desktop/renderer/src/components/voice/VoicePanel.tsx) 与 [ImagePanel.tsx](../../../apps/desktop/renderer/src/components/image/ImagePanel.tsx) 引入 `serviceSyncSeq` 保序并在 `serviceRefreshVersion` 变更或 `active` 由 `false` 切为 `true` 时执行同步，同时避免严格模式首次挂载重复拉取。
+3. **回归覆盖**：[voice-config.test.cjs](../../../apps/desktop/renderer/tests/voice-config.test.ts) 与 [image-config.test.cjs](../../../apps/desktop/renderer/tests/image-config.test.ts) 新增纯函数单测；[settings-workspace-check.cjs](../../../apps/desktop/tests/e2e/settings-workspace.e2e.cjs#L558-L574) 新增「挂起 `POST /v1/voice-services` → 返回角色配置卸载添加页 → 释放响应 → 自动选中且保留探测结果并可跳转管理」的确定性复现断言。
 
 #### 12.9.3 自验证据
 

@@ -12,7 +12,7 @@ import { ConfigNotice } from '../components/config/ConfigNotice';
 import { RoleSheetHost } from '../components/config/role/RoleSheetHost';
 import { WorldbooksPanel } from '../components/config/role/WorldbooksPanel';
 import { Sheet } from '../components/config/sheet/Sheet';
-import { chatRowStatus, memoryRowStatus, quotaLimitBad, rowDotVisible } from '../components/config/summary.js';
+import { chatRowStatus, memoryRowStatus, quotaLimitBad, rowDotVisible } from '../components/config/summary';
 import { MediaGroup, MediaStateRow, RoleSaveActions, type MediaSummaryStatus } from '../components/config/MediaSheet';
 import {
   ServiceDeleteEntry, ServiceDeleteSheet, ServiceHeading, ServiceIndex, ServiceIndexState, ServiceManagementRow,
@@ -20,12 +20,12 @@ import {
   serviceHost, serviceMaintenanceOf, serviceProbeNotice, serviceStatus, serviceWriteFailure, useServiceSheetExit, type ServiceIndexEntry, type ServiceKind,
 } from '../components/config/ServiceParts';
 import { captureSavedSummary, sweepSavedElement } from '../components/config/sheet/save-feedback';
-import { T1, T2, T6, T7, T8, T19, T10, T11, T12, T13, T16, T20, T21, T23, T25, T26, T28, T29, T30, T31, T32, T33, T34, T36, T37, T38 } from '../components/config/config-texts.js';
+import { T1, T2, T6, T7, T8, T19, T10, T11, T12, T13, T16, T20, T21, T23, T25, T26, T28, T29, T30, T31, T32, T33, T34, T36, T37, T38 } from '../components/config/config-texts';
 import { VoicePanel } from '../components/voice/VoicePanel';
 import { VoiceServiceCreate, VoiceServiceDetail } from '../components/voice/VoiceServiceEditor';
 import { ImagePanel } from '../components/image/ImagePanel';
 import { ImageServiceCreate, ImageServiceDetail, type ImageService } from '../components/image/ImageServiceEditor';
-import { type VoiceServiceItem } from '../voice-config.js';
+import { type VoiceServiceItem } from '../voice-config';
 import { ModelNamePicker } from '../components/model/ModelNamePicker';
 import { SecretInput } from '../components/model/SecretInput';
 import { useModelProbe, type ModelProbeTarget } from '../components/model/use-model-probe';
@@ -43,11 +43,11 @@ import {
   resolveModelBaseUrlOnProtocolChange,
   SECRET_MASK_SENTINEL,
   secretOperationOf,
-} from '../components/model/model-picker.js';
-import { clearModelCache, providerCacheKey, writeModelCache } from '../components/model/model-cache.js';
-import { mergeBindingDrafts } from '../components/model/binding-merge.js';
+} from '../components/model/model-picker';
+import { clearModelCache, providerCacheKey, writeModelCache } from '../components/model/model-cache';
+import { mergeBindingDrafts } from '../components/model/binding-merge';
 import type { ConfigDraftState } from '../components/config-draft';
-import { savedImageModelOf } from '../image-config.js';
+import { savedImageModelOf } from '../image-config';
 import { useThemePreset } from '../ui/presets';
 import { ConfigThemeTransition } from '../ui/config-theme-transition';
 import { TokenUsageSection } from '../components/config/TokenUsageSection';

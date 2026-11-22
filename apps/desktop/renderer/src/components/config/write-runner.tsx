@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../../api';
-import { LIVE, T29, T32 } from './config-texts.js';
+import { LIVE, T29, T32 } from './config-texts';
 import { announceLive } from '../../ui/live-announcer';
 
 export type WriteFailure =

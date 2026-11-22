@@ -7,17 +7,17 @@ import {
   ServiceDeleteEntry, ServiceDeleteSheet, ServiceHeading, ServiceManagementRow, ServicePauseNotice, ServiceProbeAction,
   ServiceRow, ServiceSheet, ServiceSheetActions, ServiceUseRow, serviceHost, serviceMaintenanceOf, serviceProbeNotice, serviceWriteFailure, useServiceSheetExit,
 } from '../config/ServiceParts';
-import { T10, T12, T16, T32 } from '../config/config-texts.js';
+import { T10, T12, T16, T32 } from '../config/config-texts';
 import { captureSavedSummary } from '../config/sheet/save-feedback';
 import { useSheet } from '../config/sheet/sheet-context';
 import { useMediaOccupancy } from '../config/use-media-occupancy';
 import { useWrite } from '../config/write-runner';
 import { SecretInput } from '../model/SecretInput';
-import { createSecretDraft, nextSecretDraftOnInput, SECRET_MASK_SENTINEL, secretOperationOf } from '../model/model-picker.js';
+import { createSecretDraft, nextSecretDraftOnInput, SECRET_MASK_SENTINEL, secretOperationOf } from '../model/model-picker';
 import { ImageModelPicker } from './ImageModelPicker';
-import { clearImageModelCache, imageServiceCacheKey, writeImageModelCache } from './image-cache.js';
+import { clearImageModelCache, imageServiceCacheKey, writeImageModelCache } from './image-cache';
 import { useImageProbe, type ImageProbeTarget } from './use-image-probe';
-import { describeImageFailure, savedImageModelOf } from '../../image-config.js';
+import { describeImageFailure, savedImageModelOf } from '../../image-config';
 
 export type ImageService = {
   serviceId: string;

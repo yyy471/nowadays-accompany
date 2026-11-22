@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../../api';
 import { Button, announceLive } from '../../../ui';
-import { T29, T31 } from '../config-texts.js';
+import { T29, T31 } from '../config-texts';
 import { Sheet } from '../sheet/Sheet';
 import { useSheet } from '../sheet/sheet-context';
 import { useWrite } from '../write-runner';

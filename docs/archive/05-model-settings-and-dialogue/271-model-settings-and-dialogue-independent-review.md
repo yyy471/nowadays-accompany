@@ -53,7 +53,7 @@
 ### MR-03 剩余问题
 
 1. **保存草稿会丢失刚读取的候选。** 新建供应商，保存前读到 `review-alpha`、`review-beta`，保存后在角色页选择该供应商，下拉为空。新建和编辑保存时清空各自探测状态，只有已保存接口的读取会写共享缓存。把与提交配置一致的草稿候选转给保存后的资源，并继续限制过期请求的写入。见 [新建保存](../../../apps/desktop/renderer/src/pages/Settings.tsx#L127)、[编辑保存](../../../apps/desktop/renderer/src/pages/Settings.tsx#L519)。
-2. **同地址换密钥后仍提供旧候选。** 在设置页读取旧密钥可用的两项模型，换密钥并保存，角色页继续显示旧两项。手动刷新后服务实际只返回 `review-rotated`。缓存键只含凭据状态和引用，两次本地密钥都显示 `stored`。改用能区分已保存凭据版本的标识，或在成功换密钥时清理该供应商的缓存与在途结果。见 [供应商缓存键](../../../apps/desktop/renderer/src/components/model/model-cache.js#L5)。
+2. **同地址换密钥后仍提供旧候选。** 在设置页读取旧密钥可用的两项模型，换密钥并保存，角色页继续显示旧两项。手动刷新后服务实际只返回 `review-rotated`。缓存键只含凭据状态和引用，两次本地密钥都显示 `stored`。改用能区分已保存凭据版本的标识，或在成功换密钥时清理该供应商的缓存与在途结果。见 [供应商缓存键](../../../apps/desktop/renderer/src/components/model/model-cache.ts#L5)。
 
 ### MR-04 剩余问题
 
@@ -76,7 +76,7 @@
 
 在角色页读取供应商的模型列表，让本机替身暂缓返回旧密钥的候选。切到设置页，在地址和协议相同的条件下更换密钥并保存。回到角色页，候选已按预期清空。释放旧请求后，原来的两个候选又出现在下拉中。
 
-保存只删除共享缓存中的当前值。供应商的共享键在两次密钥均为 `stored` 时保持相同，角色页的请求代际也未变，旧请求因此仍能调用 `writeModelCache`。需使换密钥前的在途探测同步失效。复验应覆盖旧请求晚于保存返回，以及晚于新密钥列表返回两种顺序。见 [缓存键与清理](../../../apps/desktop/renderer/src/components/model/model-cache.js#L5)、[在途列表写入](../../../apps/desktop/renderer/src/components/model/use-model-probe.ts#L132)、[保存后的缓存处理](../../../apps/desktop/renderer/src/pages/Settings.tsx#L532)。
+保存只删除共享缓存中的当前值。供应商的共享键在两次密钥均为 `stored` 时保持相同，角色页的请求代际也未变，旧请求因此仍能调用 `writeModelCache`。需使换密钥前的在途探测同步失效。复验应覆盖旧请求晚于保存返回，以及晚于新密钥列表返回两种顺序。见 [缓存键与清理](../../../apps/desktop/renderer/src/components/model/model-cache.ts#L5)、[在途列表写入](../../../apps/desktop/renderer/src/components/model/use-model-probe.ts#L132)、[保存后的缓存处理](../../../apps/desktop/renderer/src/pages/Settings.tsx#L532)。
 
 Agent 首次穿搭、生图草稿探测等仍按第 3 节单独验收。
 

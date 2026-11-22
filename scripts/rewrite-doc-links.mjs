@@ -18,6 +18,69 @@ const TARGET_MOVES = [
   ["devDoc/", "docs/"],
 ];
 
+const RENDERER_JS_TO_TS = [
+  "appearance-import",
+  "image-config",
+  "outfit-display",
+  "state-version",
+  "token-usage",
+  "voice-config",
+  "components/appearance/preset-lock",
+  "components/config/config-texts",
+  "components/config/summary",
+  "components/image/image-cache",
+  "components/model/binding-merge",
+  "components/model/model-cache",
+  "components/model/model-picker",
+  "components/voice/voice-cache",
+  "conversation/advance",
+  "conversation/fixtures",
+  "conversation/history",
+  "conversation/performance",
+  "conversation/task-actions",
+  "conversation/typing-state",
+  "conversation/window-model",
+  "entry/role-entry",
+  "relations/dossier",
+  "relations/fold-marks",
+];
+
+const EXACT_MOVES = new Map([
+  ...RENDERER_JS_TO_TS.flatMap((mod) => [
+    [`apps/desktop/renderer/src/${mod}.js`, `apps/desktop/renderer/src/${mod}.ts`],
+    [`apps/desktop/renderer/src/${mod}.d.ts`, `apps/desktop/renderer/src/${mod}.ts`],
+  ]),
+  ["apps/desktop/renderer/src/Relations.tsx", "apps/desktop/renderer/src/pages/Relations.tsx"],
+  ["apps/desktop/renderer/src/ui/relationship-journal.css", "apps/desktop/renderer/src/styles/relationship-journal.css"],
+  ["apps/desktop/renderer/src/ui/relationship-journal-integration.css", "apps/desktop/renderer/src/styles/relationship-journal-integration.css"],
+  ["apps/desktop/renderer/src/ui/relationship-journal-transition.css", "apps/desktop/renderer/src/styles/relationship-journal-transition.css"],
+  ["apps/desktop/renderer/src/relations/memory-correction.css", "apps/desktop/renderer/src/styles/memory-correction.css"],
+  ["apps/desktop/renderer/src/studio-overrides.css", "apps/desktop/renderer/src/styles/studio-overrides.css"],
+  ...[
+    "appearance-import",
+    "binding-merge",
+    "config-texts",
+    "conversation-advance",
+    "conversation-performance",
+    "conversation-typing",
+    "conversation-window-model",
+    "image-config",
+    "model-cache",
+    "model-picker",
+    "outfit-display",
+    "pack3-entry",
+    "relations-dossier",
+    "state-version",
+    "summary-derive",
+    "token-usage",
+    "voice-config",
+    "voice-engines-emotion",
+  ].map((name) => [
+    `apps/desktop/tests/unit/${name}.test.cjs`,
+    `apps/desktop/renderer/tests/${name}.test.ts`,
+  ]),
+]);
+
 function toOldDocPath(file) {
   const rel = path.relative(root, file).split(path.sep).join("/");
   if (rel.startsWith("docs/")) return `devDoc/${rel.slice("docs/".length)}`;
@@ -27,6 +90,9 @@ function toOldDocPath(file) {
 }
 
 function testTarget(name) {
+  if (["unit/", "helpers/", "integration/", "e2e/", "live/"].some((sub) => name.startsWith(sub))) {
+    return `apps/desktop/tests/${name}`;
+  }
   if (["electron-executable.cjs", "config-page-controls.cjs", "run-e2e.cjs"].includes(name)) {
     return `apps/desktop/tests/helpers/${name}`;
   }
@@ -38,8 +104,7 @@ function testTarget(name) {
   return null;
 }
 
-function mapTarget(oldTarget) {
-  // 兼容已经做过一次前缀替换、但尚未进入分类子目录的链接。
+function normalizeTarget(oldTarget) {
   for (const prefix of ["desktop/desk-preview/tests/", "apps/desktop/tests/"]) {
     if (oldTarget.startsWith(prefix)) {
       const mapped = testTarget(oldTarget.slice(prefix.length));
@@ -65,6 +130,16 @@ function mapTarget(oldTarget) {
     if (oldTarget.startsWith(from)) return `${to}${oldTarget.slice(from.length)}`;
   }
   return oldTarget;
+}
+
+function mapTarget(oldTarget) {
+  let current = normalizeTarget(oldTarget);
+  for (let i = 0; i < 4; i += 1) {
+    const next = EXACT_MOVES.get(current);
+    if (!next || next === current) break;
+    current = next;
+  }
+  return current;
 }
 
 function rewriteLinks(file, text) {

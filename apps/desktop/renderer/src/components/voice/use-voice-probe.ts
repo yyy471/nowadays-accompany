@@ -6,7 +6,7 @@ import {
   toVoiceServiceConfig,
   type VoiceProbeResult,
   type VoiceProtocol,
-} from '../../voice-config.js';
+} from '../../voice-config';
 import {
   clearVoiceProbeCache,
   getVoiceProbeCacheEpoch,
@@ -14,7 +14,7 @@ import {
   readVoiceProbeCache,
   subscribeVoiceProbeCache,
   writeVoiceProbeCache,
-} from './voice-cache.js';
+} from './voice-cache';
 
 export type VoiceProbeTarget =
   | {

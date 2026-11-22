@@ -138,7 +138,7 @@
 1. **`292-R05`（已停用生图服务保存前拦截）**：
    - [ImagePanel.tsx](../../../apps/desktop/renderer/src/components/image/ImagePanel.tsx#L301-L347) 的 `save()` 新增本地启用状态预检（`!currentLocal.enabled`），并在调用 `guardWrite(...)` 前向后端重新拉取 `/v1/image-services` 二次确认所选服务仍存在且 `enabled === true`；若已停用则直接行内报错（`IMAGE_SERVICE_DISABLED`）并刷新本地列表提示「当前所选生图服务已停用，请先启用或重新选择。」，不会先把活跃角色暂停后再失败。切换回已启用服务后可正常保存。
 2. **`292-R06`（跨页删除／停用／修改服务连接后旧探测与旧样图立即失效，拒收在途晚到响应且保留草稿）**：
-   - [image-config.js](../../../apps/desktop/renderer/src/image-config.js#L195-L210)（及 `image-config.d.ts`）新增 `imageServiceSnapshotKey(service, epoch)` 纯函数，纳入 `serviceId`、`enabled`、`protocol`、`baseUrl`、`timeoutMs`、`credentialRef`、`credential.status/reference`、`updatedAt` 与每服务修改代次 `epoch`。
+   - [image-config.js](../../../apps/desktop/renderer/src/image-config.ts#L195-L210)（及 `image-config.d.ts`）新增 `imageServiceSnapshotKey(service, epoch)` 纯函数，纳入 `serviceId`、`enabled`、`protocol`、`baseUrl`、`timeoutMs`、`credentialRef`、`credential.status/reference`、`updatedAt` 与每服务修改代次 `epoch`。
    - [Settings.tsx](../../../apps/desktop/renderer/src/pages/Settings.tsx#L102-L106) 追踪 `imageServiceEpochs`（仅在 `ImageServiceDetail` 保存或启停切换、或创建／删除服务时递增），并将 `serviceEpochs` 与 `outfitRefreshVersion={lookVersion}` 传入 `ImagePanel`。
    - [ImagePanel.tsx](../../../apps/desktop/renderer/src/components/image/ImagePanel.tsx#L180-L505) 为 `probe` 与 `preview` 绑定 `{ serviceId, snapshotKey }` 标签，跨页同步或服务快照变化时立即失效清除旧 `probe` 模型芯片／摘要与旧 `preview` 测试样图、清理对应短暂状态提示并递增 `probeSeq`／`previewSeq`（同时在切离页面及请求起始校验快照键，`finally` 仅按当前序列重置 `busy` 标志），确保在途晚到响应不会写回旧芯片或旧样图；用户的未保存草稿字段全程保留。同步在服饰列表刷新移除选中预览服饰时清理失效 `previewOutfitId` 与旧样图。
 3. **`292-R07`（预览接口校验 `outfitId` 角色归属与未删除状态）**：

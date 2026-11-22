@@ -42,14 +42,14 @@
 
 ```text
 apps/
-  backend/            # 后端源码、测试、验收脚本、reviews
+  apps/backend/            # 后端源码、测试、验收脚本、reviews
   desktop/
     electron/         # main / preload / backend-paths
     renderer/         # React + Vite
     tests/            # unit / e2e / integration / live / helpers
     scripts/          # 令牌生成与样式检查
 docs/                 # 原 devDoc
-tools/art-pipeline/   # 原 desktop/desk-preview/tools
+tools/art-pipeline/   # 原 apps/desktop/tools
 scripts/              # 仓库级验证、清理、文档与卫生工具
 ```
 
@@ -61,7 +61,7 @@ scripts/              # 仓库级验证、清理、文档与卫生工具
 
 `scripts/check-repo-hygiene.mjs` 已接入 `verify`：
 
-- 退役根目录回流（`backend/`、`desktop/`、`devDoc/`、`prototypes/`）；
+- 退役根目录回流（`apps/backend/`、`desktop/`、`docs/`、`prototypes/`）；
 - 被跟踪的 `node_modules/`、`dist/`、`test-results/`、`release/`、日志与编译缓存；
 - 新增 `renderer/src/**` 的 `.js + .d.ts` 配对（现有 23 组登记为基线，合并后应逐步删除基线项）；
 - 代码、现行规范、`STATUS.md`、根说明中的旧路径硬编码（`docs/archive/` 保留历史路径）；

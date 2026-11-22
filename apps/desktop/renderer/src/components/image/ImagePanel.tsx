@@ -6,7 +6,7 @@ import { announceLive } from '../../ui/live-announcer';
 import type { ConfigDraftState } from '../config-draft';
 import { MediaGroup, MediaRow, MediaSheet, MediaStateRow, RoleSaveActions, type MediaSummaryStatus } from '../config/MediaSheet';
 import { useSheet } from '../config/sheet/sheet-context';
-import { T25, T33, T34 } from '../config/config-texts.js';
+import { T25, T33, T34 } from '../config/config-texts';
 import {
   createImageForm,
   describeImageFailure,
@@ -20,10 +20,10 @@ import {
   type ImageForm,
   type ImagePreview,
   type ImageSettingsViewPayload,
-} from '../../image-config.js';
+} from '../../image-config';
 import { ImageModelPicker } from './ImageModelPicker';
 import { OutfitReferences } from './OutfitReferences';
-import { imageServiceCacheKey } from './image-cache.js';
+import { imageServiceCacheKey } from './image-cache';
 import { useImageProbe } from './use-image-probe';
 
 type Props = {

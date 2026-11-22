@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../../api';
-import { describeImageFailure } from '../../image-config.js';
+import { describeImageFailure } from '../../image-config';
 import type { Outfit } from '../../types';
 import { Button, ErrorNote, Field, Input } from '../../ui';
 

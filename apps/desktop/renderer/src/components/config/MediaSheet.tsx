@@ -3,8 +3,8 @@ import { Button, Icon, StatusDot } from '../../ui';
 import { Sheet } from './sheet/Sheet';
 import { useSheet } from './sheet/sheet-context';
 import { useWrite } from './write-runner';
-import { ARIA, T8, T29, T35, T35_RETRY } from './config-texts.js';
-import { rowDotVisible } from './summary.js';
+import { ARIA, T8, T29, T35, T35_RETRY } from './config-texts';
+import { rowDotVisible } from './summary';
 import type { ConfigDraftState } from '../config-draft';
 
 type Status = 'ok' | 'off' | 'error' | 'dirty' | 'none';

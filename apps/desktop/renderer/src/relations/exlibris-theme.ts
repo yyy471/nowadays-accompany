@@ -1,5 +1,5 @@
 import type { ThemeTransitionStrategy } from '../ui/theme-transition';
-import { buildFoldMarks } from './fold-marks.js';
+import { buildFoldMarks } from './fold-marks';
 
 function reduced(): boolean {
   const root = document.documentElement;

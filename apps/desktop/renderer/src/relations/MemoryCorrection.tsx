@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../api';
 import { Button, Checkbox, ErrorNote, Field, Input, Modal, Textarea } from '../ui';
-import './memory-correction.css';
+import '../styles/memory-correction.css';
 
 export interface MemoryTarget { type: 'event' | 'daily_summary'; id: string }
 interface RecordText { title: string; summary: string; subjectiveExperience: string }

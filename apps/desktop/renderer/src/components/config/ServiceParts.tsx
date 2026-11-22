@@ -1,12 +1,12 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { ApiError } from '../../api';
 import { Button, Icon, StatusDot, type DotStatus } from '../../ui';
-import type { ProbeNotice } from '../model/model-picker.js';
+import type { ProbeNotice } from '../model/model-picker';
 import { SheetHost } from './MediaSheet';
 import { Sheet } from './sheet/Sheet';
 import { useSheet } from './sheet/sheet-context';
 import { useWrite } from './write-runner';
-import { ARIA, T8, T13, T14, T16, T17, T29, T31, T32, T35, T35_RETRY, T36 } from './config-texts.js';
+import { ARIA, T8, T13, T14, T16, T17, T29, T31, T32, T35, T35_RETRY, T36 } from './config-texts';
 
 export type ServiceKind = 'model' | 'voice' | 'image' | 'mcp' | 'skill';
 export const SERVICE_NAMES: Record<ServiceKind, string> = { model: '模型服务', voice: '语音服务', image: '生图服务', mcp: 'MCP', skill: 'Skill' };

@@ -12,15 +12,15 @@
 
 ### R02 旧状态覆盖新状态
 
-- 新增 [state-version.js](../../../apps/desktop/renderer/src/state-version.js#L1)，按角色保存已应用的最大 `stateVersion`。角色不匹配、版本更旧或版本号无效时丢弃；同版本允许刷新。
+- 新增 [state-version.js](../../../apps/desktop/renderer/src/state-version.ts#L1)，按角色保存已应用的最大 `stateVersion`。角色不匹配、版本更旧或版本号无效时丢弃；同版本允许刷新。
 - [App.tsx](../../../apps/desktop/renderer/src/App.tsx#L29) 的初始请求和每 5 秒轮询统一走 `applySnapshot`；角色切换时重新激活当前角色，旧请求由请求编号和角色门共同拦截。断线期间不降低已见版本，恢复后更高版本正常应用。
-- [state-version.test.cjs](../../../apps/desktop/tests/unit/state-version.test.cjs) 覆盖同角色乱序、切角色、切回、断线恢复和无效版本。
+- [state-version.test.cjs](../../../apps/desktop/renderer/tests/state-version.test.ts) 覆盖同角色乱序、切角色、切回、断线恢复和无效版本。
 
 ### R03 缺图时图片与服饰名不一致
 
-- 新增 [outfit-display.js](../../../apps/desktop/renderer/src/outfit-display.js#L1)，把实际显示的图片 URL 与服饰名作为一组状态，仅在解码成功后一起替换；新图解码失败保留旧组，快速换装时旧解码完成也不能覆盖新组。
+- 新增 [outfit-display.js](../../../apps/desktop/renderer/src/outfit-display.ts#L1)，把实际显示的图片 URL 与服饰名作为一组状态，仅在解码成功后一起替换；新图解码失败保留旧组，快速换装时旧解码完成也不能覆盖新组。
 - [HomeScene.tsx](../../../apps/desktop/renderer/src/components/home/HomeScene.tsx#L82) 使用该分组状态生成图片、图注、`alt` 和 `aria-label`。图片渲染失败只清除同一 URL 的展示，不回退到新服饰名。
-- [outfit-display.test.cjs](../../../apps/desktop/tests/unit/outfit-display.test.cjs) 覆盖加载中、解码失败、快速换装、清空和同一 URL 改名。
+- [outfit-display.test.cjs](../../../apps/desktop/renderer/tests/outfit-display.test.ts) 覆盖加载中、解码失败、快速换装、清空和同一 URL 改名。
 
 ## 2. 复验证据
 

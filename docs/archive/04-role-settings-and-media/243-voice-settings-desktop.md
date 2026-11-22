@@ -18,7 +18,7 @@
 
 ## 2. 表单与载荷映射
 
-- 纯逻辑集中在 `renderer/src/voice-config.js`（[voice-config.js](../../../apps/desktop/renderer/src/voice-config.js)），不碰 DOM，测试直接覆盖。
+- 纯逻辑集中在 `renderer/src/voice-config.js`（[voice-config.js](../../../apps/desktop/renderer/src/voice-config.ts)），不碰 DOM，测试直接覆盖。
 - `createVoiceForm` 把 `VoiceConfigView` 读成表单；未保存过配置时给出默认值（统一协议、参考音频、`zh`、语速 1、情感强度 1），与后端 `DEFAULT_SPEED`／`DEFAULT_EMO_ALPHA` 一致。
 - `toVoicePayload` 是保存与试听共用的唯一出口，按协议收敛字段：旧 IndexTTS 只发 `kind: "reference"` 且参考模式、参考文本固定为 `null`；统一协议按 `sourceKind` 发参考音频或预置音色。输出字段全部落在 `saveVoiceSchema`／`previewVoiceSchema` 的允许集合内，不会因 `.strict()` 被拒。
 

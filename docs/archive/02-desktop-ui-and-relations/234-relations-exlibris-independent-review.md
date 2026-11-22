@@ -8,7 +8,7 @@
 
 在隔离服务中挂起第九篇日记详情。角色设定、近况、服饰、经历和其他八篇可读日记已经返回。继续观察两秒，首页仍显示「正在读取近况」，进入经历页也看不到已返回的经历。释放第九篇请求后，经历才出现。
 
-`loadRelationPacket` 等经历、日常概况和全部日记详情一起结束，`Relations` 才发布整份资料。逐批读取解除了八篇截断，但也让第九篇及之后的日记进入首页和经历的等待链。应独立展示已返回的资料，并保留切换角色后的旧请求隔离。定位见 [load-dossier.ts](../../../apps/desktop/renderer/src/relations/load-dossier.ts#L28) 和 [Relations.tsx](../../../apps/desktop/renderer/src/Relations.tsx#L88)。
+`loadRelationPacket` 等经历、日常概况和全部日记详情一起结束，`Relations` 才发布整份资料。逐批读取解除了八篇截断，但也让第九篇及之后的日记进入首页和经历的等待链。应独立展示已返回的资料，并保留切换角色后的旧请求隔离。定位见 [load-dossier.ts](../../../apps/desktop/renderer/src/relations/load-dossier.ts#L28) 和 [Relations.tsx](../../../apps/desktop/renderer/src/pages/Relations.tsx#L88)。
 
 ### EX-R02 · P2 · 多角色选择项被压缩
 
@@ -16,7 +16,7 @@
 
 ### EX-R03 · P2 · 关闭换人面板时键盘焦点丢失
 
-打开选择器后焦点仍留在「换一位」。把焦点移入角色选项后按 `Esc`，选择器关闭，焦点落回文档主体。v2 原型打开时聚焦当前角色，按 `Esc` 关闭后焦点返回「换一位」。桌面实现需要恢复这两步，以便键盘用户继续操作。定位见 [Relations.tsx](../../../apps/desktop/renderer/src/Relations.tsx#L131)。
+打开选择器后焦点仍留在「换一位」。把焦点移入角色选项后按 `Esc`，选择器关闭，焦点落回文档主体。v2 原型打开时聚焦当前角色，按 `Esc` 关闭后焦点返回「换一位」。桌面实现需要恢复这两步，以便键盘用户继续操作。定位见 [Relations.tsx](../../../apps/desktop/renderer/src/pages/Relations.tsx#L131)。
 
 ## 2. 已通过的检查
 

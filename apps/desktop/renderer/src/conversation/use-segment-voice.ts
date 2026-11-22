@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import type { VoiceResponse } from './api-types';
-import type { PerfRow } from './history.js';
+import type { PerfRow } from './history';
 
 export interface SegmentVoiceHandle {
   playingId: number | null;

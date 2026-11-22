@@ -14,7 +14,7 @@ import {
   type TokenUsageRange,
   type TokenUsageSummaryView,
   type TokenUsageTotalsView,
-} from '../../token-usage.js';
+} from '../../token-usage';
 import { AsyncBoundary, Button, Field, Select } from '../../ui';
 import { announceLive } from '../../ui/live-announcer';
 

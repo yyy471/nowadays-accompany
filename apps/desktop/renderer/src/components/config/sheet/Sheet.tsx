@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { T9 } from '../config-texts.js';
+import { T9 } from '../config-texts';
 import { focusableControls } from '../../../ui/focus';
 import { createMotionScope, readMotionTime, readMotionValue, useMotionPolicy } from '../../../ui';
 import { SheetScrims } from './scrims';

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { PerfRow } from './history.js';
+import type { PerfRow } from './history';
 
 export interface VoiceHandle {
   /** 正在播放的句段 id；无则 null。 */

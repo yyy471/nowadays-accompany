@@ -5,7 +5,7 @@ import { announceLive } from '../../ui/live-announcer';
 import type { ConfigDraftState } from '../config-draft';
 import { MediaGroup, MediaRow, MediaSheet, MediaStateRow, RoleSaveActions, type MediaSummaryStatus } from '../config/MediaSheet';
 import { useSheet } from '../config/sheet/sheet-context';
-import { T3, T25, T33, T34 } from '../config/config-texts.js';
+import { T3, T25, T33, T34 } from '../config/config-texts';
 import {
   createVoiceForm,
   describeVoiceFailure,
@@ -23,8 +23,8 @@ import {
   type VoiceForm,
   type VoiceReferenceItem,
   type VoiceServiceItem,
-} from '../../voice-config.js';
-import { voiceServiceCacheKey } from './voice-cache.js';
+} from '../../voice-config';
+import { voiceServiceCacheKey } from './voice-cache';
 import { useVoiceProbe } from './use-voice-probe';
 import { formatVoiceEngineLabel, VoiceProbeSummaryBox } from './VoiceProbeView';
 

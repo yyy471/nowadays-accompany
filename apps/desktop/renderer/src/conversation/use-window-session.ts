@@ -12,11 +12,11 @@ import type {
   ConversationWaitReason,
   WindowView
 } from './api-types';
-import type { PerfRow } from './history.js';
-import type { PerformanceSnapshot, SceneLayerMode } from './performance.js';
+import type { PerfRow } from './history';
+import type { PerformanceSnapshot, SceneLayerMode } from './performance';
 import { backendBaseUrl } from './backend-base';
-import { applySegmentAnnotations, createRowIdRegistry, groupSegments, isSubmissionConfirmed, lastRowOf, mergeSegments, messageStatusOf, newerSceneTask, nextMessageSequence, reconcileFinalSegments, rowsForMessage, sceneView } from './window-model.js';
-import { createTypingState } from './typing-state.js';
+import { applySegmentAnnotations, createRowIdRegistry, groupSegments, isSubmissionConfirmed, lastRowOf, mergeSegments, messageStatusOf, newerSceneTask, nextMessageSequence, reconcileFinalSegments, rowsForMessage, sceneView } from './window-model';
+import { createTypingState } from './typing-state';
 
 export type ConnectionState = 'connecting' | 'open' | 'retrying' | 'closed';
 export type SessionEventReason = 'load' | 'send' | 'retryReply' | 'segment' | 'ready' | 'annotation' | 'terminal' | 'scene' | 'error' | 'connection' | 'history';

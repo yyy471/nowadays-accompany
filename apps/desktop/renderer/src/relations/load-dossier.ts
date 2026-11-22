@@ -1,6 +1,6 @@
 import { api } from '../api';
 import { appearanceAssetUrl, type Outfit, type RoleDetail, type RoleStateResponse } from '../types';
-import { diaryParagraphs, diaryTitle, formatExperienceDate, stateLines, stateSentence, type RelationDiary, type RelationEvent, type RelationPacket, type RelationSummary } from './dossier.js';
+import { diaryParagraphs, diaryTitle, formatExperienceDate, stateLines, stateSentence, type RelationDiary, type RelationEvent, type RelationPacket, type RelationSummary } from './dossier';
 
 interface SearchItem { type: string; id: string; title: string; snippet: string }
 interface EventDetail { title: string; summary: string; subjectiveExperience?: string; experienceDate: string; sources?: Array<{ evidenceId: string }> }

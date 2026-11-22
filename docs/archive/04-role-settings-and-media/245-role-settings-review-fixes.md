@@ -21,7 +21,7 @@
 
 ## 3. RS-R02 · 探测结果跟随地址与协议
 
-- 纯逻辑新增 `normalizeBaseUrl`、`isProbeCurrent`、`resolveCapabilities`（[voice-config.js](../../../apps/desktop/renderer/src/voice-config.js)）。地址比较只忽略首尾空白与末尾斜杠，与后端规范化一致。
+- 纯逻辑新增 `normalizeBaseUrl`、`isProbeCurrent`、`resolveCapabilities`（[voice-config.js](../../../apps/desktop/renderer/src/voice-config.ts)）。地址比较只忽略首尾空白与末尾斜杠，与后端规范化一致。
 - 页面用 `probeSource` 记录发起探测时的地址与协议。响应回来时若当前表单已改地址或协议，直接丢弃并提示「地址已修改，刚才的探测结果已丢弃」；探测期间切换角色也一并丢弃。
 - 能力声明按来源解析：表单仍指向已保存服务时用已保存配置的 `capabilities`；换了地址则用同一地址的探测结果；两者都不匹配时返回 `null`，宁可跳过能力校验也不拿旧声明去校验新服务。预置音色列表同样只在探测来源匹配时展示。
 - `validateVoiceForm` 区分「没传 capabilities」与「显式无能力」：显式传 `null` 时不再回落到表单里的旧声明。

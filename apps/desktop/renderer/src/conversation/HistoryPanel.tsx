@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Icon, useMotionPolicy } from '../ui';
-import { buildDays, calendarDays, dateLabel, dayKey, daySnippets, dotTier, findHits, keyToDate, rangesFor, snippet, termsFor, textFor } from './history.js';
-import type { DaySummary, PerfRow } from './history.js';
-import type { PerfScene } from './performance.js';
+import { buildDays, calendarDays, dateLabel, dayKey, daySnippets, dotTier, findHits, keyToDate, rangesFor, snippet, termsFor, textFor } from './history';
+import type { DaySummary, PerfRow } from './history';
+import type { PerfScene } from './performance';
 
 const WEEK = '日一二三四五六';
 const weekday = (key: string) => `周${WEEK[keyToDate(key).getDay()]}`;

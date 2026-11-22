@@ -13,7 +13,7 @@
    - [Settings.tsx](../../../apps/desktop/renderer/src/pages/Settings.tsx) 的 `SettingsWorkspace` 使用 `handledWorkspaceKey` 记录已处理的请求键并在消费时通知外层清空，避免创建完成刷新角色列表或切回「角色配置」时重复弹出空白创建窗。
 2. **#2 连续两轮实时对话消息顺序倒错**：
    - 后端 [conversation-store.ts](../../../apps/backend/src/storage/conversation-store.ts) 在 SSE 事件（`message_segments`、`message_completed`、`message_interrupted`）写入并广播真实数据库序号 `replySequence` 与 `replyCreatedAt`；
-   - 前端 [window-model.js](../../../apps/desktop/renderer/src/conversation/window-model.js) 新增 `nextMessageSequence(messages)` 替代 `Number.MAX_SAFE_INTEGER` 兜底；[use-window-session.ts](../../../apps/desktop/renderer/src/conversation/use-window-session.ts) 在 `PendingReply` 上承接 `replySequence` / `replyCreatedAt` 并用于 `finalizePending`，彻底消除首轮 SSE 回复排到第二轮真实用户消息之后的问题。
+   - 前端 [window-model.js](../../../apps/desktop/renderer/src/conversation/window-model.ts) 新增 `nextMessageSequence(messages)` 替代 `Number.MAX_SAFE_INTEGER` 兜底；[use-window-session.ts](../../../apps/desktop/renderer/src/conversation/use-window-session.ts) 在 `PendingReply` 上承接 `replySequence` / `replyCreatedAt` 并用于 `finalizePending`，彻底消除首轮 SSE 回复排到第二轮真实用户消息之后的问题。
 3. **#3 与外观显示裁决（首次进入对话 & 设置页衣柜）**：
    - [App.tsx](../../../apps/desktop/renderer/src/App.tsx) 以 `appearanceRoleId` 派生同角色刷新不清空快照的 `appearanceLoading`，并在收到会话终态/标注事件时触发 `onRoleStateChanged` 及时同步最新服饰状态；
    - [Conversation.tsx](../../../apps/desktop/renderer/src/pages/Conversation.tsx) 与 [ConversationStage.tsx](../../../apps/desktop/renderer/src/conversation/ConversationStage.tsx) 移除「当前未选择服饰」提示，仅在确认 `outfits.length === 0` 时使用主题占位人物；否则在 `appearanceLoading` 或 `currentOutfit === null` 时展示背景与 `.dialogue-stage-arriving`（「正在整理画面…」 / 「`<角色名>` 正在换装，即将赶来…」）；
@@ -36,7 +36,7 @@
    - `cd apps/backend && npx -y node@24 scripts/accept-offline.mjs`：**21／21** 步全部通过，`realServiceCalls=0`（报告 summary.json（`../../../apps/backend/test-results/p5-2026-11-16T03-58-22-917Z-d6aa0d00/summary.json`，历史运行产物已轮转））。
 2. **桌面渲染器门禁与单元测试**：
    - `cd apps/desktop/renderer && npm run check && npm run build` 通过（`tokens:check` 最新、`lint:styles` 22 个 CSS 零违规且豁免命中从 389 降至 388、`tsc --noEmit` 通过、126 模块打包通过）；
-   - `cd desktop/desk-preview && npx -y node@24 --test tests/*.test.cjs`：**136／136** 通过（含 [conversation-window-model.test.cjs](../../../apps/desktop/tests/unit/conversation-window-model.test.cjs) 新增 `nextMessageSequence` 顺序回归）。
+   - `cd desktop/desk-preview && npx -y node@24 --test tests/*.test.cjs`：**136／136** 通过（含 [conversation-window-model.test.cjs](../../../apps/desktop/renderer/tests/conversation-window-model.test.ts) 新增 `nextMessageSequence` 顺序回归）。
 3. **Electron 实机 DOM／真实本地后端端到端自验**（均于最终代码改动后运行，全部退出码 0，`errors: []`）：
    - 新增专项检查 [startup-flow-fixes-check.cjs](../../../apps/desktop/tests/e2e/startup-flow-fixes.e2e.cjs)：验证 #1 创建弹窗不重开、#2 两轮实时消息正序、#3「即将赶来」不闪现主题图/「未选择服饰」、#4 底部推进条与「全部展开」、#5 `/models` 404 指引与新建草稿测试继承、#6 新建角色即时状态同步与慢速语音试听主动取消；
    - 回归更新并重跑 [settings-workspace-check.cjs](../../../apps/desktop/tests/e2e/settings-workspace.e2e.cjs)、[settings-review-fixes-check.cjs](../../../apps/desktop/tests/e2e/settings-review-fixes.e2e.cjs)、[settings-real-backend-check.cjs](../../../apps/desktop/tests/e2e/settings-real-backend.e2e.cjs)、[workflow-real-backend-chain-check.cjs](../../../apps/desktop/tests/e2e/workflow-real-backend-chain.e2e.cjs)、[dialogue-layout-check.cjs](../../../apps/desktop/tests/e2e/dialogue-layout.e2e.cjs)、[settings-auto-reload-check.cjs](../../../apps/desktop/tests/e2e/settings-auto-reload.e2e.cjs) 与 [settings-binding-recovery-check.cjs](../../../apps/desktop/tests/e2e/settings-binding-recovery.e2e.cjs)。

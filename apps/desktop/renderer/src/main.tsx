@@ -23,10 +23,10 @@ import './styles/conversation.css';
 import './styles/feed.css';
 import './ui/preset-appearance.css';
 import './ui/status-dot.css';
-import './ui/relationship-journal.css';
-import './ui/relationship-journal-integration.css';
-import './ui/relationship-journal-transition.css';
-import './studio-overrides.css';
+import './styles/relationship-journal.css';
+import './styles/relationship-journal-integration.css';
+import './styles/relationship-journal-transition.css';
+import './styles/studio-overrides.css';
 
 applyMotionPreference(readMotionPreference());
 createRoot(document.getElementById('root')!).render(

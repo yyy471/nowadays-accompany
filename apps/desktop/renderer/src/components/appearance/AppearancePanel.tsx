@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { api, apiUpload, ApiError } from '../../api';
 import type { Outfit, RoleStateResponse } from '../../types';
-import { assetLocked, outfitWritePolicy } from './preset-lock.js';
+import { assetLocked, outfitWritePolicy } from './preset-lock';
 import { appearanceAssetUrl } from '../../types';
 import { Button, createMotionScope, Field, Select, useMotionPolicy } from '../../ui';
 import { Sheet } from '../config/sheet/Sheet';
@@ -11,7 +11,7 @@ import { useSheet } from '../config/sheet/sheet-context';
 import { MediaStateRow, RoleSaveActions } from '../config/MediaSheet';
 import { ConfigNotice } from '../config/ConfigNotice';
 import { useWrite } from '../config/write-runner';
-import { T22, T25, T27, T29, T31, T36 } from '../config/config-texts.js';
+import { T22, T25, T27, T29, T31, T36 } from '../config/config-texts';
 import { announceLive } from '../../ui/live-announcer';
 import {
   markImportedPlans,
@@ -21,7 +21,7 @@ import {
   summarizeOutfitPlan,
   type AppearanceImportPlan,
   type AppearanceScanResult,
-} from '../../appearance-import.js';
+} from '../../appearance-import';
 
 type Props = {
   roleId: string;

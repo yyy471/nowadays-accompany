@@ -8,13 +8,13 @@ import { useThemePreset } from './ui/presets';
 import { ThemeSwitcher } from './components/shell/ThemeSwitcher';
 import { PageDock } from './components/shell/PageDock';
 import { HomePage } from './pages/Home';
-import { Relations } from './Relations';
+import { Relations } from './pages/Relations';
 import { SettingsWorkspace, type ConfigNavigationGuard } from './pages/Settings';
 import { ConversationPage } from './pages/Conversation';
 import { FeedPage } from './pages/Feed';
 import { RoleEntry } from './pages/RoleEntry';
-import { needsEntryPick } from './entry/role-entry.js';
-import { createStateVersionGate } from './state-version.js';
+import { needsEntryPick } from './entry/role-entry';
+import { createStateVersionGate } from './state-version';
 
 export function App() {
   const { preset } = useThemePreset();

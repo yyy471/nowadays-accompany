@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { api, ApiError } from '../../api';
-import { modelTestNote, type ProbeNotice } from './model-picker.js';
-import { T4 } from '../config/config-texts.js';
+import { modelTestNote, type ProbeNotice } from './model-picker';
+import { T4 } from '../config/config-texts';
 import {
   getModelCacheEpoch,
   getModelCacheVersion,
   readModelCache,
   subscribeModelCache,
   writeModelCache,
-} from './model-cache.js';
+} from './model-cache';
 
 /** 候选配置探测目标：草稿直接用表单值，已保存服务走按资源接口。 */
 export type ModelProbeTarget =
