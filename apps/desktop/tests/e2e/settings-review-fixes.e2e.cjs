@@ -7,12 +7,12 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const { resolveElectronExecutable } = require('../helpers/electron-executable.cjs');
 const { button, configControls, editor, element, setValue, sheet } = require('../helpers/config-page-controls.cjs');
-const root = path.resolve(__dirname, '../../../../');
+const { repoRoot: root, desktopDir, backendDir, xiachengPortraitFixture } = require('../helpers/paths.cjs');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'nowadays-ui-real-'));
 const emptyPresets = path.join(temp, 'presets');
 fs.mkdirSync(emptyPresets, { recursive: true });
 const node = process.execPath;
-const imagePath = path.join(root, 'apps/desktop/renderer/src/assets/themes/xiacheng/character.png');
+const imagePath = xiachengPortraitFixture;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(fn) { let last; for (const start = Date.now(); Date.now() - start < 25000;) { try { const value = await fn(); if (value) return value; } catch (error) { last = error; } await delay(100); } throw Error(`等待超时: ${last || ''}`); }
 let backend, electron, ws, backendLog = '', electronLog = '', nextId = 0, base = '';
@@ -23,7 +23,7 @@ const { click, pickRole, tab, openRoleRow, openSheet } = configControls(ev, unti
 async function request(route, options = {}) { const response = await fetch(base + route, options); const body = await response.json(); if (!response.ok) throw Error(`${response.status}: ${JSON.stringify(body)}`); return body; }
 const json = body => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 async function run() {
-  backend = spawn(node, ['--import', 'tsx', 'src/main.ts', '--app-root', path.join(temp, 'app'), '--port', '0', '--preset-assets-dir', emptyPresets], { cwd: path.join(root, 'apps', 'backend'), windowsHide: true });
+  backend = spawn(node, ['--import', 'tsx', 'src/main.ts', '--app-root', path.join(temp, 'app'), '--port', '0', '--preset-assets-dir', emptyPresets], { cwd: backendDir, windowsHide: true });
   backend.stdout.on('data', data => backendLog += data); backend.stderr.on('data', data => backendLog += data);
   const port = await until(() => { const match = /"event":"listening","host":"[^"]+","port":(\d+)/.exec(backendLog); return match?.[1]; });
   base = `http://127.0.0.1:${port}`;
@@ -46,7 +46,7 @@ async function run() {
     await request(`/v1/roles/${a.roleId}/appearance/outfits`, { method: 'POST', body: form });
   }
   const env = { ...process.env, NOWADAYS_BACKEND_URL: base, NOWADAYS_APP_ROOT: path.join(temp, 'desktop'), NOWADAYS_SKIP_ROLE_PICKER: '1' }; delete env.ELECTRON_RUN_AS_NODE;
-  electron = spawn(resolveElectronExecutable({ repoRoot: root }), ['--no-sandbox', '--remote-debugging-port=0', `--user-data-dir=${path.join(temp, 'profile')}`, path.join(root, 'apps/desktop')], { env, windowsHide: true });
+  electron = spawn(resolveElectronExecutable({ repoRoot: root }), ['--no-sandbox', '--remote-debugging-port=0', `--user-data-dir=${path.join(temp, 'profile')}`, desktopDir], { env, windowsHide: true });
   electron.stdout.on('data', data => electronLog += data); electron.stderr.on('data', data => electronLog += data);
   const debugPort = await until(() => /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)/.exec(electronLog)?.[1]);
   const target = await until(async () => (await (await fetch(`http://127.0.0.1:${debugPort}/json/list`)).json()).find(item => item.url.startsWith('desk://bundle/')));

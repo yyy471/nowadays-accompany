@@ -500,6 +500,7 @@ test("多角色暂停超时时返回已经停止的角色名单", { timeout: 60_
     {
       disableMemoryRuntime: false,
       memoryModelFactory: () => memoryModel,
+      maintenancePauseTimeoutMs: 600,
     },
   );
   try {

@@ -24,7 +24,7 @@ const ALLOWED_DEVDOC_ROOT_MD = new Set([
   'STATUS.md',
   '161-digital-life-direction-decisions.md',
 ]);
-// 201–204 保留 205 重构前已移除的 Blender 脚本历史引用，仅限这四份早期记录放行
+// 201–204 保留 205 重构前已移除的 Blender / 早期静态书桌历史引用
 const LEGACY_REMOVED_TARGETS = new Set([
   'desktop/desk-preview/tools/render_desk.py',
   'desktop/desk-preview/tools/render_portrait.py',
@@ -32,10 +32,10 @@ const LEGACY_REMOVED_TARGETS = new Set([
   'tools/art-pipeline/render_desk.py',
   'tools/art-pipeline/render_portrait.py',
   'tools/art-pipeline/package_assets.py',
-  'apps/desktop/index.html',
+  'desktop/desk-preview/index.html',
 ]);
 // 归档记录保留当时路径：退役目录不在现行结构中出现，但历史链接不要求复活目标。
-const LEGACY_REMOVED_PREFIXES = ['prototypes/', 'desktop/desk-preview/'];
+const LEGACY_REMOVED_PREFIXES = ['prototypes/'];
 const isLegacyRemoved = target => {
   const normalized = rel(target);
   return LEGACY_REMOVED_TARGETS.has(normalized) || LEGACY_REMOVED_PREFIXES.some(prefix => normalized.startsWith(prefix));

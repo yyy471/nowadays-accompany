@@ -13,7 +13,7 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const { resolveElectronExecutableInfo } = require('../helpers/electron-executable.cjs');
 
-const root = path.resolve(__dirname, '../../../../');
+const { repoRoot: root, desktopDir, backendDir } = require('../helpers/paths.cjs');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'nowadays-p3-entry-'));
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -49,7 +49,7 @@ async function ev(expression) {
 
 async function run() {
   backend = spawn(process.execPath, ['--import', 'tsx', 'src/main.ts', '--app-root', path.join(temp, 'app'), '--port', '0'], {
-    cwd: path.join(root, 'apps', 'backend'),
+    cwd: backendDir,
     windowsHide: true,
   });
   backend.stdout.on('data', data => backendLog += data);
@@ -64,7 +64,7 @@ async function run() {
   const electronInfo = resolveElectronExecutableInfo({ repoRoot: root });
   electron = spawn(electronInfo.executable, [
     '--no-sandbox', '--remote-debugging-port=0', `--user-data-dir=${path.join(temp, 'profile')}`,
-    path.join(root, 'apps/desktop'),
+    desktopDir,
   ], { env, windowsHide: true });
   electron.stdout.on('data', data => electronLog += data);
   electron.stderr.on('data', data => electronLog += data);

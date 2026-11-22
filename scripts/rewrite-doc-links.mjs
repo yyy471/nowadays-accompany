@@ -124,8 +124,8 @@ for (const file of files) {
     .replace(/(?<![A-Za-z0-9_./-])desktop\/scripts\//g, "apps/desktop/scripts/")
     .replace(/(?<![A-Za-z0-9_./-])backend\//g, "apps/backend/")
     .replace(/devDoc\//g, "docs/")
-    .replace(/cd backend\b/g, "cd apps/backend")
-    .replace(/Set-Location ([^\r\n]*?)\\backend\b/g, "Set-Location $1\\apps\\backend");
+    .replace(/(?<![A-Za-z0-9_./-])cd backend\b/g, "cd apps/backend")
+    .replace(/Set-Location ([^\r\n]*?)(?<!\\apps)\\backend\b/g, "Set-Location $1\\apps\\backend");
   if (text !== original) {
     fs.writeFileSync(file, text);
     console.log(path.relative(root, file));

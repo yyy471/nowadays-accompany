@@ -7,9 +7,9 @@ const os = require('node:os');
 const assert = require('node:assert/strict');
 const { resolveElectronExecutable } = require('../helpers/electron-executable.cjs');
 const { button, configControls, editor, element, setValue, sheet } = require('../helpers/config-page-controls.cjs');
-const root = path.resolve(__dirname, '../../../../');
-const { PNG } = require(require.resolve('pngjs', { paths: [path.resolve(__dirname, '../..', 'electron'), root, path.join(root, 'apps', 'backend')] }));
-const out = path.join(root, 'test-results/settings-workspace');
+const { repoRoot: root, desktopDir, backendDir, electronDir, xiachengPortraitFixture, testResultsDir } = require('../helpers/paths.cjs');
+const { PNG } = require(require.resolve('pngjs', { paths: [electronDir, root, backendDir] }));
+const out = path.join(testResultsDir, 'settings-workspace');
 fs.mkdirSync(out, { recursive: true });
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'settings-workspace-'));
 const sampleWavPath = path.join(temp, 'sample.wav');
@@ -79,7 +79,7 @@ const server = http.createServer((req, res) => {
     if (outfitMatch[2] === 'home' && req.method === 'POST') { req.resume(); outfit.home = { assetId: 'home-new' }; return json(res, outfit.home, 201); }
     if (outfitMatch[2] === 'sprites' && outfitMatch[3] && req.method === 'DELETE') { outfit.sprites = outfit.sprites.filter(item => item.assetId !== outfitMatch[3]); return json(res, { assetId: outfitMatch[3], retained: true }); }
   }
-  if (p.includes('/appearance/assets/')) { res.writeHead(200, { 'content-type': 'image/png' }); return res.end(fs.readFileSync(path.join(root, 'apps/desktop/renderer/src/assets/themes/xiacheng/character.png'))); }
+  if (p.includes('/appearance/assets/')) { res.writeHead(200, { 'content-type': 'image/png' }); return res.end(fs.readFileSync(xiachengPortraitFixture)); }
   if (p.endsWith('/bindings') && req.method === 'PUT') { let body = ''; req.on('data', chunk => body += chunk); return req.on('end', () => { const data = JSON.parse(body), id = role.roleId; if (roleStates[id] !== 'stopped') return json(res, { error: { message: '角色尚未停止' } }, 409); if (data.expectedRevision !== String(revisions[id])) return json(res, { error: { message: '绑定版本已变化' } }, 409); bindings[id] = data.bindings.map(item => ({ ...item, modelName: item.modelName || null })); revisions[id]++; json(res, { items: bindings[id], revision: String(revisions[id]) }); }); }
   if (p.endsWith('/bindings')) return json(res, { items: bindings[role?.roleId] || [], revision: String(revisions[role?.roleId] || 1) });
   if (p.endsWith('/autonomy/budget') && req.method === 'PUT') { let body = ''; req.on('data', chunk => body += chunk); return req.on('end', () => { if (roleStates[role.roleId] !== 'stopped') return json(res, { error: { message: '角色尚未停止' } }, 409); budgets[role.roleId] = { ...budgets[role.roleId], ...JSON.parse(body) }; json(res, budgets[role.roleId]); }); }
@@ -224,7 +224,7 @@ const server = http.createServer((req, res) => {
     let body = ''; req.on('data', c => body += c);
     return req.on('end', () => {
       const data = JSON.parse(body); imagePreviews.push(data);
-      const pngBytes = fs.readFileSync(path.join(root, 'apps/desktop/renderer/src/assets/themes/xiacheng/character.png'));
+      const pngBytes = fs.readFileSync(xiachengPortraitFixture);
       json(res, { width: 512, height: 512, prompt: data.prompt || data.settings.basePrompt, mediaType: 'image/png', dataBase64: pngBytes.toString('base64') });
     });
   }
@@ -311,7 +311,7 @@ const { click, pickRole, tab, openRoleRow, openSheet } = configControls(ev, unti
 async function run() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const env = { ...process.env, NOWADAYS_BACKEND_URL: `http://127.0.0.1:${server.address().port}`, NOWADAYS_APP_ROOT: path.join(temp, 'data'), NOWADAYS_SKIP_ROLE_PICKER: '1' }; delete env.ELECTRON_RUN_AS_NODE;
-  proc = spawn(resolveElectronExecutable({ repoRoot: root }), ['--no-sandbox', '--remote-debugging-port=0', `--user-data-dir=${path.join(temp, 'profile')}`, path.join(root, 'apps/desktop')], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  proc = spawn(resolveElectronExecutable({ repoRoot: root }), ['--no-sandbox', '--remote-debugging-port=0', `--user-data-dir=${path.join(temp, 'profile')}`, desktopDir], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   proc.stdout.on('data', x => logs += x); proc.stderr.on('data', x => logs += x);
   let port; await until(() => port = /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)/.exec(logs)?.[1]);
   let target; await until(async () => target = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(item => item.url.startsWith('desk://bundle/')));
@@ -402,7 +402,7 @@ async function run() {
   }
   const image = sheet + ' .nd-image';
   const voice = sheet + ' .nd-voice';
-  const startPath = path.join(root, 'apps/desktop/renderer/src/assets/themes/xiacheng/character.png');
+  const startPath = xiachengPortraitFixture;
   await setProfile('乙的未保存草稿');
   await until(() => ev("!!document.querySelector('.config-tabs [aria-current=page] .tab-dot')"));
   await pickRole('a');

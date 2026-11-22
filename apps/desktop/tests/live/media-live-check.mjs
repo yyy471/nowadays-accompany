@@ -9,12 +9,12 @@ import { createBackendApp, listen } from "../../../backend/src/bootstrap/app.ts"
 import { parseBackendConfig } from "../../../backend/src/bootstrap/config.ts";
 import { httpClient, delay } from "../../../backend/scripts/role-world-http-transport.mjs";
 import { resolveElectronExecutable } from "../helpers/electron-executable.cjs";
+import { backendDir, desktopDir, repoRoot as root, testResultsDir } from "../helpers/paths.cjs";
 import { defaultComfyWorkflow } from "../../../backend/src/scene/comfyui-workflow.ts";
 
 const [voiceMode = "sample", imageMode = "sample"] = process.argv.slice(2);
 assert.ok(["sample", "cosyvoice", "indextts"].includes(voiceMode) && ["sample", "comfy"].includes(imageMode));
-const root = fileURLToPath(new URL("../../../", import.meta.url));
-const output = path.join(root, "test-results", "desktop-media");
+const output = path.join(testResultsDir, "desktop-media");
 fs.mkdirSync(output, { recursive: true });
 const out = fs.mkdtempSync(path.join(output, voiceMode + "-" + imageMode + "-"));
 const report = { voiceMode, imageMode, textModel: "deterministic", checks: {}, errors: [] };
@@ -126,7 +126,7 @@ async function main() {
   const post = async (method, route, body) => (await api.request(method, route, body)).body;
   const role = await post("POST", "/v1/roles", { displayName: "雨声", definition: { text: "习惯听雨的角色" } });
   const rr = "/v1/roles/" + role.roleId, route = rr + "/windows/" + role.defaultWindowId;
-  const attachment = path.join(root, "backend/assets/presets/xiacheng/outfits/default");
+  const attachment = path.join(backendDir, "assets/presets/xiacheng/outfits/default");
   const asset = file => new Blob([fs.readFileSync(path.join(attachment, file + ".png"))], { type: "image/png" });
   const outfitForm = new FormData(); outfitForm.append("name", "测试常服"); outfitForm.append("home", asset("home"), "home.png");
   for (const name of ["happy", "worried"]) outfitForm.append("sprites", asset("sprites/" + name), name + ".png");
@@ -161,7 +161,7 @@ async function main() {
   const env = { ...process.env, NOWADAYS_SKIP_ROLE_PICKER: "1", NOWADAYS_BACKEND_URL: api.origin, NOWADAYS_APP_ROOT: cfg.appRoot };
   delete env.ELECTRON_RUN_AS_NODE;
   proc = spawn(resolveElectronExecutable({ repoRoot: root }), ["--no-sandbox", "--remote-debugging-port=0", "--user-data-dir=" + path.join(out, "profile"),
-    path.join(root, "apps/desktop")], { env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    desktopDir], { env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
   proc.stderr.on("data", b => { log = (log + b).slice(-18000); }); proc.stdout.resume();
   const debug = await until("ELECTRON", () => /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)/.exec(log)?.[1]);
   const tab = await until("DESK", async () => (await (await fetch("http://127.0.0.1:" + debug + "/json/list")).json()).find(t => t.url.startsWith("desk://bundle/")));

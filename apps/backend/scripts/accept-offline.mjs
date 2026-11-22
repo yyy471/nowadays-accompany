@@ -48,7 +48,7 @@ const ALL_STEPS = [...STAGE_A, ...STAGE_B, ...STAGE_C];
 function printHelp() {
   console.log(`node scripts/accept-offline.mjs [选项]
 
-离线固定全量验收；报告保存于 backend/test-results/p5-<时间>-<编号>/。
+离线固定全量验收；报告保存于 apps/backend/test-results/p5-<时间>-<编号>/。
   --only <id,id>       只运行指定步骤；结果标记 partial，不可作为全量门禁
   --keep-tmp           保留本次 run/tmp（失败时总是保留）
   --keep-runs <N>      保留最新 N 个未被文档引用的历史 run（默认读 ACCEPT_KEEP_RUNS 或 5）

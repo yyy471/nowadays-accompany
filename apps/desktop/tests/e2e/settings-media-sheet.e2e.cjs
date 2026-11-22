@@ -8,8 +8,8 @@ const os = require('node:os');
 const assert = require('node:assert/strict');
 const { PNG } = require('pngjs');
 const { resolveElectronExecutable } = require('../helpers/electron-executable.cjs');
-const root = path.resolve(__dirname, '../../../../');
-const out = path.join(root, 'test-results/settings-media-sheet');
+const { repoRoot: root, desktopDir, xiachengPortraitFixture, testResultsDir } = require('../helpers/paths.cjs');
+const out = path.join(testResultsDir, 'settings-media-sheet');
 fs.mkdirSync(out, { recursive: true });
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'settings-media-sheet-'));
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -22,7 +22,7 @@ async function until(fn, label = 'cond', timeoutMs = 20000) {
   throw Error(`等待超时(${label})${last ? ': ' + last.message : ''}`);
 }
 const date = '2026-11-19T10:00:00.000Z';
-const portraitFixture = fs.readFileSync(path.join(root, 'apps/desktop/renderer/src/assets/themes/xiacheng/character.png'));
+const portraitFixture = fs.readFileSync(xiachengPortraitFixture);
 const roles = [{ roleId: 'a', displayName: '甲角色', isBuiltin: false }, { roleId: 'b', displayName: '乙角色', isBuiltin: false }];
 const longResourceName = '模型服务'.repeat(80);
 const longResourceAddress = `https://model.test/${'long-address-'.repeat(50)}`;
@@ -98,7 +98,7 @@ async function run(verify) {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const env = { ...process.env, NOWADAYS_BACKEND_URL: `http://127.0.0.1:${server.address().port}`, NOWADAYS_APP_ROOT: path.join(temp, 'app'), NOWADAYS_SKIP_ROLE_PICKER: '1' };
   delete env.ELECTRON_RUN_AS_NODE;
-  proc = spawn(resolveElectronExecutable({ repoRoot: root }), ['--no-sandbox', '--remote-debugging-port=0', `--user-data-dir=${path.join(temp, 'profile')}`, path.join(root, 'apps/desktop')], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  proc = spawn(resolveElectronExecutable({ repoRoot: root }), ['--no-sandbox', '--remote-debugging-port=0', `--user-data-dir=${path.join(temp, 'profile')}`, desktopDir], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   proc.stdout.on('data', chunk => logs += chunk); proc.stderr.on('data', chunk => logs += chunk);
   const port = await until(() => /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)/.exec(logs)?.[1], 'devtools');
   const target = await until(async () => (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(item => item.url.startsWith('desk://bundle/')), 'target');

@@ -13,7 +13,7 @@ const repoRoot = path.resolve(desktop, "..", "..");
 const outputRoot = path.join(repoRoot, "test-results", "desktop-e2e");
 const distDir = path.join(desktop, "renderer", "dist");
 const timeoutMs = Number(process.env.E2E_TIMEOUT_MS ?? "180000");
-const poolSize = Math.max(1, Number(process.env.E2E_CONCURRENCY ?? "2"));
+const poolSize = Math.max(1, Number(process.env.E2E_CONCURRENCY ?? "3"));
 const keepRuns = Math.max(0, Number(process.env.E2E_KEEP_RUNS ?? "5"));
 const expectedSuiteSize = 15;
 
@@ -154,9 +154,15 @@ function runOne(name, runDir) {
     child.once("close", (code, signal) => {
       clearTimeout(timer);
       try { fs.closeSync(fd); } catch { /* 已关闭 */ }
+      const passed = code === 0 && !timedOut;
+      if (passed) {
+        try {
+          fs.rmSync(caseDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+        } catch { /* 临时目录残留留待 clean-artifacts 清理 */ }
+      }
       resolve({
         name,
-        passed: code === 0 && !timedOut,
+        passed,
         exitCode: code,
         signal,
         timedOut,
@@ -164,7 +170,7 @@ function runOne(name, runDir) {
         finishedAt: new Date().toISOString(),
         ms: Date.now() - started,
       });
-      console.log(JSON.stringify({ event: "e2e_finished", name, passed: code === 0 && !timedOut, ms: Date.now() - started }));
+      console.log(JSON.stringify({ event: "e2e_finished", name, passed, ms: Date.now() - started }));
     });
   });
 }

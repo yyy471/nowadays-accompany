@@ -20,11 +20,11 @@ const assert = require('node:assert/strict');
 const { resolveElectronExecutableInfo } = require('../helpers/electron-executable.cjs');
 const { button, configControls, editor, element, sheet } = require('../helpers/config-page-controls.cjs');
 
-const root = path.resolve(__dirname, '../../../../');
-const screenshotDir = path.join(root, 'test-results', 'full-chain-review');
+const { repoRoot: root, desktopDir, backendDir, xiachengPortraitFixture, testResultsDir } = require('../helpers/paths.cjs');
+const screenshotDir = path.join(testResultsDir, 'full-chain-review');
 fs.mkdirSync(screenshotDir, { recursive: true });
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'nowadays-chain-'));
-const imagePath = path.join(root, 'apps/desktop/renderer/src/assets/themes/xiacheng/character.png');
+const imagePath = xiachengPortraitFixture;
 const pngBytes = fs.readFileSync(imagePath);
 
 function createWavBuffer(durationMs = 120, sampleRate = 16000) {
@@ -430,7 +430,7 @@ async function run() {
   closeServers.push(llmA.server, llmB.server, tts.server, comfyA.server, comfyB.server);
 
   backend = spawn(process.execPath, ['--import', 'tsx', 'src/main.ts', '--app-root', path.join(temp, 'app'), '--port', '0'], {
-    cwd: path.join(root, 'apps', 'backend'),
+    cwd: backendDir,
     windowsHide: true,
   });
   backend.stdout.on('data', d => backendLog += d);
@@ -465,7 +465,7 @@ async function run() {
   const electronInfo = resolveElectronExecutableInfo({ repoRoot: root });
   electron = spawn(electronInfo.executable, [
     '--no-sandbox', '--remote-debugging-port=0', `--user-data-dir=${path.join(temp, 'profile')}`,
-    path.join(root, 'apps/desktop'),
+    desktopDir,
   ], { env, windowsHide: true });
   electron.stdout.on('data', d => electronLog += d);
   electron.stderr.on('data', d => electronLog += d);

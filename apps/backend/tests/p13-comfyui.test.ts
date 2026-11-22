@@ -1071,7 +1071,7 @@ test("media maintenance waits for a timed-out generator that ignores cancellatio
 test("aborting a poll cancels the queued prompt remotely", { timeout: 30_000 }, async () => {
   const comfy = await startFakeComfy();
   try {
-    comfy.historyDelayMs = 1_500;
+    comfy.historyDelayMs = 400;
     const controller = new AbortController();
     const client = new ComfyUiClient({
       baseUrl: comfy.baseUrl,
@@ -1119,7 +1119,7 @@ test("a configured service timeout ends the task and clears the remote prompt", 
     assert.equal(patched.status, 200);
     await api(context.base, "PUT", roleBase, settingsBody(context));
     const replyId = await createReply(context);
-    context.comfy.historyDelayMs = 8_000;
+    context.comfy.historyDelayMs = 5_500;
 
     const startedAt = Date.now();
     const created = await api(

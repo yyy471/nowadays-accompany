@@ -9,7 +9,7 @@
 在 backend 目录操作。package.json 要求 Node.js >=24；当前实际验证为 Windows x64、Node 24.22.2，依赖版本固定在 package-lock.json。不要使用旧项目根目录的 node_modules。
 
 ```powershell
-Set-Location D:\app\nowadays\accompany\apps\apps\backend
+Set-Location D:\app\nowadays\accompany\apps\backend
 node --version
 npm ci
 npm run typecheck

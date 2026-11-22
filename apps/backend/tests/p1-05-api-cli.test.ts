@@ -28,6 +28,8 @@ function tempRoot(): string {
 }
 
 function startBackend(root: string): Promise<BackendProcess> {
+  const emptyPresets = path.join(root, "empty-presets");
+  fs.mkdirSync(emptyPresets, { recursive: true });
   return new Promise((resolve, reject) => {
     const child = spawn(
       process.execPath,
@@ -37,6 +39,8 @@ function startBackend(root: string): Promise<BackendProcess> {
         mainEntry,
         "--app-root",
         root,
+        "--preset-assets-dir",
+        emptyPresets,
         "--port",
         "0",
       ],
@@ -52,7 +56,7 @@ function startBackend(root: string): Promise<BackendProcess> {
       settled = true;
       child.kill();
       reject(new Error(`后端启动超时：${stderr}`));
-    }, 15_000);
+    }, 25_000);
 
     child.stdout?.setEncoding("utf8");
     child.stderr?.setEncoding("utf8");

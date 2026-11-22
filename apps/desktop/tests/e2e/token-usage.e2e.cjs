@@ -12,7 +12,7 @@ const { pathToFileURL } = require('node:url');
 const { resolveElectronExecutable } = require('../helpers/electron-executable.cjs');
 const { button, configControls, element, setValue } = require('../helpers/config-page-controls.cjs');
 
-const root = path.resolve(__dirname, '../../../../');
+const { repoRoot: root, desktopDir, backendDir } = require('../helpers/paths.cjs');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'nowadays-token-usage-e2e-'));
 const emptyPresets = path.join(temp, 'presets');
 fs.mkdirSync(emptyPresets, { recursive: true });
@@ -153,7 +153,7 @@ async function run() {
   backend = spawn(
     node,
     ['--import', 'tsx', 'src/main.ts', '--app-root', path.join(temp, 'app'), '--port', '0', '--preset-assets-dir', emptyPresets],
-    { cwd: path.join(root, 'apps', 'backend'), windowsHide: true },
+    { cwd: backendDir, windowsHide: true },
   );
   backend.stdout.on('data', (data) => {
     backendLog += data;
@@ -263,7 +263,7 @@ async function run() {
 
   electron = spawn(
     resolveElectronExecutable({ repoRoot: root }),
-    ['--no-sandbox', '--remote-debugging-port=0', `--user-data-dir=${path.join(temp, 'profile')}`, path.join(root, 'apps/desktop')],
+    ['--no-sandbox', '--remote-debugging-port=0', `--user-data-dir=${path.join(temp, 'profile')}`, desktopDir],
     { env, windowsHide: true },
   );
   electron.stdout.on('data', (data) => {

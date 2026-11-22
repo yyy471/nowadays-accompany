@@ -63,6 +63,8 @@ export interface BackendAppOptions {
   sceneImageInspector?: SceneImageServiceOptions["imageInspector"];
   /** 删除等待在途工作收尾的期限；超时返回可重试失败并保留角色（283 §16）。 */
   roleDeletionWaitMs?: number;
+  /** 模型／媒体维护等待依赖角色停止的超时阈值（默认 20 秒，测试可覆写）。 */
+  maintenancePauseTimeoutMs?: number;
 }
 
 import { MediaMaintenance } from '../application/media-maintenance.js';
@@ -140,7 +142,7 @@ function assembleBackendApp(
         if (view.state === "stopped") continue;
         const initiated = view.state === "active";
         if (initiated) activity.requestStop(roleId);
-        const deadline = Date.now() + 20_000;
+        const deadline = Date.now() + (options.maintenancePauseTimeoutMs ?? 20_000);
         while (Date.now() < deadline && activity.view(roleId).state !== "stopped") {
           await new Promise((resolve) => setTimeout(resolve, 100));
         }

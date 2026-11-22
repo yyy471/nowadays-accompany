@@ -126,9 +126,9 @@ export function writeRoleTransferPackage(filePath: string, pkg: RoleTransferPack
 /**
  * 读取迁移包。
  *
- * 包发布使用“临时文件 + 同目录硬链接”，Windows 在杀软或索引器持有句柄时，
- * 极短时间内仍可能看到 nlink=2。这里只对 UNSAFE_PATH 做短暂重试，最终仍按
- * 同一路径规则拒绝；不会放过符号链接、越界路径或持久的多硬链接文件。
+ * Windows 在杀软或索引器持有句柄时，文件刚写出后的极短时间内仍可能
+ * 触发 `ROLE_TRANSFER_UNSAFE_PATH`；这里只对该瞬态错误做短暂重试，
+ * 最终仍按同一路径规则拒绝，不会放过符号链接、越界路径或持久异常文件。
  */
 export function readRoleTransferPackage(filePath: string): RoleTransferPackage {
   const resolved = path.resolve(filePath);

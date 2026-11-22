@@ -8,8 +8,8 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const { resolveElectronExecutable } = require('../helpers/electron-executable.cjs');
 
-const root = path.resolve(__dirname, '../../../../');
-const results = path.join(root, 'apps', 'backend', 'test-results', 'relations-v2');
+const { repoRoot: root, desktopDir, xiachengPortraitFixture, backendTestResultsDir } = require('../helpers/paths.cjs');
+const results = path.join(backendTestResultsDir, 'relations-v2');
 fs.mkdirSync(results, { recursive: true });
 const temp = fs.mkdtempSync(path.join(results, 'profile-'));
 const now = '2026-11-09T10:00:00.000Z';
@@ -29,7 +29,7 @@ const server = http.createServer((req, res) => {
     if (p === '/v1/roles') return json(res, { items: roles });
     if (p === `/v1/roles/${role.roleId}`) return json(res, { ...role, createdAt: now, definition: { text: `${role.displayName}的介绍`, payload: {} }, definitionRevision: 1 });
     if (p.endsWith('/appearance/outfits')) return json(res, { items: [{ outfitId: 'o', roleId: role.roleId, name: '服饰', home: { assetId: 'portrait', outfitId: 'o', usage: 'home' }, sprites: [] }] });
-    if (p.endsWith('/appearance/assets/portrait')) { res.writeHead(200, { 'content-type': 'image/png' }); return res.end(fs.readFileSync(path.join(root, 'apps/desktop/renderer/src/assets/themes/xiacheng/character.png'))); }
+    if (p.endsWith('/appearance/assets/portrait')) { res.writeHead(200, { 'content-type': 'image/png' }); return res.end(fs.readFileSync(xiachengPortraitFixture)); }
     if (p.endsWith('/state')) return json(res, { state: { outfitId: 'o', mood: `${role.displayName}的近况` }, stateVersion: 1, updatedAt: now });
     if (p.endsWith('/memory/search')) {
       const type = body?.types?.[0];
@@ -59,7 +59,7 @@ async function run() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const env = { ...process.env, NOWADAYS_BACKEND_URL: `http://127.0.0.1:${server.address().port}`, NOWADAYS_APP_ROOT: path.join(temp, 'data'), NOWADAYS_SKIP_ROLE_PICKER: '1' };
   delete env.ELECTRON_RUN_AS_NODE;
-  proc = spawn(resolveElectronExecutable({ repoRoot: root }), ['--no-sandbox', '--remote-debugging-port=0', `--user-data-dir=${path.join(temp, 'chrome')}`, path.join(root, 'apps/desktop')], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  proc = spawn(resolveElectronExecutable({ repoRoot: root }), ['--no-sandbox', '--remote-debugging-port=0', `--user-data-dir=${path.join(temp, 'chrome')}`, desktopDir], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   proc.stdout.on('data', chunk => logs += chunk); proc.stderr.on('data', chunk => logs += chunk);
   const port = await until(() => /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)/.exec(logs)?.[1]);
   const target = await until(async () => (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(item => item.url.startsWith('desk://bundle/')));

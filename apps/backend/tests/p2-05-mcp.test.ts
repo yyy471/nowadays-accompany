@@ -407,7 +407,7 @@ class NewReplyWhileToolRunsModel implements ModelPort {
 
 test("a new message replies while an external tool keeps running and preserves the original task", { timeout: 30_000 }, async () => {
   const model = new NewReplyWhileToolRunsModel();
-  const fixture = createFixtureWithModel(model);
+  const fixture = createFixtureWithModel(model, { toolForegroundWaitMs: 300 });
   let workspace = "";
   try {
     ({ workspace } = addWorkspaceMcp(fixture));

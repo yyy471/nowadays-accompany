@@ -7,15 +7,15 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { resolveElectronExecutable } from "../helpers/electron-executable.cjs";
+import { backendDir, desktopDir, repoRoot as root, testResultsDir } from "../helpers/paths.cjs";
 import { createBackendApp, listen } from "../../../backend/src/bootstrap/app.ts";
 import { parseBackendConfig, rolePaths } from "../../../backend/src/bootstrap/config.ts";
 import { configureProvider, delay, httpClient, nativeFetch, openEvents } from "../../../backend/scripts/role-world-http-transport.mjs";
 import { worldEntries } from "../../../backend/scripts/role-world-scenarios.mjs";
 
-const root = fileURLToPath(new URL("../../../", import.meta.url));
 const [source, credentials, roleName, tier = "deepseek"] = process.argv.slice(2);
 if (!source || !credentials || !roleName || !["vertex", "deepseek"].includes(tier)) throw Error("FIXTURE_CREDENTIAL_PATH_ROLE_AND_TIER_REQUIRED");
-const liveResults = path.join(root, "test-results", "role-world");
+const liveResults = path.join(testResultsDir, "role-world");
 if (!fs.realpathSync(source).startsWith(fs.realpathSync(liveResults) + path.sep)) throw Error("EXPECTED_ISOLATED_LIVE_TEST_ROOT");
 const out = fs.mkdtempSync(path.join(liveResults, "display-"));
 const appRoot = path.join(out, "app");
@@ -62,7 +62,7 @@ const currentView = `(() => {
     compose: !!document.querySelector('#dialogue-draft') };
 })()`;
 async function run() {
-  configureProvider(path.join(root, "apps", "backend"), tier, credentials, worldEntries, call => calls.push(call));
+  configureProvider(backendDir, tier, credentials, worldEntries, call => calls.push(call));
   app = createBackendApp(parseBackendConfig(["--app-root", appRoot, "--port", "0"]), {disablePresetAssistant:true});
   const port = await listen(app.server, 0, "127.0.0.1");
   const api = httpClient(port);
@@ -82,7 +82,7 @@ async function run() {
   stream = await openEvents(api.origin, route, (await api.get(route + "/messages")).cursor, "desktop-display-observer");
   electronEnv.NOWADAYS_BACKEND_URL = api.origin;
   proc = spawn(resolveElectronExecutable({repoRoot:root}), ["--no-sandbox", "--remote-debugging-port=0",
-    "--user-data-dir=" + path.join(out, "profile"), path.join(root, "apps/desktop")], {
+    "--user-data-dir=" + path.join(out, "profile"), desktopDir], {
     env: electronEnv, windowsHide: true, stdio:["ignore","pipe","pipe"],
   });
   proc.stdout.on("data", data => { childLog += data; });

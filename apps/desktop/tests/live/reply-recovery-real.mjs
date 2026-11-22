@@ -9,9 +9,9 @@ import { setTimeout as pause } from "node:timers/promises";
 import { createBackendApp, listen } from "../../../backend/src/bootstrap/app.ts";
 import { parseBackendConfig } from "../../../backend/src/bootstrap/config.ts";
 import { resolveElectronExecutable } from "../helpers/electron-executable.cjs";
+import { backendDir, desktopDir, repoRoot as root, testResultsDir } from "../helpers/paths.cjs";
 
 const self = fileURLToPath(import.meta.url);
-const root = path.resolve(path.dirname(self), "../../..");
 const original = "你还记得扉页里的蓝色书签吗？";
 const draft = "下一条我想问封底的题字，先放在草稿里。";
 const firstHalf = "我看到扉页了，";
@@ -63,7 +63,7 @@ async function serve(appRoot, generation) {
 }
 
 async function run() {
-  const resultRoot = path.join(root,"test-results","reply-recovery");
+  const resultRoot = path.join(testResultsDir,"reply-recovery");
   fs.mkdirSync(resultRoot,{recursive:true});
   const output = fs.mkdtempSync(path.join(resultRoot,"desktop-"));
   const appRoot = path.join(output,"app");
@@ -81,7 +81,7 @@ async function run() {
   }
   async function startBackend(generation) {
     const proc = backend = fork(self,["serve",appRoot,generation],{
-      cwd:path.join(root,"backend"), execArgv:["--import","tsx"], windowsHide:true, silent:true,
+      cwd:backendDir, execArgv:["--import","tsx"], windowsHide:true, silent:true,
     });
     const log = fs.createWriteStream(path.join(output,generation+"-backend.log"));
     proc.stderr.pipe(log); proc.stdout.pipe(log,{end:false});

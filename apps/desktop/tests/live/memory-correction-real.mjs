@@ -14,9 +14,9 @@ import { MemoryStore } from "../../../backend/src/storage/memory-store.ts";
 import { RoleStorage } from "../../../backend/src/storage/role-storage.ts";
 import { delay, httpClient } from "../../../backend/scripts/role-world-http-transport.mjs";
 import { resolveElectronExecutable } from "../helpers/electron-executable.cjs";
+import { desktopDir, repoRoot as root, testResultsDir } from "../helpers/paths.cjs";
 
-const root = fileURLToPath(new URL("../../../", import.meta.url));
-const resultRoot = path.join(root, "test-results", "memory-correction");
+const resultRoot = path.join(testResultsDir, "memory-correction");
 fs.mkdirSync(resultRoot, { recursive: true });
 const output = fs.mkdtempSync(path.join(resultRoot, "desktop-"));
 const config = parseBackendConfig(["--app-root", path.join(output, "app"), "--port", "0"]);
@@ -88,7 +88,7 @@ async function launch(origin) {
   delete env.ELECTRON_RUN_AS_NODE;
   browserLog = "";
   proc = spawn(resolveElectronExecutable({ repoRoot: root }), ["--no-sandbox", "--remote-debugging-port=0",
-    "--user-data-dir=" + path.join(output, "profile"), path.join(root, "apps/desktop")], { env, windowsHide: true });
+    "--user-data-dir=" + path.join(output, "profile"), desktopDir], { env, windowsHide: true });
   proc.stderr.on("data", chunk => { browserLog += chunk; });
   const port = await until("Electron", () => /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)/.exec(browserLog)?.[1]);
   const target = await until("桌面渲染器", async () => (await (await fetch("http://127.0.0.1:" + port + "/json/list")).json())

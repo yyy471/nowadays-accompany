@@ -38,29 +38,50 @@ async function verifyLongTextAndContrast({ cmd, ev, until, nav, out, errors, lon
   const geometry = [];
   const problems = [];
   for (const theme of ['白昼来信', '晚风电台']) {
+    const targetPreset = theme === '晚风电台' ? 'nightwave' : 'daylight';
     await ev(`[...document.querySelectorAll('.ui-theme-switcher button')].find(button=>button.textContent.includes(${JSON.stringify(theme)})).click()`);
+    await until(() => ev(`document.documentElement.dataset.uiPreset === ${JSON.stringify(targetPreset)} && !document.querySelector('.config-theme-veil') && !document.documentElement.hasAttribute('data-switching')`), `theme ${theme} settled`);
     for (const [width, height] of [[1440, 840], [1280, 800], [720, 540]]) {
       await cmd('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
       await nav('模型');
       await until(() => ev(`document.querySelector('.config-service-head h2')?.textContent===${JSON.stringify(longResourceName)}`), 'long model heading');
-      await ev('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
-      const layout = await ev(`(() => {
-        const book = document.querySelector('.config-book');
-        const leaf = document.querySelector('.config-leaf-body');
-        const heading = document.querySelector('.config-service-head h2');
-        const address = document.querySelector(${JSON.stringify(width <= 900 ? '.config-service-head p' : '[data-service-group="连接"] .config-sum-keys span')});
-        const fields = [heading,address];
-        const dots = [...leaf.querySelectorAll('.config-sum .ui-dot')].filter(dot=>dot.getClientRects().length);
-        const footer = document.querySelector('.config-leaf-foot');
-        return {
-          bookOverflow: book.scrollWidth - book.clientWidth,
-          leafOverflow: leaf.scrollWidth - leaf.clientWidth,
-          fields: fields.map(field => ({title:field.title, overflow:field.scrollWidth - field.clientWidth, ellipsis:getComputedStyle(field).textOverflow})),
-          dotXs: dots.map(dot=>dot.getBoundingClientRect().x),
-          footerHeight: footer.getBoundingClientRect().height,
-          hasRetiredCopy: /已全部保存|点按任一项修改|配置状态以已保存的数据为准|本机偏好|位角色活动中/.test(book.innerText),
-        };
-      })()`);
+      await ev('document.fonts.ready');
+      // 等视口尺寸与连续两帧状态点 X 坐标完全稳定，避免主题切光或滚动条收口未完成时读到瞬态偏差。
+      let settledDotKey = '';
+      let layout = null;
+      await until(async () => {
+        const probe = await ev(`(() => {
+          if (Math.abs(window.innerWidth - ${width}) > 1) return null;
+          if (document.querySelector('.config-theme-veil') || document.documentElement.hasAttribute('data-switching')) return null;
+          if (document.getAnimations({ subtree: true }).some(a => a.playState === 'running')) return null;
+          const book = document.querySelector('.config-book');
+          const leaf = document.querySelector('.config-leaf-body');
+          const heading = document.querySelector('.config-service-head h2');
+          const address = document.querySelector(${JSON.stringify(width <= 900 ? '.config-service-head p' : '[data-service-group="连接"] .config-sum-keys span')});
+          if (!book || !leaf || !heading || !address) return null;
+          const fields = [heading, address];
+          const dots = [...leaf.querySelectorAll('.config-sum .ui-dot')].filter(dot => dot.getClientRects().length);
+          const footer = document.querySelector('.config-leaf-foot');
+          return {
+            bookOverflow: book.scrollWidth - book.clientWidth,
+            leafOverflow: leaf.scrollWidth - leaf.clientWidth,
+            fields: fields.map(field => ({ title: field.title, overflow: field.scrollWidth - field.clientWidth, ellipsis: getComputedStyle(field).textOverflow })),
+            dotXs: dots.map(dot => dot.getBoundingClientRect().x),
+            footerHeight: footer.getBoundingClientRect().height,
+            hasRetiredCopy: /已全部保存|点按任一项修改|配置状态以已保存的数据为准|本机偏好|位角色活动中/.test(book.innerText),
+          };
+        })()`);
+        if (!probe || probe.dotXs.length < 5) {
+          settledDotKey = '';
+          return false;
+        }
+        const nextKey = probe.dotXs.map(x => Math.round(x * 100)).join(',');
+        const stable = nextKey === settledDotKey;
+        settledDotKey = nextKey;
+        if (!stable) return false;
+        layout = probe;
+        return true;
+      }, `${theme} ${width} layout settled`);
       assert.ok(layout.bookOverflow <= 1 && layout.leafOverflow <= 1, `${theme} ${width} 横向溢出：${JSON.stringify(layout)}`);
       assert.deepEqual(layout.fields.map(field => field.title), [longResourceName, longResourceAddress]);
       const fields = layout.fields.map(({ overflow, ellipsis }) => ({ overflow, ellipsis }));

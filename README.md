@@ -19,7 +19,7 @@ Nowadays 是一个面向单用户桌面的数字生命项目。每个角色拥�
 需要 Git、Node.js 24 或更高版本，以及 npm（Windows x64 下常用 `npx -y node@24` 指定版本）。以下命令使用 PowerShell：
 
 ```powershell
-Set-Location backend
+Set-Location apps/backend
 npm ci
 npx -y node@24 --import tsx src/cli.ts --help
 npm run dev -- --app-root ./.nowadays --port 3210

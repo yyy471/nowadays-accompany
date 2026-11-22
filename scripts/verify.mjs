@@ -9,7 +9,6 @@ import {
   localNode24Exe,
   rendererDir,
   repoRoot,
-  rootTestResultsDir,
   toolsDir,
 } from "./repo-paths.mjs";
 import { ensureToolsDirectories } from "./ensure-tools.mjs";
@@ -55,44 +54,68 @@ function changedFiles() {
     .sort();
 }
 
+function walkFiles(directory, suffix, base = directory) {
+  if (!fs.existsSync(directory)) return [];
+  const out = [];
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    if (["node_modules", "dist", "fixtures", "acceptance"].includes(entry.name)) continue;
+    const full = path.join(directory, entry.name);
+    if (entry.isDirectory()) out.push(...walkFiles(full, suffix, base));
+    else if (entry.isFile() && entry.name.endsWith(suffix)) {
+      out.push(path.relative(base, full).replaceAll("\\", "/"));
+    }
+  }
+  return out.sort();
+}
+
 function backendTestFiles() {
-  return fs.readdirSync(path.join(backendDir, "tests"))
-    .filter((file) => file.endsWith(".test.ts"))
-    .sort()
-    .map((file) => `tests/${file}`);
+  return walkFiles(path.join(backendDir, "tests"), ".test.ts", backendDir);
+}
+
+function desktopUnitTestFiles() {
+  return walkFiles(path.join(desktopDir, "tests", "unit"), ".test.cjs", desktopDir);
 }
 
 function targetedBackendTests(files) {
   const all = backendTestFiles();
-  const directTests = files.filter((file) => /^apps\/backend\/tests\/[^/]+\.test\.ts$/.test(file))
+  if (files.includes("package.json")) return all;
+  const directTests = files
+    .filter((file) => file.startsWith("apps/backend/tests/") && file.endsWith(".test.ts") && !file.startsWith("apps/backend/tests/acceptance/"))
     .map((file) => file.slice("apps/backend/".length));
+  const nonTestBackendInfra = files.some((file) =>
+    file === "apps/backend/package.json" ||
+    file === "apps/backend/tsconfig.json" ||
+    file === "scripts/repo-paths.mjs" ||
+    file === "scripts/ensure-tools.mjs" ||
+    file.startsWith("apps/backend/examples/") ||
+    file.startsWith("apps/backend/scripts/") ||
+    file.startsWith("apps/backend/reviews/") ||
+    (file.startsWith("apps/backend/tests/") && !file.endsWith(".test.ts")),
+  );
+  if (nonTestBackendInfra) return all;
+
   const source = files.filter((file) => file.startsWith("apps/backend/src/"));
-  if (source.length === 0) {
-    if (directTests.length) return directTests;
-    // 验收脚本、reviews 或共享配置改动无法由文件名推断覆盖面，回退全量。
-    if (files.some((file) => file.startsWith("apps/backend/scripts/") || file.startsWith("apps/backend/reviews/"))) return all;
-    return [];
-  }
+  if (source.length === 0) return directTests;
+
   const pick = (...names) => names.filter((name) => all.includes(name));
   const targets = new Set();
   for (const file of source) {
     const relative = file.slice("apps/backend/src/".length);
     if (relative.startsWith("mcp/")) {
-      for (const test of pick("tests/p2-04-mcp.test.ts", "tests/p2-05-mcp.test.ts")) targets.add(test);
+      for (const test of pick("tests/p2-04-mcp.test.ts", "tests/p2-05-mcp.test.ts", "tests/unit/mcp-local.test.ts", "tests/integration/mcp-execution.test.ts")) targets.add(test);
     } else if (relative.startsWith("skills/")) {
-      for (const test of pick("tests/p2-04-skill.test.ts", "tests/p2-05-skill.test.ts", "tests/p5-skill-run.test.ts")) targets.add(test);
+      for (const test of pick("tests/p2-04-skill.test.ts", "tests/p2-05-skill.test.ts", "tests/p5-skill-run.test.ts", "tests/unit/skill-library.test.ts", "tests/integration/skill-execution.test.ts", "tests/integration/skill-run.test.ts")) targets.add(test);
     } else if (relative.startsWith("tts/")) {
-      for (const test of pick("tests/p8-voice.test.ts", "tests/p9-tts-engines-emotion.test.ts", "tests/p9-tts-unified.test.ts")) targets.add(test);
+      for (const test of pick("tests/p8-voice.test.ts", "tests/p9-tts-engines-emotion.test.ts", "tests/p9-tts-unified.test.ts", "tests/integration/voice-tts.test.ts", "tests/unit/tts-engines-emotion.test.ts", "tests/integration/tts-unified.test.ts")) targets.add(test);
     } else if (relative.startsWith("scene/")) {
-      for (const test of pick("tests/p10-auto-scene.test.ts", "tests/p10-scene-image.test.ts", "tests/p11-scene-image-planning.test.ts")) targets.add(test);
+      for (const test of pick("tests/p10-auto-scene.test.ts", "tests/p10-scene-image.test.ts", "tests/p11-scene-image-planning.test.ts", "tests/integration/scene-image-auto.test.ts", "tests/integration/scene-image-core.test.ts", "tests/integration/scene-image-planning.test.ts")) targets.add(test);
     } else if (relative.startsWith("model/")) {
-      for (const test of pick("tests/model-providers.test.ts", "tests/p2-04-model.test.ts", "tests/p2-04-google-gemini.test.ts", "tests/p2-05-stream.test.ts")) targets.add(test);
+      for (const test of pick("tests/model-providers.test.ts", "tests/p2-04-model.test.ts", "tests/p2-04-google-gemini.test.ts", "tests/p2-05-stream.test.ts", "tests/unit/model-providers.test.ts", "tests/unit/model-protocols.test.ts", "tests/unit/google-gemini.test.ts", "tests/integration/model-stream.test.ts")) targets.add(test);
     } else {
       // bootstrap/storage/application/http/domain/security 等共享层改动无法可靠局部化，升级全量。
       return all;
     }
   }
-  // 改动测试自身与共享源码同时出现时，至少覆盖被改测试。
   for (const test of directTests) targets.add(test);
   return targets.size ? [...targets].sort() : all;
 }
@@ -113,10 +136,11 @@ const commands = {
     };
   },
   backendTests(tests = backendTestFiles()) {
+    const allCount = backendTestFiles().length;
     return {
-      name: tests.length === backendTestFiles().length ? "backend-tests" : `backend-tests:${tests.length}`,
+      name: tests.length === allCount ? "backend-tests" : `backend-tests:${tests.length}`,
       cmd: process.execPath,
-      args: ["--import", "tsx", "--test", `--test-concurrency=${process.env.ACCEPT_TEST_CONCURRENCY ?? "8"}`, ...tests],
+      args: ["--import", "tsx", "--test", `--test-concurrency=${process.env.ACCEPT_TEST_CONCURRENCY ?? "10"}`, ...tests],
       cwd: backendDir,
     };
   },
@@ -126,12 +150,14 @@ const commands = {
   rendererBuild() {
     return { name: "renderer-build", cmd: process.execPath, args: [npmCli, "run", "build"], cwd: rendererDir };
   },
-  desktopTests() {
-    const tests = fs.readdirSync(path.join(desktopDir, "tests", "unit"))
-      .filter((file) => file.endsWith(".test.cjs"))
-      .sort()
-      .map((file) => `tests/unit/${file}`);
-    return { name: "desktop-tests", cmd: process.execPath, args: ["--test", ...tests], cwd: desktopDir };
+  desktopTests(tests = desktopUnitTestFiles()) {
+    const allCount = desktopUnitTestFiles().length;
+    return {
+      name: tests.length === allCount ? "desktop-tests" : `desktop-tests:${tests.length}`,
+      cmd: process.execPath,
+      args: ["--test", ...tests],
+      cwd: desktopDir,
+    };
   },
   feedIntegration() {
     return {
@@ -142,10 +168,13 @@ const commands = {
     };
   },
   acceptance() {
+    const script = fs.existsSync(path.join(backendDir, "scripts", "verify", "accept-offline.mjs"))
+      ? "scripts/verify/accept-offline.mjs"
+      : "scripts/accept-offline.mjs";
     return {
       name: "accept-offline",
       cmd: process.execPath,
-      args: ["scripts/accept-offline.mjs"],
+      args: [script],
       cwd: backendDir,
     };
   },
@@ -200,18 +229,43 @@ async function runParallel(commandList) {
   return results.sort((left, right) => commandList.findIndex((item) => item.name === left.name) - commandList.findIndex((item) => item.name === right.name));
 }
 
-async function fastCommands(files) {
-  if (files.length === 0) return [commands.docs(), commands.hygiene(), commands.backendTypecheck(), commands.rendererCheck(), commands.desktopTests()];
+function filterByKeywords(candidates, keywords) {
+  const lower = keywords.map((k) => k.toLowerCase());
+  return candidates.filter((file) => lower.some((k) => file.toLowerCase().includes(k)));
+}
+
+async function fastCommands(files, keywords = []) {
+  if (keywords.length > 0) {
+    const backendMatches = filterByKeywords(backendTestFiles(), keywords);
+    const desktopMatches = filterByKeywords(desktopUnitTestFiles(), keywords);
+    const list = [commands.docs(), commands.hygiene(), commands.backendTypecheck(), commands.rendererCheck()];
+    if (backendMatches.length > 0) list.push(commands.backendTests(backendMatches));
+    if (desktopMatches.length > 0) list.push(commands.desktopTests(desktopMatches));
+    if (backendMatches.length === 0 && desktopMatches.length === 0) {
+      console.error(`[verify] 未匹配到包含关键字 [${keywords.join(", ")}] 的单测文件`);
+      process.exit(2);
+    }
+    return list;
+  }
+
+  if (files.length === 0) {
+    return [commands.docs(), commands.hygiene(), commands.backendTypecheck(), commands.rendererCheck(), commands.desktopTests()];
+  }
   const list = [commands.docs(), commands.hygiene()];
-  const backendChanged = files.some((file) =>
-    file.startsWith("apps/backend/") || file === "scripts/repo-paths.mjs" || file === "scripts/ensure-tools.mjs");
-  const rendererChanged = files.some((file) => file.startsWith("apps/desktop/renderer/"));
-  const desktopChanged = files.some((file) =>
-    file.startsWith("apps/desktop/tests/") || [
-      "apps/desktop/electron/main.cjs",
-      "apps/desktop/electron/backend-paths.cjs",
-      "apps/desktop/electron/settings-preload.cjs",
-    ].includes(file));
+  const rootInfraChanged = files.some((file) => ["package.json", "scripts/repo-paths.mjs", "scripts/ensure-tools.mjs"].includes(file));
+  const backendChanged = rootInfraChanged || files.some((file) => file.startsWith("apps/backend/"));
+  const rendererChanged = rootInfraChanged || files.some((file) =>
+    file.startsWith("apps/desktop/renderer/") ||
+    file.startsWith("apps/desktop/scripts/") ||
+    file === "docs/design/character-studio/tokens.json",
+  );
+  const desktopChanged = rootInfraChanged || files.some((file) =>
+    file === "apps/desktop/package.json" ||
+    file.startsWith("apps/desktop/scripts/") ||
+    file.startsWith("apps/desktop/tests/") ||
+    file.startsWith("apps/desktop/electron/") ||
+    file === "docs/design/character-studio/tokens.json",
+  );
   if (backendChanged) {
     list.push(commands.backendTypecheck());
     const tests = targetedBackendTests(files);
@@ -219,20 +273,25 @@ async function fastCommands(files) {
   }
   if (rendererChanged) list.push(commands.rendererCheck());
   if (desktopChanged || rendererChanged) list.push(commands.desktopTests());
+  if (files.some((file) => file.startsWith("apps/desktop/tests/integration/") || file.startsWith("apps/desktop/renderer/src/feed/"))) {
+    list.push(commands.feedIntegration());
+  }
   return list;
 }
 
 async function unitCommands() {
-  return runParallel([
+  // 轻量与前端构建先并发跑完，再独占资源执行 8 并发后端全量单测，避免 CPU 争抢引起子进程启动超时。
+  const quick = await runParallel([
     commands.docs(),
     commands.hygiene(),
     commands.backendTypecheck(),
-    commands.backendTests(),
     commands.rendererCheck(),
     commands.rendererBuild(),
     commands.desktopTests(),
     commands.feedIntegration(),
   ]);
+  const backend = await run(commands.backendTests());
+  return [...quick, backend];
 }
 
 async function gateCommands() {
@@ -242,33 +301,39 @@ async function gateCommands() {
     first.push(result);
     if (!result.passed) return first;
   }
-  const parallel = await runParallel([
-    commands.acceptance(),
-    commands.desktopTests(),
-    commands.feedIntegration(),
+  // 离线验收自身已按 Stage A/B/C 并发跑满，其余轻量桌面检查先并发或随同执行，避免过多进程争抢。
+  const light = await runParallel([
     commands.docs(),
     commands.hygiene(),
+    commands.desktopTests(),
+    commands.feedIntegration(),
   ]);
+  const acceptance = await run(commands.acceptance());
   const e2e = await run(commands.e2e());
-  return [...first, ...parallel, e2e];
+  return [...first, ...light, acceptance, e2e];
 }
 
-const args = process.argv.slice(2);
-const mode = args[0] ?? "gate";
+const rawArgs = process.argv.slice(2);
+const dashDash = rawArgs.indexOf("--");
+const headArgs = dashDash >= 0 ? rawArgs.slice(0, dashDash) : rawArgs;
+const tailKeywords = dashDash >= 0 ? rawArgs.slice(dashDash + 1).filter(Boolean) : [];
+const mode = headArgs[0] ?? "gate";
 if (!["fast", "unit", "gate", "e2e", "changed"].includes(mode)) {
-  console.error("用法: node scripts/verify.mjs <fast|unit|gate|e2e|changed> [--filter <关键字>]");
+  console.error("用法: node scripts/verify.mjs <fast|unit|gate|e2e|changed> [--filter <关键字> | -- <关键字...>]");
   process.exit(2);
 }
 
+const wallStarted = Date.now();
 let results;
 if (mode === "changed") {
   const files = changedFiles();
   console.log(files.length ? files.join("\n") : "（无工作区改动）");
   process.exit(0);
 } else if (mode === "e2e") {
-  results = [await run(commands.rendererBuild()), await run(commands.e2e(args.slice(1)))];
+  results = [await run(commands.rendererBuild()), await run(commands.e2e(headArgs.slice(1)))];
 } else if (mode === "fast") {
-  results = await runParallel(await fastCommands(changedFiles()));
+  const keywords = tailKeywords.length ? tailKeywords : headArgs.slice(1).filter((a) => a !== "--");
+  results = await runParallel(await fastCommands(changedFiles(), keywords));
 } else if (mode === "unit") {
   results = await unitCommands();
 } else {
@@ -276,8 +341,9 @@ if (mode === "changed") {
 }
 
 const failed = results.filter((item) => !item.passed);
+const wall = ((Date.now() - wallStarted) / 1000).toFixed(1);
 const total = (results.reduce((sum, item) => sum + item.ms, 0) / 1000).toFixed(1);
-console.log(`\n[verify] ${results.length - failed.length}/${results.length} 通过，累计 ${total}s`);
+console.log(`\n[verify] ${results.length - failed.length}/${results.length} 通过，墙钟 ${wall}s（子项累计 ${total}s）`);
 if (failed.length) {
   console.error(`[verify] 失败: ${failed.map((item) => item.name).join(", ")}`);
   process.exit(1);
