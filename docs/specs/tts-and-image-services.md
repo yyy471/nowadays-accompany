@@ -106,13 +106,13 @@
 4. **单份语音启停与竞态隔离**（[VoicePanel.tsx](../../apps/desktop/renderer/src/components/voice/VoicePanel.tsx) · [use-segment-voice.ts](../../apps/desktop/renderer/src/conversation/use-segment-voice.ts)）：
    - 配置页通过 `inFlight` 互斥锁阻止保存与启停并发覆盖；`VOICE_DISABLED` 仅拦截按句对话合成，配置页试听始终可用。
    - 对话页 `useSegmentVoice` 收到首个 `VOICE_DISABLED` 后暂停后续自动播放与预取请求，同时保留用户手动点击某句重试的能力；切角色／切窗口时递增世代号与 `playToken`，丢弃晚到音频与错误提示。
-5. **多引擎选择、试听情绪与本地 WSL 桥接实测**（[voice-service.ts](../../apps/backend/src/application/media/voice-service.ts) · [voice-config.js](../../apps/desktop/renderer/src/voice-config.ts) · [VoicePanel.tsx](../../apps/desktop/renderer/src/components/voice/VoicePanel.tsx)）：
+5. **多引擎选择、试听情绪与本地 WSL 桥接实测**（[voice-service.ts](../../apps/backend/src/application/media/voice-service.ts) · [voice-config.ts](../../apps/desktop/renderer/src/voice-config.ts) · [VoicePanel.tsx](../../apps/desktop/renderer/src/components/voice/VoicePanel.tsx)）：
    - `nowadays-tts-v1` 可同时声明多个后端引擎（`engines` 与 `defaultEngine`）；角色保存或试听提交不在 `engines` 内的 `ttsEngine` 会返回 `400 VOICE_ENGINE_UNSUPPORTED`，切换到不声明目标引擎的服务时清理已选引擎并引导重选。
    - 配置页支持选择具体引擎、按所选引擎匹配并自动回退对应前缀预置音色（`cosy:` / `index:`），并在试听卡片提供可选 `emotion` 输入框随 `POST /voice/preview` 下发。
    - **实机对比（本机 WSL `http://127.0.0.1:9890` 双引擎实测）**：`CosyVoice3-0.5B` 输出 `24000 Hz` 单声道 WAV，热态推理 `5.6–7.3 秒`，显存约 `5.0–5.3 GiB`，原生支持自由中文 `instruct2` 情绪指令，推荐为首版默认引擎；`IndexTTS-2.5` 输出 `22050 Hz` 单声道 WAV，热态推理更快（实测 `4.7 秒` / 约 `1.05 RTF`），但显存占用较高（约 `8.2 GiB`）且情绪由中文关键词映射到 8 维向量。两引擎按需冷切换约 `28.6–39.7 秒`（对应 WSL 宿主机外部脚本修改保留 `.bak-pre-emotion` 备份，独立于本仓库源码）。
-6. **全局语音服务目录、角色引用与跨页缓存共享**（[global-voice-service.ts](../../apps/backend/src/application/media/global-voice-service.ts) · [voice-service.ts](../../apps/backend/src/application/media/voice-service.ts) · [Settings.tsx](../../apps/desktop/renderer/src/pages/Settings.tsx) · [VoiceServiceEditor.tsx](../../apps/desktop/renderer/src/components/voice/VoiceServiceEditor.tsx) · [voice-cache.js](../../apps/desktop/renderer/src/components/voice/voice-cache.ts) · [use-voice-probe.ts](../../apps/desktop/renderer/src/components/voice/use-voice-probe.ts)）：
+6. **全局语音服务目录、角色引用与跨页缓存共享**（[global-voice-service.ts](../../apps/backend/src/application/media/global-voice-service.ts) · [voice-service.ts](../../apps/backend/src/application/media/voice-service.ts) · [Settings.tsx](../../apps/desktop/renderer/src/pages/Settings.tsx) · [VoiceServiceEditor.tsx](../../apps/desktop/renderer/src/components/voice/VoiceServiceEditor.tsx) · [voice-cache.ts](../../apps/desktop/renderer/src/components/voice/voice-cache.ts) · [use-voice-probe.ts](../../apps/desktop/renderer/src/components/voice/use-voice-probe.ts)）：
    - 全局「设置 -> 模型 -> 语音」统一维护语音服务的名称、接口协议、服务地址、可选默认引擎（`defaultEngine`）、在线连接探测及全局启用／停用／删除。后端按服务依赖处理维护。启动时通过 `backfillFromRoles` 将既有角色已保存 `(protocol, baseUrl)` 自动归入 `voice_services` 并回填 `service_id`。
-   - 角色配置「模型 -> 语音」不保留手填地址／协议输入，改为下拉选择已配置语音服务，并提供「测试连接」与「在设置中管理 →／去设置添加 →」直达设置页；全局详情页改址／删改时通过 `serviceRefreshVersion` 与 `serviceEpochs` 通知角色页同步列表并按服务版本清除 `voice-cache.js` 缓存。
+   - 角色配置「模型 -> 语音」不保留手填地址／协议输入，改为下拉选择已配置语音服务，并提供「测试连接」与「在设置中管理 →／去设置添加 →」直达设置页；全局详情页改址／删改时通过 `serviceRefreshVersion` 与 `serviceEpochs` 通知角色页同步列表并按服务版本清除 `voice-cache.ts` 缓存。
    - 角色保存前在发起 `guardWrite` 停机前先校验服务选择及重查 `/v1/voice-services`，拦截已删除或全局停用的服务；当角色引擎选回「跟随服务默认」时通过显式 `clearEngine` 清空角色覆盖列（`tts_engine = NULL`），运行时（合成与后台情绪标注 `resolveVoiceRuntime`）实时校验全局服务启用状态并继承最新 `service.config.defaultEngine`。
 
 ### 3.2 生图服务凭据隔离与草稿探测
@@ -120,9 +120,9 @@
 1. **凭据二选一与跨站点防护**（[image-service.ts](../../apps/backend/src/application/media/image-service.ts#L113-L223) · [imageServiceSiteIdentity](../../apps/backend/src/domain/image-service.ts#L59-L67)）：
    - 直填明文 `secret` 与 `config.credentialRef`（`env:`/`file:`）不能共存（`409 RESOURCE_CREDENTIAL_CONFLICT`）；仅保存环境变量／文件引用时可读写配置页，待真正探测或生图时再通过 `resolveConnection` 解析。
    - 当 `protocol` 与 `URL.origin` 发生变化（跨站点修改）而沿用已存储密钥或原 `credentialRef` 时，无论正式 `PATCH /v1/image-services/:id` 还是草稿 `resolveDraftConnection` 均拒绝并抛出 `409 RESOURCE_CREDENTIAL_STALE`，防止把凭据发送给新地址。
-2. **先校验后停机的前端顺序与统一模型选取**（[Settings.tsx](../../apps/desktop/renderer/src/pages/Settings.tsx#L1237-L1581) · [ImageModelPicker.tsx](../../apps/desktop/renderer/src/components/image/ImageModelPicker.tsx) · [use-image-probe.ts](../../apps/desktop/renderer/src/components/image/use-image-probe.ts) · [image-cache.js](../../apps/desktop/renderer/src/components/image/image-cache.ts) · `292 §7.1`）：
+2. **先校验后停机的前端顺序与统一模型选取**（[Settings.tsx](../../apps/desktop/renderer/src/pages/Settings.tsx#L1237-L1581) · [ImageModelPicker.tsx](../../apps/desktop/renderer/src/components/image/ImageModelPicker.tsx) · [use-image-probe.ts](../../apps/desktop/renderer/src/components/image/use-image-probe.ts) · [image-cache.ts](../../apps/desktop/renderer/src/components/image/image-cache.ts) · `292 §7.1`）：
    - 提交前校验地址格式（`http:`/`https:`）及跨站点换密确认。后端也在暂停前校验密钥冲突和换站重验，详见 [语音／生图服务维护窗口](./role-config-and-activity.md#321-语音生图服务维护窗口)。
-   - 全局设置页（创建/详情）与角色配置页共用 `ImageModelPicker`、`useImageProbe` 与按服务密钥代次隔离的 `image-cache.js` 缓存（与文本模型 `ModelNamePicker` / `useModelProbe` 对齐）：`读取模型列表` 与 `测试连接` 的状态日志在当前页相互覆盖、切页或切换服务即清零；在全局生图服务可选保存 `config.modelName` 后，角色配置切换或初选该服务时自动带入默认模型，同时允许从已探测候选下拉选择或手填覆盖。
+   - 全局设置页（创建/详情）与角色配置页共用 `ImageModelPicker`、`useImageProbe` 与按服务密钥代次隔离的 `image-cache.ts` 缓存（与文本模型 `ModelNamePicker` / `useModelProbe` 对齐）：`读取模型列表` 与 `测试连接` 的状态日志在当前页相互覆盖、切页或切换服务即清零；在全局生图服务可选保存 `config.modelName` 后，角色配置切换或初选该服务时自动带入默认模型，同时允许从已探测候选下拉选择或手填覆盖。
    - 全局探测与角色草稿探测／测试出图均只读不写库；`ImagePanel` 不保留重复的内联「新建生图服务」表单，新建／修改统一跳设置页并在返回时经 `serviceRefreshVersion` 与 `serviceEpochs` 同步服务列表与失效缓存（`292-R05` 已通过独立复核；`292-R06` 原跨页场景通过后已于 [292 §9](../archive/06-workflow-simplification/292-278-remaining-deletion-maintenance.md#9-283-28-补修复核跟进与文档勘误自验292-r06-在途编辑292-r08-干净隔离环境与-doc-r01r04) 补修在途编辑阻塞，复核结论见第 5.1 节）。
 
 3. **对话模型视觉提炼基础与服饰锚点提示词**（[scene-image-settings.ts](../../apps/backend/src/application/media/scene-image-settings.ts) · [model.ts](../../apps/backend/src/domain/model.ts) · [protocols.ts](../../apps/backend/src/model/protocols.ts) · [google-gemini.ts](../../apps/backend/src/model/google-gemini.ts) · [ImagePanel.tsx](../../apps/desktop/renderer/src/components/image/ImagePanel.tsx)）：
@@ -146,7 +146,7 @@
 ### 4.1 已验证范围与限制（离线／本地假端点）
 
 - **后端单元测试与离线验收**：[222](../archive/03-appearance-and-performance/222-tts-unified-independent-review.md)（`v10→v12` 迁移回填、重定向拦截、双形状试听与语速 `0.1..10` 范围）、[247](../archive/04-role-settings-and-media/247-role-voice-toggle-independent-review.md)／[249](../archive/04-role-settings-and-media/249-role-voice-toggle-review-fixes.md)（语音启停保留配置、切换防误报）、[250](../archive/04-role-settings-and-media/250-comfyui-independent-review.md)／[251](../archive/04-role-settings-and-media/251-comfyui-review-fixes.md)（ComfyUI 探测、超时队列清理、凭据换站拦截、任务配置快照）及 [292 §6～§7](../archive/06-workflow-simplification/292-278-remaining-deletion-maintenance.md#6-生图草稿探测语音暂存试听与设置导航收敛) 均在本机假 HTTP 端点与 `accept-offline.mjs`（`realServiceCalls: 0`）下通过验证。
-- **桌面端全链路检查**：[workflow-real-backend-chain-check.cjs](../../apps/desktop/tests/e2e/workflow-real-backend-chain.e2e.cjs) 与 [settings-workspace-check.cjs](../../apps/desktop/tests/e2e/settings-workspace.e2e.cjs) 通过真实 Electron + 真实本机后端验证了草稿探测、测试生图、语音暂存试听与原子 multipart 保存、停用保留与对话按句播报／手动过场图联调（外部模型、TTS 与 ComfyUI 为本地假服务端点）。
+- **桌面端全链路检查**：[workflow-real-backend-chain.e2e.cjs](../../apps/desktop/tests/e2e/workflow-real-backend-chain.e2e.cjs) 与 [settings-workspace.e2e.cjs](../../apps/desktop/tests/e2e/settings-workspace.e2e.cjs) 通过真实 Electron + 真实本机后端验证了草稿探测、测试生图、语音暂存试听与原子 multipart 保存、停用保留与对话按句播报／手动过场图联调（外部模型、TTS 与 ComfyUI 为本地假服务端点）。
 
 ### 4.2 未实现或待设计功能（来自 `246 §6` 与 `248 §10`）
 
@@ -166,18 +166,18 @@
 # 1. 后端类型检查与语音／ComfyUI 定向单测（Node 24）
 cd apps/backend
 npx -y node@24 ./node_modules/typescript/bin/tsc --noEmit
-npx -y node@24 --import tsx --test tests/p8-voice.test.ts tests/p9-tts-unified.test.ts tests/p9-tts-engines-emotion.test.ts tests/p13-comfyui.test.ts
-npx -y node@24 scripts/accept-offline.mjs
+npx -y node@24 --import tsx --test tests/integration/voice-tts.test.ts tests/integration/tts-unified.test.ts tests/unit/tts-engines-emotion.test.ts tests/integration/comfyui-client.test.ts
+npx -y node@24 scripts/verify/accept-offline.mjs
 
 # 2. 桌面前端检查、构建与纯逻辑单测
-cd apps/desktop/renderer
+cd ../desktop/renderer
 npm run check
 npm run build
-cd ..
-npx -y node@24 --test tests/voice-config.test.cjs tests/voice-engines-emotion.test.cjs tests/image-config.test.cjs
+npx -y node@24 --import ../node_modules/tsx/dist/loader.mjs --test tests/voice-config.test.ts tests/voice-engines-emotion.test.ts tests/image-config.test.ts
 
 # 3. 真实本机后端 + Electron 设置／对话全链路检查（仓库根目录，外接假 TTS/ComfyUI 端点）
-npx -y node@24 apps/desktop/tests/workflow-real-backend-chain-check.cjs
+cd ../../..
+npx -y node@24 apps/desktop/tests/e2e/workflow-real-backend-chain.e2e.cjs
 ```
 
 ---
@@ -203,8 +203,8 @@ npx -y node@24 apps/desktop/tests/workflow-real-backend-chain-check.cjs
   - [protocols.ts](../../apps/backend/src/model/protocols.ts) · [google-gemini.ts](../../apps/backend/src/model/google-gemini.ts) · [comfyui-client.ts](../../apps/backend/src/scene/comfyui-client.ts) · [comfyui-workflow.ts](../../apps/backend/src/scene/comfyui-workflow.ts) · [comfyui-generator.ts](../../apps/backend/src/scene/comfyui-generator.ts)
   - [voice-store.ts](../../apps/backend/src/storage/media/voice-store.ts) · [voice-service-store.ts](../../apps/backend/src/storage/media/voice-service-store.ts) · [image-service-store.ts](../../apps/backend/src/storage/media/image-service-store.ts) · [scene-image-settings-store.ts](../../apps/backend/src/storage/media/scene-image-settings-store.ts) · [schema.ts](../../apps/backend/src/storage/core/schema.ts)
 - **桌面前端渲染器与纯逻辑单测**：
-  - [VoicePanel.tsx](../../apps/desktop/renderer/src/components/voice/VoicePanel.tsx) · [VoiceServiceEditor.tsx](../../apps/desktop/renderer/src/components/voice/VoiceServiceEditor.tsx) · [VoiceProbeView.tsx](../../apps/desktop/renderer/src/components/voice/VoiceProbeView.tsx) · [use-voice-probe.ts](../../apps/desktop/renderer/src/components/voice/use-voice-probe.ts) · [voice-cache.js](../../apps/desktop/renderer/src/components/voice/voice-cache.ts) · [voice-config.js](../../apps/desktop/renderer/src/voice-config.ts) · [ImagePanel.tsx](../../apps/desktop/renderer/src/components/image/ImagePanel.tsx) · [ImageModelPicker.tsx](../../apps/desktop/renderer/src/components/image/ImageModelPicker.tsx) · [use-image-probe.ts](../../apps/desktop/renderer/src/components/image/use-image-probe.ts) · [image-cache.js](../../apps/desktop/renderer/src/components/image/image-cache.ts) · [image-config.js](../../apps/desktop/renderer/src/image-config.ts) · [Settings.tsx](../../apps/desktop/renderer/src/pages/Settings.tsx) · [use-segment-voice.ts](../../apps/desktop/renderer/src/conversation/use-segment-voice.ts)
-  - [voice-config.test.cjs](../../apps/desktop/renderer/tests/voice-config.test.ts) · [voice-engines-emotion.test.cjs](../../apps/desktop/renderer/tests/voice-engines-emotion.test.ts) · [image-config.test.cjs](../../apps/desktop/renderer/tests/image-config.test.ts) · [p8-voice.test.ts](../../apps/backend/tests/integration/voice-tts.test.ts) · [p9-tts-unified.test.ts](../../apps/backend/tests/integration/tts-unified.test.ts) · [p9-tts-engines-emotion.test.ts](../../apps/backend/tests/unit/tts-engines-emotion.test.ts) · [p13-comfyui.test.ts](../../apps/backend/tests/integration/comfyui-client.test.ts)
+  - [VoicePanel.tsx](../../apps/desktop/renderer/src/components/voice/VoicePanel.tsx) · [VoiceServiceEditor.tsx](../../apps/desktop/renderer/src/components/voice/VoiceServiceEditor.tsx) · [VoiceProbeView.tsx](../../apps/desktop/renderer/src/components/voice/VoiceProbeView.tsx) · [use-voice-probe.ts](../../apps/desktop/renderer/src/components/voice/use-voice-probe.ts) · [voice-cache.ts](../../apps/desktop/renderer/src/components/voice/voice-cache.ts) · [voice-config.ts](../../apps/desktop/renderer/src/voice-config.ts) · [ImagePanel.tsx](../../apps/desktop/renderer/src/components/image/ImagePanel.tsx) · [ImageModelPicker.tsx](../../apps/desktop/renderer/src/components/image/ImageModelPicker.tsx) · [use-image-probe.ts](../../apps/desktop/renderer/src/components/image/use-image-probe.ts) · [image-cache.ts](../../apps/desktop/renderer/src/components/image/image-cache.ts) · [image-config.ts](../../apps/desktop/renderer/src/image-config.ts) · [Settings.tsx](../../apps/desktop/renderer/src/pages/Settings.tsx) · [use-segment-voice.ts](../../apps/desktop/renderer/src/conversation/use-segment-voice.ts)
+  - [voice-config.test.ts](../../apps/desktop/renderer/tests/voice-config.test.ts) · [voice-engines-emotion.test.ts](../../apps/desktop/renderer/tests/voice-engines-emotion.test.ts) · [image-config.test.ts](../../apps/desktop/renderer/tests/image-config.test.ts) · [voice-tts.test.ts](../../apps/backend/tests/integration/voice-tts.test.ts) · [tts-unified.test.ts](../../apps/backend/tests/integration/tts-unified.test.ts) · [tts-engines-emotion.test.ts](../../apps/backend/tests/unit/tts-engines-emotion.test.ts) · [comfyui-client.test.ts](../../apps/backend/tests/integration/comfyui-client.test.ts)
 
 ### 5.3 归档与复核文档追溯
 

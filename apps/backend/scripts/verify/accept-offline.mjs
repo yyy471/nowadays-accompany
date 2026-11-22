@@ -18,7 +18,7 @@ const docsRoot = path.join(repoRoot, "docs");
 const toolsRoot = path.join(repoRoot, ".tools");
 const acceptanceResultsDir = path.join(repoRoot, "test-results", "backend-acceptance");
 const MIN_BACKEND_TESTS = 551;
-const MIN_DELIVERY_TESTS = 3;
+const MIN_DELIVERY_TESTS = 5;
 const STEP_TIMEOUT_MS = 240_000;
 
 const matrices = [

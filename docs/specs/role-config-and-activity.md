@@ -225,16 +225,16 @@ npm test
 
 ```bash
 cd apps/backend
-npx -y node@24 --import tsx --test tests/p14-role-activity.test.ts tests/p15-resource-management.test.ts tests/p16-role-deletion.test.ts tests/p18-278-review-fixes.test.ts tests/p19-model-maintenance.test.ts tests/p6-appearance.test.ts tests/p8-voice.test.ts
+npx -y node@24 --import tsx --test tests/integration/role-activity.test.ts tests/integration/resource-management.test.ts tests/integration/role-deletion.test.ts tests/integration/workflow-simplification-fixes.test.ts tests/integration/workflow-recovery-fixes.test.ts tests/unit/model-maintenance.test.ts tests/integration/appearance-management.test.ts tests/integration/voice-tts.test.ts
 ```
 
-关键覆盖场景：`p14`（三态、`guardRole`/`guardAll`、`resume` 不清待办不重置额度、`reconcileStartup`）；`p15`（引用报告、MCP/Skill 占用与仅开关放行、全表替换版本冲突、凭据换站拦截、两阶段删除故障注入与幂等重试）；`p16`（双路径角色删除与最后角色 409）；`p18`/`p19`（依赖范围影响与只暂停相关角色、仅旧任务依赖暂缓、连续维护、删除超时唤醒与任务结束整理恢复）；`p6`/`p8`（服饰与语音启停守卫）。
+关键覆盖场景：`role-activity`（三态、`guardRole`/`guardAll`、`resume` 不清待办不重置额度、`reconcileStartup`）；`resource-management`（引用报告、MCP/Skill 占用与仅开关放行、全表替换版本冲突、凭据换站拦截、两阶段删除故障注入与幂等重试）；`role-deletion`（双路径角色删除与最后角色 409）；`workflow-simplification-fixes` / `workflow-recovery-fixes` / `model-maintenance`（依赖范围影响与只暂停相关角色、仅旧任务依赖暂缓、连续维护、删除超时唤醒与任务结束整理恢复）；`appearance-management` / `voice-tts`（服饰与语音启停守卫）。
 
 ### 4.2 后端离线交付验收脚本（离线假服务）
 
 ```bash
 cd apps/backend
-npx -y node@24 scripts/accept-offline.mjs
+npx -y node@24 scripts/verify/accept-offline.mjs
 ```
 
 ### 4.3 桌面端静态检查、构建与单测（Node 24）
@@ -242,27 +242,28 @@ npx -y node@24 scripts/accept-offline.mjs
 ```bash
 cd apps/desktop/renderer
 npm run check
+npm test
 npm run build
 
 cd ..
-npx -y node@24 --test tests/*.test.cjs
+npx -y node@24 --test tests/unit/*.test.cjs
 ```
 
-本专项核心前端单测包括：`binding-merge.test.cjs`、`model-cache.test.cjs`、`model-picker.test.cjs`、`image-config.test.cjs`、`voice-config.test.cjs`、`appearance-import.test.cjs`、`outfit-display.test.cjs`、`environment.test.cjs`。
+本专项核心前端单测包括 `apps/desktop/renderer/tests/` 下的 `binding-merge.test.ts`、`model-cache.test.ts`、`model-picker.test.ts`、`image-config.test.ts`、`voice-config.test.ts`、`appearance-import.test.ts`、`outfit-display.test.ts`。
 
 ### 4.4 本机真实后端 HTTP + Electron 全链路检查（离线模型桩 / 本地假 HTTP 端点）
 
 ```bash
-npx -y node@24 apps/desktop/tests/workflow-real-backend-chain-check.cjs
-npx -y node@24 apps/desktop/tests/settings-sheet-focus-check.cjs
-npx -y node@24 apps/desktop/tests/settings-media-sheet-check.cjs
-npx -y node@24 apps/desktop/tests/settings-v6-behavior-check.cjs
+npx -y node@24 apps/desktop/tests/e2e/workflow-real-backend-chain.e2e.cjs
+npx -y node@24 apps/desktop/tests/e2e/settings-sheet-focus.e2e.cjs
+npx -y node@24 apps/desktop/tests/e2e/settings-media-sheet.e2e.cjs
+npx -y node@24 apps/desktop/tests/e2e/settings-v6-behavior.e2e.cjs
 ```
 
-- **纸笺与分区交接**。按 v6 §7.3、§7.9，点击参数片段后关闭纸笺，焦点回到该行的「编辑」。切分区或切换既有角色后聚焦新分区标题。切角色先处理当前纸笺的 T9，再判断是否有设定草稿需要 T37。新建角色成功后收起纸笺和双层压暗，焦点回到底栏选择器。跨页打开设置时聚焦目标分区标题。对应检查见 [settings-sheet-focus-check.cjs](../../apps/desktop/tests/e2e/settings-sheet-focus.e2e.cjs)。
+- **纸笺与分区交接**。按 v6 §7.3、§7.9，点击参数片段后关闭纸笺，焦点回到该行的「编辑」。切分区或切换既有角色后聚焦新分区标题。切角色先处理当前纸笺的 T9，再判断是否有设定草稿需要 T37。新建角色成功后收起纸笺和双层压暗，焦点回到底栏选择器。跨页打开设置时聚焦目标分区标题。对应检查见 [settings-sheet-focus.e2e.cjs](../../apps/desktop/tests/e2e/settings-sheet-focus.e2e.cjs)。
 - **媒体及展示回归**。语音按角色和服务保存会话草稿，后端保存当前一份。系统减少动效、昼夜与三种视口、停止卡对比度、仅对摘要确有变化的行播放保存反馈等检查见 [媒体纸笺回归](../../apps/desktop/tests/e2e/settings-media-sheet.e2e.cjs)与 [v6 行为验收](../../apps/desktop/tests/e2e/settings-v6-behavior.e2e.cjs)。
 
-- **已同步工具与并发绑定回写**：E2E 脚本已通过 [electron-executable.cjs](../../apps/desktop/tests/helpers/electron-executable.cjs) 优先解析 `apps/desktop/node_modules/electron`（`292-R08` 与 `292-R06` 已在 [283 §29](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#29-292-第-9-节独立复验) 复核通过）；`292-R09` 模拟服务与 CDP 有界超时清理已按 [292 §10](../archive/06-workflow-simplification/292-278-remaining-deletion-maintenance.md#10-283-29292-r09doc-r01-邻接契约与-settings-review-fixes-checkcjs-收口自验) 完成补修自验（待独立复核）。[settings-review-fixes-check.cjs](../../apps/desktop/tests/e2e/settings-review-fixes.e2e.cjs) 已同步更新以分别覆盖非重叠 `mergeBindingDrafts` 自动合并、同用途重叠冲突阻断 + `503` 重读恢复、以及删除取消焦点回退与删后刷新重试；同时修复 [Settings.tsx](../../apps/desktop/renderer/src/pages/Settings.tsx#L531) 在 `409` 自动合并重提成功后改调 `mergeRefreshedBindings` 同步跨标签页草稿状态，避免另一页草稿滞留假脏标记（自验通过，待独立复核）。
+- **已同步工具与并发绑定回写**：E2E 脚本已通过 [electron-executable.cjs](../../apps/desktop/tests/helpers/electron-executable.cjs) 优先解析 `apps/desktop/node_modules/electron`（`292-R08` 与 `292-R06` 已在 [283 §29](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#29-292-第-9-节独立复验) 复核通过）；`292-R09` 模拟服务与 CDP 有界超时清理已按 [292 §10](../archive/06-workflow-simplification/292-278-remaining-deletion-maintenance.md#10-283-29292-r09doc-r01-邻接契约与-settings-review-fixes-checkcjs-收口自验) 完成补修自验（待独立复核）。[settings-review-fixes.e2e.cjs](../../apps/desktop/tests/e2e/settings-review-fixes.e2e.cjs) 已同步更新以分别覆盖非重叠 `mergeBindingDrafts` 自动合并、同用途重叠冲突阻断 + `503` 重读恢复、以及删除取消焦点回退与删后刷新重试；同时修复 [Settings.tsx](../../apps/desktop/renderer/src/pages/Settings.tsx#L531) 在 `409` 自动合并重提成功后改调 `mergeRefreshedBindings` 同步跨标签页草稿状态，避免另一页草稿滞留假脏标记（自验通过，待独立复核）。
 
 ### 4.5 真实外部服务与打包范围（当前未纳入离线自动验收）
 
@@ -293,11 +294,11 @@ npx -y node@24 apps/desktop/tests/settings-v6-behavior-check.cjs
 - **`292-R06`（原跨页与在途编辑场景均已独立复验）**：[ImagePanel.tsx](../../apps/desktop/renderer/src/components/image/ImagePanel.tsx#L149-L505) 与 [imageServiceSnapshotKey](../../apps/desktop/renderer/src/image-config.ts#L195-L210) 为 `probe`/`preview` 绑定 `{ serviceId, snapshotKey }`，跨页失效后拒收晚到响应；针对 `283 §28` 指出的在途编辑导致按钮长期锁死于「正在出图…」，[292 §9](../archive/06-workflow-simplification/292-278-remaining-deletion-maintenance.md#9-283-28-补修复核跟进与文档勘误自验292-r06-在途编辑292-r08-干净隔离环境与-doc-r01r04) 新增 `invalidateProbe`／`invalidatePreview`（`#L149-L165`、`#L295-L306`、`#L606-L618`）同步重置忙态按钮并丢弃旧响应，复核结论见 [状态页](../STATUS.md)。
 - **`292-R07`（已通过 `283 §28` 独立复核）**：[scene-image-settings.ts](../../apps/backend/src/application/media/scene-image-settings.ts#L155-L195) 的 `preview()` 对非空 `outfitId` 通过 `AppearanceStore.getOutfit(outfitId)` 核验当前角色下未删除服饰，否则在生图前抛出 `404 OUTFIT_NOT_FOUND`（见 [283 §28](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#28-292-第-8-节独立复验)）。
 - **`292-R08`（独立隔离 E2E 通过）**：[electron-executable.cjs](../../apps/desktop/tests/helpers/electron-executable.cjs) 按环境变量 → `apps/desktop/node_modules/electron` → 开发机根目录兜底解析，新增 `resolveElectronExecutableInfo` 暴露实际解析来源（`electronExecutableSource`、`electronExecutableResolvedFromDesktop`）并支持 `NOWADAYS_ALLOW_ROOT_ELECTRON_FALLBACK=0` 禁止回落根目录；已在仅含 `apps/desktop/node_modules` 的无根目录依赖隔离副本完成完整构建与全链路 E2E 自验（见 [292 §9](../archive/06-workflow-simplification/292-278-remaining-deletion-maintenance.md#9-283-28-补修复核跟进与文档勘误自验292-r06-在途编辑292-r08-干净隔离环境与-doc-r01r04)）。
-- **已更新历史测试与本轮待复核项**：[settings-review-fixes-check.cjs](../../apps/desktop/tests/e2e/settings-review-fixes.e2e.cjs) 已同步 `mergeBindingDrafts` 非重叠自动合并与同用途重叠冲突恢复，`292-R09` 有界等待清理及 [Settings.tsx](../../apps/desktop/renderer/src/pages/Settings.tsx#L531) 自动合并草稿回写同步均已完成自验（见 [292 §10](../archive/06-workflow-simplification/292-278-remaining-deletion-maintenance.md#10-283-29292-r09doc-r01-邻接契约与-settings-review-fixes-checkcjs-收口自验) 与 [STATUS.md](../STATUS.md)），待独立复核。
+- **已更新历史测试与本轮待复核项**：[settings-review-fixes.e2e.cjs](../../apps/desktop/tests/e2e/settings-review-fixes.e2e.cjs) 已同步 `mergeBindingDrafts` 非重叠自动合并与同用途重叠冲突恢复，`292-R09` 有界等待清理及 [Settings.tsx](../../apps/desktop/renderer/src/pages/Settings.tsx#L531) 自动合并草稿回写同步均已完成自验（见 [292 §10](../archive/06-workflow-simplification/292-278-remaining-deletion-maintenance.md#10-283-29292-r09doc-r01-邻接契约与-settings-review-fixes-checkcjs-收口自验) 与 [STATUS.md](../STATUS.md)），待独立复核。
 - **待实测/复核项**：`278 §4` 首次配置交互恢复链（[279 §3](../archive/06-workflow-simplification/279-workflow-simplification-two-pass-review.md#3-第三轮端到端复核)）尚未完成真实后端完整复验；真实外部模型/ComfyUI/TTS 服务与桌面端实际打包行为待联调留证。
 
 ### 5.4 核心实现索引
 
 - **后端路由、校验与守卫**：[config-writes.ts](../../apps/backend/src/http/config-writes.ts) · [write-guard.ts](../../apps/backend/src/http/write-guard.ts) · [role-activity-routes.ts](../../apps/backend/src/http/role-activity-routes.ts) · [routes.ts](../../apps/backend/src/http/routes.ts) · [router.ts](../../apps/backend/src/http/router.ts) · [schemas.ts](../../apps/backend/src/http/schemas.ts) · [voice-service-routes.ts](../../apps/backend/src/http/voice-service-routes.ts) · [image-service-routes.ts](../../apps/backend/src/http/image-service-routes.ts) · [voice-routes.ts](../../apps/backend/src/http/voice-routes.ts) · [appearance-routes.ts](../../apps/backend/src/http/appearance-routes.ts) · [commands.ts](../../apps/backend/src/cli/commands.ts)
 - **后端领域与协调服务**：[role-activity.ts](../../apps/backend/src/domain/role-activity.ts) · [errors.ts](../../apps/backend/src/domain/errors.ts) · [role-activity-service.ts](../../apps/backend/src/application/role/role-activity-service.ts) · [role-deletion-service.ts](../../apps/backend/src/application/role/role-deletion-service.ts) · [role-service.ts](../../apps/backend/src/application/role/role-service.ts) · [resource-service.ts](../../apps/backend/src/application/resources/resource-service.ts) · [global-voice-service.ts](../../apps/backend/src/application/media/global-voice-service.ts) · [conversation-service.ts](../../apps/backend/src/application/conversation/conversation-service.ts) · [appearance-service.ts](../../apps/backend/src/application/media/appearance-service.ts) · [app.ts](../../apps/backend/src/bootstrap/app.ts)
-- **桌面设置端**：[Settings.tsx](../../apps/desktop/renderer/src/pages/Settings.tsx) · [binding-merge.js](../../apps/desktop/renderer/src/components/model/binding-merge.ts) · [use-model-probe.ts](../../apps/desktop/renderer/src/components/model/use-model-probe.ts) · [ImagePanel.tsx](../../apps/desktop/renderer/src/components/image/ImagePanel.tsx) · [VoicePanel.tsx](../../apps/desktop/renderer/src/components/voice/VoicePanel.tsx) · [VoiceServiceEditor.tsx](../../apps/desktop/renderer/src/components/voice/VoiceServiceEditor.tsx) · [VoiceProbeView.tsx](../../apps/desktop/renderer/src/components/voice/VoiceProbeView.tsx) · [use-voice-probe.ts](../../apps/desktop/renderer/src/components/voice/use-voice-probe.ts) · [voice-cache.js](../../apps/desktop/renderer/src/components/voice/voice-cache.ts) · [AppearancePanel.tsx](../../apps/desktop/renderer/src/components/appearance/AppearancePanel.tsx)
+- **桌面设置端**：[Settings.tsx](../../apps/desktop/renderer/src/pages/Settings.tsx) · [binding-merge.ts](../../apps/desktop/renderer/src/components/model/binding-merge.ts) · [use-model-probe.ts](../../apps/desktop/renderer/src/components/model/use-model-probe.ts) · [ImagePanel.tsx](../../apps/desktop/renderer/src/components/image/ImagePanel.tsx) · [VoicePanel.tsx](../../apps/desktop/renderer/src/components/voice/VoicePanel.tsx) · [VoiceServiceEditor.tsx](../../apps/desktop/renderer/src/components/voice/VoiceServiceEditor.tsx) · [VoiceProbeView.tsx](../../apps/desktop/renderer/src/components/voice/VoiceProbeView.tsx) · [use-voice-probe.ts](../../apps/desktop/renderer/src/components/voice/use-voice-probe.ts) · [voice-cache.ts](../../apps/desktop/renderer/src/components/voice/voice-cache.ts) · [AppearancePanel.tsx](../../apps/desktop/renderer/src/components/appearance/AppearancePanel.tsx)

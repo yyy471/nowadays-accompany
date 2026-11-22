@@ -95,7 +95,7 @@
 
 ### 3.1 输入状态、消息提交去重与打断语义
 
-- **输入态保活与 1 秒退出**（[typing-state.js](../../apps/desktop/renderer/src/conversation/typing-state.ts#L2-L51)、[input-state.ts](../../apps/backend/src/application/conversation/input-state.ts#L10-L96)）：
+- **输入态保活与 1 秒退出**（[typing-state.ts](../../apps/desktop/renderer/src/conversation/typing-state.ts#L2-L51)、[input-state.ts](../../apps/backend/src/application/conversation/input-state.ts#L10-L96)）：
   - 前端 `createTypingState` 串行泵送更新并维护 `delay = 1000` ms 定时器；持续键入只刷新过期时间，停输 1 秒后发送 `typing: false`；切换窗口／卸载调用 `close()` 在最后一次请求完成后调用 `DELETE .../input-state?clientId=`；打字本身**不会**中断正在生成的回复（`DL-81`）。
 - **提交与活动停止态的判定先后**（[280 §2](../archive/06-workflow-simplification/280-278-progress-role-workspace-dialogue-receipt.md#L15-L45)、[routes.ts](../../apps/backend/src/http/routes.ts#L251-L280)、[conversation-service.ts](../../apps/backend/src/application/conversation/conversation-service.ts#L264-L296)）：
   - `POST .../messages` 先查 `findSubmittedMessage`：已存在的 `submissionId` 跳过「禁止新建」门槛，重新清理 `blockedWindows` 并重新评估调度与 `waitReason` 返回 `200`；真正的新提交才触发 `activity.assertCanStart(roleId)`，角色停止时拒绝入库并返回 `409 ROLE_ACTIVITY_STOPPED`。
@@ -121,7 +121,7 @@
 
 ### 3.3 桌面对话交互、按句语音与对象切换隔离
 
-- **逐句推进与等待反馈**（[ChatPane.tsx](../../apps/desktop/renderer/src/conversation/ChatPane.tsx#L177-L335)、[advance.js](../../apps/desktop/renderer/src/conversation/advance.ts)）：
+- **逐句推进与等待反馈**（[ChatPane.tsx](../../apps/desktop/renderer/src/conversation/ChatPane.tsx#L177-L335)、[advance.ts](../../apps/desktop/renderer/src/conversation/advance.ts)）：
   - 用户发送后立即清除当前 `wait` 与错误、聚焦消息滚动容器并隐藏输入框；收到首个可用句段即自动推进显示第一句；之后用户在消息区域点击（`shouldAdvanceFromClick`，避开按钮／链接／输入框／已选中文本）或按键 `Enter` / `Space`（`shouldAdvanceFromKey`，且已处理 `Shift+Enter` 换行与 IME `isComposing`/`keyCode === 229`）推进下一段；未到下一段时显示「正在组织回复…」或「下一句还在准备…」（`271 MR-05`）。
   - 一旦终态到达且末段展示完毕（含单句或失败空回复），立即还原输入框并归还草稿焦点（非历史查看态时）。
 - **语音播放、情绪联动与停用处理**（[use-segment-voice.ts](../../apps/desktop/renderer/src/conversation/use-segment-voice.ts) · [voice-service.ts](../../apps/backend/src/application/media/voice-service.ts)）：
@@ -160,16 +160,16 @@
 
 | 范围 | 测试与验证证据 |
 | --- | --- |
-| 句段切分、流式部分段、异步表情标注与计量、SSE 重连与快照游标 | [p7-performance.test.ts](../../apps/backend/tests/integration/conversation-performance.test.ts) · [216 独立复核](../archive/03-appearance-and-performance/216-conversation-performance-independent-review.md#6-217-第-7-节补修独立复验) |
-| 手动过场图任务幂等、模型／固定规划、`background` vs `full_scene`、历史服饰、故障写盘与启动恢复 | [p10-scene-image.test.ts](../../apps/backend/tests/integration/scene-image-core.test.ts) · [p11-scene-image-planning.test.ts](../../apps/backend/tests/integration/scene-image-planning.test.ts) · [227 独立复核](../archive/03-appearance-and-performance/227-scene-image-independent-review.md#7-228-第-10-节-r06-独立复验) |
-| ComfyUI 过场图适配器、配置锁定、跨站点变更拒绝（`CG-R01～R05`） | [p13-comfyui.test.ts](../../apps/backend/tests/integration/comfyui-client.test.ts) · [250 独立复核](../archive/04-role-settings-and-media/250-comfyui-independent-review.md#251-第-5-节补修独立复验) |
-| 消息接收去重、`waitReason` 回执、乱序 SSE 缓冲与恢复确认 | [p17-message-receipt.test.ts](../../apps/backend/tests/integration/message-receipt.test.ts) · [p18-278-review-fixes.test.ts](../../apps/backend/tests/integration/workflow-simplification-fixes.test.ts) · [283 §4～§9](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#4-284-修复独立复验) |
-| 桌面对话演化、输入状态 1 秒防抖／清理、窗口会话、立绘降级链、逐句点击与 `FE-R01～R04` / `MR-04～05` | [conversation-advance.test.cjs](../../apps/desktop/renderer/tests/conversation-advance.test.ts) · [conversation-typing.test.cjs](../../apps/desktop/renderer/tests/conversation-typing.test.ts) · [conversation-window-model.test.cjs](../../apps/desktop/renderer/tests/conversation-window-model.test.ts) · [conversation-performance.test.cjs](../../apps/desktop/renderer/tests/conversation-performance.test.ts) · [conversation-review-regression.py](../../apps/desktop/tests/live/conversation-review-regression.py) · [231 独立复核](../archive/03-appearance-and-performance/231-conversation-desktop-independent-review.md#4-232-修复独立复验) · [271 §8](../archive/05-model-settings-and-dialogue/271-model-settings-and-dialogue-independent-review.md#8-276-补修独立复验) |
+| 句段切分、流式部分段、异步表情标注与计量、SSE 重连与快照游标 | [conversation-performance.test.ts](../../apps/backend/tests/integration/conversation-performance.test.ts) · [216 独立复核](../archive/03-appearance-and-performance/216-conversation-performance-independent-review.md#6-217-第-7-节补修独立复验) |
+| 手动过场图任务幂等、模型／固定规划、`background` vs `full_scene`、历史服饰、故障写盘与启动恢复 | [scene-image-core.test.ts](../../apps/backend/tests/integration/scene-image-core.test.ts) · [scene-image-planning.test.ts](../../apps/backend/tests/integration/scene-image-planning.test.ts) · [227 独立复核](../archive/03-appearance-and-performance/227-scene-image-independent-review.md#7-228-第-10-节-r06-独立复验) |
+| ComfyUI 过场图适配器、配置锁定、跨站点变更拒绝（`CG-R01～R05`） | [comfyui-client.test.ts](../../apps/backend/tests/integration/comfyui-client.test.ts) · [250 独立复核](../archive/04-role-settings-and-media/250-comfyui-independent-review.md#251-第-5-节补修独立复验) |
+| 消息接收去重、`waitReason` 回执、乱序 SSE 缓冲与恢复确认 | [message-receipt.test.ts](../../apps/backend/tests/integration/message-receipt.test.ts) · [workflow-simplification-fixes.test.ts](../../apps/backend/tests/integration/workflow-simplification-fixes.test.ts) · [workflow-recovery-fixes.test.ts](../../apps/backend/tests/integration/workflow-recovery-fixes.test.ts) · [283 §4～§9](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#4-284-修复独立复验) |
+| 桌面对话演化、输入状态 1 秒防抖／清理、窗口会话、立绘降级链、逐句点击与 `FE-R01～R04` / `MR-04～05` | [conversation-advance.test.ts](../../apps/desktop/renderer/tests/conversation-advance.test.ts) · [conversation-typing.test.ts](../../apps/desktop/renderer/tests/conversation-typing.test.ts) · [conversation-window-model.test.ts](../../apps/desktop/renderer/tests/conversation-window-model.test.ts) · [conversation-performance.test.ts](../../apps/desktop/renderer/tests/conversation-performance.test.ts) · [conversation-review-regression.py](../../apps/desktop/tests/live/conversation-review-regression.py) · [231 独立复核](../archive/03-appearance-and-performance/231-conversation-desktop-independent-review.md#4-232-修复独立复验) · [271 §8](../archive/05-model-settings-and-dialogue/271-model-settings-and-dialogue-independent-review.md#8-276-补修独立复验) |
 
 ### 4.2 实现方自验、待独立复核范围
 
-- [237 对话页日落刻度明暗切换](../archive/02-desktop-ui-and-relations/237-dialogue-theme-transition.md)（对应脚本 [theme-transition-check.cjs](../../apps/desktop/tests/e2e/theme-transition.e2e.cjs)）：对话舞台光线、纸面 14 档逐行推进、历史层切换与 reduced-motion 收尾。
-- [238 对话页顶部精简与布局调整](../archive/02-desktop-ui-and-relations/238-dialogue-layout-refinement.md) 与 [239 隐藏底部导航栏偏好](../archive/02-desktop-ui-and-relations/239-dialogue-dock-visibility.md)（对应脚本 [dialogue-layout-check.cjs](../../apps/desktop/tests/e2e/dialogue-layout.e2e.cjs)）：右上角图标收纳、窄屏适配与 Dock 持久化偏好。
+- [237 对话页日落刻度明暗切换](../archive/02-desktop-ui-and-relations/237-dialogue-theme-transition.md)（对应脚本 [theme-transition.e2e.cjs](../../apps/desktop/tests/e2e/theme-transition.e2e.cjs)）：对话舞台光线、纸面 14 档逐行推进、历史层切换与 reduced-motion 收尾。
+- [238 对话页顶部精简与布局调整](../archive/02-desktop-ui-and-relations/238-dialogue-layout-refinement.md) 与 [239 隐藏底部导航栏偏好](../archive/02-desktop-ui-and-relations/239-dialogue-dock-visibility.md)（对应脚本 [dialogue-layout.e2e.cjs](../../apps/desktop/tests/e2e/dialogue-layout.e2e.cjs)）：右上角图标收纳、窄屏适配与 Dock 持久化偏好。
 
 ### 4.3 未实现能力与真实联调缺口
 
@@ -177,10 +177,10 @@
   - `CG-03` 自动过场图、ComfyUI `img2img` 服饰参考图上传与纯背景分支隔离、桌面失败回复原地重试（`retryFailedReply`）与分段音频播放切窗清理均已通过独立代码复核、全量离线回归及本机实时 `nowadays-tts-v1`（`cosyvoice`/`indextts`）与 ComfyUI `MOSS-Image`（自动 `background` + 手动 `img2img` `full_scene`）Electron E2E（文本对话使用确定性桩）。
 - **剩余能力与真实联调缺口**：
   - 真实多模态 LLM 对话流全栈串联、多语种长句 TTS、ComfyUI 长等待取消清队列／8 MiB 与 32 MiB 实机上限，以及设置页 `img2img`／`OutfitReferences` 专属 UI 交互 E2E 仍待后续补测。
-  - **生图配置未就绪占位 vs 失败策略**：当前未配置真实生图服务时仍沿用 `FakeSceneImageGenerator` 产出样例图（`248 §10` 指出正式版需收口为明确失败或开关边界）。
-  - **服务端历史按日期统计与关键词检索接口**：当前桌面 `HistoryPanel` 通过循环 `before` 分页拉取全部历史并在前端 [history.js](../../apps/desktop/renderer/src/conversation/history.ts) 建立索引（`231 §1`）。
-  - **半写入残留自动清扫任务**：当前依赖单次失败删除及管理员／日志定位，`227 §7` 遗留后台清扫尚未实施。
-  - **`DL-142` 未定交互细则**（[223 §4](../archive/03-appearance-and-performance/223-conversation-performance-development-guide.md)）：指定句段范围出图、重画／替换同轮旧图等产品交互仍未拍板。
+- **生图配置未就绪占位 vs 失败策略**：当前未配置真实生图服务时仍沿用 `FakeSceneImageGenerator` 产出样例图（`248 §10` 指出正式版需收口为明确失败或开关边界）。
+- **服务端历史按日期统计与关键词检索接口**：当前桌面 `HistoryPanel` 通过循环 `before` 分页拉取全部历史并在前端 [history.ts](../../apps/desktop/renderer/src/conversation/history.ts) 建立索引（`231 §1`）。
+- **半写入残留自动清扫任务**：当前依赖单次失败删除及管理员／日志定位，`227 §7` 遗留后台清扫尚未实施。
+- **`DL-142` 未定交互细则**（[223 §4](../archive/03-appearance-and-performance/223-conversation-performance-development-guide.md)）：指定句段范围出图、重画／替换同轮旧图等产品交互仍未拍板。
 - **尚未真实联调的能力**：真实模型长时间流式断开恢复、真实 TTS / IndexTTS 中文听感与设备输出、真实 ComfyUI + MOSS-Image 显存与耗时（[STATUS.md §2](../STATUS.md#2-当前待推进事项backlog)）、Windows 打包后整包运行。
 
 ### 4.4 可执行验证命令
@@ -188,24 +188,26 @@
 ```powershell
 # 1. 后端类型检查、全量单元测试与 21 步统一离线验收（Node 24）
 cd apps/backend
-npx -y node@24 ./node_modules/typescript/bin/tsc --noEmit
-npx -y node@24 --import tsx --test tests/*.test.ts
-npx -y node@24 scripts/accept-offline.mjs
+npm run typecheck
+npm test
+npx -y node@24 scripts/verify/accept-offline.mjs
 
 # 定向复验本专题核心测试
-npx -y node@24 --import tsx --test tests/p7-performance.test.ts tests/p10-scene-image.test.ts tests/p11-scene-image-planning.test.ts tests/p13-comfyui.test.ts tests/p17-message-receipt.test.ts tests/p18-278-review-fixes.test.ts
+npx -y node@24 --import tsx --test tests/integration/conversation-performance.test.ts tests/integration/scene-image-core.test.ts tests/integration/scene-image-planning.test.ts tests/integration/comfyui-client.test.ts tests/integration/message-receipt.test.ts tests/integration/workflow-simplification-fixes.test.ts tests/integration/workflow-recovery-fixes.test.ts
 
-# 2. 桌面渲染层门禁、构建与逻辑单测
-cd apps/desktop/renderer
+# 2. 桌面渲染层门禁、单测、构建与桌面壳单测
+cd ../desktop/renderer
 npm run check
+npm test
 npm run build
 cd ..
-npx -y node@24 --test tests/*.test.cjs
+npx -y node@24 --test tests/unit/*.test.cjs
 
 # 3. 隔离 Electron + 本地后端链路／布局／换光验收脚本（仓库根目录）
-npx -y node@24 apps/desktop/tests/workflow-real-backend-chain-check.cjs
-npx -y node@24 apps/desktop/tests/dialogue-layout-check.cjs
-npx -y node@24 apps/desktop/tests/theme-transition-check.cjs
+cd ../..
+npx -y node@24 apps/desktop/tests/e2e/workflow-real-backend-chain.e2e.cjs
+npx -y node@24 apps/desktop/tests/e2e/dialogue-layout.e2e.cjs
+npx -y node@24 apps/desktop/tests/e2e/theme-transition.e2e.cjs
 ```
 
 ---
@@ -234,7 +236,7 @@ npx -y node@24 apps/desktop/tests/theme-transition-check.cjs
 - **桌面前端渲染器**：
   - [Conversation.tsx](../../apps/desktop/renderer/src/pages/Conversation.tsx) · [use-window-session.ts](../../apps/desktop/renderer/src/conversation/use-window-session.ts) · [use-segment-voice.ts](../../apps/desktop/renderer/src/conversation/use-segment-voice.ts)
   - [ChatPane.tsx](../../apps/desktop/renderer/src/conversation/ChatPane.tsx) · [ConversationStage.tsx](../../apps/desktop/renderer/src/conversation/ConversationStage.tsx) · [HistoryPanel.tsx](../../apps/desktop/renderer/src/conversation/HistoryPanel.tsx)
-  - [typing-state.js](../../apps/desktop/renderer/src/conversation/typing-state.ts) · [advance.js](../../apps/desktop/renderer/src/conversation/advance.ts) · [window-model.js](../../apps/desktop/renderer/src/conversation/window-model.ts) · [history.js](../../apps/desktop/renderer/src/conversation/history.ts) · [performance.js](../../apps/desktop/renderer/src/conversation/performance.ts) · [dialogue-theme.ts](../../apps/desktop/renderer/src/conversation/dialogue-theme.ts)
+  - [typing-state.ts](../../apps/desktop/renderer/src/conversation/typing-state.ts) · [advance.ts](../../apps/desktop/renderer/src/conversation/advance.ts) · [window-model.ts](../../apps/desktop/renderer/src/conversation/window-model.ts) · [history.ts](../../apps/desktop/renderer/src/conversation/history.ts) · [performance.ts](../../apps/desktop/renderer/src/conversation/performance.ts) · [dialogue-theme.ts](../../apps/desktop/renderer/src/conversation/dialogue-theme.ts)
 
 ### 5.3 归档与复核文档追溯
 

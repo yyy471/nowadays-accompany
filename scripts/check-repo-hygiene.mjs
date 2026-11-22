@@ -136,7 +136,18 @@ const LEGACY_REFERENCES = [
   { pattern: /(^|[^A-Za-z0-9_\-/])prototypes\//g, label: "prototypes/" },
 ];
 const TEXT_EXTENSIONS = /\.(cjs|mjs|js|ts|tsx|json|md|yml|yaml|py|ps1|sh)$/;
-const SCAN_ROOTS = ["apps", "scripts", "docs/specs", "docs/README.md", "docs/STATUS.md", "README.md", "AGENTS.md"];
+const SCAN_ROOTS = [
+  "apps",
+  "scripts",
+  "tools",
+  "docs/specs",
+  "docs/design/character-studio/tokens.json",
+  "docs/README.md",
+  "docs/STATUS.md",
+  "README.md",
+  "AGENTS.md",
+  "package.json",
+];
 const SCAN_FILES = SCAN_ROOTS.map((entry) => path.join(repoRoot, entry)).filter((entry) => fs.existsSync(entry));
 // 迁移与清理工具本身必须写下旧路径才能工作，不参与旧路径扫描。
 const SKIP_SCAN = new Set([

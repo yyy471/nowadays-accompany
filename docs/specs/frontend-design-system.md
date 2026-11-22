@@ -277,7 +277,7 @@ node ../../scripts/check-design-tokens.mjs --list-allow   # 列出所有豁免�
 node ../../scripts/check-design-tokens.mjs --json         # 机器可读输出
 ```
 
-`apps/desktop` 的 `npm test` 里的 `tests/design-tokens.test.cjs` 同样会跑（含规则单元测试与仓库当前状态）。
+`apps/desktop` 的 `npm test` 里的 `tests/unit/design-tokens.test.cjs` 同样会跑（含规则单元测试与仓库当前状态）。
 
 **选型说明**：自写脚本 `apps/desktop/scripts/check-design-tokens.mjs`（复用 renderer 里已有的 `postcss` 解析器）覆盖仓库专属令牌规则、豁免棘轮上限与生成文件白名单；若后续需要通用 CSS 属性顺序等规则，再评估引入 stylelint 并行。
 
