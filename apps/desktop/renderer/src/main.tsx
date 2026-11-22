@@ -1,0 +1,34 @@
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { ConfirmProvider, ModalLayerProvider, MotionPolicyProvider } from './ui';
+import { ThemePresetProvider } from './ui/presets';
+import { App } from './App';
+import { applyMotionPreference, readMotionPreference } from './preferences';
+import './styles.css';
+import './ui/theme.css';
+import './ui/character-tokens.css';
+import './ui/motion-reduced.css';
+import './ui/character-theme.css';
+import './styles/shell.css';
+import './styles/home.css';
+import './styles/appearance.css';
+import './styles/voice.css';
+import './styles/image.css';
+import './styles/settings-workspace.css';
+import './styles/settings-catalog.css';
+import './styles/token-usage.css';
+import './styles/role-entry.css';
+import './styles/relations-exlibris.css';
+import './styles/conversation.css';
+import './styles/feed.css';
+import './ui/preset-appearance.css';
+import './ui/status-dot.css';
+import './styles/relationship-journal.css';
+import './styles/relationship-journal-integration.css';
+import './styles/relationship-journal-transition.css';
+import './styles/studio-overrides.css';
+
+applyMotionPreference(readMotionPreference());
+createRoot(document.getElementById('root')!).render(
+  <StrictMode><MotionPolicyProvider><ModalLayerProvider><ThemePresetProvider><ConfirmProvider><App /></ConfirmProvider></ThemePresetProvider></ModalLayerProvider></MotionPolicyProvider></StrictMode>
+);

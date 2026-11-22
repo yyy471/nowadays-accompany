@@ -1,14 +1,16 @@
 # Dependencies and generated builds (including renderer builds)
 node_modules/
 dist/
-/desktop-dist/
+/apps/desktop/release/
 /.packaging*/
 /release/
 /release-*/
 *.tsbuildinfo
 
 # Test results and local tool caches; test/ contains versioned source
+.tools/
 /test-results/
+/apps/backend/test-results/
 /coverage/
 /playwright-report/
 /.nyc_output/
@@ -33,15 +35,11 @@ dist/
 !.env.*.example
 
 # Local agent workspace, review artifacts and machine-specific tooling
+/.claude/
 /.workbuddy/
 /.workbuddy-ai/
 /.nowadays-review/
-/.archify/*/visual-check/
-/.archify/*/review-*/
-/.archify/*/*.browser-check.json
-/.archify/*/*.delivery.json
-/.archify/*/*.finalize.json
-/.archify/*/*.finalize-summary.json
+/.archify/
 
 # Editor and operating-system files
 /.idea/
