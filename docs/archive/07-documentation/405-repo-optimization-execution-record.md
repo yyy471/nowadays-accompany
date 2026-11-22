@@ -168,7 +168,7 @@ scripts/              # 仓库级验证、清理、文档与卫生工具
 | `.git/` 体积与对象完整性 | ≤ 200 MB，`git fsck --full` 0 错误 | **181.48 MiB**（`941c968` 提交前）／**181.58 MiB**（`941c968` 提交后），`git fsck --full` 退出码 0 | `.git/` |
 | 单次 `accept-offline` 产物大小与纯净度 | < 5 MB，`sourceUnchanged: true`，`realServiceCalls: 0`，`tmpRemoved: true` | 每个 run 运行目录 **1.00 MiB**（3 次均 `sourceUnchanged: true`、`realServiceCalls: 0`、`tmpRemoved: true`） | `test-results/backend-acceptance/p5-2026-11-22T05-27-17-893Z-828049f8`、`p5-2026-11-22T05-37-59-894Z-83abe7a1`、`p5-2026-11-22T05-45-19-258Z-e913a791` |
 | 后端正式测试与交付自检 | 551／551（0 跳过/删减），交付单测全过 | 69 个测试文件 **551／551** 通过；`delivery-tests` **5／5** 通过 | `apps/backend/scripts/verify/run-tests.mjs`、`acceptance.test.mjs` |
-| 后端评测辅助单测（独立脚本） | 通过 | **8／8** 通过（须在 `apps/backend` 执行 `node --import tsx --test scripts/eval/*.test.mjs`，未纳入 `verify.mjs` 主链） | `apps/backend/scripts/eval/*.test.mjs` |
+| 后端评测辅助单测（独立脚本） | 通过 | **8／8** 通过（需 `--import tsx`，初版未接入主链，已于 §7.3 正式接入 `verify.mjs`） | `apps/backend/scripts/eval/*.test.mjs` |
 | 桌面渲染器、桌面壳与跨端集成单测 | 0 跳过/删减 | 渲染器 ESM 单测（18 文件）**132／132**、桌面壳 CJS 单测（3 文件）**13／13**、跨端 `feed-integration` **3／3** | `apps/desktop/renderer/tests/`、`apps/desktop/tests/{unit,integration}/` |
 | 桌面 Electron E2E 与孤儿进程 | 15／15 全过，0 孤儿 `electron.exe` | 连续 3 轮 **15／15** 全部通过（`complete: true`、`entryStable: true`），跑后 `electron.exe` 进程数 **0** | `test-results/desktop-e2e/e2e-2026-11-22T05-46-44-330Z-dc49c13a/gates.json` |
 | 样式门禁、文档巡检与仓库卫生护栏 | 0 违规 / 0 错误 | `lint:styles` 28 个 CSS **0 违规**（豁免 387 ≤ 387）；`check-docs.mjs` 核心 13 份 + 归档 156 份 **0 错误、0 警告**；`check-repo-hygiene.mjs` 706 个跟踪文件、0 组 JS/声明配对、**0 错误**（6 条温和告警） | `scripts/check-docs.mjs`、`scripts/check-repo-hygiene.mjs` |
@@ -203,4 +203,23 @@ scripts/              # 仓库级验证、清理、文档与卫生工具
      - `accept-offline.mjs`：**84.2 s**（报告内部起止 **83.87 s** ≤ 95 s），**21／21** 步全过（`delivery-tests` **5／5**、`tests` **551／551** / 69 个测试文件、`sourceUnchanged=true`、`realServiceCalls=0`、`tmpRemoved=true`，运行目录 `test-results/backend-acceptance/p5-2026-11-22T11-51-54-373Z-9bc9f8bf/` 体积 **1.00 MiB**）；
      - `desktop-e2e`：**41.6 s**（`gates.json` 起止 **41.49 s** ≤ 65 s），**15／15** 全过（`complete=true`、`entryStable=true`，报告 `test-results/desktop-e2e/e2e-2026-11-22T11-53-18-527Z-92069f61/gates.json`），跑后孤儿 `electron.exe` **0**；
      - 仓库总占用 **1.083 GiB（1.162 GB）**（≤ 1.2 GB），`.git/` **181.58 MiB**（≤ 200 MB），`git fsck --full` 退出码 0。
+
+### 7.3 治理专项三项细节收口（2026-11-22）
+
+针对全面复核指出的 3 项非阻断小尾巴完成收口（本机自验，离线范围）：
+
+1. **散落测试残留与 `.packaging*` 清理（`scripts/clean-artifacts.mjs`）**：
+   - 在 `collectReviewBloat()` 增加对 `test-results/` 根及子根下未被文档引用的散落单文件清理规则（保留文档提及的 `p2-02/03/04*.log` 与 `role-style-final-n20.log`）。
+   - 执行 `node scripts/clean-artifacts.mjs --apply --keep-runs 5`：清理 **313 个目标**，释放 **16.04 MiB**（此前被占用的 `.packaging/` 与 `.packaging-28948/` 已解除占用并随本轮一并删除，卫生巡检警告由 6 条降至 4 条）。
+   - 清理后排除用户本地调试生成的数据目录（`apps/backend/.nowadays-desktop/`，59.78 MiB）仓库占用为 **1.067 GiB（1.146 GB）**（二进制与十进制均 ≤ 1.20 GB；含该本地运行目录为 **1.125 GiB / 1.208 GB**）。
+2. **评测脚本单测接入 `verify.mjs` 与头部用法注释修正**：
+   - `scripts/verify.mjs` 新增 `backendEvalTests()`，将 `apps/backend/scripts/eval/*.test.mjs`（**8／8**）正式接入 `fast`（含关键字匹配）、`unit`（10/10）与 `gate` 预检并行池。
+   - 修正 `apps/backend/scripts/eval/` 下 `role-prompt-ablation.mjs`、`role-world-http-summary.mjs`、`role-world-http.mjs`、`score-role-dialogue.mjs`、`summarize-world-dialogue.mjs`、`verify-role-life-http.mjs` 共 6 处头部注释的脚本/输出路径为新目录结构。
+3. **补全本地配置忽略规则**：根 `.gitignore` 增加 `/.claude/`。
+4. **验证结果（Node 24.22.2，离线范围）**：
+   - `node scripts/check-docs.mjs`：核心 13 份 + 归档 156 份，**0 错误、0 警告**；
+   - `node scripts/check-repo-hygiene.mjs`：706 个跟踪文件、0 组 JS/声明配对、**0 错误、4 警告**（仅余 `file-size-budget`）；
+   - `npm run verify:fast -- role`：**6／6** 通过（墙钟 **28.3 s**，含 `backend-eval-tests` 8／8 耗时 2.7 s、`backend-tests:7` 54／54 耗时 28.1 s）；
+   - `npm run verify:unit`：**10／10** 通过（墙钟 **54.6 s** ≤ 60 s，含 `backend-eval-tests` 8／8、`backend-tests` 551／551 耗时 39.9 s、`renderer-tests` 132／132、`desktop-tests` 13／13、`feed-integration` 3／3）。
+
 

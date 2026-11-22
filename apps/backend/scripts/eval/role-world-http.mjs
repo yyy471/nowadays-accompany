@@ -1,4 +1,4 @@
-// Node 24 --import tsx scripts/role-world-http.mjs <run> <deepseek|vertex> <credential-file> <lin|zhou|all> <scenario|all>
+// Node 24 --import tsx scripts/eval/role-world-http.mjs <run> <deepseek|vertex> <credential-file> <lin|zhou|all> <scenario|all>
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

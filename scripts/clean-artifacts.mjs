@@ -284,6 +284,12 @@ async function collectReviewBloat(testRoot, protectedEntries, options, operation
     if (entry.isSymbolicLink()) continue;
     if (RUN_NAME_RE.test(entry.name) || entry.name === "desktop-e2e" || entry.name === "backend-acceptance") continue;
     const full = path.join(testRoot, entry.name);
+    if (entry.isFile()) {
+      if (!options.protectStatusRefs || !protectedEntries.has(entry.name)) {
+        operations.push({ action: "prune-review", path: full, testRoot });
+      }
+      continue;
+    }
     if (!entry.isDirectory()) continue;
     if (options.protectStatusRefs && !protectedEntries.has(entry.name)) {
       operations.push({ action: "prune-review", path: full, testRoot });

@@ -1,4 +1,4 @@
-// 仅读取 HTTP 驱动的脱敏报告。Node 24 scripts/role-world-http-summary.mjs <run>
+// 仅读取 HTTP 驱动的脱敏报告。Node 24 scripts/eval/role-world-http-summary.mjs <run>
 import fs from "node:fs";
 import path from "node:path";
 import {fileURLToPath} from "node:url";

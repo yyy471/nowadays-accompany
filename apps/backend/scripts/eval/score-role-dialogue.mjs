@@ -1,4 +1,4 @@
-// node backend/scripts/score-role-dialogue.mjs test-results/role-live/baseline-deepseek.json [...]
+// node apps/backend/scripts/eval/score-role-dialogue.mjs test-results/backend-acceptance/role-live/baseline-deepseek.json [...]
 // 仅评估脱敏逐轮报告。所有文本信号列轮号供复核，不相加为人格分数。
 import fs from "node:fs";
 import path from "node:path";

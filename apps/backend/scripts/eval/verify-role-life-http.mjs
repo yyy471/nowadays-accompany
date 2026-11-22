@@ -1,4 +1,4 @@
-// Node 24 --import tsx scripts/verify-role-life-http.mjs <run> <long|autonomy|scheduled|quiet> <deepseek|vertex> <凭据文件>
+// Node 24 --import tsx scripts/eval/verify-role-life-http.mjs <run> <long|autonomy|scheduled|quiet> <deepseek|vertex> <凭据文件>
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";

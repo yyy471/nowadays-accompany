@@ -1,5 +1,5 @@
 // 使用正式 HTTP 采样器的报告汇总。多个目录按传入次序选择整场复跑，保留被替换场次的路径。
-// node scripts/summarize-world-dialogue.mjs <output-dir> <run-dir> [...]
+// node scripts/eval/summarize-world-dialogue.mjs <output-dir> <run-dir> [...]
 import fs from "node:fs";
 import path from "node:path";
 import { scenarios } from "./role-world-scenarios.mjs";

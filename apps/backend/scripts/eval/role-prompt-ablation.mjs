@@ -1,4 +1,4 @@
-// Node 24 --import tsx scripts/role-prompt-ablation.mjs <run> <deepseek|vertex> <credentials-path> [--history-style|--history-feedback] [--offline]
+// Node 24 --import tsx scripts/eval/role-prompt-ablation.mjs <run> <deepseek|vertex> <credentials-path> [--history-style|--history-feedback] [--offline]
 // 真实调用只写公开回复、完成状态及输入哈希。固定历史不拼接上一条试验的输出。
 import fs from "node:fs";
 import { createHash } from "node:crypto";

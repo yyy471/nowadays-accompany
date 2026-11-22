@@ -35,6 +35,7 @@ dist/
 !.env.*.example
 
 # Local agent workspace, review artifacts and machine-specific tooling
+/.claude/
 /.workbuddy/
 /.workbuddy-ai/
 /.nowadays-review/

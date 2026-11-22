@@ -73,6 +73,10 @@ function backendTestFiles() {
   return walkFiles(path.join(backendDir, "tests"), ".test.ts", backendDir);
 }
 
+function backendEvalTestFiles() {
+  return walkFiles(path.join(backendDir, "scripts", "eval"), ".test.mjs", backendDir);
+}
+
 function desktopUnitTestFiles() {
   return walkFiles(path.join(desktopDir, "tests", "unit"), ".test.cjs", desktopDir);
 }
@@ -191,6 +195,15 @@ const commands = {
       cwd: desktopDir,
     };
   },
+  backendEvalTests(tests = backendEvalTestFiles()) {
+    const allCount = backendEvalTestFiles().length;
+    return {
+      name: tests.length === allCount ? "backend-eval-tests" : `backend-eval-tests:${tests.length}`,
+      cmd: process.execPath,
+      args: ["--import", "tsx", "--test", ...tests],
+      cwd: backendDir,
+    };
+  },
   acceptance() {
     const script = fs.existsSync(path.join(backendDir, "scripts", "verify", "accept-offline.mjs"))
       ? "scripts/verify/accept-offline.mjs"
@@ -261,13 +274,15 @@ function filterByKeywords(candidates, keywords) {
 async function fastCommands(files, keywords = []) {
   if (keywords.length > 0) {
     const backendMatches = filterByKeywords(backendTestFiles(), keywords);
+    const evalMatches = filterByKeywords(backendEvalTestFiles(), keywords);
     const desktopMatches = filterByKeywords(desktopUnitTestFiles(), keywords);
     const rendererMatches = filterByKeywords(rendererUnitTestFiles(), keywords);
     const list = [commands.docs(), commands.hygiene(), commands.backendTypecheck(), commands.rendererCheck()];
     if (backendMatches.length > 0) list.push(commands.backendTests(backendMatches));
+    if (evalMatches.length > 0) list.push(commands.backendEvalTests(evalMatches));
     if (desktopMatches.length > 0) list.push(commands.desktopTests(desktopMatches));
     if (rendererMatches.length > 0) list.push(commands.rendererTests(rendererMatches));
-    if (backendMatches.length === 0 && desktopMatches.length === 0 && rendererMatches.length === 0) {
+    if (backendMatches.length === 0 && evalMatches.length === 0 && desktopMatches.length === 0 && rendererMatches.length === 0) {
       console.error(`[verify] 未匹配到包含关键字 [${keywords.join(", ")}] 的单测文件`);
       process.exit(2);
     }
@@ -275,7 +290,7 @@ async function fastCommands(files, keywords = []) {
   }
 
   if (files.length === 0) {
-    return [commands.docs(), commands.hygiene(), commands.backendTypecheck(), commands.rendererCheck(), commands.desktopTests(), commands.rendererTests()];
+    return [commands.docs(), commands.hygiene(), commands.backendTypecheck(), commands.backendEvalTests(), commands.rendererCheck(), commands.desktopTests(), commands.rendererTests()];
   }
   const list = [commands.docs(), commands.hygiene()];
   const rootInfraChanged = files.some((file) => ["package.json", "scripts/repo-paths.mjs", "scripts/ensure-tools.mjs"].includes(file));
@@ -296,6 +311,9 @@ async function fastCommands(files, keywords = []) {
     list.push(commands.backendTypecheck());
     const tests = targetedBackendTests(files);
     if (tests.length) list.push(commands.backendTests(tests));
+    if (rootInfraChanged || files.some((file) => file.startsWith("apps/backend/scripts/eval/"))) {
+      list.push(commands.backendEvalTests());
+    }
   }
   if (rendererChanged) {
     list.push(commands.rendererCheck());
@@ -309,11 +327,12 @@ async function fastCommands(files, keywords = []) {
 }
 
 async function unitCommands() {
-  // 轻量与前端构建先并发跑完，再独占资源执行 8 并发后端全量单测，避免 CPU 争抢引起子进程启动超时。
+  // 轻量与前端构建先并发跑完，再独占资源执行高并发后端全量单测，避免 CPU 争抢引起子进程启动超时。
   const quick = await runParallel([
     commands.docs(),
     commands.hygiene(),
     commands.backendTypecheck(),
+    commands.backendEvalTests(),
     commands.rendererCheck(),
     commands.rendererBuild(),
     commands.desktopTests(),
@@ -332,6 +351,7 @@ async function gateCommands() {
       commands.rendererCheck(),
       commands.docs(),
       commands.hygiene(),
+      commands.backendEvalTests(),
       commands.desktopTests(),
       commands.rendererTests(),
       commands.feedIntegration(),
