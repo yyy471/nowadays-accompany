@@ -33,6 +33,14 @@ const LEGACY_REMOVED_TARGETS = new Set([
   'tools/art-pipeline/render_portrait.py',
   'tools/art-pipeline/package_assets.py',
   'desktop/desk-preview/index.html',
+  // Wave 6 确认已被正式单测/验收覆盖并移除的早期一次性 reviews 探针：
+  'apps/backend/reviews/20261103-p1-index-literals.ts',
+  'apps/backend/reviews/20261103-p1-recheck.ts',
+  'apps/backend/reviews/20261103-p1-review.ts',
+  'apps/backend/reviews/20261103-p2-04-recheck.ts',
+  'apps/backend/reviews/20261103-p2-04-review.ts',
+  'apps/backend/reviews/20261104-p2-04-r01-review.ts',
+  'apps/backend/reviews/20261104-p2-06-fix-review.ts',
 ]);
 // 归档记录保留当时路径：退役目录不在现行结构中出现，但历史链接不要求复活目标。
 const LEGACY_REMOVED_PREFIXES = ['prototypes/'];

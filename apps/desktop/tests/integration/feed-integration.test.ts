@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { listen } from "../../../backend/src/bootstrap/app.js";
-import { createFixtureWithModel, ScriptedChatModel } from "../../../backend/tests/p2-05-fixture.js";
+import { createFixtureWithModel, ScriptedChatModel } from "../../../backend/tests/fixtures/conversation-fixture.js";
 import { loadFeed, loadUpcoming, messageKey } from "../../renderer/src/feed/data";
 import type { RoleListItem } from "../../renderer/src/types";
 

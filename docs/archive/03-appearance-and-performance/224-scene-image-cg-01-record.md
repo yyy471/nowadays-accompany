@@ -82,7 +82,7 @@
 
 ## 7. 测试与自验
 
-新增 [p10-scene-image.test.ts](../../../apps/backend/tests/p10-scene-image.test.ts)，8 项：
+新增 [p10-scene-image.test.ts](../../../apps/backend/tests/integration/scene-image-core.test.ts)，8 项：
 
 - 手动任务从已保存回复发起，任务字段、区间、两种读取入口、图片解码、分页与详情引用、事件顺序 `queued → planning → generating → succeeded` 一致。
 - 同一幂等键并发请求只创建一个任务、只生成一次；重复请求不改变原图层模式。

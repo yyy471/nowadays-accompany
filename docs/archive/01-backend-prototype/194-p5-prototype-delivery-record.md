@@ -11,9 +11,9 @@
 | 当前后端源码 | apps/backend/src、package.json／package-lock.json | 独立 Node >=24 依赖；tsx 源码运行，非桌面安装包 |
 | 启动及配置说明 | [apps/backend/README.md](../../../apps/backend/README.md) | app-root、数据布局、CLI、模型与绑定、本地 MCP、Skill、查询、备份及限制 |
 | 无密钥样例 | [examples](../../../apps/backend/examples) | 三种模型协议、角色设定、绑定、本地 MCP、通用 Skill；服务地址及路径占位符需按实际环境替换 |
-| 统一离线验收 | [accept-offline.mjs](../../../apps/backend/scripts/accept-offline.mjs) | 固定离线白名单、新建证据目录、逐步日志、退出码／报告／用例计数检查、源码哈希 |
-| 真实进程冒烟 | [process-smoke.ts](../../../apps/backend/scripts/process-smoke.ts) | 实际 main／CLI 进程、设定修订及重启；样例注册、本地工具及 Skill 核验 |
-| 交付入口回归 | [acceptance.test.mjs](../../../apps/backend/scripts/acceptance.test.mjs) | 缺报告、缺用例、重复编号、失败／错误字段、正式测试尾部及非全通过的拒绝 |
+| 统一离线验收 | [accept-offline.mjs](../../../apps/backend/scripts/verify/accept-offline.mjs) | 固定离线白名单、新建证据目录、逐步日志、退出码／报告／用例计数检查、源码哈希 |
+| 真实进程冒烟 | [process-smoke.ts](../../../apps/backend/scripts/verify/process-smoke.ts) | 实际 main／CLI 进程、设定修订及重启；样例注册、本地工具及 Skill 核验 |
+| 交付入口回归 | [acceptance.test.mjs](../../../apps/backend/scripts/verify/acceptance.test.mjs) | 缺报告、缺用例、重复编号、失败／错误字段、正式测试尾部及非全通过的拒绝 |
 
 统一执行 `cd apps/backend` 后 `npm run accept:offline`。独立 Node 路径仅是本工作区现成运行时，交付不要求固定绝对路径；完整准备方法见 README。
 

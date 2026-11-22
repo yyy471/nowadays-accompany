@@ -45,9 +45,9 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p3-fix-20261104"
 
 自验：
 
-- [p3-review-fixes.test.ts:180](../../../apps/backend/tests/p3-review-fixes.test.ts#L155) 把额度设为 1，自主模型用掉最后一点后同轮请求 `diary_write` 与 `autonomy_share`。断言日记数为 0、主窗口消息数为 0、`usedPoints=1`，计量只有 1 条模型记录；执行、任务和活动均为 paused，安排以 `AUTONOMY_BUDGET_EXHAUSTED` 结束。
-- [p3-review-fixes.test.ts:252](../../../apps/backend/tests/p3-review-fixes.test.ts#L227) 覆盖多工具请求撞上余额边界：额度为 2，模型与首篇日记各用一点后，已请求的日记正常保留，后续分享保持未执行，执行暂停。
-- 既有 [p3-02-autonomy-runtime.test.ts:88](../../../apps/backend/tests/p3-02-autonomy-runtime.test.ts#L88) 与 :282 两处计量条数随新口径更新：MCP、分享、再安排及记忆检索都登记实际工具调用；无限额度时全部记录 `counted=0`。
+- [p3-review-fixes.test.ts:180](../../../apps/backend/tests/integration/autonomy-boundaries.test.ts#L155) 把额度设为 1，自主模型用掉最后一点后同轮请求 `diary_write` 与 `autonomy_share`。断言日记数为 0、主窗口消息数为 0、`usedPoints=1`，计量只有 1 条模型记录；执行、任务和活动均为 paused，安排以 `AUTONOMY_BUDGET_EXHAUSTED` 结束。
+- [p3-review-fixes.test.ts:252](../../../apps/backend/tests/integration/autonomy-boundaries.test.ts#L227) 覆盖多工具请求撞上余额边界：额度为 2，模型与首篇日记各用一点后，已请求的日记正常保留，后续分享保持未执行，执行暂停。
+- 既有 [p3-02-autonomy-runtime.test.ts:88](../../../apps/backend/tests/integration/autonomy-runtime.test.ts#L88) 与 :282 两处计量条数随新口径更新：MCP、分享、再安排及记忆检索都登记实际工具调用；无限额度时全部记录 `counted=0`。
 
 ## 3. P3-R02 安排时间统一为可比较的实际时刻
 
@@ -59,8 +59,8 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p3-fix-20261104"
 
 自验：
 
-- [p3-01-autonomy-store.test.ts:241](../../../apps/backend/tests/p3-01-autonomy-store.test.ts#L241) 覆盖 `+08:00`、`-05:00`、跨日与同一瞬间的不同写法。断言保存值为 canonical UTC，同一瞬间按创建顺序稳定排序，且 `03:00:01Z` 前不到期、到点恰好到期，跨日安排只在 `04:30:00Z` 到期。
-- [p3-review-fixes.test.ts:317](../../../apps/backend/tests/p3-review-fixes.test.ts#L292) 用 `11:00:01+08:00` 安排，在当前 UTC 文本仍为 `03:00:02Z` 时正式 `runDueAutonomy` 启动并完成。
+- [p3-01-autonomy-store.test.ts:241](../../../apps/backend/tests/unit/autonomy-store.test.ts#L241) 覆盖 `+08:00`、`-05:00`、跨日与同一瞬间的不同写法。断言保存值为 canonical UTC，同一瞬间按创建顺序稳定排序，且 `03:00:01Z` 前不到期、到点恰好到期，跨日安排只在 `04:30:00Z` 到期。
+- [p3-review-fixes.test.ts:317](../../../apps/backend/tests/integration/autonomy-boundaries.test.ts#L292) 用 `11:00:01+08:00` 安排，在当前 UTC 文本仍为 `03:00:02Z` 时正式 `runDueAutonomy` 启动并完成。
 
 ## 4. P3-R03 预算暂停保持原任务链资源资格
 
@@ -72,7 +72,7 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p3-fix-20261104"
 - [conversation-service.ts:523](../../../apps/backend/src/application/conversation/conversation-service.ts#L523) 的启动检查允许 `budget_resume` 在聊天模型已关闭时凭原任务资格启动；[conversation-service.ts:928](../../../apps/backend/src/application/conversation/conversation-service.ts#L928) 的续行使用任务模型与续行资源。新任务仍只使用当前启用资源，派发时继续读取最新配置。
 - 任务结束时沿用既有逻辑结束全部资源续行，资格随整条任务链释放。
 
-自验：[p3-review-fixes.test.ts:346](../../../apps/backend/tests/p3-review-fixes.test.ts#L321) 分别关闭模型与 MCP 后跨日恢复。两个场景都断言恢复确实启动、原任务最终 completed、成果文件写出、MCP 工具仍被提供；历史暂停活动保留。
+自验：[p3-review-fixes.test.ts:346](../../../apps/backend/tests/integration/autonomy-boundaries.test.ts#L321) 分别关闭模型与 MCP 后跨日恢复。两个场景都断言恢复确实启动、原任务最终 completed、成果文件写出、MCP 工具仍被提供；历史暂停活动保留。
 
 ## 5. P3-R04 已结束任务不再退化为新任务
 
@@ -83,8 +83,8 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p3-fix-20261104"
 
 自验：
 
-- [p3-01-autonomy-store.test.ts:287](../../../apps/backend/tests/p3-01-autonomy-store.test.ts#L287) 直接结束暂停任务后领取到期恢复安排，断言返回空、安排 cancelled／`AUTONOMY_RESUME_TASK_ENDED`、任务仍只有 1 个且没有新活动。
-- [p3-review-fixes.test.ts:425](../../../apps/backend/tests/p3-review-fixes.test.ts#L400) 走正式 `finishTask`，恢复时模型调用数不增加、没有日记、任务保持 completed、恢复安排 cancelled／`TASK_ENDED`，执行记录只有 1 条。
+- [p3-01-autonomy-store.test.ts:287](../../../apps/backend/tests/unit/autonomy-store.test.ts#L287) 直接结束暂停任务后领取到期恢复安排，断言返回空、安排 cancelled／`AUTONOMY_RESUME_TASK_ENDED`、任务仍只有 1 个且没有新活动。
+- [p3-review-fixes.test.ts:425](../../../apps/backend/tests/integration/autonomy-boundaries.test.ts#L400) 走正式 `finishTask`，恢复时模型调用数不增加、没有日记、任务保持 completed、恢复安排 cancelled／`TASK_ENDED`，执行记录只有 1 条。
 
 ## 6. P3-R05 自主活动不占用对话轮次
 
@@ -93,13 +93,13 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p3-fix-20261104"
 - [conversation-store.ts:75](../../../apps/backend/src/storage/conversation/conversation-store.ts#L75) 的提交输入增加 `countsAsConversationRound`；[conversation-store.ts:639](../../../apps/backend/src/storage/conversation/conversation-store.ts#L639) 仅在需要计轮时分配下一个 `decision_round`，否则写入 `NULL` 并从事件负载省略。
 - [conversation-service.ts:1096](../../../apps/backend/src/application/conversation/conversation-service.ts#L1096) 自主执行提交时传 `false`，用户消息执行保持原有计轮规则。
 
-自验：[p3-review-fixes.test.ts:489](../../../apps/backend/tests/p3-review-fixes.test.ts#L464) 断言纯自主活动前后当前轮次都为 0、自主执行 `decision_round=NULL`、用户消息数为 0；随后提交真实用户消息，轮次变为 1 且该执行 `decision_round=1`。
+自验：[p3-review-fixes.test.ts:489](../../../apps/backend/tests/integration/autonomy-boundaries.test.ts#L464) 断言纯自主活动前后当前轮次都为 0、自主执行 `decision_round=NULL`、用户消息数为 0；随后提交真实用户消息，轮次变为 1 且该执行 `decision_round=1`。
 
 ## 7. P3-R06 暂停状态只反映仍待恢复的任务
 
 修改：[autonomy-store.ts:360](../../../apps/backend/src/storage/conversation/autonomy-store.ts#L360) 的 `hasPausedActivity` 连接 `tasks`，只统计活动 paused 且所属任务仍 paused 的记录。历史 paused 活动继续保留，但不再把已完成任务报告为当前暂停。
 
-自验：[p3-review-fixes.test.ts:553](../../../apps/backend/tests/p3-review-fixes.test.ts#L528) 先确认暂停状态为真、活动为 paused；跨日恢复并完成后断言任务全部 completed、`paused=false`、活动状态为 `["completed","paused"]`（历史保留）、没有待执行安排、当日额度使用 1 点。
+自验：[p3-review-fixes.test.ts:553](../../../apps/backend/tests/integration/autonomy-boundaries.test.ts#L528) 先确认暂停状态为真、活动为 paused；跨日恢复并完成后断言任务全部 completed、`paused=false`、活动状态为 `["completed","paused"]`（历史保留）、没有待执行安排、当日额度使用 1 点。
 
 ## 8. 回归范围与后续
 
@@ -110,7 +110,7 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p3-fix-20261104"
 
 ## 9. 188 第 5 节复验遗留修复
 
-日期：2026-11-04。依据：[188 第 5.2／5.3 节](./188-p3-independent-review.md)与扩展脚本 [20261104-p3-fix-recheck.ts](../../../apps/backend/reviews/20261104-p3-fix-recheck.ts)。
+日期：2026-11-04。依据：[188 第 5.2／5.3 节](./188-p3-independent-review.md)与扩展脚本 [20261104-p3-fix-recheck.ts](../../../apps/backend/tests/acceptance/autonomy-fixes.acceptance.ts)。
 
 ### 9.1 P3-R01 建连期间预留与实际派发计费一致
 
@@ -131,7 +131,7 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p3-fix-20261104"
 - 任务正式结束时 [conversation-service.ts:255](../../../apps/backend/src/application/conversation/conversation-service.ts#L255) 关闭任务目录并释放连接；恢复完成、失败或用户显式结束都会走到最终释放。
 - 配置变更仍由连接池的配置指纹处理：下一次派发读取最新配置，指纹变化时重建客户端；新任务继续只使用当前启用资源。
 
-自验：[p3-review-fixes.test.ts:593](../../../apps/backend/tests/p3-review-fixes.test.ts#L568) 使用真实有状态 stdio 服务，额度 2 时先模型与工具各 1 点得到 `1` 后暂停，跨日恢复同一任务后第二次得到 `2`，工具结果按顺序为 `["1","2"]`，任务 completed 且资源续行全部结束。复核方扩展脚本 `P3-R03-stateful-MCP-survives-budget-pause` 也为 `contractPassed=true`。
+自验：[p3-review-fixes.test.ts:593](../../../apps/backend/tests/integration/autonomy-boundaries.test.ts#L568) 使用真实有状态 stdio 服务，额度 2 时先模型与工具各 1 点得到 `1` 后暂停，跨日恢复同一任务后第二次得到 `2`，工具结果按顺序为 `["1","2"]`，任务 completed 且资源续行全部结束。复核方扩展脚本 `P3-R03-stateful-MCP-survives-budget-pause` 也为 `contractPassed=true`。
 
 ### 9.3 自验证据
 
@@ -145,7 +145,7 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p3-fix-20261104"
 | 全量回归 | 135／135 通过，0 失败、0 取消；`tests.log` |
 | 原 188 场景 | 7／7 `contractPassed=true`，无 `probeError`；`original-probes.log` |
 | 第 5 节扩展场景 | 2／2 `contractPassed=true`，无 `probeError`；`extended-probes.log` |
-| 新增正式回归 | 6 项，均在 [p3-review-fixes.test.ts](../../../apps/backend/tests/p3-review-fixes.test.ts)，该文件共 14 项 |
+| 新增正式回归 | 6 项，均在 [p3-review-fixes.test.ts](../../../apps/backend/tests/integration/autonomy-boundaries.test.ts)，该文件共 14 项 |
 
 全部模型为离线脚本端口，MCP 为真实本地 stdio 服务与临时工作空间；本轮没有调用真实模型、付费服务、QQ 或远程 MCP，也没有重启应用或多进程组合。保留的会话连续性仅限同进程内，应用重启后的恢复仍属 P4 范围。
 
@@ -155,7 +155,7 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p3-fix-20261104"
 
 ## 10. 188 第 6 节额度预留边界补正
 
-日期：2026-11-04。依据：[188 第 6.3／6.4 节](./188-p3-independent-review.md)与脚本 [20261104-p3-reservation-boundary-review.ts](../../../apps/backend/reviews/20261104-p3-reservation-boundary-review.ts)。
+日期：2026-11-04。依据：[188 第 6.3／6.4 节](./188-p3-independent-review.md)与脚本 [20261104-p3-reservation-boundary-review.ts](../../../apps/backend/tests/acceptance/autonomy-reservation-boundary.acceptance.ts)。
 
 ### 10.1 跨日提交按实际派发日结算
 
@@ -168,12 +168,12 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p3-fix-20261104"
 
 自验：
 
-- [p3-review-fixes.test.ts:961](../../../apps/backend/tests/p3-review-fixes.test.ts#L961) 复现本地 23:59:59 预留、00:00:01 派发：工具与新一天模型各计 1 点，`usedPoints` 与当天账本均为 2。
-- [p3-review-fixes.test.ts:1030](../../../apps/backend/tests/p3-review-fixes.test.ts#L1030) 新一天余额已满时不派发，工具结果记为 `failed/AUTONOMY_BUDGET_EXHAUSTED`，执行与活动 paused，当天不新增计量。
-- [p3-review-fixes.test.ts:1099](../../../apps/backend/tests/p3-review-fixes.test.ts#L1099) 有限模型计 1 点后切换无限制、再切回有限并取消无限制预留，`usedPoints` 仍为 1，不会退掉模型点数。
-- [p3-review-fixes.test.ts:1167](../../../apps/backend/tests/p3-review-fixes.test.ts#L1167) 覆盖有限→无限制、无限制→有限的成功派发，分别得到 1 点与 2 点，`accountedPoints=usedPoints`。
-- [p3-review-fixes.test.ts:1225](../../../apps/backend/tests/p3-review-fixes.test.ts#L1225) 已扣点的预留切到无限制后取消，仍按原日期退回该点，模型调用点数保留。
-- [p3-review-fixes.test.ts:1278](../../../apps/backend/tests/p3-review-fixes.test.ts#L1278) 已扣点的预留切到无限制后成功派发，工具点保留，后续模型按无限制记录 `counted=0`，`usedPoints=2` 与已计点数一致。
+- [p3-review-fixes.test.ts:961](../../../apps/backend/tests/integration/autonomy-boundaries.test.ts#L961) 复现本地 23:59:59 预留、00:00:01 派发：工具与新一天模型各计 1 点，`usedPoints` 与当天账本均为 2。
+- [p3-review-fixes.test.ts:1030](../../../apps/backend/tests/integration/autonomy-boundaries.test.ts#L1030) 新一天余额已满时不派发，工具结果记为 `failed/AUTONOMY_BUDGET_EXHAUSTED`，执行与活动 paused，当天不新增计量。
+- [p3-review-fixes.test.ts:1099](../../../apps/backend/tests/integration/autonomy-boundaries.test.ts#L1099) 有限模型计 1 点后切换无限制、再切回有限并取消无限制预留，`usedPoints` 仍为 1，不会退掉模型点数。
+- [p3-review-fixes.test.ts:1167](../../../apps/backend/tests/integration/autonomy-boundaries.test.ts#L1167) 覆盖有限→无限制、无限制→有限的成功派发，分别得到 1 点与 2 点，`accountedPoints=usedPoints`。
+- [p3-review-fixes.test.ts:1225](../../../apps/backend/tests/integration/autonomy-boundaries.test.ts#L1225) 已扣点的预留切到无限制后取消，仍按原日期退回该点，模型调用点数保留。
+- [p3-review-fixes.test.ts:1278](../../../apps/backend/tests/integration/autonomy-boundaries.test.ts#L1278) 已扣点的预留切到无限制后成功派发，工具点保留，后续模型按无限制记录 `counted=0`，`usedPoints=2` 与已计点数一致。
 
 ### 10.2 自验证据
 
@@ -186,7 +186,7 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p3-fix-20261104"
 | 原 188 场景 | 7／7 `contractPassed=true`；`original-probes.log` |
 | 第 5 节扩展场景 | 2／2 `contractPassed=true`；`extended-probes.log` |
 | 第 6 节预留边界场景 | 2／2 `contractPassed=true`；`reservation-boundary.log` |
-| 新增正式回归 | 7 项，均在 [p3-review-fixes.test.ts](../../../apps/backend/tests/p3-review-fixes.test.ts)，该文件共 21 项 |
+| 新增正式回归 | 7 项，均在 [p3-review-fixes.test.ts](../../../apps/backend/tests/integration/autonomy-boundaries.test.ts)，该文件共 21 项 |
 
 本轮仍只使用离线模型、真实本地 stdio MCP、临时目录与注入时钟；没有调用真实模型、付费服务、QQ 或远程 MCP，也没有修改系统时间、重启应用或多进程组合。
 

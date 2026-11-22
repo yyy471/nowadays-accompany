@@ -10,6 +10,6 @@ export const rendererDir = path.join(desktopDir, "renderer");
 export const docsDir = path.join(repoRoot, "docs");
 export const toolsDir = path.join(repoRoot, ".tools");
 export const artPipelineDir = path.join(repoRoot, "tools", "art-pipeline");
-export const backendTestResultsDir = path.join(backendDir, "test-results");
 export const rootTestResultsDir = path.join(repoRoot, "test-results");
+export const backendTestResultsDir = path.join(rootTestResultsDir, "backend-acceptance");
 export const localNode24Exe = path.join(toolsDir, "node-v24", "node.exe");

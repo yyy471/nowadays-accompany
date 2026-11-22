@@ -42,7 +42,7 @@
 
 ## 5. 测试与验收
 
-- **后端新增用例**「voice can be disabled and enabled without losing the saved config」：默认 `enabled` 为 `true`；停用后句段合成返回 409 `VOICE_DISABLED` 且不调用语音服务；停用期间试听仍 200；停用期间保存 preset 配置返回 `enabled: false` 且读回同一份音色；再启用后恢复合成。[p9-tts-unified.test.ts](../../../apps/backend/tests/p9-tts-unified.test.ts)
+- **后端新增用例**「voice can be disabled and enabled without losing the saved config」：默认 `enabled` 为 `true`；停用后句段合成返回 409 `VOICE_DISABLED` 且不调用语音服务；停用期间试听仍 200；停用期间保存 preset 配置返回 `enabled: false` 且读回同一份音色；再启用后恢复合成。[p9-tts-unified.test.ts](../../../apps/backend/tests/integration/tts-unified.test.ts)
 - **迁移模拟补齐。** 回拨 `user_version` 到 V10、V11、V12 的三处模拟此前只改版本号，严格 ALTER 会撞上已存在的 `enabled` 列，统一补 `ALTER TABLE role_voice_settings DROP COLUMN enabled`；这与 [245](./245-role-settings-review-fixes.md) 定下的「回拨版本必须同时删除该版本之后新增的列」一致。
 - **版本断言。** `p1-02-storage`（两处）、`p2-02-memory`、`p8-voice`、`p9-tts-unified`（两处）、`p10-scene-image` 的 `schemaVersion` 全部改为 14；`p8-voice` 用例名去掉「schema v12 tables」，避免版本号写死在标题里。
 - **后端全量。** 302／302 项通过。离线验收 `npx -y node@24 scripts/accept-offline.mjs` 21／21 步、302／302 项，`realServiceCalls=0`、`sourceUnchanged=true`，目录 `apps/backend/test-results/p5-2026-11-10T08-47-52-755Z-cc614808/`。

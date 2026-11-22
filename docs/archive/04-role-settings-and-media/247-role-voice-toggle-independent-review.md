@@ -18,7 +18,7 @@
 
 浏览器使用模拟接口和音频。当前窗口收到 `VOICE_DISABLED` 后，后续自动播放静默跳过，手动点播提示一次停用原因。两项缺口均可复现，结果位于 `apps/backend/test-results/review-246/review-246.json`。桌面 89 项测试、类型检查及生产构建通过。真实 TTS 服务与桌面实际声音输出待联调。
 
-后端类型检查、302 项正式测试及 21 步离线验收通过。覆盖旧语音记录迁移、停用时拒绝新句段合成且不调用语音服务、仍可试听、保存新音色仍停用及启用后恢复合成。验收目录为 `apps/backend/test-results/p5-2026-11-10T09-03-18-706Z-2d73bd72/`，`realServiceCalls=0`、`sourceUnchanged=true`。 [语音启停回归](../../../apps/backend/tests/p9-tts-unified.test.ts#L566)
+后端类型检查、302 项正式测试及 21 步离线验收通过。覆盖旧语音记录迁移、停用时拒绝新句段合成且不调用语音服务、仍可试听、保存新音色仍停用及启用后恢复合成。验收目录为 `apps/backend/test-results/p5-2026-11-10T09-03-18-706Z-2d73bd72/`，`realServiceCalls=0`、`sourceUnchanged=true`。 [语音启停回归](../../../apps/backend/tests/integration/tts-unified.test.ts#L566)
 
 ## 4. 249 补修独立复验
 

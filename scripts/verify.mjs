@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -93,7 +94,7 @@ function targetedBackendTests(files) {
     file === "scripts/ensure-tools.mjs" ||
     file.startsWith("apps/backend/examples/") ||
     file.startsWith("apps/backend/scripts/") ||
-    file.startsWith("apps/backend/reviews/") ||
+    file.startsWith("apps/backend/tests/acceptance/") ||
     (file.startsWith("apps/backend/tests/") && !file.endsWith(".test.ts")),
   );
   if (nonTestBackendInfra) return all;
@@ -106,15 +107,15 @@ function targetedBackendTests(files) {
   for (const file of source) {
     const relative = file.slice("apps/backend/src/".length);
     if (relative.startsWith("mcp/")) {
-      for (const test of pick("tests/p2-04-mcp.test.ts", "tests/p2-05-mcp.test.ts", "tests/unit/mcp-local.test.ts", "tests/integration/mcp-execution.test.ts")) targets.add(test);
+      for (const test of pick("tests/unit/mcp-local.test.ts", "tests/integration/mcp-execution.test.ts")) targets.add(test);
     } else if (relative.startsWith("skills/")) {
-      for (const test of pick("tests/p2-04-skill.test.ts", "tests/p2-05-skill.test.ts", "tests/p5-skill-run.test.ts", "tests/unit/skill-library.test.ts", "tests/integration/skill-execution.test.ts", "tests/integration/skill-run.test.ts")) targets.add(test);
+      for (const test of pick("tests/unit/skill-library.test.ts", "tests/integration/skill-execution.test.ts", "tests/integration/skill-run.test.ts")) targets.add(test);
     } else if (relative.startsWith("tts/")) {
-      for (const test of pick("tests/p8-voice.test.ts", "tests/p9-tts-engines-emotion.test.ts", "tests/p9-tts-unified.test.ts", "tests/integration/voice-tts.test.ts", "tests/unit/tts-engines-emotion.test.ts", "tests/integration/tts-unified.test.ts")) targets.add(test);
+      for (const test of pick("tests/integration/voice-tts.test.ts", "tests/unit/tts-engines-emotion.test.ts", "tests/integration/tts-unified.test.ts")) targets.add(test);
     } else if (relative.startsWith("scene/")) {
-      for (const test of pick("tests/p10-auto-scene.test.ts", "tests/p10-scene-image.test.ts", "tests/p11-scene-image-planning.test.ts", "tests/integration/scene-image-auto.test.ts", "tests/integration/scene-image-core.test.ts", "tests/integration/scene-image-planning.test.ts")) targets.add(test);
+      for (const test of pick("tests/integration/scene-image-auto.test.ts", "tests/integration/scene-image-core.test.ts", "tests/integration/scene-image-planning.test.ts")) targets.add(test);
     } else if (relative.startsWith("model/")) {
-      for (const test of pick("tests/model-providers.test.ts", "tests/p2-04-model.test.ts", "tests/p2-04-google-gemini.test.ts", "tests/p2-05-stream.test.ts", "tests/unit/model-providers.test.ts", "tests/unit/model-protocols.test.ts", "tests/unit/google-gemini.test.ts", "tests/integration/model-stream.test.ts")) targets.add(test);
+      for (const test of pick("tests/unit/model-providers.test.ts", "tests/unit/model-protocols.test.ts", "tests/unit/google-gemini.test.ts", "tests/integration/model-stream.test.ts")) targets.add(test);
     } else {
       // bootstrap/storage/application/http/domain/security 等共享层改动无法可靠局部化，升级全量。
       return all;
@@ -141,10 +142,20 @@ const commands = {
   },
   backendTests(tests = backendTestFiles()) {
     const allCount = backendTestFiles().length;
+    const defaultConcurrency = String(Math.min(16, Math.max(8, Math.floor(os.availableParallelism() / 2))));
+    const concurrencyArg = `--test-concurrency=${process.env.ACCEPT_TEST_CONCURRENCY ?? defaultConcurrency}`;
+    if (tests.length === allCount) {
+      return {
+        name: "backend-tests",
+        cmd: process.execPath,
+        args: [path.join(backendDir, "scripts", "verify", "run-tests.mjs"), concurrencyArg],
+        cwd: backendDir,
+      };
+    }
     return {
-      name: tests.length === allCount ? "backend-tests" : `backend-tests:${tests.length}`,
+      name: `backend-tests:${tests.length}`,
       cmd: process.execPath,
-      args: ["--import", "tsx", "--test", `--test-concurrency=${process.env.ACCEPT_TEST_CONCURRENCY ?? "10"}`, ...tests],
+      args: ["--import", "tsx", "--test", concurrencyArg, ...tests],
       cwd: backendDir,
     };
   },
@@ -314,23 +325,29 @@ async function unitCommands() {
 }
 
 async function gateCommands() {
-  const first = [];
-  for (const command of [commands.rendererCheck(), commands.rendererBuild()]) {
-    const result = await run(command);
-    first.push(result);
-    if (!result.passed) return first;
-  }
-  // 离线验收自身已按 Stage A/B/C 并发跑满，其余轻量桌面检查先并发或随同执行，避免过多进程争抢。
-  const light = await runParallel([
-    commands.docs(),
-    commands.hygiene(),
-    commands.desktopTests(),
-    commands.rendererTests(),
-    commands.feedIntegration(),
+  // 前端校验/轻量检查/构建 与 后端离线验收 互不写同一目录，并行执行以缩短总墙钟；
+  // 桌面 Electron E2E 在两者全部落定后独占 CPU 顺序执行，避免动画与后端重载池争时序。
+  const frontendAndLight = (async () => {
+    const preflight = await runParallel([
+      commands.rendererCheck(),
+      commands.docs(),
+      commands.hygiene(),
+      commands.desktopTests(),
+      commands.rendererTests(),
+      commands.feedIntegration(),
+    ]);
+    const checkPassed = preflight.find((result) => result.name === "renderer-check")?.passed === true;
+    const build = checkPassed ? await run(commands.rendererBuild()) : null;
+    return { preflight, build };
+  })();
+  const [{ preflight, build }, acceptance] = await Promise.all([
+    frontendAndLight,
+    run(commands.acceptance()),
   ]);
-  const acceptance = await run(commands.acceptance());
+  const results = [...preflight, ...(build ? [build] : []), acceptance];
+  if (!build?.passed) return results;
   const e2e = await run(commands.e2e());
-  return [...first, ...light, acceptance, e2e];
+  return [...results, e2e];
 }
 
 const rawArgs = process.argv.slice(2);

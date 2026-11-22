@@ -16,7 +16,7 @@ import {
 export const RUN_NAME_RE = /^p5-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[0-9a-f]{8}$/;
 export const E2E_RUN_NAME_RE = /^e2e-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[0-9a-f]{8}$/;
 const RUN_REFERENCE_RE = /p5-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[0-9a-f]{8}/g;
-const DIR_REFERENCE_RE = /test-results\/([A-Za-z0-9_.\-]+)/g;
+const DIR_REFERENCE_RE = /test-results\/(?:backend-acceptance\/)?([A-Za-z0-9_.\-]+)/g;
 const LEGACY_RELATIVE_PATHS = [
   ".cache",
   "node_modules",

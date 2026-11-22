@@ -10,8 +10,8 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const { resolveElectronExecutable } = require('../helpers/electron-executable.cjs');
 
-const { repoRoot: root, desktopDir, xiachengPortraitFixture, backendTestResultsDir } = require('../helpers/paths.cjs');
-const results = path.join(backendTestResultsDir, 'review-234');
+const { repoRoot: root, desktopDir, xiachengPortraitFixture, testResultsDir } = require('../helpers/paths.cjs');
+const results = path.join(testResultsDir, 'review-234');
 fs.mkdirSync(results, { recursive: true });
 const temp = fs.mkdtempSync(path.join(results, 'profile-'));
 // Chromium 的配置目录放在系统临时目录，避免退出时的文件锁把证据目录塞满。

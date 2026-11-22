@@ -17,7 +17,7 @@
 | 边界脚本类型检查 | 严格模式检查退出码 0；`probe-typecheck.log` |
 | 边界场景 | 7 个场景均复现缺口，无脚本异常；`p3-review-report.json`、`p3-probes.log` |
 | 源码归属 | `source-manifest-before.json`、`source-manifest.json`；复核期间既有源码、测试及依赖清单未变 |
-| 复现脚本 | [20261104-p3-review.ts](../../../apps/backend/reviews/20261104-p3-review.ts) |
+| 复现脚本 | [20261104-p3-review.ts](../../../apps/backend/tests/acceptance/autonomy-review.acceptance.ts) |
 
 全部模型为离线脚本端口，MCP 为真实本地 stdio 服务与临时工作空间；未调用真实 DeepSeek、付费模型、QQ 或远程 MCP。TEMP／TMP 及 `P1_REVIEW_TMP_ROOT` 指向本轮 `tmp/`，沿用既有递归删除守卫；样例结束后关闭应用并清理自身临时目录。日期跨日用注入时钟实现，没有修改系统时间，也不依赖强杀、重启或多进程异常来复现。
 
@@ -126,7 +126,7 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p3-independent-20261104-180217"
 | 扩展脚本类型检查 | 严格模式退出码 0；`extended-typecheck.log` |
 | 源码归属 | `source-manifest-before.json`、`source-manifest.json`；测试期间既有源码、测试、依赖和原探针未变，仅新增扩展脚本 |
 
-本轮仅使用离线模型与真实本地 stdio MCP、专用 TEMP／TMP 和既有递归删除守卫，未访问真实模型或付费服务，也没有强杀或重启应用。扩展脚本：[20261104-p3-fix-recheck.ts](../../../apps/backend/reviews/20261104-p3-fix-recheck.ts)。与原脚本一样，`contractPassed=false` 表示复现问题；报告异常单列为 `probeError`，本轮没有该类异常。
+本轮仅使用离线模型与真实本地 stdio MCP、专用 TEMP／TMP 和既有递归删除守卫，未访问真实模型或付费服务，也没有强杀或重启应用。扩展脚本：[20261104-p3-fix-recheck.ts](../../../apps/backend/tests/acceptance/autonomy-fixes.acceptance.ts)。与原脚本一样，`contractPassed=false` 表示复现问题；报告异常单列为 `probeError`，本轮没有该类异常。
 
 ### 5.2 P3-R01：内部工具额度已补齐，但异步建连结束前扣点且失去计量对应
 
@@ -183,7 +183,7 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p3-independent-20261104-180217"
 | 新脚本类型检查 | 严格模式退出码 0；`reservation-typecheck.log` |
 | 源码归属 | `source-manifest-before.json`、`source-manifest.json`；原有源码／测试／依赖未变，仅新增本轮复核脚本 |
 
-新增脚本：[20261104-p3-reservation-boundary-review.ts](../../../apps/backend/reviews/20261104-p3-reservation-boundary-review.ts)。沿用独立输出目录、专用 TEMP／TMP 和删除守卫，用专用 Node 加载 `tsx` 手动运行；`contractPassed=false` 表示缺口复现，脚本错误才记为 `probeError`。本轮仍仅调用离线模型及真实本地 stdio MCP，无真实服务费用；日期变化通过应用注入时钟，模式变化使用公开的 `setBudget`，没有改系统时间或直接篡改额度表。
+新增脚本：[20261104-p3-reservation-boundary-review.ts](../../../apps/backend/tests/acceptance/autonomy-reservation-boundary.acceptance.ts)。沿用独立输出目录、专用 TEMP／TMP 和删除守卫，用专用 Node 加载 `tsx` 手动运行；`contractPassed=false` 表示缺口复现，脚本错误才记为 `probeError`。本轮仍仅调用离线模型及真实本地 stdio MCP，无真实服务费用；日期变化通过应用注入时钟，模式变化使用公开的 `setBudget`，没有改系统时间或直接篡改额度表。
 
 ### 6.2 已通过的补正
 

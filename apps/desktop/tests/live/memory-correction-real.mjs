@@ -12,7 +12,7 @@ import { parseBackendConfig, rolePaths } from "../../../backend/src/bootstrap/co
 import { registerMessageEvidence } from "../../../backend/src/storage/memory/evidence.ts";
 import { MemoryStore } from "../../../backend/src/storage/memory/memory-store.ts";
 import { RoleStorage } from "../../../backend/src/storage/core/role-storage.ts";
-import { delay, httpClient } from "../../../backend/scripts/role-world-http-transport.mjs";
+import { delay, httpClient } from "../../../backend/scripts/eval/role-world-http-transport.mjs";
 import { resolveElectronExecutable } from "../helpers/electron-executable.cjs";
 import { desktopDir, repoRoot as root, testResultsDir } from "../helpers/paths.cjs";
 

@@ -84,7 +84,7 @@
 
 | 编号 | 复核发现 | 修订与复验条件 |
 | --- | --- | --- |
-| DOC-R01 · P2 | 对话现行规范把 `DELETE …/input-state` 的成功响应写为 `204`，缺 `clientId` 写成 `INVALID_QUERY`。HTTP 路由实际返回 `200 { cleared: true }`，缺参数时报 `400 INPUT_STATE_INVALID`。另有手动记忆整理接口将内部 `MEMORY_BATCH_CONFLICT` 当成同步 HTTP 结果，路由实际登记触发后返回 `202`，删除期间拒绝为 `409 ROLE_DELETING`。 [对话契约](../../specs/conversation-performance-and-scene-images.md#21-对话输入状态sse-与语音消费接口) · [后端路由](../../../apps/backend/src/http/routes.ts#L358-L375) · [输入态测试](../../../apps/backend/tests/p2-05-api-cli.test.ts#L155-L160) · [手动整理路由](../../../apps/backend/src/http/routes.ts#L914-L932) | 对照入口分别列出 HTTP 返回与后台处理结果。输入态 HTTP／CLI 测试本轮重跑通过。 |
+| DOC-R01 · P2 | 对话现行规范把 `DELETE …/input-state` 的成功响应写为 `204`，缺 `clientId` 写成 `INVALID_QUERY`。HTTP 路由实际返回 `200 { cleared: true }`，缺参数时报 `400 INPUT_STATE_INVALID`。另有手动记忆整理接口将内部 `MEMORY_BATCH_CONFLICT` 当成同步 HTTP 结果，路由实际登记触发后返回 `202`，删除期间拒绝为 `409 ROLE_DELETING`。 [对话契约](../../specs/conversation-performance-and-scene-images.md#21-对话输入状态sse-与语音消费接口) · [后端路由](../../../apps/backend/src/http/routes.ts#L358-L375) · [输入态测试](../../../apps/backend/tests/integration/conversation-api-cli.test.ts#L155-L160) · [手动整理路由](../../../apps/backend/src/http/routes.ts#L914-L932) | 对照入口分别列出 HTTP 返回与后台处理结果。输入态 HTTP／CLI 测试本轮重跑通过。 |
 | DOC-R02 · P2 | 对话与媒体两份现行规范把 `CG-04` 定义为图生图与锚点上传。223 将 `CG-04` 用于独立复核与真实适配，状态页也将真实适配和图生图分别列出。 [对话规范](../../specs/conversation-performance-and-scene-images.md#43-未实现能力与真实联调缺口) · [223 工作包](../03-appearance-and-performance/223-conversation-performance-development-guide.md) · [状态页](../../STATUS.md#2-当前待推进事项backlog) | 按 223 保留工作包含义。图生图与锚点上传单独列为后续能力。 |
 | DOC-R03 · P2 | 媒体规范用 `app.db` 和 `business.db` 指代物理库，实际文件是 `app.sqlite` 和 `business.sqlite`。按媒体表查库会用错路径。 [媒体规范](../../specs/tts-and-image-services.md#23-数据存储与受管文件) · [路径定义](../../../apps/backend/src/bootstrap/config.ts#L68-L84) | 媒体规范使用实际文件名或指向存储规范的路径定义。 |
 | DOC-R04 · P3 | 总索引常用专项表把 292-R05～R08 标为「待修」，状态页与 292 §8 已记录实现方补修，当前处于独立复核阶段。 [常用专项](../../README.md#常用专项) · [状态页](../../STATUS.md#2-当前待推进事项backlog) | 用稳定的证据链接描述专项，当前状态引用状态页。 |
@@ -93,6 +93,6 @@
 
 ### 7.1 现行规范勘误独立复验
 
-2026-11-14。`DOC-R01` 的原发现已修正，确认删除输入态返回 `200 { cleared: true }`，缺 `clientId` 返回 `400 INPUT_STATE_INVALID`，手动整理接口返回 `202 { triggerId, duplicate }`。`DOC-R02`～`DOC-R04` 通过复验，`CG-04` 已恢复为独立复核与真实适配，媒体库使用 `.sqlite`，常用专项以中性证据链接配合状态页维护。 [输入态 HTTP 验证](../../../apps/backend/tests/p2-05-api-cli.test.ts#L142-L182) · [手动整理入口](../../../apps/backend/src/http/routes.ts#L914-L932)
+2026-11-14。`DOC-R01` 的原发现已修正，确认删除输入态返回 `200 { cleared: true }`，缺 `clientId` 返回 `400 INPUT_STATE_INVALID`，手动整理接口返回 `202 { triggerId, duplicate }`。`DOC-R02`～`DOC-R04` 通过复验，`CG-04` 已恢复为独立复核与真实适配，媒体库使用 `.sqlite`，常用专项以中性证据链接配合状态页维护。 [输入态 HTTP 验证](../../../apps/backend/tests/integration/conversation-api-cli.test.ts#L142-L182) · [手动整理入口](../../../apps/backend/src/http/routes.ts#L914-L932)
 
 **DOC-R01 邻接契约差异 · P3。** 同一张表仍把 `POST …/input-state` 参数失败统一写成 `INPUT_STATE_INVALID`。本机 HTTP 实测，缺 `clientId` 返回 `400 INPUT_STATE_INVALID`，已传空 `clientId` 或 `typing` 非布尔值则返回 `400 INVALID_REQUEST`。两类失败分别来自输入态业务校验和请求体结构校验。修订时按来源列明两个错误码，保留 `DELETE` 行本次修补。 [现行契约](../../specs/conversation-performance-and-scene-images.md#21-对话输入状态sse-与语音消费接口) · [结构校验](../../../apps/backend/src/http/validation.ts#L4-L12)

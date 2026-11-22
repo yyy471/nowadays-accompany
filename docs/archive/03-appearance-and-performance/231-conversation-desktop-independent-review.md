@@ -23,7 +23,7 @@
 ## 3. 验证证据
 
 - Node.js 24.22.2 下独立重跑桌面 `npm test`，52／52 通过。渲染器 `npm run typecheck` 和生产构建通过。构建产物放在独立复核目录，保留既有 API 混合导入提示。
-- 在无界面 Chromium 运行同一构建，使用模拟快照／SSE 和音频播放替身复现第 2 节。三个场景的可重复脚本与原始结果见 探针（`../../../apps/backend/test-results/review-225-desktop/probe.py`，历史脚本已清理） · [结果](../../../apps/backend/test-results/review-225-desktop/findings.json)。
+- 在无界面 Chromium 运行同一构建，使用模拟快照／SSE 和音频播放替身复现第 2 节。三个场景的可重复脚本与原始结果见 探针（`../../../apps/backend/test-results/review-225-desktop/probe.py`，历史脚本已清理） · [结果](../../../test-results/backend-acceptance/review-225-desktop/findings.json)。
 - 本轮验证覆盖前端构建、离线测试和所列浏览器场景。真实模型、真实 TTS、生图、Electron 原生设备与正式交付由相应工作包单独验收。
 
 ## 4. 232 修复独立复验
@@ -37,6 +37,6 @@
 | FE-R03 | 同轮图像只在起始句段显示一个入口。找不到有效起始锚点时，入口单独展示且舞台不自动显示该图。 |
 | FE-R04 | 打开历史、定位片段均保留当时的整幅图。回看期间新到的背景图没有切入。回到最新后，舞台才显示新背景图。 |
 
-Node.js 24.22.2 下独立重跑桌面 `npm test`，53／53 通过，渲染器类型检查和生产构建通过。使用隔离构建和模拟快照、SSE 与音频运行 10 组浏览器场景。 探针（`../../../apps/backend/test-results/review-232-desktop/probe.py`，历史脚本已清理） · [结果](../../../apps/backend/test-results/review-232-desktop/findings.json)
+Node.js 24.22.2 下独立重跑桌面 `npm test`，53／53 通过，渲染器类型检查和生产构建通过。使用隔离构建和模拟快照、SSE 与音频运行 10 组浏览器场景。 探针（`../../../apps/backend/test-results/review-232-desktop/probe.py`，历史脚本已清理） · [结果](../../../test-results/backend-acceptance/review-232-desktop/findings.json)
 
 复验结论覆盖以上四项修复。FE-02 的断线和生成中恢复、真实语音及设备，FE-03 的服务端历史检索、自动出图和真实生图，FE-04 的桌面交付继续按 225 验收。

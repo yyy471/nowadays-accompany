@@ -39,7 +39,7 @@
 | [apps/backend/src/application/conversation-service.ts](../../../apps/backend/src/application/conversation/conversation-service.ts#L383) | 启动恢复协调中断执行、未返回工具调用、自主任务及 superseded 任务延续调度 |
 | [apps/backend/src/storage/conversation-store.ts](../../../apps/backend/src/storage/conversation/conversation-store.ts#L103) | 中断执行返回关联任务摘要；第 6 节增加活跃 superseded 任务的延续查询 |
 | [apps/backend/src/storage/role-store.ts](../../../apps/backend/src/storage/role/role-store.ts#L1162) | 未派发／在途工具调用的恢复结果；结果保存支持注入恢复时刻 |
-| [apps/backend/tests/p4-recovery.test.ts](../../../apps/backend/tests/p4-recovery.test.ts#L273) | 8 项 P4 恢复正式回归（含 superseded、ended、预算暂停保护） |
+| [apps/backend/tests/p4-recovery.test.ts](../../../apps/backend/tests/integration/process-recovery.test.ts#L273) | 8 项 P4 恢复正式回归（含 superseded、ended、预算暂停保护） |
 
 ## 4. 自验证据
 
@@ -143,7 +143,7 @@
 
 ### 8.4 正式回归与验证证据
 
-新增 [p4-checkpoint-recovery.test.ts](../../../apps/backend/tests/p4-checkpoint-recovery.test.ts) 五项正式回归：已完成检查点重启后零模型调用提交原文与状态；状态版本变化时不提交旧检查点并按最新状态重新判断；已提交答复的收尾间隙重启后收敛且重复重启幂等；未派发预留重启后退还且余额等于计量账本；跨日释放不把旧日预留退成新日余额。`p2-02` 迁移测试同步校验 v4 预留表；业务库版本断言更新为 4。
+新增 [p4-checkpoint-recovery.test.ts](../../../apps/backend/tests/integration/checkpoint-recovery.test.ts) 五项正式回归：已完成检查点重启后零模型调用提交原文与状态；状态版本变化时不提交旧检查点并按最新状态重新判断；已提交答复的收尾间隙重启后收敛且重复重启幂等；未派发预留重启后退还且余额等于计量账本；跨日释放不把旧日预留退成新日余额。`p2-02` 迁移测试同步校验 v4 预留表；业务库版本断言更新为 4。
 
 运行目录：`apps/backend/test-results/p4-remaining-final2-20261105/`、`p4-recheck-final2-20261105/`、`p4-original-final-20261105/`、`p3-review-final-20261105/`、`p3-fix-final-20261105/`、`p3-reservation-final-20261105/`（Git 忽略）。使用项目独立 Node.js 24.22.2、后端锁定依赖、离线模型和本地 stdio MCP，TEMP／TMP 独立。
 

@@ -12,7 +12,7 @@
 
 ## 验证
 
-- **专项测试**（[`apps/backend/tests/p18-278-review-fixes.test.ts`](../../../apps/backend/tests/p18-278-review-fixes.test.ts#L3109-L3395)）：
+- **专项测试**（[`apps/backend/tests/p18-278-review-fixes.test.ts`](../../../apps/backend/tests/integration/workflow-simplification-fixes.test.ts#L3109-L3395)）：
   - `退避到期时模型仍在维护不重复扫库，维护结束后自动整理一次（283 §23）`：覆盖虚拟 30 秒退避定时器到期与 HTTP 真实事件循环下唤醒两条路径，确认退避到期且模型处于维护期内不再重复打开角色记忆存储、待补写扫描与失败重试查询为 0、模型调用为 0，解除写库故障并结束维护后自动补写 `task_end` 并单次完成整理。
   - 执行 `cd apps/backend && npx -y node@24 --import tsx --test --test-name-pattern="283 §23" tests/p18-278-review-fixes.test.ts` 通过（`1/1`）。
 - **后端全量检查**：

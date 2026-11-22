@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createBackendApp, listen } from "../../../backend/src/bootstrap/app.ts";
 import { parseBackendConfig } from "../../../backend/src/bootstrap/config.ts";
-import { httpClient, delay } from "../../../backend/scripts/role-world-http-transport.mjs";
+import { httpClient, delay } from "../../../backend/scripts/eval/role-world-http-transport.mjs";
 import { resolveElectronExecutable } from "../helpers/electron-executable.cjs";
 import { backendDir, desktopDir, repoRoot as root, testResultsDir } from "../helpers/paths.cjs";
 import { defaultComfyWorkflow } from "../../../backend/src/scene/comfyui-workflow.ts";

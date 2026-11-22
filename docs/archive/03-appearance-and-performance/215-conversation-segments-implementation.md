@@ -63,7 +63,7 @@
 
 ## 6. 测试与自验
 
-新增 [p7-performance.test.ts](../../../apps/backend/tests/p7-performance.test.ts)，8 项：
+新增 [p7-performance.test.ts](../../../apps/backend/tests/integration/conversation-performance.test.ts)，8 项：
 
 - 纯句段切分：短句合并、长句拆分、动作旁白、换行与空正文，逐段断言原文范围。
 - 一条回复只保存一条助手消息，句段稳定、列表与详情一致、`message_segments` 先于完成事件、按游标重放一致、详情路由与 404。

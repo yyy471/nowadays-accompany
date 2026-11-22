@@ -1,6 +1,6 @@
 import os, subprocess, re, json, uuid, shutil
 from pathlib import Path
-root=Path('apps/backend/test-results/fix-231-desktop').resolve()
+root=Path('test-results/backend-acceptance/fix-231-desktop').resolve()
 root.mkdir(parents=True, exist_ok=True)
 build=root/'renderer'
 shutil.copytree(Path('apps/desktop/renderer/dist'), build, dirs_exist_ok=True)

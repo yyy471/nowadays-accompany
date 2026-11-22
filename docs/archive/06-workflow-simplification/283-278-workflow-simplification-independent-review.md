@@ -369,7 +369,7 @@ R01、R02 在上述本机复验范围内关闭，本轮未发现新增阻塞项�
 | --- | --- | --- |
 | 292-R05 · P2 | **保存已停用的生图服务会误停角色。** 乙已绑定备用生图。在设置停用该服务并恢复角色活动后，回到乙的配置页点击「暂停并保存配置」，后端返回 `IMAGE_SERVICE_DISABLED`，乙从 `active` 变为 `stopped`。前端在暂停前只判断服务是否存在。 [保存入口](../../../apps/desktop/renderer/src/components/image/ImagePanel.tsx#L192) · [后端校验](../../../apps/backend/src/application/media/scene-image-settings.ts#L97) | 在已停用且存在、已删除两种情况下，保存均提示具体原因并保持角色 `active`。换到启用服务之后仍可按原流程保存。 |
 | 292-R06 · P2 | **服务被删除后旧模型候选仍可选。** 在乙的生图页探测备用服务，得到 `backup-image-model.safetensors`。从设置删除备用服务并返回后，页面同时显示「当前所选生图服务已不存在」和可点击的旧模型候选。跨页同步刷新了服务列表，却保留探测结果。 [服务同步](../../../apps/desktop/renderer/src/components/image/ImagePanel.tsx#L153) · [候选绘制](../../../apps/desktop/renderer/src/components/image/ImagePanel.tsx#L329) | 跨页删除、停用或修改当前服务连接后，过时探测和预览不得继续归于当前服务。验证已返回结果和迟到响应，同时保留用户填写的配置草稿。 |
-| 292-R07 · P2 | **测试生图跳过服饰归属校验。** 用仅存在于甲衣柜的服饰 ID 请求乙的 `/scene-image/preview`，并在乙的草稿提供该 ID 的提示词。接口返回 200，提示词进入样图，ComfyUI 收到一次生成。268 §6 已要求生成前校验角色归属。 [测试生图实现](../../../apps/backend/src/application/media/scene-image-settings.ts#L154) · [现有测试数据](../../../apps/backend/tests/p13-comfyui.test.ts#L1149) | 当前角色的服饰与不指定服饰仍可测试。其他角色、已删除或不存在的服饰在发起生成前拒绝，模拟 ComfyUI 调用数保持为零。 |
+| 292-R07 · P2 | **测试生图跳过服饰归属校验。** 用仅存在于甲衣柜的服饰 ID 请求乙的 `/scene-image/preview`，并在乙的草稿提供该 ID 的提示词。接口返回 200，提示词进入样图，ComfyUI 收到一次生成。268 §6 已要求生成前校验角色归属。 [测试生图实现](../../../apps/backend/src/application/media/scene-image-settings.ts#L154) · [现有测试数据](../../../apps/backend/tests/integration/comfyui-client.test.ts#L1149) | 当前角色的服饰与不指定服饰仍可测试。其他角色、已删除或不存在的服饰在发起生成前拒绝，模拟 ComfyUI 调用数保持为零。 |
 | 292-R08 · P2 | **新 E2E 依赖根目录旧 Electron。** 脚本从根 `node_modules` 直接启动 `electron.exe`，根目录没有 `package.json`。按项目安装说明，桌面依赖由 `apps/desktop/package.json` 声明。本机测试通过依赖旧工作区残留，按现行目录单独安装依赖的检出无法执行该命令。 [启动路径](../../../apps/desktop/tests/e2e/workflow-real-backend-chain.e2e.cjs#L294) · [桌面依赖](../../../apps/desktop/package.json#L16) | 只安装后端、桌面与渲染器的项目依赖并构建，在没有根 `node_modules` 的环境中按文档命令执行成功。 |
 
 ### 27.2 已验证范围
@@ -386,7 +386,7 @@ R01、R02 在上述本机复验范围内关闭，本轮未发现新增阻塞项�
 
 - **292-R05 原场景通过。** 绑定已停用服务时保存被拦截，角色保持 `active`；重新选择可用服务后原保存流程继续工作。
 - **292-R06 原跨页场景通过。** 设置页停用、修改连接或删除服务后，旧探测／样图及迟到结果被丢弃，角色表单草稿保留。同一项补修另有下述在途编辑问题，尚需复验。
-- **292-R07 通过。** 当前角色有效服饰可生成；跨角色、已删除及不存在的服饰返回 `404 OUTFIT_NOT_FOUND`，未发起 ComfyUI 调用。 [后端测试](../../../apps/backend/tests/p13-comfyui.test.ts)
+- **292-R07 通过。** 当前角色有效服饰可生成；跨角色、已删除及不存在的服饰返回 `404 OUTFIT_NOT_FOUND`，未发起 ComfyUI 调用。 [后端测试](../../../apps/backend/tests/integration/comfyui-client.test.ts)
 - **292-R08 的桌面优先解析通过单测。** 本机全链路使用解析器的旧根目录兜底。本轮未在只有 `desktop/desk-preview` 真进程依赖的干净环境重跑完整 E2E，脚本的 `electronExecutableResolvedCleanly: true` 为固定字段，不能用于判定实际依赖来源。 [解析单测](../../../apps/desktop/tests/unit/electron-executable.test.cjs) · [E2E 输出](../../../apps/desktop/tests/e2e/workflow-real-backend-chain.e2e.cjs#L825)
 
 ### 292-R06 补充场景：编辑中的样图请求使测试按钮无法恢复

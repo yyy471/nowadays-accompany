@@ -11,8 +11,8 @@ const os = require('node:os');
 const assert = require('node:assert/strict');
 const { resolveElectronExecutable } = require('../helpers/electron-executable.cjs');
 
-const { repoRoot: root, desktopDir, xiachengPortraitFixture, backendTestResultsDir } = require('../helpers/paths.cjs');
-const results = path.join(backendTestResultsDir, 'theme-transition');
+const { repoRoot: root, desktopDir, xiachengPortraitFixture, testResultsDir } = require('../helpers/paths.cjs');
+const results = path.join(testResultsDir, 'theme-transition');
 fs.mkdirSync(results, { recursive: true });
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'theme-transition-'));
 const now = '2026-11-09T10:00:00.000Z';

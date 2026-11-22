@@ -32,7 +32,7 @@
 
 1. **后端编译、单元测试与离线验收**：
    - `cd apps/backend && npx -y node@24 ./node_modules/typescript/bin/tsc --noEmit` 通过；
-   - `cd apps/backend && npx -y node@24 --import tsx --test --test-concurrency=8 tests/*.test.ts`：**424／424** 通过（新增 [p12-role-settings.test.ts](../../../apps/backend/tests/p12-role-settings.test.ts) 草稿测试创建/更新挂载与错配隔离断言，以及 [p7-performance.test.ts](../../../apps/backend/tests/p7-performance.test.ts) SSE `replySequence`／`replyCreatedAt` 断言）；
+   - `cd apps/backend && npx -y node@24 --import tsx --test --test-concurrency=8 tests/*.test.ts`：**424／424** 通过（新增 [p12-role-settings.test.ts](../../../apps/backend/tests/integration/role-settings.test.ts) 草稿测试创建/更新挂载与错配隔离断言，以及 [p7-performance.test.ts](../../../apps/backend/tests/integration/conversation-performance.test.ts) SSE `replySequence`／`replyCreatedAt` 断言）；
    - `cd apps/backend && npx -y node@24 scripts/accept-offline.mjs`：**21／21** 步全部通过，`realServiceCalls=0`（报告 summary.json（`../../../apps/backend/test-results/p5-2026-11-16T03-58-22-917Z-d6aa0d00/summary.json`，历史运行产物已轮转））。
 2. **桌面渲染器门禁与单元测试**：
    - `cd apps/desktop/renderer && npm run check && npm run build` 通过（`tokens:check` 最新、`lint:styles` 22 个 CSS 零违规且豁免命中从 389 降至 388、`tsc --noEmit` 通过、126 模块打包通过）；

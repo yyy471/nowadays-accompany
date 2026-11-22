@@ -37,9 +37,9 @@
 
 新增脚本：
 
-- [离线组合验收](../../../apps/backend/reviews/20261104-p2-06-acceptance.ts)：同一隔离目录与删除守卫下执行。
-- [真实联调](../../../apps/backend/reviews/20261104-p2-06-real-model.ts)：显式要求 `NOWADAYS_ACCEPTANCE_CREDENTIAL_FILE` 和 `NOWADAYS_REVIEW_OUTPUT`，仅允许 `api.deepseek.com` 上游，生成请求设上限与超时；实际只发出 6 次。
-- [真实原因诊断](../../../apps/backend/reviews/20261104-p2-06-real-diagnostics.ts)：只追加两次受限连接请求并分析已保存记忆输出；字段改名仅在内存中作格式对照，没有修补业务数据。
+- [离线组合验收](../../../apps/backend/tests/acceptance/delivery-pipeline.acceptance.ts)：同一隔离目录与删除守卫下执行。
+- [真实联调](../../../apps/backend/scripts/eval/real-model-smoke.ts)：显式要求 `NOWADAYS_ACCEPTANCE_CREDENTIAL_FILE` 和 `NOWADAYS_REVIEW_OUTPUT`，仅允许 `api.deepseek.com` 上游，生成请求设上限与超时；实际只发出 6 次。
+- [真实原因诊断](../../../apps/backend/scripts/eval/real-model-diagnostics.ts)：只追加两次受限连接请求并分析已保存记忆输出；字段改名仅在内存中作格式对照，没有修补业务数据。
 
 新脚本最初存在 SQL 诊断列名、工具结果封装读取和“自动召回必须命中”的样例假设错误，最终按实际契约修正：字段读取 `execution_stream_events.stream_event_id`、工具结果读取 `result`，自动召回未命中后让 Agent 主动改写查询。首次与诊断报告保留，不将这些脚本错误归为产品问题。严格类型检查的可选字段声明也已修正；真实脚本仅改类型标注和可省略空字段，没有改变已执行的请求内容，不为该调整重复收费请求。
 

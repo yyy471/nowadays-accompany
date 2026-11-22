@@ -47,8 +47,8 @@
 
 自验：
 
-- [p2-05-mcp.test.ts:399](../../../apps/backend/tests/p2-05-mcp.test.ts#L399) 启动真实 `command_run` 慢工具，工具未释放时发送新消息；断言新回复先完成、旧执行保留 `interrupted` 部分文字、原任务保持 `active` 且无结束原因、旧工具结果保存为 `success`、无重复派发。
-- [p2-05-conversation.test.ts:124](../../../apps/backend/tests/p2-05-conversation.test.ts#L124) 的原 supersede 用例按新行为更新：中断后立即出现 `superseded` 与 `running` 两条执行；回复顺序、旧执行 `decision_round=null`、事件与第二轮上下文保持原断言。
+- [p2-05-mcp.test.ts:399](../../../apps/backend/tests/integration/mcp-execution.test.ts#L399) 启动真实 `command_run` 慢工具，工具未释放时发送新消息；断言新回复先完成、旧执行保留 `interrupted` 部分文字、原任务保持 `active` 且无结束原因、旧工具结果保存为 `success`、无重复派发。
+- [p2-05-conversation.test.ts:124](../../../apps/backend/tests/integration/conversation-loop.test.ts#L124) 的原 supersede 用例按新行为更新：中断后立即出现 `superseded` 与 `running` 两条执行；回复顺序、旧执行 `decision_round=null`、事件与第二轮上下文保持原断言。
 
 ## 3. R02 每次派发读取最新模型／MCP／Skill 配置
 
@@ -61,10 +61,10 @@
 
 自验：
 
-- [p2-05-conversation.test.ts:199](../../../apps/backend/tests/p2-05-conversation.test.ts#L199) 第一轮后更新模型 `baseUrl`，第二轮请求使用新地址，`model_calls` 仍指向同一 `resourceId`。
-- [p2-05-mcp.test.ts:477](../../../apps/backend/tests/p2-05-mcp.test.ts#L477) 两次真实命令分别得到更新前后的 `REVIEW_VALUE`。
-- [p2-05-skill.test.ts:52](../../../apps/backend/tests/p2-05-skill.test.ts#L52) 两次读取同一 Skill，分别命中旧、新 `sourcePath` 的正文。
-- 原有 [p2-05-mcp.test.ts:111](../../../apps/backend/tests/p2-05-mcp.test.ts#L111) 继续验证关闭 MCP 后原链可用、下一任务不再提供外部工具。
+- [p2-05-conversation.test.ts:199](../../../apps/backend/tests/integration/conversation-loop.test.ts#L199) 第一轮后更新模型 `baseUrl`，第二轮请求使用新地址，`model_calls` 仍指向同一 `resourceId`。
+- [p2-05-mcp.test.ts:477](../../../apps/backend/tests/integration/mcp-execution.test.ts#L477) 两次真实命令分别得到更新前后的 `REVIEW_VALUE`。
+- [p2-05-skill.test.ts:52](../../../apps/backend/tests/integration/skill-execution.test.ts#L52) 两次读取同一 Skill，分别命中旧、新 `sourcePath` 的正文。
+- 原有 [p2-05-mcp.test.ts:111](../../../apps/backend/tests/integration/mcp-execution.test.ts#L111) 继续验证关闭 MCP 后原链可用、下一任务不再提供外部工具。
 
 ## 4. R03 显式不完整响应不按成功提交
 
@@ -76,9 +76,9 @@
 
 自验：
 
-- [p2-05-failure.test.ts:159](../../../apps/backend/tests/p2-05-failure.test.ts#L159) 覆盖 `length`、`max_tokens`、`response.incomplete`：执行失败、`decision_round=null`、部分文字中断保留、下一消息可重新决策。
-- [p2-05-failure.test.ts:199](../../../apps/backend/tests/p2-05-failure.test.ts#L199) 验证不完整响应携带 `state_update` 请求时不执行工具、不改变状态。
-- [p2-05-memory-chain.test.ts:385](../../../apps/backend/tests/p2-05-memory-chain.test.ts#L385) 覆盖完成标记与 `max_tokens` 两种不完整记忆响应：批次失败、无事件、证据未被标记 `processed`。
+- [p2-05-failure.test.ts:159](../../../apps/backend/tests/integration/conversation-failure.test.ts#L159) 覆盖 `length`、`max_tokens`、`response.incomplete`：执行失败、`decision_round=null`、部分文字中断保留、下一消息可重新决策。
+- [p2-05-failure.test.ts:199](../../../apps/backend/tests/integration/conversation-failure.test.ts#L199) 验证不完整响应携带 `state_update` 请求时不执行工具、不改变状态。
+- [p2-05-memory-chain.test.ts:385](../../../apps/backend/tests/integration/memory-chain.test.ts#L385) 覆盖完成标记与 `max_tokens` 两种不完整记忆响应：批次失败、无事件、证据未被标记 `processed`。
 
 ## 5. R04 state_update 失败不提交补丁
 
@@ -88,8 +88,8 @@
 
 自验：
 
-- [p2-05-conversation.test.ts:255](../../../apps/backend/tests/p2-05-conversation.test.ts#L255) 成功补丁仍只在完成事务提交，工具消息为 `success`。
-- [p2-05-conversation.test.ts:302](../../../apps/backend/tests/p2-05-conversation.test.ts#L302) 非法补丁返回 `INVALID_TOOL_ARGUMENTS`，角色状态与版本不变。
+- [p2-05-conversation.test.ts:255](../../../apps/backend/tests/integration/conversation-loop.test.ts#L255) 成功补丁仍只在完成事务提交，工具消息为 `success`。
+- [p2-05-conversation.test.ts:302](../../../apps/backend/tests/integration/conversation-loop.test.ts#L302) 非法补丁返回 `INVALID_TOOL_ARGUMENTS`，角色状态与版本不变。
 
 ## 6. R05 默认记忆模型请求包含完整输出协议
 
@@ -98,7 +98,7 @@
 - [memory-runtime.ts:397](../../../apps/backend/src/application/memory/memory-runtime.ts#L397) 的默认系统提示列出 `create_event`、`update_event`、`refine_event`、`defer` 的必需字段与约束，包含 `expectedVersion`、`evidenceIds`、`experienceDate`、候选限制和空操作示例。
 - [memory-runtime.ts:351](../../../apps/backend/src/application/memory/memory-runtime.ts#L351) 的 `RefreshingMemoryModel` 让默认 HTTP 记忆模型在每次 `form()` 时刷新同一资源的最新配置，与 R02 的派发前读取原则一致。
 
-自验：[p2-05-memory-chain.test.ts:311](../../../apps/backend/tests/p2-05-memory-chain.test.ts#L311) 使用只依据请求协议生成结果的离线模型：断言请求包含上述操作与字段，并由默认 `HttpMemoryModel` 经 `MemoryService` 保存事件、把证据标记为 `processed`，覆盖请求协议到实际写入的链路。
+自验：[p2-05-memory-chain.test.ts:311](../../../apps/backend/tests/integration/memory-chain.test.ts#L311) 使用只依据请求协议生成结果的离线模型：断言请求包含上述操作与字段，并由默认 `HttpMemoryModel` 经 `MemoryService` 保存事件、把证据标记为 `processed`，覆盖请求协议到实际写入的链路。
 
 ## 7. R06 Agent 接入事件／摘要纠错与摘要来源追溯
 
@@ -109,7 +109,7 @@
 - [agent-tools.ts:519](../../../apps/backend/src/application/conversation/agent-tools.ts#L519) 按摘要来源范围读取原始消息与工具证据，支持 `windowId`、`fromSequence`、`toSequence`、`limit`，并登记摘要召回。
 - [memory-store.ts:1059](../../../apps/backend/src/storage/memory/memory-store.ts#L1059) 的 `listSummaryEvidence` 按摘要来源窗口与序号／时间范围查询，拒绝跨窗口混入。
 
-自验：[p2-05-agent.test.ts:128](../../../apps/backend/tests/p2-05-agent.test.ts#L128) 在同一轮依次验证：摘要证据读取仅返回来源窗口原文；按当前版本纠错成功且版本递增；旧版本纠错返回 `MEMORY_VERSION_CONFLICT`；另一角色的事件返回 `MEMORY_EVENT_NOT_FOUND`；原始消息与摘要正文不变；摘要召回已登记。
+自验：[p2-05-agent.test.ts:128](../../../apps/backend/tests/integration/agent-graph.test.ts#L128) 在同一轮依次验证：摘要证据读取仅返回来源窗口原文；按当前版本纠错成功且版本递增；旧版本纠错返回 `MEMORY_VERSION_CONFLICT`；另一角色的事件返回 `MEMORY_EVENT_NOT_FOUND`；原始消息与摘要正文不变；摘要召回已登记。
 
 ## 8. R07 无新证据时的精炼维护批次与失败退避
 
@@ -122,9 +122,9 @@
 
 自验：
 
-- [p2-05-memory-chain.test.ts:452](../../../apps/backend/tests/p2-05-memory-chain.test.ts#L452) 无新证据时模型被调用一次，输入证据为空且含候选；模型选择不精炼时事件保持 `active`、无摘要，批次完成。
-- [p2-05-memory-chain.test.ts:494](../../../apps/backend/tests/p2-05-memory-chain.test.ts#L494) 模型失败后维护批次失败、候选保留；再次运行会重试并产生第二个失败批次。
-- [p2-05-memory-chain.test.ts:549](../../../apps/backend/tests/p2-05-memory-chain.test.ts#L549) 待处理证据与候选在同一模型输入中同时提供。
+- [p2-05-memory-chain.test.ts:452](../../../apps/backend/tests/integration/memory-chain.test.ts#L452) 无新证据时模型被调用一次，输入证据为空且含候选；模型选择不精炼时事件保持 `active`、无摘要，批次完成。
+- [p2-05-memory-chain.test.ts:494](../../../apps/backend/tests/integration/memory-chain.test.ts#L494) 模型失败后维护批次失败、候选保留；再次运行会重试并产生第二个失败批次。
+- [p2-05-memory-chain.test.ts:549](../../../apps/backend/tests/integration/memory-chain.test.ts#L549) 待处理证据与候选在同一模型输入中同时提供。
 
 第二轮补充候选首次自动检查、1 小时复检和跨批累计失败次数，见第 11.4 节。
 
@@ -136,7 +136,7 @@
 - [agent-graph.ts:461](../../../apps/backend/src/application/conversation/agent-graph.ts#L461) 的 `checkTask` 在模型轮次开始、工具轮次开始和每次工具调用前检查任务仍为 `active`；[:169](../../../apps/backend/src/application/conversation/agent-graph.ts#L169)、[:302](../../../apps/backend/src/application/conversation/agent-graph.ts#L302)、[:310](../../../apps/backend/src/application/conversation/agent-graph.ts#L310) 分别接入。已发出的调用继续接收结果，晚到结果不重启任务。
 - [conversation-service.ts](../../../apps/backend/src/application/conversation/conversation-service.ts) 的执行失败路径对 `TASK_ENDED` 不再重复结束任务。
 
-自验：[p2-05-mcp.test.ts:600](../../../apps/backend/tests/p2-05-mcp.test.ts#L600) 在第一轮真实 `workspace_write` 成功后通过正式 `finishTask` 结束任务，再让模型请求第二次写入；断言第二次工具未执行、`round-2.txt` 不存在、执行失败原因为 `TASK_ENDED`、任务保持 `completed`、仅有一个工具调用。
+自验：[p2-05-mcp.test.ts:600](../../../apps/backend/tests/integration/mcp-execution.test.ts#L600) 在第一轮真实 `workspace_write` 成功后通过正式 `finishTask` 结束任务，再让模型请求第二次写入；断言第二次工具未执行、`round-2.txt` 不存在、执行失败原因为 `TASK_ENDED`、任务保持 `completed`、仅有一个工具调用。
 
 第二轮把该检查落实到异步建连之后的实际派发边界，见第 11.5 节。
 
@@ -196,8 +196,8 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p2-05-review-fix2-20261104"
 
 自验：
 
-- [p2-05-mcp.test.ts:560](../../../apps/backend/tests/p2-05-mcp.test.ts#L560) 新增两步任务用例：第一步真实工具被门控，期间发送新消息；工具释放后原任务继续，最终写出 `task-result.md`。断言仅一个任务且为 `completed`、三次执行依次为 `superseded`／`completed`／`completed`、两个工具调用均成功、任务关系为 `initiates`＋`continues`。
-- [p2-05-mcp.test.ts:408](../../../apps/backend/tests/p2-05-mcp.test.ts#L408) 更新首轮用例：新增“原任务继续完成”回复，断言续行决策发生、任务完成原因仍为“回复完成”、无重复任务。
+- [p2-05-mcp.test.ts:560](../../../apps/backend/tests/integration/mcp-execution.test.ts#L560) 新增两步任务用例：第一步真实工具被门控，期间发送新消息；工具释放后原任务继续，最终写出 `task-result.md`。断言仅一个任务且为 `completed`、三次执行依次为 `superseded`／`completed`／`completed`、两个工具调用均成功、任务关系为 `initiates`＋`continues`。
+- [p2-05-mcp.test.ts:408](../../../apps/backend/tests/integration/mcp-execution.test.ts#L408) 更新首轮用例：新增“原任务继续完成”回复，断言续行决策发生、任务完成原因仍为“回复完成”、无重复任务。
 - 扩展探针 `R01-original-task-progress-after-new-reply` 的 `contractPassed=true`：两步任务在新消息后继续保存成果，`continuationRequests=2`，任务为 `completed`。
 
 限制：续行不按步骤签名做硬去重，而是把已发生调用与真实结果放入模型历史并在系统提示中约束；若模型仍重复请求同一步骤，当前实现不会在工具层拦截。该边界由本轮测试覆盖“已完成步骤不再调用”的常规路径，独立复核可继续压测。
@@ -213,11 +213,11 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p2-05-review-fix2-20261104"
 
 自验：
 
-- [p2-05-mcp.test.ts:817](../../../apps/backend/tests/p2-05-mcp.test.ts#L817) 同一执行连续两次调用真实有状态 stdio 服务，配置不变，结果为 `["1","2"]`。
-- [p2-05-mcp.test.ts:921](../../../apps/backend/tests/p2-05-mcp.test.ts#L921) 新增跨续行用例：首执行第一次调用得到 `1`，新消息替代后任务续行再次调用得到 `2`，证明续行复用同一服务会话；任务最终 `completed`。
-- [p2-05-mcp.test.ts:1053](../../../apps/backend/tests/p2-05-mcp.test.ts#L1053) 新增关闭后链内延续用例：读取后关闭 MCP 资源并触发新消息，原任务续行仍可使用已装配工具写出成果；任务完成后新消息的模型请求不再包含外部工具，证明链结束时释放。
-- [p2-05-mcp.test.ts:111](../../../apps/backend/tests/p2-05-mcp.test.ts#L111) 关闭资源后原执行第二次调用仍成功，下一任务不再提供外部工具。
-- [p2-05-mcp.test.ts:618](../../../apps/backend/tests/p2-05-mcp.test.ts#L618) 配置变化后的下一次派发使用新 `env`；旧、新值分别为 `old`／`new`，均收到真实工具结果。
+- [p2-05-mcp.test.ts:817](../../../apps/backend/tests/integration/mcp-execution.test.ts#L817) 同一执行连续两次调用真实有状态 stdio 服务，配置不变，结果为 `["1","2"]`。
+- [p2-05-mcp.test.ts:921](../../../apps/backend/tests/integration/mcp-execution.test.ts#L921) 新增跨续行用例：首执行第一次调用得到 `1`，新消息替代后任务续行再次调用得到 `2`，证明续行复用同一服务会话；任务最终 `completed`。
+- [p2-05-mcp.test.ts:1053](../../../apps/backend/tests/integration/mcp-execution.test.ts#L1053) 新增关闭后链内延续用例：读取后关闭 MCP 资源并触发新消息，原任务续行仍可使用已装配工具写出成果；任务完成后新消息的模型请求不再包含外部工具，证明链结束时释放。
+- [p2-05-mcp.test.ts:111](../../../apps/backend/tests/integration/mcp-execution.test.ts#L111) 关闭资源后原执行第二次调用仍成功，下一任务不再提供外部工具。
+- [p2-05-mcp.test.ts:618](../../../apps/backend/tests/integration/mcp-execution.test.ts#L618) 配置变化后的下一次派发使用新 `env`；旧、新值分别为 `old`／`new`，均收到真实工具结果。
 - 扩展探针 `R02-mcp-session-survives-unchanged-config` 的 `contractPassed=true`，结果为 `["1","2"]`。
 
 限制：目录和连接池只存在于 `ConversationService` 内存中，后端重启后新执行会重新建连，不保留服务进程会话；多个并行活动任务各自持有目录，服务关闭时统一释放。
@@ -232,9 +232,9 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p2-05-review-fix2-20261104"
 
 自验：
 
-- [p2-05-memory-chain.test.ts:550](../../../apps/backend/tests/p2-05-memory-chain.test.ts#L550) 新候选在第 100 轮后自动触发一次维护：模型收到空证据与候选，选择不精炼后维护批次完成，候选保留且两条待处理证据未被消费。
-- [p2-05-memory-chain.test.ts:494](../../../apps/backend/tests/p2-05-memory-chain.test.ts#L494) 连续两次维护失败后，两个 0／0 批次的 `attemptCount` 分别为 1、2，证明退避计数跨批累计。
-- [p2-05-memory-chain.test.ts:452](../../../apps/backend/tests/p2-05-memory-chain.test.ts#L452) 与 [:608](../../../apps/backend/tests/p2-05-memory-chain.test.ts#L608) 继续覆盖手动维护和“证据＋候选”合并输入。
+- [p2-05-memory-chain.test.ts:550](../../../apps/backend/tests/integration/memory-chain.test.ts#L550) 新候选在第 100 轮后自动触发一次维护：模型收到空证据与候选，选择不精炼后维护批次完成，候选保留且两条待处理证据未被消费。
+- [p2-05-memory-chain.test.ts:494](../../../apps/backend/tests/integration/memory-chain.test.ts#L494) 连续两次维护失败后，两个 0／0 批次的 `attemptCount` 分别为 1、2，证明退避计数跨批累计。
+- [p2-05-memory-chain.test.ts:452](../../../apps/backend/tests/integration/memory-chain.test.ts#L452) 与 [:608](../../../apps/backend/tests/integration/memory-chain.test.ts#L608) 继续覆盖手动维护和“证据＋候选”合并输入。
 - 扩展探针 `R07-automatic-candidate-maintenance` 与 `R07-consecutive-maintenance-failure-backoff` 均为 `contractPassed=true`。
 
 限制：候选在一次成功维护后仍保留时，下一次自动检查在 1 小时后；模型持续选择不精炼时每小时最多一次，不做更密集轮询。
@@ -249,9 +249,9 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p2-05-review-fix2-20261104"
 
 自验：
 
-- [p2-05-mcp.test.ts:1122](../../../apps/backend/tests/p2-05-mcp.test.ts#L1122) 建连期间通过正式 `finishTask` 结束任务：释放建连门控后 `late-result.txt` 不存在，工具结果为 `failed`／`TASK_ENDED`，执行失败，任务保持 `completed`。
-- [p2-05-mcp.test.ts:1264](../../../apps/backend/tests/p2-05-mcp.test.ts#L1264) 建连期间新消息替代：首次派发未执行并记为 `EXECUTION_SUPERSEDED` 失败，续行重试后成功；三次执行依次为 `superseded`／`completed`／`completed`，任务完成。
-- [p2-05-mcp.test.ts:741](../../../apps/backend/tests/p2-05-mcp.test.ts#L741) 继续覆盖模型轮次入口的任务结束检查。
+- [p2-05-mcp.test.ts:1122](../../../apps/backend/tests/integration/mcp-execution.test.ts#L1122) 建连期间通过正式 `finishTask` 结束任务：释放建连门控后 `late-result.txt` 不存在，工具结果为 `failed`／`TASK_ENDED`，执行失败，任务保持 `completed`。
+- [p2-05-mcp.test.ts:1264](../../../apps/backend/tests/integration/mcp-execution.test.ts#L1264) 建连期间新消息替代：首次派发未执行并记为 `EXECUTION_SUPERSEDED` 失败，续行重试后成功；三次执行依次为 `superseded`／`completed`／`completed`，任务完成。
+- [p2-05-mcp.test.ts:741](../../../apps/backend/tests/integration/mcp-execution.test.ts#L741) 继续覆盖模型轮次入口的任务结束检查。
 - 扩展探针 `R08-task-end-during-mcp-connect` 的 `contractPassed=true`。
 
 ### 11.6 回归范围与限制

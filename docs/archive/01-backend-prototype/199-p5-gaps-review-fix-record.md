@@ -52,11 +52,11 @@
 
 新增正式回归：
 
-- [p5-task-decisions](../../../apps/backend/tests/p5-task-decisions.test.ts)：暂停写入故障后重启按原决定恢复、保留资源、原任务唤醒与用户任务不扣点；同一任务暂停续行后按最新未落实决定恢复失败终态，再次重启保持一致。
-- [p5-reconcile](../../../apps/backend/tests/p5-reconcile.test.ts)：待派发与在途调用不能被提前补录，晚到真实结果仍可保存。
-- [p5-skill-run](../../../apps/backend/tests/p5-skill-run.test.ts)：插话后脚本继续并归原调用；真实超时记录为 `SKILL_SCRIPT_TIMEOUT`。
-- [p5-background-tools](../../../apps/backend/tests/p5-background-tools.test.ts)：慢握手转后台后派发一次；任务已结束保持未派发。
-- [p5-memory-capacity](../../../apps/backend/tests/p5-memory-capacity.test.ts)：反斜杠、引号和历史超长分段的序列化容量核算。
+- [p5-task-decisions](../../../apps/backend/tests/integration/task-decisions.test.ts)：暂停写入故障后重启按原决定恢复、保留资源、原任务唤醒与用户任务不扣点；同一任务暂停续行后按最新未落实决定恢复失败终态，再次重启保持一致。
+- [p5-reconcile](../../../apps/backend/tests/integration/reconcile-unknown.test.ts)：待派发与在途调用不能被提前补录，晚到真实结果仍可保存。
+- [p5-skill-run](../../../apps/backend/tests/integration/skill-run.test.ts)：插话后脚本继续并归原调用；真实超时记录为 `SKILL_SCRIPT_TIMEOUT`。
+- [p5-background-tools](../../../apps/backend/tests/integration/background-tools.test.ts)：慢握手转后台后派发一次；任务已结束保持未派发。
+- [p5-memory-capacity](../../../apps/backend/tests/integration/memory-capacity.test.ts)：反斜杠、引号和历史超长分段的序列化容量核算。
 
 ## 3. 第二轮复核补充：R01 最新决定
 
@@ -76,7 +76,7 @@
 
 - 复核脚本 `interrupted-continuation.ts` 复制到 `apps/backend/test-results/p5-gaps-fix-20261106/` 复跑（原脚本目录保留原结果）。强杀前任务 `active`、两次执行为 `completed` + `running`；重启瞬间任务保持 `active`、中断执行记为 `failed` 并接手一次新的续行；完成后任务 `completed / 回复完成`，`recoveredModelCalls=1`。
 - `latest-decision.ts` 复跑仍得到 `failed / 第二轮确认无法完成`；`edge-review.ts` 与 `dispatch-review.ts` 的 R02～R06 结果与上轮一致。
-- 新增正式回归 [p5-task-decisions](../../../apps/backend/tests/p5-task-decisions.test.ts)：第一轮暂停落实后，用 `beginDueWake` 建立「任务已回到 active、续行执行 running 且无检查点」的强杀前状态；重启不重放旧暂停，按原任务继续一次模型调用并完成，执行状态为 `completed / failed / completed`、全部指向同一任务编号；再次重启保持完成态且不新增模型调用。
+- 新增正式回归 [p5-task-decisions](../../../apps/backend/tests/integration/task-decisions.test.ts)：第一轮暂停落实后，用 `beginDueWake` 建立「任务已回到 active、续行执行 running 且无检查点」的强杀前状态；重启不重放旧暂停，按原任务继续一次模型调用并完成，执行状态为 `completed / failed / completed`、全部指向同一任务编号；再次重启保持完成态且不新增模型调用。
 
 本轮运行目录：`apps/backend/test-results/p5-2026-11-06T08-25-39-625Z-318fd43d/`。类型检查与严格复核脚本类型检查通过，正式测试 201／201（新增第三轮 R01 回归 1 项），交付回归 2／2，进程冒烟 1／1，P2～P5 场景矩阵与统一离线验收 21 个步骤全部通过；`sourceUnchanged=true`，`realServiceCalls=0`。R01 第三轮补修仍待独立复核，R02～R06 保持离线通过结论。
 

@@ -7,7 +7,7 @@ const path = require('node:path');
 const os = require('node:os');
 const assert = require('node:assert/strict');
 const { resolveElectronExecutable } = require('../helpers/electron-executable.cjs');
-const { repoRoot: root, desktopDir, backendTestResultsDir } = require('../helpers/paths.cjs'), output = path.join(backendTestResultsDir, 'dialogue-layout');
+const { repoRoot: root, desktopDir, testResultsDir } = require('../helpers/paths.cjs'), output = path.join(testResultsDir, 'dialogue-layout');
 fs.mkdirSync(output, { recursive: true });
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'dialogue-layout-'));
 const date = '2026-11-09T10:00:00.000Z';

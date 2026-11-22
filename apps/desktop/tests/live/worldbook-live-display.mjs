@@ -10,8 +10,8 @@ import { resolveElectronExecutable } from "../helpers/electron-executable.cjs";
 import { backendDir, desktopDir, repoRoot as root, testResultsDir } from "../helpers/paths.cjs";
 import { createBackendApp, listen } from "../../../backend/src/bootstrap/app.ts";
 import { parseBackendConfig, rolePaths } from "../../../backend/src/bootstrap/config.ts";
-import { configureProvider, delay, httpClient, nativeFetch, openEvents } from "../../../backend/scripts/role-world-http-transport.mjs";
-import { worldEntries } from "../../../backend/scripts/role-world-scenarios.mjs";
+import { configureProvider, delay, httpClient, nativeFetch, openEvents } from "../../../backend/scripts/eval/role-world-http-transport.mjs";
+import { worldEntries } from "../../../backend/scripts/eval/role-world-scenarios.mjs";
 
 const [source, credentials, roleName, tier = "deepseek"] = process.argv.slice(2);
 if (!source || !credentials || !roleName || !["vertex", "deepseek"].includes(tier)) throw Error("FIXTURE_CREDENTIAL_PATH_ROLE_AND_TIER_REQUIRED");

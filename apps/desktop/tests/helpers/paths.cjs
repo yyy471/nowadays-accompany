@@ -12,7 +12,7 @@ const rendererDir = path.join(desktopDir, "renderer");
 const electronDir = path.join(desktopDir, "electron");
 const xiachengPortraitFixture = path.join(rendererDir, "src", "assets", "themes", "xiacheng", "character.png");
 const testResultsDir = path.join(repoRoot, "test-results");
-const backendTestResultsDir = path.join(backendDir, "test-results");
+const backendTestResultsDir = path.join(testResultsDir, "backend-acceptance");
 
 module.exports = {
   repoRoot,

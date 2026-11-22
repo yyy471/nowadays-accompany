@@ -19,7 +19,7 @@
 
 | 编号 | 复现和影响 | 复验条件 |
 | --- | --- | --- |
-| **R01 · 图片格式误判** | 48×64 的普通 JPEG 可由 Pillow 完整解码，上传却返回 400 `IMAGE_DECODE_FAILED`。JPEG 检查把扫描数据继续当段标记读。保留合法 PNG 签名、IHDR 和 IEND、移除图像数据后，图片无法解码，上传仍返回 201。现有 JPEG 测试样本只有段头，没有实际扫描数据。 [PNG 检查](../../../apps/backend/src/application/media/image-inspect.ts#L39) · [JPEG 检查](../../../apps/backend/src/application/media/image-inspect.ts#L59) · [现有测试样本](../../../apps/backend/tests/p6-appearance.test.ts#L14) | 使用可实际解码的 PNG、JPEG、WebP 样本验证整套及单张导入。拒绝缺少像素数据或损坏的文件，返回具体文件名。校验范围遵循 DL-136 的文件格式约定 |
+| **R01 · 图片格式误判** | 48×64 的普通 JPEG 可由 Pillow 完整解码，上传却返回 400 `IMAGE_DECODE_FAILED`。JPEG 检查把扫描数据继续当段标记读。保留合法 PNG 签名、IHDR 和 IEND、移除图像数据后，图片无法解码，上传仍返回 201。现有 JPEG 测试样本只有段头，没有实际扫描数据。 [PNG 检查](../../../apps/backend/src/application/media/image-inspect.ts#L39) · [JPEG 检查](../../../apps/backend/src/application/media/image-inspect.ts#L59) · [现有测试样本](../../../apps/backend/tests/integration/appearance-management.test.ts#L14) | 使用可实际解码的 PNG、JPEG、WebP 样本验证整套及单张导入。拒绝缺少像素数据或损坏的文件，返回具体文件名。校验范围遵循 DL-136 的文件格式约定 |
 | **R02 · 旧状态覆盖新状态** | 同一角色初始请求取得版本 1，角色详情稍晚返回。轮询先取得版本 2，主页先显示白色针织裙。初始请求的并发读取随后完成，主页又切回版本 1 的黑白长裙。两条更新路径均直接写入状态。 [初始刷新](../../../apps/desktop/renderer/src/App.tsx#L37) · [轮询刷新](../../../apps/desktop/renderer/src/App.tsx#L59) | 所有刷新入口共享按角色和 `stateVersion` 判断新旧的逻辑。补验同角色乱序、切角色和断线恢复 |
 | **R03 · 缺图时图片与服饰名不一致** | 白色针织裙已显示，再把当前服饰改为蓝色外套并令新图解码失败。画面持续显示白色针织裙，图注与替代文字却使用蓝色外套。图片状态只保留 URL，名称直接取新服饰属性。 [图片解码与图注](../../../apps/desktop/renderer/src/components/home/HomeScene.tsx#L78) | 把实际显示的图片和它的服饰信息一起更新。测试新图加载中、加载失败及快速换装，验证回退归属一致 |
 

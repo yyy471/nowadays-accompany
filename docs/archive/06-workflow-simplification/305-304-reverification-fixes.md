@@ -11,7 +11,7 @@
 
 ## 验证
 
-- **专项测试**（[`apps/backend/tests/p18-278-review-fixes.test.ts`](../../../apps/backend/tests/p18-278-review-fixes.test.ts#L3400-L3678)）：
+- **专项测试**（[`apps/backend/tests/p18-278-review-fixes.test.ts`](../../../apps/backend/tests/integration/workflow-simplification-fixes.test.ts#L3400-L3678)）：
   - `定时器读取绑定或角色库暂不可用时不崩溃且恢复后继续处理已持久化触发（283 §24）`：
     1. 在 Node 默认设置（未处理 Promise 拒绝直接退出）的独立子进程内，经由 `POST /v1/roles/:roleId/memory/batches`（返回 `202`）并在 `canScheduleNow` 注入 `SQLITE_BUSY`，验证工具证据处理完成、子进程不崩溃并以退出码 `0` 收尾、`/v1/health` 返回 `200`。
     2. 分别向 `canScheduleNow` 与 `armTimer` 直接打开角色库两条路径注入 `SQLITE_BUSY` 后解除锁，验证不触发未处理拒绝且短退避定时器在存储恢复后自动消费持久化 `manual` 触发并完成一次整理。

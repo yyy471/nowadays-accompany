@@ -18,21 +18,21 @@ const keepRuns = Math.max(0, Number(process.env.E2E_KEEP_RUNS ?? "5"));
 const expectedSuiteSize = 15;
 
 const SUITE = [
-  "pack3-entry.e2e.cjs",
-  "dialogue-layout.e2e.cjs",
-  "relations-desktop.e2e.cjs",
-  "theme-transition.e2e.cjs",
   "startup-flow-fixes.e2e.cjs",
-  "settings-binding-recovery.e2e.cjs",
-  "settings-auto-reload.e2e.cjs",
+  "settings-workspace.e2e.cjs",
   "settings-real-backend.e2e.cjs",
   "settings-review-fixes.e2e.cjs",
-  "settings-workspace.e2e.cjs",
-  "settings-sheet-focus.e2e.cjs",
-  "settings-media-sheet.e2e.cjs",
-  "settings-v6-behavior.e2e.cjs",
+  "relations-desktop.e2e.cjs",
+  "settings-auto-reload.e2e.cjs",
+  "settings-binding-recovery.e2e.cjs",
   "token-usage.e2e.cjs",
+  "dialogue-layout.e2e.cjs",
+  "pack3-entry.e2e.cjs",
+  "theme-transition.e2e.cjs",
+  "settings-media-sheet.e2e.cjs",
+  "settings-sheet-focus.e2e.cjs",
   "workflow-real-backend-chain.e2e.cjs",
+  "settings-v6-behavior.e2e.cjs",
 ];
 
 // 共享 Electron 会话、精确动画或长等待的用例单独成链，避免与并发池抢时序。

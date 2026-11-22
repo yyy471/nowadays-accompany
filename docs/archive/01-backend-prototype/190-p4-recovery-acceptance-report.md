@@ -15,7 +15,7 @@
 - 对照 DL-30、DL-53、DL-65～DL-67、DL-70～DL-73、DL-100～DL-108、DL-113，验收已有角色、任务、记忆、资源和额度规则；不另建恢复系统，不增加权限审批或逐次确认。
 - 分支：`codex/p1-role-storage`，HEAD：`3fa50e6d3b9ce70f37f02bdcae506fb4ed41406a`；实际验收对象包括未提交的 P2／P3 工作树，不能只用 HEAD 代表本次实现。
 - Node：项目独立的 `prototypes/p0/.runtime/node-v24.22.2-win-x64/node.exe`；依赖使用 `apps/backend/node_modules`。
-- 本轮未修改业务源码、正式测试或依赖；新增独立脚本 [20261104-p4-acceptance.ts](../../../apps/backend/reviews/20261104-p4-acceptance.ts)，并同步报告和阶段导航。91 个既有源码、测试、复核脚本及工程文件前后 SHA-256 均一致。
+- 本轮未修改业务源码、正式测试或依赖；新增独立脚本 [20261104-p4-acceptance.ts](../../../apps/backend/tests/acceptance/recovery-acceptance.acceptance.ts)，并同步报告和阶段导航。91 个既有源码、测试、复核脚本及工程文件前后 SHA-256 均一致。
 - 全部使用可控离线模型、本地 SQLite 和真实本地 stdio MCP；付费模型调用 0 次，没有读取或写入用户真实模型密钥。
 - 后端强杀使用独立子进程的 `SIGKILL`，四个位置均未调用 `app.close()`；只结束本次创建的测试进程。样例与数据库保留在隔离测试目录。
 
@@ -125,7 +125,7 @@ P3 重放入口为 `reviews/20261104-p3-review.ts`、`reviews/20261104-p3-fix-re
 
 ### 7.1 快照及结果
 
-运行目录：`apps/backend/test-results/p4-independent-recheck-20261104-202253/`。分支及 HEAD 与第 1 节一致，验收对象是 191 修复后的未提交工作树。使用同一独立 Node 24.22.2 与后端依赖；业务源码、正式测试和依赖在本轮前后未修改，新增脚本 [20261104-p4-recovery-recheck.ts](../../../apps/backend/reviews/20261104-p4-recovery-recheck.ts)。全部使用离线模型和真实本地 stdio MCP，没有真实模型或付费调用。
+运行目录：`apps/backend/test-results/p4-independent-recheck-20261104-202253/`。分支及 HEAD 与第 1 节一致，验收对象是 191 修复后的未提交工作树。使用同一独立 Node 24.22.2 与后端依赖；业务源码、正式测试和依赖在本轮前后未修改，新增脚本 [20261104-p4-recovery-recheck.ts](../../../apps/backend/tests/acceptance/recovery-recheck.acceptance.ts)。全部使用离线模型和真实本地 stdio MCP，没有真实模型或付费调用。
 
 | 检查 | 独立结果与证据 |
 | --- | --- |
@@ -197,7 +197,7 @@ P4-R01／R02 的原始简单重启场景已经改善；本轮保留两项编号�
 - [ConversationStore](../../../apps/backend/src/storage/conversation/conversation-store.ts)新增 `findInterruptedUserTask`，只为待回复输入找回因 PROCESS_INTERRUPTED 中断、仍 active 且已有工具事实的用户任务。创建回复执行、关联原 taskId 为 continues、领取原输入在同一事务中完成。
 - [ConversationService](../../../apps/backend/src/application/conversation/conversation-service.ts)启动时触发上述任务的现有调度，传入原任务和工具事实，提交后原输入只处理一次。普通部分回复、纯文本旧回复和明确结束的任务不进入该恢复路径，新消息与输入状态规则保留。
 - 用户任务创建时保存原链资源；用户和自主任务恢复都读取既有的模型／MCP／Skill 延续。关闭资源仍阻止新任务，原链结束后释放延续，没有新增授权或审批。
-- 新增 [p4-user-recovery.test.ts](../../../apps/backend/tests/p4-user-recovery.test.ts)两项正式回归；[复核脚本](../../../apps/backend/reviews/20261104-p4-recovery-recheck.ts)扩展至六项，关闭资源场景实际调用 MCP 核查，并检查新任务不能借用关闭资源。
+- 新增 [p4-user-recovery.test.ts](../../../apps/backend/tests/integration/user-recovery.test.ts)两项正式回归；[复核脚本](../../../apps/backend/tests/acceptance/recovery-recheck.acceptance.ts)扩展至六项，关闭资源场景实际调用 MCP 核查，并检查新任务不能借用关闭资源。
 
 ### 8.3 验证证据
 
@@ -239,7 +239,7 @@ R02 的原修改在本轮独立范围关闭；R01 遗留及 R03 已直接修正�
 分支 `codex/p1-role-storage`，HEAD 仍为 `3fa50e6d3b9ce70f37f02bdcae506fb4ed41406a`；验收实际包含未提交工作树。运行目录：`apps/backend/test-results/p4-final-acceptance-20261105-090420/`。
 
 - 使用项目独立 Node 24.22.2、后端锁定依赖、可控离线模型、真实 stdio MCP、隔离 SQLite；没有真实模型或付费调用。
-- 新脚本：[20261105-p4-remaining-acceptance.ts](../../../apps/backend/reviews/20261105-p4-remaining-acceptance.ts)，单独严格类型检查通过。95 个既有源码、测试、复核脚本及工程文件前后 SHA-256 一致，没有业务改动。
+- 新脚本：[20261105-p4-remaining-acceptance.ts](../../../apps/backend/tests/acceptance/recovery-remaining.acceptance.ts)，单独严格类型检查通过。95 个既有源码、测试、复核脚本及工程文件前后 SHA-256 一致，没有业务改动。
 - 正式基线：`baseline-summary.json`、`typecheck.log`、`tests.log`；152 项通过，失败／取消／跳过均为 0。
 - 步骤 1 的五份报告位于 `step1/`：`p4-report.json`（8）、`p4-recovery-recheck-report.json`（6）、`p3-review-report.json`（7）、`p3-extended-report.json`（2）、`reservation-boundary-report.json`（2），全部通过。
 - 步骤 2 最终报告为 `remaining-verified/p4-remaining-report.json`，日志 `remaining-verified.log`；8 项中 4 通过、4 失败、执行异常 0。强杀前后的业务记录、原执行检查点、真实效果、进程编号及调用材料均在报告中；各用例目录保留 `fixture.json`、`boundary.json`、工具效果、子进程日志和隔离数据库。
@@ -322,7 +322,7 @@ R02 的原修改在本轮独立范围关闭；R01 遗留及 R03 已直接修正�
 - 内部工具的完成凭据和计量使用同一业务事务；中断后只能确认意图的步骤，也按原调用时间补齐一次计量。继续使用既有任务／事件体系，没有新增恢复系统、schema、依赖、授权或用户配置。
 - 外部工具正常结果计量和启动补记统一采用持久预留的派发时间，不采用结果返回或重启时间；跨日补记不改变实际消费日期，不向新一天补发旧日点数。
 - 恢复仍在运行的模型调用时，在同一事务内保存已输出文字为 interrupted、登记原始证据及中断事件；原 executionId 保持。新一段输出单独保存，后续中断只收集最近中断标记后的新片段，不把旧片段重复拼接或覆盖。
-- 新增 [p4-internal-recovery.test.ts](../../../apps/backend/tests/p4-internal-recovery.test.ts)六项正式回归：成功内部结果复用、不明内部操作不重做、抛错后不伪造明确失败、正常晚到／启动补记的派发日期、恢复时中断文字分段保留。
+- 新增 [p4-internal-recovery.test.ts](../../../apps/backend/tests/integration/internal-recovery.test.ts)六项正式回归：成功内部结果复用、不明内部操作不重做、抛错后不伪造明确失败、正常晚到／启动补记的派发日期、恢复时中断文字分段保留。
 
 ### 10.3 验证与证据
 
@@ -430,7 +430,7 @@ R01～R03／R05 保持各自已关闭范围；R04／R06 的原补修复现通过
 | P3 回归 | 7＋2＋2 均通过；`final-probes/p3-review-report.json`、`p3-extended-report.json`、`reservation-boundary-report.json` |
 | 实现快照与汇总 | `before-fix/`、`source-before.json`、`source-after.json`、`verification-summary.json` |
 
-新增 [p4-internal-startup.test.ts](../../../apps/backend/tests/p4-internal-startup.test.ts)五项正式回归，覆盖终态旧凭据跨日与二次启动、用户任务豁免、无限制计量、事务故障回滚及幂等重试、预算暂停保护。异常矩阵新增 `internal-intent-crossday`，并强化两项原失败用例的续行上下文与二次启动断言。
+新增 [p4-internal-startup.test.ts](../../../apps/backend/tests/integration/internal-startup.test.ts)五项正式回归，覆盖终态旧凭据跨日与二次启动、用户任务豁免、无限制计量、事务故障回滚及幂等重试、预算暂停保护。异常矩阵新增 `internal-intent-crossday`，并强化两项原失败用例的续行上下文与二次启动断言。
 
 `internal-intent` 恢复后日记一篇，已用与账本均三点，续行模型看见原内部 unknown 事实；跨日变体旧工具仍记原日，次日模型消费及当日账本均一点。`internal-receipt-db-failure` 重启后任务仍 failed，无新模型，日记一篇，已用及账本均两点。三例再次启动均零模型调用，日记、账本和内部凭据数量不变。
 

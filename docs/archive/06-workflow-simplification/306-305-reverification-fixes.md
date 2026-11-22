@@ -11,7 +11,7 @@
 
 ## 验证
 
-- **专项测试**（[`apps/backend/tests/p18-278-review-fixes.test.ts`](../../../apps/backend/tests/p18-278-review-fixes.test.ts#L3680-L3938)）：
+- **专项测试**（[`apps/backend/tests/p18-278-review-fixes.test.ts`](../../../apps/backend/tests/integration/workflow-simplification-fixes.test.ts#L3680-L3938)）：
   - `启动读库失败后恢复遗漏的中断批次并继续整理且不重置运行中批次（283 §25）`：
     1. 用真实 `MemoryStore.startBatch` 在角色库留下“已消费触发 + `running` 状态未完成批次 + `processing` 证据”，重启时仅对目标角色的 `MemoryRuntime` 存储打开注入临时 `SQLITE_BUSY`，确认 `/v1/health` 返回 `200`、遗留批次仍保持 `running` 且模型调用为 `0`。
     2. 分别验证三条路径无需再次重启即可恢复：解锁后等待退避定时器自动把遗留批次置为 `failed`（`PROCESS_INTERRUPTED`）并完成一次整理及后续新增手动整理（`autoRecovery`）；解锁前保留已持久化 `manual` 触发并自动消费完成（`persistedTrigger`）；解锁后立即调用 `POST /v1/roles/:roleId/memory/batches`（返回 `202`）时先清理遗留 `running` 批次再完成整理，不再因 `MemoryBatchConflictError` 吞为 `0` 次调用（`immediateManual`）。

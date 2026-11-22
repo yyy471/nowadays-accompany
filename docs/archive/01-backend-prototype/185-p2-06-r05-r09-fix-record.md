@@ -55,8 +55,8 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p2-06-r05-r09-fix-20261104"
 
 自验：
 
-- [p2-05-memory-chain.test.ts:311](../../../apps/backend/tests/p2-05-memory-chain.test.ts#L311) 的默认 `HttpMemoryModel` 用例更新为带完整标签的真实返回形状：断言请求包含五个单数键且不包含 `people`／`topics`／`places`／`emotions`／`sources`；模型返回五类标签后经 `MemoryService` 保存，断言 `getTags` 读回全部维度且 `memory_search_documents` 已有对应事件索引。
-- [p2-05-memory-chain.test.ts:422](../../../apps/backend/tests/p2-05-memory-chain.test.ts#L422) 新增复数标签失败用例：模型仍返回旧复数键时，批次失败且错误码为 `MEMORY_OPERATION_INVALID`，事件数为 0、证据均未标记 `processed`、处理进度不推进；失败尝试次数按既有规则登记为 1，批次保持 `failed`。
+- [p2-05-memory-chain.test.ts:311](../../../apps/backend/tests/integration/memory-chain.test.ts#L311) 的默认 `HttpMemoryModel` 用例更新为带完整标签的真实返回形状：断言请求包含五个单数键且不包含 `people`／`topics`／`places`／`emotions`／`sources`；模型返回五类标签后经 `MemoryService` 保存，断言 `getTags` 读回全部维度且 `memory_search_documents` 已有对应事件索引。
+- [p2-05-memory-chain.test.ts:422](../../../apps/backend/tests/integration/memory-chain.test.ts#L422) 新增复数标签失败用例：模型仍返回旧复数键时，批次失败且错误码为 `MEMORY_OPERATION_INVALID`，事件数为 0、证据均未标记 `processed`、处理进度不推进；失败尝试次数按既有规则登记为 1，批次保持 `failed`。
 
 限制：本轮未重跑真实 DeepSeek M06／M07。真实模型形成事件、按需召回与原始来源读取仍需在独立复验后使用同一配置补齐，不能以离线 JSON 预设替代。
 
@@ -68,7 +68,7 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p2-06-r05-r09-fix-20261104"
 - [model-service.ts:78](../../../apps/backend/src/application/resources/model-service.ts#L78) 读取终态的显式截断标记；[model-service.ts:87](../../../apps/backend/src/application/resources/model-service.ts#L87) 仅在“已完成、无正文且未被显式截断”时返回 `EMPTY_RESPONSE`。思考模型或正文被测试预算截断时视为服务可达，不把测试自身限额报成服务配置不可用。
 - 空流仍按 `STREAM_TRUNCATED` 失败；上游 HTTP 错误仍按 `MODEL_REQUEST_FAILED` 失败；连接测试仍不携带角色上下文、不发送工具、不写业务消息，只保存既有 `model_test_calls` 记录。
 
-自验：[p2-04-model.test.ts:845](../../../apps/backend/tests/p2-04-model.test.ts#L845) 新增用例，按顺序覆盖正常正文、仅思考后 `max_tokens`、正文部分截断、已完成但无正文、空流和上游 503。断言前三项成功、后三项失败；请求 `max_tokens` 不小于 256、system／user 固定为连接测试内容且不包含工具；六次测试结果按 `succeeded`／`succeeded`／`succeeded`／`failed`／`failed`／`failed` 写入 `model_test_calls`。
+自验：[p2-04-model.test.ts:845](../../../apps/backend/tests/unit/model-protocols.test.ts#L845) 新增用例，按顺序覆盖正常正文、仅思考后 `max_tokens`、正文部分截断、已完成但无正文、空流和上游 503。断言前三项成功、后三项失败；请求 `max_tokens` 不小于 256、system／user 固定为连接测试内容且不包含工具；六次测试结果按 `succeeded`／`succeeded`／`succeeded`／`failed`／`failed`／`failed` 写入 `model_test_calls`。
 
 限制：本轮未重跑真实 DeepSeek 连接测试按钮。1024 是本轮实现选择；184 的 1024 对照条件不自动成为用户确认的固定参数。
 

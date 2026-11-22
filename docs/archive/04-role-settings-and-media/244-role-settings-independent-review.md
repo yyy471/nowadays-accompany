@@ -100,7 +100,7 @@
 
 ## 7. 245 第 12 节补修独立复验
 
-2026-11-10。RS-R08 在已验范围关闭。探测尚未保存的服务 B 后临时改为 C，再改回 B，表单可选择 B 的参考模式。保存和试听均携带相同的模式、录音、原文和 B 的能力声明。模拟试听播放成功，离开并重新进入设置后仍选中 B 的模式，全程仅发起一次探测。后端回归另验证了保存时随请求提交的能力声明会参与校验并持久化。 [保存入口](../../../apps/desktop/renderer/src/components/voice/VoicePanel.tsx#L257) · [试听入口](../../../apps/desktop/renderer/src/components/voice/VoicePanel.tsx#L176) · [后端回归](../../../apps/backend/tests/p12-role-settings.test.ts#L808)
+2026-11-10。RS-R08 在已验范围关闭。探测尚未保存的服务 B 后临时改为 C，再改回 B，表单可选择 B 的参考模式。保存和试听均携带相同的模式、录音、原文和 B 的能力声明。模拟试听播放成功，离开并重新进入设置后仍选中 B 的模式，全程仅发起一次探测。后端回归另验证了保存时随请求提交的能力声明会参与校验并持久化。 [保存入口](../../../apps/desktop/renderer/src/components/voice/VoicePanel.tsx#L257) · [试听入口](../../../apps/desktop/renderer/src/components/voice/VoicePanel.tsx#L176) · [后端回归](../../../apps/backend/tests/integration/role-settings.test.ts#L808)
 
 两组浏览器回归通过。能力未知时保存请求省略能力声明，之后探测可选新模式。服务明确不支持所选音色来源时，参考音频与预置音色两个分支的保存和试听请求数均为 0。RS-R01～RS-R08 在各自已验离线范围关闭，本轮未发现新的阻断项。
 

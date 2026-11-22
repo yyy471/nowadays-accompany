@@ -197,7 +197,7 @@
 1. **R01 · 取消写入与内存状态原子收敛**：[ConversationService.cancelTask](../../../apps/backend/src/application/conversation/conversation-service.ts#L483) 将 `interruptExecution`、`finishTask` 与 `appendStreamEvent("task_cancelled")` 合并至单笔 SQLite 事务内执行且不再吞掉执行中断写库异常；仅在事务成功提交后清理 `pendingContinuations` 并中止／摘除在途执行句柄，确保写入任务终态或取消事件失败时整笔回滚、重试与放行原执行均保持一致。
 2. **R02 · 预置服饰稳定来源标识（`BUSINESS V22`）**：[schema.ts](../../../apps/backend/src/storage/core/schema.ts#L12) 升级业务库至 V22，在 `outfits` 新增 `preset_key TEXT` 与局部唯一索引 `idx_outfits_role_preset_key`（[appearance.ts](../../../apps/backend/src/domain/appearance.ts) · [appearance-store.ts](../../../apps/backend/src/storage/media/appearance-store.ts)）；[preset-assistant.ts](../../../apps/backend/src/application/role/preset-assistant.ts#L116) 优先按 `presetKey`（目录 slug，兼容 V21 遗留 `preset_key IS NULL` 回填）匹配已有预置服饰并排除自身后解决冲突命名，重复重启及修改预置显示名时沿用原 `outfitId` 且保留同名自定义服饰。
 3. **R03 · 后置解析工具参数异常保留已收到的 Token 用量**：[protocols.ts](../../../apps/backend/src/model/protocols.ts) 中 `streamOpenAiChat`、`streamOpenAiResponses` 与 `streamAnthropic` 均将流结束后的 `parseToolArguments` 提前放入外层 `try ... catch` 块内执行（先完成全部工具参数 JSON 解析并暂存，任一参数无效时由 `catch` 在抛出 `MODEL_TOOL_ARGUMENTS_INVALID` 前优先发出已收到的 `usage` 事件，且不发出 `tool_call` 或 `completed`），配合 `AgentGraph` 将该轮消耗累计至任务失败调用与任务 `usage` 汇总。
-4. **自验证据**：新增 R01～R03 专项回归至 [p19-preset-assistant-pack1.test.ts](../../../apps/backend/tests/p19-preset-assistant-pack1.test.ts)（共 12 项全部通过）；全量 `npx -y node@24 scripts/accept-offline.mjs` 21／21 步通过（`436/436` 正式测试、2 项交付测试、`process-smoke` 与 16 项独立脚本校验通过，`realServiceCalls = 0`，报告位于 `apps/backend/test-results/p5-2026-11-17T02-25-43-104Z-e98155af/summary.json`）。
+4. **自验证据**：新增 R01～R03 专项回归至 [p19-preset-assistant-pack1.test.ts](../../../apps/backend/tests/integration/preset-assistant-core.test.ts)（共 12 项全部通过）；全量 `npx -y node@24 scripts/accept-offline.mjs` 21／21 步通过（`436/436` 正式测试、2 项交付测试、`process-smoke` 与 16 项独立脚本校验通过，`realServiceCalls = 0`，报告位于 `apps/backend/test-results/p5-2026-11-17T02-25-43-104Z-e98155af/summary.json`）。
 
 ### 8.2 包 1 补修独立复验（2026-11-17，R01～R03 通过）
 
@@ -221,7 +221,7 @@
 
 针对 §8.2 记录的门禁稳定性发现（非包 1 缺陷）完成修复，仅改离线验收探针等待方式，不触及任何产品代码。
 
-1. **修复点**：[20261104-p2-05-fix-recheck.ts](../../../apps/backend/reviews/20261104-p2-05-fix-recheck.ts) 的 `R07-automatic-candidate-maintenance` 在 `waitForIdle` 后由固定 `await delay(200)` 改为轮询等待维护批次真正启动：`until(() => calls > 0 && listRefineCandidates(...).length > 0)`。轮询复用文件内既有 `until`（8s 上限、20ms 间隔），条件与下方 `observed` 断言完全一致；真正的功能失败由 `until` 的 8s 超时兜底并报 `PROBE_WAIT_TIMEOUT`，不再依赖固定阈值。
+1. **修复点**：[20261104-p2-05-fix-recheck.ts](../../../apps/backend/tests/acceptance/conversation-fixes.acceptance.ts) 的 `R07-automatic-candidate-maintenance` 在 `waitForIdle` 后由固定 `await delay(200)` 改为轮询等待维护批次真正启动：`until(() => calls > 0 && listRefineCandidates(...).length > 0)`。轮询复用文件内既有 `until`（8s 上限、20ms 间隔），条件与下方 `observed` 断言完全一致；真正的功能失败由 `until` 的 8s 超时兜底并报 `PROBE_WAIT_TIMEOUT`，不再依赖固定阈值。
 2. **类型检查**：对修改后的 review 脚本按 `review-typecheck` 同等参数独立 `tsc --noEmit` 通过。
 3. **稳定性验证**：单脚本串行重复运行 10 次，`R07-automatic-candidate-maintenance` 全部 `contractPassed=true`（`modelCalls=1／candidates=1`），同批 5 个探针均通过；原「3 次失败 1 次」抖动不再复现。
 4. **全量门禁**：`npx -y node@24 scripts/accept-offline.mjs` **21／21 步通过**（原独立复验为 20／21），`sourceUnchanged=true`、`realServiceCalls=0`、正式测试 `436/436`，报告 `apps/backend/test-results/p5-2026-11-17T09-35-03-680Z-3493805f/summary.json`；`node scripts/check-docs.mjs` 0 错误 0 警告。
@@ -276,7 +276,7 @@
 
 ### 9.4 自验证据
 
-- 新增 [p20-preset-assistant-pack2.test.ts](../../../apps/backend/tests/p20-preset-assistant-pack2.test.ts) 6 项：单段切段续行（含默认 15 轮常量与窗口不拉黑）、`task_pause` 同批停派与同窗接回原 `taskId`、同工具 3 次失败熔断、连续 3 段无进展熔断（含可见说明）、管理工具挂载范围与自改红线、样例 MCP 搜索／桌面控制与慢工具转后台结果回收。
+- 新增 [p20-preset-assistant-pack2.test.ts](../../../apps/backend/tests/integration/preset-assistant-outfits.test.ts) 6 项：单段切段续行（含默认 15 轮常量与窗口不拉黑）、`task_pause` 同批停派与同窗接回原 `taskId`、同工具 3 次失败熔断、连续 3 段无进展熔断（含可见说明）、管理工具挂载范围与自改红线、样例 MCP 搜索／桌面控制与慢工具转后台结果回收。
 - `npm run typecheck` 通过；全量正式测试 **442／442**；`node scripts/accept-offline.mjs` **21／21** 步通过（`realServiceCalls = 0`、`sourceUnchanged = true`），报告 `apps/backend/test-results/p5-2026-11-17T11-53-01-430Z-c8fd96f7/summary.json`；`node scripts/check-docs.mjs` 0 错误 0 警告。
 - 未覆盖：真实第三方 MCP 服务的安装与端到端联调、真实模型在 15 轮切段下的表现、桌面端新增入口（§4.3 取消按钮属包 3）。以上按 §6.2 与 §7.2 另行留证。
 
@@ -327,7 +327,7 @@
 1. **统一恢复辅助**：[admin-tools.ts](../../../apps/backend/src/application/role/admin-tools.ts) 新增 `failAfterStop`，在写入失败时先恢复目标角色活动态，再把 `roleStopped`／`resumed`（资源工具另有 `pausedRoleIds`／`rolledBackRoleIds`／各角色 `activity`）并入**原 `AppError` 的 details** 后重抛。保留原错误码（如 `BINDING_REVISION_CONFLICT`、`INVALID_BINDING`、`STORAGE_ERROR`），模型仍可据此判断冲突类型，回执同时明确给出停机已回滚，避免静默停机。
 2. **`app_role_update`／`app_role_bindings_set`**：`stopForWrite` 之后的写入移入 `try`，`catch` 中 `resumeIfNeeded` 恢复原活动态并经 `failAfterStop` 重抛；成功路径的恢复逻辑与返回体不变。
 3. **`app_resource_update`**：把角色恢复统一移到 `finally` 内、`endMaintenance` **之后**执行，再按 `failure` 决定恢复策略——成功按 `resumeRoles` 参数、失败无条件回滚本次暂停角色。原实现在 `catch` 中（维护窗口尚未结束）调用 `activity.resume`，会被 `resumeGuard`（`assertResumeAllowed`，283 R01）以 `RESOURCE_MAINTENANCE` 拒绝，导致回滚无效；调整顺序后失败回滚与成功恢复均生效（成功路径 `resumeRoles: true` 此前同样受此影响，本次一并修正）。
-4. **回归测试**：[p20-preset-assistant-pack2.test.ts](../../../apps/backend/tests/p20-preset-assistant-pack2.test.ts) 新增 R04 专项 1 项，覆盖四场景：过期 `expectedRevision`、缺 `modelName`、`app_role_update` 存储写入抛错、资源连接变更暂停后写入抛错；断言失败码正确、角色活动态恢复 `active`、错误 details 带出恢复结果。包 2 用例由 6 项增至 7 项。
+4. **回归测试**：[p20-preset-assistant-pack2.test.ts](../../../apps/backend/tests/integration/preset-assistant-outfits.test.ts) 新增 R04 专项 1 项，覆盖四场景：过期 `expectedRevision`、缺 `modelName`、`app_role_update` 存储写入抛错、资源连接变更暂停后写入抛错；断言失败码正确、角色活动态恢复 `active`、错误 details 带出恢复结果。包 2 用例由 6 项增至 7 项。
 5. **门禁**：`tsc --noEmit` 通过；p20 专项 7／7 通过；全量 `npx -y node@24 scripts/accept-offline.mjs` **21／21 步**、正式测试 **443／443**、`sourceUnchanged=true`、`realServiceCalls=0`，报告 `apps/backend/test-results/p5-2026-11-17T13-26-48-525Z-2cfb15d8/summary.json`；`node scripts/check-docs.mjs` 0 错误 0 警告。
 
 **顺带格式修正**：[agent-tools.ts](../../../apps/backend/src/application/conversation/agent-tools.ts) `taskFinishTool` 函数签名的多余空格（§10.3 观察项 3）已清理，无行为影响。
@@ -403,7 +403,7 @@
 
 1. **布局解析**：新增 [backend-paths.cjs](../../../apps/desktop/electron/backend-paths.cjs)，区分「开发仓库」「打包产物」「显式覆盖（`NOWADAYS_BACKEND_ROOT`）」三种布局，统一给出后端入口、预置素材目录与包内 Node 运行时；`main.cjs` 以 `--preset-assets-dir` 显式传给后端，不再依赖源码相对路径。
 2. **打包清单**：[package.json](../../../apps/desktop/package.json) 的 `files` 纳入 `backend-paths.cjs`，`extraResources` 把 `backend`（`src`、`assets/presets`、依赖与清单）与 `preset-assets` 复制到 `resources/`；Node 运行时按「包内 `node-runtime` → `NOWADAYS_NODE_PATH` → PATH」回退。
-3. **路径验证**：新增后端用例 [p21-pack3-preset-assets.test.ts](../../../apps/backend/tests/p21-pack3-preset-assets.test.ts)，在隔离的 `resources/preset-assets` 布局下启动，断言夏澄官方介绍、两套预置服饰、主页图字节、差分数量、默认穿着与重启幂等（`outfitId` 不变、不重复导入）。
+3. **路径验证**：新增后端用例 [p21-pack3-preset-assets.test.ts](../../../apps/backend/tests/integration/preset-assistant-assets.test.ts)，在隔离的 `resources/preset-assets` 布局下启动，断言夏澄官方介绍、两套预置服饰、主页图字节、差分数量、默认穿着与重启幂等（`outfitId` 不变、不重复导入）。
 
 ### 11.6 自验证据
 
@@ -429,7 +429,7 @@
 | 全站去「陪伴」 | 全量搜索 `renderer/src` | 「陪伴」命中 **0**（含样式与组件文案） |
 | 打包路径解析 | 直接调用 `backend-paths.cjs` 验证三种布局 | 仓库态指向 `apps/backend/` 与 `prototypes/p0/.runtime/...`；打包态指向 `resources/backend`＋`resources/preset-assets`＋`resources/node-runtime`；`NOWADAYS_BACKEND_ROOT` 覆盖优先 |
 | 取消接口契约 | 比对前端调用与后端路由/schema | `POST /v1/roles/:roleId/tasks/:taskId/cancel` 的 `{ reason }` 与 `taskCancelBodySchema`（trim/1–2000/optional）一致；任务字段与 `pickCancelableTask` 期望一致 |
-| 预置锁定数据 | 核对接口与类型 | `Outfit`／`OutfitAsset` 均带 `isPreset`（[p19](../../../apps/backend/tests/p19-preset-assistant-pack1.test.ts) 已断言主页图与差分），锁定策略不会因字段缺失退化为「可编辑」 |
+| 预置锁定数据 | 核对接口与类型 | `Outfit`／`OutfitAsset` 均带 `isPreset`（[p19](../../../apps/backend/tests/integration/preset-assistant-core.test.ts) 已断言主页图与差分），锁定策略不会因字段缺失退化为「可编辑」 |
 
 ### 12.2 E1 · P2 · Electron E2E 套件整体为红，不能作为包 3 回归门禁
 

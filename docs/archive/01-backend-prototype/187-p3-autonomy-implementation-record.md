@@ -83,7 +83,7 @@ CLI：
 
 ## 7. 自验证据
 
-证据目录：[apps/backend/test-results/p3-self-verification-20261104](../../../apps/backend/test-results/p3-self-verification-20261104)。
+证据目录：[apps/backend/test-results/p3-self-verification-20261104](../../../test-results/backend-acceptance/p3-self-verification-20261104)。
 
 - 类型检查：`tsc --noEmit` 退出码 0；
 - 全量测试：119 项通过、0 失败；
