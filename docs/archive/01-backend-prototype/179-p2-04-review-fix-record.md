@@ -50,7 +50,7 @@
 - [src/model/protocols.ts:49](../../../apps/backend/src/model/protocols.ts#L49)（Chat）、[170](../../../apps/backend/src/model/protocols.ts#L170)（Responses）、[323](../../../apps/backend/src/model/protocols.ts#L323)（Anthropic）分别校验完整终态：Chat 要求 `finish_reason` 与 `[DONE]`；Responses 要求 `response.completed` 或 `response.incomplete`；Anthropic 要求 `message_delta.stop_reason` 与 `message_stop`。
 - 提前 EOF、空流和显式失败抛出 `MODEL_REQUEST_FAILED`，不发出 `completed`；工具调用只在终态确认后发出，避免基于未确认完成的响应执行工具。已收到的文字增量仍先交付上层。
 - 显式不完整（Chat `length`／`content_filter`、Responses `response.incomplete`、Anthropic `max_tokens`／`pause_turn`）在 `completed.incomplete` 标记，正常结束不设置。
-- [src/application/model-service.ts:46](../../../apps/backend/src/application/model-service.ts#L46) 连接测试要求完整终态且至少一段文字或工具调用；空响应不写成功记录。
+- [src/application/model-service.ts:46](../../../apps/backend/src/application/resources/model-service.ts#L46) 连接测试要求完整终态且至少一段文字或工具调用；空响应不写成功记录。
 
 自验：`tests/p2-04-model.test.ts` 的“streams require a complete protocol terminal and mark explicit incompletes”覆盖三类协议的正常结束、文字后 EOF、空流、显式不完整和无终态工具调用；“connection tests reject empty streams and upstream errors leak no body”覆盖空流连接测试落为失败。
 
@@ -76,8 +76,8 @@
 
 实现：
 
-- [src/storage/memory-store.ts:1006](../../../apps/backend/src/storage/memory-store.ts#L1006) 提供 `listSummaryCandidates`；[:1039](../../../apps/backend/src/storage/memory-store.ts#L1039) 的 `refineEvent` 支持多事件聚合、创建或补充摘要、来源去重、版本递增、事件与摘要修订及索引更新。
-- [src/application/memory-service.ts:343](../../../apps/backend/src/application/memory-service.ts#L343) 构建候选；[:447](../../../apps/backend/src/application/memory-service.ts#L447) 校验目标事件、候选归属和摘要目标，[:523](../../../apps/backend/src/application/memory-service.ts#L523) 提交精炼。
+- [src/storage/memory-store.ts:1006](../../../apps/backend/src/storage/memory/memory-store.ts#L1006) 提供 `listSummaryCandidates`；[:1039](../../../apps/backend/src/storage/memory/memory-store.ts#L1039) 的 `refineEvent` 支持多事件聚合、创建或补充摘要、来源去重、版本递增、事件与摘要修订及索引更新。
+- [src/application/memory-service.ts:343](../../../apps/backend/src/application/memory/memory-service.ts#L343) 构建候选；[:447](../../../apps/backend/src/application/memory/memory-service.ts#L447) 校验目标事件、候选归属和摘要目标，[:523](../../../apps/backend/src/application/memory/memory-service.ts#L523) 提交精炼。
 - 模型给出的 `reason` 写入事件与摘要修订内容，作为聚合依据留痕；批次失败时，版本冲突保留 `MEMORY_VERSION_CONFLICT` 作为诊断码。
 
 自验：

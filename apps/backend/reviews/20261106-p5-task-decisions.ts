@@ -12,7 +12,7 @@ import {
 } from "../tests/p2-05-fixture.js";
 import { createBackendApp } from "../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths } from "../src/bootstrap/config.js";
-import { RoleStorage } from "../src/storage/role-storage.js";
+import { RoleStorage } from "../src/storage/core/role-storage.js";
 
 const output = path.resolve(process.env.NOWADAYS_REVIEW_OUTPUT ?? "test-results/p5-task-decisions");
 const onlyCase = process.env.NOWADAYS_REVIEW_CASE ?? null;

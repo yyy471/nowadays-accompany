@@ -25,7 +25,7 @@
 
 ### P3-R01 [P1] 自主日记及分享绕过额度，最后一点用完后仍产生实际操作
 
-位置：[agent-graph.ts:366](../../../apps/backend/src/application/agent-graph.ts#L366)～389；同文件状态工具分支 :340；[187 第 3 节](./187-p3-autonomy-implementation-record.md)对内部工具全部免扣的描述。
+位置：[agent-graph.ts:366](../../../apps/backend/src/application/conversation/agent-graph.ts#L366)～389；同文件状态工具分支 :340；[187 第 3 节](./187-p3-autonomy-implementation-record.md)对内部工具全部免扣的描述。
 
 非 MCP 工具分支只对 `tool.source === "skill"` 扣点并登记工具计量。`diary_write` 的来源为 `memory`，`autonomy_share`／`autonomy_schedule` 为 `autonomy`，因此直接执行而不检查余额。把后台记忆维护的豁免套给角色主动写日记，违反 DL-109 明确规定；DL-105／DL-108 也不允许最后一点用于模型后继续发出实际工具操作。
 
@@ -35,7 +35,7 @@
 
 ### P3-R02 [P1] 带时区的合法 ISO 安排按原字符串比较，到点不能唤醒
 
-位置：[autonomy-store.ts:215](../../../apps/backend/src/storage/autonomy-store.ts#L215)、:248、:265、:474；[autonomy-service.ts:96](../../../apps/backend/src/application/autonomy-service.ts#L96)的解析与保存路径。
+位置：[autonomy-store.ts:215](../../../apps/backend/src/storage/conversation/autonomy-store.ts#L215)、:248、:265、:474；[autonomy-service.ts:96](../../../apps/backend/src/application/conversation/autonomy-service.ts#L96)的解析与保存路径。
 
 入口只用 `Date.parse` 验证时间，但原样保存 `scheduledAt`；后续 SQL 按字符串排序，并用 `scheduled_at <= nowISO` 判断到期。计时器却按 `Date.parse` 计算实际时刻，两者口径不一致。
 
@@ -45,7 +45,7 @@
 
 ### P3-R03 [P1] 预算暂停清理原链资源，次日恢复无法沿用已关闭的模型或 MCP
 
-位置：[conversation-service.ts:513](../../../apps/backend/src/application/conversation-service.ts#L513)～515、:850～857、:1114～1132。
+位置：[conversation-service.ts:513](../../../apps/backend/src/application/conversation/conversation-service.ts#L513)～515、:850～857、:1114～1132。
 
 `finally` 仅在 `running.superseded && task.active` 时保留任务资源目录。预算耗尽置任务 paused 后走关闭分支，删除目录与绑定缓存；次日 `budget_resume` 又按新任务解析启用资源，且 `startDueAutonomy` 要求当前启用的 chat binding。DL-108 明确预算暂停不结束原任务链，DL-71 的原链资源使用资格应持续至任务结束。
 
@@ -58,7 +58,7 @@
 
 ### P3-R04 [P1] 已结束暂停任务的恢复安排自动创建替代任务并继续执行
 
-位置：[autonomy-store.ts:517](../../../apps/backend/src/storage/autonomy-store.ts#L517)～551；[conversation-service.ts:222](../../../apps/backend/src/application/conversation-service.ts#L222)的任务结束路径。
+位置：[autonomy-store.ts:517](../../../apps/backend/src/storage/conversation/autonomy-store.ts#L517)～551；[conversation-service.ts:222](../../../apps/backend/src/application/conversation/conversation-service.ts#L222)的任务结束路径。
 
 领取 `budget_resume` 时，若关联原任务已 completed／failed，代码将 `taskId` 改为空，随后进入通用“新建自主任务”分支。正式结束原任务也没有消除这项恢复安排，因此旧恢复安排被转换成新任务发起依据。
 
@@ -68,7 +68,7 @@
 
 ### P3-R05 [P2] 自主活动被计为对话轮次，提前推进记忆精炼观察期
 
-位置：[conversation-service.ts:1000](../../../apps/backend/src/application/conversation-service.ts#L1000)；[conversation-store.ts:638](../../../apps/backend/src/storage/conversation-store.ts#L638)～650。
+位置：[conversation-service.ts:1000](../../../apps/backend/src/application/conversation/conversation-service.ts#L1000)；[conversation-store.ts:638](../../../apps/backend/src/storage/conversation/conversation-store.ts#L638)～650。
 
 自主活动完成也直接调用通用 `commitConversation`，其无条件分配下一个 `decision_round`。DL-98 的观察轮次用于“完成针对已发送消息的回复决策”，无输入消息的自主计划执行不应额外计为对话轮次。
 
@@ -78,7 +78,7 @@
 
 ### P3-R06 [P2] 原暂停记录永久参与当前状态，任务完成后仍显示 paused
 
-位置：[autonomy-store.ts:326](../../../apps/backend/src/storage/autonomy-store.ts#L326)～332、:565～587；[autonomy-service.ts:47](../../../apps/backend/src/application/autonomy-service.ts#L47)～57。
+位置：[autonomy-store.ts:326](../../../apps/backend/src/storage/conversation/autonomy-store.ts#L326)～332、:565～587；[autonomy-service.ts:47](../../../apps/backend/src/application/conversation/autonomy-service.ts#L47)～57。
 
 预算恢复为同一任务新增活动记录，原活动仍保持 paused；`hasPausedActivity` 查询任意历史 paused 行，不参考任务当前状态或该任务最新活动。只要曾经暂停过，状态接口就会持续报告 paused。
 
@@ -130,7 +130,7 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p3-independent-20261104-180217"
 
 ### 5.2 P3-R01：内部工具额度已补齐，但异步建连结束前扣点且失去计量对应
 
-位置：[agent-graph.ts:436](../../../apps/backend/src/application/agent-graph.ts#L436)；实际派发边界 [agent-tools.ts:1026](../../../apps/backend/src/application/agent-tools.ts#L1026)；`agent-graph.ts` 的 `executeExternal` 中 `TASK_ENDED`／`EXECUTION_SUPERSEDED` 抛出路径。
+位置：[agent-graph.ts:436](../../../apps/backend/src/application/conversation/agent-graph.ts#L436)；实际派发边界 [agent-tools.ts:1026](../../../apps/backend/src/application/conversation/agent-tools.ts#L1026)；`agent-graph.ts` 的 `executeExternal` 中 `TASK_ENDED`／`EXECUTION_SUPERSEDED` 抛出路径。
 
 自主日记、分享、安排、状态与记忆工具已统一受余额限制，原最后一点及多工具边界通过。但 MCP 在 `meterTool()` 扣点后还要异步建连，建连结束才执行 `checkDispatch`，然后发送真正的 `callTool`。如果这期间任务正式结束，检查会阻止实际工具派发；额度却不撤销，而且异常路径绕过 `recordToolMetering`。
 
@@ -147,7 +147,7 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p3-independent-20261104-180217"
 
 ### 5.3 P3-R03：资源资格恢复通过，但预算暂停仍关闭 MCP 服务会话
 
-位置：[conversation-service.ts:1206](../../../apps/backend/src/application/conversation-service.ts#L1206)～1227。
+位置：[conversation-service.ts:1206](../../../apps/backend/src/application/conversation/conversation-service.ts#L1206)～1227。
 
 `task_resource_continuations` 与 `resolveChatForTask` 已修正关闭模型／MCP 后的使用资格，两个原分场景通过，原链模型选择和最新配置读取也已接入。但 `finally` 仍只在 superseded 且 task.active 时保留目录；预算 paused 路径继续关闭目录和 MCP 连接池。次日即使资源配置完全没变，恢复也重新启动服务进程，资源 ID 的资格记录无法恢复进程内会话状态。
 
@@ -193,7 +193,7 @@ P3-R01 的第 5 节复现路径已修正：同日有限模式下，任务在建�
 
 ### 6.3 P3-R01 遗留 A：预留跨零点提交，实际调用未扣当天额度
 
-位置：[conversation-service.ts:907](../../../apps/backend/src/application/conversation-service.ts#L907)～917；[autonomy-service.ts:285](../../../apps/backend/src/application/autonomy-service.ts#L285)的预留日期；额度每日恢复沿用 `AutonomyStore.ensureBudgetRow`。
+位置：[conversation-service.ts:907](../../../apps/backend/src/application/conversation/conversation-service.ts#L907)～917；[autonomy-service.ts:285](../../../apps/backend/src/application/conversation/autonomy-service.ts#L285)的预留日期；额度每日恢复沿用 `AutonomyStore.ensureBudgetRow`。
 
 `reserveTool` 预先调用 `consumePoint` 扣去当日一点，保存预留日期；`commit` 却只把内存句柄标为已结算／已提交，没有检查派发时是否已进入新的额度日。
 
@@ -205,7 +205,7 @@ P3-R01 的第 5 节复现路径已修正：同日有限模式下，任务在建�
 
 ### 6.4 P3-R01 遗留 B：无限制下未扣点的预留取消，误退已发生模型调用
 
-位置：[conversation-service.ts:919](../../../apps/backend/src/application/conversation-service.ts#L919)～924；[autonomy-store.ts:177](../../../apps/backend/src/storage/autonomy-store.ts#L177)～187。
+位置：[conversation-service.ts:919](../../../apps/backend/src/application/conversation/conversation-service.ts#L919)～924；[autonomy-store.ts:177](../../../apps/backend/src/storage/conversation/autonomy-store.ts#L177)～187。
 
 `cancel` 不检查 `reserved.counted`，无论该预留是否扣过点都调用 `releasePoint`。存储层只判断当前是有限模式、日期相同、总 used_points 大于 0，再从总额减一，无法确认减的是该预留的点数。
 

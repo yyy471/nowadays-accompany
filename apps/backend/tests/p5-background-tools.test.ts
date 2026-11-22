@@ -5,8 +5,8 @@ import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { rolePaths } from "../src/bootstrap/config.js";
-import { DEFAULT_TOOL_FOREGROUND_WAIT_MS } from "../src/application/conversation-service.js";
-import { ConversationStore } from "../src/storage/conversation-store.js";
+import { DEFAULT_TOOL_FOREGROUND_WAIT_MS } from "../src/application/conversation/conversation-service.js";
+import { ConversationStore } from "../src/storage/conversation/conversation-store.js";
 import type { ModelEvent, ModelPort, ModelRequest } from "../src/domain/model.js";
 import {
   addBinding,

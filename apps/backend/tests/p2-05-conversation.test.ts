@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import type { ModelEvent, ModelRequest } from "../src/domain/model.js";
-import { historyLookupTool } from "../src/application/conversation-history.js";
-import { RoleAccess } from "../src/application/role-access.js";
-import { registerMessageEvidence } from "../src/storage/evidence.js";
+import { historyLookupTool } from "../src/application/conversation/conversation-history.js";
+import { RoleAccess } from "../src/application/role/role-access.js";
+import { registerMessageEvidence } from "../src/storage/memory/evidence.js";
 import {
   GatedChatModel,
   createFixture,

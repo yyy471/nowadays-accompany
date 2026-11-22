@@ -6,8 +6,8 @@ import test from "node:test";
 import { createBackendApp, type BackendApp } from "../src/bootstrap/app.js";
 import { parseBackendConfig } from "../src/bootstrap/config.js";
 import type { ModelEvent, ModelPort } from "../src/domain/model.js";
-import { ConversationStore } from "../src/storage/conversation-store.js";
-import { AutonomyStore } from "../src/storage/autonomy-store.js";
+import { ConversationStore } from "../src/storage/conversation/conversation-store.js";
+import { AutonomyStore } from "../src/storage/conversation/autonomy-store.js";
 import {
   ScriptedChatModel,
   createFixtureWithModel,

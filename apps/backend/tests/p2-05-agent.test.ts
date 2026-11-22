@@ -3,9 +3,9 @@ import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { rolePaths } from "../src/bootstrap/config.js";
 import type { ModelEvent, ModelRequest } from "../src/domain/model.js";
-import { registerMessageEvidence } from "../src/storage/evidence.js";
-import { MemoryStore } from "../src/storage/memory-store.js";
-import { RoleStorage } from "../src/storage/role-storage.js";
+import { registerMessageEvidence } from "../src/storage/memory/evidence.js";
+import { MemoryStore } from "../src/storage/memory/memory-store.js";
+import { RoleStorage } from "../src/storage/core/role-storage.js";
 import {
   ScriptedChatModel,
   createFixture,

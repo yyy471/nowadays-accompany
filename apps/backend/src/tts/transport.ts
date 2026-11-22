@@ -4,7 +4,7 @@ import {
   TtsSynthesisFailedError,
   TtsTimeoutError,
 } from "../domain/errors.js";
-import { isPcmWav } from "../application/audio-inspect.js";
+import { isPcmWav } from "../application/media/audio-inspect.js";
 import type { SynthesizedAudio } from "../domain/voice.js";
 
 export const DEFAULT_TTS_TIMEOUT_MS = 180_000;

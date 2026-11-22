@@ -6,7 +6,7 @@ import { parseBackendConfig } from "../src/bootstrap/config.js";
 import type { ModelEvent, ModelPort, ModelRequest } from "../src/domain/model.js";
 import { sceneImageSettingsSchema } from "../src/domain/scene-image-settings.js";
 import { FakeSceneImageGenerator } from "../src/scene/fake-generator.js";
-import { SceneImageStore } from "../src/storage/scene-image-store.js";
+import { SceneImageStore } from "../src/storage/media/scene-image-store.js";
 import { createFixtureWithModel, withStorage, type Fixture } from "./p2-05-fixture.js";
 
 class SceneDecisionModel implements ModelPort {

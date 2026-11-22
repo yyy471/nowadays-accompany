@@ -29,7 +29,7 @@
 
 ## 2. P1-R01［高／P1］已有角色的存储缺失被当成首次创建
 
-位置：[RoleAccess.withStore](../../../apps/backend/src/application/role-access.ts#L35)、[RoleStorage 构造](../../../apps/backend/src/storage/role-storage.ts#L14)、[openRawDatabase](../../../apps/backend/src/storage/schema.ts#L288)。
+位置：[RoleAccess.withStore](../../../apps/backend/src/application/role/role-access.ts#L35)、[RoleStorage 构造](../../../apps/backend/src/storage/core/role-storage.ts#L14)、[openRawDatabase](../../../apps/backend/src/storage/core/schema.ts#L288)。
 
 触发：先创建角色并正常关闭后端，保持应用索引 `ready`，将其某一数据库移为备份，再重启并通过真实 `GET /v1/roles/:roleId` 读取。
 
@@ -46,7 +46,7 @@
 
 ## 3. P1-R02［高／P1］已保存 unknown 的调用无法补存后续确定结果
 
-位置：[saveToolResult](../../../apps/backend/src/storage/role-store.ts#L1062)、[finishToolCall](../../../apps/backend/src/storage/role-store.ts#L985)。
+位置：[saveToolResult](../../../apps/backend/src/storage/role/role-store.ts#L1062)、[finishToolCall](../../../apps/backend/src/storage/role/role-store.ts#L985)。
 
 触发：创建任务及执行关联，登记并标记调用 running，保存 `unknown / RESPONSE_LOST`；随后为同一 toolCallId 提供确定结果样例，尝试补存 success。
 
@@ -60,7 +60,7 @@ unknown 表示目前无法确认，不能等同于永远不可核实的事实终
 
 ## 4. P1-R03［中／P2］步骤幂等忽略任务归属
 
-位置：[beginToolCall 幂等分支](../../../apps/backend/src/storage/role-store.ts#L863)。
+位置：[beginToolCall 幂等分支](../../../apps/backend/src/storage/role/role-store.ts#L863)。
 
 触发：同一执行合法关联任务 A、B。先以 A 登记 `same-step / sample / {}`，再以 B 和相同执行、步骤、工具、参数登记。
 
@@ -74,7 +74,7 @@ unknown 表示目前无法确认，不能等同于永远不可核实的事实终
 
 ## 5. P1-R04［中／P2］打开角色业务库未验证必需索引
 
-位置：[openVersionedDatabase](../../../apps/backend/src/storage/schema.ts#L267)、[assertTables](../../../apps/backend/src/storage/schema.ts#L363)。
+位置：[openVersionedDatabase](../../../apps/backend/src/storage/core/schema.ts#L267)、[assertTables](../../../apps/backend/src/storage/core/schema.ts#L363)。
 
 触发：角色库版本仍为 1、所有表仍在，移除 `idx_messages_window_submission` 和 `idx_role_single_chat_model`，关闭并重新打开角色。
 
@@ -151,7 +151,7 @@ unknown 表示目前无法确认，不能等同于永远不可核实的事实终
 
 ### 8.2 R04：谓词只按子串匹配，失效索引仍可通过
 
-位置：[schema.ts 的谓词匹配](../../../apps/backend/src/storage/schema.ts#L432)。
+位置：[schema.ts 的谓词匹配](../../../apps/backend/src/storage/core/schema.ts#L432)。
 
 将索引改为：
 
@@ -169,7 +169,7 @@ WHERE capability = 'chat_model' AND 0;
 
 ### 8.3 R02：状态空补录与结果尚未保存的中间态
 
-位置：[saveToolResult 的 existing 分支](../../../apps/backend/src/storage/role-store.ts#L1082)及[无结果分支的状态检查](../../../apps/backend/src/storage/role-store.ts#L1126)。
+位置：[saveToolResult 的 existing 分支](../../../apps/backend/src/storage/role/role-store.ts#L1082)及[无结果分支的状态检查](../../../apps/backend/src/storage/role/role-store.ts#L1126)。
 
 1. **只传状态即可补录成功。** 先保存 unknown，再调用 `saveToolResult({ roleId, toolCallId, status: "success" })`。实际接受并写为 success／reconciledAt 非空，rawResponse、adaptedResult、error 均为 null，没有提供任何结果或核查依据。第 7 节声称“补录必须携带确定结果、不提供只改状态路径”，当前实现尚未做到。应区分合法的显式空结果和根本未提供结果，不能只依赖状态声明完成核查补录。
 2. **只有调用状态 unknown 时，确定结果仍被拒绝。** 用现有公开接口 `markToolCallRunning` → `finishToolCall(..., "unknown")` 保存调用状态，暂未写 tool_results；随后为同一 toolCallId 保存带 `rawResponse: { confirmed: true }` 的 success，实际返回 TOOL_CALL_STATUS_CONFLICT。修正仅覆盖了已有 unknown 结果行的路径。
@@ -236,7 +236,7 @@ WHERE capability = 'chat_model' AND 0;
 
 ### 10.2 R04 剩余：规范化改变了字符串值
 
-位置：[schema.ts: normalizeSql](../../../apps/backend/src/storage/schema.ts#L462)。
+位置：[schema.ts: normalizeSql](../../../apps/backend/src/storage/core/schema.ts#L462)。
 
 当前对整个 WHERE 文本调用 `toLowerCase()`，并删除所有空白和括号。这些变换同时作用于引号内的字符串，而 SQLite 中字符串的大小写、尾部空格和括号属于值的一部分。
 

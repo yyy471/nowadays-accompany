@@ -1,6 +1,6 @@
-import type { RoleAccess } from "../application/role-access.js";
-import type { CredentialResolver } from "../application/credential-resolver.js";
-import type { ModelBindingResolver, ResolvedModelBinding } from "../application/model-binding-resolver.js";
+import type { RoleAccess } from "../application/role/role-access.js";
+import type { CredentialResolver } from "../application/resources/credential-resolver.js";
+import type { ModelBindingResolver, ResolvedModelBinding } from "../application/resources/model-binding-resolver.js";
 import {
   SceneImageCanceledError,
   SceneImagePlanInvalidError,
@@ -19,9 +19,9 @@ import type {
 } from "../domain/scene-image.js";
 import { resolveCredential } from "../model/credentials.js";
 import { HttpModelAdapter } from "../model/protocols.js";
-import { ConversationStore } from "../storage/conversation-store.js";
-import { resolveClaimedModelBinding } from "../application/model-maintenance.js";
-import type { ModelCallClaim } from "../application/model-maintenance.js";
+import { ConversationStore } from "../storage/conversation/conversation-store.js";
+import { resolveClaimedModelBinding } from "../application/resources/model-maintenance.js";
+import type { ModelCallClaim } from "../application/resources/model-maintenance.js";
 
 const MAX_CONTENT_CHARS = 4_000;
 const MAX_CONTEXT_MESSAGE_CHARS = 600;

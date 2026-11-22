@@ -49,7 +49,7 @@
 | `POST /v1/roles/:roleId/windows/:windowId/messages/:messageId/retry` | JSON：`{ executionId }` | `200` 与 `POST .../messages` 同结构提交结果 | 仅重派当前 `getFailedReply(windowId)` 指向的最新失败尝试，沿用原 `submissionId` 且不复制用户消息、不重派已保存回复对应的既有工具；状态过期返回 `409 REPLY_RETRY_STALE` |
 | `GET /v1/roles/:roleId/windows/:windowId/messages` | `?after=` 或 `?before=`（互斥），`limit`（`1..200`，默认 `50`） | `200 { items, hasMore, nextAfter, nextBefore, segments, activeReply, failedReply, awaitingReply, cursor, sceneImages }` | `after` 与 `before` 同传或非整数越界返回 `400 INVALID_QUERY`；单读事务采集全字段、失败／待恢复锚点与 `cursor`，确保快照、重载与 SSE 无缝衔接 |
 | `GET /v1/roles/:roleId/windows/:windowId/messages/:messageId` | — | `200 { message, segments, sceneImages }` | 窗口与消息归属不匹配返回 `404 WINDOW_NOT_FOUND` / `404 MESSAGE_NOT_FOUND` |
-| `POST /v1/roles/:roleId/windows/:windowId/input-state` | JSON：`{ clientId, typing }` | `200` 输入态或清空确认 | 请求体结构校验失败（空或空白 `clientId`、非布尔 `typing`、缺少 `typing` 或多余字段，[schemas.ts](../../apps/backend/src/http/schemas.ts#L130-L135)）返回 `400 INVALID_REQUEST`；省略 `clientId` 或空白路径标识触发输入态业务校验（`InputStateInvalidError`，[input-state.ts](../../apps/backend/src/application/input-state.ts#L144-L154)）返回 `400 INPUT_STATE_INVALID`；更新内存态并在 `typing=false` 时顺带触发 `schedule` |
+| `POST /v1/roles/:roleId/windows/:windowId/input-state` | JSON：`{ clientId, typing }` | `200` 输入态或清空确认 | 请求体结构校验失败（空或空白 `clientId`、非布尔 `typing`、缺少 `typing` 或多余字段，[schemas.ts](../../apps/backend/src/http/schemas.ts#L130-L135)）返回 `400 INVALID_REQUEST`；省略 `clientId` 或空白路径标识触发输入态业务校验（`InputStateInvalidError`，[input-state.ts](../../apps/backend/src/application/conversation/input-state.ts#L144-L154)）返回 `400 INPUT_STATE_INVALID`；更新内存态并在 `typing=false` 时顺带触发 `schedule` |
 | `DELETE /v1/roles/:roleId/windows/:windowId/input-state` | `?clientId=`（必填） | `200 { cleared: true }` | `clientId` 缺失或为空返回 `400 INPUT_STATE_INVALID`；清理指定客户端状态并触发 `schedule` |
 | `GET /v1/roles/:roleId/windows/:windowId/events` | `?after=` 与／或 Header `Last-Event-ID`，可选 `?clientId=` | `200 text/event-stream` | 游标非法或非本窗口有效事件编号返回 `400 SSE_CURSOR_INVALID`；见 §2.4 重放与心跳 |
 | `GET /v1/roles/:roleId/executions/:executionId` | — | `200` 执行详情 | 不存在返回 `404 EXECUTION_NOT_FOUND` |
@@ -69,20 +69,20 @@
 
 | 存储层级 | 具体载体 | 归属与生命周期说明 |
 | --- | --- | --- |
-| **每角色业务库**（`BUSINESS_SCHEMA_VERSION = 27`，见 [schema.ts](../../apps/backend/src/storage/schema.ts)） | `windows`、`messages`、`executions`、`message_segments`、`execution_stream_events`、`scene_image_tasks`、`scene_image_assets`、`role_scene_references`、`model_calls` | 一轮回复在 `messages` 保持一条；`message_segments` 记录 `segment_id`、`ordinal`、`kind`（`speech` / `narration`）、字符起止偏移、`outfit_id`、`home_asset_id`、`sprite_asset_id`、`voice_emotion`（V19 新增，仅 `speech` 句段写入）、`annotated_at`；`scene_image_tasks` 记录锚点消息／执行、`trigger_source`（`manual` / `auto`，`idx_scene_image_auto_attempt` 约束同消息至多一条自动单号）、`layer_mode`、`start_segment_id`～`end_segment_id`、`attempt_no`、`config_json`（固定服务、自动配置与锚点快照）；`scene_image_assets` 按 `task_id` 唯一索引约束每任务最多一张成图；`role_scene_references`（V27）保存 `img2img` 每套服饰专属参考图元数据 |
+| **每角色业务库**（`BUSINESS_SCHEMA_VERSION = 27`，见 [schema.ts](../../apps/backend/src/storage/core/schema.ts)） | `windows`、`messages`、`executions`、`message_segments`、`execution_stream_events`、`scene_image_tasks`、`scene_image_assets`、`role_scene_references`、`model_calls` | 一轮回复在 `messages` 保持一条；`message_segments` 记录 `segment_id`、`ordinal`、`kind`（`speech` / `narration`）、字符起止偏移、`outfit_id`、`home_asset_id`、`sprite_asset_id`、`voice_emotion`（V19 新增，仅 `speech` 句段写入）、`annotated_at`；`scene_image_tasks` 记录锚点消息／执行、`trigger_source`（`manual` / `auto`，`idx_scene_image_auto_attempt` 约束同消息至多一条自动单号）、`layer_mode`、`start_segment_id`～`end_segment_id`、`attempt_no`、`config_json`（固定服务、自动配置与锚点快照）；`scene_image_assets` 按 `task_id` 唯一索引约束每任务最多一张成图；`role_scene_references`（V27）保存 `img2img` 每套服饰专属参考图元数据 |
 | **每角色文件系统** | `<roleDir>/scene-images/<assetId>.<ext>`、`<roleDir>/appearance/<assetId>.<ext>` | 过场图成图仅通过 `readAsset(roleId, assetId)` 校验路径与魔数读取，相对路径不通过 HTTP 暴露；`img2img` 服饰参考图存放于 `<roleDir>/appearance/<assetId>.<ext>` 并通过受管路由存取 |
-| **后端进程内存态** | `InputStateRegistry`（[input-state.ts](../../apps/backend/src/application/input-state.ts#L12)）与 `blockedWindows` | 输入状态 1 秒自动过期，重启动清空，不持久化；执行异常写入 `blockedWindows`（同时排除因进程中断 `PROCESS_INTERRUPTED` 结算的历史异常），直到该窗口收到新消息或用户显式重试（`retryFailedReply`） |
+| **后端进程内存态** | `InputStateRegistry`（[input-state.ts](../../apps/backend/src/application/conversation/input-state.ts#L12)）与 `blockedWindows` | 输入状态 1 秒自动过期，重启动清空，不持久化；执行异常写入 `blockedWindows`（同时排除因进程中断 `PROCESS_INTERRUPTED` 结算的历史异常），直到该窗口收到新消息或用户显式重试（`retryFailedReply`） |
 | **桌面渲染器内存与本地存储** | `useWindowSession` 会话状态与 `drafts`；`localStorage` | `drafts` 按 `${roleId}:${windowId}` 分键隔离；失败回复保留 `failedReply`（结合 SSE `execution_failed.failedMessageId` 与快照 `failedReply`/`awaitingReply`）在 `ChatPane` 渲染原地重试入口；`nowadays-dialogue-voice` / `nowadays-dialogue-scene` 与 `nowadays-dialogue-dock`（见 [Conversation.tsx](../../apps/desktop/renderer/src/pages/Conversation.tsx#L22-L27)）记录演出本地偏好；音频缓存（`MAX_CACHE = 48`）通过 `URL.createObjectURL` 驻留并在切换角色／窗口／卸载时释放 |
 
 ### 2.4 SSE 事件类型与消息接收等待原因
 
-1. **SSE 数据帧与心跳**（[conversation-service.ts](../../apps/backend/src/application/conversation-service.ts#L620-L647)）：
+1. **SSE 数据帧与心跳**（[conversation-service.ts](../../apps/backend/src/application/conversation/conversation-service.ts#L620-L647)）：
    - 每条持久化流事件发送为 `id: <streamEventId>\nevent: execution\ndata: {"streamEventId":...,"type":...,...}\n\n`。
    - 游标解析（[routes.ts](../../apps/backend/src/http/routes.ts#L972-L998)）：同时存在查询参数 `?after=` 与请求头 `Last-Event-ID` 时取 `Math.max(...)`，防止 `EventSource` 带旧 URL 自动重连时重复吐字。
    - 空闲连接每 `15_000` ms 输出 `: heartbeat\n\n`；客户端断连或 `closeStreams(roleId)` 时立即清理对应的 `clientId` 输入态并尝试恢复队列调度。
 2. **现行 13 种 `ConversationStreamType`**（[conversation.ts](../../apps/backend/src/domain/conversation.ts#L6-L23)，已从 `174 §8.5` 原设计的 8 种扩展）：
    - `execution_started`、`message_delta`、`tool_started`、`tool_backgrounded`、`tool_result_saved`、`message_segments`（支持流式 `partial: true` 与终态正式段）、`segment_annotations`、`scene_image_task`、`message_completed`、`message_interrupted`、`execution_superseded`、`execution_paused`、`execution_failed`。
-3. **消息接收等待原因 `ConversationWaitReason`**（[conversation.ts](../../apps/backend/src/domain/conversation.ts#L25-L30) 与 [conversation-service.ts](../../apps/backend/src/application/conversation-service.ts#L1091-L1134)）：
+3. **消息接收等待原因 `ConversationWaitReason`**（[conversation.ts](../../apps/backend/src/domain/conversation.ts#L25-L30) 与 [conversation-service.ts](../../apps/backend/src/application/conversation/conversation-service.ts#L1091-L1134)）：
    - `ROLE_STOPPED`：角色处于停止／暂停态。
    - `MODEL_MISSING`：未配置或缺失可用对话模型。
    - `BUSY`：角色其他执行仍在运行（含后台任务／主动执行占槽）。
@@ -95,13 +95,13 @@
 
 ### 3.1 输入状态、消息提交去重与打断语义
 
-- **输入态保活与 1 秒退出**（[typing-state.js](../../apps/desktop/renderer/src/conversation/typing-state.ts#L2-L51)、[input-state.ts](../../apps/backend/src/application/input-state.ts#L10-L96)）：
+- **输入态保活与 1 秒退出**（[typing-state.js](../../apps/desktop/renderer/src/conversation/typing-state.ts#L2-L51)、[input-state.ts](../../apps/backend/src/application/conversation/input-state.ts#L10-L96)）：
   - 前端 `createTypingState` 串行泵送更新并维护 `delay = 1000` ms 定时器；持续键入只刷新过期时间，停输 1 秒后发送 `typing: false`；切换窗口／卸载调用 `close()` 在最后一次请求完成后调用 `DELETE .../input-state?clientId=`；打字本身**不会**中断正在生成的回复（`DL-81`）。
-- **提交与活动停止态的判定先后**（[280 §2](../archive/06-workflow-simplification/280-278-progress-role-workspace-dialogue-receipt.md#L15-L45)、[routes.ts](../../apps/backend/src/http/routes.ts#L251-L280)、[conversation-service.ts](../../apps/backend/src/application/conversation-service.ts#L264-L296)）：
+- **提交与活动停止态的判定先后**（[280 §2](../archive/06-workflow-simplification/280-278-progress-role-workspace-dialogue-receipt.md#L15-L45)、[routes.ts](../../apps/backend/src/http/routes.ts#L251-L280)、[conversation-service.ts](../../apps/backend/src/application/conversation/conversation-service.ts#L264-L296)）：
   - `POST .../messages` 先查 `findSubmittedMessage`：已存在的 `submissionId` 跳过「禁止新建」门槛，重新清理 `blockedWindows` 并重新评估调度与 `waitReason` 返回 `200`；真正的新提交才触发 `activity.assertCanStart(roleId)`，角色停止时拒绝入库并返回 `409 ROLE_ACTIVITY_STOPPED`。
   - 当返回 `decisionScheduled: false` 且 `waitReason` 为 `ROLE_STOPPED`、`MODEL_MISSING` 或 `WINDOW_BLOCKED` 时，桌面端释放待机输入区并保留原 `submissionId`，显示对应的就地动作（「恢复活动」／「配置对话模型」／「重试」）。
   - 并发竞争保护（`283 §5 R02`）：若 POST 响应尚未返回时 SSE `execution_started` 已经到达并点名 `messageIds` 包含刚入库的用户消息，前端先在 `awaitingSubmission` 期将事件缓存在 `bufferedEvents`，拿到响应后优先以 SSE 为准进入正常演出，避免误跌入 `wait` 提示。
-- **打断与暂停节点收敛**（[conversation-service.ts](../../apps/backend/src/application/conversation-service.ts#L1859-L2338)）：
+- **打断与暂停节点收敛**（[conversation-service.ts](../../apps/backend/src/application/conversation/conversation-service.ts#L1859-L2338)）：
   - **新消息抢占（`supersedeWindow`）**：同窗口运行中（或他窗口正在自主运行）的执行被标为 `superseded` 并中止控制器；若已有 `partialText`，落库为 `status = 'interrupted'`、生成正式句段并发送 `message_segments` -> `message_interrupted` -> `execution_superseded`；若尚无文字，则清理占位生成的空 `generating` 记录。
   - **角色请求停止（`ROLE_STOP_REQUESTED`）**：只在图节点边界检查（`checkStopBoundary`），不在模型流吐字半途强切；执行与任务记为 `paused`，用户消息保持 claimed 状态等待恢复后续行；若没有后台记忆等在途收尾工作则立即确认停止。
   - **慢工具转后台（`TOOL_BACKGROUNDED`）**：放弃当前执行槽位并保留用户消息领取态，待工具完成后续行。
@@ -111,7 +111,7 @@
 - **句段切分规则**（[message-segments.ts](../../apps/backend/src/domain/message-segments.ts)）：
   - 整行 `*...*`、`旁白：`、`【旁白】` 划为 `narration`；显式旁白内若出现引号台词或 `台词：` / `对白：` 再切出 `speech`；行内 `*动作*` 与台词拆分保留原文起止偏移；短句合并门槛为 `SHORT_SEGMENT_CHARS = 8`、`MAX_MERGED_CHARS = 30`。
   - 流式增量期间 `insertMessageSegments(..., partial=true)` 为已稳定段落提前发出 `message_segments`（`partial: true`）并保持 `segmentId`；终态提交或打断时对齐／替换未稳定末段。前端 `reconcileFinalSegments` 同步修正 `shown` 进度：若被缩短或末尾段已露出，则立即恢复输入框（`FE-R01` 闭环）。
-- **异步表情与语音情绪标注与计量边界**（[segment-annotation-service.ts](../../apps/backend/src/application/segment-annotation-service.ts)）：
+- **异步表情与语音情绪标注与计量边界**（[segment-annotation-service.ts](../../apps/backend/src/application/conversation/segment-annotation-service.ts)）：
   - 回复正式提交（或主动分享写入）之后异步派发；不再以「存在服饰或 `sprites`」为前提，只要存在未标注句段且需立绘标注或存在 `speech` 台词段即启动标注：无当前服饰／无可用差分时仍基于角色人设、前置对话历史（`listRecentContextBefore` 包含 `sender = 'user'` 的已接收消息及已结束／被打断助手消息）、当前引擎提示（`ttsEngine`）与相邻 `narration`/`speech` 语境生成精炼语音情绪指令 `voiceEmotion`；存在有效差分时在同一调用中联合输出 `spriteAssetId` 与 `voiceEmotion`。
   - 经 `resolveClaimedModelBinding` 协调模型维护窗口与在途占用，并**在扣点与 `model_calls` 登记前先完成适配器及凭据初始化**；因此 `file:` 凭据缺失或格式错误时 `model_calls` 与自主点数均不递增（`216 R03` 终版闭环）。
   - 仅在模型调用返回合法 JSON 后按白名单校验 `spriteAssetId` 并清洗 `voiceEmotion`（非 `speech` 句段强制置 `null`）写回 `message_segments`，同时推送包含 `items[].voiceEmotion` 的 `segment_annotations` SSE 事件；任何解析异常或调用失败都只记录调用结局，**不影响已保存正文与句段展示**。
@@ -124,7 +124,7 @@
 - **逐句推进与等待反馈**（[ChatPane.tsx](../../apps/desktop/renderer/src/conversation/ChatPane.tsx#L177-L335)、[advance.js](../../apps/desktop/renderer/src/conversation/advance.ts)）：
   - 用户发送后立即清除当前 `wait` 与错误、聚焦消息滚动容器并隐藏输入框；收到首个可用句段即自动推进显示第一句；之后用户在消息区域点击（`shouldAdvanceFromClick`，避开按钮／链接／输入框／已选中文本）或按键 `Enter` / `Space`（`shouldAdvanceFromKey`，且已处理 `Shift+Enter` 换行与 IME `isComposing`/`keyCode === 229`）推进下一段；未到下一段时显示「正在组织回复…」或「下一句还在准备…」（`271 MR-05`）。
   - 一旦终态到达且末段展示完毕（含单句或失败空回复），立即还原输入框并归还草稿焦点（非历史查看态时）。
-- **语音播放、情绪联动与停用处理**（[use-segment-voice.ts](../../apps/desktop/renderer/src/conversation/use-segment-voice.ts) · [voice-service.ts](../../apps/backend/src/application/voice-service.ts)）：
+- **语音播放、情绪联动与停用处理**（[use-segment-voice.ts](../../apps/desktop/renderer/src/conversation/use-segment-voice.ts) · [voice-service.ts](../../apps/backend/src/application/media/voice-service.ts)）：
   - 前端随 `segment_annotations`（及快照）同步每句的 `voiceEmotion`；自动播报存在 **220 ms** 防抖，后端 `VoiceService` 在收到缺省 `emotion` 的 `/speech` 请求时对同轮在途异步标注额外等待有界障栅（至多 **1800 ms**），确保首句在标注未落盘前到达时仍可拿到 `voice_emotion`，超时则安全退回无情绪直合。
   - 仅自动播放已开启且当前处于实时跟随且历史面板未打开时的 `speech`（非 `action`）段；遇到 `action`（旁白）只取消 220 ms 自动播放防抖（`cancelPending`），**保留已经在播的上一句音频直到自然结束或遇到新台词**；新音频切换在 `onplaying` 触发后才停掉旧 `<audio>`（`FE-R02`）。
   - 预取 `current` 及后续最多 2 个可播句段；若后端返回 `409 VOICE_DISABLED`，自动播放与预取即刻静默跳过以省去重复报错，唯有用户手动点击小喇叭会清除停用标记并向服务端重查及 toast 提示。
@@ -135,10 +135,10 @@
 ### 3.4 过场图任务状态机、配置锁定与图层语义
 
 - **状态流转**：`queued` -> `planning` -> `generating` -> 终态（`succeeded` / `skipped` / `failed`）。每次状态变化写入 `scene_image_task` 流事件并在重连时按游标补全。
-- **接收时配置锁定与跨站点保护**（[scene-image-service.ts](../../apps/backend/src/application/scene-image-service.ts#L121-L162)、[comfyui-generator.ts](../../apps/backend/src/scene/comfyui-generator.ts#L215-L250)）：
+- **接收时配置锁定与跨站点保护**（[scene-image-service.ts](../../apps/backend/src/application/media/scene-image-service.ts#L121-L162)、[comfyui-generator.ts](../../apps/backend/src/scene/comfyui-generator.ts#L215-L250)）：
   - 任务创建当刻调用 `generator.lock(roleId)` 将当前服务协议、基地址、超时期限、角色生图设置与服饰锚点序列化进 `config_json`；规划期间用户在设置页修改配置或锚点不影响已在途的旧任务（`CG-R03`）。
   - 进入 ComfyUI 生成前核对快照站点标识与当前服务记录站点标识：若跨站点／改地址，直接结算失败 `409 SCENE_IMAGE_SERVICE_CHANGED`（避免将新站点令牌发往旧地址 `CG-R05`）；同站点更新路径或轮换令牌则继续沿用快照地址与新令牌完成生成。
-- **规划输入与图层约束**（[scene-image-service.ts](../../apps/backend/src/application/scene-image-service.ts#L335-L450)、[scene-image-store.ts](../../apps/backend/src/storage/scene-image-store.ts#L154-L200)）：
+- **规划输入与图层约束**（[scene-image-service.ts](../../apps/backend/src/application/media/scene-image-service.ts#L335-L450)、[scene-image-store.ts](../../apps/backend/src/storage/media/scene-image-store.ts#L154-L200)）：
   - 上下文取锚点消息之前最多 4 条已结束消息；`outfitForMessage` 只读取目标轮句段固化的 `outfit_id`，不回退角色当前穿着（`227 R04`）。
   - 默认注入 `ModelSceneImagePlanner`（以 `FixedSceneImagePlanner` 为缺绑定兜底）：无对话模型时，手动任务回退固定规划（首段到末段 + 请求图层）；有模型但模型调用失败、登记 `model_calls` 失败或返回非法／与手动冲突的图层模式时直接以 `SCENE_IMAGE_PLAN_FAILED` / `SCENE_IMAGE_PLAN_INVALID` / `SCENE_IMAGE_PLAN_UNAVAILABLE` 失败，不回退掩盖错误（`227 R02/R03`）。
   - `CG-03` **回复后自动过场图**：角色开启 `autoGenerateEnabled` 时，仅正式回复提交触发自动任务捕获与单窗口顺序调度（`dispatchAutomatic`），无可用服务时按 `SCENE_IMAGE_AUTO_NO_SERVICE` 结算为 `skipped`；同一窗口处于 `autoCooldownMinutes` 冷却期时按 `SCENE_IMAGE_AUTO_COOLDOWN` 结算为 `skipped`；`ModelSceneImagePlanner` 对自动任务可输出 `draw: false` 并以 `SCENE_IMAGE_AUTO_NOT_SELECTED`（`skipped`）跳过而不产生图片；自动图生图会固定读取对应服饰的 `role_scene_references` 参考图，且生成纯 `background` 时按工作流分支隔离参考图输入。
@@ -227,10 +227,10 @@ npx -y node@24 apps/desktop/tests/theme-transition-check.cjs
   - [conversation.ts](../../apps/backend/src/domain/conversation.ts) · [message-segments.ts](../../apps/backend/src/domain/message-segments.ts) · [scene-image.ts](../../apps/backend/src/domain/scene-image.ts) · [errors.ts](../../apps/backend/src/domain/errors.ts)
   - [routes.ts](../../apps/backend/src/http/routes.ts) · [scene-image-routes.ts](../../apps/backend/src/http/scene-image-routes.ts) · [voice-routes.ts](../../apps/backend/src/http/voice-routes.ts) · [schemas.ts](../../apps/backend/src/http/schemas.ts)
 - **后端应用服务与存储**：
-  - [conversation-service.ts](../../apps/backend/src/application/conversation-service.ts) · [message-service.ts](../../apps/backend/src/application/message-service.ts) · [input-state.ts](../../apps/backend/src/application/input-state.ts)
-  - [segment-annotation-service.ts](../../apps/backend/src/application/segment-annotation-service.ts) · [scene-image-service.ts](../../apps/backend/src/application/scene-image-service.ts) · [voice-service.ts](../../apps/backend/src/application/voice-service.ts)
+  - [conversation-service.ts](../../apps/backend/src/application/conversation/conversation-service.ts) · [message-service.ts](../../apps/backend/src/application/conversation/message-service.ts) · [input-state.ts](../../apps/backend/src/application/conversation/input-state.ts)
+  - [segment-annotation-service.ts](../../apps/backend/src/application/conversation/segment-annotation-service.ts) · [scene-image-service.ts](../../apps/backend/src/application/media/scene-image-service.ts) · [voice-service.ts](../../apps/backend/src/application/media/voice-service.ts)
   - [model-planner.ts](../../apps/backend/src/scene/model-planner.ts) · [fixed-planner.ts](../../apps/backend/src/scene/fixed-planner.ts) · [comfyui-generator.ts](../../apps/backend/src/scene/comfyui-generator.ts)
-  - [conversation-store.ts](../../apps/backend/src/storage/conversation-store.ts) · [scene-image-store.ts](../../apps/backend/src/storage/scene-image-store.ts) · [schema.ts](../../apps/backend/src/storage/schema.ts)
+  - [conversation-store.ts](../../apps/backend/src/storage/conversation/conversation-store.ts) · [scene-image-store.ts](../../apps/backend/src/storage/media/scene-image-store.ts) · [schema.ts](../../apps/backend/src/storage/core/schema.ts)
 - **桌面前端渲染器**：
   - [Conversation.tsx](../../apps/desktop/renderer/src/pages/Conversation.tsx) · [use-window-session.ts](../../apps/desktop/renderer/src/conversation/use-window-session.ts) · [use-segment-voice.ts](../../apps/desktop/renderer/src/conversation/use-segment-voice.ts)
   - [ChatPane.tsx](../../apps/desktop/renderer/src/conversation/ChatPane.tsx) · [ConversationStage.tsx](../../apps/desktop/renderer/src/conversation/ConversationStage.tsx) · [HistoryPanel.tsx](../../apps/desktop/renderer/src/conversation/HistoryPanel.tsx)

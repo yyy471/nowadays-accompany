@@ -4,9 +4,9 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { HttpModelAdapter } from "../src/model/protocols.js";
-import { HttpMemoryModel } from "../src/application/memory-runtime.js";
+import { HttpMemoryModel } from "../src/application/memory/memory-runtime.js";
 import { rolePaths } from "../src/bootstrap/config.js";
-import { MemoryStore } from "../src/storage/memory-store.js";
+import { MemoryStore } from "../src/storage/memory/memory-store.js";
 import { createFixtureWithModel, addBinding, withStorage } from "../tests/p2-05-fixture.js";
 
 const credentialPath = process.env.NOWADAYS_ACCEPTANCE_CREDENTIAL_FILE;

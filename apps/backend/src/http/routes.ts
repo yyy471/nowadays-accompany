@@ -23,22 +23,22 @@ import type {
 import { readJsonBody, readOptionalJsonBody } from "./body.js";
 import { HttpError, type JsonResponse } from "./errors.js";
 import type { Router } from "./router.js";
-import type { AppearanceService } from "../application/appearance-service.js";
-import type { ConversationService } from "../application/conversation-service.js";
-import type { AutonomyService } from "../application/autonomy-service.js";
-import type { MemoryQueryService } from "../application/memory-query-service.js";
-import type { MessageService } from "../application/message-service.js";
-import type { ModelService } from "../application/model-service.js";
-import type { ResourceService } from "../application/resource-service.js";
-import type { RoleService } from "../application/role-service.js";
-import type { SceneImageService } from "../application/scene-image-service.js";
-import type { ImageServiceService } from "../application/image-service.js";
-import type { SceneImageSettingsService } from "../application/scene-image-settings.js";
-import type { VoiceService } from "../application/voice-service.js";
-import type { GlobalVoiceService } from "../application/global-voice-service.js";
-import type { RoleActivityService } from "../application/role-activity-service.js";
-import type { RoleDeletionService } from "../application/role-deletion-service.js";
-import type { TokenUsageService } from "../application/token-usage-service.js";
+import type { AppearanceService } from "../application/media/appearance-service.js";
+import type { ConversationService } from "../application/conversation/conversation-service.js";
+import type { AutonomyService } from "../application/conversation/autonomy-service.js";
+import type { MemoryQueryService } from "../application/memory/memory-query-service.js";
+import type { MessageService } from "../application/conversation/message-service.js";
+import type { ModelService } from "../application/resources/model-service.js";
+import type { ResourceService } from "../application/resources/resource-service.js";
+import type { RoleService } from "../application/role/role-service.js";
+import type { SceneImageService } from "../application/media/scene-image-service.js";
+import type { ImageServiceService } from "../application/media/image-service.js";
+import type { SceneImageSettingsService } from "../application/media/scene-image-settings.js";
+import type { VoiceService } from "../application/media/voice-service.js";
+import type { GlobalVoiceService } from "../application/media/global-voice-service.js";
+import type { RoleActivityService } from "../application/role/role-activity-service.js";
+import type { RoleDeletionService } from "../application/role/role-deletion-service.js";
+import type { TokenUsageService } from "../application/resources/token-usage-service.js";
 import {
   TOKEN_USAGE_CATEGORIES,
   TOKEN_USAGE_RANGES,
@@ -85,7 +85,7 @@ import { registerVoiceRoutes } from "./voice-routes.js";
 import { registerVoiceServiceRoutes } from "./voice-service-routes.js";
 import { putWorldbooksSchema } from "../domain/worldbook.js";
 
-import type { MediaMaintenance } from '../application/media-maintenance.js';
+import type { MediaMaintenance } from '../application/media/media-maintenance.js';
 
 export interface ApiServices {
   roles: RoleService;

@@ -4,8 +4,8 @@
 
 ## 1. 修复内容
 
-- 在 [memory-store.ts](../../../apps/backend/src/storage/memory-store.ts#L340-L366) 将 `reconcileFinishedTaskTriggers` 从整批单事务改为**按任务独立事务与逐项异常隔离**，返回 `{ inserted, failedTaskIds }`。任一结束任务的 `task_end` 写入失败不会回滚同角色其他任务，也不会抛出未捕获异常中断后续步骤。
-- 在 [memory-runtime.ts](../../../apps/backend/src/application/memory-runtime.ts#L543-L650) 的 `runOnce` 对对账补写 `reconcileFinishedTaskTriggers`、对话触发生成 `service.onEvidenceRegistered`、逐项 `service.onTaskFinished` 以及 `service.enqueueManual` 做故障隔离：
+- 在 [memory-store.ts](../../../apps/backend/src/storage/memory/memory-store.ts#L340-L366) 将 `reconcileFinishedTaskTriggers` 从整批单事务改为**按任务独立事务与逐项异常隔离**，返回 `{ inserted, failedTaskIds }`。任一结束任务的 `task_end` 写入失败不会回滚同角色其他任务，也不会抛出未捕获异常中断后续步骤。
+- 在 [memory-runtime.ts](../../../apps/backend/src/application/memory/memory-runtime.ts#L543-L650) 的 `runOnce` 对对账补写 `reconcileFinishedTaskTriggers`、对话触发生成 `service.onEvidenceRegistered`、逐项 `service.onTaskFinished` 以及 `service.enqueueManual` 做故障隔离：
   - 个别任务写 `task_end` 失败时保留在 `deferredTaskIds` 与数据库可对账集合中，并在 `reconcileRetryState` 记录退避重试（`armTimer` 检查 `reconcileRetryAt`），模型可用且角色有其他触发（如已入库的 `manual` 手动整理、`message_threshold`／`idle` 对话整理、或同批次其余健康的 `task_end`）时继续执行 `runPending`／`runBatch`，不再提前退出。
   - 若失败任务的工具证据已随本轮其余整理一并完成处理，本轮结束后清理其过期暂存与重试计数；若仍未处理且缺少未消费 `task_end`，保留可重试状态等待后续唤醒、重启或定时退避重试。
 - 在 `close()` 与 `disposeRole()` 同步清理 `reconcileRetryState`。

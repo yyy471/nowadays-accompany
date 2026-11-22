@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { roleCardForDialogue, roleCardPayloadForDialogue } from "../src/application/role-card-dialogue.js";
+import { roleCardForDialogue, roleCardPayloadForDialogue } from "../src/application/role/role-card-dialogue.js";
 
 const card = [
   "# 林同学", "说话简短，重承诺。",

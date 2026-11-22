@@ -5,12 +5,12 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
-import { MemoryService } from "../src/application/memory-service.js";
-import { rebuildTransferMemorySearch } from "../src/application/role-transfer-data.js";
-import { localDateFromIso, registerMessageEvidence } from "../src/storage/evidence.js";
-import { MemoryStore } from "../src/storage/memory-store.js";
-import { RoleStore } from "../src/storage/role-store.js";
-import { BUSINESS_SCHEMA_VERSION, BUSINESS_SCHEMA_V1_SQL } from "../src/storage/schema.js";
+import { MemoryService } from "../src/application/memory/memory-service.js";
+import { rebuildTransferMemorySearch } from "../src/application/transfer/role-transfer-data.js";
+import { localDateFromIso, registerMessageEvidence } from "../src/storage/memory/evidence.js";
+import { MemoryStore } from "../src/storage/memory/memory-store.js";
+import { RoleStore } from "../src/storage/role/role-store.js";
+import { BUSINESS_SCHEMA_VERSION, BUSINESS_SCHEMA_V1_SQL } from "../src/storage/core/schema.js";
 import { ScriptedMemoryModel } from "../src/model/offline-memory.js";
 import type { MemoryFormationInput } from "../src/domain/memory.js";
 

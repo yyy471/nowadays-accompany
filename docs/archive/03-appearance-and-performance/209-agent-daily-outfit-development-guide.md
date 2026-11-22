@@ -14,7 +14,7 @@
 | 当天已有决定 | 提供当前服饰与可选服饰，角色可在当前活动确有需要时决定换装 |
 | 衣柜为空 | 当轮照常处理原任务，桌面使用角色默认呈现 |
 
-时间、活动和衣柜信息由现有业务数据提供。安排可取当前自主活动目标或本轮已知计划。选择随该轮 Agent 调用执行，沿用既有调度和预算。角色想告诉用户时，可以使用现有的自主分享。 [自主唤醒入口](../../../apps/backend/src/application/conversation-service.ts#L999) · [自主决策上下文](../../../apps/backend/src/application/conversation-service.ts#L2192)
+时间、活动和衣柜信息由现有业务数据提供。安排可取当前自主活动目标或本轮已知计划。选择随该轮 Agent 调用执行，沿用既有调度和预算。角色想告诉用户时，可以使用现有的自主分享。 [自主唤醒入口](../../../apps/backend/src/application/conversation/conversation-service.ts#L999) · [自主决策上下文](../../../apps/backend/src/application/conversation/conversation-service.ts#L2192)
 
 ## 状态与提交
 
@@ -25,13 +25,13 @@
 | `outfitId` | 角色已决定穿着的服饰 ID，必须来自自己的已登记衣柜 |
 | `outfitReviewedOn` | 上次完成穿搭决定的本地日期，格式为 `YYYY-MM-DD`。选择继续穿原服饰也更新 |
 
-1. 进入一次新的 Agent 决策时，从服务端时钟计算本轮穿搭日期并传入上下文。优先复用已有本地日期换算。跨零点时仍按本轮开始决策的日期登记，下一轮按届时日期重新判断。 [业务本地日期用法](../../../apps/backend/src/application/autonomy-service.ts#L402)
+1. 进入一次新的 Agent 决策时，从服务端时钟计算本轮穿搭日期并传入上下文。优先复用已有本地日期换算。跨零点时仍按本轮开始决策的日期登记，下一轮按届时日期重新判断。 [业务本地日期用法](../../../apps/backend/src/application/conversation/autonomy-service.ts#L402)
 2. Agent 通过现有 `state_update` 提出 `outfitId`，选择继续穿原服饰时也提交该 ID。后端读取该角色衣柜校验 ID，并按本轮日期生成 `outfitReviewedOn`。无效 ID 返回可让 Agent 修正的工具结果，其他状态仍按原有规则处理。日期由后端统一写入。
-3. 有效的服饰补丁随当前执行和其他角色状态一起正式提交。提交前复核衣柜归属与状态版本。中断或冲突沿用现有执行语义，展示以最后已提交状态为准。暂未做出决定时保留既有服饰和日期，下一次符合条件的决策仍可考虑穿搭。旧角色缺字段时使用默认呈现，首次成功选择后写入状态。 [状态工具](../../../apps/backend/src/application/agent-tools.ts#L832) · [状态提交事务](../../../apps/backend/src/storage/conversation-store.ts#L674)
+3. 有效的服饰补丁随当前执行和其他角色状态一起正式提交。提交前复核衣柜归属与状态版本。中断或冲突沿用现有执行语义，展示以最后已提交状态为准。暂未做出决定时保留既有服饰和日期，下一次符合条件的决策仍可考虑穿搭。旧角色缺字段时使用默认呈现，首次成功选择后写入状态。 [状态工具](../../../apps/backend/src/application/conversation/agent-tools.ts#L832) · [状态提交事务](../../../apps/backend/src/storage/conversation/conversation-store.ts#L674)
 
 ## 主页与对话同步
 
-桌面以 `roleId` 获取角色状态和衣柜，用 `outfitId` 查主页图及对话差分。进入页面、恢复前台、切角色和断线恢复时读一次当前状态。当前聊天收到带 `stateVersion` 的完成事件时刷新。自主活动运行在独立窗口，首版可在可见界面定期读当前角色的状态，让后台换装也能出现在主页和对话页。读取只刷新展示，间隔由桌面联调确定。 [角色状态路由](../../../apps/backend/src/http/routes.ts#L129) · [自主活动窗口](../../../apps/backend/src/application/conversation-service.ts#L1011)
+桌面以 `roleId` 获取角色状态和衣柜，用 `outfitId` 查主页图及对话差分。进入页面、恢复前台、切角色和断线恢复时读一次当前状态。当前聊天收到带 `stateVersion` 的完成事件时刷新。自主活动运行在独立窗口，首版可在可见界面定期读当前角色的状态，让后台换装也能出现在主页和对话页。读取只刷新展示，间隔由桌面联调确定。 [角色状态路由](../../../apps/backend/src/http/routes.ts#L129) · [自主活动窗口](../../../apps/backend/src/application/conversation/conversation-service.ts#L1011)
 
 同一角色忽略落后于当前状态版本的响应，切角色时按角色 ID 丢弃旧请求结果。两页收到新服饰后先加载对应图片，再交给各自的渲染组件。尚未展示的旧服饰差分若已不属于当前服饰，按 [208](./208-character-appearance-import-and-dialogue.md#桌面与演出) 的缺图规则处理。已显示的历史标注继续按原记录读取。
 

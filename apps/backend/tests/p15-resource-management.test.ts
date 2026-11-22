@@ -5,7 +5,7 @@ import test from "node:test";
 import { createBackendApp, listen } from "../src/bootstrap/app.js";
 import { rolePaths } from "../src/bootstrap/config.js";
 import { ScriptedMemoryModel } from "../src/model/offline-memory.js";
-import { RoleStorage } from "../src/storage/role-storage.js";
+import { RoleStorage } from "../src/storage/core/role-storage.js";
 import {
   ScriptedChatModel,
   addBinding,

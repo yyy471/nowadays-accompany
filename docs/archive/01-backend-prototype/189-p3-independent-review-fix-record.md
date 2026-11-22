@@ -38,8 +38,8 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p3-fix-20261104"
 
 修改：
 
-- [agent-graph.ts:626](../../../apps/backend/src/application/agent-graph.ts#L626) 的 `meterTool()` 不再按工具来源筛选；自主目的下所有工具调用统一先受余额限制。
-- [agent-graph.ts:341](../../../apps/backend/src/application/agent-graph.ts#L341) 的 state 分支与 [agent-graph.ts:377](../../../apps/backend/src/application/agent-graph.ts#L377) 的非 MCP 分支在调用前扣点，并在 [agent-graph.ts:633](../../../apps/backend/src/application/agent-graph.ts#L633) 的 `recordSyntheticToolMetering` 写入与 MCP 同口径的 `call_metering` 记录。`diary_write`、`autonomy_share`、`autonomy_schedule`、记忆与状态工具不再因来源为 `memory`／`state`／`autonomy` 而豁免。
+- [agent-graph.ts:626](../../../apps/backend/src/application/conversation/agent-graph.ts#L626) 的 `meterTool()` 不再按工具来源筛选；自主目的下所有工具调用统一先受余额限制。
+- [agent-graph.ts:341](../../../apps/backend/src/application/conversation/agent-graph.ts#L341) 的 state 分支与 [agent-graph.ts:377](../../../apps/backend/src/application/conversation/agent-graph.ts#L377) 的非 MCP 分支在调用前扣点，并在 [agent-graph.ts:633](../../../apps/backend/src/application/conversation/agent-graph.ts#L633) 的 `recordSyntheticToolMetering` 写入与 MCP 同口径的 `call_metering` 记录。`diary_write`、`autonomy_share`、`autonomy_schedule`、记忆与状态工具不再因来源为 `memory`／`state`／`autonomy` 而豁免。
 - 后台记忆维护仍不走 Agent 工具计量；用户任务目的仍不扣自主额度，DL-109 的原有豁免保留。
 - 同步修正 [186 的额度说明](./186-p3-autonomy-development-guide.md)，明确自主活动内的记忆检索、日记、分享与再安排按实际工具调用扣点，只有用户任务及后台维护保留豁免。
 
@@ -53,8 +53,8 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p3-fix-20261104"
 
 修改：
 
-- [autonomy-store.ts:185](../../../apps/backend/src/storage/autonomy-store.ts#L185) 在接受安排时用 `Date.parse` 解析并保存规范 UTC ISO，不再保留带偏移的原字符串。
-- [autonomy-store.ts:250](../../../apps/backend/src/storage/autonomy-store.ts#L250)、:262、:493 的最近安排、到期列表和领取查询统一按 `julianday(scheduled_at)` 比较与排序。
+- [autonomy-store.ts:185](../../../apps/backend/src/storage/conversation/autonomy-store.ts#L185) 在接受安排时用 `Date.parse` 解析并保存规范 UTC ISO，不再保留带偏移的原字符串。
+- [autonomy-store.ts:250](../../../apps/backend/src/storage/conversation/autonomy-store.ts#L250)、:262、:493 的最近安排、到期列表和领取查询统一按 `julianday(scheduled_at)` 比较与排序。
 - 已有带偏移记录无需迁移：到期判断与排序已按实际时间解析，计时器、`nextPendingWake` 与领取规则一致。
 
 自验：
@@ -66,10 +66,10 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p3-fix-20261104"
 
 修改：
 
-- [conversation-service.ts:536](../../../apps/backend/src/application/conversation-service.ts#L536) 新增 `grantTaskResources`，在自主任务链每次执行时把已启用的 chat_model、MCP、Skill 登记到既有 `task_resource_continuations`；已有模型授权不被替换。
-- [model-binding-resolver.ts:43](../../../apps/backend/src/application/model-binding-resolver.ts#L43) 新增 `resolveChatForTask`，任务链已有模型资格时即使绑定或资源已关闭仍可解析，模型名与配置仍读取现有记录及最新资源配置；[model-binding-resolver.ts:35](../../../apps/backend/src/application/model-binding-resolver.ts#L35) 的 `hasChatForTask` 供恢复前检查使用。
-- [agent-tools.ts:35](../../../apps/backend/src/application/agent-tools.ts#L35) 接收任务链资源 ID，已关闭但属于原链的 MCP／Skill 仍生成候选并提供工具。
-- [conversation-service.ts:523](../../../apps/backend/src/application/conversation-service.ts#L523) 的启动检查允许 `budget_resume` 在聊天模型已关闭时凭原任务资格启动；[conversation-service.ts:928](../../../apps/backend/src/application/conversation-service.ts#L928) 的续行使用任务模型与续行资源。新任务仍只使用当前启用资源，派发时继续读取最新配置。
+- [conversation-service.ts:536](../../../apps/backend/src/application/conversation/conversation-service.ts#L536) 新增 `grantTaskResources`，在自主任务链每次执行时把已启用的 chat_model、MCP、Skill 登记到既有 `task_resource_continuations`；已有模型授权不被替换。
+- [model-binding-resolver.ts:43](../../../apps/backend/src/application/resources/model-binding-resolver.ts#L43) 新增 `resolveChatForTask`，任务链已有模型资格时即使绑定或资源已关闭仍可解析，模型名与配置仍读取现有记录及最新资源配置；[model-binding-resolver.ts:35](../../../apps/backend/src/application/resources/model-binding-resolver.ts#L35) 的 `hasChatForTask` 供恢复前检查使用。
+- [agent-tools.ts:35](../../../apps/backend/src/application/conversation/agent-tools.ts#L35) 接收任务链资源 ID，已关闭但属于原链的 MCP／Skill 仍生成候选并提供工具。
+- [conversation-service.ts:523](../../../apps/backend/src/application/conversation/conversation-service.ts#L523) 的启动检查允许 `budget_resume` 在聊天模型已关闭时凭原任务资格启动；[conversation-service.ts:928](../../../apps/backend/src/application/conversation/conversation-service.ts#L928) 的续行使用任务模型与续行资源。新任务仍只使用当前启用资源，派发时继续读取最新配置。
 - 任务结束时沿用既有逻辑结束全部资源续行，资格随整条任务链释放。
 
 自验：[p3-review-fixes.test.ts:346](../../../apps/backend/tests/p3-review-fixes.test.ts#L321) 分别关闭模型与 MCP 后跨日恢复。两个场景都断言恢复确实启动、原任务最终 completed、成果文件写出、MCP 工具仍被提供；历史暂停活动保留。
@@ -78,8 +78,8 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p3-fix-20261104"
 
 修改：
 
-- [autonomy-store.ts:539](../../../apps/backend/src/storage/autonomy-store.ts#L539) 在领取 `budget_resume` 前重查原任务：缺失或非自主任务以 `AUTONOMY_RESUME_TASK_MISSING` 取消，completed／failed 以 `AUTONOMY_RESUME_TASK_ENDED` 取消；校验通过前不插入执行、不创建活动，也不进入通用新建任务分支。
-- [autonomy-service.ts:137](../../../apps/backend/src/application/autonomy-service.ts#L137) 新增取消待恢复安排的入口；[conversation-service.ts:247](../../../apps/backend/src/application/conversation-service.ts#L247) 的正式 `finishTask` 与 [conversation-service.ts:1252](../../../apps/backend/src/application/conversation-service.ts#L1252) 的执行结束路径在任务终结时取消关联恢复安排，原因记为 `TASK_ENDED`。
+- [autonomy-store.ts:539](../../../apps/backend/src/storage/conversation/autonomy-store.ts#L539) 在领取 `budget_resume` 前重查原任务：缺失或非自主任务以 `AUTONOMY_RESUME_TASK_MISSING` 取消，completed／failed 以 `AUTONOMY_RESUME_TASK_ENDED` 取消；校验通过前不插入执行、不创建活动，也不进入通用新建任务分支。
+- [autonomy-service.ts:137](../../../apps/backend/src/application/conversation/autonomy-service.ts#L137) 新增取消待恢复安排的入口；[conversation-service.ts:247](../../../apps/backend/src/application/conversation/conversation-service.ts#L247) 的正式 `finishTask` 与 [conversation-service.ts:1252](../../../apps/backend/src/application/conversation/conversation-service.ts#L1252) 的执行结束路径在任务终结时取消关联恢复安排，原因记为 `TASK_ENDED`。
 
 自验：
 
@@ -90,14 +90,14 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p3-fix-20261104"
 
 修改：
 
-- [conversation-store.ts:75](../../../apps/backend/src/storage/conversation-store.ts#L75) 的提交输入增加 `countsAsConversationRound`；[conversation-store.ts:639](../../../apps/backend/src/storage/conversation-store.ts#L639) 仅在需要计轮时分配下一个 `decision_round`，否则写入 `NULL` 并从事件负载省略。
-- [conversation-service.ts:1096](../../../apps/backend/src/application/conversation-service.ts#L1096) 自主执行提交时传 `false`，用户消息执行保持原有计轮规则。
+- [conversation-store.ts:75](../../../apps/backend/src/storage/conversation/conversation-store.ts#L75) 的提交输入增加 `countsAsConversationRound`；[conversation-store.ts:639](../../../apps/backend/src/storage/conversation/conversation-store.ts#L639) 仅在需要计轮时分配下一个 `decision_round`，否则写入 `NULL` 并从事件负载省略。
+- [conversation-service.ts:1096](../../../apps/backend/src/application/conversation/conversation-service.ts#L1096) 自主执行提交时传 `false`，用户消息执行保持原有计轮规则。
 
 自验：[p3-review-fixes.test.ts:489](../../../apps/backend/tests/p3-review-fixes.test.ts#L464) 断言纯自主活动前后当前轮次都为 0、自主执行 `decision_round=NULL`、用户消息数为 0；随后提交真实用户消息，轮次变为 1 且该执行 `decision_round=1`。
 
 ## 7. P3-R06 暂停状态只反映仍待恢复的任务
 
-修改：[autonomy-store.ts:360](../../../apps/backend/src/storage/autonomy-store.ts#L360) 的 `hasPausedActivity` 连接 `tasks`，只统计活动 paused 且所属任务仍 paused 的记录。历史 paused 活动继续保留，但不再把已完成任务报告为当前暂停。
+修改：[autonomy-store.ts:360](../../../apps/backend/src/storage/conversation/autonomy-store.ts#L360) 的 `hasPausedActivity` 连接 `tasks`，只统计活动 paused 且所属任务仍 paused 的记录。历史 paused 活动继续保留，但不再把已完成任务报告为当前暂停。
 
 自验：[p3-review-fixes.test.ts:553](../../../apps/backend/tests/p3-review-fixes.test.ts#L528) 先确认暂停状态为真、活动为 paused；跨日恢复并完成后断言任务全部 completed、`paused=false`、活动状态为 `["completed","paused"]`（历史保留）、没有待执行安排、当日额度使用 1 点。
 
@@ -116,10 +116,10 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p3-fix-20261104"
 
 修改：
 
-- [agent-graph.ts:33](../../../apps/backend/src/application/agent-graph.ts#L33) 增加工具额度预留句柄；[agent-graph.ts:444](../../../apps/backend/src/application/agent-graph.ts#L444) 在 MCP 工具执行前预留 1 点，不再在异步建连前直接最终扣点；重复调用的既有路径不重复预留。
-- [agent-graph.ts:539](../../../apps/backend/src/application/agent-graph.ts#L539) 的 `executeExternal` 把派发确认传入工具上下文；[agent-graph.ts:569](../../../apps/backend/src/application/agent-graph.ts#L569) 仅在 MCP 建连与任务检查都通过、即将 `callTool` 时提交预留。[agent-tools.ts:1027](../../../apps/backend/src/application/agent-tools.ts#L1027) 在真正发送工具请求前调用该确认。
-- 未派发时撤销预留并且不写工具计量；连接失败、建连期间任务结束或用户消息替代均不消耗工具点。[agent-graph.ts:656](../../../apps/backend/src/application/agent-graph.ts#L656) 的计量记录只在预留已提交时写入；已真正派发的晚到成功／失败仍计 1 点并保留真实结果。
-- [autonomy-service.ts:285](../../../apps/backend/src/application/autonomy-service.ts#L285) 新增预留入口，复用存储层已有扣点；[autonomy-store.ts:177](../../../apps/backend/src/storage/autonomy-store.ts#L177) 增加按预留本地日期撤销，跨日时不会误减新一天的额度。
+- [agent-graph.ts:33](../../../apps/backend/src/application/conversation/agent-graph.ts#L33) 增加工具额度预留句柄；[agent-graph.ts:444](../../../apps/backend/src/application/conversation/agent-graph.ts#L444) 在 MCP 工具执行前预留 1 点，不再在异步建连前直接最终扣点；重复调用的既有路径不重复预留。
+- [agent-graph.ts:539](../../../apps/backend/src/application/conversation/agent-graph.ts#L539) 的 `executeExternal` 把派发确认传入工具上下文；[agent-graph.ts:569](../../../apps/backend/src/application/conversation/agent-graph.ts#L569) 仅在 MCP 建连与任务检查都通过、即将 `callTool` 时提交预留。[agent-tools.ts:1027](../../../apps/backend/src/application/conversation/agent-tools.ts#L1027) 在真正发送工具请求前调用该确认。
+- 未派发时撤销预留并且不写工具计量；连接失败、建连期间任务结束或用户消息替代均不消耗工具点。[agent-graph.ts:656](../../../apps/backend/src/application/conversation/agent-graph.ts#L656) 的计量记录只在预留已提交时写入；已真正派发的晚到成功／失败仍计 1 点并保留真实结果。
+- [autonomy-service.ts:285](../../../apps/backend/src/application/conversation/autonomy-service.ts#L285) 新增预留入口，复用存储层已有扣点；[autonomy-store.ts:177](../../../apps/backend/src/storage/conversation/autonomy-store.ts#L177) 增加按预留本地日期撤销，跨日时不会误减新一天的额度。
 
 自验：新增 5 个正式场景，覆盖建连期间任务结束、用户消息替代、连接失败、已派发后的晚到成功与失败。建连期间结束：工具未派发、工具结果 `failed/TASK_ENDED`、`usedPoints=1`、计量只有 1 条模型记录；派发后结束：工具结果照常保存，模型与工具各计 1 点，`accountedPoints=usedPoints`。
 
@@ -127,8 +127,8 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p3-fix-20261104"
 
 修改：
 
-- [conversation-service.ts:932](../../../apps/backend/src/application/conversation-service.ts#L932)、:1165、:1247 区分预算暂停：任务仍 paused 时保留任务资源目录与 MCP 连接池，次日恢复复用同一进程内客户端；预算暂停不再按执行结束处理。
-- 任务正式结束时 [conversation-service.ts:255](../../../apps/backend/src/application/conversation-service.ts#L255) 关闭任务目录并释放连接；恢复完成、失败或用户显式结束都会走到最终释放。
+- [conversation-service.ts:932](../../../apps/backend/src/application/conversation/conversation-service.ts#L932)、:1165、:1247 区分预算暂停：任务仍 paused 时保留任务资源目录与 MCP 连接池，次日恢复复用同一进程内客户端；预算暂停不再按执行结束处理。
+- 任务正式结束时 [conversation-service.ts:255](../../../apps/backend/src/application/conversation/conversation-service.ts#L255) 关闭任务目录并释放连接；恢复完成、失败或用户显式结束都会走到最终释放。
 - 配置变更仍由连接池的配置指纹处理：下一次派发读取最新配置，指纹变化时重建客户端；新任务继续只使用当前启用资源。
 
 自验：[p3-review-fixes.test.ts:593](../../../apps/backend/tests/p3-review-fixes.test.ts#L568) 使用真实有状态 stdio 服务，额度 2 时先模型与工具各 1 点得到 `1` 后暂停，跨日恢复同一任务后第二次得到 `2`，工具结果按顺序为 `["1","2"]`，任务 completed 且资源续行全部结束。复核方扩展脚本 `P3-R03-stateful-MCP-survives-budget-pause` 也为 `contractPassed=true`。
@@ -161,10 +161,10 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p3-fix-20261104"
 
 修改：
 
-- [conversation-service.ts:916](../../../apps/backend/src/application/conversation-service.ts#L916) 的预留提交不再只改内存状态，而是调用 [autonomy-service.ts:304](../../../apps/backend/src/application/autonomy-service.ts#L304) 的 `commitReservation`。
+- [conversation-service.ts:916](../../../apps/backend/src/application/conversation/conversation-service.ts#L916) 的预留提交不再只改内存状态，而是调用 [autonomy-service.ts:304](../../../apps/backend/src/application/conversation/autonomy-service.ts#L304) 的 `commitReservation`。
 - 提交时比较预留所属本地日期与实际派发日期：同日已扣点的预留保持；跨日或原本未扣点的预留在当前额度日重新检查并按当前模式取得点数。当天有限且余额不足时在真正 `callTool` 前抛出额度耗尽，请求不派发、执行暂停。
-- 取消只撤销确实扣过点的预留；[autonomy-store.ts:177](../../../apps/backend/src/storage/autonomy-store.ts#L177) 按原所属日期释放，不再要求当前仍为有限模式，也不会因当前无限制而遗失已扣点。未扣点的无限制预留取消时不减任何点数。
-- [agent-tools.ts](../../../apps/backend/src/application/agent-tools.ts) 透传额度耗尽，[agent-graph.ts](../../../apps/backend/src/application/agent-graph.ts) 保存未派发工具结果并让执行进入预算暂停。
+- 取消只撤销确实扣过点的预留；[autonomy-store.ts:177](../../../apps/backend/src/storage/conversation/autonomy-store.ts#L177) 按原所属日期释放，不再要求当前仍为有限模式，也不会因当前无限制而遗失已扣点。未扣点的无限制预留取消时不减任何点数。
+- [agent-tools.ts](../../../apps/backend/src/application/conversation/agent-tools.ts) 透传额度耗尽，[agent-graph.ts](../../../apps/backend/src/application/conversation/agent-graph.ts) 保存未派发工具结果并让执行进入预算暂停。
 
 自验：
 

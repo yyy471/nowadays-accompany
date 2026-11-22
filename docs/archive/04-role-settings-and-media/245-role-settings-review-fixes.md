@@ -14,7 +14,7 @@
 
 ## 2. RS-R01 · 跨站点不再沿用旧密钥
 
-- 新增 `serviceIdentityOf`：把资源身份定义为「协议 + origin」。同站点换路径（例如换 API 版本前缀）仍算同一个服务，允许保留已存密钥；换域名、换端口或换协议都算换服务。[resource-service.ts](../../../apps/backend/src/application/resource-service.ts)
+- 新增 `serviceIdentityOf`：把资源身份定义为「协议 + origin」。同站点换路径（例如换 API 版本前缀）仍算同一个服务，允许保留已存密钥；换域名、换端口或换协议都算换服务。[resource-service.ts](../../../apps/backend/src/application/resources/resource-service.ts)
 - `update` 在原有「直填密钥与 `credentialRef` 二选一」检查之后增加一层：协议或 origin 变化、请求未给 `secret`、且该资源仍持有已存密钥时，抛 400 `RESOURCE_CREDENTIAL_STALE`，提示重新填写密钥或显式清除。[errors.ts](../../../apps/backend/src/domain/errors.ts)
 - 三条放行路径：同时提交新密钥（替换）、显式 `secret: null`（清除）、原本就没有已存密钥。这样既不会把旧密钥发到未确认的新服务，也不影响同站点常规编辑。
 - 测试覆盖服务层与 HTTP 层：同 origin 换路径保留 `stored`；换端口、换协议分别被拒；带新密钥换站点成功；显式清除后可自由换站点；没有密钥时换站点不需要确认。

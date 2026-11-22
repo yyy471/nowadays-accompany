@@ -16,7 +16,7 @@
 
 ## 2. 存储与迁移
 
-业务库版本升至 v8，新增 `message_segments` 表：一条句段一行，含消息、窗口、段序、类型、文字、起止位置、标注服饰与差分、标注时间；`(message_id, ordinal)` 唯一，按窗口和消息建索引。`execution_stream_events` 按既有表重建方式加入 `message_segments` 与 `segment_annotations` 两种事件类型，旧事件原样保留。 [schema.ts](../../../apps/backend/src/storage/schema.ts#L1076) · [句段表](../../../apps/backend/src/storage/schema.ts#L1078)
+业务库版本升至 v8，新增 `message_segments` 表：一条句段一行，含消息、窗口、段序、类型、文字、起止位置、标注服饰与差分、标注时间；`(message_id, ordinal)` 唯一，按窗口和消息建索引。`execution_stream_events` 按既有表重建方式加入 `message_segments` 与 `segment_annotations` 两种事件类型，旧事件原样保留。 [schema.ts](../../../apps/backend/src/storage/core/schema.ts#L1076) · [句段表](../../../apps/backend/src/storage/core/schema.ts#L1078)
 
 新建与重新打开角色库均按 v8 校验表、列和索引；P1、P2 的 schema 版本断言同步更新。v7 到 v8 的迁移沿用 V5 的事件表重建模式，本轮未保留可迁移的 v7 实体库，未单独重放旧库迁移。
 
@@ -32,7 +32,7 @@
 - 始终满足 `content.slice(startOffset, endOffset) === text`，便于回看原文和后续按段合成。
 - 空白正文返回空数组；空正文不会生成空句段。
 
-句段在提交、打断或主动分享的同一事务内写入；`insertMessageSegments` 已存在句段时直接返回，避免重入重复插入。 [insertMessageSegments](../../../apps/backend/src/storage/conversation-store.ts#L665)
+句段在提交、打断或主动分享的同一事务内写入；`insertMessageSegments` 已存在句段时直接返回，避免重入重复插入。 [insertMessageSegments](../../../apps/backend/src/storage/conversation/conversation-store.ts#L665)
 
 ## 4. 事件与读取契约
 
@@ -45,21 +45,21 @@
 
 句段事件携带 `replyMessageId` 与完整句段；`segment_annotations` 携带消息编号和本次写入的 `segmentId`、`outfitId`、`spriteAssetId`。两者都写入 `execution_stream_events`，按既有游标重放。
 
-消息列表响应增加两个字段：`segments` 返回本页消息的全部句段，`activeReply` 在回复生成中返回消息编号、执行编号和已产生的文字（来自 `message_delta` 事件）；生成中的消息正文在列表中仍为空。 [消息列表](../../../apps/backend/src/application/message-service.ts#L32) · [未完成回复快照](../../../apps/backend/src/storage/conversation-store.ts#L590)
+消息列表响应增加两个字段：`segments` 返回本页消息的全部句段，`activeReply` 在回复生成中返回消息编号、执行编号和已产生的文字（来自 `message_delta` 事件）；生成中的消息正文在列表中仍为空。 [消息列表](../../../apps/backend/src/application/conversation/message-service.ts#L32) · [未完成回复快照](../../../apps/backend/src/storage/conversation/conversation-store.ts#L590)
 
-新增 `GET /v1/roles/:roleId/windows/:windowId/messages/:messageId`，返回 `{ message, segments }`；消息不属于该角色窗口时返回 404 `MESSAGE_NOT_FOUND`。 [消息详情路由](../../../apps/backend/src/http/routes.ts#L233) · [详情读取](../../../apps/backend/src/storage/conversation-store.ts#L540)
+新增 `GET /v1/roles/:roleId/windows/:windowId/messages/:messageId`，返回 `{ message, segments }`；消息不属于该角色窗口时返回 404 `MESSAGE_NOT_FOUND`。 [消息详情路由](../../../apps/backend/src/http/routes.ts#L233) · [详情读取](../../../apps/backend/src/storage/conversation/conversation-store.ts#L540)
 
 ## 5. 表情标注
 
-[SegmentAnnotationService](../../../apps/backend/src/application/segment-annotation-service.ts#L63) 在回复提交后运行：
+[SegmentAnnotationService](../../../apps/backend/src/application/conversation/segment-annotation-service.ts#L63) 在回复提交后运行：
 
 1. 读取消息和待标注句段，要求消息不是 `generating` 状态；按提交时捕获的角色状态确定服饰，读取该服饰的差分。没有服饰或差分为空时直接结束，不调用模型。
-2. 使用角色当前对话模型绑定，发送只含句段与差分清单的 JSON 请求，不携带工具，要求返回 `{"segments":[{"segmentId","spriteAssetId"}]}`。 [提示词](../../../apps/backend/src/application/segment-annotation-service.ts#L197)
-3. 解析时允许代码块包裹，只接受属于本消息的 `segmentId` 和属于本服饰的 `spriteAssetId`；未知编号、重复段和非法形状丢弃。 [解析](../../../apps/backend/src/application/segment-annotation-service.ts#L223)
+2. 使用角色当前对话模型绑定，发送只含句段与差分清单的 JSON 请求，不携带工具，要求返回 `{"segments":[{"segmentId","spriteAssetId"}]}`。 [提示词](../../../apps/backend/src/application/conversation/segment-annotation-service.ts#L197)
+3. 解析时允许代码块包裹，只接受属于本消息的 `segmentId` 和属于本服饰的 `spriteAssetId`；未知编号、重复段和非法形状丢弃。 [解析](../../../apps/backend/src/application/conversation/segment-annotation-service.ts#L223)
 4. 在同一事务内只更新尚未标注的句段，保存 `outfitId`、`spriteAssetId` 和 `annotatedAt`，并追加 `segment_annotations`。
 5. 标注调用失败、响应不完整或没有任何有效选择时静默结束；正文、句段和消息状态不受影响。
 
-提交时从 `commitConversation` 返回值捕获本轮状态，因此换装后新回复使用新服饰，旧句段保留原服饰和原差分；测试覆盖了两次换装后的历史读取。标注任务计入角色空闲判定，`waitForIdle` 会等待其结束；关闭服务时中止在途标注并等待收尾。主动分享由 `AutonomyService` 的消息通知接入同一队列。 [标注排队](../../../apps/backend/src/application/conversation-service.ts#L212) · [提交后触发](../../../apps/backend/src/application/conversation-service.ts#L1715) · [空闲判定](../../../apps/backend/src/application/conversation-service.ts#L2438)
+提交时从 `commitConversation` 返回值捕获本轮状态，因此换装后新回复使用新服饰，旧句段保留原服饰和原差分；测试覆盖了两次换装后的历史读取。标注任务计入角色空闲判定，`waitForIdle` 会等待其结束；关闭服务时中止在途标注并等待收尾。主动分享由 `AutonomyService` 的消息通知接入同一队列。 [标注排队](../../../apps/backend/src/application/conversation/conversation-service.ts#L212) · [提交后触发](../../../apps/backend/src/application/conversation/conversation-service.ts#L1715) · [空闲判定](../../../apps/backend/src/application/conversation/conversation-service.ts#L2438)
 
 ## 6. 测试与自验
 

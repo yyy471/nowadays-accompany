@@ -15,7 +15,7 @@
 
 | 编号 | 优先级 | 实测与复验条件 |
 | --- | --- | --- |
-| FE-R01 | P1 | 同一轮先收到 `partial: true` 的临时段，终态列表用同序号的新段替换它。页面仍显示临时段，输入框继续隐藏，额外点击一次才显示正式段，最后两段同时保留。后端允许收尾时替换不再匹配的段。前端应以终态全量列表对齐已展示进度，并在最后一个正式段已经显示时恢复输入框。 [前端句段合并](../../../apps/desktop/renderer/src/conversation/use-window-session.ts#L480) · [后端正式句段](../../../apps/backend/src/storage/conversation-store.ts#L697) |
+| FE-R01 | P1 | 同一轮先收到 `partial: true` 的临时段，终态列表用同序号的新段替换它。页面仍显示临时段，输入框继续隐藏，额外点击一次才显示正式段，最后两段同时保留。后端允许收尾时替换不再匹配的段。前端应以终态全量列表对齐已展示进度，并在最后一个正式段已经显示时恢复输入框。 [前端句段合并](../../../apps/desktop/renderer/src/conversation/use-window-session.ts#L480) · [后端正式句段](../../../apps/backend/src/storage/conversation/conversation-store.ts#L697) |
 | FE-R02 | P2 | 第一句已播放，点读第二句。第二句的 `play()` 拒绝，第一句仍被暂停并清空 `src`，页面没有正在播放的句段。应在新音频实际开始播放时才停止上一句，并覆盖播放失败和切窗口取消。 [音频切换](../../../apps/desktop/renderer/src/conversation/use-segment-voice.ts#L170) |
 | FE-R03 | P2 | 一张以 `speech-1` 为起点、`speech-2` 为终点的过场图，在两个句段都出现了查看按钮。当前按 `messageId` 取该轮全部任务，给每段重复渲染。结果入口应绑定 `startSegmentId`，任务缺少有效句段时单独处理，避开其他段落。 [句段与过场图入口](../../../apps/desktop/renderer/src/conversation/ChatPane.tsx#L173) |
 | FE-R04 | P2 | 舞台处于实时演出的 `full_scene` 时打开历史，场景立即清空。当前进入回看后停止选择实时场景，未冻结进入历史前的有效过场图。历史开关和定位应保留当前舞台，回到最新后再按实时进度更新，显式查看旧图仍可切换。 [回看时的舞台选择](../../../apps/desktop/renderer/src/conversation/ConversationStage.tsx#L88) |

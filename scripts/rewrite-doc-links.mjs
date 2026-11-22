@@ -79,6 +79,25 @@ const EXACT_MOVES = new Map([
     `apps/desktop/tests/unit/${name}.test.cjs`,
     `apps/desktop/renderer/tests/${name}.test.ts`,
   ]),
+  ...[
+    ["conversation", ["agent-context.ts", "agent-graph.ts", "agent-tools.ts", "autonomy-service.ts", "conversation-history.ts", "conversation-service.ts", "input-state.ts", "message-service.ts", "segment-annotation-service.ts"]],
+    ["memory", ["memory-query-service.ts", "memory-read-projection.ts", "memory-runtime.ts", "memory-service.ts"]],
+    ["role", ["admin-tools.ts", "preset-assistant.ts", "role-access.ts", "role-activity-service.ts", "role-card-dialogue.ts", "role-deletion-service.ts", "role-service.ts"]],
+    ["transfer", ["role-transfer.ts", "role-transfer-bindings.ts", "role-transfer-credentials.ts", "role-transfer-data.ts", "role-transfer-files.ts", "role-transfer-package.ts", "role-transfer-publication.ts"]],
+    ["media", ["appearance-service.ts", "audio-inspect.ts", "global-voice-service.ts", "image-inspect.ts", "image-service.ts", "media-maintenance.ts", "scene-image-service.ts", "scene-image-settings.ts", "voice-service.ts"]],
+    ["resources", ["credential-resolver.ts", "model-binding-resolver.ts", "model-maintenance.ts", "model-service.ts", "resource-service.ts", "token-usage-service.ts"]],
+  ].flatMap(([sub, files]) =>
+    files.map((f) => [`apps/backend/src/application/${f}`, `apps/backend/src/application/${sub}/${f}`]),
+  ),
+  ...[
+    ["core", ["app-store.ts", "installation-lock.ts", "role-storage.ts", "schema.ts", "secret-store.ts", "token-usage-store.ts", "transaction-group.ts"]],
+    ["conversation", ["autonomy-store.ts", "checkpoint-store.ts", "conversation-store.ts", "web-reading.ts"]],
+    ["memory", ["evidence.ts", "memory-store.ts"]],
+    ["role", ["role-activity-store.ts", "role-store.ts", "worldbook-store.ts"]],
+    ["media", ["appearance-store.ts", "image-service-store.ts", "scene-image-settings-store.ts", "scene-image-store.ts", "scene-reference.ts", "voice-service-store.ts", "voice-store.ts"]],
+  ].flatMap(([sub, files]) =>
+    files.map((f) => [`apps/backend/src/storage/${f}`, `apps/backend/src/storage/${sub}/${f}`]),
+  ),
 ]);
 
 function toOldDocPath(file) {

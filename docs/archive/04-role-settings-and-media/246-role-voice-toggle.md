@@ -25,10 +25,10 @@
 
 ## 3. 后端实现
 
-- **迁移 V14。** `BUSINESS_SCHEMA_VERSION = 14`，`BUSINESS_V14_SQL` 给 `role_voice_settings` 加 `enabled INTEGER NOT NULL DEFAULT 1`，老库升级后默认启用；`BUSINESS_COLUMNS` 同步登记该列。[schema.ts](../../../apps/backend/src/storage/schema.ts)
-- **存储层。** `SettingsRow.enabled: number`，`mapSettings` 转成布尔；新增 `VoiceStore.setEnabled(enabled, now)`，按 `role_id` 更新并回读，没有记录时返回 `null`。[voice-store.ts](../../../apps/backend/src/storage/voice-store.ts)
+- **迁移 V14。** `BUSINESS_SCHEMA_VERSION = 14`，`BUSINESS_V14_SQL` 给 `role_voice_settings` 加 `enabled INTEGER NOT NULL DEFAULT 1`，老库升级后默认启用；`BUSINESS_COLUMNS` 同步登记该列。[schema.ts](../../../apps/backend/src/storage/core/schema.ts)
+- **存储层。** `SettingsRow.enabled: number`，`mapSettings` 转成布尔；新增 `VoiceStore.setEnabled(enabled, now)`，按 `role_id` 更新并回读，没有记录时返回 `null`。[voice-store.ts](../../../apps/backend/src/storage/media/voice-store.ts)
 - **保存不动开关。** `saveSettings` 的 UPSERT 列表里没有 `enabled`，插入时用列默认值 1、更新时保持原值，天然满足「保存新配置不改变启用状态」。
-- **服务层。** `VoiceService.setEnabled(roleId, enabled)` 复用 `roleAccess.withStore`；记录不存在时抛 400 `VOICE_NOT_CONFIGURED`。`synthesizeSegment` 在句段校验之后、解析配置之前读 `getSettings()?.enabled === false` 抛 409 `VOICE_DISABLED`，附带 `roleId`。[voice-service.ts](../../../apps/backend/src/application/voice-service.ts)
+- **服务层。** `VoiceService.setEnabled(roleId, enabled)` 复用 `roleAccess.withStore`；记录不存在时抛 400 `VOICE_NOT_CONFIGURED`。`synthesizeSegment` 在句段校验之后、解析配置之前读 `getSettings()?.enabled === false` 抛 409 `VOICE_DISABLED`，附带 `roleId`。[voice-service.ts](../../../apps/backend/src/application/media/voice-service.ts)
 - **路由。** `PUT /v1/roles/:roleId/voice/enabled`，请求体 `{ enabled: boolean }` 用 `.strict()` 拒绝多余字段，返回 `{ voice }`。[voice-routes.ts](../../../apps/backend/src/http/voice-routes.ts)
 - **视图。** `VoiceSettingsRecord.enabled` 与 `VoiceConfigView.enabled` 一路透传，`toView` 直接输出。
 

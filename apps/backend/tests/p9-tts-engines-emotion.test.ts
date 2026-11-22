@@ -1,4 +1,4 @@
-import { BUSINESS_SCHEMA_VERSION } from "../src/storage/schema.js";
+import { BUSINESS_SCHEMA_VERSION } from "../src/storage/core/schema.js";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -13,7 +13,7 @@ import { createBackendApp, listen } from "../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths } from "../src/bootstrap/config.js";
 import type { ModelEvent, ModelPort, ModelRequest } from "../src/domain/model.js";
 import type { VoiceCapabilities, VoiceEngineStatus } from "../src/domain/voice.js";
-import { RoleStorage } from "../src/storage/role-storage.js";
+import { RoleStorage } from "../src/storage/core/role-storage.js";
 import { configFetch } from "./config-write.js";
 import { createLegacyRole } from "./legacy-role-fixture.js";
 import {

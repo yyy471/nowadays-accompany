@@ -10,8 +10,8 @@ import { modelConfigSchema } from "../src/domain/resource.js";
 import { MODEL_PROVIDERS, GOOGLE_VERTEX_EXPRESS_URL, type ModelProvider } from "../src/domain/model-providers.js";
 import { modelServiceProbeSchema, modelServiceTestSchema, type ModelEvent, type ModelRequest } from "../src/domain/model.js";
 import { HttpModelAdapter, serializeModelRequest } from "../src/model/protocols.js";
-import { fingerprintOf } from "../src/application/model-service.js";
-import { selectAgentContext } from "../src/application/agent-context.js";
+import { fingerprintOf } from "../src/application/resources/model-service.js";
+import { selectAgentContext } from "../src/application/conversation/agent-context.js";
 import { createFixtureWithModel } from "./p2-05-fixture.js";
 
 const request: ModelRequest = {

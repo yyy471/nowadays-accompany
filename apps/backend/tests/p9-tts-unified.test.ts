@@ -8,7 +8,7 @@ import test from "node:test";
 import Database from "better-sqlite3";
 import { listen } from "../src/bootstrap/app.js";
 import { rolePaths } from "../src/bootstrap/config.js";
-import { BUSINESS_SCHEMA_VERSION } from "../src/storage/schema.js";
+import { BUSINESS_SCHEMA_VERSION } from "../src/storage/core/schema.js";
 import {
   TtsCanceledError,
   TtsProtocolInvalidError,

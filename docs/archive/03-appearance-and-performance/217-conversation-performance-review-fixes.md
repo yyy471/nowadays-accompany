@@ -8,7 +8,7 @@
 - 响应新增 `cursor`，为读取同一快照时窗口的最新 SSE 事件编号。消息、句段、未完成回复文字和游标在同一个 SQLite 读事务内取得，消除快照与 SSE 建连之间写入终态或表情结果时的遗漏。
 - 客户端进入窗口后使用 `after=cursor` 建立 SSE；快照已包含的增量不会重放，快照之后写入的 `message_delta`、`message_segments`、`segment_annotations`、`message_completed`／`message_interrupted` 都能续接。
 - 生成期间句段仍不提前发布：桌面先用 `activeReply`（消息编号、执行编号、已产生文字）和后续 `message_delta` 显示一个进行中的气泡，收到 `message_segments` 后再按段展示。若要生成中逐句出气泡，需要另立工作包改变句段发布时机。
-- [快照读取](../../../apps/backend/src/application/message-service.ts#L34) · [向前翻页](../../../apps/backend/src/storage/role-store.ts#L662) · [消息路由](../../../apps/backend/src/http/routes.ts#L207)
+- [快照读取](../../../apps/backend/src/application/conversation/message-service.ts#L34) · [向前翻页](../../../apps/backend/src/storage/role/role-store.ts#L662) · [消息路由](../../../apps/backend/src/http/routes.ts#L207)
 
 复验覆盖：生成中断言快照文字与游标，放行模型让终态在快照之后、SSE 建连之前写入，再用 `after=cursor` 读取；新增量与快照文字拼成完整回复，未重放连接起点之前的增量。另用 5 条消息覆盖最近一页、`before` 两页翻页、`after` 向前翻页、游标为 0 和 `after`／`before` 冲突。
 
@@ -17,7 +17,7 @@
 - 句段在回复落库时就写入当时的服饰 `outfitId`，差分保持可空；正常提交使用本轮提交后的状态，打断、主动分享和进程中断收尾使用当时已提交的角色状态。
 - 表情标注优先使用句段已保存的服饰，不再按标注时的当前状态回退；写回差分时用 `COALESCE(outfit_id, ?)`，只补空值，不覆盖历史服饰。
 - 标注模型省略、返回空数组、服饰没有差分或标注失败时，句段仍有明确服饰归属，差分保持空，桌面可按该服饰回退。
-- [句段落库](../../../apps/backend/src/storage/conversation-store.ts#L666) · [当前服饰](../../../apps/backend/src/storage/conversation-store.ts#L701) · [标注服饰选择](../../../apps/backend/src/application/segment-annotation-service.ts#L226)
+- [句段落库](../../../apps/backend/src/storage/conversation/conversation-store.ts#L666) · [当前服饰](../../../apps/backend/src/storage/conversation/conversation-store.ts#L701) · [标注服饰选择](../../../apps/backend/src/application/conversation/segment-annotation-service.ts#L226)
 
 复验覆盖：黑裙标注微笑 → 白裙有差分但标注返回空 → 换回黑裙；白裙句段保存 `outfitId`、差分为空、标注时间为空，换回后再次读取仍为白裙；另保留无差分服饰只保存句段不调用标注模型的用例。
 
@@ -26,7 +26,7 @@
 - 标注调用接入既有 `model_calls`／`call_metering`：用户对话按 `user_chat` 记录且 `counted=0`，不扣自主点数；自主任务按 `autonomous` 记录，调用前经 `AutonomyService.consumePoint`，额度耗尽时直接跳过标注、不发出模型请求。
 - 记录用途、成功／失败状态、错误码、用量和上游原始响应；解析器没有有效选择但模型正常完成时仍记录成功调用。正文、句段和消息状态不因标注失败改变。
 - 启动恢复新增收尾：执行已经终结但模型调用仍为 `running` 的记录归为 `PROCESS_INTERRUPTED`，避免标注中途退出留下永久在途记录。
-- [标注计量与额度](../../../apps/backend/src/application/segment-annotation-service.ts#L82) · [用途判定](../../../apps/backend/src/storage/conversation-store.ts#L1780) · [启动收尾](../../../apps/backend/src/storage/conversation-store.ts#L1693)
+- [标注计量与额度](../../../apps/backend/src/application/conversation/segment-annotation-service.ts#L82) · [用途判定](../../../apps/backend/src/storage/conversation/conversation-store.ts#L1780) · [启动收尾](../../../apps/backend/src/storage/conversation/conversation-store.ts#L1693)
 
 复验覆盖：三轮用户对话实际 9 次模型请求对应 9 条 `model_calls` 和 9 条 `call_metering`，全部 `user_chat`、`counted=0`，自主额度未变化；自主额度 1 点用完后主动分享的后置标注不再请求模型，`model_calls` 无记录；提高额度后标注请求 1 次，记录 `autonomous`、成功、`counted=1`、用量 JSON，预算已用 2 点；标注模型抛错时回复和句段保留，调用记录为失败。
 
@@ -66,7 +66,7 @@
 - 标注的额度扣减与 `model_calls`／`call_metering` 登记放进同一个 SQLite 事务。登记写库失败时扣点一起回滚；额度耗尽时不留下调用记录，也不派发模型。
 - 未接入自主服务的组合仍在派发前跳过自主标注；用户对话分支只登记、不扣点，行为不变。
 - 事务提交后模型请求失败时仍保留已扣点与失败调用记录，与既有自主任务“调用尝试计入额度”的规则一致。
-- [标注扣点与登记](../../../apps/backend/src/application/segment-annotation-service.ts#L97)
+- [标注扣点与登记](../../../apps/backend/src/application/conversation/segment-annotation-service.ts#L97)
 
 复验覆盖：注入 `call_metering` 写入失败后发起主动分享，正文和句段保留，模型请求数、`model_calls`、`call_metering` 与已用点数均未增加；移除故障后同一入口可正常标注，请求、调用记录、计量记录和已用点数各增加 1。
 
@@ -92,7 +92,7 @@
 - 把模型适配器初始化（含 `file:`／`env:` 凭据读取）前移到额度扣减与调用登记之前。初始化失败直接跳过标注，不扣点、不写 `model_calls`／`call_metering`，已保存的主动分享不受影响。
 - 适配器初始化成功、请求实际派发后再失败时，行为不变：调用记录为失败、自主点数仍按一次调用扣减、计量保持 `counted=1`。
 - 用户对话的标注同样在适配器初始化失败时不留调用记录；已保存的正文和句段保持可读。
-- [适配器初始化与扣点顺序](../../../apps/backend/src/application/segment-annotation-service.ts#L97) · [扣点与登记同事务](../../../apps/backend/src/application/segment-annotation-service.ts#L104)
+- [适配器初始化与扣点顺序](../../../apps/backend/src/application/conversation/segment-annotation-service.ts#L97) · [扣点与登记同事务](../../../apps/backend/src/application/conversation/segment-annotation-service.ts#L104)
 
 复验覆盖：绑定不存在的 `file:` 凭据后发起主动分享，正文、句段和服饰归属保留，模型请求、`model_calls`、`call_metering` 与已用点数全部不变；另用离线模型在派发后抛错，确认自主点数增加 1、调用记录为 `failed`／`MODEL_REQUEST_FAILED`／`autonomous`、计量为 `counted=1`。
 

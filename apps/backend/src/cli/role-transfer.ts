@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { applyRoleTransfer, exportRoleTransfer, preflightRoleTransfer } from "../application/role-transfer.js";
+import { applyRoleTransfer, exportRoleTransfer, preflightRoleTransfer } from "../application/transfer/role-transfer.js";
 import { parseBackendConfig } from "../bootstrap/config.js";
 
 const help = [

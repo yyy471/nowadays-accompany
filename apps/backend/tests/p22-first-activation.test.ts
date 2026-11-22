@@ -7,10 +7,10 @@ import path from "node:path";
 import test, { type TestContext } from "node:test";
 import { createBackendApp, listen, type BackendAppOptions } from "../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths } from "../src/bootstrap/config.js";
-import { XIA_CHENG_BUILTIN_KEY } from "../src/application/preset-assistant.js";
+import { XIA_CHENG_BUILTIN_KEY } from "../src/application/role/preset-assistant.js";
 import type { ModelEvent, ModelRequest } from "../src/domain/model.js";
-import { RoleActivityStore } from "../src/storage/role-activity-store.js";
-import { RoleStorage } from "../src/storage/role-storage.js";
+import { RoleActivityStore } from "../src/storage/role/role-activity-store.js";
+import { RoleStorage } from "../src/storage/core/role-storage.js";
 import { createLegacyRole } from "./legacy-role-fixture.js";
 import { deferred } from "./p2-05-fixture.js";
 

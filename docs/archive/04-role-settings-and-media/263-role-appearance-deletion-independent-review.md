@@ -4,7 +4,7 @@
 
 ## AD-R01 · P2 · 并发删除可以删到只剩零个角色
 
-准备两个已停止角色，让第一个 DELETE 在运行时收尾等待时提交另一个角色的 DELETE。两个请求都选择保留历史，结果均返回 200，`GET /v1/roles` 返回 0 个角色。当前在等待运行时收尾前检查角色数，之后写事务未复验。最后一个角色的检查应与移除索引处于同一事务，复验时应有一个请求返回 409 `LAST_ROLE_REQUIRED`，并保留对应角色。 [删除服务](../../../apps/backend/src/application/role-deletion-service.ts#L55) · [DL-148](../../161-digital-life-direction-decisions.md#dl-148-配置修改直接删除与运行限制)
+准备两个已停止角色，让第一个 DELETE 在运行时收尾等待时提交另一个角色的 DELETE。两个请求都选择保留历史，结果均返回 200，`GET /v1/roles` 返回 0 个角色。当前在等待运行时收尾前检查角色数，之后写事务未复验。最后一个角色的检查应与移除索引处于同一事务，复验时应有一个请求返回 409 `LAST_ROLE_REQUIRED`，并保留对应角色。 [删除服务](../../../apps/backend/src/application/role/role-deletion-service.ts#L55) · [DL-148](../../161-digital-life-direction-decisions.md#dl-148-配置修改直接删除与运行限制)
 
 ## AD-R02 · P2 · 未传历史选择也会删除历史数据
 
@@ -12,11 +12,11 @@
 
 ## AD-R03 · P2 · 角色已删除，清理记录写入失败却返回 500
 
-临时库只阻止删除 `role_deletions` 中的记录。选择一并清理后，角色索引和目录已删除，待清理记录保留，但首次 DELETE 和故障期间重试都返回 500 `INTERNAL_ERROR`。移除故障后重试返回 200。角色删除已提交后，清理记录删除失败应保留重试依据，并按实际删除结果响应。可对照第二包已复验的同类行为。 [角色清理收尾](../../../apps/backend/src/application/role-deletion-service.ts#L98) · [第二包复验](./258-resource-management-independent-review.md#259-第-8-节补修独立复验)
+临时库只阻止删除 `role_deletions` 中的记录。选择一并清理后，角色索引和目录已删除，待清理记录保留，但首次 DELETE 和故障期间重试都返回 500 `INTERNAL_ERROR`。移除故障后重试返回 200。角色删除已提交后，清理记录删除失败应保留重试依据，并按实际删除结果响应。可对照第二包已复验的同类行为。 [角色清理收尾](../../../apps/backend/src/application/role/role-deletion-service.ts#L98) · [第二包复验](./258-resource-management-independent-review.md#259-第-8-节补修独立复验)
 
 ## AD-R04 · P2 · 旧图清理失败会使新主页立绘无法读取
 
-上传一套含主页立绘的服饰，旧图未被历史句段引用。注入故障只阻止旧素材行的清理，再上传新立绘。替换返回 500，服饰列表已经指向新立绘，读取新图返回 404，旧图仍可读取。立绘切换事务已提交，后续清理异常进入上传失败处理，删除了新图文件。应让新图写入、当前立绘指向和成功响应保持一致。旧图清理失败应可延后处理，或在替换提交前完整回滚。 [替换服务](../../../apps/backend/src/application/appearance-service.ts#L185) · [替换事务](../../../apps/backend/src/storage/appearance-store.ts#L252)
+上传一套含主页立绘的服饰，旧图未被历史句段引用。注入故障只阻止旧素材行的清理，再上传新立绘。替换返回 500，服饰列表已经指向新立绘，读取新图返回 404，旧图仍可读取。立绘切换事务已提交，后续清理异常进入上传失败处理，删除了新图文件。应让新图写入、当前立绘指向和成功响应保持一致。旧图清理失败应可延后处理，或在替换提交前完整回滚。 [替换服务](../../../apps/backend/src/application/media/appearance-service.ts#L185) · [替换事务](../../../apps/backend/src/storage/media/appearance-store.ts#L252)
 
 ## 验证与交接
 
@@ -31,7 +31,7 @@
 
 ### AD-R05 · P2 · 上传可以在服饰删除后写入该服饰
 
-分别让主页立绘补传和单张差分上传在图片解码期间等待，同时通过 HTTP 删除同一服饰，保留另一套。DELETE 先返回 200。放行解码后，两类上传都返回 201，各自在已删除服饰下新增一条未标记删除的素材。服饰列表已隐藏该服饰，素材仍能按 ID 读取。上传只在异步解码前校验服饰，入库时未重验删除状态。应在提交素材的同一事务中校验服饰仍有效，并在拒绝后清理本次写入的受管文件。 [差分上传](../../../apps/backend/src/application/appearance-service.ts#L121) · [主页立绘替换](../../../apps/backend/src/application/appearance-service.ts#L185)
+分别让主页立绘补传和单张差分上传在图片解码期间等待，同时通过 HTTP 删除同一服饰，保留另一套。DELETE 先返回 200。放行解码后，两类上传都返回 201，各自在已删除服饰下新增一条未标记删除的素材。服饰列表已隐藏该服饰，素材仍能按 ID 读取。上传只在异步解码前校验服饰，入库时未重验删除状态。应在提交素材的同一事务中校验服饰仍有效，并在拒绝后清理本次写入的受管文件。 [差分上传](../../../apps/backend/src/application/media/appearance-service.ts#L121) · [主页立绘替换](../../../apps/backend/src/application/media/appearance-service.ts#L185)
 
 两类上传交错均复现。另验证了晚到的差分标注无法把已物理删除的素材 ID 写回历史句段，该用例通过。输出见 `apps/backend/test-results/review-262/recheck-264.log` 与 `appearance-races.log`。角色删除原问题关闭，第三包待 AD-R05 修复并复验。
 
@@ -43,7 +43,7 @@
 
 同一已停止角色的差分上传在图片解码处等待。分别通过公开接口选择保留历史和一并清理，两个场景的 DELETE 都在放行解码前返回 200，角色详情返回 404。随后上传均返回 201。保留历史时，原目录新增素材文件和数据库记录。一并清理时，DELETE 返回 `filesRemoved=false` 并保留待清理记录，已开始清理的受管目录随后被上传重新写入。
 
-当前角色配置写入租约只阻止恢复活动，角色删除和素材上传可以同时持有。上传持有删除前打开的业务库，服饰有效性检查只核对该业务库中的服饰。角色删除应与在途角色配置写入协调，在写入结束后才接受删除，或拒绝交错请求并保持数据状态一致。第三包待 AD-R06 修复并复验。 [角色写入守卫](../../../apps/backend/src/application/role-activity-service.ts#L197) · [上传入口](../../../apps/backend/src/application/appearance-service.ts#L121)
+当前角色配置写入租约只阻止恢复活动，角色删除和素材上传可以同时持有。上传持有删除前打开的业务库，服饰有效性检查只核对该业务库中的服饰。角色删除应与在途角色配置写入协调，在写入结束后才接受删除，或拒绝交错请求并保持数据状态一致。第三包待 AD-R06 修复并复验。 [角色写入守卫](../../../apps/backend/src/application/role/role-activity-service.ts#L197) · [上传入口](../../../apps/backend/src/application/media/appearance-service.ts#L121)
 
 输出见 `apps/backend/test-results/review-262/recheck-264-upload.log` 和 `role-upload-race.log`。
 

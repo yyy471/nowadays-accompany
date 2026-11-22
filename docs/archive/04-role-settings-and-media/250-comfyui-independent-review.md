@@ -8,15 +8,15 @@
 
 ## CG-R02 · P2 · 生图凭据失效导致角色配置无法查看或修改
 
-保存角色生图配置后，把关联服务的凭据改为缺失的 `env:` 引用。角色生图配置 GET 和 PUT 均返回 500 `MODEL_CREDENTIAL_UNAVAILABLE`。修复凭据后可重新读取原配置。配置读取和关联校验共用会解析密钥的 `findConnection`，即使不调用服务也会失败。应分开读取配置与解析凭据，让已保存设置能继续读取和修正，探测和生成再验证凭据。 [角色配置读取和保存](../../../apps/backend/src/application/scene-image-settings.ts#L81)
+保存角色生图配置后，把关联服务的凭据改为缺失的 `env:` 引用。角色生图配置 GET 和 PUT 均返回 500 `MODEL_CREDENTIAL_UNAVAILABLE`。修复凭据后可重新读取原配置。配置读取和关联校验共用会解析密钥的 `findConnection`，即使不调用服务也会失败。应分开读取配置与解析凭据，让已保存设置能继续读取和修正，探测和生成再验证凭据。 [角色配置读取和保存](../../../apps/backend/src/application/media/scene-image-settings.ts#L81)
 
 ## CG-R03 · P2 · 已接收的任务会采用规划期间修改的新配置
 
-用旧模型和锚点提交整幅图任务，挂起画面规划。任务返回 201 后保存新模型和锚点，再放行规划。模拟服务收到新模型和新锚点。生成器在规划结束后才读取角色生图配置，未按 236 固定任务提交时的配置版本。应在任务接收时固定服务、模型和锚点版本，并保留明确的停用处理。 [规划后开始生成](../../../apps/backend/src/application/scene-image-service.ts#L427) · [运行时配置读取](../../../apps/backend/src/scene/comfyui-generator.ts#L147)
+用旧模型和锚点提交整幅图任务，挂起画面规划。任务返回 201 后保存新模型和锚点，再放行规划。模拟服务收到新模型和新锚点。生成器在规划结束后才读取角色生图配置，未按 236 固定任务提交时的配置版本。应在任务接收时固定服务、模型和锚点版本，并保留明确的停用处理。 [规划后开始生成](../../../apps/backend/src/application/media/scene-image-service.ts#L427) · [运行时配置读取](../../../apps/backend/src/scene/comfyui-generator.ts#L147)
 
 ## CG-R04 · P2 · 轮询期间中止会跳过远端队列清理
 
-提交成功后挂起 `/history` 请求，在请求等待中触发中止。客户端结束时只访问了 `/prompt` 和 `/history`，没有尝试 `/queue` 清理。轮询请求抛错会绕过循环顶部的取消分支，已入队的任务可能留在远端。正式过场图默认还有 120 秒的外层上限，早于默认 180 秒的 ComfyUI 上限。应统一有效超时，并在已取得远端任务标识的中止路径尝试一次清理。 [客户端轮询](../../../apps/backend/src/scene/comfyui-client.ts#L119) · [正式任务外层超时](../../../apps/backend/src/application/scene-image-service.ts#L412)
+提交成功后挂起 `/history` 请求，在请求等待中触发中止。客户端结束时只访问了 `/prompt` 和 `/history`，没有尝试 `/queue` 清理。轮询请求抛错会绕过循环顶部的取消分支，已入队的任务可能留在远端。正式过场图默认还有 120 秒的外层上限，早于默认 180 秒的 ComfyUI 上限。应统一有效超时，并在已取得远端任务标识的中止路径尝试一次清理。 [客户端轮询](../../../apps/backend/src/scene/comfyui-client.ts#L119) · [正式任务外层超时](../../../apps/backend/src/application/media/scene-image-service.ts#L412)
 
 ## 验证范围
 

@@ -1,4 +1,4 @@
-import type { RoleInitStatus } from "../storage/app-store.js";
+import type { RoleInitStatus } from "../storage/core/app-store.js";
 
 /** 角色活动的三态。active 表示允许活动，不等于「此刻正在执行」。 */
 export type RoleActivityState = "active" | "stopping" | "stopped";

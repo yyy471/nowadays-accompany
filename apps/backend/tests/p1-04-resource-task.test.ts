@@ -8,7 +8,7 @@ import test from "node:test";
 import { createBackendApp, listen } from "../src/bootstrap/app.js";
 import { parseBackendConfig } from "../src/bootstrap/config.js";
 import { AppError } from "../src/domain/errors.js";
-import { RoleStore } from "../src/storage/role-store.js";
+import { RoleStore } from "../src/storage/role/role-store.js";
 
 function tempRoot(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "nowadays-p1-04-"));

@@ -6,12 +6,12 @@ import {
   XIA_CHENG_BUILTIN_KEY,
   XIA_CHENG_DEFAULT_DEFINITION_TEXT,
   XIA_CHENG_DISPLAY_NAME,
-} from "../src/application/preset-assistant.js";
-import type { CreateRoleInput, CreateRoleInternalOptions } from "../src/application/role-service.js";
+} from "../src/application/role/preset-assistant.js";
+import type { CreateRoleInput, CreateRoleInternalOptions } from "../src/application/role/role-service.js";
 import type { BackendApp } from "../src/bootstrap/app.js";
 import { rolePaths, type BackendConfig } from "../src/bootstrap/config.js";
-import { AppStore } from "../src/storage/app-store.js";
-import { BUSINESS_SCHEMA_V22_SQL } from "../src/storage/schema.js";
+import { AppStore } from "../src/storage/core/app-store.js";
+import { BUSINESS_SCHEMA_V22_SQL } from "../src/storage/core/schema.js";
 
 /** 在浏览器/对话夹具中保留 V22 已有角色的调用顺序；正常初始化会升级旧库。 */
 export function createLegacyRole(app: BackendApp, input: CreateRoleInput) {

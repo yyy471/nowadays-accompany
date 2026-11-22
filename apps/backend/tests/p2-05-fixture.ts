@@ -6,10 +6,10 @@ import path from "node:path";
 import { createBackendApp, type BackendApp, type BackendAppOptions } from "../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths } from "../src/bootstrap/config.js";
 import type { ModelEvent, ModelPort, ModelRequest } from "../src/domain/model.js";
-import { localDateFromIso, registerMessageEvidence } from "../src/storage/evidence.js";
-import { MemoryStore } from "../src/storage/memory-store.js";
-import { RoleStorage } from "../src/storage/role-storage.js";
-import type { BindingCapability } from "../src/storage/role-store.js";
+import { localDateFromIso, registerMessageEvidence } from "../src/storage/memory/evidence.js";
+import { MemoryStore } from "../src/storage/memory/memory-store.js";
+import { RoleStorage } from "../src/storage/core/role-storage.js";
+import type { BindingCapability } from "../src/storage/role/role-store.js";
 import { createLegacyRole } from "./legacy-role-fixture.js";
 
 export class ScriptedChatModel implements ModelPort {

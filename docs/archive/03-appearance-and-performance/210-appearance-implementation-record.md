@@ -8,18 +8,18 @@
 
 ### 外观存储与导入
 
-- 业务库升至 v7：[schema.ts](../../../apps/backend/src/storage/schema.ts#L12) 新增 `outfits` 与 `outfit_assets`，服饰名在同一角色内唯一，主页图每套最多一张，差分允许同名；[V7 迁移](../../../apps/backend/src/storage/schema.ts#L1018) 随既有 v1～v6 链路执行。
-- 角色目录新增 `appearance/`：[config.ts](../../../apps/backend/src/bootstrap/config.ts#L14)、[role-storage.ts](../../../apps/backend/src/storage/role-storage.ts#L19)。图片保存到受管理的角色目录，SQLite 只保存登记与相对路径。
-- [AppearanceStore](../../../apps/backend/src/storage/appearance-store.ts#L42) 负责衣柜、素材与同角色唯一约束；[AppearanceService](../../../apps/backend/src/application/appearance-service.ts#L33) 负责整套导入、单张差分、读取素材。导入失败会清理本次已写文件，不发布残缺记录。
-- 图片检查：[image-inspect.ts](../../../apps/backend/src/application/image-inspect.ts#L17) 按文件签名限定 PNG／JPEG／WebP，再由 `sharp` 完整解码像素；多帧 WebP 校验全部帧。未知格式返回 `IMAGE_FORMAT_UNSUPPORTED`，无法解码返回 `IMAGE_DECODE_FAILED`，均附文件名。单图上限 32 MiB，多图请求上限 128 MiB。后续完整解码与异步导入流程见 [212](./212-appearance-review-fixes.md)。
+- 业务库升至 v7：[schema.ts](../../../apps/backend/src/storage/core/schema.ts#L12) 新增 `outfits` 与 `outfit_assets`，服饰名在同一角色内唯一，主页图每套最多一张，差分允许同名；[V7 迁移](../../../apps/backend/src/storage/core/schema.ts#L1018) 随既有 v1～v6 链路执行。
+- 角色目录新增 `appearance/`：[config.ts](../../../apps/backend/src/bootstrap/config.ts#L14)、[role-storage.ts](../../../apps/backend/src/storage/core/role-storage.ts#L19)。图片保存到受管理的角色目录，SQLite 只保存登记与相对路径。
+- [AppearanceStore](../../../apps/backend/src/storage/media/appearance-store.ts#L42) 负责衣柜、素材与同角色唯一约束；[AppearanceService](../../../apps/backend/src/application/media/appearance-service.ts#L33) 负责整套导入、单张差分、读取素材。导入失败会清理本次已写文件，不发布残缺记录。
+- 图片检查：[image-inspect.ts](../../../apps/backend/src/application/media/image-inspect.ts#L17) 按文件签名限定 PNG／JPEG／WebP，再由 `sharp` 完整解码像素；多帧 WebP 校验全部帧。未知格式返回 `IMAGE_FORMAT_UNSUPPORTED`，无法解码返回 `IMAGE_DECODE_FAILED`，均附文件名。单图上限 32 MiB，多图请求上限 128 MiB。后续完整解码与异步导入流程见 [212](./212-appearance-review-fixes.md)。
 - HTTP：[appearance-routes.ts](../../../apps/backend/src/http/appearance-routes.ts#L21) 提供 `GET /outfits`、`POST /outfits`、`POST /outfits/:outfitId/sprites`、`GET /assets/:assetId`；[body.ts](../../../apps/backend/src/http/body.ts#L17) 使用 multipart 表单解析；[router.ts](../../../apps/backend/src/http/router.ts) 与 [errors.ts](../../../apps/backend/src/http/errors.ts) 增加二进制响应，图片按登记的 `media_type` 返回。
 
 ### Agent 每日穿搭
 
-- 每轮开始按业务本地日期计算 `roundLocalDate`，作为工具上下文传入：[conversation-service.ts](../../../apps/backend/src/application/conversation-service.ts#L1592)。
-- [buildOutfitBrief](../../../apps/backend/src/application/conversation-service.ts#L2136) 把本地日期、可用服饰 ID／名称／用途、当前服饰和当天是否已决定写入系统提示；衣柜为空时不增加提示。
-- [state_update](../../../apps/backend/src/application/agent-tools.ts#L833) 校验 `outfitId` 属于本人衣柜，由后端写入 `outfitReviewedOn`，模型提供的日期被忽略；无效 ID 返回可修正的 `OUTFIT_NOT_FOUND`。工具校验后的补丁通过 `statePatch` 进入本轮提交。
-- [提交前复核](../../../apps/backend/src/application/conversation-service.ts#L2173) 再次确认补丁引用的服饰仍属于该角色，状态版本仍由既有提交事务检查。
+- 每轮开始按业务本地日期计算 `roundLocalDate`，作为工具上下文传入：[conversation-service.ts](../../../apps/backend/src/application/conversation/conversation-service.ts#L1592)。
+- [buildOutfitBrief](../../../apps/backend/src/application/conversation/conversation-service.ts#L2136) 把本地日期、可用服饰 ID／名称／用途、当前服饰和当天是否已决定写入系统提示；衣柜为空时不增加提示。
+- [state_update](../../../apps/backend/src/application/conversation/agent-tools.ts#L833) 校验 `outfitId` 属于本人衣柜，由后端写入 `outfitReviewedOn`，模型提供的日期被忽略；无效 ID 返回可修正的 `OUTFIT_NOT_FOUND`。工具校验后的补丁通过 `statePatch` 进入本轮提交。
+- [提交前复核](../../../apps/backend/src/application/conversation/conversation-service.ts#L2173) 再次确认补丁引用的服饰仍属于该角色，状态版本仍由既有提交事务检查。
 
 ### 桌面
 

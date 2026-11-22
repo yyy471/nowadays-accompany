@@ -1,4 +1,4 @@
-import { BUSINESS_SCHEMA_VERSION } from "../src/storage/schema.js";
+import { BUSINESS_SCHEMA_VERSION } from "../src/storage/core/schema.js";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -9,8 +9,8 @@ import Database from "better-sqlite3";
 import sharp from "sharp";
 import { createBackendApp, listen, type BackendApp } from "../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths } from "../src/bootstrap/config.js";
-import { ConversationStore } from "../src/storage/conversation-store.js";
-import { RoleStorage } from "../src/storage/role-storage.js";
+import { ConversationStore } from "../src/storage/conversation/conversation-store.js";
+import { RoleStorage } from "../src/storage/core/role-storage.js";
 import { SceneImageGenerationFailedError } from "../src/domain/errors.js";
 import type {
   SceneImageGenerationInput,

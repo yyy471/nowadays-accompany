@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { MemoryService } from "../src/application/memory-service.js";
+import { MemoryService } from "../src/application/memory/memory-service.js";
 import { createBackendApp, listen, type BackendApp } from "../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths } from "../src/bootstrap/config.js";
 import {
@@ -13,10 +13,10 @@ import {
 } from "../src/domain/errors.js";
 import type { MemoryFormationInput } from "../src/domain/memory.js";
 import { ScriptedMemoryModel } from "../src/model/offline-memory.js";
-import { localDateFromIso, registerMessageEvidence, sha256 } from "../src/storage/evidence.js";
-import { MemoryStore } from "../src/storage/memory-store.js";
-import { RoleStorage } from "../src/storage/role-storage.js";
-import { BUSINESS_SCHEMA_VERSION } from "../src/storage/schema.js";
+import { localDateFromIso, registerMessageEvidence, sha256 } from "../src/storage/memory/evidence.js";
+import { MemoryStore } from "../src/storage/memory/memory-store.js";
+import { RoleStorage } from "../src/storage/core/role-storage.js";
+import { BUSINESS_SCHEMA_VERSION } from "../src/storage/core/schema.js";
 
 interface Fixture {
   root: string;

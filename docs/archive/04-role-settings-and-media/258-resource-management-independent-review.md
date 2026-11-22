@@ -8,11 +8,11 @@
 
 ## RP-R02 · P2 · 角色库不可读时把实际占用视为空
 
-给角色启用 MCP 绑定并停止角色。正常读取返回启用绑定和 `canDisable=false`。临时移走该测试角色的业务库后，引用接口返回 200、0 条引用和 `canDisable=true`，关闭资源返回 200。恢复业务库后，角色绑定仍开启，全局资源已经关闭。引用扫描吞掉角色库访问失败，后续写入依据不完整的报告放行。应在引用校验无法完成时返回明确的错误，并拒绝依赖该校验的写入。 [引用扫描](../../../apps/backend/src/application/resource-service.ts#L257)
+给角色启用 MCP 绑定并停止角色。正常读取返回启用绑定和 `canDisable=false`。临时移走该测试角色的业务库后，引用接口返回 200、0 条引用和 `canDisable=true`，关闭资源返回 200。恢复业务库后，角色绑定仍开启，全局资源已经关闭。引用扫描吞掉角色库访问失败，后续写入依据不完整的报告放行。应在引用校验无法完成时返回明确的错误，并拒绝依赖该校验的写入。 [引用扫描](../../../apps/backend/src/application/resources/resource-service.ts#L257)
 
 ## RP-R03 · P2 · 删除失败仍移除了部分角色绑定
 
-准备两个已停止角色，首个角色有一条关闭的 MCP 绑定，第二个角色的业务库临时不可读。删除资源返回 500 `STORAGE_ERROR`，资源仍可查，但首个角色的绑定已经丢失。删除流程按角色逐库清理，后续失败无法撤销已写入的前序清理。复验应确认失败时原绑定可读，并验证删除在可重试的失败条件下收敛。 [删除流程](../../../apps/backend/src/application/resource-service.ts#L314)
+准备两个已停止角色，首个角色有一条关闭的 MCP 绑定，第二个角色的业务库临时不可读。删除资源返回 500 `STORAGE_ERROR`，资源仍可查，但首个角色的绑定已经丢失。删除流程按角色逐库清理，后续失败无法撤销已写入的前序清理。复验应确认失败时原绑定可读，并验证删除在可重试的失败条件下收敛。 [删除流程](../../../apps/backend/src/application/resources/resource-service.ts#L314)
 
 ## 复验范围
 
@@ -31,7 +31,7 @@
 
 在临时库配置两条关闭的 MCP 绑定，确认引用接口返回可删除。用 SQLite 触发器分别令第二个角色库的绑定删除失败、令全局库的资源删除失败。两次 DELETE 均返回 500 `INTERNAL_ERROR`，资源随后仍可读取，但前一种情况丢失首个角色的绑定，后一种情况丢失全部绑定。移除触发器后重试均成功删除资源，确认了可重试性。首次失败与重试之间，用户已看到部分配置被清除。
 
-当前预检只验证能打开角色库，后续清理逐库提交，先于全局资源删除事务。修复需让失败响应对应一致的可见状态，或用持久化的删除进度明确区分已接受删除和失败，避免资源仍可编辑时丢失原绑定。两处故障注入脚本及输出见 `apps/backend/test-results/review-259/delete-write-failure.ts` 和 `delete-write-failure.log`。第二包待 RP-R04 修复并复验。 [删除流程](../../../apps/backend/src/application/resource-service.ts#L314)
+当前预检只验证能打开角色库，后续清理逐库提交，先于全局资源删除事务。修复需让失败响应对应一致的可见状态，或用持久化的删除进度明确区分已接受删除和失败，避免资源仍可编辑时丢失原绑定。两处故障注入脚本及输出见 `apps/backend/test-results/review-259/delete-write-failure.ts` 和 `delete-write-failure.log`。第二包待 RP-R04 修复并复验。 [删除流程](../../../apps/backend/src/application/resources/resource-service.ts#L314)
 
 ## 259 第 6 节补修独立复验
 
@@ -42,7 +42,7 @@
 - 在临时全局库用延迟外键注入提交错误。核对 `DELETE` 和内层保存点释放均成功，错误在外层 `COMMIT` 触发。HTTP DELETE 返回 500，资源仍能读取，两条原绑定均消失，重启后仍缺失。移除故障后可重试删除。
 - 使用现有数据库结构另起测试子进程。让进程在第一笔 SQLite `COMMIT` 成功后立即退出，DELETE 连接随之断开。重启后资源仍能读取，首个角色的绑定未恢复，第二个角色的绑定保留。
 
-`runAtomicallyAcross()` 在各连接上依次提交。后续提交失败时，先前已提交的库无法由 `ROLLBACK` 恢复；进程退出时也没有可供启动恢复的删除记录。候选修法是在全局库用一次事务提交资源删除和待清理记录，读写侧按该状态处理残留绑定，重启或重试继续清理。验收需覆盖逻辑提交失败时保留原配置，以及进程中断后恢复为完整可见状态。第二包待 RP-R05 修复并复验。 [事务提交](../../../apps/backend/src/storage/transaction-group.ts#L23)
+`runAtomicallyAcross()` 在各连接上依次提交。后续提交失败时，先前已提交的库无法由 `ROLLBACK` 恢复；进程退出时也没有可供启动恢复的删除记录。候选修法是在全局库用一次事务提交资源删除和待清理记录，读写侧按该状态处理残留绑定，重启或重试继续清理。验收需覆盖逻辑提交失败时保留原配置，以及进程中断后恢复为完整可见状态。第二包待 RP-R05 修复并复验。 [事务提交](../../../apps/backend/src/storage/core/transaction-group.ts#L23)
 
 独立输出见 `apps/backend/test-results/review-259/transaction-group-independent-recheck.log` 与 `delete-commit-failure.log`。
 
@@ -52,11 +52,11 @@
 
 ### RP-R06 · P2 · 清除待清理记录失败会误报删除失败并阻止启动
 
-用临时库触发器只拦 `resource_deletions` 的删除。全局资源与角色绑定已删除，待清理记录保留，但 DELETE 返回 500 `INTERNAL_ERROR`，资源随后返回 404。保留该故障启动隔离子进程时，清理记录的异常直接中断后端启动。删除决策提交后，应保留待清理记录供后续处理，已接受的删除仍返回成功，单条清理失败也应允许后端继续启动。 [请求收尾](../../../apps/backend/src/application/resource-service.ts#L353) · [启动清理](../../../apps/backend/src/application/resource-service.ts#L394)
+用临时库触发器只拦 `resource_deletions` 的删除。全局资源与角色绑定已删除，待清理记录保留，但 DELETE 返回 500 `INTERNAL_ERROR`，资源随后返回 404。保留该故障启动隔离子进程时，清理记录的异常直接中断后端启动。删除决策提交后，应保留待清理记录供后续处理，已接受的删除仍返回成功，单条清理失败也应允许后端继续启动。 [请求收尾](../../../apps/backend/src/application/resources/resource-service.ts#L353) · [启动清理](../../../apps/backend/src/application/resources/resource-service.ts#L394)
 
 ### RP-R07 · P3 · 重试同一 DELETE 不会继续清理
 
-用延迟外键让角色库提交失败。首次 DELETE 返回 200，资源返回 404，绑定接口已隐藏残留绑定。移除故障后重试同一个 DELETE，返回 404 `RESOURCE_NOT_FOUND`，物理绑定和待清理记录都仍在。正式用例直接调用内部清理方法，HTTP 重试在资源引用查询处提前结束。实现方约定的重试清理应通过公开入口验证。 [删除入口](../../../apps/backend/src/application/resource-service.ts#L330)
+用延迟外键让角色库提交失败。首次 DELETE 返回 200，资源返回 404，绑定接口已隐藏残留绑定。移除故障后重试同一个 DELETE，返回 404 `RESOURCE_NOT_FOUND`，物理绑定和待清理记录都仍在。正式用例直接调用内部清理方法，HTTP 重试在资源引用查询处提前结束。实现方约定的重试清理应通过公开入口验证。 [删除入口](../../../apps/backend/src/application/resources/resource-service.ts#L330)
 
 第二包待处理 RP-R06、RP-R07。复验脚本和输出见 `apps/backend/test-results/review-259/decision-commit-independent-recheck.log`、`delete-cleanup-edges.ts` 与 `delete-cleanup-edges.log`。
 

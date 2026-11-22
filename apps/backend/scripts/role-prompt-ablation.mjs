@@ -4,10 +4,10 @@ import fs from "node:fs";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { ConversationService } from "../src/application/conversation-service.ts";
-import { DEFAULT_MAX_TOOL_ROUNDS } from "../src/application/agent-graph.ts";
-import { roleCardForDialogue } from "../src/application/role-card-dialogue.ts";
-import { selectAgentContext } from "../src/application/agent-context.ts";
+import { ConversationService } from "../src/application/conversation/conversation-service.ts";
+import { DEFAULT_MAX_TOOL_ROUNDS } from "../src/application/conversation/agent-graph.ts";
+import { roleCardForDialogue } from "../src/application/role/role-card-dialogue.ts";
+import { selectAgentContext } from "../src/application/conversation/agent-context.ts";
 import { HttpModelAdapter, serializeModelRequest } from "../src/model/protocols.ts";
 import { isIncompleteCompletion } from "../src/domain/model.ts";
 

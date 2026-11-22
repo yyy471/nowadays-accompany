@@ -1,4 +1,4 @@
-import type { RoleActivityService } from "../application/role-activity-service.js";
+import type { RoleActivityService } from "../application/role/role-activity-service.js";
 import type { ResourceKind } from "../domain/resource.js";
 import { setBodyReadHook } from "./body.js";
 import type { RouteHandler } from "./router.js";

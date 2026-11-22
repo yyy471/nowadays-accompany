@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { MemoryFormationInput, MemoryModelPort } from "../src/domain/memory.js";
-import { MemoryService } from "../src/application/memory-service.js";
-import { MemoryStore } from "../src/storage/memory-store.js";
+import { MemoryService } from "../src/application/memory/memory-service.js";
+import { MemoryStore } from "../src/storage/memory/memory-store.js";
 import { DEFAULT_MEMORY_BUDGET_CHARS } from "../src/domain/memory.js";
 import {
   createFixture,

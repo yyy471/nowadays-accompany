@@ -10,15 +10,15 @@ import { createBackendApp, listen } from "../src/bootstrap/app.js";
 import {
   captureRoleTransfer, readRoleTransferPackage, resolveRoleTransferBindings,
   roleTransferTimelineFingerprint, stageRoleTransfer, writeRoleTransferPackage,
-} from "../src/application/role-transfer-package.js";
-import { canonicalJson, sha256 } from "../src/application/role-transfer-data.js";
+} from "../src/application/transfer/role-transfer-package.js";
+import { canonicalJson, sha256 } from "../src/application/transfer/role-transfer-data.js";
 import { sceneImageSettingsSchema } from "../src/domain/scene-image-settings.js";
-import { AppStore } from "../src/storage/app-store.js";
-import { RoleActivityStore } from "../src/storage/role-activity-store.js";
-import { RoleStorage } from "../src/storage/role-storage.js";
-import { SceneImageSettingsStore } from "../src/storage/scene-image-settings-store.js";
-import { readSceneReference, saveSceneReference } from "../src/storage/scene-reference.js";
-import { inspectImage } from "../src/application/image-inspect.js";
+import { AppStore } from "../src/storage/core/app-store.js";
+import { RoleActivityStore } from "../src/storage/role/role-activity-store.js";
+import { RoleStorage } from "../src/storage/core/role-storage.js";
+import { SceneImageSettingsStore } from "../src/storage/media/scene-image-settings-store.js";
+import { readSceneReference, saveSceneReference } from "../src/storage/media/scene-reference.js";
+import { inspectImage } from "../src/application/media/image-inspect.js";
 import sharp from "sharp";
 
 const NOW = "2026-11-20T00:00:00.000Z";

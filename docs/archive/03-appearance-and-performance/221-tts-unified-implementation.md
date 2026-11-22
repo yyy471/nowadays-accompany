@@ -34,7 +34,7 @@
 | `preset_voice_id` | 预置音色 ID |
 | `capabilities_json` | 保存时确认的能力声明快照 |
 
-- v9 → v10 只对音色表执行 `ALTER TABLE ADD COLUMN`，历史消息、句段、事件和 SSE 游标不变。[迁移 SQL](../../../apps/backend/src/storage/schema.ts#L1175)
+- v9 → v10 只对音色表执行 `ALTER TABLE ADD COLUMN`，历史消息、句段、事件和 SSE 游标不变。[迁移 SQL](../../../apps/backend/src/storage/core/schema.ts#L1175)
 - 旧行读取为 `protocol=indextts`、`voiceSource={kind:"reference",referenceMode:null,referenceText:null}`，原服务地址和 `referenceAssetId` 保留；未绑定参考素材的草稿仍可读取。
 - 保存时 `engine` 与 `protocol` 一致；旧配置继续显示 `indextts`。旧请求只传 `referenceAssetId` 时按参考音色处理，新请求使用 `voiceSource`。
 
@@ -53,7 +53,7 @@
 - 声明需要录音原文的模式缺少文本时返回 400 `VOICE_REFERENCE_TEXT_REQUIRED`；不需要原文时不附带 `reference_text`。
 - 显式语言／语速超出声明范围分别返回 `VOICE_LANGUAGE_UNSUPPORTED`、`VOICE_SPEED_OUT_OF_RANGE`；未显式提供时按声明收敛并夹取。
 - 未声明语言列表或语速范围时不发送对应字段，由服务决定；统一协议台词上限 1000 个 Unicode 码点，超过返回 `VOICE_TEXT_TOO_LONG`。
-- 旧协议只支持参考音色，传入预置来源返回 `VOICE_SOURCE_UNSUPPORTED`。[应用层](../../../apps/backend/src/application/voice-service.ts#L137) · [路由](../../../apps/backend/src/http/voice-routes.ts#L90)
+- 旧协议只支持参考音色，传入预置来源返回 `VOICE_SOURCE_UNSUPPORTED`。[应用层](../../../apps/backend/src/application/media/voice-service.ts#L137) · [路由](../../../apps/backend/src/http/voice-routes.ts#L90)
 
 ## 5. 验证
 
@@ -98,13 +98,13 @@
 
 - 服务地址或协议变化时，不再继承旧服务的预置 `voiceId` 或参考模式。仅保存新地址且原来源为预置音色时返回 400 `VOICE_SOURCE_REQUIRED`，要求重新选择；原来源为参考音色时保留素材和原文、清空参考模式。
 - 参考原文只在参考素材未变时继承；换另一份录音时清空旧原文，模式仍要求原文时返回 400 `VOICE_REFERENCE_TEXT_REQUIRED`，补填后试听与保存使用新原文。
-- 同一服务、同一素材的部分编辑仍继承已有模式和原文。保存与试听草稿共用该合并规则。[来源合并](../../../apps/backend/src/application/voice-service.ts#L564) · [字段继承](../../../apps/backend/src/application/voice-service.ts#L658)
+- 同一服务、同一素材的部分编辑仍继承已有模式和原文。保存与试听草稿共用该合并规则。[来源合并](../../../apps/backend/src/application/media/voice-service.ts#L564) · [字段继承](../../../apps/backend/src/application/media/voice-service.ts#L658)
 
 ### 7.4 R04 语言代码和语速范围
 
 - 统一协议的语言改为服务声明的语言代码：2–8 位主标签加可选子标签，如 `ko`、`en-US`；不再限制在旧五项。空列表仍表示由服务决定且界面隐藏选择。
 - 语速请求放宽到 0.1–10，实际保存和合成按 `capabilities.speed` 声明校验并夹取；探测、设置和合成使用同一组参数。
-- 旧 IndexTTS 协议独立保留 `zh`、`en`、`ja`、`es`、`ar` 和 0.5–2 的限制；220 已明示两套规则。[语言声明](../../../apps/backend/src/domain/voice-capabilities.ts#L4) · [参数校验](../../../apps/backend/src/application/voice-service.ts#L773)
+- 旧 IndexTTS 协议独立保留 `zh`、`en`、`ja`、`es`、`ar` 和 0.5–2 的限制；220 已明示两套规则。[语言声明](../../../apps/backend/src/domain/voice-capabilities.ts#L4) · [参数校验](../../../apps/backend/src/application/media/voice-service.ts#L773)
 
 ### 7.5 验证
 
@@ -121,7 +121,7 @@
 
 - 保存时原先只要目标服务声明一个参考模式就自动补选；现在切换服务地址或协议时不再使用该快捷选择，保存的参考模式保持为空，需要用户明确提交新模式。
 - 首次配置和同一服务内的单模式快捷选择保留；合成时也不再根据单模式静默补选，未确认模式的已保存配置在试听或按句合成时返回 400 `VOICE_REFERENCE_MODE_REQUIRED`。
-- 测试覆盖：绑定服务 A 后只向 B 提交地址和单模式能力，保存返回 200 但 `referenceMode` 为空；随后保存配置试听返回 `VOICE_REFERENCE_MODE_REQUIRED`，B 未收到请求；显式选择 B 的模式后试听成功。[单模式快捷](../../../apps/backend/src/application/voice-service.ts#L699) · [模式校验](../../../apps/backend/src/application/voice-service.ts#L499)
+- 测试覆盖：绑定服务 A 后只向 B 提交地址和单模式能力，保存返回 200 但 `referenceMode` 为空；随后保存配置试听返回 `VOICE_REFERENCE_MODE_REQUIRED`，B 未收到请求；显式选择 B 的模式后试听成功。[单模式快捷](../../../apps/backend/src/application/media/voice-service.ts#L699) · [模式校验](../../../apps/backend/src/application/media/voice-service.ts#L499)
 
 ### 8.2 R04 补充：语速声明下限统一为 0.1
 
@@ -143,7 +143,7 @@
 - 业务库升级到 v11，`role_voice_settings` 增加 `reference_mode_confirmed`，旧行默认已确认。
 - 切换服务地址或协议时，未显式选择参考模式的保存写入未确认状态；后续只修改语速、语言等无关字段仍保持未确认，不会按单模式自动补选。
 - 首次配置、已确认配置和同一服务内的单模式快捷选择继续可用；显式提交模式后恢复已确认。
-- 试听和按句合成在模式未确认时均返回 400 `VOICE_REFERENCE_MODE_REQUIRED`，不向上游派发请求；显式选择后两者恢复正常。[确认状态解析](../../../apps/backend/src/application/voice-service.ts#L711) · [快捷选择条件](../../../apps/backend/src/application/voice-service.ts#L169) · [v11 迁移](../../../apps/backend/src/storage/schema.ts#L1192)
+- 试听和按句合成在模式未确认时均返回 400 `VOICE_REFERENCE_MODE_REQUIRED`，不向上游派发请求；显式选择后两者恢复正常。[确认状态解析](../../../apps/backend/src/application/media/voice-service.ts#L711) · [快捷选择条件](../../../apps/backend/src/application/media/voice-service.ts#L169) · [v11 迁移](../../../apps/backend/src/storage/core/schema.ts#L1192)
 - 测试覆盖：换到单模式服务后保存地址和能力，再单独保存 `speed`，模式仍为空；试听和按句合成均被拒绝且目标服务收到 0 次请求；显式保存模式后按句合成成功。
 
 ### 9.2 R04 补充：语速范围必须包含 1.0
@@ -165,7 +165,7 @@
 
 - v11 迁移在新增列后按行状态回填：`protocol='nowadays-tts-v1'`、`voice_source='reference'` 且 `reference_mode IS NULL` 的行无法证明模式已确认，迁移后标记为未确认。
 - 已绑定参考模式、旧 IndexTTS 协议和统一协议预置音色的行保持已确认。
-- 迁移后的待确认配置只保存语速、语言等无关字段仍不会自动绑定单模式；试听和按句合成继续返回 400 `VOICE_REFERENCE_MODE_REQUIRED`，显式选择模式后恢复。[v11 迁移](../../../apps/backend/src/storage/schema.ts#L1192) · [快捷选择条件](../../../apps/backend/src/application/voice-service.ts#L169) · [确认状态解析](../../../apps/backend/src/application/voice-service.ts#L711)
+- 迁移后的待确认配置只保存语速、语言等无关字段仍不会自动绑定单模式；试听和按句合成继续返回 400 `VOICE_REFERENCE_MODE_REQUIRED`，显式选择模式后恢复。[v11 迁移](../../../apps/backend/src/storage/core/schema.ts#L1192) · [快捷选择条件](../../../apps/backend/src/application/media/voice-service.ts#L169) · [确认状态解析](../../../apps/backend/src/application/media/voice-service.ts#L711)
 - 测试构造实际 v10 形态：待确认行与已绑定模式行分别降级到 v10 再打开，确认状态分别为 0 和 1；待确认行连续保存 `speed` 后模式和确认状态不变，试听被拒绝且目标服务收到 0 次请求，显式选择后恢复。v9 迁移用例同时确认旧协议行升级为已确认。
 
 ### 10.2 验证
@@ -181,7 +181,7 @@
 ### 11.1 R03 补充：已升级到 v11 的待确认行重新回填
 
 - 业务库升级到 v12。v11 只新增 `reference_mode_confirmed` 列并默认已确认；v12 把 `protocol='nowadays-tts-v1'`、`voice_source='reference'` 且 `reference_mode IS NULL` 的行统一改为未确认。
-- 直接从 v10 升级会依次执行 v11、v12；上一版 v11 迁移过的库在下次打开时执行 v12 修复。已绑定参考模式、显式确认的行和旧 IndexTTS 行不受影响。[v12 迁移](../../../apps/backend/src/storage/schema.ts#L1198) · [快捷选择条件](../../../apps/backend/src/application/voice-service.ts#L169) · [确认状态解析](../../../apps/backend/src/application/voice-service.ts#L711)
+- 直接从 v10 升级会依次执行 v11、v12；上一版 v11 迁移过的库在下次打开时执行 v12 修复。已绑定参考模式、显式确认的行和旧 IndexTTS 行不受影响。[v12 迁移](../../../apps/backend/src/storage/core/schema.ts#L1198) · [快捷选择条件](../../../apps/backend/src/application/media/voice-service.ts#L169) · [确认状态解析](../../../apps/backend/src/application/media/voice-service.ts#L711)
 - 测试构造上一版 v11 形态：待确认行的 `reference_mode_confirmed=1`、`user_version=11`，重开库后确认状态变为 0。只保存 `speed:1.4` 后模式仍为空，试听返回 400 `VOICE_REFERENCE_MODE_REQUIRED`，目标服务收到 0 次请求；显式选择 `clone-b` 后恢复合成。已绑定模式行保持 `clone-b` 和已确认。
 
 ### 11.2 验证

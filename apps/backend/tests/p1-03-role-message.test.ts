@@ -7,7 +7,7 @@ import path from "node:path";
 import test from "node:test";
 import { createBackendApp, listen } from "../src/bootstrap/app.js";
 import { parseBackendConfig } from "../src/bootstrap/config.js";
-import { RoleService } from "../src/application/role-service.js";
+import { RoleService } from "../src/application/role/role-service.js";
 import { RoleInitializationError } from "../src/domain/errors.js";
 
 function tempRoot(): string {

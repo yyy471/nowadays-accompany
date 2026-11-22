@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { createBackendApp } from "../src/bootstrap/app.js";
 import { parseBackendConfig } from "../src/bootstrap/config.js";
-import { XIA_CHENG_BUILTIN_KEY } from "../src/application/preset-assistant.js";
+import { XIA_CHENG_BUILTIN_KEY } from "../src/application/role/preset-assistant.js";
 
 function tempRoot(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "nowadays-p21-"));

@@ -12,12 +12,12 @@
 
 | 编号 | 复现结果 | 补齐与复验条件 |
 | --- | --- | --- |
-| R01 · P1 · 任务暂停恢复 | 在回复提交后向 `pauseTask` 注入一次写入错误。重启前执行为 `completed`、任务为 `active`，重启后任务被按「回复完成」结束，原暂停决定丢失。显式完成或失败决定同样经过这个收尾边界。[提交与暂停](../../../apps/backend/src/application/conversation-service.ts#L1540) · [启动收尾](../../../apps/backend/src/application/conversation-service.ts#L598) | 让任务决定与回复提交在恢复时保持一致。故障后重启按原决定落实暂停或指定终态，暂停保留资源续行，并验证唤醒与原任务身份。 |
-| R02 · P1 · 在途结果被提前改写 | 对仍为 `running` 且尚无结果的调用，角色只提供一段 `observation` 就能用 `tool_reconcile` 写成 `success`。此时 `previousStatus=null`，随后保存实际失败返回 `TOOL_RESULT_CONFLICT`。[补录工具](../../../apps/backend/src/application/agent-tools.ts#L1393) · [结果保存](../../../apps/backend/src/storage/role-store.ts#L1383) | 补录入口以原调用的未知状态为前提，在保存事务内核对。验证待派发、在途及已确认状态的调用不能被提前定案，未知结果的核查与晚到真实结果仍可正确保存。 |
-| R03 · P1 · 插话中断已派发脚本 | Skill 脚本写出第一个文件后，发送同窗口新消息。脚本子进程被强杀，后续文件没有写出，调用却登记为 `failed / EXECUTION_SUPERSEDED`，实际副作用已经发生。[脚本中断](../../../apps/backend/src/application/agent-tools.ts#L1050) | 将回复替代与已派发脚本生命周期分开。插话后让原脚本继续，结果仍归原调用。验证脚本的实际退出、超时及无法确认结果的场景各自记录真实状态。 |
-| R04 · P2 · 慢握手转后台后无法派发 | 工具目录发现正常，实际调用的第二次 MCP 建连越过前台窗口。释放握手后，派发检查引用已经关闭的数据库连接，保存 `MCP_TOOL_OUTCOME_UNKNOWN` 和 `The database connection is not open`。服务端从未收到工具调用。[派发检查](../../../apps/backend/src/application/agent-graph.ts#L611) · [转后台路径](../../../apps/backend/src/application/agent-graph.ts#L909) | 覆盖握手期间和已派发后的后台切换。仍可派发的任务使用有效存储上下文，已经结束的任务保持未派发事实。验证慢握手后实际调用一次并保存结果。 |
-| R05 · P2 · 用户任务定时续行误扣点 | 用带 `taskId` 的唤醒恢复暂停的 `origin=user` 任务。任务顺利完成，但模型计量是 `autonomous / counted=1`，自主点数增加 1。[到期执行](../../../apps/backend/src/application/conversation-service.ts#L997) · [计量归属](../../../apps/backend/src/application/conversation-service.ts#L1277) | 按 DL-110 用原任务来源确定续行计量。测试用户任务在自主余额为零时仍可按原来源继续，自主任务继续受额度控制。 |
-| R06 · P2 · 完整整理请求超过容量 | 在声明容量 3,000 字符、固定开销 1,000 和输出预留 500 的场景，证据由反斜杠组成。按实际 JSON 长度计算，前三批连同开销和预留各为 4,703，仍送入模型并被标为完成。[批次组装](../../../apps/backend/src/application/memory-service.ts#L277) · [片段选取](../../../apps/backend/src/storage/memory-store.ts#L565) | 用序列化后的完整请求验证容量，计入转义与证据元数据。覆盖普通文本、反斜杠、引号以及重试时的旧分段，成功处理后再推进证据进度。 |
+| R01 · P1 · 任务暂停恢复 | 在回复提交后向 `pauseTask` 注入一次写入错误。重启前执行为 `completed`、任务为 `active`，重启后任务被按「回复完成」结束，原暂停决定丢失。显式完成或失败决定同样经过这个收尾边界。[提交与暂停](../../../apps/backend/src/application/conversation/conversation-service.ts#L1540) · [启动收尾](../../../apps/backend/src/application/conversation/conversation-service.ts#L598) | 让任务决定与回复提交在恢复时保持一致。故障后重启按原决定落实暂停或指定终态，暂停保留资源续行，并验证唤醒与原任务身份。 |
+| R02 · P1 · 在途结果被提前改写 | 对仍为 `running` 且尚无结果的调用，角色只提供一段 `observation` 就能用 `tool_reconcile` 写成 `success`。此时 `previousStatus=null`，随后保存实际失败返回 `TOOL_RESULT_CONFLICT`。[补录工具](../../../apps/backend/src/application/conversation/agent-tools.ts#L1393) · [结果保存](../../../apps/backend/src/storage/role/role-store.ts#L1383) | 补录入口以原调用的未知状态为前提，在保存事务内核对。验证待派发、在途及已确认状态的调用不能被提前定案，未知结果的核查与晚到真实结果仍可正确保存。 |
+| R03 · P1 · 插话中断已派发脚本 | Skill 脚本写出第一个文件后，发送同窗口新消息。脚本子进程被强杀，后续文件没有写出，调用却登记为 `failed / EXECUTION_SUPERSEDED`，实际副作用已经发生。[脚本中断](../../../apps/backend/src/application/conversation/agent-tools.ts#L1050) | 将回复替代与已派发脚本生命周期分开。插话后让原脚本继续，结果仍归原调用。验证脚本的实际退出、超时及无法确认结果的场景各自记录真实状态。 |
+| R04 · P2 · 慢握手转后台后无法派发 | 工具目录发现正常，实际调用的第二次 MCP 建连越过前台窗口。释放握手后，派发检查引用已经关闭的数据库连接，保存 `MCP_TOOL_OUTCOME_UNKNOWN` 和 `The database connection is not open`。服务端从未收到工具调用。[派发检查](../../../apps/backend/src/application/conversation/agent-graph.ts#L611) · [转后台路径](../../../apps/backend/src/application/conversation/agent-graph.ts#L909) | 覆盖握手期间和已派发后的后台切换。仍可派发的任务使用有效存储上下文，已经结束的任务保持未派发事实。验证慢握手后实际调用一次并保存结果。 |
+| R05 · P2 · 用户任务定时续行误扣点 | 用带 `taskId` 的唤醒恢复暂停的 `origin=user` 任务。任务顺利完成，但模型计量是 `autonomous / counted=1`，自主点数增加 1。[到期执行](../../../apps/backend/src/application/conversation/conversation-service.ts#L997) · [计量归属](../../../apps/backend/src/application/conversation/conversation-service.ts#L1277) | 按 DL-110 用原任务来源确定续行计量。测试用户任务在自主余额为零时仍可按原来源继续，自主任务继续受额度控制。 |
+| R06 · P2 · 完整整理请求超过容量 | 在声明容量 3,000 字符、固定开销 1,000 和输出预留 500 的场景，证据由反斜杠组成。按实际 JSON 长度计算，前三批连同开销和预留各为 4,703，仍送入模型并被标为完成。[批次组装](../../../apps/backend/src/application/memory/memory-service.ts#L277) · [片段选取](../../../apps/backend/src/storage/memory/memory-store.ts#L565) | 用序列化后的完整请求验证容量，计入转义与证据元数据。覆盖普通文本、反斜杠、引号以及重试时的旧分段，成功处理后再推进证据进度。 |
 
 ## 复验顺序
 
@@ -42,7 +42,7 @@
 
 第一轮对同一任务提交并应用 `task_pause`，原因是「第一轮暂缓」。随后用原任务 ID 唤醒，第二轮回复与 `task_finish(status=failed)` 均已提交。向该轮的 `finishTask` 注入一次写入失败。重启前任务为 `active`，两条执行记录均为 `completed`，各自保存了任务决定。重启后任务变成 `paused`，原因恢复为「第一轮暂缓」。预期应落实第二轮的 `failed` 及失败原因。
 
-恢复查询按最早执行排序，收尾逻辑只处理同一任务的第一条记录。旧暂停已经执行过，但任务续行变回 `active` 后，这条旧记录重新满足恢复条件并遮蔽了第二轮决定。[恢复查询](../../../apps/backend/src/storage/conversation-store.ts#L1508) · [按任务去重](../../../apps/backend/src/application/conversation-service.ts#L607)
+恢复查询按最早执行排序，收尾逻辑只处理同一任务的第一条记录。旧暂停已经执行过，但任务续行变回 `active` 后，这条旧记录重新满足恢复条件并遮蔽了第二轮决定。[恢复查询](../../../apps/backend/src/storage/conversation/conversation-store.ts#L1508) · [按任务去重](../../../apps/backend/src/application/conversation/conversation-service.ts#L607)
 
 复验需要覆盖同一任务先暂停再续行、回复已提交而状态写入失败的场景。恢复后应应用本轮有效且尚未落实的决定，保持原任务身份与资源收尾语义，并在再次重启时保持结果一致。
 
@@ -58,7 +58,7 @@
 
 先让自主任务提交并落实第一轮暂停，再用同一任务 ID 定时唤醒。等第二轮离线模型进入调用、尚未输出回复或决定时，对测试子进程发送 `SIGKILL`。强杀前任务为 `active`，两次执行分别为 `completed` 和 `running`。重启将第二次执行记为 `failed`，但同时把任务改回 `paused / 第一轮暂缓`，恢复模型调用为 0。
 
-启动先将不可从检查点续跑的执行标为中断，随后查询只在已完成执行里查找任务决定。此时仍能选中第一轮已经落实的暂停，排队的中断续行随后因任务已暂停而无法开始。[启动恢复顺序](../../../apps/backend/src/application/conversation-service.ts#L466) · [收尾候选](../../../apps/backend/src/storage/conversation-store.ts#L1508) · [原任务续行](../../../apps/backend/src/storage/conversation-store.ts#L325)
+启动先将不可从检查点续跑的执行标为中断，随后查询只在已完成执行里查找任务决定。此时仍能选中第一轮已经落实的暂停，排队的中断续行随后因任务已暂停而无法开始。[启动恢复顺序](../../../apps/backend/src/application/conversation/conversation-service.ts#L466) · [收尾候选](../../../apps/backend/src/storage/conversation/conversation-store.ts#L1508) · [原任务续行](../../../apps/backend/src/storage/conversation/conversation-store.ts#L325)
 
 修复后的复验需同时覆盖提交前强杀和提交后状态写入失败。前者应保留中断执行事实，并按原任务的恢复规则继续；后者应落实当前已提交决定。两者都需要排除已经落实的历史决定，保持原任务 ID 及重启幂等性。
 

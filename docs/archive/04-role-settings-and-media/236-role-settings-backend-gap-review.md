@@ -17,13 +17,13 @@
 | 附件条目 | 复核与补全意见 |
 | --- | --- |
 | §2 密钥直填 | **确实缺，首版必补。** 模型配置只接受 `env:`／`file:`，资源响应原样返回配置。建议密钥只写、独立于资源配置保存；读接口返回已保存／引用／未配置／不可解密状态。首次保存服务与密钥应原子落库，后续明确保留、替换、清除三种操作。对话、记忆、过场图规划、测试共用同一凭据解析入口。MCP 的 `env` 也会原样回传，首版至少要给角色选择器脱敏摘要；MCP 令牌在页面接入直填时再纳入秘密存储。 [资源配置](../../../apps/backend/src/domain/resource.ts#L7) · [资源接口](../../../apps/backend/src/http/routes.ts#L482) |
-| §3 按资源列模型／测试 | **确实缺，首版必补。** 现有接口只吃候选配置，测试记录的 `resourceId` 固定为空。建议区分新建服务的临时探测与已保存服务的按 ID 探测。保持地址、协议和密钥上下文一致；服务 origin 变化时清空旧测试结果，要求新密钥或显式选择无密钥，避免自动携带旧密钥。测试记录归全局配置，保留耗时和结构化原因。 [模型服务](../../../apps/backend/src/application/model-service.ts#L35) · [现有路由](../../../apps/backend/src/http/routes.ts#L726) |
-| §4 参考音频 | **原缺口是列表与删除。** 按角色列出、显式标记当前引用，使用中拒绝删除。已有 `referenceAssetId:null` 可解绑参考音频。语音停用保留当前唯一配置，和解绑录音分别处理，见第 8 节。原始录音回放留作候选，试听走已有合成接口。 [声音服务](../../../apps/backend/src/application/voice-service.ts#L130) · [音色存储](../../../apps/backend/src/storage/voice-store.ts#L125) |
+| §3 按资源列模型／测试 | **确实缺，首版必补。** 现有接口只吃候选配置，测试记录的 `resourceId` 固定为空。建议区分新建服务的临时探测与已保存服务的按 ID 探测。保持地址、协议和密钥上下文一致；服务 origin 变化时清空旧测试结果，要求新密钥或显式选择无密钥，避免自动携带旧密钥。测试记录归全局配置，保留耗时和结构化原因。 [模型服务](../../../apps/backend/src/application/resources/model-service.ts#L35) · [现有路由](../../../apps/backend/src/http/routes.ts#L726) |
+| §4 参考音频 | **原缺口是列表与删除。** 按角色列出、显式标记当前引用，使用中拒绝删除。已有 `referenceAssetId:null` 可解绑参考音频。语音停用保留当前唯一配置，和解绑录音分别处理，见第 8 节。原始录音回放留作候选，试听走已有合成接口。 [声音服务](../../../apps/backend/src/application/media/voice-service.ts#L130) · [音色存储](../../../apps/backend/src/storage/media/voice-store.ts#L125) |
 | §5 预置音色下架 | **用户可识别的错误缺。** 现有探测能列音色，合成失败仍是通用错误。成功取得同一服务的音色列表时可先在前端比对当前 ID；正式协议建议让桥接返回机器可识别的「音色不存在」，然后由后端映射。单凭 HTTP 404 会把地址填错、路由不存在也当成下架。探测失败应显示「无法确认」，保留原选择。 [统一 TTS 客户端](../../../apps/backend/src/tts/unified-tts-client.ts#L94) · [桥接规范](../03-appearance-and-performance/220-tts-unified-integration.md) |
-| §6.1／§6.2 删除角色／资源 | **都缺。** 直接删除和修改前的停止／解绑条件已确认。删除整个角色时由用户选择是否保留记忆与对话数据，见第 8 节。资源开关仍遵循 DL-71。 [资源服务](../../../apps/backend/src/application/resource-service.ts#L46) · [任务链模型解析](../../../apps/backend/src/application/model-binding-resolver.ts#L49) |
-| §6.3 服饰和差分删除 | **确实缺。** 停止角色活动后，删除系统登记与对应受管副本，保留原始素材文件。实施时需处理当前穿着和历史句段对素材 ID 的引用。主页图另补上传和替换入口。 [外观路由](../../../apps/backend/src/http/appearance-routes.ts#L11) · [角色业务库约束](../../../apps/backend/src/storage/schema.ts#L1149) |
-| §7／§8 额外模型槽、能力开关、远程 MCP 和生图服务 | **均未形成当前页面可调用的完整能力。** 已有对话、记忆、MCP、Skill 四类绑定；本地 MCP 已有运行时连接；真实过场图生成器还无配置。首版只显示能生效的项，后续功能按工作包确定入口和生效语义。 [绑定能力](../../../apps/backend/src/application/resource-service.ts#L39) · [过场图默认生成器](../../../apps/backend/src/application/scene-image-service.ts#L91) |
-| §9 初始化重试、并发、角色卡 | **重试已具备。** 列表已有状态及错误文字，可直接做失败卡片和重试；结构化错误码后补。整表写绑定缺少版本，若模型与扩展各自保存，前端首版共用一份草稿及保存动作，正式分开保存前补版本或单项更新。以已有设定创建另一实例可复用读取与创建接口；导入角色卡文件、共享外观／音色属于另外的契约。 [角色初始化](../../../apps/backend/src/application/role-service.ts#L94) · [绑定接口](../../../apps/backend/src/http/routes.ts#L538) |
+| §6.1／§6.2 删除角色／资源 | **都缺。** 直接删除和修改前的停止／解绑条件已确认。删除整个角色时由用户选择是否保留记忆与对话数据，见第 8 节。资源开关仍遵循 DL-71。 [资源服务](../../../apps/backend/src/application/resources/resource-service.ts#L46) · [任务链模型解析](../../../apps/backend/src/application/resources/model-binding-resolver.ts#L49) |
+| §6.3 服饰和差分删除 | **确实缺。** 停止角色活动后，删除系统登记与对应受管副本，保留原始素材文件。实施时需处理当前穿着和历史句段对素材 ID 的引用。主页图另补上传和替换入口。 [外观路由](../../../apps/backend/src/http/appearance-routes.ts#L11) · [角色业务库约束](../../../apps/backend/src/storage/core/schema.ts#L1149) |
+| §7／§8 额外模型槽、能力开关、远程 MCP 和生图服务 | **均未形成当前页面可调用的完整能力。** 已有对话、记忆、MCP、Skill 四类绑定；本地 MCP 已有运行时连接；真实过场图生成器还无配置。首版只显示能生效的项，后续功能按工作包确定入口和生效语义。 [绑定能力](../../../apps/backend/src/application/resources/resource-service.ts#L39) · [过场图默认生成器](../../../apps/backend/src/application/media/scene-image-service.ts#L91) |
+| §9 初始化重试、并发、角色卡 | **重试已具备。** 列表已有状态及错误文字，可直接做失败卡片和重试；结构化错误码后补。整表写绑定缺少版本，若模型与扩展各自保存，前端首版共用一份草稿及保存动作，正式分开保存前补版本或单项更新。以已有设定创建另一实例可复用读取与创建接口；导入角色卡文件、共享外观／音色属于另外的契约。 [角色初始化](../../../apps/backend/src/application/role/role-service.ts#L94) · [绑定接口](../../../apps/backend/src/http/routes.ts#L538) |
 
 密钥存储建议优先验证 Windows 当前用户保护，以及桌面启动和 CLI 各自能否使用。现有 Electron 主进程会启动独立的 Node 后端；采用 Electron `safeStorage` 就需要明确谁解密、后端通过哪条受控通道取用，以及独立运行时的行为。Windows 的 DPAPI 能隔离不同账户，同账户进程仍是独立威胁边界。原型先展示密钥状态和操作，存储方案在本机打包和重启测试后确定。 [桌面启动](../../../apps/desktop/electron/main.cjs#L47) · [Electron safeStorage 官方文档](https://www.electronjs.org/docs/latest/api/safe-storage)
 
@@ -32,11 +32,11 @@
 | 优先级 | 发现 | 补全意见 |
 | --- | --- | --- |
 | 首版 | 模型地址只校验字符串，适配器直接拼路径。列模型未显式设超时、取消信号或重定向策略。模拟返回 `data` 为对象时抛 `TypeError`，缺 `data` 时返回空列表 | 收敛 URL 校验和基础路径规则；规范化返回、超时和中止；带密钥请求显式限制重定向。原型区分列表为空、上游格式不兼容、连接失败与请求取消。 [适配器](../../../apps/backend/src/model/protocols.ts#L19) · [请求入口](../../../apps/backend/src/model/protocols.ts#L551) |
-| 首版 | 配置资源启停和角色绑定启停是两层。独立记忆模型被停用后，运行时会回落对话模型。设置页只拿原始绑定和资源，用户容易误解当前生效项 | 原型显示「已选配置」和「实际生效」及原因，区分未绑定、全局停用、记忆继承。初期可由现有接口联合展示；若需要直接诊断凭据和可用性，后端应返回不包含秘密的摘要。绑定模型入口在无服务时跳全局设置并可返回当前角色。 [模型解析器](../../../apps/backend/src/application/model-binding-resolver.ts#L90) · [当前设置页](../../../apps/desktop/renderer/src/pages/Settings.tsx#L43) |
-| 首版 | 桌面通用 API 助手只抛错误文案，丢失 `code/status/details`，并默认把成功响应当 JSON。试听返回音频字节；语音配置视图也没有暴露模式是否待确认 | 保留结构化错误，试听复用二进制请求与播放逻辑，允许终止过期试听；补齐声音状态，如未配置、缺参考音频、待确认克隆模式、可用、服务暂不可达、预置已下架。探测、试听均绑定当前候选配置，旧结果晚到时丢弃。 [桌面 API](../../../apps/desktop/renderer/src/api.ts#L1) · [声音视图](../../../apps/backend/src/application/voice-service.ts#L942) |
+| 首版 | 配置资源启停和角色绑定启停是两层。独立记忆模型被停用后，运行时会回落对话模型。设置页只拿原始绑定和资源，用户容易误解当前生效项 | 原型显示「已选配置」和「实际生效」及原因，区分未绑定、全局停用、记忆继承。初期可由现有接口联合展示；若需要直接诊断凭据和可用性，后端应返回不包含秘密的摘要。绑定模型入口在无服务时跳全局设置并可返回当前角色。 [模型解析器](../../../apps/backend/src/application/resources/model-binding-resolver.ts#L90) · [当前设置页](../../../apps/desktop/renderer/src/pages/Settings.tsx#L43) |
+| 首版 | 桌面通用 API 助手只抛错误文案，丢失 `code/status/details`，并默认把成功响应当 JSON。试听返回音频字节；语音配置视图也没有暴露模式是否待确认 | 保留结构化错误，试听复用二进制请求与播放逻辑，允许终止过期试听；补齐声音状态，如未配置、缺参考音频、待确认克隆模式、可用、服务暂不可达、预置已下架。探测、试听均绑定当前候选配置，旧结果晚到时丢弃。 [桌面 API](../../../apps/desktop/renderer/src/api.ts#L1) · [声音视图](../../../apps/backend/src/application/media/voice-service.ts#L942) |
 | 首版外观管理 | 目录导入碰到两个 `home.*` 时，前端静默用后一张覆盖前一张，后端的多主页图校验收不到冲突。已允许主页图留空，但缺后续补传；一套服饰使用一次 multipart，请求上限 128 MiB | 原型先展示按套导入预检与结果。明确主页图缺失、重复、单套超过上限的提示，保留已确认的差分按文件名登记规则。缺主页图允许后补，导入多套时按套标出成功和失败。 [目录分组](../../../apps/desktop/renderer/src/components/appearance/AppearancePanel.tsx#L141) · [导入约定](../03-appearance-and-performance/208-character-appearance-import-and-dialogue.md) · [上传上限](../../../apps/backend/src/http/body.ts#L5) |
 | 首版交互 | 当前设置页与主页、对话共用 `currentId`，切换编辑对象会切换陪伴角色。设置页角色详情也依赖首页的角色、状态、衣柜三项一起成功 | 按 DL-147 分开「正在编辑」和「当前陪伴」。建议保留或提示未保存草稿，设定、外观、声音等分区独立加载。失败角色直接显示初始化状态与重试。 [应用角色状态](../../../apps/desktop/renderer/src/App.tsx#L22) · [设置表单](../../../apps/desktop/renderer/src/pages/Settings.tsx#L20) |
-| 按承诺排期 | 本地 stdio MCP 已有运行时 `listTools`，资源设置没有独立探测路由。修改正在使用的资源地址、命令或凭据，也涉及既有任务链如何延续 | 若设置页提供「测试 MCP」，增加用户主动发起的限时探测，返回握手状态和工具数；Skill 保持按实际执行反馈。实施资源编辑前验证停用、替换和清除凭据时任务链所见配置，沿用 DL-71 对停用的既有决定。 [MCP 客户端](../../../apps/backend/src/mcp/client.ts#L56) · [资源更新](../../../apps/backend/src/application/resource-service.ts#L69) |
+| 按承诺排期 | 本地 stdio MCP 已有运行时 `listTools`，资源设置没有独立探测路由。修改正在使用的资源地址、命令或凭据，也涉及既有任务链如何延续 | 若设置页提供「测试 MCP」，增加用户主动发起的限时探测，返回握手状态和工具数；Skill 保持按实际执行反馈。实施资源编辑前验证停用、替换和清除凭据时任务链所见配置，沿用 DL-71 对停用的既有决定。 [MCP 客户端](../../../apps/backend/src/mcp/client.ts#L56) · [资源更新](../../../apps/backend/src/application/resources/resource-service.ts#L69) |
 
 ## 4. 原型验收与实施顺序
 
@@ -72,7 +72,7 @@
 3. **配置模型与服务。** 角色页提供「对话」「记忆整理」「语音」「生图」。全局模型服务在设置页维护，角色按用途选用，找不到可用服务时可跳去新增并返回原角色。记忆整理默认继承对话模型，可单独绑定。语音沿用当前按角色保存地址、协议和音色的接口。生图建议全局保存服务连接，角色选择文生图或图生图模型，页面随所选类型显示对应的锚点字段。
 4. **配置 MCP 和 Skill。** 全局维护资源，角色页添加绑定并启停。配置顺序用于引导，已有角色可独立编辑任一区域。停用阻止新任务使用，已开始的任务链沿用 DL-71。
 
-建议原型区分「已保存」「测试通过」「当前生效」。角色数据创建后即可编辑，绑定有效对话模型后才具备常规对话所需配置。TTS、生图、外观和扩展各自可用、可缺省；独立记忆模型是可选项。各模型区都提供主动测试。对话服务测试仍遵循 DL-119，允许用户在测试未通过时保存草稿或配置，界面如实标出状态。 [角色创建与设定](../../../apps/backend/src/http/routes.ts#L83) · [记忆模型继承](../../../apps/backend/src/application/model-binding-resolver.ts#L94) · [DL-119](../../161-digital-life-direction-decisions.md#dl-119-模型配置手动填写列表失败保留与主动测试连接)
+建议原型区分「已保存」「测试通过」「当前生效」。角色数据创建后即可编辑，绑定有效对话模型后才具备常规对话所需配置。TTS、生图、外观和扩展各自可用、可缺省；独立记忆模型是可选项。各模型区都提供主动测试。对话服务测试仍遵循 DL-119，允许用户在测试未通过时保存草稿或配置，界面如实标出状态。 [角色创建与设定](../../../apps/backend/src/http/routes.ts#L83) · [记忆模型继承](../../../apps/backend/src/application/resources/model-binding-resolver.ts#L94) · [DL-119](../../161-digital-life-direction-decisions.md#dl-119-模型配置手动填写列表失败保留与主动测试连接)
 
 ### 6.2 各类测试的现状与缺口
 
@@ -83,7 +83,7 @@
 | TTS | 「测试连接」检查协议、服务可用性与能力；「生成试听」用当前音色、短文本和当前参数实际合成并播放 | 统一协议已有 `/voice/probe` 和 `/voice/preview`，候选试听可先于保存。旧 IndexTTS 在 [243](./243-voice-settings-desktop.md) 按试听验证连接。参考音频管理和声音面板已有实现，单份语音配置的启停待按第 8 节补齐。 |
 | 生图 | 「测试连接」检查地址、认证、选中模型和输入能力；「测试生图」用当前类型及选中的服饰配置实际生成一张可解码的图片 | 已按 [248](./248-comfyui-adaptation.md) 接入 ComfyUI：服务连接与凭据、节点能力探测、角色配置（模型路径、锚点提示词、服饰提示词、采样参数）、独立测试生图，以及过场图任务走真实适配器。仍缺图生图的锚点图上传与按类型切换。 |
 
-连接、探测和生成均使用操作当时的候选配置。修改地址、协议、模型或音色／锚点后，对应的旧测试结果应标为过期。测试样图、试听音频和失败信息留在配置流程，测试不写入角色对话、记忆、正式过场图历史或自主额度。接真实服务时生成测试可能消耗服务商额度。 [模型测试](../../../apps/backend/src/application/model-service.ts#L40) · [声音探测与试听](../../../apps/backend/src/application/voice-service.ts#L272) · [过场图路由](../../../apps/backend/src/http/scene-image-routes.ts#L14) · [模拟生成器](../../../apps/backend/src/application/scene-image-service.ts#L91)
+连接、探测和生成均使用操作当时的候选配置。修改地址、协议、模型或音色／锚点后，对应的旧测试结果应标为过期。测试样图、试听音频和失败信息留在配置流程，测试不写入角色对话、记忆、正式过场图历史或自主额度。接真实服务时生成测试可能消耗服务商额度。 [模型测试](../../../apps/backend/src/application/resources/model-service.ts#L40) · [声音探测与试听](../../../apps/backend/src/application/media/voice-service.ts#L272) · [过场图路由](../../../apps/backend/src/http/scene-image-routes.ts#L14) · [模拟生成器](../../../apps/backend/src/application/media/scene-image-service.ts#L91)
 
 ### 6.3 生图锚点、输入能力和运行时选图
 
@@ -99,7 +99,7 @@
 - **按所选模型校验。** 文生图检查基础提示词与目标服饰提示词，图生图检查基础提示词与目标服饰锚点图。建议切换模型类型时保留另一类已编辑的服饰配置，生成与测试按当前类型取值。图生图缺目标服饰锚点图时提示上传；如需要文生图回退，须有可用的文生图模型及相应配置，是否自动回退另行确认。模型类型及参考图支持范围以所选模型和适配协议为准。
 - **按目标服饰取锚点。** 文生图生成新服饰时，可保留角色基础身份，由本次提示描述新服饰，避免沿用旧衣着。图生图更换服饰时读取目标服饰的锚点图。纯背景只传环境描述；如果当前模型需要强制图像输入，纯背景的模型选择规则另行确认。
 - **保持导入边界。** 第 5 节批量导入仍只处理 `standees` 和 `expressions`，不扫描源目录的 `outfits`。生图配置里由用户显式上传的参考图属于独立资源，可替换或删除，不进入主页或对话素材列表。
-- **与现有行为的差距。** 当前规划器读目标回复、服饰名和描述，生成器只接收规划描述；整幅图会自动拿主页 `home` 作为参考。需要增加提示词组装和明确的参考来源，将主页图与生图配置解耦。当前取该回复第一个有服饰的句段；如果同一轮未来允许多套服饰，需要按最终目标句段定位或拒绝跨服饰范围。任务提交时固定服务、模型和锚点版本，避免切衣服或编辑配置影响已排队任务。 [现有服饰和参考图读取](../../../apps/backend/src/storage/scene-image-store.ts#L151) · [生成调用](../../../apps/backend/src/application/scene-image-service.ts#L408)
+- **与现有行为的差距。** 当前规划器读目标回复、服饰名和描述，生成器只接收规划描述；整幅图会自动拿主页 `home` 作为参考。需要增加提示词组装和明确的参考来源，将主页图与生图配置解耦。当前取该回复第一个有服饰的句段；如果同一轮未来允许多套服饰，需要按最终目标句段定位或拒绝跨服饰范围。任务提交时固定服务、模型和锚点版本，避免切衣服或编辑配置影响已排队任务。 [现有服饰和参考图读取](../../../apps/backend/src/storage/media/scene-image-store.ts#L151) · [生成调用](../../../apps/backend/src/application/media/scene-image-service.ts#L408)
 
 ### 6.4 增删改查与状态保护
 

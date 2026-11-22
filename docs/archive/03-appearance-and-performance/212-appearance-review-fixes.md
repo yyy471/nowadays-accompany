@@ -6,8 +6,8 @@
 
 ### R01 图片格式误判
 
-- [inspectImage](../../../apps/backend/src/application/image-inspect.ts#L17) 先按文件签名限定 PNG／JPEG／WebP，再由 `sharp` 0.35.5（libvips）读取元数据并完整解码像素。缺少或损坏的像素数据、非法 PNG 行过滤类型、不可解码的 VP8L 码流统一返回 `IMAGE_DECODE_FAILED`，附文件名。首轮按块／段／RIFF 的结构校验已被完整解码取代。
-- 图片检查和写入改为异步：[RoleAccess.withStoreAsync](../../../apps/backend/src/application/role-access.ts#L53) 保持角色就绪检查、重名检查和失败文件清理的原有顺序，[appearance-routes.ts](../../../apps/backend/src/http/appearance-routes.ts#L36) 的两个上传入口等待完成后再响应。
+- [inspectImage](../../../apps/backend/src/application/media/image-inspect.ts#L17) 先按文件签名限定 PNG／JPEG／WebP，再由 `sharp` 0.35.5（libvips）读取元数据并完整解码像素。缺少或损坏的像素数据、非法 PNG 行过滤类型、不可解码的 VP8L 码流统一返回 `IMAGE_DECODE_FAILED`，附文件名。首轮按块／段／RIFF 的结构校验已被完整解码取代。
+- 图片检查和写入改为异步：[RoleAccess.withStoreAsync](../../../apps/backend/src/application/role/role-access.ts#L53) 保持角色就绪检查、重名检查和失败文件清理的原有顺序，[appearance-routes.ts](../../../apps/backend/src/http/appearance-routes.ts#L36) 的两个上传入口等待完成后再响应。
 - [p6-appearance.test.ts](../../../apps/backend/tests/p6-appearance.test.ts) 使用 Pillow 12.3.0 实际编码的 48×64 PNG、JPEG、渐进 JPEG、有损 WebP 和无损 WebP，并加入缺像素 PNG、损坏 IDAT、仅段头 JPEG、非法过滤 PNG 与损坏 VP8L；整套导入和单张补图都覆盖正例与反例。
 
 ### R02 旧状态覆盖新状态
@@ -61,8 +61,8 @@
 
 ### 修复
 
-- [inspectImage](../../../apps/backend/src/application/image-inspect.ts#L17) 改为签名识别后调用 `sharp` 0.35.5：先读元数据核对格式和宽高，再完整解码像素。PNG 非法行过滤、损坏 VP8L、缺失像素数据和截断文件都返回 `IMAGE_DECODE_FAILED`，保留文件名。
-- `sharp` 以精确版本加入后端依赖，`package-lock.json` 同步更新。图片校验和文件写入改为异步，[RoleAccess.withStoreAsync](../../../apps/backend/src/application/role-access.ts#L53) 保留角色检查、重名检查和失败清理顺序；两个 HTTP 上传入口都等待写入完成后再响应。
+- [inspectImage](../../../apps/backend/src/application/media/image-inspect.ts#L17) 改为签名识别后调用 `sharp` 0.35.5：先读元数据核对格式和宽高，再完整解码像素。PNG 非法行过滤、损坏 VP8L、缺失像素数据和截断文件都返回 `IMAGE_DECODE_FAILED`，保留文件名。
+- `sharp` 以精确版本加入后端依赖，`package-lock.json` 同步更新。图片校验和文件写入改为异步，[RoleAccess.withStoreAsync](../../../apps/backend/src/application/role/role-access.ts#L53) 保留角色检查、重名检查和失败清理顺序；两个 HTTP 上传入口都等待写入完成后再响应。
 - [p6-appearance.test.ts](../../../apps/backend/tests/p6-appearance.test.ts) 加入复核反例 `bad-filter.png` 与 `bad-stream.webp`，并在整套导入和单张补图两个入口断言 400 与文件名；原有真实样本、缺像素 PNG、损坏 IDAT 和仅段头 JPEG 用例继续保留。
 
 ### 复验
@@ -91,7 +91,7 @@
 
 ### 修复
 
-- [inspectImage](../../../apps/backend/src/application/image-inspect.ts#L36) 的元数据读取和像素解码都启用 `animated: true`，多帧 WebP 会解码全部帧；任一帧失败即返回 `IMAGE_DECODE_FAILED` 并保留文件名。
+- [inspectImage](../../../apps/backend/src/application/media/image-inspect.ts#L36) 的元数据读取和像素解码都启用 `animated: true`，多帧 WebP 会解码全部帧；任一帧失败即返回 `IMAGE_DECODE_FAILED` 并保留文件名。
 - 多帧图片的 `metadata.height` 是全部帧总高度，登记宽高改用单帧画布 `pageHeight`，避免把 48×64 的两帧动画记成 48×128。
 - [p6-appearance.test.ts](../../../apps/backend/tests/p6-appearance.test.ts) 增加正常两帧 WebP 与第二帧损坏版本，新增整套导入和单张补图两个入口的独立用例，并断言失败后衣柜和受管文件均未增加。
 

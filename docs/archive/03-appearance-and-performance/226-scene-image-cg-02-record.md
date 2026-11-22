@@ -21,8 +21,8 @@
 
 规划端口输入扩展为角色、窗口、消息、执行归属、正文、句段、服饰记录、附近上下文和请求图层。 [scene-image.ts](../../../apps/backend/src/domain/scene-image.ts#L88)
 
-- 上下文取目标轮之前最多 4 条消息，按时间升序，跳过仍在生成的回复；单条截断到 600 字符，正文截断到 4000 字符。 [scene-image-store.ts](../../../apps/backend/src/storage/scene-image-store.ts#L223)
-- 服饰只取该回复句段记录的 `outfitId`，没有记录时按未知服饰处理，不回退角色当前服饰，避免后来换装回填旧场景（[227 R04](./227-scene-image-independent-review.md) 修复后口径）。名称与用途说明进入提示词，不暴露素材路径。 [scene-image-store.ts](../../../apps/backend/src/storage/scene-image-store.ts#L148)
+- 上下文取目标轮之前最多 4 条消息，按时间升序，跳过仍在生成的回复；单条截断到 600 字符，正文截断到 4000 字符。 [scene-image-store.ts](../../../apps/backend/src/storage/media/scene-image-store.ts#L223)
+- 服饰只取该回复句段记录的 `outfitId`，没有记录时按未知服饰处理，不回退角色当前服饰，避免后来换装回填旧场景（[227 R04](./227-scene-image-independent-review.md) 修复后口径）。名称与用途说明进入提示词，不暴露素材路径。 [scene-image-store.ts](../../../apps/backend/src/storage/media/scene-image-store.ts#L148)
 - 提示词要求只输出 JSON：`description`、`layerMode`、`startSegmentId`、`endSegmentId`；明确 `background` 不画人物、`full_scene` 画角色与场景、区间必须来自给出句段且首尾包含。 [model-planner.ts](../../../apps/backend/src/scene/model-planner.ts#L209)
 - 解析容忍代码块与前后解释文字，但严格校验描述非空与图层取值；区间归属与顺序由服务层再次校验。 [model-planner.ts](../../../apps/backend/src/scene/model-planner.ts#L260)
 
@@ -40,13 +40,13 @@
 ## 4. 参考素材与假生成器
 
 - 生成端口新增可选 `references`，首版只支持 `role: "character"` 的服饰主参考图。 [scene-image.ts](../../../apps/backend/src/domain/scene-image.ts#L109)
-- 只有 `full_scene` 读取参考图：按 `appearance/` 根目录校验相对路径、8 MiB 上限与媒体类型魔数，任一项不满足返回空数组。 [scene-image-service.ts](../../../apps/backend/src/application/scene-image-service.ts#L463)
+- 只有 `full_scene` 读取参考图：按 `appearance/` 根目录校验相对路径、8 MiB 上限与媒体类型魔数，任一项不满足返回空数组。 [scene-image-service.ts](../../../apps/backend/src/application/media/scene-image-service.ts#L463)
 - 假生成器在整幅图模式把参考图缩放到画面下部并合成，纯背景图保持渐变；输出仍为确定性 PNG，便于断言参考图确实到达生成端。 [fake-generator.ts](../../../apps/backend/src/scene/fake-generator.ts#L62)
 - 参考图合成使用 `sharp` 的 `rotate → resize → composite`，不读取真实生图服务，也不产生费用。
 
 ## 5. 超时、失败与重试
 
-- 单次生成使用 `AbortSignal.any([任务信号, AbortSignal.timeout(120s)])`；超时优先结算为 `SCENE_IMAGE_GENERATION_TIMEOUT`，服务关闭仍结算为 `SCENE_IMAGE_INTERRUPTED`。 [scene-image-service.ts](../../../apps/backend/src/application/scene-image-service.ts#L396)
+- 单次生成使用 `AbortSignal.any([任务信号, AbortSignal.timeout(120s)])`；超时优先结算为 `SCENE_IMAGE_GENERATION_TIMEOUT`，服务关闭仍结算为 `SCENE_IMAGE_INTERRUPTED`。 [scene-image-service.ts](../../../apps/backend/src/application/media/scene-image-service.ts#L396)
 - 生成结果继续做非空、32 MiB 上限与完整解码校验；写盘失败或取消时删除未提交文件，成功状态与素材引用同事务提交。
 - 失败任务保留错误码与摘要，回复正文与句段照常读取；同一幂等键重放返回原失败任务，不触发第二次生成。
 - 新幂等键创建新任务并推进 `attempt`，重试成功后结果与原句段关联；重试不是自动重发，仍需显式请求。

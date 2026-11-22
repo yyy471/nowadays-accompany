@@ -5,13 +5,13 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
-import { inspectImage } from "../src/application/image-inspect.js";
+import { inspectImage } from "../src/application/media/image-inspect.js";
 import { createBackendApp, listen } from "../src/bootstrap/app.js";
 import { rolePaths } from "../src/bootstrap/config.js";
 import type { OutfitRecord } from "../src/domain/appearance.js";
 import { AppError } from "../src/domain/errors.js";
-import { SceneImageSettingsStore } from "../src/storage/scene-image-settings-store.js";
-import { RoleStorage } from "../src/storage/role-storage.js";
+import { SceneImageSettingsStore } from "../src/storage/media/scene-image-settings-store.js";
+import { RoleStorage } from "../src/storage/core/role-storage.js";
 import { createFixtureWithModel, ScriptedChatModel, type Fixture } from "./p2-05-fixture.js";
 
 // 以下样本由 Pillow 12.3.0 实际编码，均可完整解码：48×64 像素。

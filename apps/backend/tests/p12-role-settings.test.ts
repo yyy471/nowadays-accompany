@@ -1,4 +1,4 @@
-import { APP_SCHEMA_VERSION } from "../src/storage/schema.js";
+import { APP_SCHEMA_VERSION } from "../src/storage/core/schema.js";
 import assert from "node:assert/strict";
 import { configFetch } from "./config-write.js";
 import { randomUUID } from "node:crypto";
@@ -13,7 +13,7 @@ import { parseBackendConfig } from "../src/bootstrap/config.js";
 import { AppError } from "../src/domain/errors.js";
 import type { ModelServiceConfig } from "../src/domain/model.js";
 import { HttpModelAdapter } from "../src/model/protocols.js";
-import { AppStore } from "../src/storage/app-store.js";
+import { AppStore } from "../src/storage/core/app-store.js";
 
 interface MockServer {
   baseUrl: string;

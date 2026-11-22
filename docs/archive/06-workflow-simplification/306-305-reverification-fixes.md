@@ -5,9 +5,9 @@
 ## 修复内容
 
 - **登记启动阶段跳过的中断批次恢复角色并在恢复读库后先行补齐**：
-  - 在 [`MemoryRuntime`](../../../apps/backend/src/application/memory-runtime.ts#L86-L87) 新增 `pendingStartupRecoveryRoles`，在 [`recoverOnStartup`](../../../apps/backend/src/application/memory-runtime.ts#L123-L158) 中仅当 `RoleStorage.openExisting` 或 `recoverInterruptedBatches` 未完成而抛出异常时，将该角色登记到 `pendingStartupRecoveryRoles` 并交由 [`armTimer`](../../../apps/backend/src/application/memory-runtime.ts#L469-L500) 安排短退避唤醒；若角色路径缺失／非法或执行 `close`／`disposeRole`（[`close`](../../../apps/backend/src/application/memory-runtime.ts#L275)、[`disposeRole`](../../../apps/backend/src/application/memory-runtime.ts#L289)），则清理对应登记。
-  - 在 [`armTimer`](../../../apps/backend/src/application/memory-runtime.ts#L469-L486) 中把 `pendingStartupRecoveryRoles.has(roleId)` 纳入短退避唤醒条件，避免遗留 `running` 批次尚无待处理触发或 `failed` 重试时间戳时定时器静默退出。
-  - 在 [`runOnce`](../../../apps/backend/src/application/memory-runtime.ts#L650-L659) 打开角色库后、任何触发写入或 `service.runPending`／`runBatch` 执行之前，先检查 `pendingStartupRecoveryRoles.has(roleId)` 并补齐 `store.recoverInterruptedBatches(roleId, nowIso)`，随即同步移除该角色标记；同时在 [`dueRetry`](../../../apps/backend/src/application/memory-runtime.ts#L728-L737) 中纳入本次启动补齐恢复到的失败证据。由于该步骤严格串行在角色队列内且仅覆盖未完成启动恢复的角色，因此当前进程正常运行中的批次不会被误重置，也无需再次重启即可继续整理已持久化或新提交的触发。
+  - 在 [`MemoryRuntime`](../../../apps/backend/src/application/memory/memory-runtime.ts#L86-L87) 新增 `pendingStartupRecoveryRoles`，在 [`recoverOnStartup`](../../../apps/backend/src/application/memory/memory-runtime.ts#L123-L158) 中仅当 `RoleStorage.openExisting` 或 `recoverInterruptedBatches` 未完成而抛出异常时，将该角色登记到 `pendingStartupRecoveryRoles` 并交由 [`armTimer`](../../../apps/backend/src/application/memory/memory-runtime.ts#L469-L500) 安排短退避唤醒；若角色路径缺失／非法或执行 `close`／`disposeRole`（[`close`](../../../apps/backend/src/application/memory/memory-runtime.ts#L275)、[`disposeRole`](../../../apps/backend/src/application/memory/memory-runtime.ts#L289)），则清理对应登记。
+  - 在 [`armTimer`](../../../apps/backend/src/application/memory/memory-runtime.ts#L469-L486) 中把 `pendingStartupRecoveryRoles.has(roleId)` 纳入短退避唤醒条件，避免遗留 `running` 批次尚无待处理触发或 `failed` 重试时间戳时定时器静默退出。
+  - 在 [`runOnce`](../../../apps/backend/src/application/memory/memory-runtime.ts#L650-L659) 打开角色库后、任何触发写入或 `service.runPending`／`runBatch` 执行之前，先检查 `pendingStartupRecoveryRoles.has(roleId)` 并补齐 `store.recoverInterruptedBatches(roleId, nowIso)`，随即同步移除该角色标记；同时在 [`dueRetry`](../../../apps/backend/src/application/memory/memory-runtime.ts#L728-L737) 中纳入本次启动补齐恢复到的失败证据。由于该步骤严格串行在角色队列内且仅覆盖未完成启动恢复的角色，因此当前进程正常运行中的批次不会被误重置，也无需再次重启即可继续整理已持久化或新提交的触发。
 
 ## 验证
 

@@ -30,9 +30,9 @@
 
 ## 3. 存储与凭据
 
-- **app 库升到 V4**，新增 `image_services`（`service_id`、`name`、`enabled`、`config_json`、时间戳）。ComfyUI 通常只有一个地址，所以连接与模型分开：连接全局存一份，模型参数落在角色配置里。[schema.ts](../../../apps/backend/src/storage/schema.ts)
-- **业务库升到 V15**，新增 `role_scene_image_settings`：每个角色一份，保存即整份覆盖（与 [DL-149](../../161-digital-life-direction-decisions.md#dl-149-角色语音只保留当前一份配置) 的语音配置同构）。`outfit_prompts_json` 按 `outfitId` 存服饰锚点提示词，`workflow_json` 为空时用内置模板。[scene-image-settings-store.ts](../../../apps/backend/src/storage/scene-image-settings-store.ts)
-- **凭据复用统一解析。** 密钥仍写 `resource_secrets`（键为 `service_id`），支持 `secret` 直填与 `env:`／`file:` 引用，二选一由服务层拒绝并存；读接口只回 `stored`／`reference`／`missing`／`unavailable` 状态。[image-service.ts](../../../apps/backend/src/application/image-service.ts)
+- **app 库升到 V4**，新增 `image_services`（`service_id`、`name`、`enabled`、`config_json`、时间戳）。ComfyUI 通常只有一个地址，所以连接与模型分开：连接全局存一份，模型参数落在角色配置里。[schema.ts](../../../apps/backend/src/storage/core/schema.ts)
+- **业务库升到 V15**，新增 `role_scene_image_settings`：每个角色一份，保存即整份覆盖（与 [DL-149](../../161-digital-life-direction-decisions.md#dl-149-角色语音只保留当前一份配置) 的语音配置同构）。`outfit_prompts_json` 按 `outfitId` 存服饰锚点提示词，`workflow_json` 为空时用内置模板。[scene-image-settings-store.ts](../../../apps/backend/src/storage/media/scene-image-settings-store.ts)
+- **凭据复用统一解析。** 密钥仍写 `resource_secrets`（键为 `service_id`），支持 `secret` 直填与 `env:`／`file:` 引用，二选一由服务层拒绝并存；读接口只回 `stored`／`reference`／`missing`／`unavailable` 状态。[image-service.ts](../../../apps/backend/src/application/media/image-service.ts)
 - **换服务要重新确认凭据。** 协议或 origin 变化、请求未给新密钥、仍持有旧凭据时返回 `RESOURCE_CREDENTIAL_STALE`；同站点换路径仍算同一个服务。这条规则与 [245 第 2 节](./245-role-settings-review-fixes.md) 的模型资源一致。
 
 ## 4. ComfyUI 客户端

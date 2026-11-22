@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
-import { AgentGraphRunner } from "../src/application/agent-graph.js";
+import { AgentGraphRunner } from "../src/application/conversation/agent-graph.js";
 import { rolePaths } from "../src/bootstrap/config.js";
 import type { ConversationTool } from "../src/domain/conversation.js";
-import { AutonomyStore } from "../src/storage/autonomy-store.js";
-import { ConversationStore } from "../src/storage/conversation-store.js";
-import { RoleStorage } from "../src/storage/role-storage.js";
+import { AutonomyStore } from "../src/storage/conversation/autonomy-store.js";
+import { ConversationStore } from "../src/storage/conversation/conversation-store.js";
+import { RoleStorage } from "../src/storage/core/role-storage.js";
 import { createFixtureWithModel, ScriptedChatModel } from "./p2-05-fixture.js";
 
 const dispatchedAt = "2026-11-05T03:00:00.000Z";

@@ -4,7 +4,7 @@ import type {
   MessageRecord,
   ToolCallRecord,
   ToolResultRecord,
-} from "../storage/role-store.js";
+} from "../storage/role/role-store.js";
 
 export type ConversationStreamType =
   | "execution_started"

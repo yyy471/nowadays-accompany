@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
-import { selectAgentContext } from "../src/application/agent-context.js";
+import { selectAgentContext } from "../src/application/conversation/agent-context.js";
 import type { ModelMessage, ModelProtocol, ModelRequest } from "../src/domain/model.js";
 import { HttpModelAdapter, serializeModelRequest } from "../src/model/protocols.js";
 import { createFixtureWithModel, ScriptedChatModel, withStorage, type Fixture } from "./p2-05-fixture.js";

@@ -19,7 +19,7 @@
 
 | 编号 | 复现和影响 | 复验条件 |
 | --- | --- | --- |
-| **R01 · 图片格式误判** | 48×64 的普通 JPEG 可由 Pillow 完整解码，上传却返回 400 `IMAGE_DECODE_FAILED`。JPEG 检查把扫描数据继续当段标记读。保留合法 PNG 签名、IHDR 和 IEND、移除图像数据后，图片无法解码，上传仍返回 201。现有 JPEG 测试样本只有段头，没有实际扫描数据。 [PNG 检查](../../../apps/backend/src/application/image-inspect.ts#L39) · [JPEG 检查](../../../apps/backend/src/application/image-inspect.ts#L59) · [现有测试样本](../../../apps/backend/tests/p6-appearance.test.ts#L14) | 使用可实际解码的 PNG、JPEG、WebP 样本验证整套及单张导入。拒绝缺少像素数据或损坏的文件，返回具体文件名。校验范围遵循 DL-136 的文件格式约定 |
+| **R01 · 图片格式误判** | 48×64 的普通 JPEG 可由 Pillow 完整解码，上传却返回 400 `IMAGE_DECODE_FAILED`。JPEG 检查把扫描数据继续当段标记读。保留合法 PNG 签名、IHDR 和 IEND、移除图像数据后，图片无法解码，上传仍返回 201。现有 JPEG 测试样本只有段头，没有实际扫描数据。 [PNG 检查](../../../apps/backend/src/application/media/image-inspect.ts#L39) · [JPEG 检查](../../../apps/backend/src/application/media/image-inspect.ts#L59) · [现有测试样本](../../../apps/backend/tests/p6-appearance.test.ts#L14) | 使用可实际解码的 PNG、JPEG、WebP 样本验证整套及单张导入。拒绝缺少像素数据或损坏的文件，返回具体文件名。校验范围遵循 DL-136 的文件格式约定 |
 | **R02 · 旧状态覆盖新状态** | 同一角色初始请求取得版本 1，角色详情稍晚返回。轮询先取得版本 2，主页先显示白色针织裙。初始请求的并发读取随后完成，主页又切回版本 1 的黑白长裙。两条更新路径均直接写入状态。 [初始刷新](../../../apps/desktop/renderer/src/App.tsx#L37) · [轮询刷新](../../../apps/desktop/renderer/src/App.tsx#L59) | 所有刷新入口共享按角色和 `stateVersion` 判断新旧的逻辑。补验同角色乱序、切角色和断线恢复 |
 | **R03 · 缺图时图片与服饰名不一致** | 白色针织裙已显示，再把当前服饰改为蓝色外套并令新图解码失败。画面持续显示白色针织裙，图注与替代文字却使用蓝色外套。图片状态只保留 URL，名称直接取新服饰属性。 [图片解码与图注](../../../apps/desktop/renderer/src/components/home/HomeScene.tsx#L78) | 把实际显示的图片和它的服饰信息一起更新。测试新图加载中、加载失败及快速换装，验证回退归属一致 |
 
@@ -41,7 +41,7 @@
 | 统一离线验收 | Node.js 24.22.2，实际 `npm run accept:offline` 21／21 步通过，正式测试 212／212，`sourceUnchanged=true`，真实服务调用 0 |
 | 桌面回归 | 30／30，渲染器类型检查与 Vite 构建通过 |
 
-PNG 当前以解压后长度相同为准，非法行过滤类型仍被接受。VP8L 以头部、版本和最小长度为准，损坏的图像码流仍被接受。R01 的关闭条件仍为两个上传入口接受可解码的支持格式、对实际无法解码的文件返回 `IMAGE_DECODE_FAILED`，同时保留文件名。补验应保留本节两种反例和真实的正例。 [PNG 检查](../../../apps/backend/src/application/image-inspect.ts#L187) · [WebP 检查](../../../apps/backend/src/application/image-inspect.ts#L438)
+PNG 当前以解压后长度相同为准，非法行过滤类型仍被接受。VP8L 以头部、版本和最小长度为准，损坏的图像码流仍被接受。R01 的关闭条件仍为两个上传入口接受可解码的支持格式、对实际无法解码的文件返回 `IMAGE_DECODE_FAILED`，同时保留文件名。补验应保留本节两种反例和真实的正例。 [PNG 检查](../../../apps/backend/src/application/media/image-inspect.ts#L187) · [WebP 检查](../../../apps/backend/src/application/media/image-inspect.ts#L438)
 
 统一离线验收目录为 `apps/backend/test-results/p5-2026-11-08T15-06-36-199Z-389ba586/`。专项证据位于 `apps/backend/test-results/p6-appearance-recheck/`。其中 `pillow-negative.jsonl` 为坏图完整解码结果，`probe-result.json` 为两个 HTTP 入口及换装、恢复证据，`renderer-order-result.json` 为实际渲染器源码的受控结果。原生 Electron 文件选择、乱序注入与缩放本轮未独立重跑。实现方证据见 212。
 
@@ -57,7 +57,7 @@ PNG 当前以解压后长度相同为准，非法行过滤类型仍被接受。V
 | 统一离线验收 | Node.js 24.22.2，实际 `npm run accept:offline` 21／21，正式测试 212／212，`sourceUnchanged=true`，真实服务调用 0。运行目录为 `apps/backend/test-results/p5-2026-11-08T15-23-41-200Z-3de7aa55/` |
 | 桌面回归 | 桌面测试 30／30，复跑当前渲染器源码确认迟到旧状态被忽略，缺图时旧图与名称保持一致 |
 
-追加反例是两帧 WebP。正常版两帧均可读，损坏版保留容器、帧头与第一帧，清零第二帧 VP8L 头之后的码流。Pillow 能读取损坏版的第一帧，第二帧读取失败。整套导入和单张补图都接受正常版和损坏版，均返回 201。独立调用当前安装的 `sharp` 0.35.5 复现了差异：默认模式 `stats()` 对两个文件都成功，启用 `animated: true` 后仍接受正常版，并对损坏版抛出解码错误。应用当前按默认模式校验，因而只验证了首帧。 [解码入口](../../../apps/backend/src/application/image-inspect.ts#L36)
+追加反例是两帧 WebP。正常版两帧均可读，损坏版保留容器、帧头与第一帧，清零第二帧 VP8L 头之后的码流。Pillow 能读取损坏版的第一帧，第二帧读取失败。整套导入和单张补图都接受正常版和损坏版，均返回 201。独立调用当前安装的 `sharp` 0.35.5 复现了差异：默认模式 `stats()` 对两个文件都成功，启用 `animated: true` 后仍接受正常版，并对损坏版抛出解码错误。应用当前按默认模式校验，因而只验证了首帧。 [解码入口](../../../apps/backend/src/application/media/image-inspect.ts#L36)
 
 复验条件为在两个入口均保留可用的静态和动画 WebP，拒绝后续帧损坏的文件并返回 `IMAGE_DECODE_FAILED` 及原文件名。专项证据位于 `apps/backend/test-results/p6-appearance-independent-round3/`，包括 `probe-result.json`、`pillow-additional.jsonl` 和 `decoder-frame-mode.json`。本轮未修改业务代码或正式测试，原生 Electron 交互和上传内存峰值未纳入本轮独立复验。
 

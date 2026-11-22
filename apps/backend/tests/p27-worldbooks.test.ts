@@ -2,15 +2,15 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import test from "node:test";
-import { selectAgentContext } from "../src/application/agent-context.js";
+import { selectAgentContext } from "../src/application/conversation/agent-context.js";
 import { listen } from "../src/bootstrap/app.js";
 import { matchWorldbooks, type Worldbook } from "../src/domain/worldbook.js";
 import { type ModelRequest } from "../src/domain/model.js";
 import { serializeModelRequest } from "../src/model/protocols.js";
-import { MemoryStore } from "../src/storage/memory-store.js";
+import { MemoryStore } from "../src/storage/memory/memory-store.js";
 import { createFixture, ScriptedChatModel, withStorage } from "./p2-05-fixture.js";
 import { captureRoleTransfer, roleTransferTimelineFingerprint, roleTransferWithAncestors,
-  writeRoleTransferPackage } from "../src/application/role-transfer-package.js";
+  writeRoleTransferPackage } from "../src/application/transfer/role-transfer-package.js";
 
 const entry = (id: string, keyword: string, content: string): Worldbook["entries"][number] => ({
   id, title: id, keywords: [keyword], content, enabled: true, visibility: "known",

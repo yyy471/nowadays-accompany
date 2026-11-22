@@ -7,8 +7,8 @@ import { pathToFileURL } from "node:url";
 import { createBackendApp } from "../src/bootstrap/app.js";
 import { rolePaths } from "../src/bootstrap/config.js";
 import type { ModelEvent, ModelPort, ModelRequest } from "../src/domain/model.js";
-import { RoleStorage } from "../src/storage/role-storage.js";
-import { RoleStore } from "../src/storage/role-store.js";
+import { RoleStorage } from "../src/storage/core/role-storage.js";
+import { RoleStore } from "../src/storage/role/role-store.js";
 import {
   addBinding,
   createFixture,

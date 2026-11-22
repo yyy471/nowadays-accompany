@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { rolePaths } from "../src/bootstrap/config.js";
 import type { ModelEvent, ModelPort, ModelRequest } from "../src/domain/model.js";
-import { MemoryStore } from "../src/storage/memory-store.js";
+import { MemoryStore } from "../src/storage/memory/memory-store.js";
 import { addBinding, createFixture, createFixtureWithModel, withStorage, type Fixture } from "../tests/p2-05-fixture.js";
 
 const output = path.resolve(process.env.NOWADAYS_REVIEW_OUTPUT ?? "test-results/p2-06-acceptance-20261104");

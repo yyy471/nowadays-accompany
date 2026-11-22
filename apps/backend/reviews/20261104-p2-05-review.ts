@@ -3,9 +3,9 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import type { ModelEvent, ModelPort, ModelRequest } from "../src/domain/model.js";
-import { HttpMemoryModel } from "../src/application/memory-runtime.js";
+import { HttpMemoryModel } from "../src/application/memory/memory-runtime.js";
 import { rolePaths } from "../src/bootstrap/config.js";
-import { MemoryStore } from "../src/storage/memory-store.js";
+import { MemoryStore } from "../src/storage/memory/memory-store.js";
 import { ScriptedChatModel, createFixture, createFixtureWithModel, addBinding, seedEvent, withStorage, type Fixture } from "../tests/p2-05-fixture.js";
 
 // 只检查公开服务链路和本地 MCP；每项保留观测，不使用真实模型或用户文件。

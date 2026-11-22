@@ -2,15 +2,15 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { rolePaths } from "../src/bootstrap/config.js";
-import { MemoryService } from "../src/application/memory-service.js";
-import { HttpMemoryModel } from "../src/application/memory-runtime.js";
-import type { ResolvedModelBinding } from "../src/application/model-binding-resolver.js";
+import { MemoryService } from "../src/application/memory/memory-service.js";
+import { HttpMemoryModel } from "../src/application/memory/memory-runtime.js";
+import type { ResolvedModelBinding } from "../src/application/resources/model-binding-resolver.js";
 import type { MemoryFormationInput } from "../src/domain/memory.js";
 import type { ModelEvent, ModelPort, ModelRequest } from "../src/domain/model.js";
 import { ScriptedMemoryModel } from "../src/model/offline-memory.js";
-import { registerMessageEvidence } from "../src/storage/evidence.js";
-import { MemoryStore } from "../src/storage/memory-store.js";
-import { RoleStorage } from "../src/storage/role-storage.js";
+import { registerMessageEvidence } from "../src/storage/memory/evidence.js";
+import { MemoryStore } from "../src/storage/memory/memory-store.js";
+import { RoleStorage } from "../src/storage/core/role-storage.js";
 import {
   ScriptedChatModel,
   addBinding,

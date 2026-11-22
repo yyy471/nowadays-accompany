@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
-import { MemoryQueryService } from "../src/application/memory-query-service.js";
-import type { RoleAccess } from "../src/application/role-access.js";
-import { rebuildTransferMemorySearch } from "../src/application/role-transfer-data.js";
+import { MemoryQueryService } from "../src/application/memory/memory-query-service.js";
+import type { RoleAccess } from "../src/application/role/role-access.js";
+import { rebuildTransferMemorySearch } from "../src/application/transfer/role-transfer-data.js";
 import type { MemoryClaimRecord } from "../src/domain/memory.js";
-import { registerMessageEvidence } from "../src/storage/evidence.js";
-import { MemoryStore } from "../src/storage/memory-store.js";
-import { RoleStore } from "../src/storage/role-store.js";
+import { registerMessageEvidence } from "../src/storage/memory/evidence.js";
+import { MemoryStore } from "../src/storage/memory/memory-store.js";
+import { RoleStore } from "../src/storage/role/role-store.js";
 
 const now = "2026-11-20T12:00:00.000Z";
 function setup() {

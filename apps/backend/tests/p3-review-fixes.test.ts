@@ -6,7 +6,7 @@ import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { rolePaths } from "../src/bootstrap/config.js";
 import type { ModelEvent, ModelRequest } from "../src/domain/model.js";
-import { MemoryStore } from "../src/storage/memory-store.js";
+import { MemoryStore } from "../src/storage/memory/memory-store.js";
 import {
   ScriptedChatModel,
   addBinding,

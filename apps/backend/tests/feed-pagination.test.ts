@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { listen } from "../src/bootstrap/app.js";
 import { rolePaths } from "../src/bootstrap/config.js";
-import { RoleStorage } from "../src/storage/role-storage.js";
+import { RoleStorage } from "../src/storage/core/role-storage.js";
 import { createFixtureWithModel, ScriptedChatModel } from "./p2-05-fixture.js";
 
 test("动态所需的安排、活动与记忆批次可逐页读取，默认顺序保持一致", async () => {

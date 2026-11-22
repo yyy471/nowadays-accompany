@@ -68,7 +68,7 @@
 - 成功工具结果和文件中唯一一次效果均保留，但恢复模型调用为 0；显式调用现有调度入口也不能继续原任务。
 - 没有待领取唤醒或已恢复的任务延续进入调度。A04 的未完成自主任务也出现同样的停滞。
 
-**实现位置：** [ConversationService.recoverOnStartup](../../../apps/backend/src/application/conversation-service.ts:383)只调用执行中断处理，再为 pending 唤醒设定时器；[ConversationStore.recoverInterruptedExecutions](../../../apps/backend/src/storage/conversation-store.ts:1049)将运行中执行记为失败，没有协调原任务、活动、已领取安排与原检查点进度。运行时的 `pendingContinuations` 也未在启动时从这些持久记录恢复。
+**实现位置：** [ConversationService.recoverOnStartup](../../../apps/backend/src/application/conversation/conversation-service.ts:383)只调用执行中断处理，再为 pending 唤醒设定时器；[ConversationStore.recoverInterruptedExecutions](../../../apps/backend/src/storage/conversation/conversation-store.ts:1049)将运行中执行记为失败，没有协调原任务、活动、已领取安排与原检查点进度。运行时的 `pendingContinuations` 也未在启动时从这些持久记录恢复。
 
 **影响：** 重启保存了任务名称与效果，却不能让角色继续处理未完成事项；界面还可能长期显示实际上已经不运行的活动。该问题不能靠等待下一次用户发消息或重建新任务替代。
 
@@ -86,7 +86,7 @@
 - 原执行已是 `failed / PROCESS_INTERRUPTED`，实际工具进程已经退出，但记录仍暗示在运行。
 - 文件中实际存在一次 `effect`；没有进入角色核查决策，恢复模型调用为 0。此处无响应确实不等于没有发生操作。
 
-**实现位置：** [ConversationStore.recoverInterruptedExecutions](../../../apps/backend/src/storage/conversation-store.ts:1049)只恢复执行、部分回复和运行中的模型调用，没有协调这些执行关联的未返回工具调用。P4-R01 修复调度本身也不能替代本项对未知结果的明确记录。
+**实现位置：** [ConversationStore.recoverInterruptedExecutions](../../../apps/backend/src/storage/conversation/conversation-store.ts:1049)只恢复执行、部分回复和运行中的模型调用，没有协调这些执行关联的未返回工具调用。P4-R01 修复调度本身也不能替代本项对未知结果的明确记录。
 
 **影响：** 工具账面状态与实际进程不一致，角色后续不能可靠区分“仍在执行”和“结果未知”；如果恢复时直接重试，有重复外部效果的风险。本次未观察到重复操作，因为恢复链尚未启动，不把潜在重复说成已发生。
 
@@ -155,7 +155,7 @@ P3 重放入口为 `reviews/20261104-p3-review.ts`、`reviews/20261104-p3-fix-re
 
 第一项的原自主任务为 `235ee24b-cadb-463f-92cb-6d43f62feee0`，旧执行为 `49dbfb08-374f-4f7d-bed1-7e17670bd6b2`。强杀前新用户回复已经 completed，原任务仍 active，旧执行已 superseded；重启后没有任何原任务评估，实际效果仅一次但没有继续处理入口。第二项的用户原任务 `3267ee7f-73c7-46df-bdc2-83c6b252ccde` 复现同样结果。
 
-**原因：** [recoverInterruptedExecutions](../../../apps/backend/src/storage/conversation-store.ts:1058)只选择 `executions.status = 'running'`，两个旧执行均已是 superseded，不在返回列表中。[recoverOnStartup](../../../apps/backend/src/application/conversation-service.ts:383)只从这个列表恢复延续，还额外限定 `taskOrigin === 'autonomous'`。该条件无法代表全部仍有效的独立任务。
+**原因：** [recoverInterruptedExecutions](../../../apps/backend/src/storage/conversation/conversation-store.ts:1058)只选择 `executions.status = 'running'`，两个旧执行均已是 superseded，不在返回列表中。[recoverOnStartup](../../../apps/backend/src/application/conversation/conversation-service.ts:383)只从这个列表恢复延续，还额外限定 `taskOrigin === 'autonomous'`。该条件无法代表全部仍有效的独立任务。
 
 **修复要求：** 依据任务自身是否结束、已保存进度及未处理工具事实协调恢复，覆盖自主和用户来源；沿用原 taskId，不把被替代回复恢复成旧答案，也不另建替代任务。明确结束的任务继续排除，新消息优先和预算／资源延续规则继续保持。修复后重跑两个 superseded 用例以及 ended／A08，分别证明“继续原任务”和“不续写旧回复／不复活终态”。
 
@@ -165,7 +165,7 @@ P3 重放入口为 `reviews/20261104-p3-review.ts`、`reviews/20261104-p3-fix-re
 
 两项失败中，工具调用分别为 `b2f942cf-a362-45b4-a548-f294c39fde3f`、`3867b503-e414-4091-bfe6-77d39834df94`。MCP 实际文件均有一次 `effect`，强杀重启后仍为 running、tool_results 为空；原工具进程已结束，状态没有归入 unknown。
 
-**原因：** [recoverOnStartup](../../../apps/backend/src/application/conversation-service.ts:403)只把本次 `running` 执行恢复列表传入 [recoverInterruptedToolCalls](../../../apps/backend/src/storage/role-store.ts:1162)。RoleStore 对传入调用的状态区分有效，但 superseded 旧执行完全没有传入，因此跳过整个调用。
+**原因：** [recoverOnStartup](../../../apps/backend/src/application/conversation/conversation-service.ts:403)只把本次 `running` 执行恢复列表传入 [recoverInterruptedToolCalls](../../../apps/backend/src/storage/role/role-store.ts:1162)。RoleStore 对传入调用的状态区分有效，但 superseded 旧执行完全没有传入，因此跳过整个调用。
 
 **修复要求：** 启动时对进程退出后无法继续确认的未返回调用进行独立协调，不能只依赖原回复执行的 running 列表。保留原调用身份、已保存明确结果及既有 unknown 修订记录；不伪造执行失败或重复发出操作。未结束任务收到 unknown 后可结合可用工具核查；已结束任务只保存实际未知事实，不自动派生新任务。两个失败用例与 ended、check-unknown 应一起复验。
 
@@ -194,8 +194,8 @@ P4-R01／R02 的原始简单重启场景已经改善；本轮保留两项编号�
 
 ### 8.2 本轮直接修改
 
-- [ConversationStore](../../../apps/backend/src/storage/conversation-store.ts)新增 `findInterruptedUserTask`，只为待回复输入找回因 PROCESS_INTERRUPTED 中断、仍 active 且已有工具事实的用户任务。创建回复执行、关联原 taskId 为 continues、领取原输入在同一事务中完成。
-- [ConversationService](../../../apps/backend/src/application/conversation-service.ts)启动时触发上述任务的现有调度，传入原任务和工具事实，提交后原输入只处理一次。普通部分回复、纯文本旧回复和明确结束的任务不进入该恢复路径，新消息与输入状态规则保留。
+- [ConversationStore](../../../apps/backend/src/storage/conversation/conversation-store.ts)新增 `findInterruptedUserTask`，只为待回复输入找回因 PROCESS_INTERRUPTED 中断、仍 active 且已有工具事实的用户任务。创建回复执行、关联原 taskId 为 continues、领取原输入在同一事务中完成。
+- [ConversationService](../../../apps/backend/src/application/conversation/conversation-service.ts)启动时触发上述任务的现有调度，传入原任务和工具事实，提交后原输入只处理一次。普通部分回复、纯文本旧回复和明确结束的任务不进入该恢复路径，新消息与输入状态规则保留。
 - 用户任务创建时保存原链资源；用户和自主任务恢复都读取既有的模型／MCP／Skill 延续。关闭资源仍阻止新任务，原链结束后释放延续，没有新增授权或审批。
 - 新增 [p4-user-recovery.test.ts](../../../apps/backend/tests/p4-user-recovery.test.ts)两项正式回归；[复核脚本](../../../apps/backend/reviews/20261104-p4-recovery-recheck.ts)扩展至六项，关闭资源场景实际调用 MCP 核查，并检查新任务不能借用关闭资源。
 
@@ -270,7 +270,7 @@ R02 的原修改在本轮独立范围关闭；R01 遗留及 R03 已直接修正�
 
 更明确的 `checkpoint-before-commit` 原执行为 `89f313c8-fc2e-4ab5-a0d2-782095f50c4c`。强杀前的真实 SQLite 图检查点已有 round=3、完整文字“原检查点中的最终回复”、statePatch `mood=检查点内的状态`，没有待调用工具。重启没有提交这些结果，反而再调用一次模型，新正式答复为“恢复后新执行另写的回复”，角色 mood 仍为“平静”。原文字保留为中断记录，不能将此称为原文丢失；丢失的是继续原进度并提交有效待提交结果的能力。
 
-位置：[AgentGraphRunner.run](../../../apps/backend/src/application/agent-graph.ts:150)始终创建 initialState 并调用 `graph.invoke(initialState)`；[启动恢复](../../../apps/backend/src/application/conversation-service.ts:383)与 `beginTaskContinuation` 创建新的执行编号，没有按原 thread_id 加载和继续图状态。此前原 taskId 保持的修复不能覆盖这个契约。
+位置：[AgentGraphRunner.run](../../../apps/backend/src/application/conversation/agent-graph.ts:150)始终创建 initialState 并调用 `graph.invoke(initialState)`；[启动恢复](../../../apps/backend/src/application/conversation/conversation-service.ts:383)与 `beginTaskContinuation` 创建新的执行编号，没有按原 thread_id 加载和继续图状态。此前原 taskId 保持的修复不能覆盖这个契约。
 
 修复要求：未被新消息替代且应恢复的同次决策使用原 executionId／thread_id，读取真实检查点及业务实际结果；成功步骤不重做，结果未知先核查。已形成有效最终结果但尚未提交时，不能无故丢弃并重新调用模型。新的判断应刷新最新设定、状态、资源、预算和相关记忆，旧检查点不能回滚已提交业务；状态版本或新消息导致材料失效时按既有规则重新判断，不盲目提交旧状态。不把 superseded 的旧回复恢复为旧答案，不另建恢复系统。
 
@@ -280,7 +280,7 @@ R02 的原修改在本轮独立范围关闭；R01 遗留及 R03 已直接修正�
 
 依据 DL-71、DL-72、DL-113。`commit-before-task-finish` 原执行 `ce182015-4129-4270-b441-2cbf8018ef8b`、原任务 `8ffe2efb-25e0-4d66-9cf9-15cced62ede0`。正式答复、角色状态和 execution=completed 都已保存，任务仍 active；重启后任务、活动及已领取安排没有收尾，两个资源延续的 ended_at 仍为空。此处恢复不应重复调用模型或重做效果。
 
-位置：[runExecution 正式提交与收尾](../../../apps/backend/src/application/conversation-service.ts:1175)分步调用 commitConversation、finishTaskAfterExecution、活动更新及 completeWake；启动恢复只处理运行中或 superseded 的执行，没有协调这个已完成执行留下的收尾间隙。
+位置：[runExecution 正式提交与收尾](../../../apps/backend/src/application/conversation/conversation-service.ts:1175)分步调用 commitConversation、finishTaskAfterExecution、活动更新及 completeWake；启动恢复只处理运行中或 superseded 的执行，没有协调这个已完成执行留下的收尾间隙。
 
 修复要求：基于同一业务库事务或可幂等重入的收尾协调，使已提交答复对应的任务、活动、唤醒与资源延续最终一致；启动可识别历史间隙，不能重生成答复或重复扣点。只能收尾确实应结束的原链，不能把仅被引用的其他任务一律结束。复验提交前／后强杀、重复重启、收尾失败回滚／重入以及资源最终释放。
 
@@ -288,7 +288,7 @@ R02 的原修改在本轮独立范围关闭；R01 遗留及 R03 已直接修正�
 
 依据 DL-105～DL-108、DL-113。`before-dispatch` 原执行 `50b9bf93-dcbe-45b1-a054-13c76849e7f3`。在原模型返回后，工具已登记并预留 1 点，尚未进入运行标记或真实调用就强杀；实际效果为空。重启正确将其记为“尚未派发”失败，随后新增一次恢复模型调用。当天总共两次模型调用、零次工具调用，计量账本两点，余额却已用三点。
 
-位置：[reserveTool](../../../apps/backend/src/application/conversation-service.ts:954)先持久扣除预留点数，再仅用内存中的 settled／committed 和取消闭包管理；[reservePoint](../../../apps/backend/src/application/autonomy-service.ts:285)没有与原调用绑定的持久预留结算材料。进程消失后没有取消闭包退还该次未派发预留。
+位置：[reserveTool](../../../apps/backend/src/application/conversation/conversation-service.ts:954)先持久扣除预留点数，再仅用内存中的 settled／committed 和取消闭包管理；[reservePoint](../../../apps/backend/src/application/conversation/autonomy-service.ts:285)没有与原调用绑定的持久预留结算材料。进程消失后没有取消闭包退还该次未派发预留。
 
 修复要求：为预留与原调用保存可恢复的关联及结算状态，在已知未派发时幂等退还，在实际派发／结果未知时按真实阶段处理，不能盲目退还在途调用。保持原日期、有限／无限制、跨日实际派发和取消口径，不能把旧日预留退成新日额外余额，不重复记账或重复释放。具体字段由实施方在现有架构内确定，不增加用户配置或审批。复验本例、重复重启、跨日及模式切换，并重放已有 P3 预留边界。
 
@@ -318,7 +318,7 @@ R02 的原修改在本轮独立范围关闭；R01 遗留及 R03 已直接修正�
 
 ### 10.2 直接补修
 
-- [AgentGraphRunner](../../../apps/backend/src/application/agent-graph.ts)为内部工具按执行／回合／索引／工具名生成稳定步骤键，复用 [ConversationStore](../../../apps/backend/src/storage/conversation-store.ts)已有业务事件保存执行意图与结果凭据。成功结果重用、不重复执行或扣点；意图存在但结果未确认时保存 unknown，先核查实际记录，不盲目重做。状态工具的已确认补丁仍参与图结果。
+- [AgentGraphRunner](../../../apps/backend/src/application/conversation/agent-graph.ts)为内部工具按执行／回合／索引／工具名生成稳定步骤键，复用 [ConversationStore](../../../apps/backend/src/storage/conversation/conversation-store.ts)已有业务事件保存执行意图与结果凭据。成功结果重用、不重复执行或扣点；意图存在但结果未确认时保存 unknown，先核查实际记录，不盲目重做。状态工具的已确认补丁仍参与图结果。
 - 内部工具的完成凭据和计量使用同一业务事务；中断后只能确认意图的步骤，也按原调用时间补齐一次计量。继续使用既有任务／事件体系，没有新增恢复系统、schema、依赖、授权或用户配置。
 - 外部工具正常结果计量和启动补记统一采用持久预留的派发时间，不采用结果返回或重启时间；跨日补记不改变实际消费日期，不向新一天补发旧日点数。
 - 恢复仍在运行的模型调用时，在同一事务内保存已输出文字为 interrupted、登记原始证据及中断事件；原 executionId 保持。新一段输出单独保存，后续中断只收集最近中断标记后的新片段，不把旧片段重复拼接或覆盖。
@@ -385,12 +385,12 @@ R05 原修复在独立范围关闭；R04／R06 的本轮三处补修自验通过
 
 ### 11.3 共用原因与修复要求［P1，R04／R06 遗留］
 
-[executeInternal](../../../apps/backend/src/application/agent-graph.ts:716)只有再次访问同一执行／回合／索引时，才将 started-only 凭据转换为 unknown 并补记计量。第 10 节正式回归中的未知步骤直接再次调用了该节点，因此覆盖不到以下实际启动路径：
+[executeInternal](../../../apps/backend/src/application/conversation/agent-graph.ts:716)只有再次访问同一执行／回合／索引时，才将 started-only 凭据转换为 unknown 并补记计量。第 10 节正式回归中的未知步骤直接再次调用了该节点，因此覆盖不到以下实际启动路径：
 
 - 检查点未达到恢复条件，原任务进入新的延续执行，原内部步骤不会重放。
 - 完成凭据／计量写入失败后，原任务已是终态，启动不能也不应重新运行它。
 
-[启动协调](../../../apps/backend/src/application/conversation-service.ts:447)目前只显式处理外部工具预留及 `tool_calls`；[延续上下文](../../../apps/backend/src/application/conversation-service.ts:1756)也只遍历外部工具调用，没有纳入这些内部步骤凭据。因此内部操作事实和计量的恢复仍依赖执行路径，不能覆盖以上两例。
+[启动协调](../../../apps/backend/src/application/conversation/conversation-service.ts:447)目前只显式处理外部工具预留及 `tool_calls`；[延续上下文](../../../apps/backend/src/application/conversation/conversation-service.ts:1756)也只遍历外部工具调用，没有纳入这些内部步骤凭据。因此内部操作事实和计量的恢复仍依赖执行路径，不能覆盖以上两例。
 
 修复应在启动阶段独立协调本次进程中断遗留的内部开始／完成凭据，与是否能回到原节点分开：
 
@@ -409,10 +409,10 @@ R01～R03／R05 保持各自已关闭范围；R04／R06 的原补修复现通过
 
 ### 12.1 修改与边界
 
-- [ConversationStore](../../../apps/backend/src/storage/conversation-store.ts:1193)在启动阶段统一读取每个内部步骤的最新凭据，不再依赖图重新进入原工具节点。只有开始凭据时，保留原 executionId／stepKey，原子保存 `unknown / PROCESS_INTERRUPTED` 和应有计量；不重做业务操作、不再消耗点数。已有完成凭据时幂等补齐缺失计量，已有账本直接返回。
+- [ConversationStore](../../../apps/backend/src/storage/conversation/conversation-store.ts:1193)在启动阶段统一读取每个内部步骤的最新凭据，不再依赖图重新进入原工具节点。只有开始凭据时，保留原 executionId／stepKey，原子保存 `unknown / PROCESS_INTERRUPTED` 和应有计量；不重做业务操作、不再消耗点数。已有完成凭据时幂等补齐缺失计量，已有账本直接返回。
 - 使用原派发时间、counted 及原任务归属；兼容此前未保存 purpose／taskId 的凭据。用户任务不进入自主计量，无限制自主操作保留 counted=0；跨日补记仍属原日，重复启动不重复凭据或账本。预算暂停执行保持暂停、不提前结算尚可正常续行的步骤。
-- [ConversationService 启动协调](../../../apps/backend/src/application/conversation-service.ts:441)在任务恢复前结算这些凭据。失败或结束的任务只补档案，不创建替代任务、不运行模型；写入失败时事务回滚，保留开始凭据供后续启动重试。
-- [任务延续上下文](../../../apps/backend/src/application/conversation-service.ts:1794)加入原任务内部操作的结果、原执行及状态、派发时间和步骤身份。未知操作明确呈现 unknown；使用普通历史消息，不伪造提供方工具调用编号／参数。实际验收断言模型读到了步骤键和 unknown，而非只检查数据库。
+- [ConversationService 启动协调](../../../apps/backend/src/application/conversation/conversation-service.ts:441)在任务恢复前结算这些凭据。失败或结束的任务只补档案，不创建替代任务、不运行模型；写入失败时事务回滚，保留开始凭据供后续启动重试。
+- [任务延续上下文](../../../apps/backend/src/application/conversation/conversation-service.ts:1794)加入原任务内部操作的结果、原执行及状态、派发时间和步骤身份。未知操作明确呈现 unknown；使用普通历史消息，不伪造提供方工具调用编号／参数。实际验收断言模型读到了步骤键和 unknown，而非只检查数据库。
 - 业务变更仅两份 conversation 文件；复用既有事件、任务、账本，没有 schema、依赖、授权或用户配置变动。
 
 ### 12.2 验证与证据

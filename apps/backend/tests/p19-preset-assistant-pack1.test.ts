@@ -1,4 +1,4 @@
-import { APP_SCHEMA_VERSION, BUSINESS_SCHEMA_VERSION } from "../src/storage/schema.js";
+import { APP_SCHEMA_VERSION, BUSINESS_SCHEMA_VERSION } from "../src/storage/core/schema.js";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -22,13 +22,13 @@ import { parseBackendConfig, rolePaths } from "../src/bootstrap/config.js";
 import {
   XIA_CHENG_BUILTIN_KEY,
   XIA_CHENG_DISPLAY_NAME,
-} from "../src/application/preset-assistant.js";
+} from "../src/application/role/preset-assistant.js";
 import { ScriptedMemoryModel } from "../src/model/offline-memory.js";
 import type { ModelEvent, ModelRequest } from "../src/domain/model.js";
 import { HttpModelAdapter } from "../src/model/protocols.js";
 import type { OutfitRecord } from "../src/domain/appearance.js";
-import type { TaskRecord } from "../src/storage/role-store.js";
-import { RoleStorage } from "../src/storage/role-storage.js";
+import type { TaskRecord } from "../src/storage/role/role-store.js";
+import { RoleStorage } from "../src/storage/core/role-storage.js";
 
 function tempRoot(prefix = "nowadays-p19-"): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));

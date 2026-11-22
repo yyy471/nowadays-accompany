@@ -6,10 +6,10 @@
 
 | 编号 | 修复 | 证据 |
 | --- | --- | --- |
-| R01 | 规划与生成都用服务侧竞速等待，信号中止立即结算；关闭不被挂起的生成器拖住；晚到结果不再写盘或改状态 | [raceWithSignal](../../../apps/backend/src/application/scene-image-service.ts#L607) · [生成等待](../../../apps/backend/src/application/scene-image-service.ts#L406) |
+| R01 | 规划与生成都用服务侧竞速等待，信号中止立即结算；关闭不被挂起的生成器拖住；晚到结果不再写盘或改状态 | [raceWithSignal](../../../apps/backend/src/application/media/scene-image-service.ts#L607) · [生成等待](../../../apps/backend/src/application/media/scene-image-service.ts#L406) |
 | R02 | 规划模型调用先登记成功再发出；登记失败抛 `SCENE_IMAGE_PLAN_UNAVAILABLE`，任务可追溯失败且实际调用为 0 | [登记失败即返回](../../../apps/backend/src/scene/model-planner.ts#L109) |
 | R03 | 指定图层写入提示词与请求载荷，纯背景明确不描述人物；规划结果与指定图层冲突时拒绝，不送生成端 | [图层规则](../../../apps/backend/src/scene/model-planner.ts#L232) · [冲突拒绝](../../../apps/backend/src/scene/model-planner.ts#L188) |
-| R04 | 服饰只认句段记录的 `outfitId`，删除角色当前服饰回退；无记录按未知服饰、无参考图生成 | [服饰查询](../../../apps/backend/src/storage/scene-image-store.ts#L148) |
+| R04 | 服饰只认句段记录的 `outfitId`，删除角色当前服饰回退；无记录按未知服饰、无参考图生成 | [服饰查询](../../../apps/backend/src/storage/media/scene-image-store.ts#L148) |
 
 ## 2. R01 服务侧超时与关闭
 

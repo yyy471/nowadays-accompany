@@ -41,8 +41,8 @@
 
 修改：
 
-- [conversation-service.ts:81](../../../apps/backend/src/application/conversation-service.ts#L81) 增加 `detached` 集合。[:847](../../../apps/backend/src/application/conversation-service.ts#L847) 的 `supersedeWindow` 在中断旧执行后立即释放角色决策槽，并把旧执行移入 `detached`；旧工具结果仍由原执行保存，新消息可马上开始新决策。
-- [conversation-service.ts:461](../../../apps/backend/src/application/conversation-service.ts#L461) 在原执行结束时从 `detached` 移除并重新调度；[:832](../../../apps/backend/src/application/conversation-service.ts#L832) 的 `isIdle` 在仍有分离执行时保持非空闲，避免读侧把在途工具当作已结束。第二轮补充原任务的独立续行执行，见第 11.2 节。
+- [conversation-service.ts:81](../../../apps/backend/src/application/conversation/conversation-service.ts#L81) 增加 `detached` 集合。[:847](../../../apps/backend/src/application/conversation/conversation-service.ts#L847) 的 `supersedeWindow` 在中断旧执行后立即释放角色决策槽，并把旧执行移入 `detached`；旧工具结果仍由原执行保存，新消息可马上开始新决策。
+- [conversation-service.ts:461](../../../apps/backend/src/application/conversation/conversation-service.ts#L461) 在原执行结束时从 `detached` 移除并重新调度；[:832](../../../apps/backend/src/application/conversation/conversation-service.ts#L832) 的 `isIdle` 在仍有分离执行时保持非空闲，避免读侧把在途工具当作已结束。第二轮补充原任务的独立续行执行，见第 11.2 节。
 - 删除旧执行失败时自动将任务结束为 `EXECUTION_SUPERSEDED` 的分支；只有非 `TASK_ENDED` 的真实失败才结束任务，新消息不再改变原任务状态或资源延续。
 
 自验：
@@ -54,10 +54,10 @@
 
 修改：
 
-- [model-binding-resolver.ts:40](../../../apps/backend/src/application/model-binding-resolver.ts#L40) 增加 `refresh`：保留原 `resourceId` 以延续当前执行，重新解析同一资源的最新配置与同资源最新模型名。
-- [conversation-service.ts:506](../../../apps/backend/src/application/conversation-service.ts#L506) 的 `resolveModel` 在每一轮模型调用前刷新；[agent-graph.ts:170](../../../apps/backend/src/application/agent-graph.ts#L170) 每轮使用当前句柄和配置记录 `model_calls`。已发出的模型流继续使用其开始时的配置。
-- [agent-tools.ts:735](../../../apps/backend/src/application/agent-tools.ts#L735) 的 MCP 工具每次调用重新读取资源配置、按最新 `env` 建立临时连接并在调用后关闭；目录探测阶段的临时连接也会关闭。资源关闭后，原执行已装配的工具仍可继续，下一任务不再获得已关闭资源。第二轮已改为按配置指纹复用连接池，并以任务链为生命周期，见第 11.3 节。
-- [agent-tools.ts:139](../../../apps/backend/src/application/agent-tools.ts#L139) 的 `skillLibraryFor` 在每次 `skill_read` 时按资源最新 `sourcePath` 重建库；[agent-tools.ts:702](../../../apps/backend/src/application/agent-tools.ts#L702) 正文和引用文件都从最新目录读取。
+- [model-binding-resolver.ts:40](../../../apps/backend/src/application/resources/model-binding-resolver.ts#L40) 增加 `refresh`：保留原 `resourceId` 以延续当前执行，重新解析同一资源的最新配置与同资源最新模型名。
+- [conversation-service.ts:506](../../../apps/backend/src/application/conversation/conversation-service.ts#L506) 的 `resolveModel` 在每一轮模型调用前刷新；[agent-graph.ts:170](../../../apps/backend/src/application/conversation/agent-graph.ts#L170) 每轮使用当前句柄和配置记录 `model_calls`。已发出的模型流继续使用其开始时的配置。
+- [agent-tools.ts:735](../../../apps/backend/src/application/conversation/agent-tools.ts#L735) 的 MCP 工具每次调用重新读取资源配置、按最新 `env` 建立临时连接并在调用后关闭；目录探测阶段的临时连接也会关闭。资源关闭后，原执行已装配的工具仍可继续，下一任务不再获得已关闭资源。第二轮已改为按配置指纹复用连接池，并以任务链为生命周期，见第 11.3 节。
+- [agent-tools.ts:139](../../../apps/backend/src/application/conversation/agent-tools.ts#L139) 的 `skillLibraryFor` 在每次 `skill_read` 时按资源最新 `sourcePath` 重建库；[agent-tools.ts:702](../../../apps/backend/src/application/conversation/agent-tools.ts#L702) 正文和引用文件都从最新目录读取。
 
 自验：
 
@@ -71,8 +71,8 @@
 修改：
 
 - [domain/model.ts:100](../../../apps/backend/src/domain/model.ts#L100) 集中定义显式不完整判定：`incomplete=true` 或 `stopReason` 为 `length`、`max_tokens`、`max_output_tokens`、`incomplete`、`response.incomplete`。
-- [agent-graph.ts:239](../../../apps/backend/src/application/agent-graph.ts#L239) 在确认终态后、返回工具调用或提交前抛出 `MODEL_REQUEST_FAILED`（`reason: INCOMPLETE_RESPONSE`）；已输出文字保留为中断消息，工具请求不派发。
-- [memory-runtime.ts:390](../../../apps/backend/src/application/memory-runtime.ts#L390) 的默认 `HttpMemoryModel` 拒绝不完整终态，返回 `MEMORY_MODEL_INCOMPLETE`；记忆服务按失败批次处理，证据保持未完成并进入退避。
+- [agent-graph.ts:239](../../../apps/backend/src/application/conversation/agent-graph.ts#L239) 在确认终态后、返回工具调用或提交前抛出 `MODEL_REQUEST_FAILED`（`reason: INCOMPLETE_RESPONSE`）；已输出文字保留为中断消息，工具请求不派发。
+- [memory-runtime.ts:390](../../../apps/backend/src/application/memory/memory-runtime.ts#L390) 的默认 `HttpMemoryModel` 拒绝不完整终态，返回 `MEMORY_MODEL_INCOMPLETE`；记忆服务按失败批次处理，证据保持未完成并进入退避。
 
 自验：
 
@@ -84,7 +84,7 @@
 
 修改：
 
-- [agent-graph.ts:336](../../../apps/backend/src/application/agent-graph.ts#L336) 先执行工具并检查结果，仅在 `status === "success"` 时合并待提交补丁；参数形状保持 `{patch:{...}}`，与工具读取一致。失败结果只进入下一轮工具消息，不改变状态。
+- [agent-graph.ts:336](../../../apps/backend/src/application/conversation/agent-graph.ts#L336) 先执行工具并检查结果，仅在 `status === "success"` 时合并待提交补丁；参数形状保持 `{patch:{...}}`，与工具读取一致。失败结果只进入下一轮工具消息，不改变状态。
 
 自验：
 
@@ -95,8 +95,8 @@
 
 修改：
 
-- [memory-runtime.ts:397](../../../apps/backend/src/application/memory-runtime.ts#L397) 的默认系统提示列出 `create_event`、`update_event`、`refine_event`、`defer` 的必需字段与约束，包含 `expectedVersion`、`evidenceIds`、`experienceDate`、候选限制和空操作示例。
-- [memory-runtime.ts:351](../../../apps/backend/src/application/memory-runtime.ts#L351) 的 `RefreshingMemoryModel` 让默认 HTTP 记忆模型在每次 `form()` 时刷新同一资源的最新配置，与 R02 的派发前读取原则一致。
+- [memory-runtime.ts:397](../../../apps/backend/src/application/memory/memory-runtime.ts#L397) 的默认系统提示列出 `create_event`、`update_event`、`refine_event`、`defer` 的必需字段与约束，包含 `expectedVersion`、`evidenceIds`、`experienceDate`、候选限制和空操作示例。
+- [memory-runtime.ts:351](../../../apps/backend/src/application/memory/memory-runtime.ts#L351) 的 `RefreshingMemoryModel` 让默认 HTTP 记忆模型在每次 `form()` 时刷新同一资源的最新配置，与 R02 的派发前读取原则一致。
 
 自验：[p2-05-memory-chain.test.ts:311](../../../apps/backend/tests/p2-05-memory-chain.test.ts#L311) 使用只依据请求协议生成结果的离线模型：断言请求包含上述操作与字段，并由默认 `HttpMemoryModel` 经 `MemoryService` 保存事件、把证据标记为 `processed`，覆盖请求协议到实际写入的链路。
 
@@ -104,10 +104,10 @@
 
 修改：
 
-- [agent-tools.ts:47](../../../apps/backend/src/application/agent-tools.ts#L47) 的工具目录增加 `memory_correct_event`、`memory_correct_summary`、`memory_summary_evidence`。
-- [agent-tools.ts:397](../../../apps/backend/src/application/agent-tools.ts#L397) 与 [:465](../../../apps/backend/src/application/agent-tools.ts#L465) 按契约解析版本纠错参数，调用既有 `correctEvent`／`correctSummary`；原始消息和证据不被改写。
-- [agent-tools.ts:519](../../../apps/backend/src/application/agent-tools.ts#L519) 按摘要来源范围读取原始消息与工具证据，支持 `windowId`、`fromSequence`、`toSequence`、`limit`，并登记摘要召回。
-- [memory-store.ts:1059](../../../apps/backend/src/storage/memory-store.ts#L1059) 的 `listSummaryEvidence` 按摘要来源窗口与序号／时间范围查询，拒绝跨窗口混入。
+- [agent-tools.ts:47](../../../apps/backend/src/application/conversation/agent-tools.ts#L47) 的工具目录增加 `memory_correct_event`、`memory_correct_summary`、`memory_summary_evidence`。
+- [agent-tools.ts:397](../../../apps/backend/src/application/conversation/agent-tools.ts#L397) 与 [:465](../../../apps/backend/src/application/conversation/agent-tools.ts#L465) 按契约解析版本纠错参数，调用既有 `correctEvent`／`correctSummary`；原始消息和证据不被改写。
+- [agent-tools.ts:519](../../../apps/backend/src/application/conversation/agent-tools.ts#L519) 按摘要来源范围读取原始消息与工具证据，支持 `windowId`、`fromSequence`、`toSequence`、`limit`，并登记摘要召回。
+- [memory-store.ts:1059](../../../apps/backend/src/storage/memory/memory-store.ts#L1059) 的 `listSummaryEvidence` 按摘要来源窗口与序号／时间范围查询，拒绝跨窗口混入。
 
 自验：[p2-05-agent.test.ts:128](../../../apps/backend/tests/p2-05-agent.test.ts#L128) 在同一轮依次验证：摘要证据读取仅返回来源窗口原文；按当前版本纠错成功且版本递增；旧版本纠错返回 `MEMORY_VERSION_CONFLICT`；另一角色的事件返回 `MEMORY_EVENT_NOT_FOUND`；原始消息与摘要正文不变；摘要召回已登记。
 
@@ -115,10 +115,10 @@
 
 修改：
 
-- [memory-store.ts:749](../../../apps/backend/src/storage/memory-store.ts#L749) 的 `latestMaintenanceBatch` 以 `input_from_sequence=0 AND input_to_sequence=0` 标识无证据维护批次（[:389](../../../apps/backend/src/storage/memory-store.ts#L389) 的创建处约定该标记）。
-- [memory-store.ts:378](../../../apps/backend/src/storage/memory-store.ts#L378) 在无待处理证据但存在精炼候选时创建 0／0 维护批次并消费待处理触发；[memory-service.ts:174](../../../apps/backend/src/application/memory-service.ts#L174) 对维护批次允许一次空证据模型调用，由模型决定是否精炼，操作数为 0 也按完成处理。
-- [memory-service.ts:307](../../../apps/backend/src/application/memory-service.ts#L307) 的 `runPending` 在维护批次后停止本轮回圈，避免同角色并发批次。
-- [memory-runtime.ts:249](../../../apps/backend/src/application/memory-runtime.ts#L249) 依据最近维护批次的失败状态、`attemptCount` 与默认重试间隔计算下次重试时间；[:213](../../../apps/backend/src/application/memory-runtime.ts#L213) 的定时唤醒和 [:333](../../../apps/backend/src/application/memory-runtime.ts#L333) 的到期判断都纳入该时间。只有仍有精炼候选时才排定重试，避免空转。
+- [memory-store.ts:749](../../../apps/backend/src/storage/memory/memory-store.ts#L749) 的 `latestMaintenanceBatch` 以 `input_from_sequence=0 AND input_to_sequence=0` 标识无证据维护批次（[:389](../../../apps/backend/src/storage/memory/memory-store.ts#L389) 的创建处约定该标记）。
+- [memory-store.ts:378](../../../apps/backend/src/storage/memory/memory-store.ts#L378) 在无待处理证据但存在精炼候选时创建 0／0 维护批次并消费待处理触发；[memory-service.ts:174](../../../apps/backend/src/application/memory/memory-service.ts#L174) 对维护批次允许一次空证据模型调用，由模型决定是否精炼，操作数为 0 也按完成处理。
+- [memory-service.ts:307](../../../apps/backend/src/application/memory/memory-service.ts#L307) 的 `runPending` 在维护批次后停止本轮回圈，避免同角色并发批次。
+- [memory-runtime.ts:249](../../../apps/backend/src/application/memory/memory-runtime.ts#L249) 依据最近维护批次的失败状态、`attemptCount` 与默认重试间隔计算下次重试时间；[:213](../../../apps/backend/src/application/memory/memory-runtime.ts#L213) 的定时唤醒和 [:333](../../../apps/backend/src/application/memory/memory-runtime.ts#L333) 的到期判断都纳入该时间。只有仍有精炼候选时才排定重试，避免空转。
 
 自验：
 
@@ -133,8 +133,8 @@
 修改：
 
 - [errors.ts:356](../../../apps/backend/src/domain/errors.ts#L356) 增加 `TaskEndedError`（`TASK_ENDED`）。
-- [agent-graph.ts:461](../../../apps/backend/src/application/agent-graph.ts#L461) 的 `checkTask` 在模型轮次开始、工具轮次开始和每次工具调用前检查任务仍为 `active`；[:169](../../../apps/backend/src/application/agent-graph.ts#L169)、[:302](../../../apps/backend/src/application/agent-graph.ts#L302)、[:310](../../../apps/backend/src/application/agent-graph.ts#L310) 分别接入。已发出的调用继续接收结果，晚到结果不重启任务。
-- [conversation-service.ts](../../../apps/backend/src/application/conversation-service.ts) 的执行失败路径对 `TASK_ENDED` 不再重复结束任务。
+- [agent-graph.ts:461](../../../apps/backend/src/application/conversation/agent-graph.ts#L461) 的 `checkTask` 在模型轮次开始、工具轮次开始和每次工具调用前检查任务仍为 `active`；[:169](../../../apps/backend/src/application/conversation/agent-graph.ts#L169)、[:302](../../../apps/backend/src/application/conversation/agent-graph.ts#L302)、[:310](../../../apps/backend/src/application/conversation/agent-graph.ts#L310) 分别接入。已发出的调用继续接收结果，晚到结果不重启任务。
+- [conversation-service.ts](../../../apps/backend/src/application/conversation/conversation-service.ts) 的执行失败路径对 `TASK_ENDED` 不再重复结束任务。
 
 自验：[p2-05-mcp.test.ts:600](../../../apps/backend/tests/p2-05-mcp.test.ts#L600) 在第一轮真实 `workspace_write` 成功后通过正式 `finishTask` 结束任务，再让模型请求第二次写入；断言第二次工具未执行、`round-2.txt` 不存在、执行失败原因为 `TASK_ENDED`、任务保持 `completed`、仅有一个工具调用。
 
@@ -188,11 +188,11 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p2-05-review-fix2-20261104"
 
 修改：
 
-- [conversation-service.ts:88](../../../apps/backend/src/application/conversation-service.ts#L88) 增加待续行队列；[:421](../../../apps/backend/src/application/conversation-service.ts#L421) 的 `schedule` 先处理未完成用户消息，再启动队列中的任务续行；[:428](../../../apps/backend/src/application/conversation-service.ts#L428) 的 `startTaskContinuation` 为同一任务创建新执行并设置运行槽。
-- [conversation-store.ts:229](../../../apps/backend/src/storage/conversation-store.ts#L229) 的 `beginTaskContinuation` 校验角色状态版本、无运行中执行且任务仍为 `active`，插入 `trigger_type='tool_result'` 的执行并登记 `continues` 关系；不新建任务。
-- [conversation-service.ts:731](../../../apps/backend/src/application/conversation-service.ts#L731) 在续行执行的消息前附加任务档案；[:952](../../../apps/backend/src/application/conversation-service.ts#L952) 的 `buildContinuationToolMessages` 从 [role-store.ts:1019](../../../apps/backend/src/storage/role-store.ts#L1019) 的 `listTaskToolCalls` 重建该任务已发生工具调用及真实结果，再叠加最新近期消息。[agent-graph.ts:140](../../../apps/backend/src/application/agent-graph.ts#L140) 的执行输入接受 `taskId`，续行沿用原任务身份。
-- [conversation-service.ts:1024](../../../apps/backend/src/application/conversation-service.ts#L1024) 的系统提示说明当前在继续原任务及目标，要求不重做已成功步骤、不续写被中断回复，按最新上下文继续。
-- [conversation-service.ts:821](../../../apps/backend/src/application/conversation-service.ts#L821) 在旧执行因新消息被替代且原任务仍为 `active` 时排队续行；[:504](../../../apps/backend/src/application/conversation-service.ts#L504) 按 `taskId` 去重；[:1081](../../../apps/backend/src/application/conversation-service.ts#L1081) 的 `isIdle` 把待续行视为非空闲。续行成功完成后由同一执行路径把原任务标记为 `completed`。
+- [conversation-service.ts:88](../../../apps/backend/src/application/conversation/conversation-service.ts#L88) 增加待续行队列；[:421](../../../apps/backend/src/application/conversation/conversation-service.ts#L421) 的 `schedule` 先处理未完成用户消息，再启动队列中的任务续行；[:428](../../../apps/backend/src/application/conversation/conversation-service.ts#L428) 的 `startTaskContinuation` 为同一任务创建新执行并设置运行槽。
+- [conversation-store.ts:229](../../../apps/backend/src/storage/conversation/conversation-store.ts#L229) 的 `beginTaskContinuation` 校验角色状态版本、无运行中执行且任务仍为 `active`，插入 `trigger_type='tool_result'` 的执行并登记 `continues` 关系；不新建任务。
+- [conversation-service.ts:731](../../../apps/backend/src/application/conversation/conversation-service.ts#L731) 在续行执行的消息前附加任务档案；[:952](../../../apps/backend/src/application/conversation/conversation-service.ts#L952) 的 `buildContinuationToolMessages` 从 [role-store.ts:1019](../../../apps/backend/src/storage/role/role-store.ts#L1019) 的 `listTaskToolCalls` 重建该任务已发生工具调用及真实结果，再叠加最新近期消息。[agent-graph.ts:140](../../../apps/backend/src/application/conversation/agent-graph.ts#L140) 的执行输入接受 `taskId`，续行沿用原任务身份。
+- [conversation-service.ts:1024](../../../apps/backend/src/application/conversation/conversation-service.ts#L1024) 的系统提示说明当前在继续原任务及目标，要求不重做已成功步骤、不续写被中断回复，按最新上下文继续。
+- [conversation-service.ts:821](../../../apps/backend/src/application/conversation/conversation-service.ts#L821) 在旧执行因新消息被替代且原任务仍为 `active` 时排队续行；[:504](../../../apps/backend/src/application/conversation/conversation-service.ts#L504) 按 `taskId` 去重；[:1081](../../../apps/backend/src/application/conversation/conversation-service.ts#L1081) 的 `isIdle` 把待续行视为非空闲。续行成功完成后由同一执行路径把原任务标记为 `completed`。
 
 自验：
 
@@ -206,9 +206,9 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p2-05-review-fix2-20261104"
 
 修改：
 
-- [agent-tools.ts:750](../../../apps/backend/src/application/agent-tools.ts#L750) 以 `command`、`args`、排序后的 `env` 生成配置指纹；[:761](../../../apps/backend/src/application/agent-tools.ts#L761) 的 `McpConnectionPool` 在每次 `acquire` 时读取最新配置（[:771](../../../apps/backend/src/application/agent-tools.ts#L771)）：指纹未变复用同一客户端与服务进程，变化时退休旧连接并为后续调用建立新连接。
-- [agent-tools.ts:806](../../../apps/backend/src/application/agent-tools.ts#L806) 以活跃调用计数延迟关闭；[:831](../../../apps/backend/src/application/agent-tools.ts#L831) 的 `retire` 仅在无在途调用时关闭旧客户端，已发出的调用仍从旧配置收取结果。[agent-tools.ts:141](../../../apps/backend/src/application/agent-tools.ts#L141) 在目录释放时关闭全部连接。
-- [conversation-service.ts:92](../../../apps/backend/src/application/conversation-service.ts#L92) 增加按任务登记的工具目录缓存。续行执行优先复用同一任务的目录与连接池（[:665](../../../apps/backend/src/application/conversation-service.ts#L665)）；新任务结束时登记目录（[:722](../../../apps/backend/src/application/conversation-service.ts#L722)），任务完成或失败后释放（[:821](../../../apps/backend/src/application/conversation-service.ts#L821)）；服务关闭时释放全部残留目录（[:391](../../../apps/backend/src/application/conversation-service.ts#L391)）。因此同一任务链跨续行执行保持同一 MCP 服务会话，下一任务重新装配。
+- [agent-tools.ts:750](../../../apps/backend/src/application/conversation/agent-tools.ts#L750) 以 `command`、`args`、排序后的 `env` 生成配置指纹；[:761](../../../apps/backend/src/application/conversation/agent-tools.ts#L761) 的 `McpConnectionPool` 在每次 `acquire` 时读取最新配置（[:771](../../../apps/backend/src/application/conversation/agent-tools.ts#L771)）：指纹未变复用同一客户端与服务进程，变化时退休旧连接并为后续调用建立新连接。
+- [agent-tools.ts:806](../../../apps/backend/src/application/conversation/agent-tools.ts#L806) 以活跃调用计数延迟关闭；[:831](../../../apps/backend/src/application/conversation/agent-tools.ts#L831) 的 `retire` 仅在无在途调用时关闭旧客户端，已发出的调用仍从旧配置收取结果。[agent-tools.ts:141](../../../apps/backend/src/application/conversation/agent-tools.ts#L141) 在目录释放时关闭全部连接。
+- [conversation-service.ts:92](../../../apps/backend/src/application/conversation/conversation-service.ts#L92) 增加按任务登记的工具目录缓存。续行执行优先复用同一任务的目录与连接池（[:665](../../../apps/backend/src/application/conversation/conversation-service.ts#L665)）；新任务结束时登记目录（[:722](../../../apps/backend/src/application/conversation/conversation-service.ts#L722)），任务完成或失败后释放（[:821](../../../apps/backend/src/application/conversation/conversation-service.ts#L821)）；服务关闭时释放全部残留目录（[:391](../../../apps/backend/src/application/conversation/conversation-service.ts#L391)）。因此同一任务链跨续行执行保持同一 MCP 服务会话，下一任务重新装配。
 - 目录复用不改变配置读取时机：模型、MCP 和 Skill 内容仍按派发读取最新配置；任务链内关闭资源时，已装配工具继续可用至链条结束，新任务不再获得该资源。
 
 自验：
@@ -226,9 +226,9 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p2-05-review-fix2-20261104"
 
 修改：
 
-- [memory-runtime.ts:282](../../../apps/backend/src/application/memory-runtime.ts#L282) 的 `maintenanceCheckAt`：存在精炼候选且没有维护批次时返回当前时间，首次候选可立即自动检查；最近维护成功则在其完成后 `MAINTENANCE_RECHECK_MS`（[:39](../../../apps/backend/src/application/memory-runtime.ts#L39)，1 小时）再检查；失败时交给重试路径。
-- [memory-runtime.ts:257](../../../apps/backend/src/application/memory-runtime.ts#L257) 的 `maintenanceRetryAt` 仅在仍有候选时按累计 `attemptCount` 索引既有退避表；[:365](../../../apps/backend/src/application/memory-runtime.ts#L365) 的 `runOnce` 在无待处理触发时按重试或检查到期运行 `maintenanceOnly` 批次，[:214](../../../apps/backend/src/application/memory-runtime.ts#L214) 的定时器同时纳入两者，避免紧密循环。
-- [memory-store.ts:355](../../../apps/backend/src/storage/memory-store.ts#L355) 接受 `maintenanceOnly`；[:466](../../../apps/backend/src/storage/memory-store.ts#L466) 的 `startMaintenanceBatch` 创建 0／0 维护批次，不使用未达阈值的证据；[:498](../../../apps/backend/src/storage/memory-store.ts#L498) 以 `consecutiveMaintenanceFailures`（[:518](../../../apps/backend/src/storage/memory-store.ts#L518)）写入累计失败次数，计数会跨批保留直到维护成功。
+- [memory-runtime.ts:282](../../../apps/backend/src/application/memory/memory-runtime.ts#L282) 的 `maintenanceCheckAt`：存在精炼候选且没有维护批次时返回当前时间，首次候选可立即自动检查；最近维护成功则在其完成后 `MAINTENANCE_RECHECK_MS`（[:39](../../../apps/backend/src/application/memory/memory-runtime.ts#L39)，1 小时）再检查；失败时交给重试路径。
+- [memory-runtime.ts:257](../../../apps/backend/src/application/memory/memory-runtime.ts#L257) 的 `maintenanceRetryAt` 仅在仍有候选时按累计 `attemptCount` 索引既有退避表；[:365](../../../apps/backend/src/application/memory/memory-runtime.ts#L365) 的 `runOnce` 在无待处理触发时按重试或检查到期运行 `maintenanceOnly` 批次，[:214](../../../apps/backend/src/application/memory/memory-runtime.ts#L214) 的定时器同时纳入两者，避免紧密循环。
+- [memory-store.ts:355](../../../apps/backend/src/storage/memory/memory-store.ts#L355) 接受 `maintenanceOnly`；[:466](../../../apps/backend/src/storage/memory/memory-store.ts#L466) 的 `startMaintenanceBatch` 创建 0／0 维护批次，不使用未达阈值的证据；[:498](../../../apps/backend/src/storage/memory/memory-store.ts#L498) 以 `consecutiveMaintenanceFailures`（[:518](../../../apps/backend/src/storage/memory/memory-store.ts#L518)）写入累计失败次数，计数会跨批保留直到维护成功。
 
 自验：
 
@@ -243,9 +243,9 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p2-05-review-fix2-20261104"
 
 修改：
 
-- [agent-graph.ts:309](../../../apps/backend/src/application/agent-graph.ts#L309) 定义统一的 `checkDispatch`，同时校验执行仍在运行与任务仍为 `active`；状态工具、内部工具和外部分别在 [:340](../../../apps/backend/src/application/agent-graph.ts#L340)、[:363](../../../apps/backend/src/application/agent-graph.ts#L363)、[:511](../../../apps/backend/src/application/agent-graph.ts#L511) 获得该回调。
-- [agent-tools.ts:875](../../../apps/backend/src/application/agent-tools.ts#L875) 在异步 `acquire`（可能包含建连）完成后、[:876](../../../apps/backend/src/application/agent-tools.ts#L876) 的 `callTool` 之前调用 `checkDispatch`；任务结束或执行被替代时不会派发。
-- [agent-tools.ts:893](../../../apps/backend/src/application/agent-tools.ts#L893) 将 `TASK_ENDED`／`EXECUTION_SUPERSEDED` 原样抛回；[agent-graph.ts:516](../../../apps/backend/src/application/agent-graph.ts#L516) 保存该工具调用的失败结果并中断执行，晚到结果不重发。
+- [agent-graph.ts:309](../../../apps/backend/src/application/conversation/agent-graph.ts#L309) 定义统一的 `checkDispatch`，同时校验执行仍在运行与任务仍为 `active`；状态工具、内部工具和外部分别在 [:340](../../../apps/backend/src/application/conversation/agent-graph.ts#L340)、[:363](../../../apps/backend/src/application/conversation/agent-graph.ts#L363)、[:511](../../../apps/backend/src/application/conversation/agent-graph.ts#L511) 获得该回调。
+- [agent-tools.ts:875](../../../apps/backend/src/application/conversation/agent-tools.ts#L875) 在异步 `acquire`（可能包含建连）完成后、[:876](../../../apps/backend/src/application/conversation/agent-tools.ts#L876) 的 `callTool` 之前调用 `checkDispatch`；任务结束或执行被替代时不会派发。
+- [agent-tools.ts:893](../../../apps/backend/src/application/conversation/agent-tools.ts#L893) 将 `TASK_ENDED`／`EXECUTION_SUPERSEDED` 原样抛回；[agent-graph.ts:516](../../../apps/backend/src/application/conversation/agent-graph.ts#L516) 保存该工具调用的失败结果并中断执行，晚到结果不重发。
 
 自验：
 

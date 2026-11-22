@@ -5,7 +5,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createBackendApp, listen } from "../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths } from "../src/bootstrap/config.js";
-import { RoleStore } from "../src/storage/role-store.js";
+import { RoleStore } from "../src/storage/role/role-store.js";
 
 const runId = `p1-independent-${Date.now()}-${randomUUID().slice(0, 8)}`;
 const outputRoot = path.resolve("test-results", runId);

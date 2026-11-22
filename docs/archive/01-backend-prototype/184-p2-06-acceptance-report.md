@@ -82,7 +82,7 @@ M04 正常完成真实中文回复；M05 在已启用 Skill 和 MCP 的环境中
 
 ### R05 [P1] 重新打开：记忆提示词的标签键与保存契约不一致
 
-位置：[memory-runtime.ts:432](../../../apps/backend/src/application/memory-runtime.ts#L432)、[示例 :442](../../../apps/backend/src/application/memory-runtime.ts#L442)；对应 [memory.ts:15](../../../apps/backend/src/domain/memory.ts#L15)、174 第 612 行的固定标签维度。
+位置：[memory-runtime.ts:432](../../../apps/backend/src/application/memory/memory-runtime.ts#L432)、[示例 :442](../../../apps/backend/src/application/memory/memory-runtime.ts#L442)；对应 [memory.ts:15](../../../apps/backend/src/domain/memory.ts#L15)、174 第 612 行的固定标签维度。
 
 提示词及例子要求 `people/topics/places/emotions/sources`，而 `memoryFormationResponseSchema` 严格接收 `person/topic/place/emotion/source`。真实模型遵照提示词输出复数键，保存时得到 `MEMORY_OPERATION_INVALID`，批次 failed、5 条证据 failed、事件数 0。
 
@@ -92,7 +92,7 @@ M04 正常完成真实中文回复；M05 在已启用 Skill 和 MCP 的环境中
 
 ### R09 [P2] 新增：连接测试额度 16 导致可用的思考模型误报失败
 
-位置：[model-service.ts:53](../../../apps/backend/src/application/model-service.ts#L53)。
+位置：[model-service.ts:53](../../../apps/backend/src/application/resources/model-service.ts#L53)。
 
 连接测试固定 `maxOutputTokens:16`。同一地址、密钥和模型下，按钮返回 `MODEL_REQUEST_FAILED`／“模型连接测试未收到有效输出”，而实际对话和工具调用均成功。
 

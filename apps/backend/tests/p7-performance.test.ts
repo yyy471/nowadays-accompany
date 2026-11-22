@@ -4,13 +4,13 @@ import test from "node:test";
 import { listen } from "../src/bootstrap/app.js";
 import {
   parseSegmentAnnotationOutput,
-} from "../src/application/segment-annotation-service.js";
+} from "../src/application/conversation/segment-annotation-service.js";
 import type { MessageSegmentRecord } from "../src/domain/conversation.js";
 import type { OutfitRecord } from "../src/domain/appearance.js";
 import { segmentMessage, settledMessageSegments } from "../src/domain/message-segments.js";
 import type { ModelEvent, ModelRequest } from "../src/domain/model.js";
 import { resolveCredential } from "../src/model/credentials.js";
-import { ConversationStore } from "../src/storage/conversation-store.js";
+import { ConversationStore } from "../src/storage/conversation/conversation-store.js";
 import {
   createFixture,
   createFixtureWithModel,

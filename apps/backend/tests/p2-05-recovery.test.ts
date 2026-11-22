@@ -5,9 +5,9 @@ import { createBackendApp } from "../src/bootstrap/app.js";
 import { parseBackendConfig } from "../src/bootstrap/config.js";
 import type { MemoryFormationInput } from "../src/domain/memory.js";
 import { ScriptedMemoryModel } from "../src/model/offline-memory.js";
-import { ConversationStore } from "../src/storage/conversation-store.js";
-import { registerMessageEvidence } from "../src/storage/evidence.js";
-import { MemoryStore } from "../src/storage/memory-store.js";
+import { ConversationStore } from "../src/storage/conversation/conversation-store.js";
+import { registerMessageEvidence } from "../src/storage/memory/evidence.js";
+import { MemoryStore } from "../src/storage/memory/memory-store.js";
 import {
   GatedChatModel,
   ScriptedChatModel,

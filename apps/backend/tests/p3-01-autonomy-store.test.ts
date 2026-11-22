@@ -5,8 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { parseBackendConfig, rolePaths } from "../src/bootstrap/config.js";
-import { AutonomyStore } from "../src/storage/autonomy-store.js";
-import { RoleStorage } from "../src/storage/role-storage.js";
+import { AutonomyStore } from "../src/storage/conversation/autonomy-store.js";
+import { RoleStorage } from "../src/storage/core/role-storage.js";
 
 function createRoleStorage(): {
   root: string;

@@ -18,8 +18,8 @@ const backend = fileURLToPath(new URL("../", import.meta.url));
 const load = (module) => import(pathToFileURL(path.resolve(backend, source, module)).href);
 const { createBackendApp } = await load("bootstrap/app.ts");
 const { parseBackendConfig, rolePaths } = await load("bootstrap/config.ts");
-const { RoleStorage } = await load("storage/role-storage.ts");
-const { MemoryStore } = await load("storage/memory-store.ts");
+const { RoleStorage } = await load("storage/core/role-storage.ts");
+const { MemoryStore } = await load("storage/memory/memory-store.ts");
 const lines = fs.readFileSync(credentials, "utf8").split(/\r?\n/);
 const supplied = (host) => {
   const index = lines.findIndex(line => line.includes("https://" + host + "/"));
@@ -231,7 +231,7 @@ try {
     await runDailyBoundary(turn);
   } else if (boundaryGroup) {
     const { followupTime, locateCompletedBoundary } = await import("./role-boundary-delivery.mjs");
-    const { ConversationStore } = await load("storage/conversation-store.ts");
+    const { ConversationStore } = await load("storage/conversation/conversation-store.ts");
     report.fixtures = [];
     report.boundaryFailures = [];
     const anchor = Date.now();

@@ -4,7 +4,7 @@ import {
   resolveClaimedModelBinding,
   type ModelCallClaim,
   type ModelMaintenanceGate,
-} from "../src/application/model-maintenance.js";
+} from "../src/application/resources/model-maintenance.js";
 
 /** 可逐次放行的维护门：每次 wait 记录资源并等测试放行。 */
 function gated(resources: string[]): {

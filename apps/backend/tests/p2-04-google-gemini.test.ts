@@ -1,4 +1,4 @@
-import { APP_SCHEMA_VERSION, BUSINESS_SCHEMA_VERSION } from "../src/storage/schema.js";
+import { APP_SCHEMA_VERSION, BUSINESS_SCHEMA_VERSION } from "../src/storage/core/schema.js";
 import assert from "node:assert/strict";
 import { createVerify, generateKeyPairSync, randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -11,8 +11,8 @@ import { createBackendApp, listen } from "../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths } from "../src/bootstrap/config.js";
 import { APPLICATION_TRIGGER_INPUT, isIncompleteCompletion, type ModelEvent, type ModelMessage, type ModelToolSpec } from "../src/domain/model.js";
 import { HttpModelAdapter } from "../src/model/protocols.js";
-import { AppStore } from "../src/storage/app-store.js";
-import { RoleStore } from "../src/storage/role-store.js";
+import { AppStore } from "../src/storage/core/app-store.js";
+import { RoleStore } from "../src/storage/role/role-store.js";
 
 interface RecordedRequest {
   method: string;

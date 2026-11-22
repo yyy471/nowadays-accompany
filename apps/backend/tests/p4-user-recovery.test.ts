@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { createBackendApp, type BackendApp } from "../src/bootstrap/app.js";
 import { parseBackendConfig } from "../src/bootstrap/config.js";
-import { ConversationStore } from "../src/storage/conversation-store.js";
+import { ConversationStore } from "../src/storage/conversation/conversation-store.js";
 import {
   ScriptedChatModel,
   createFixtureWithModel,

@@ -4,8 +4,8 @@
 
 ## 1. 修复内容
 
-- 在 [memory-store.ts](../../../apps/backend/src/storage/memory-store.ts) 新增 `listFinishedTasksNeedingTrigger` 与 `reconcileFinishedTaskTriggers`：以已持久化的 `tasks`（`status IN ('completed', 'failed')`）、工具结果 `evidence_records`（`er.task_id = t.task_id`）及 `evidence_processing.status = 'pending'` 为准，为缺少未消费 `task_end` 触发的已结束任务按事务幂等补写 `task_end` 触发；已通过 `keepHistory=1`/`0` 删除成功的角色已从 `app.db` 的 `roles` 移除，重启恢复不会对已删除角色触发整理。
-- 在 [memory-runtime.ts](../../../apps/backend/src/application/memory-runtime.ts) 的 `recoverOnStartup` 补齐对账：先调用 `store.reconcileFinishedTaskTriggers` 补写缺失的 `task_end` 触发（若存储触发写仍受阻则本地捕获异常），再同时检查 `listPendingTriggers` 与 `listFinishedTasksNeedingTrigger` 以决定启动后是否排队唤醒检查，避免故障直到重启后唤醒前才恢复时被遗漏。
+- 在 [memory-store.ts](../../../apps/backend/src/storage/memory/memory-store.ts) 新增 `listFinishedTasksNeedingTrigger` 与 `reconcileFinishedTaskTriggers`：以已持久化的 `tasks`（`status IN ('completed', 'failed')`）、工具结果 `evidence_records`（`er.task_id = t.task_id`）及 `evidence_processing.status = 'pending'` 为准，为缺少未消费 `task_end` 触发的已结束任务按事务幂等补写 `task_end` 触发；已通过 `keepHistory=1`/`0` 删除成功的角色已从 `app.db` 的 `roles` 移除，重启恢复不会对已删除角色触发整理。
+- 在 [memory-runtime.ts](../../../apps/backend/src/application/memory/memory-runtime.ts) 的 `recoverOnStartup` 补齐对账：先调用 `store.reconcileFinishedTaskTriggers` 补写缺失的 `task_end` 触发（若存储触发写仍受阻则本地捕获异常），再同时检查 `listPendingTriggers` 与 `listFinishedTasksNeedingTrigger` 以决定启动后是否排队唤醒检查，避免故障直到重启后唤醒前才恢复时被遗漏。
 - 在 `notifyTaskFinished` 与 `persistTaskEndTrigger` 统一即时持久化逻辑：无论角色是否处于删除保护期，任务结束均先尝试写入 `task_end` 触发，区分 `"persisted"` / `"none"` / `"failed"`，仅在 `"failed"` 时转入内存暂存 `deferredTaskIds`；非删除状态下入队 `pendingScheduled` 检查，不再依赖可能因维护提前返回的 `pendingTaskIds`。
 - 在 `runOnce` 先执行 `store.reconcileFinishedTaskTriggers`，再吸收 `deferredTaskIds` 与本次 `taskIds`，并仅在相关写库完成后移除本次快照对应的 `deferredTaskIds`，避免提前清队列导致写入失败或并发通知丢失。
 

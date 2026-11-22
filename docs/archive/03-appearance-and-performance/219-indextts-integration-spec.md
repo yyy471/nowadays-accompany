@@ -40,7 +40,7 @@
 | --- | --- |
 | R01 合成成功校验 | 上游返回 `200 audio/wav` 加普通文本，适配器将文本作为音频成功返回。应对照 WAV 契约校验有效响应并限制缓冲大小，拒绝伪造媒体类型或损坏内容。 [响应校验](../../../apps/backend/src/tts/indextts-client.ts#L60) |
 | R02 错误响应的超时和取消 | 上游先发出 HTTP 500 和半截 JSON 后停住，实际超时和主动取消都被错误归类为 `TTS_SYNTHESIS_FAILED`。成功响应体读到一半超时的对照用例能返回 `TTS_TIMEOUT`。应让读取错误响应体也保留 504 超时和取消语义。 [错误体解析](../../../apps/backend/src/tts/indextts-client.ts#L99) |
-| R03 服务根地址校验 | 当前保存校验接受查询串。`baseUrl` 形如 `/bridge?name=x` 时，适配器实际请求 `/tts`，丢掉 `/bridge`。首版根地址应拒绝查询串、片段，允许路径前缀时应验证 `/bridge/tts` 的拼接结果。 [根地址校验](../../../apps/backend/src/application/voice-service.ts#L316) · [路径拼接](../../../apps/backend/src/tts/indextts-client.ts#L95) |
+| R03 服务根地址校验 | 当前保存校验接受查询串。`baseUrl` 形如 `/bridge?name=x` 时，适配器实际请求 `/tts`，丢掉 `/bridge`。首版根地址应拒绝查询串、片段，允许路径前缀时应验证 `/bridge/tts` 的拼接结果。 [根地址校验](../../../apps/backend/src/application/media/voice-service.ts#L316) · [路径拼接](../../../apps/backend/src/tts/indextts-client.ts#L95) |
 
 独立样例与结果在 `apps/backend/test-results/review-218-tts/`，统一离线报告在 `apps/backend/test-results/p5-2026-11-09T02-35-13-984Z-0af668d9/summary.json`。真实接入的验收应使用可启动的桥接、同一份参考音频，依次验证健康状态、候选试听、保存后的按段语音、旁白跳过，以及切换窗口时取消等待。应记录服务版本、权重、实际语言与语速效果、冷启动时间和正常合成时间。本轮只更新文档，业务代码和正式测试未改，未提交或推送。
 

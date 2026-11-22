@@ -1,4 +1,4 @@
-import type { RoleActivityService } from "../application/role-activity-service.js";
+import type { RoleActivityService } from "../application/role/role-activity-service.js";
 import type { JsonResponse } from "./errors.js";
 import type { Router } from "./router.js";
 

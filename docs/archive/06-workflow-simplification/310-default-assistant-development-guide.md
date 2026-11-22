@@ -10,7 +10,7 @@
 
 ### 1.1 Schema 扩展与身份识别
 
-现行 [schema.ts](../../../apps/backend/src/storage/schema.ts#L141-L173) 尚无内置标识与独立只读展示介绍字段。需按既有版本迁移机制推进 `APP_SCHEMA_VERSION` 与 `BUSINESS_SCHEMA_VERSION`：
+现行 [schema.ts](../../../apps/backend/src/storage/core/schema.ts#L141-L173) 尚无内置标识与独立只读展示介绍字段。需按既有版本迁移机制推进 `APP_SCHEMA_VERSION` 与 `BUSINESS_SCHEMA_VERSION`：
 
 1. **`app.sqlite`（`roles` 表）**：新增 `builtin_key TEXT`（唯一部分索引 `WHERE builtin_key IS NOT NULL`），夏澄固定为 `"xiacheng"`；`GET /v1/roles` 与 `GET /v1/roles/:roleId` 返回 `isBuiltin: boolean` 与 `builtinKey: string | null`。
 2. **`business.sqlite`（`roles` 表）**：新增 `builtin_key TEXT` 与独立展示字段 `bio_text TEXT NOT NULL DEFAULT ''`（供关系页「角色介绍」只读展示预置介绍）；**不得**再用 `definition_text` 同时充当只读展示介绍与可编辑人设。
@@ -19,14 +19,14 @@
 
 ### 1.2 唯一实例、共存与启动初始化
 
-- **后端启动初始化**：在后端启动链（`RoleService` 复用 [role-service.ts](../../../apps/backend/src/application/role-service.ts#L66-L153) 四步初始化）中按 `builtin_key = 'xiacheng'` 查找内置实例：
+- **后端启动初始化**：在后端启动链（`RoleService` 复用 [role-service.ts](../../../apps/backend/src/application/role/role-service.ts#L66-L153) 四步初始化）中按 `builtin_key = 'xiacheng'` 查找内置实例：
   - **不存在时**：生成或分配稳定 `roleId`，写入 `builtin_key = 'xiacheng'`、`displayName = '夏澄'`、预置 `bioText`、初始可编辑 `definitionText`、初始 `stopped` 活动态（沿用 `markCreatedStopped` 与首次模型引导规则）及预置默认服饰／差分；
   - **初始化中断（`initializing` / `failed`）或重启重试时**：沿用原 `roleId` 调用 `initializeRole` 幂等补齐缺失数据库、主窗口或预置外观；
   - **升级与同名共存**：同一数据目录最多创建一个 `builtin_key = 'xiacheng'` 实例；既有历史库中若已存在名为「夏澄」但 `builtin_key IS NULL` 的普通角色，保持其原 `roleId` 与数据不动，不将其强行改写为内置实例。升级与重启保留夏澄已保存的角色卡正文、模型与扩展绑定、自定义服饰、记忆及对话历史。
 
 ### 1.3 人设分层注入
 
-[ConversationService.buildSystemPrompt](../../../apps/backend/src/application/conversation-service.ts#L2858) 对 `builtinKey === 'xiacheng'` 的角色采用**底座＋补充正文**两层组装：
+[ConversationService.buildSystemPrompt](../../../apps/backend/src/application/conversation/conversation-service.ts#L2858) 对 `builtinKey === 'xiacheng'` 的角色采用**底座＋补充正文**两层组装：
 
 1. **不可覆盖的系统底座（后端固定注入）**：包含默认通用办事助手定位、真实调用工具与严禁编造结果约束、多步推进分段续行与 `task_pause` 澄清规范，以及第 6 节的「运行中自改禁区与指导用户去设置页」规则。
 2. **用户可编辑的角色卡正文（`definitionText`）**：作为夏澄的性格、语气、称呼与协作偏好注入，无论用户如何修订或清空补充内容，都不覆盖系统底座职责。
@@ -39,11 +39,11 @@
 
 | 操作对象 / 路由 | 夏澄（`builtin_key = 'xiacheng'`）约束 | 普通角色 |
 | --- | --- | --- |
-| `DELETE /v1/roles/:roleId`（[RoleDeletionService](../../../apps/backend/src/application/role-deletion-service.ts#L76-L122)） | **拒绝删除**，在处置前返回 `409 BUILTIN_ROLE_PROTECTED`。 | 允许删除（包括删光所有普通角色仅保留夏澄；`length <= 1` 仅作总角色兜底）。 |
+| `DELETE /v1/roles/:roleId`（[RoleDeletionService](../../../apps/backend/src/application/role/role-deletion-service.ts#L76-L122)） | **拒绝删除**，在处置前返回 `409 BUILTIN_ROLE_PROTECTED`。 | 允许删除（包括删光所有普通角色仅保留夏澄；`length <= 1` 仅作总角色兜底）。 |
 | `PATCH /v1/roles/:roleId/definition`（[schemas.ts](../../../apps/backend/src/http/schemas.ts#L37-L47)） | **允许**修改 `definition`（角色卡正文／payload）；若提交与「夏澄」不同的 `displayName`，拒绝返回 `409 BUILTIN_FIELD_LOCKED`（同值幂等或省略放行）；不接受改写只读 `bioText`。 | 正常修改 `displayName` 与 `definition`。 |
-| `PUT /v1/roles/:roleId/bindings`（[ResourceService](../../../apps/backend/src/application/resource-service.ts#L563-L598)） | **放开** `chat_model`、`mcp`、`skill` 绑定；`memory_model` 沿用既有回退规则（未单独绑定时继承 `chat_model`；如禁止单独绑定 `memory_model` 则统一在校验中拒绝非空 `memory_model` 或随现有回退规则处理）。 | 正常配置全部能力绑定。 |
+| `PUT /v1/roles/:roleId/bindings`（[ResourceService](../../../apps/backend/src/application/resources/resource-service.ts#L563-L598)） | **放开** `chat_model`、`mcp`、`skill` 绑定；`memory_model` 沿用既有回退规则（未单独绑定时继承 `chat_model`；如禁止单独绑定 `memory_model` 则统一在校验中拒绝非空 `memory_model` 或随现有回退规则处理）。 | 正常配置全部能力绑定。 |
 | `PUT /v1/roles/:roleId/autonomy/budget`、语音 `/voice*`、生图 `/scene-image` | **放开**，走现有 `ROLE_CONFIG_WRITES` 守卫与业务规则。 | 正常配置。 |
-| 外观服饰与差分（`appearance-routes.ts` / [AppearanceService](../../../apps/backend/src/application/appearance-service.ts)） | **允许**新增自定义服饰（`isPreset = false`）并对自添服饰正常增删改；**禁止**对 `is_preset = 1` 的预置服饰或其预置 `home`／`sprite` 素材执行改名、替换、上传覆盖或删除（返回 `409 PRESET_APPEARANCE_LOCKED`）。 | 正常增删改，保留 `LAST_OUTFIT_REQUIRED`。 |
+| 外观服饰与差分（`appearance-routes.ts` / [AppearanceService](../../../apps/backend/src/application/media/appearance-service.ts)） | **允许**新增自定义服饰（`isPreset = false`）并对自添服饰正常增删改；**禁止**对 `is_preset = 1` 的预置服饰或其预置 `home`／`sprite` 素材执行改名、替换、上传覆盖或删除（返回 `409 PRESET_APPEARANCE_LOCKED`）。 | 正常增删改，保留 `LAST_OUTFIT_REQUIRED`。 |
 
 > **附带守卫检查**：[config-writes.ts](../../../apps/backend/src/http/config-writes.ts) 当前覆盖 15 个 `ROLE_CONFIG_WRITES` 路由；夏澄相关的预置校验应挂在领域／服务层（在 `roleWrite` 验证角色已停止后、实际落库前拒绝并返回可识别错误码，不留未受保护直写旁路）。
 
@@ -59,7 +59,7 @@
 2. [Relations.tsx](../../../apps/desktop/renderer/src/pages/Relations.tsx#L295-L300) 与 [load-dossier.ts](../../../apps/desktop/renderer/src/relations/load-dossier.ts#L37-L47)：
    - 关系页「角色介绍」对内置角色优先展示只读预置介绍 `bioText`（可附带展示当前设定摘要），避免用户编辑性格正文后覆盖官方介绍；
    - 夏澄初始化时自动激活默认预置服饰（写入初始 `state.outfitId`），防止进入对话时误触发 `awaitingInitialOutfit` 卡在「正在换装」或因无 `home` 图在关系页显示空白。
-3. **日夜切换与预置差分协同**：在夏澄新立绘与服饰重做完成前，首版预置默认服饰与差分复用现有夏澄资源注册进后端受管目录（复用 [AppearanceService](../../../apps/backend/src/application/appearance-service.ts#L76) 与 [SegmentAnnotationService](../../../apps/backend/src/application/segment-annotation-service.ts#L385)）；同时明确日夜主题与句段差分的取图协同——当仅命中基础形象而非特定句段差分时，支持夏澄按日夜主题切换对应基础立绘，后续重做正式服饰资产时直接替换预置资源目录并按 `is_preset = 1` 同步更新受管副本。
+3. **日夜切换与预置差分协同**：在夏澄新立绘与服饰重做完成前，首版预置默认服饰与差分复用现有夏澄资源注册进后端受管目录（复用 [AppearanceService](../../../apps/backend/src/application/media/appearance-service.ts#L76) 与 [SegmentAnnotationService](../../../apps/backend/src/application/conversation/segment-annotation-service.ts#L385)）；同时明确日夜主题与句段差分的取图协同——当仅命中基础形象而非特定句段差分时，支持夏澄按日夜主题切换对应基础立绘，后续重做正式服饰资产时直接替换预置资源目录并按 `is_preset = 1` 同步更新受管副本。
 
 ### 3.2 打包与资产定位
 
@@ -88,7 +88,7 @@
 ### 5.1 单段上限、自动续行与连续失败熔断
 
 1. **显式续行语义与 15 轮切段**：
-   - 修复现行 [agent-graph.ts](../../../apps/backend/src/application/agent-graph.ts#L171-L341) 与 [conversation-service.ts](../../../apps/backend/src/application/conversation-service.ts#L2315-L2337) 达到 `maxToolRounds` 直接抛 `ToolRoundLimitError` 把任务标 `failed` 并拉黑窗口的缺陷。
+   - 修复现行 [agent-graph.ts](../../../apps/backend/src/application/conversation/agent-graph.ts#L171-L341) 与 [conversation-service.ts](../../../apps/backend/src/application/conversation/conversation-service.ts#L2315-L2337) 达到 `maxToolRounds` 直接抛 `ToolRoundLimitError` 把任务标 `failed` 并拉黑窗口的缺陷。
    - **单段执行上限默认设为 `15` 个模型决策轮**（可通过配置项覆盖）。这里的「轮」指模型决策轮：图内判定为 `state.round + 1 >= maxToolRounds` 时该轮只提交进度、不再派发工具，因此**单段最多实际派发 `maxToolRounds - 1` 次工具调用（默认 14 次）**，「15 轮」不等于「15 次工具派发」。当办事任务达到单段轮次上限、或模型显式调用续行工具（如 `task_continue` / 携带 `continue: true` 提交阶段进度汇报）时，后端提交本轮进度回复与状态（任务维持 `active`），并在 `finally` 阶段通过 `queueTaskContinuation` 沿原 `taskId` 自动排入下一执行段继续推进；普通闲聊及未声明续行的常规回复仍按默认 `completed` 结束，不误触发续行。
 2. **连续失败／无进展熔断**：
    - 在原任务上累计连续失败计数：同一工具或同错误码连续失败 `3` 次，或连续 `3` 段续行既无成功新工具调用又无进度笔记推进时，强制触发熔断：停止继续派发，将任务置为 `paused`（原因记为熔断暂停），并向当前窗口提交说明当前障碍与已保存进度的汇报，等待用户决定是否调整或取消。
@@ -97,8 +97,8 @@
 
 ### 5.2 模型暂停、即时停派与用户澄清恢复（`DL-158`）
 
-1. **图内即时停派**：改造 [agent-tools.ts](../../../apps/backend/src/application/agent-tools.ts#L1244-L1289) 与 [agent-graph.ts](../../../apps/backend/src/application/agent-graph.ts#L352) 中的 `task_pause` 语义：**`task_pause` 需当前执行已关联活动任务（`context.taskId !== null`）才生效**；若首个工具即为 `task_pause`（任务尚未建立），工具返回 `TASK_REQUIRED`、暂停不生效，同批后续调用照常派发（工具描述已注明该前置条件）。一旦该轮成功执行 `task_pause`（写入 `reason` 与可选 `question` / `note`），当前 `toolsNode` 立即停止派发同一批后续未执行的外部工具（标为跳过/未派发），下一节点仅允许模型产出面向用户的澄清提问或进度说明（禁止再派发新工具调用），回复提交后任务以 `status = 'paused'` 落库，已发出的在途/后台工具仍按 `DL-53` / `DL-103` 保存真实结果或核查未知状态。
-2. **用户回复澄清后接回原任务**：改造 [conversation-store.ts](../../../apps/backend/src/storage/conversation-store.ts#L253-L389) 的 `beginExecution`：
+1. **图内即时停派**：改造 [agent-tools.ts](../../../apps/backend/src/application/conversation/agent-tools.ts#L1244-L1289) 与 [agent-graph.ts](../../../apps/backend/src/application/conversation/agent-graph.ts#L352) 中的 `task_pause` 语义：**`task_pause` 需当前执行已关联活动任务（`context.taskId !== null`）才生效**；若首个工具即为 `task_pause`（任务尚未建立），工具返回 `TASK_REQUIRED`、暂停不生效，同批后续调用照常派发（工具描述已注明该前置条件）。一旦该轮成功执行 `task_pause`（写入 `reason` 与可选 `question` / `note`），当前 `toolsNode` 立即停止派发同一批后续未执行的外部工具（标为跳过/未派发），下一节点仅允许模型产出面向用户的澄清提问或进度说明（禁止再派发新工具调用），回复提交后任务以 `status = 'paused'` 落库，已发出的在途/后台工具仍按 `DL-53` / `DL-103` 保存真实结果或核查未知状态。
+2. **用户回复澄清后接回原任务**：改造 [conversation-store.ts](../../../apps/backend/src/storage/conversation/conversation-store.ts#L253-L389) 的 `beginExecution`：
    - 当用户在同一窗口发送新消息、且该窗口存在关联着因模型提问／熔断而处于 `paused` 状态的原用户委托任务时，新执行**自动关联并恢复该原 `taskId`**（`paused -> active`、`relation = 'continues'`），将原任务目标、进度笔记、`toolCalls` 历史及 `task_resource_continuations` 注入上下文，不另开新任务导致累计 token 与任务链断裂。
    - 若用户在同一窗口通过新消息明确放弃／取消，模型可调用 `task_finish(status="failed"|"completed", ...)` 结束原任务；或由用户直接点击显式取消入口。
 
@@ -119,9 +119,9 @@
      - `google-gemini`：`inputTokens = promptTokenCount`，`cachedTokens = cachedContentTokenCount`，`outputTokens = candidatesTokenCount + (thoughtsTokenCount ?? 0)`；
      - `anthropic-messages`：`inputTokens = (input_tokens ?? 0) + (cache_read_input_tokens ?? 0) + (cache_creation_input_tokens ?? 0)`（并在流结束时取 `message_start` 与 `message_delta` 的最新累计值），`cachedTokens = cache_read_input_tokens`，`outputTokens = output_tokens`。
 2. **采集与归属边界**：
-   - 在 [conversation-service.ts](../../../apps/backend/src/application/conversation-service.ts#L1798-L1805) 区分 `purpose`：用户委托办事任务／有续行任务归为 `'user_task'`（或通过 `execution_tasks` 关联 `taskId`）；
-   - [agent-graph.ts](../../../apps/backend/src/application/agent-graph.ts#L304-L314) 在上游失败／中断异常抛出前，若已收到部分 `usage` 事件也写入 `model_calls.usage_json`，不得丢弃；未返回 usage 时保留 `null` 不伪造为 `0`；
-   - **明确排除**：后台记忆整理（`memory_maintenance`）与回复完成后的异步句段标注（[segment-annotation-service.ts](../../../apps/backend/src/application/segment-annotation-service.ts)）**不计入**办事任务 token 统计。
+   - 在 [conversation-service.ts](../../../apps/backend/src/application/conversation/conversation-service.ts#L1798-L1805) 区分 `purpose`：用户委托办事任务／有续行任务归为 `'user_task'`（或通过 `execution_tasks` 关联 `taskId`）；
+   - [agent-graph.ts](../../../apps/backend/src/application/conversation/agent-graph.ts#L304-L314) 在上游失败／中断异常抛出前，若已收到部分 `usage` 事件也写入 `model_calls.usage_json`，不得丢弃；未返回 usage 时保留 `null` 不伪造为 `0`；
+   - **明确排除**：后台记忆整理（`memory_maintenance`）与回复完成后的异步句段标注（[segment-annotation-service.ts](../../../apps/backend/src/application/conversation/segment-annotation-service.ts)）**不计入**办事任务 token 统计。
 3. **任务级查询输出**：
    - `GET /v1/roles/:roleId/tasks` 与 `GET /v1/roles/:roleId/tasks/:taskId` 返回 `usage: { inputTokens: number; cachedTokens: number; outputTokens: number; totalTokens: number; callCount: number; missingUsageCalls: number }`（按关联到该 `taskId` 的主决策 `model_calls` 汇总）。首版桌面端暂不在界面渲染该统计数值，由后端准确持久化与输出接口留待后续页面展示。
 
@@ -184,8 +184,8 @@
 
 | 编号 | 独立复现与验收要求 |
 | --- | --- |
-| R01 · P2 · 取消写入失败后执行和任务状态分裂 | 在离线模型处理已启动的任务时，向 SQLite 注入任务终态写入错误。取消抛出错误，原执行已从 `running` 变为 `failed`，任务仍为 `active`，取消事件为 0。解除故障并让原执行收尾，调度器创建新执行，任务随后完成。取消请求应保证任务终态、执行终态、取消事件与内存调度一致。复验覆盖写任务终态失败、写取消事件失败及请求重试。 [取消流程](../../../apps/backend/src/application/conversation-service.ts#L483) |
-| R02 · P2 · 同名自定义服饰导致预置重复导入 | 无素材启动后给夏澄新增自定义「日常常服」，随后放入名为「日常常服」的官方 `default` 素材。首次启动创建「日常常服（预置）」，之后两次启动各生成一套带后缀的新预置。三次启动预置数量为 1、2、3，角色编号始终相同。预置应按稳定来源标识匹配。复验需保留同名自定义服饰，重复启动及预置显示名修改时沿用已有预置服饰身份。 [预置服饰匹配](../../../apps/backend/src/application/preset-assistant.ts#L120) |
+| R01 · P2 · 取消写入失败后执行和任务状态分裂 | 在离线模型处理已启动的任务时，向 SQLite 注入任务终态写入错误。取消抛出错误，原执行已从 `running` 变为 `failed`，任务仍为 `active`，取消事件为 0。解除故障并让原执行收尾，调度器创建新执行，任务随后完成。取消请求应保证任务终态、执行终态、取消事件与内存调度一致。复验覆盖写任务终态失败、写取消事件失败及请求重试。 [取消流程](../../../apps/backend/src/application/conversation/conversation-service.ts#L483) |
+| R02 · P2 · 同名自定义服饰导致预置重复导入 | 无素材启动后给夏澄新增自定义「日常常服」，随后放入名为「日常常服」的官方 `default` 素材。首次启动创建「日常常服（预置）」，之后两次启动各生成一套带后缀的新预置。三次启动预置数量为 1、2、3，角色编号始终相同。预置应按稳定来源标识匹配。复验需保留同名自定义服饰，重复启动及预置显示名修改时沿用已有预置服饰身份。 [预置服饰匹配](../../../apps/backend/src/application/role/preset-assistant.ts#L120) |
 | R03 · P2 · 工具参数无效时丢掉已收到的 token 用量 | 本地 OpenAI Chat SSE 已返回输入 27、输出 9，并正常发送 `[DONE]`。工具参数为截断 JSON，适配器抛出 `MODEL_TOOL_ARGUMENTS_INVALID`，期间没有发出 `usage` 事件。解析在流异常处理块外执行，且先于最终用量事件。应保留已收到的用量，同时维持原解析错误及禁止派发无效调用的行为。复验覆盖 OpenAI Chat，并检查同样先解析工具参数再发用量的 Responses、Anthropic 路径和任务汇总。 [流结束后的工具解析](../../../apps/backend/src/model/protocols.ts#L227) |
 
 本次复核仅覆盖包 1 后端、随仓预置素材和本地离线验收。桌面后续包、发布包运行、真实模型和第三方 MCP 联调另按对应工作包复验。
@@ -194,8 +194,8 @@
 
 针对第 8 节提出的 R01～R03 已完成修复并补充自动化回归用例，全部进入本地离线全量自验（尚待独立复验）：
 
-1. **R01 · 取消写入与内存状态原子收敛**：[ConversationService.cancelTask](../../../apps/backend/src/application/conversation-service.ts#L483) 将 `interruptExecution`、`finishTask` 与 `appendStreamEvent("task_cancelled")` 合并至单笔 SQLite 事务内执行且不再吞掉执行中断写库异常；仅在事务成功提交后清理 `pendingContinuations` 并中止／摘除在途执行句柄，确保写入任务终态或取消事件失败时整笔回滚、重试与放行原执行均保持一致。
-2. **R02 · 预置服饰稳定来源标识（`BUSINESS V22`）**：[schema.ts](../../../apps/backend/src/storage/schema.ts#L12) 升级业务库至 V22，在 `outfits` 新增 `preset_key TEXT` 与局部唯一索引 `idx_outfits_role_preset_key`（[appearance.ts](../../../apps/backend/src/domain/appearance.ts) · [appearance-store.ts](../../../apps/backend/src/storage/appearance-store.ts)）；[preset-assistant.ts](../../../apps/backend/src/application/preset-assistant.ts#L116) 优先按 `presetKey`（目录 slug，兼容 V21 遗留 `preset_key IS NULL` 回填）匹配已有预置服饰并排除自身后解决冲突命名，重复重启及修改预置显示名时沿用原 `outfitId` 且保留同名自定义服饰。
+1. **R01 · 取消写入与内存状态原子收敛**：[ConversationService.cancelTask](../../../apps/backend/src/application/conversation/conversation-service.ts#L483) 将 `interruptExecution`、`finishTask` 与 `appendStreamEvent("task_cancelled")` 合并至单笔 SQLite 事务内执行且不再吞掉执行中断写库异常；仅在事务成功提交后清理 `pendingContinuations` 并中止／摘除在途执行句柄，确保写入任务终态或取消事件失败时整笔回滚、重试与放行原执行均保持一致。
+2. **R02 · 预置服饰稳定来源标识（`BUSINESS V22`）**：[schema.ts](../../../apps/backend/src/storage/core/schema.ts#L12) 升级业务库至 V22，在 `outfits` 新增 `preset_key TEXT` 与局部唯一索引 `idx_outfits_role_preset_key`（[appearance.ts](../../../apps/backend/src/domain/appearance.ts) · [appearance-store.ts](../../../apps/backend/src/storage/media/appearance-store.ts)）；[preset-assistant.ts](../../../apps/backend/src/application/role/preset-assistant.ts#L116) 优先按 `presetKey`（目录 slug，兼容 V21 遗留 `preset_key IS NULL` 回填）匹配已有预置服饰并排除自身后解决冲突命名，重复重启及修改预置显示名时沿用原 `outfitId` 且保留同名自定义服饰。
 3. **R03 · 后置解析工具参数异常保留已收到的 Token 用量**：[protocols.ts](../../../apps/backend/src/model/protocols.ts) 中 `streamOpenAiChat`、`streamOpenAiResponses` 与 `streamAnthropic` 均将流结束后的 `parseToolArguments` 提前放入外层 `try ... catch` 块内执行（先完成全部工具参数 JSON 解析并暂存，任一参数无效时由 `catch` 在抛出 `MODEL_TOOL_ARGUMENTS_INVALID` 前优先发出已收到的 `usage` 事件，且不发出 `tool_call` 或 `completed`），配合 `AgentGraph` 将该轮消耗累计至任务失败调用与任务 `usage` 汇总。
 4. **自验证据**：新增 R01～R03 专项回归至 [p19-preset-assistant-pack1.test.ts](../../../apps/backend/tests/p19-preset-assistant-pack1.test.ts)（共 12 项全部通过）；全量 `npx -y node@24 scripts/accept-offline.mjs` 21／21 步通过（`436/436` 正式测试、2 项交付测试、`process-smoke` 与 16 项独立脚本校验通过，`realServiceCalls = 0`，报告位于 `apps/backend/test-results/p5-2026-11-17T02-25-43-104Z-e98155af/summary.json`）。
 
@@ -249,16 +249,16 @@
 
 ### 9.1 单段切段与续行（DL-154）
 
-1. **单段上限**：[agent-graph.ts](../../../apps/backend/src/application/agent-graph.ts) 新增 `DEFAULT_MAX_TOOL_ROUNDS = 15`，[conversation-service.ts](../../../apps/backend/src/application/conversation-service.ts) 默认沿用同一常量，仍可通过 `maxToolRounds` 覆盖。
+1. **单段上限**：[agent-graph.ts](../../../apps/backend/src/application/conversation/agent-graph.ts) 新增 `DEFAULT_MAX_TOOL_ROUNDS = 15`，[conversation-service.ts](../../../apps/backend/src/application/conversation/conversation-service.ts) 默认沿用同一常量，仍可通过 `maxToolRounds` 覆盖。
 2. **自动切段**：图内达到单段上限时不再抛 `ToolRoundLimitError`（该异常仅保留给未建立任务的普通对话），而是标记 `stopKind = round_limit`、停止派发同批剩余调用，并进入**收尾节点**（提供工具清单但忽略任何新调用）产出进度说明；回复提交后任务维持 `active`，由 `queueTaskContinuation` 沿原 `taskId` 排入下一执行段。
-3. **显式续行**：新增内部工具 `task_continue`（[agent-tools.ts](../../../apps/backend/src/application/agent-tools.ts)），语义为「本段收尾、任务未完成」，走同一条收尾与排队路径；`task_finish`／普通回复仍按原语义结束任务。
+3. **显式续行**：新增内部工具 `task_continue`（[agent-tools.ts](../../../apps/backend/src/application/conversation/agent-tools.ts)），语义为「本段收尾、任务未完成」，走同一条收尾与排队路径；`task_finish`／普通回复仍按原语义结束任务。
 4. **停派可见性**：同批未派发调用以 `TOOL_SKIPPED_AFTER_{PAUSE|CONTINUE|CIRCUIT_BREAKER|ROUND_LIMIT}` 回填配对工具消息，不写 `tool_calls`，避免被当作已执行。
 5. **续行上下文**：`buildContinuationToolMessages` 只重放最近 40 条已保存调用证据，防止长任务续行上下文无限膨胀。
 
 ### 9.2 暂停、澄清恢复与熔断（DL-154 / DL-158）
 
 1. **`task_pause` 图内即时停派**：一旦该轮成功执行 `task_pause`，同一批后续调用不再派发，下一节点只输出面向用户的澄清／进度说明，回复提交后任务以 `paused` 落库并写入 `wait_reason = AWAITING_USER_INPUT`、`continuable = 1`。
-2. **同窗回复接回原任务**：[conversation-store.ts](../../../apps/backend/src/storage/conversation-store.ts) `beginExecution` 优先查找同窗口 `paused` 且 `continuable = 1`、`wait_reason ∈ {AWAITING_USER_INPUT, CIRCUIT_BREAKER}` 的用户任务，自动 `paused -> active` 并以 `relation = continues` 关联，原目标、进度笔记、已保存调用与资源延续随上下文注入；角色停止与额度暂停的恢复路径不变。
+2. **同窗回复接回原任务**：[conversation-store.ts](../../../apps/backend/src/storage/conversation/conversation-store.ts) `beginExecution` 优先查找同窗口 `paused` 且 `continuable = 1`、`wait_reason ∈ {AWAITING_USER_INPUT, CIRCUIT_BREAKER}` 的用户任务，自动 `paused -> active` 并以 `relation = continues` 关联，原目标、进度笔记、已保存调用与资源延续随上下文注入；角色停止与额度暂停的恢复路径不变。
 3. **连续失败熔断**：`RoleStore.taskToolFailureStreak` 按真实 `tool_results` 从新到旧统计「同一工具 + 同一错误码」的连续失败，`failed` 与 `unknown` 同样计入、成功或换错误码即中断；达到 `CIRCUIT_FAILURE_THRESHOLD = 3` 时标记 `circuit_breaker`，同批停派，任务暂停为 `TASK_CIRCUIT_BREAKER`。
 4. **连续无进展熔断**：每次续行段收尾按「本段是否有新的成功工具调用或进度笔记」累计 `consecutive_no_progress`，连续 3 段无进展即暂停为 `TASK_CIRCUIT_BREAKER`，并向当前窗口补一条可见说明（含最近进度笔记），不只依赖任务状态。
 5. **计数持久化**：`tasks.consecutive_failures` / `consecutive_no_progress` 由运行期回写（暂停中的任务仍可更新，终态不再改写），供任务查询与后续页面展示。
@@ -266,7 +266,7 @@
 
 ### 9.3 夏澄内部管理工具与方案 A 守卫（DL-159）
 
-新增 [admin-tools.ts](../../../apps/backend/src/application/admin-tools.ts)，仅在 `builtin_key = 'xiacheng'` 时由 `loadAgentTools` 挂载，直接调用应用服务（内部工具回执，不走 HTTP 自循环）：
+新增 [admin-tools.ts](../../../apps/backend/src/application/role/admin-tools.ts)，仅在 `builtin_key = 'xiacheng'` 时由 `loadAgentTools` 挂载，直接调用应用服务（内部工具回执，不走 HTTP 自循环）：
 
 - **只读**：`app_roles_list`、`app_role_get`、`app_activities_list`、`app_role_records_query`（消息／任务含 `usage`／记忆／日记／额度／唤醒）、`app_resources_list`、`app_resource_inspect`、`app_media_services_list`；MCP `env` 与模型凭据保持脱敏，不返回明文。
 - **普通角色写**：`app_role_create`、`app_role_activity`、`app_role_update`、`app_role_bindings_set`（支持 `expectedRevision`）、`app_role_autonomy_set`；目标处于 `active`/`stopping` 时先 `requestStop` 并轮询等待 `stopped`（15s 上限，超时返回 `ROLE_STOP_TIMEOUT`），成功后按参数或原状态恢复。
@@ -313,7 +313,7 @@
 
 1. **单段轮次口径**：`state.round + 1 >= maxToolRounds` 使每段实派工具数为 `maxToolRounds - 1`（默认 14 次），模型决策轮为 15 轮。与 §5.1「提交本轮进度回复」的表述一致，但 §5.1 与 §7.2 均只写「15 轮」，建议在规范中明确「15 个模型轮／最多 14 次工具派发」，避免后续真实长任务按派发次数理解而低估段数。**已修复（见 §10.7）：§5.1／§5.2／§7.1／§7.2 统一为「15 个模型决策轮，最多实派 14 次工具」。**
 2. **首个工具即 `task_pause`**：此时任务尚未建立，工具返回 `TASK_REQUIRED`，暂停不生效、同批后续调用照常派发。行为本身合理（无任务可暂停），但建议在工具描述或 §5.2 注明「需先有活动任务」，否则模型可能误以为已暂停。**已修复（见 §10.7）：`task_pause` 工具描述与 §5.2 均注明前置条件。**
-3. **格式瑕疵**：[agent-tools.ts](../../../apps/backend/src/application/agent-tools.ts#L1365) `function taskFinishTool(  roleId: string,` 存在多余空格（后端无格式门禁，仅提示）。**已清理（见 §10.5）。**
+3. **格式瑕疵**：[agent-tools.ts](../../../apps/backend/src/application/conversation/agent-tools.ts#L1365) `function taskFinishTool(  roleId: string,` 存在多余空格（后端无格式门禁，仅提示）。**已清理（见 §10.5）。**
 
 ### 10.4 复核范围与环境说明
 
@@ -324,13 +324,13 @@
 
 针对 §10.2 的 P2 缺陷 R04 完成补修，覆盖建议修复的全部三个写入工具；**仅改失败路径的活动态恢复与错误回执，不改变成功写入语义**。
 
-1. **统一恢复辅助**：[admin-tools.ts](../../../apps/backend/src/application/admin-tools.ts) 新增 `failAfterStop`，在写入失败时先恢复目标角色活动态，再把 `roleStopped`／`resumed`（资源工具另有 `pausedRoleIds`／`rolledBackRoleIds`／各角色 `activity`）并入**原 `AppError` 的 details** 后重抛。保留原错误码（如 `BINDING_REVISION_CONFLICT`、`INVALID_BINDING`、`STORAGE_ERROR`），模型仍可据此判断冲突类型，回执同时明确给出停机已回滚，避免静默停机。
+1. **统一恢复辅助**：[admin-tools.ts](../../../apps/backend/src/application/role/admin-tools.ts) 新增 `failAfterStop`，在写入失败时先恢复目标角色活动态，再把 `roleStopped`／`resumed`（资源工具另有 `pausedRoleIds`／`rolledBackRoleIds`／各角色 `activity`）并入**原 `AppError` 的 details** 后重抛。保留原错误码（如 `BINDING_REVISION_CONFLICT`、`INVALID_BINDING`、`STORAGE_ERROR`），模型仍可据此判断冲突类型，回执同时明确给出停机已回滚，避免静默停机。
 2. **`app_role_update`／`app_role_bindings_set`**：`stopForWrite` 之后的写入移入 `try`，`catch` 中 `resumeIfNeeded` 恢复原活动态并经 `failAfterStop` 重抛；成功路径的恢复逻辑与返回体不变。
 3. **`app_resource_update`**：把角色恢复统一移到 `finally` 内、`endMaintenance` **之后**执行，再按 `failure` 决定恢复策略——成功按 `resumeRoles` 参数、失败无条件回滚本次暂停角色。原实现在 `catch` 中（维护窗口尚未结束）调用 `activity.resume`，会被 `resumeGuard`（`assertResumeAllowed`，283 R01）以 `RESOURCE_MAINTENANCE` 拒绝，导致回滚无效；调整顺序后失败回滚与成功恢复均生效（成功路径 `resumeRoles: true` 此前同样受此影响，本次一并修正）。
 4. **回归测试**：[p20-preset-assistant-pack2.test.ts](../../../apps/backend/tests/p20-preset-assistant-pack2.test.ts) 新增 R04 专项 1 项，覆盖四场景：过期 `expectedRevision`、缺 `modelName`、`app_role_update` 存储写入抛错、资源连接变更暂停后写入抛错；断言失败码正确、角色活动态恢复 `active`、错误 details 带出恢复结果。包 2 用例由 6 项增至 7 项。
 5. **门禁**：`tsc --noEmit` 通过；p20 专项 7／7 通过；全量 `npx -y node@24 scripts/accept-offline.mjs` **21／21 步**、正式测试 **443／443**、`sourceUnchanged=true`、`realServiceCalls=0`，报告 `apps/backend/test-results/p5-2026-11-17T13-26-48-525Z-2cfb15d8/summary.json`；`node scripts/check-docs.mjs` 0 错误 0 警告。
 
-**顺带格式修正**：[agent-tools.ts](../../../apps/backend/src/application/agent-tools.ts) `taskFinishTool` 函数签名的多余空格（§10.3 观察项 3）已清理，无行为影响。
+**顺带格式修正**：[agent-tools.ts](../../../apps/backend/src/application/conversation/agent-tools.ts) `taskFinishTool` 函数签名的多余空格（§10.3 观察项 3）已清理，无行为影响。
 
 **当时未纳入、现已处理**：§10.3 观察项 1／2 当时属措辞澄清建议，未随 R04 补修擅改；用户确认后已按 [§10.7](#107-103-残余观察项澄清2026-11-17已处理) 处理。
 
@@ -349,7 +349,7 @@
 | 用例是否真守卫 | 临时回退 `admin-tools.ts` 到补修前实现后单跑 p20 | 新增 R04 用例**失败**（6 pass / 1 fail）；恢复实现后 7／7 通过，确认该用例不是空断言 |
 | 全量门禁 | 补修后独立运行 | **21／21** 步通过、正式测试 **443／443**、`sourceUnchanged = true`、`realServiceCalls = 0`，报告 `apps/backend/test-results/p5-2026-11-17T13-36-39-852Z-37815188/summary.json` |
 
-**附带确认**：§10.5 第 3 点所述「原成功路径的 `resumeRoles` 在维护窗口内被守卫拒绝」经代码核对成立——[role-activity-service.ts](../../../apps/backend/src/application/role-activity-service.ts#L153) 的 `resume` 先过 `resumeGuard`，即 [resource-service.ts](../../../apps/backend/src/application/resource-service.ts#L545) 的 `assertResumeAllowed`，维护中的目标服务会抛 `RESOURCE_MAINTENANCE`。故本次修复同时消除了一个此前未被发现的成功路径缺陷（`resumeRoles: true` 实际未恢复），「先 `endMaintenance` 再 `resume`」的顺序是必要修复而非可选优化。
+**附带确认**：§10.5 第 3 点所述「原成功路径的 `resumeRoles` 在维护窗口内被守卫拒绝」经代码核对成立——[role-activity-service.ts](../../../apps/backend/src/application/role/role-activity-service.ts#L153) 的 `resume` 先过 `resumeGuard`，即 [resource-service.ts](../../../apps/backend/src/application/resources/resource-service.ts#L545) 的 `assertResumeAllowed`，维护中的目标服务会抛 `RESOURCE_MAINTENANCE`。故本次修复同时消除了一个此前未被发现的成功路径缺陷（`resumeRoles: true` 实际未恢复），「先 `endMaintenance` 再 `resume`」的顺序是必要修复而非可选优化。
 
 **残余提示（不阻塞）**：
 
@@ -365,7 +365,7 @@
 用户确认后处理 §10.3 的两项非阻塞措辞澄清，**均为文档／工具描述改动，不改变任何运行时行为**：
 
 1. **观察项 1 · 单段轮次口径**：把「15 轮」统一明确为「15 个模型决策轮，最多实派 14 次工具」。改动 §5.1（标题下正文说明 `state.round + 1 >= maxToolRounds` 时该轮只提交进度、不派发工具）、§5.2、§7.1 包 2 条目与 §7.2 验收表。现行规范 [storage-memory-and-autonomy.md](../../specs/storage-memory-and-autonomy.md) 不含包 2 的 15 轮描述（第 89 行「默认最多 8 轮」属首轮原型旧述，不在此次范围），故无需改活规范。
-2. **观察项 2 · `task_pause` 前置条件**：在 [agent-tools.ts](../../../apps/backend/src/application/agent-tools.ts) 的 `task_pause` 工具描述中注明「需先有活动任务（当前执行已关联任务编号）才能暂停，否则返回 `TASK_REQUIRED`、暂停不生效，同批后续调用照常派发」；并在 §5.2 第 1 点补充同样说明。仅改 `description` 文案，执行逻辑与错误码（`TASK_REQUIRED`）不变。
+2. **观察项 2 · `task_pause` 前置条件**：在 [agent-tools.ts](../../../apps/backend/src/application/conversation/agent-tools.ts) 的 `task_pause` 工具描述中注明「需先有活动任务（当前执行已关联任务编号）才能暂停，否则返回 `TASK_REQUIRED`、暂停不生效，同批后续调用照常派发」；并在 §5.2 第 1 点补充同样说明。仅改 `description` 文案，执行逻辑与错误码（`TASK_REQUIRED`）不变。
 3. **验证**：`tsc --noEmit` 通过；全量 `npx -y node@24 scripts/accept-offline.mjs` 21／21 步、正式测试 443／443、`sourceUnchanged=true`、`realServiceCalls=0`，报告 `apps/backend/test-results/p5-2026-11-17T13-52-57-440Z-1cf7ace7/summary.json`；`node scripts/check-docs.mjs` 0 错误 0 警告。工具描述变更不影响离线模型按工具名选择，包 2 行为用例无需改动。
 
 ## 11. 包 3 实施记录（2026-11-17，自验通过，待独立复核）

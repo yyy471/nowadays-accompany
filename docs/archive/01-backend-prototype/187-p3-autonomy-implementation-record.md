@@ -17,7 +17,7 @@
 
 ## 2. 存储与迁移
 
-新增 [autonomy-store.ts](../../../apps/backend/src/storage/autonomy-store.ts)：
+新增 [autonomy-store.ts](../../../apps/backend/src/storage/conversation/autonomy-store.ts)：
 
 - `getBudget`／`setBudget`／`consumePoint`：读取与扣点前按应用时区检查本地日期，跨日仅重置为当前日一份；
 - `createWake`／`listWakes`／`nextPendingWake`／`listDueWakes`／`claimWake`／`completeWake`／`cancelWake`；
@@ -25,7 +25,7 @@
 - `beginDueWake`：在事务内检查角色无运行执行，领取最早到期安排，创建或恢复任务、`trigger_type='autonomous'` 执行和活动，并关联自主活动窗口；
 - `findPendingBudgetResume`：避免同一暂停任务重复创建恢复安排。
 
-业务库 v3 见 [schema.ts](../../../apps/backend/src/storage/schema.ts)。除新增三表外，`execution_stream_events` 的事件类型检查增加 `execution_paused`；迁移时重建该表并保留历史事件，旧 v2 数据可升级到 v3。`ensureSchema` 按连续版本逐级执行迁移。
+业务库 v3 见 [schema.ts](../../../apps/backend/src/storage/core/schema.ts)。除新增三表外，`execution_stream_events` 的事件类型检查增加 `execution_paused`；迁移时重建该表并保留历史事件，旧 v2 数据可升级到 v3。`ensureSchema` 按连续版本逐级执行迁移。
 
 `beginDueWake` 的 `task_id` 只对 `budget_resume` 生效；`scheduled` 安排始终创建新的自主任务，避免把后续安排错误挂到已完成或无关任务上。
 
@@ -45,7 +45,7 @@
 - 次日唤醒后任务恢复 `active`，新执行与原任务 `continues`；系统提示要求先结合最新情况与已有结果重新评估，不自动重放旧操作。
 - 无限制不触发暂停，只记录 `counted=0` 的调用。
 
-相关实现：[autonomy-service.ts](../../../apps/backend/src/application/autonomy-service.ts)、[agent-graph.ts](../../../apps/backend/src/application/agent-graph.ts)、[conversation-service.ts](../../../apps/backend/src/application/conversation-service.ts)。
+相关实现：[autonomy-service.ts](../../../apps/backend/src/application/conversation/autonomy-service.ts)、[agent-graph.ts](../../../apps/backend/src/application/conversation/agent-graph.ts)、[conversation-service.ts](../../../apps/backend/src/application/conversation/conversation-service.ts)。
 
 ## 4. 调度、唤醒与串行
 

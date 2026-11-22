@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ModelEvent, ModelMessage, ModelProtocol } from "../src/domain/model.js";
-import { selectAgentContext } from "../src/application/agent-context.js";
+import { selectAgentContext } from "../src/application/conversation/agent-context.js";
 import { HttpModelAdapter, serializeModelRequest } from "../src/model/protocols.js";
 
 const sse = (data: unknown): string => `data: ${JSON.stringify(data)}\n\n`;

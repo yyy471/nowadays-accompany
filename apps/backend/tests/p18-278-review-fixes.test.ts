@@ -9,9 +9,9 @@ import sharp from "sharp";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseBackendConfig, rolePaths } from "../src/bootstrap/config.js";
 import { createBackendApp, listen, type BackendApp } from "../src/bootstrap/app.js";
-import { ModelBindingResolver } from "../src/application/model-binding-resolver.js";
-import { MemoryStore } from "../src/storage/memory-store.js";
-import { RoleStorage } from "../src/storage/role-storage.js";
+import { ModelBindingResolver } from "../src/application/resources/model-binding-resolver.js";
+import { MemoryStore } from "../src/storage/memory/memory-store.js";
+import { RoleStorage } from "../src/storage/core/role-storage.js";
 import type { MemoryModelPort } from "../src/domain/memory.js";
 import type { ModelEvent, ModelPort, ModelRequest } from "../src/domain/model.js";
 import {
@@ -3413,9 +3413,9 @@ test("定时器读取绑定或角色库暂不可用时不崩溃且恢复后继�
     const probeScript = `
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { ModelBindingResolver } from ${JSON.stringify(pathToFileURL(path.join(backendRoot, "src/application/model-binding-resolver.ts")).href)};
+import { ModelBindingResolver } from ${JSON.stringify(pathToFileURL(path.join(backendRoot, "src/application/resources/model-binding-resolver.ts")).href)};
 import { createBackendApp, listen } from ${JSON.stringify(pathToFileURL(path.join(backendRoot, "src/bootstrap/app.ts")).href)};
-import { MemoryStore } from ${JSON.stringify(pathToFileURL(path.join(backendRoot, "src/storage/memory-store.ts")).href)};
+import { MemoryStore } from ${JSON.stringify(pathToFileURL(path.join(backendRoot, "src/storage/memory/memory-store.ts")).href)};
 import { createFixtureWithModel, ScriptedChatModel, withStorage } from ${JSON.stringify(pathToFileURL(path.join(backendRoot, "tests/p2-05-fixture.ts")).href)};
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));

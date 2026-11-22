@@ -155,7 +155,7 @@
    - `active` -> `requestStop`：若 `activityRuntime.isRunning(roleId)` 为 `false` 则同步写入 `stopped`（`confirmed: true`）；若正在运行则先置 `stopping`，禁止新对话/自主唤醒与新节点，待运行节点走到可保存进度边界由 `confirmStop` 确认 `stopped`。
    - `resume`：仅把 `stopped` 切回 `active` 并调用 `resumeWork(roleId)` 接回停机前待办与暂停任务链，不清理待办、不重置自主额度；恢复前先过 `resourceService.assertResumeAllowed(roleId)` 检查，若当前解析的 `chat` 或 `memory` 模型正处维护窗口则拒绝（`409 RESOURCE_MAINTENANCE`）。
    - `reconcileStartup`（后端启动时）：清理历史运行状态并把无在途执行的 `stopping` 请求收敛为 `stopped`。
-2. **并发写锁与读体后复验（[RoleActivityService](../../apps/backend/src/application/role-activity-service.ts)、[write-guard.ts](../../apps/backend/src/http/write-guard.ts)）**：
+2. **并发写锁与读体后复验（[RoleActivityService](../../apps/backend/src/application/role/role-activity-service.ts)、[write-guard.ts](../../apps/backend/src/http/write-guard.ts)）**：
    - `guardRole` 按 `roleId` 维度的 `writeChains` 队列串行执行配置写入，并在持有 `roleLeases` 期间阻断并发 `resume`。
    - `guardAll` 的全局租约机制保留，当前 `GLOBAL_CONFIG_WRITES` 清单为空。
    - 对带请求体的配置写入，通过 `setBodyReadHook` 在异步读取完整请求体后、进入处理器之前再次执行 `assertStopped` / `assertAllStopped`，防止读体间隙有其他调用恢复角色导致写入越权。
@@ -181,16 +181,16 @@
 
 角色已绑定的服务被全局停用后，可以保留原服务 ID、修改该角色其他参数。其他角色的新绑定、改绑到另一个停用服务、实际合成与生成仍受停用守卫约束。已删除的服务须重新选择。语音会话中曾为备用服务暂存的草稿不构成绑定。
 
-- [MediaMaintenance](../../apps/backend/src/application/media-maintenance.ts) 读取就绪角色库内当前保存的 `serviceId` 并结合活动状态计算依赖。连接字段或凭据实际变更及全局停用进入维护窗口；只修改名称、默认引擎／模型或重新启用直接提交。
+- [MediaMaintenance](../../apps/backend/src/application/media/media-maintenance.ts) 读取就绪角色库内当前保存的 `serviceId` 并结合活动状态计算依赖。连接字段或凭据实际变更及全局停用进入维护窗口；只修改名称、默认引擎／模型或重新启用直接提交。
 - 维护先校验可预判的输入错误，只暂停目标服务的活动依赖并等待已经领取的语音合成、试听或生图调用。窗口内阻止对同服务的并发写入、新领取、相关改绑和角色恢复，写前复验实际依赖。成功返回 `{ service, maintenance: { connectionChanged, pausedRoleIds } }`，失败也回带本次已暂停的角色 ID。已停止或原本正在停止的角色不计入本次恢复名单。
 - 手动过场图重放已有幂等键仍返回原任务。单次生成超时可先结算任务，服务领取保留到实际生成调用结束；维护等待有界。删除时检查活动依赖和在途调用，停止角色的旧引用保留在角色库，用于界面提示重新选择。
 
 ### 3.3 删除两阶段事务与启动恢复
 
-- **全局资源删除（[ResourceService.remove](../../apps/backend/src/application/resource-service.ts#L707-L748)）**：
+- **全局资源删除（[ResourceService.remove](../../apps/backend/src/application/resources/resource-service.ts#L707-L748)）**：
   - `app.sqlite` 为决策提交源，所有就绪角色库为从属清理对象；通过 `runWithDecisionCommit` 先确保任一角色库读取/打开或清理准备失败时整笔回滚、原绑定完好。
   - 决策库提交资源删除与 `resource_deletions` 记录后若部分角色库绑定清理失败，删后读取 `listBindings` 会过滤 `listResourceDeletions()`，由后端启动清理或客户端重试同个 `DELETE` 幂等完成剩余清理。
-- **角色删除（[RoleDeletionService](../../apps/backend/src/application/role-deletion-service.ts)）**：
+- **角色删除（[RoleDeletionService](../../apps/backend/src/application/role/role-deletion-service.ts)）**：
   - 通过串行队列与 `deleting` 互斥防止并发重复删/同时删光所有角色；事务内二次校验 `LAST_ROLE_REQUIRED`。
   - 清理内存/后台执行时经 `disposeRole` 取消过场图与排队标注，并等待 `waitForRoleInflightIdle`（默认 `roleDeletionWaitMs = 15000`）与记忆空闲；超时抛 `409 ROLE_BUSY` 并经 `onDeletionFailed` 调用 `conversation.wakePendingWork(roleId)` 补发删除期间被拒的维护唤醒。
   - `keepHistory=0` 时记录 `role_deletions` 并删除角色目录，目录被占用未删净时在响应 `filesRemoved: false` 后由下次启动 `reconcilePendingDeletions` 续删。
@@ -284,14 +284,14 @@ npx -y node@24 apps/desktop/tests/settings-v6-behavior-check.cjs
 
 ### 5.2 来源冲突 / 规范滞后（实现先行，待统一修订正文）
 
-1. **MCP / Skill 全局单独停用（`161 DL-148` vs `278 §3` / `282 §2`）**：`161` 正文当前仍保留「被角色开启或未结束任务链占用期间拒绝全局关闭」；实现（[resource-service.ts](../../apps/backend/src/application/resource-service.ts#L260-L275)）已先行改为仅切换 `enabled` 时直接放行（`canDisable: true`）、新任务立即阻止、原任务链继续至结束；[161 DL-148 注记](../161-digital-life-direction-decisions.md#dl-148-配置修改直接删除与运行限制) 已挂出待统一修订。
+1. **MCP / Skill 全局单独停用（`161 DL-148` vs `278 §3` / `282 §2`）**：`161` 正文当前仍保留「被角色开启或未结束任务链占用期间拒绝全局关闭」；实现（[resource-service.ts](../../apps/backend/src/application/resources/resource-service.ts#L260-L275)）已先行改为仅切换 `enabled` 时直接放行（`canDisable: true`）、新任务立即阻止、原任务链继续至结束；[161 DL-148 注记](../161-digital-life-direction-decisions.md#dl-148-配置修改直接删除与运行限制) 已挂出待统一修订。
 2. **资源路由守卫分类文件残留**：[config-writes.ts](../../apps/backend/src/http/config-writes.ts#L40-L43) 的 `RESOURCE_CONFIG_WRITES` 与 [write-guard.ts](../../apps/backend/src/http/write-guard.ts#L49-L65) 的 `resourceWrite()` 仍保留于源码树中，但 [routes.ts](../../apps/backend/src/http/routes.ts#L103-L107) 已将 `PATCH/DELETE /v1/resources/:resourceId` 改由路由与服务层按 `maintenancePlan` 及 `references().canDelete` 分级协调（仅维护参数变更暂停实际依赖角色，删除无需全局无依赖角色停机）。
 
 ### 5.3 已补修待独立复核与未闭环项（见 `STATUS.md`、`283 §27` 与 `292 §8`）
 
 - **`292-R05`（已通过 `283 §28` 独立复核）**：[ImagePanel.tsx](../../apps/desktop/renderer/src/components/image/ImagePanel.tsx#L308-L354) 的 `save()` 先校本地服务启用态，并在发起 `guardWrite` 停机前重读 `/v1/image-services` 确认服务仍存在且 `enabled === true`；停用时直接报错 `IMAGE_SERVICE_DISABLED`（见 [283 §28](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#28-292-第-8-节独立复验)）。
 - **`292-R06`（原跨页与在途编辑场景均已独立复验）**：[ImagePanel.tsx](../../apps/desktop/renderer/src/components/image/ImagePanel.tsx#L149-L505) 与 [imageServiceSnapshotKey](../../apps/desktop/renderer/src/image-config.ts#L195-L210) 为 `probe`/`preview` 绑定 `{ serviceId, snapshotKey }`，跨页失效后拒收晚到响应；针对 `283 §28` 指出的在途编辑导致按钮长期锁死于「正在出图…」，[292 §9](../archive/06-workflow-simplification/292-278-remaining-deletion-maintenance.md#9-283-28-补修复核跟进与文档勘误自验292-r06-在途编辑292-r08-干净隔离环境与-doc-r01r04) 新增 `invalidateProbe`／`invalidatePreview`（`#L149-L165`、`#L295-L306`、`#L606-L618`）同步重置忙态按钮并丢弃旧响应，复核结论见 [状态页](../STATUS.md)。
-- **`292-R07`（已通过 `283 §28` 独立复核）**：[scene-image-settings.ts](../../apps/backend/src/application/scene-image-settings.ts#L155-L195) 的 `preview()` 对非空 `outfitId` 通过 `AppearanceStore.getOutfit(outfitId)` 核验当前角色下未删除服饰，否则在生图前抛出 `404 OUTFIT_NOT_FOUND`（见 [283 §28](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#28-292-第-8-节独立复验)）。
+- **`292-R07`（已通过 `283 §28` 独立复核）**：[scene-image-settings.ts](../../apps/backend/src/application/media/scene-image-settings.ts#L155-L195) 的 `preview()` 对非空 `outfitId` 通过 `AppearanceStore.getOutfit(outfitId)` 核验当前角色下未删除服饰，否则在生图前抛出 `404 OUTFIT_NOT_FOUND`（见 [283 §28](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#28-292-第-8-节独立复验)）。
 - **`292-R08`（独立隔离 E2E 通过）**：[electron-executable.cjs](../../apps/desktop/tests/helpers/electron-executable.cjs) 按环境变量 → `apps/desktop/node_modules/electron` → 开发机根目录兜底解析，新增 `resolveElectronExecutableInfo` 暴露实际解析来源（`electronExecutableSource`、`electronExecutableResolvedFromDesktop`）并支持 `NOWADAYS_ALLOW_ROOT_ELECTRON_FALLBACK=0` 禁止回落根目录；已在仅含 `apps/desktop/node_modules` 的无根目录依赖隔离副本完成完整构建与全链路 E2E 自验（见 [292 §9](../archive/06-workflow-simplification/292-278-remaining-deletion-maintenance.md#9-283-28-补修复核跟进与文档勘误自验292-r06-在途编辑292-r08-干净隔离环境与-doc-r01r04)）。
 - **已更新历史测试与本轮待复核项**：[settings-review-fixes-check.cjs](../../apps/desktop/tests/e2e/settings-review-fixes.e2e.cjs) 已同步 `mergeBindingDrafts` 非重叠自动合并与同用途重叠冲突恢复，`292-R09` 有界等待清理及 [Settings.tsx](../../apps/desktop/renderer/src/pages/Settings.tsx#L531) 自动合并草稿回写同步均已完成自验（见 [292 §10](../archive/06-workflow-simplification/292-278-remaining-deletion-maintenance.md#10-283-29292-r09doc-r01-邻接契约与-settings-review-fixes-checkcjs-收口自验) 与 [STATUS.md](../STATUS.md)），待独立复核。
 - **待实测/复核项**：`278 §4` 首次配置交互恢复链（[279 §3](../archive/06-workflow-simplification/279-workflow-simplification-two-pass-review.md#3-第三轮端到端复核)）尚未完成真实后端完整复验；真实外部模型/ComfyUI/TTS 服务与桌面端实际打包行为待联调留证。
@@ -299,5 +299,5 @@ npx -y node@24 apps/desktop/tests/settings-v6-behavior-check.cjs
 ### 5.4 核心实现索引
 
 - **后端路由、校验与守卫**：[config-writes.ts](../../apps/backend/src/http/config-writes.ts) · [write-guard.ts](../../apps/backend/src/http/write-guard.ts) · [role-activity-routes.ts](../../apps/backend/src/http/role-activity-routes.ts) · [routes.ts](../../apps/backend/src/http/routes.ts) · [router.ts](../../apps/backend/src/http/router.ts) · [schemas.ts](../../apps/backend/src/http/schemas.ts) · [voice-service-routes.ts](../../apps/backend/src/http/voice-service-routes.ts) · [image-service-routes.ts](../../apps/backend/src/http/image-service-routes.ts) · [voice-routes.ts](../../apps/backend/src/http/voice-routes.ts) · [appearance-routes.ts](../../apps/backend/src/http/appearance-routes.ts) · [commands.ts](../../apps/backend/src/cli/commands.ts)
-- **后端领域与协调服务**：[role-activity.ts](../../apps/backend/src/domain/role-activity.ts) · [errors.ts](../../apps/backend/src/domain/errors.ts) · [role-activity-service.ts](../../apps/backend/src/application/role-activity-service.ts) · [role-deletion-service.ts](../../apps/backend/src/application/role-deletion-service.ts) · [role-service.ts](../../apps/backend/src/application/role-service.ts) · [resource-service.ts](../../apps/backend/src/application/resource-service.ts) · [global-voice-service.ts](../../apps/backend/src/application/global-voice-service.ts) · [conversation-service.ts](../../apps/backend/src/application/conversation-service.ts) · [appearance-service.ts](../../apps/backend/src/application/appearance-service.ts) · [app.ts](../../apps/backend/src/bootstrap/app.ts)
+- **后端领域与协调服务**：[role-activity.ts](../../apps/backend/src/domain/role-activity.ts) · [errors.ts](../../apps/backend/src/domain/errors.ts) · [role-activity-service.ts](../../apps/backend/src/application/role/role-activity-service.ts) · [role-deletion-service.ts](../../apps/backend/src/application/role/role-deletion-service.ts) · [role-service.ts](../../apps/backend/src/application/role/role-service.ts) · [resource-service.ts](../../apps/backend/src/application/resources/resource-service.ts) · [global-voice-service.ts](../../apps/backend/src/application/media/global-voice-service.ts) · [conversation-service.ts](../../apps/backend/src/application/conversation/conversation-service.ts) · [appearance-service.ts](../../apps/backend/src/application/media/appearance-service.ts) · [app.ts](../../apps/backend/src/bootstrap/app.ts)
 - **桌面设置端**：[Settings.tsx](../../apps/desktop/renderer/src/pages/Settings.tsx) · [binding-merge.js](../../apps/desktop/renderer/src/components/model/binding-merge.ts) · [use-model-probe.ts](../../apps/desktop/renderer/src/components/model/use-model-probe.ts) · [ImagePanel.tsx](../../apps/desktop/renderer/src/components/image/ImagePanel.tsx) · [VoicePanel.tsx](../../apps/desktop/renderer/src/components/voice/VoicePanel.tsx) · [VoiceServiceEditor.tsx](../../apps/desktop/renderer/src/components/voice/VoiceServiceEditor.tsx) · [VoiceProbeView.tsx](../../apps/desktop/renderer/src/components/voice/VoiceProbeView.tsx) · [use-voice-probe.ts](../../apps/desktop/renderer/src/components/voice/use-voice-probe.ts) · [voice-cache.js](../../apps/desktop/renderer/src/components/voice/voice-cache.ts) · [AppearancePanel.tsx](../../apps/desktop/renderer/src/components/appearance/AppearancePanel.tsx)

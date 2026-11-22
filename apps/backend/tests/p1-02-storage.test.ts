@@ -7,10 +7,10 @@ import test from "node:test";
 import Database from "better-sqlite3";
 import { createBackendApp, listen } from "../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths } from "../src/bootstrap/config.js";
-import { AppStore } from "../src/storage/app-store.js";
-import { RoleStore } from "../src/storage/role-store.js";
-import { RoleStorage } from "../src/storage/role-storage.js";
-import { APP_SCHEMA_VERSION, BUSINESS_SCHEMA_VERSION, openAppDatabase } from "../src/storage/schema.js";
+import { AppStore } from "../src/storage/core/app-store.js";
+import { RoleStore } from "../src/storage/role/role-store.js";
+import { RoleStorage } from "../src/storage/core/role-storage.js";
+import { APP_SCHEMA_VERSION, BUSINESS_SCHEMA_VERSION, openAppDatabase } from "../src/storage/core/schema.js";
 
 function tempRoot(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "nowadays-p1-02-"));

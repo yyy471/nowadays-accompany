@@ -5,9 +5,9 @@
 ## 修复内容
 
 - **把 `canScheduleNow` 纳入 `armTimer` 异常保护边界**：
-  - 在 [`MemoryRuntime.canScheduleNow`](../../../apps/backend/src/application/memory-runtime.ts#L363-L382) 中，除原有的 `ModelBindingMissingError` 外，只将非锁类绑定/角色状态异常（`ResourceKindMismatchError`、`RoleNotFoundError`、`RoleNotReadyError`、`InvalidRoleIdError`）判定为不可调度，临时读库错误（如 `SQLITE_BUSY`）交由 [`armTimer`](../../../apps/backend/src/application/memory-runtime.ts#L405-L488) 的统一 `try/catch` 接管，不再从 `drain` 的 `finally` 向外抛出未处理 Promise 拒绝，避免单角色临时锁冲突导致整个后端进程退出。
+  - 在 [`MemoryRuntime.canScheduleNow`](../../../apps/backend/src/application/memory/memory-runtime.ts#L363-L382) 中，除原有的 `ModelBindingMissingError` 外，只将非锁类绑定/角色状态异常（`ResourceKindMismatchError`、`RoleNotFoundError`、`RoleNotReadyError`、`InvalidRoleIdError`）判定为不可调度，临时读库错误（如 `SQLITE_BUSY`）交由 [`armTimer`](../../../apps/backend/src/application/memory/memory-runtime.ts#L405-L488) 的统一 `try/catch` 接管，不再从 `drain` 的 `finally` 向外抛出未处理 Promise 拒绝，避免单角色临时锁冲突导致整个后端进程退出。
 - **读库临时失败与遗留待处理触发的退避自动恢复**：
-  - 在 [`armTimer`](../../../apps/backend/src/application/memory-runtime.ts#L459-L483) 与 [`isMissingRoleStorageError`](../../../apps/backend/src/application/memory-runtime.ts#L874-L889) 中，当读取绑定或打开角色库出现非路径缺失/非法错误时，通过 [`nextTimerRetryDelayMs`](../../../apps/backend/src/application/memory-runtime.ts#L384-L392) 与 [`scheduleWakeTimer`](../../../apps/backend/src/application/memory-runtime.ts#L394-L403) 安排短退避唤醒（`250ms` 起步）；当角色库可打开但仍有未消费触发（`listPendingTriggers`）或尚未登记补写退避的已结束任务（`listFinishedTasksNeedingTrigger`）时同样安排恢复唤醒；[`recoverOnStartup`](../../../apps/backend/src/application/memory-runtime.ts#L147-L150) 遇单角色恢复异常时也接入 `armTimer`，并在 `close`／`disposeRole` 时清理退避状态。
+  - 在 [`armTimer`](../../../apps/backend/src/application/memory/memory-runtime.ts#L459-L483) 与 [`isMissingRoleStorageError`](../../../apps/backend/src/application/memory/memory-runtime.ts#L874-L889) 中，当读取绑定或打开角色库出现非路径缺失/非法错误时，通过 [`nextTimerRetryDelayMs`](../../../apps/backend/src/application/memory/memory-runtime.ts#L384-L392) 与 [`scheduleWakeTimer`](../../../apps/backend/src/application/memory/memory-runtime.ts#L394-L403) 安排短退避唤醒（`250ms` 起步）；当角色库可打开但仍有未消费触发（`listPendingTriggers`）或尚未登记补写退避的已结束任务（`listFinishedTasksNeedingTrigger`）时同样安排恢复唤醒；[`recoverOnStartup`](../../../apps/backend/src/application/memory/memory-runtime.ts#L147-L150) 遇单角色恢复异常时也接入 `armTimer`，并在 `close`／`disposeRole` 时清理退避状态。
 
 ## 验证
 

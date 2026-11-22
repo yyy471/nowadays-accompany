@@ -7,9 +7,9 @@ import type { ModelEvent, ModelProtocol, ModelRequest } from "../src/domain/mode
 import { McpToolClient } from "../src/mcp/client.js";
 import { HttpModelAdapter } from "../src/model/protocols.js";
 import { SkillLibrary } from "../src/skills/skill-library.js";
-import { registerMessageEvidence } from "../src/storage/evidence.js";
-import { MemoryStore } from "../src/storage/memory-store.js";
-import { RoleStore } from "../src/storage/role-store.js";
+import { registerMessageEvidence } from "../src/storage/memory/evidence.js";
+import { MemoryStore } from "../src/storage/memory/memory-store.js";
+import { RoleStore } from "../src/storage/role/role-store.js";
 
 // 独立复核探针：仅本地模拟响应和专用目录，不修改业务源码或访问真实模型。
 const outputRoot = path.resolve("test-results/p2-04-independent-20261103");

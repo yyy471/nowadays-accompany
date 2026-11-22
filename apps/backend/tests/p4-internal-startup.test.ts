@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createBackendApp, type BackendApp } from "../src/bootstrap/app.js";
 import { parseBackendConfig } from "../src/bootstrap/config.js";
-import { AutonomyStore } from "../src/storage/autonomy-store.js";
-import { ConversationStore } from "../src/storage/conversation-store.js";
+import { AutonomyStore } from "../src/storage/conversation/autonomy-store.js";
+import { ConversationStore } from "../src/storage/conversation/conversation-store.js";
 import { createFixtureWithModel, ScriptedChatModel, withStorage, type Fixture } from "./p2-05-fixture.js";
 
 const dispatchedAt = "2026-11-05T03:00:00.000Z";

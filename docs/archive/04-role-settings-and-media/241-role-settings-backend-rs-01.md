@@ -17,7 +17,7 @@
 
 ### 2.1 应用库 v3
 
-- `APP_SCHEMA_VERSION` 由 2 升到 3，新增 `resource_secrets` 表保存密文、密钥版本和时间；`model_test_calls` 增加 `config_fingerprint` 与 `(resource_id, finished_at)` 索引。[schema.ts](../../../apps/backend/src/storage/schema.ts#L88)
+- `APP_SCHEMA_VERSION` 由 2 升到 3，新增 `resource_secrets` 表保存密文、密钥版本和时间；`model_test_calls` 增加 `config_fingerprint` 与 `(resource_id, finished_at)` 索引。[schema.ts](../../../apps/backend/src/storage/core/schema.ts#L88)
 - 迁移按既有机制注册：v2 库执行 `CREATE TABLE`、`ALTER TABLE ... ADD COLUMN` 和索引，已有资源、角色和测试记录保持不变。v3 测试用真实回放验证：建 v3 库、删新表与新列、`user_version = 2` 后重开，资源仍可读且结构补齐。
 
 ### 2.2 本地密钥盒
@@ -28,20 +28,20 @@
 
 ### 2.3 统一凭据解析
 
-- `CredentialResolver` 按资源读取直填密钥，没有时回退 `env:`／`file:` 引用；`inspect` 返回四种状态，`resolve` 在不可解密或引用缺失时抛 `MODEL_CREDENTIAL_UNAVAILABLE`，`fingerprintSalt` 把密钥更新时间带入测试指纹。[credential-resolver.ts](../../../apps/backend/src/application/credential-resolver.ts#L27)
+- `CredentialResolver` 按资源读取直填密钥，没有时回退 `env:`／`file:` 引用；`inspect` 返回四种状态，`resolve` 在不可解密或引用缺失时抛 `MODEL_CREDENTIAL_UNAVAILABLE`，`fingerprintSalt` 把密钥更新时间带入测试指纹。[credential-resolver.ts](../../../apps/backend/src/application/resources/credential-resolver.ts#L27)
 - 对话服务、记忆运行时、过场图规划器和模型服务都改为通过该解析器取凭据；没有注入解析器的测试路径仍保留原 `resolveCredential` 行为。
 
 ## 3. 资源接口
 
-- 创建：`secret` 与资源配置在同一事务写入；配置非法、密钥超长或非模型资源带密钥时整笔回滚，不会留下孤儿密钥。[resource-service.ts](../../../apps/backend/src/application/resource-service.ts#L85)
-- 更新：省略 `secret` 保留，`null` 清除，字符串替换。直填密钥与 `credentialRef` 二选一；替换密钥时配置带引用、保留密钥时新配置引入引用、创建时同时提供，均返回 `RESOURCE_CREDENTIAL_CONFLICT`。[resource-service.ts](../../../apps/backend/src/application/resource-service.ts#L121)
+- 创建：`secret` 与资源配置在同一事务写入；配置非法、密钥超长或非模型资源带密钥时整笔回滚，不会留下孤儿密钥。[resource-service.ts](../../../apps/backend/src/application/resources/resource-service.ts#L85)
+- 更新：省略 `secret` 保留，`null` 清除，字符串替换。直填密钥与 `credentialRef` 二选一；替换密钥时配置带引用、保留密钥时新配置引入引用、创建时同时提供，均返回 `RESOURCE_CREDENTIAL_CONFLICT`。[resource-service.ts](../../../apps/backend/src/application/resources/resource-service.ts#L121)
 - 读取：`GET /v1/resources` 与 `GET /v1/resources/:resourceId` 返回 `credential` 摘要和 `lastTest`，不包含明文或密文。[routes.ts](../../../apps/backend/src/http/routes.ts#L516)
 - `secret` 不进入 `config_json`，配置校验仍按 `modelConfigSchema` 执行；读接口回显的 `config` 与旧版本兼容。
 
 ## 4. 按资源探测与结果过期
 
-- 新增 `POST /v1/resources/:resourceId/models` 与 `/model-test`，按资源 ID 读取配置和统一凭据；非模型资源返回 `RESOURCE_KIND_MISMATCH`。[routes.ts](../../../apps/backend/src/http/routes.ts#L540) · [model-service.ts](../../../apps/backend/src/application/model-service.ts#L83)
-- 测试记录写入 `resource_id` 和 `config_fingerprint`；指纹由协议、规范化 baseUrl 和凭据版本（密钥更新时间或引用串）组成，不包含明文。[model-service.ts](../../../apps/backend/src/application/model-service.ts#L95)
+- 新增 `POST /v1/resources/:resourceId/models` 与 `/model-test`，按资源 ID 读取配置和统一凭据；非模型资源返回 `RESOURCE_KIND_MISMATCH`。[routes.ts](../../../apps/backend/src/http/routes.ts#L540) · [model-service.ts](../../../apps/backend/src/application/resources/model-service.ts#L83)
+- 测试记录写入 `resource_id` 和 `config_fingerprint`；指纹由协议、规范化 baseUrl 和凭据版本（密钥更新时间或引用串）组成，不包含明文。[model-service.ts](../../../apps/backend/src/application/resources/model-service.ts#L95)
 - 资源视图的 `lastTest` 带 `stale`：密钥替换、清除或重新保存后，旧结果不再对应当前配置。地址或协议变化时直接删除该资源的测试记录，视图返回 `lastTest: null`。
 - 新建服务的候选探测仍用 `POST /v1/model-services/models` 与 `/test`，可带一次性 `secret`；该密钥只用于本次请求，不落库。[model.ts](../../../apps/backend/src/domain/model.ts#L18)
 
@@ -54,8 +54,8 @@
 
 ## 6. 声音配置补充
 
-- `GET /v1/roles/:roleId/voice/references` 列出该角色已导入的参考音频，`inUse` 标记当前 `referenceAssetId`；不返回角色目录内的相对路径。[voice-service.ts](../../../apps/backend/src/application/voice-service.ts#L285)
-- `DELETE /v1/roles/:roleId/voice/references/:assetId` 先校验是否正在使用，使用中返回 409 `VOICE_REFERENCE_IN_USE`；记录删除成功后清理文件，失败返回 `fileRemoved=false` 并保留日志，便于配置页提示重试。[voice-service.ts](../../../apps/backend/src/application/voice-service.ts#L310)
+- `GET /v1/roles/:roleId/voice/references` 列出该角色已导入的参考音频，`inUse` 标记当前 `referenceAssetId`；不返回角色目录内的相对路径。[voice-service.ts](../../../apps/backend/src/application/media/voice-service.ts#L285)
+- `DELETE /v1/roles/:roleId/voice/references/:assetId` 先校验是否正在使用，使用中返回 409 `VOICE_REFERENCE_IN_USE`；记录删除成功后清理文件，失败返回 `fileRemoved=false` 并保留日志，便于配置页提示重试。[voice-service.ts](../../../apps/backend/src/application/media/voice-service.ts#L310)
 - 文件清理只允许角色目录内路径；异常记录不执行越界删除。
 - 统一 TTS 错误解析新增 `code` 字段读取；404 且 `code` 为 `VOICE_NOT_FOUND`／`PRESET_VOICE_NOT_FOUND` 时映射为 409 `TTS_VOICE_UNAVAILABLE`，其余 404 仍按 `TTS_SYNTHESIS_FAILED`。[transport.ts](../../../apps/backend/src/tts/transport.ts#L100) · [unified-tts-client.ts](../../../apps/backend/src/tts/unified-tts-client.ts#L146)
 

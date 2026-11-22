@@ -6,8 +6,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test, { type TestContext } from "node:test";
 import Database from "better-sqlite3";
-import { applyRoleTransfer, exportRoleTransfer, preflightRoleTransfer } from "../src/application/role-transfer.js";
-import { readRoleTransferPackage, roleTransferWithAncestors, writeRoleTransferPackage } from "../src/application/role-transfer-package.js";
+import { applyRoleTransfer, exportRoleTransfer, preflightRoleTransfer } from "../src/application/transfer/role-transfer.js";
+import { readRoleTransferPackage, roleTransferWithAncestors, writeRoleTransferPackage } from "../src/application/transfer/role-transfer-package.js";
 import { createBackendApp } from "../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths, type BackendConfig } from "../src/bootstrap/config.js";
 
@@ -254,7 +254,7 @@ test("进程在换名各阶段退出时，下一次正常启动恢复到完整�
   fs.writeFileSync(note(source, roleId, "新增.md"), "未来");
   exportRoleTransfer(source, roleId, newer);
   const script = `
-    import { applyRoleTransfer } from "./src/application/role-transfer.ts";
+    import { applyRoleTransfer } from "./src/application/transfer/role-transfer.ts";
     import { parseBackendConfig } from "./src/bootstrap/config.ts";
     const [root, file, token, point] = process.argv.slice(1);
     applyRoleTransfer(parseBackendConfig(["--app-root", root]), file, token, {}, undefined,

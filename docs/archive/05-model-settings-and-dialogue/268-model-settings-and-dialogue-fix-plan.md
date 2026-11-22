@@ -6,7 +6,7 @@
 
 ## 1. 优先排查对话差分
 
-外观导入把 `standees` 登记为主页立绘，把 `expressions` 登记为差分。导入服务只创建衣柜记录和素材，角色穿着由 Agent 通过 `state_update` 提交。现在句段标注在正文落库后执行，服饰为空或对应服饰没有差分时直接跳过。舞台也要求句段有服饰标识才应用差分。因此已导入图片时仍有多条路径只显示立绘，实际会话需继续定位到具体一条。见 [外观服务](../../../apps/backend/src/application/appearance-service.ts#L76)、[穿搭与回复](../../../apps/backend/src/application/conversation-service.ts#L2456)、[句段标注](../../../apps/backend/src/application/segment-annotation-service.ts)、[对话舞台](../../../apps/desktop/renderer/src/conversation/ConversationStage.tsx#L81)。
+外观导入把 `standees` 登记为主页立绘，把 `expressions` 登记为差分。导入服务只创建衣柜记录和素材，角色穿着由 Agent 通过 `state_update` 提交。现在句段标注在正文落库后执行，服饰为空或对应服饰没有差分时直接跳过。舞台也要求句段有服饰标识才应用差分。因此已导入图片时仍有多条路径只显示立绘，实际会话需继续定位到具体一条。见 [外观服务](../../../apps/backend/src/application/media/appearance-service.ts#L76)、[穿搭与回复](../../../apps/backend/src/application/conversation/conversation-service.ts#L2456)、[句段标注](../../../apps/backend/src/application/conversation/segment-annotation-service.ts)、[对话舞台](../../../apps/desktop/renderer/src/conversation/ConversationStage.tsx#L81)。
 
 1. 在临时数据根导入千叶的实际目录，用可控模型跑真实 HTTP、SSE 和桌面。核对角色状态的 `outfitId`、对应衣柜的差分、每个句段保存的服饰和立绘、标注调用和 `spriteAssetId`、素材请求状态及左侧实际显示的图。用 `02_classic`、`06_white_knit_barelegs` 验证两套有差分的服饰，再用只有主页立绘的 `01_white_knit_stockings` 验证缺图分支。
 2. 核对首次穿搭和换装的提交时机。角色有衣柜时沿用 DL-136 的每日首次活动或对话选衣，确保本轮 Agent 提交的新穿着进入句段服饰快照和标注候选。若当前服饰为空或已失效，在既有穿搭流程中请 Agent 选择有效服饰。若 Agent 仍未提交、服饰没有差分或标注失败，文字照常展示。衣柜可提示「当前未选择服饰」或「这套服饰没有对话表情」，用于定位素材问题。
@@ -15,7 +15,7 @@
 
 ## 2. 设置页填写后即可读取列表和测试
 
-新建模型服务表单目前只有保存。编辑表单按 `modelDirty` 禁用列表和测试，列表只交给 `datalist`。后端已有草稿 `POST /v1/model-services/models`、`POST /v1/model-services/test` 和按资源探测接口。见 [设置页](../../../apps/desktop/renderer/src/pages/Settings.tsx#L500)、[模型路由](../../../apps/backend/src/http/routes.ts#L840)、[模型服务](../../../apps/backend/src/application/model-service.ts#L61)。
+新建模型服务表单目前只有保存。编辑表单按 `modelDirty` 禁用列表和测试，列表只交给 `datalist`。后端已有草稿 `POST /v1/model-services/models`、`POST /v1/model-services/test` 和按资源探测接口。见 [设置页](../../../apps/desktop/renderer/src/pages/Settings.tsx#L500)、[模型路由](../../../apps/backend/src/http/routes.ts#L840)、[模型服务](../../../apps/backend/src/application/resources/model-service.ts#L61)。
 
 - 新建、编辑使用同一套模型名称控件与探测逻辑。填写有效的协议、服务地址及所需密钥后即可读取列表。选择或输入模型后即可发简短测试请求。列表读取与测试由按钮主动触发，保存独立执行。显示加载、成功、空列表、失败和重试。手填模型名称始终可用，读取失败保留当前值。
 - 字段统一显示「选择或输入模型名称」。列表有内容时点击字段打开可筛选的下拉框，选项显示服务返回的模型名称，保留手填入口。请求仍发送服务识别的模型标识。设置页选择的名称用来测试，可作为再次打开供应商时的测试选项。角色绑定独立填写。
@@ -24,7 +24,7 @@
 
 ## 3. 角色配置先选供应商，再选模型
 
-后端绑定已经保存 `resourceId` 和 `modelName`，对话与记忆按各角色绑定解析。角色页目前只提供供应商下拉和模型 ID 输入，另有「新建模型服务」跳转并预填资源草稿。见 [角色绑定表单](../../../apps/desktop/renderer/src/pages/Settings.tsx#L377)、[绑定解析](../../../apps/backend/src/application/model-binding-resolver.ts#L180)。
+后端绑定已经保存 `resourceId` 和 `modelName`，对话与记忆按各角色绑定解析。角色页目前只提供供应商下拉和模型 ID 输入，另有「新建模型服务」跳转并预填资源草稿。见 [角色绑定表单](../../../apps/desktop/renderer/src/pages/Settings.tsx#L377)、[绑定解析](../../../apps/backend/src/application/resources/model-binding-resolver.ts#L180)。
 
 - 对话模型和记忆整理模型共用模型名称选择控件。先选设置中已保存的供应商，再用该供应商列表选择模型，或手填。切换供应商时清空该项的待保存模型名和旧列表，重新载入当前供应商的候选。角色 A、角色 B 和设置页的测试都可以对同一供应商使用不同模型。
 - 删除角色页的「新建模型服务」按钮和创建后预填草稿的逻辑。保留「在设置中查看模型」，添加供应商统一从设置进入。保存角色选择继续走角色绑定的 revision 校验。
@@ -32,7 +32,7 @@
 
 ## 4. 首次启动与角色初始状态
 
-当前创建角色索引时没有初始化活动记录，`RoleActivityStore` 将无记录解释为 `active`。全局配置写入要求所有角色已停止，因此新数据根只要建立一个角色就可能挡住首轮配置。当前代码查到的模型资源创建只写全局资源，角色表单从绑定接口读已有选择。预置角色若显示已绑定，需要继续检查首启数据包、安装入口和配置页草稿，区分实际落库与仅显示了选中项。见 [角色索引](../../../apps/backend/src/storage/app-store.ts#L152)、[角色活动存储](../../../apps/backend/src/storage/role-activity-store.ts#L15)。
+当前创建角色索引时没有初始化活动记录，`RoleActivityStore` 将无记录解释为 `active`。全局配置写入要求所有角色已停止，因此新数据根只要建立一个角色就可能挡住首轮配置。当前代码查到的模型资源创建只写全局资源，角色表单从绑定接口读已有选择。预置角色若显示已绑定，需要继续检查首启数据包、安装入口和配置页草稿，区分实际落库与仅显示了选中项。见 [角色索引](../../../apps/backend/src/storage/core/app-store.ts#L152)、[角色活动存储](../../../apps/backend/src/storage/role/role-activity-store.ts#L15)。
 
 - 新数据根无预置角色时保持空列表，直接允许配置全局模型。预置角色和首次配置中新建的角色以 `stopped` 写入活动记录。建议把后续新建角色也统一设为 `stopped`，便于先配置再开始活动。覆盖 API、CLI、安装预置和初始化重试，确保停止状态在后端可查询。用户明确开始活动后才进入活动调度。
 - 初始化角色的模型绑定为空。设置页创建供应商后角色仍为空，直到用户在角色配置中保存。验证预置的默认角色与其他角色走同一规则。

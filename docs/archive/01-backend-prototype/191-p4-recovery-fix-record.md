@@ -10,8 +10,8 @@
 
 修复：
 
-- [ConversationStore.recoverInterruptedExecutions](../../../apps/backend/src/storage/conversation-store.ts#L1058)在把执行标记为中断失败时，同时返回该执行关联任务的身份、状态和来源，供启动恢复使用。
-- [ConversationService.recoverOnStartup](../../../apps/backend/src/application/conversation-service.ts#L383)为**任务仍为 `active` 且来源为 `autonomous`** 的中断执行恢复任务延续；已结束任务不复活，也不新建替代任务。被新消息替代的执行按第 6 节处理：只有原任务仍有工具进展时才继续，仅被替代的回复本身不续写。
+- [ConversationStore.recoverInterruptedExecutions](../../../apps/backend/src/storage/conversation/conversation-store.ts#L1058)在把执行标记为中断失败时，同时返回该执行关联任务的身份、状态和来源，供启动恢复使用。
+- [ConversationService.recoverOnStartup](../../../apps/backend/src/application/conversation/conversation-service.ts#L383)为**任务仍为 `active` 且来源为 `autonomous`** 的中断执行恢复任务延续；已结束任务不复活，也不新建替代任务。被新消息替代的执行按第 6 节处理：只有原任务仍有工具进展时才继续，仅被替代的回复本身不续写。
 - 延续通过既有 `startTaskContinuation` 进入 `pendingContinuations` 和现有调度入口，沿用原 `taskId`、任务窗口和检查点记录；启动时若成功排队则主动触发一次调度，未成功时仍保留待调度记录。
 - 延续执行重新读取最新角色设定、状态、当前资源授权和额度；已有工具结果由既有 `buildContinuationToolMessages` 作为工具消息提供给模型，不重复派发已保存的成功调用。
 - 活动与已领取唤醒沿用原记录，由延续执行正式完成或失败，不把 `claimed` 简单改回 `pending`。
@@ -24,7 +24,7 @@
 
 修复：
 
-- 新增 [RoleStore.recoverInterruptedToolCalls](../../../apps/backend/src/storage/role-store.ts#L1162)，处理进程退出后尚无结果的 `pending`／`running` 调用；第 6 节已把入口扩展为启动时扫描全部符合条件的历史调用，不再只依赖本次中断执行列表。
+- 新增 [RoleStore.recoverInterruptedToolCalls](../../../apps/backend/src/storage/role/role-store.ts#L1162)，处理进程退出后尚无结果的 `pending`／`running` 调用；第 6 节已把入口扩展为启动时扫描全部符合条件的历史调用，不再只依赖本次中断执行列表。
 - `pending`（尚未派发）记录为 `failed`，诊断码 `PROCESS_INTERRUPTED`，结果正文明确「进程中断时该调用尚未派发」。
 - `running`（已进入调用流程但无明确结果）记录为 `unknown`，同样保存 `PROCESS_INTERRUPTED` 事实，不伪造成功或失败；保留原 `toolCallId`、任务和执行关联。
 - 结果通过既有 `saveToolResult` 保存，继续沿用原始结果、结果修订与 `previous_status`／`reconciled_at` 机制；单个调用恢复异常不阻塞其他调用。
@@ -36,9 +36,9 @@
 
 | 文件 | 内容 |
 | --- | --- |
-| [apps/backend/src/application/conversation-service.ts](../../../apps/backend/src/application/conversation-service.ts#L383) | 启动恢复协调中断执行、未返回工具调用、自主任务及 superseded 任务延续调度 |
-| [apps/backend/src/storage/conversation-store.ts](../../../apps/backend/src/storage/conversation-store.ts#L103) | 中断执行返回关联任务摘要；第 6 节增加活跃 superseded 任务的延续查询 |
-| [apps/backend/src/storage/role-store.ts](../../../apps/backend/src/storage/role-store.ts#L1162) | 未派发／在途工具调用的恢复结果；结果保存支持注入恢复时刻 |
+| [apps/backend/src/application/conversation-service.ts](../../../apps/backend/src/application/conversation/conversation-service.ts#L383) | 启动恢复协调中断执行、未返回工具调用、自主任务及 superseded 任务延续调度 |
+| [apps/backend/src/storage/conversation-store.ts](../../../apps/backend/src/storage/conversation/conversation-store.ts#L103) | 中断执行返回关联任务摘要；第 6 节增加活跃 superseded 任务的延续查询 |
+| [apps/backend/src/storage/role-store.ts](../../../apps/backend/src/storage/role/role-store.ts#L1162) | 未派发／在途工具调用的恢复结果；结果保存支持注入恢复时刻 |
 | [apps/backend/tests/p4-recovery.test.ts](../../../apps/backend/tests/p4-recovery.test.ts#L273) | 8 项 P4 恢复正式回归（含 superseded、ended、预算暂停保护） |
 
 ## 4. 自验证据
@@ -75,14 +75,14 @@
 
 ### 6.1 P4-R01 遗留：被替代执行的原任务恢复
 
-- 新增 [ConversationStore.listSupersededTaskContinuations](../../../apps/backend/src/storage/conversation-store.ts#L1112)：找出仍为 `active` 且有 `superseded` 执行的任务；自主任务按原任务链继续，用户任务只在已有工具进展时继续，避免重放纯文本旧回复。
-- [ConversationService.recoverOnStartup](../../../apps/backend/src/application/conversation-service.ts#L383)把这些任务与中断的自主任务一起排入原有 `pendingContinuations`，沿用原 `taskId` 和任务窗口，不新建替代任务。
+- 新增 [ConversationStore.listSupersededTaskContinuations](../../../apps/backend/src/storage/conversation/conversation-store.ts#L1112)：找出仍为 `active` 且有 `superseded` 执行的任务；自主任务按原任务链继续，用户任务只在已有工具进展时继续，避免重放纯文本旧回复。
+- [ConversationService.recoverOnStartup](../../../apps/backend/src/application/conversation/conversation-service.ts#L383)把这些任务与中断的自主任务一起排入原有 `pendingContinuations`，沿用原 `taskId` 和任务窗口，不新建替代任务。
 - 没有工具进展、只有被替代回复的 `A08` 用例不进入延续；明确结束的 `ended` 任务不复活。新消息仍由现有调度优先处理，预算／资源延续规则不变。
 - 继续的是原任务，不是旧回复：用户任务只在存在未处理工具事实时继续并形成自己的新回复；自主任务仍在原自主窗口完成，不把中断的旧答案补写为已提交内容。
 
 ### 6.2 P4-R02 遗留：未返回调用独立归 unknown
 
-- [RoleStore.recoverInterruptedToolCalls](../../../apps/backend/src/storage/role-store.ts#L1162)改为在启动时扫描该角色所有尚无结果、所属执行已不是 `running` 且不是预算暂停的 `pending`／`running` 调用，不再依赖本次中断执行列表，因此 `superseded` 旧执行和已结束任务上的在途调用也会处理；预算暂停任务等待恢复时的未派发调用保持原状。
+- [RoleStore.recoverInterruptedToolCalls](../../../apps/backend/src/storage/role/role-store.ts#L1162)改为在启动时扫描该角色所有尚无结果、所属执行已不是 `running` 且不是预算暂停的 `pending`／`running` 调用，不再依赖本次中断执行列表，因此 `superseded` 旧执行和已结束任务上的在途调用也会处理；预算暂停任务等待恢复时的未派发调用保持原状。
 - `pending` 仍记为 `failed`，`running` 记为 `unknown` 并保存 `PROCESS_INTERRUPTED`；保留原调用身份和既有结果修订记录。已结束任务只保存未知事实，不派生延续；未结束任务在后续模型评估中收到该事实。
 
 ### 6.3 定向自验
@@ -122,23 +122,23 @@
 
 ### 8.1 P4-R04：原执行检查点恢复
 
-- [ConversationService.resumableTask](../../../apps/backend/src/application/conversation-service.ts#L520)只在以下条件同时成立时恢复原执行：执行仍为 `running`；原 `stateVersionLoaded` 等于当前角色状态版本；关联任务仍为 `active`；同窗口没有新待处理用户消息；该 thread 的最新检查点已越过首轮模型（`metadata.step >= 1`）。`superseded`、`paused`、已结束任务以及仅有输入／未完成首轮模型的检查点继续走既有失败或任务延续路径，不复活旧回复。
-- [执行恢复入口](../../../apps/backend/src/application/conversation-service.ts#L619)沿用原 `executionId`／thread_id：先把该执行仍为 `running` 的模型调用标记中断，再用原检查点重新进入图，不新建执行。已保存的成功工具结果由 `beginToolCall` 的 `stepKey` 去重和既有结果读取复用，不重复派发效果；调用未派发／在途的结果按第 2 节规则先结算。
-- [AgentGraphRunner.run](../../../apps/backend/src/application/agent-graph.ts#L150)新增 `resume`：为 true 时以 `graph.invoke(null, thread_id)` 从检查点继续。已形成最终结果但尚未提交的检查点在恢复时不再调用模型，直接提交检查点中的文字和 `statePatch`；仍有待执行工具回合的检查点只执行缺失步骤。
+- [ConversationService.resumableTask](../../../apps/backend/src/application/conversation/conversation-service.ts#L520)只在以下条件同时成立时恢复原执行：执行仍为 `running`；原 `stateVersionLoaded` 等于当前角色状态版本；关联任务仍为 `active`；同窗口没有新待处理用户消息；该 thread 的最新检查点已越过首轮模型（`metadata.step >= 1`）。`superseded`、`paused`、已结束任务以及仅有输入／未完成首轮模型的检查点继续走既有失败或任务延续路径，不复活旧回复。
+- [执行恢复入口](../../../apps/backend/src/application/conversation/conversation-service.ts#L619)沿用原 `executionId`／thread_id：先把该执行仍为 `running` 的模型调用标记中断，再用原检查点重新进入图，不新建执行。已保存的成功工具结果由 `beginToolCall` 的 `stepKey` 去重和既有结果读取复用，不重复派发效果；调用未派发／在途的结果按第 2 节规则先结算。
+- [AgentGraphRunner.run](../../../apps/backend/src/application/conversation/agent-graph.ts#L150)新增 `resume`：为 true 时以 `graph.invoke(null, thread_id)` 从检查点继续。已形成最终结果但尚未提交的检查点在恢复时不再调用模型，直接提交检查点中的文字和 `statePatch`；仍有待执行工具回合的检查点只执行缺失步骤。
 - 恢复后的新模型回合重新读取当前设定、状态、资源授权、额度与自动召回；若角色状态版本已变化或出现新消息，检查点材料失效，不盲目提交旧结果，按既有规则失败并由任务延续重新判断。
 - 恢复模式且无服务端续传材料时，工具节点把模型调用编号改写为业务 `toolCallId`，使后续请求与业务记录一致；存在提供方 `continuation` 时保留原始编号，避免破坏签名／续传块。该归一只作用于恢复执行，普通在线执行继续使用模型原始调用编号。
 
 ### 8.2 P4-R05：已提交答复后的任务、活动、唤醒与资源收尾
 
-- 新增 [ConversationStore.listCommittedExecutionGaps](../../../apps/backend/src/storage/conversation-store.ts#L1287)：只返回已 `completed`、已有提交状态版本、也已有完成答复，且通过 `initiates`／`continues` 关联到仍为 `active` 任务、同任务没有其他 `running`／`paused` 执行的间隙；仅被引用的任务不会被结束。
-- [启动收尾协调](../../../apps/backend/src/application/conversation-service.ts#L581)按间隙幂等结束原任务（`回复完成`）、取消待执行的额度恢复，再清理资源延续。资源清理只处理任务结束时间晚于授权时间的延续，避免把任务结束后手工新增的延续误删。
-- 新增 [AutonomyStore.reconcileTerminalActivities](../../../apps/backend/src/storage/autonomy-store.ts#L470)：把已 `completed`／`failed` 执行上仍为 `running` 的活动收敛为对应终态，完成其仍为 `claimed` 的唤醒；预算暂停执行保持原状。重复启动不重复生成答复、不重复扣点，任务、活动、唤醒和资源最终一致。
+- 新增 [ConversationStore.listCommittedExecutionGaps](../../../apps/backend/src/storage/conversation/conversation-store.ts#L1287)：只返回已 `completed`、已有提交状态版本、也已有完成答复，且通过 `initiates`／`continues` 关联到仍为 `active` 任务、同任务没有其他 `running`／`paused` 执行的间隙；仅被引用的任务不会被结束。
+- [启动收尾协调](../../../apps/backend/src/application/conversation/conversation-service.ts#L581)按间隙幂等结束原任务（`回复完成`）、取消待执行的额度恢复，再清理资源延续。资源清理只处理任务结束时间晚于授权时间的延续，避免把任务结束后手工新增的延续误删。
+- 新增 [AutonomyStore.reconcileTerminalActivities](../../../apps/backend/src/storage/conversation/autonomy-store.ts#L470)：把已 `completed`／`failed` 执行上仍为 `running` 的活动收敛为对应终态，完成其仍为 `claimed` 的唤醒；预算暂停执行保持原状。重复启动不重复生成答复、不重复扣点，任务、活动、唤醒和资源最终一致。
 
 ### 8.3 P4-R06：未派发工具预留的持久结算
 
-- 业务库升级到 v4，新增 [autonomy_tool_reservations](../../../apps/backend/src/storage/schema.ts#L911)：以 `tool_call_id` 为主键保存 `local_date`、`counted` 和 `reserved／committed／released` 状态；旧库按既有逐级迁移路径升级，未增加用户配置或审批。
-- [AutonomyStore.reserveToolPoint](../../../apps/backend/src/storage/autonomy-store.ts#L212)在工具登记后持久预留；[commitToolReservation](../../../apps/backend/src/storage/autonomy-store.ts#L275)在工具实际派发前使用原日期／模式结算；[releaseToolReservation](../../../apps/backend/src/storage/autonomy-store.ts#L336)在已知未派发时退还。运行中的取消闭包与原调用关联，不再只依赖进程内状态。
-- [启动结算](../../../apps/backend/src/storage/autonomy-store.ts#L367)：预算暂停执行保持不动；仍为 `reserved` 且没有成功／未知结果的调用按未确认派发退还；已有成功／未知结果但预留未提交的调用按已派发处理。已提交但缺少计量账本的调用补记 `call_metering`，不重复插入。
+- 业务库升级到 v4，新增 [autonomy_tool_reservations](../../../apps/backend/src/storage/core/schema.ts#L911)：以 `tool_call_id` 为主键保存 `local_date`、`counted` 和 `reserved／committed／released` 状态；旧库按既有逐级迁移路径升级，未增加用户配置或审批。
+- [AutonomyStore.reserveToolPoint](../../../apps/backend/src/storage/conversation/autonomy-store.ts#L212)在工具登记后持久预留；[commitToolReservation](../../../apps/backend/src/storage/conversation/autonomy-store.ts#L275)在工具实际派发前使用原日期／模式结算；[releaseToolReservation](../../../apps/backend/src/storage/conversation/autonomy-store.ts#L336)在已知未派发时退还。运行中的取消闭包与原调用关联，不再只依赖进程内状态。
+- [启动结算](../../../apps/backend/src/storage/conversation/autonomy-store.ts#L367)：预算暂停执行保持不动；仍为 `reserved` 且没有成功／未知结果的调用按未确认派发退还；已有成功／未知结果但预留未提交的调用按已派发处理。已提交但缺少计量账本的调用补记 `call_metering`，不重复插入。
 - 保持原有口径：同日实际派发不重复扣点；跨日派发在新日期消耗新点；旧日退还不能变成新日额外余额；无限制模式预留不计点；取消只影响该调用自己的预留。
 
 ### 8.4 正式回归与验证证据

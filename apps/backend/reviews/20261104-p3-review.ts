@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { rolePaths } from "../src/bootstrap/config.js";
-import { MemoryStore } from "../src/storage/memory-store.js";
+import { MemoryStore } from "../src/storage/memory/memory-store.js";
 import type { ModelEvent, ModelRequest } from "../src/domain/model.js";
 import { ScriptedChatModel, addBinding, createFixtureWithModel, withStorage, type Fixture } from "../tests/p2-05-fixture.js";
 

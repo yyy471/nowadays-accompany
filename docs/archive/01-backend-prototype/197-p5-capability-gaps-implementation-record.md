@@ -10,14 +10,14 @@
 
 | 缺口 | 实现 | 验收 |
 | --- | --- | --- |
-| GAP-01 慢工具自动转后台 | [executeExternalTracked](../../../apps/backend/src/application/agent-graph.ts#L736) 在前台窗口内等待工具；越窗后写入 `background` 模式事件、`tool_backgrounded` 流事件，原执行按 `superseded` 结束但保留已领取消息与任务目录；后台结果由 [handleBackgroundToolSettled](../../../apps/backend/src/application/conversation-service.ts#L1753) 保存并接回原任务 | 快返保持前台、慢返转后台、窗口两侧边界、同窗口插话、任务结束／资源关闭后的晚到结果；同一次调用只派发、只保存、只计量一次 |
+| GAP-01 慢工具自动转后台 | [executeExternalTracked](../../../apps/backend/src/application/conversation/agent-graph.ts#L736) 在前台窗口内等待工具；越窗后写入 `background` 模式事件、`tool_backgrounded` 流事件，原执行按 `superseded` 结束但保留已领取消息与任务目录；后台结果由 [handleBackgroundToolSettled](../../../apps/backend/src/application/conversation/conversation-service.ts#L1753) 保存并接回原任务 | 快返保持前台、慢返转后台、窗口两侧边界、同窗口插话、任务结束／资源关闭后的晚到结果；同一次调用只派发、只保存、只计量一次 |
 | GAP-02 角色决定任务暂停、继续和结束 | 新增 `task_progress`、`task_pause`、`task_finish` 三个任务工具；`task_finish`／`task_pause` 由调用参数推导任务动作，提交回复后落实。暂停保留原任务编号、进度笔记与资源延续；携带任务编号的唤醒接回原链 | 两段阅读、暂停后重启接续、另起目标建新链、无任务决策时按「回复完成」结束 |
 | GAP-03 核查未知结果后补录原调用 | 新增 `tool_reconcile` 工具：按原 `toolCallId` 保存明确结果、核查说明、证据关联与时间，保留先前 `unknown` 记录；结果不足时保持未知 | 写入后断线、重启核查并补录；重复补录幂等；冲突状态被拒绝；已结束任务仍可补录；证据不足保持未知 |
-| GAP-04 记忆整理按模型容量分批 | [MemoryService](../../../apps/backend/src/application/memory-service.ts#L68) 按声明的 `maxInputChars`／`maxOutputChars` 计算单批预算并扣除固定开销；[memoryCapacityOf](../../../apps/backend/src/application/memory-runtime.ts#L399) 从当前记忆模型绑定读取容量，未声明时使用保守默认；批次保存上下文预算与输出预留 | 两种容量的离线模型得到不同批数；长证据跨批按顺序处理，成功后推进进度；容量不足返回 `MEMORY_CAPACITY_EXCEEDED` |
+| GAP-04 记忆整理按模型容量分批 | [MemoryService](../../../apps/backend/src/application/memory/memory-service.ts#L68) 按声明的 `maxInputChars`／`maxOutputChars` 计算单批预算并扣除固定开销；[memoryCapacityOf](../../../apps/backend/src/application/memory/memory-runtime.ts#L399) 从当前记忆模型绑定读取容量，未声明时使用保守默认；批次保存上下文预算与输出预留 | 两种容量的离线模型得到不同批数；长证据跨批按顺序处理，成功后推进进度；容量不足返回 `MEMORY_CAPACITY_EXCEEDED` |
 | GAP-05 Skill 随包脚本定位执行 | [SkillLibrary.resolveScript](../../../apps/backend/src/skills/skill-library.ts#L104) 只允许 Skill 目录内已存在的 `.js`／`.mjs`；`skill_run` 以 Skill 目录为工作目录运行，提供 `NOWADAYS_WORKSPACE`，记录输出、退出码、超时与截断 | 脚本读取随包资源并写入工作空间；失败状态与退出码进入调用记录；读取正文不产生执行，未启用 Skill 不提供运行入口 |
-| GAP-06 按日记编号读取正文 | [getDiarySegment](../../../apps/backend/src/application/memory-query-service.ts#L348) 按码点分段读取 Markdown 原文，返回 `fromChar`／`toChar`／`hasMore` 与关联事件编号，并刷新正文快照；`memory_diary` 工具暴露同一能力 | 搜索命中后读到长日记尾部；角色隔离与缺失文件报错；分段边界与连续读取 |
+| GAP-06 按日记编号读取正文 | [getDiarySegment](../../../apps/backend/src/application/memory/memory-query-service.ts#L348) 按码点分段读取 Markdown 原文，返回 `fromChar`／`toChar`／`hasMore` 与关联事件编号，并刷新正文快照；`memory_diary` 工具暴露同一能力 | 搜索命中后读到长日记尾部；角色隔离与缺失文件报错；分段边界与连续读取 |
 
-业务库 schema 升至 v5：新增 `task_notes`，扩展 `execution_stream_events` 的事件类型（含 `tool_backgrounded`），新增 `tool_results.reconciled_by_call_id`。迁移保留旧数据，见 [schema.ts](../../../apps/backend/src/storage/schema.ts#L927)。
+业务库 schema 升至 v5：新增 `task_notes`，扩展 `execution_stream_events` 的事件类型（含 `tool_backgrounded`），新增 `tool_results.reconciled_by_call_id`。迁移保留旧数据，见 [schema.ts](../../../apps/backend/src/storage/core/schema.ts#L927)。
 
 ## 2. 关键机制
 
@@ -37,7 +37,7 @@
 ### 2.3 未知结果补录
 
 - `tool_reconcile` 只写原调用的结果事实，不重新派发工具、不新增计量。
-- `verifiedByToolCallId` 接受模型侧 wire id：由 [resolveToolCallReference](../../../apps/backend/src/storage/role-store.ts#L1154) 在同一执行保存的调用映射中解析为业务编号；无法解析时明确返回 `VERIFIED_BY_CALL_NOT_FOUND`，不写无效关联。
+- `verifiedByToolCallId` 接受模型侧 wire id：由 [resolveToolCallReference](../../../apps/backend/src/storage/role/role-store.ts#L1154) 在同一执行保存的调用映射中解析为业务编号；无法解析时明确返回 `VERIFIED_BY_CALL_NOT_FOUND`，不写无效关联。
 - 已按不同状态保存的结果保持 `TOOL_RESULT_CONFLICT`；重复相同状态返回 `duplicate=true`。
 
 ### 2.4 记忆容量
@@ -61,7 +61,7 @@
 
 | 问题 | 修复 |
 | --- | --- |
-| 后台结果续行报 `The database connection is not open` | 结算回调仍在原图执行的异步上下文中，LangChain 隐式配置带入了已关闭的旧 saver。续行调度改用干净异步上下文后再延迟执行，见 [handleBackgroundToolSettled](../../../apps/backend/src/application/conversation-service.ts#L1753) |
+| 后台结果续行报 `The database connection is not open` | 结算回调仍在原图执行的异步上下文中，LangChain 隐式配置带入了已关闭的旧 saver。续行调度改用干净异步上下文后再延迟执行，见 [handleBackgroundToolSettled](../../../apps/backend/src/application/conversation/conversation-service.ts#L1753) |
 | 执行已停止后前台计时器仍触发转后台 | 新消息替代执行时，等待窗口计时器仍会把在途调用转后台并提前排队任务续行，导致续行在结果保存前启动。改为执行已停止时不再按超时转后台，等工具实际结算后由原执行收尾；同时把前台窗口原型默认值从 120 秒调为 2 秒，并加入默认值回归 |
 | 工具结果保存失败时进程出现未处理拒绝 | 后台等待路径的前台结算错误改为传回图执行，由既有失败路径记录并恢复，不再脱离 `Promise.race`；P4 `result-db-failure` 由崩溃恢复为契约通过 |
 | 核查工具无法接受模型看到的 wire id | 新增同执行调用引用解析，证据关联保存业务编号；无法解析时明确失败 |

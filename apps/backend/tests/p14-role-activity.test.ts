@@ -8,7 +8,7 @@ import { listen, createBackendApp } from "../src/bootstrap/app.js";
 import { rolePaths } from "../src/bootstrap/config.js";
 import { AppError } from "../src/domain/errors.js";
 import type { ModelEvent, ModelPort, ModelRequest } from "../src/domain/model.js";
-import { RoleActivityStore } from "../src/storage/role-activity-store.js";
+import { RoleActivityStore } from "../src/storage/role/role-activity-store.js";
 import {
   addBinding,
   createFixture,

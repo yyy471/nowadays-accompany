@@ -10,9 +10,9 @@ import Database from "better-sqlite3";
 import { createBackendApp, listen } from "../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths } from "../src/bootstrap/config.js";
 import { extractMcpWebFragments, pageWebFragments, renderWebReadingPrefix, webReadingCandidates } from "../src/domain/web-reading.js";
-import { listWebReadingPositions, readWebToolProjection } from "../src/storage/web-reading.js";
-import { MemoryStore } from "../src/storage/memory-store.js";
-import { backfillEvidence } from "../src/storage/evidence.js";
+import { listWebReadingPositions, readWebToolProjection } from "../src/storage/conversation/web-reading.js";
+import { MemoryStore } from "../src/storage/memory/memory-store.js";
+import { backfillEvidence } from "../src/storage/memory/evidence.js";
 
 const url = "https://fixture.invalid/reading/topic";
 const markers = (value: unknown): number[] =>

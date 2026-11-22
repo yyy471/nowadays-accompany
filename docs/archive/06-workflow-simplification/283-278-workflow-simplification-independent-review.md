@@ -9,9 +9,9 @@
 | 编号 | 复核结果 | 修复后的复验条件 |
 | --- | --- | --- |
 | R01 · P1 | **模型维护写入前缺少并发保护。** 本地 API 复现。甲的模型调用尚未结束，修改服务进入等待后，乙绑定目标服务并恢复活动均返回 200。随后修改也返回 200，乙保持活动且未列入暂停名单。 [维护路由](../../../apps/backend/src/http/routes.ts#L618) | 模型写入与相关绑定、恢复、调用领取按目标服务协调，提交前重查实际依赖。新增依赖不能抢在写入前恢复或领取。无关服务继续运行，操作结束后释放保护。 |
-| R02 · P1 | **模型恢复后，已接收的消息未继续处理。** 本地 API 复现。停用模型后发送返回 `MODEL_MISSING`，重新启用服务后模型调用次数仍为 0。另测窗口阻塞后使用原标识重试，仍返回 `WINDOW_BLOCKED`，模型调用次数不变。 [重复提交分支](../../../apps/backend/src/application/conversation-service.ts#L225) | 修复绑定或重新启用服务后，活动角色的原消息自动继续调度。窗口可恢复时就地重试原消息。两种路径均检查只写入一条用户消息、只产生一次有效回复。 |
-| R03 · P1 | **任务终结后可能过早释放扩展占用。** 源码核对。任务终结立即关闭资源续用记录，再异步关闭工具目录。引用检查只计算尚未结束的任务链和启用绑定，未覆盖已发工具调用及连接收尾。 [任务终结](../../../apps/backend/src/application/conversation-service.ts#L363) · [资源引用](../../../apps/backend/src/application/resource-service.ts#L397) | 发出工具调用后关闭角色绑定，再终结任务。在途结果仍记在原任务上，资源修改与删除保持受阻，结果结算和连接收尾后释放占用。补验恢复与重启。 |
-| R04 · P2 | **影响范围与运行时模型解析不一致。** 本地 API 复现。全局停用的模型仍被影响接口列为对话和记忆依赖，改地址使角色停止。源码核对还发现，独立记忆模型全局停用时，运行时回退到对话模型，影响接口却只检查角色绑定开关。 [影响计算](../../../apps/backend/src/application/resource-service.ts#L306) · [运行时解析](../../../apps/backend/src/application/model-binding-resolver.ts#L94) | 影响报告、提交前校验和运行时使用相同解析规则。全局停用且无续用的资源不扩大暂停范围。记忆回退能计入实际目标。只有旧任务依赖时，只暂缓该任务。 |
+| R02 · P1 | **模型恢复后，已接收的消息未继续处理。** 本地 API 复现。停用模型后发送返回 `MODEL_MISSING`，重新启用服务后模型调用次数仍为 0。另测窗口阻塞后使用原标识重试，仍返回 `WINDOW_BLOCKED`，模型调用次数不变。 [重复提交分支](../../../apps/backend/src/application/conversation/conversation-service.ts#L225) | 修复绑定或重新启用服务后，活动角色的原消息自动继续调度。窗口可恢复时就地重试原消息。两种路径均检查只写入一条用户消息、只产生一次有效回复。 |
+| R03 · P1 | **任务终结后可能过早释放扩展占用。** 源码核对。任务终结立即关闭资源续用记录，再异步关闭工具目录。引用检查只计算尚未结束的任务链和启用绑定，未覆盖已发工具调用及连接收尾。 [任务终结](../../../apps/backend/src/application/conversation/conversation-service.ts#L363) · [资源引用](../../../apps/backend/src/application/resources/resource-service.ts#L397) | 发出工具调用后关闭角色绑定，再终结任务。在途结果仍记在原任务上，资源修改与删除保持受阻，结果结算和连接收尾后释放占用。补验恢复与重启。 |
+| R04 · P2 | **影响范围与运行时模型解析不一致。** 本地 API 复现。全局停用的模型仍被影响接口列为对话和记忆依赖，改地址使角色停止。源码核对还发现，独立记忆模型全局停用时，运行时回退到对话模型，影响接口却只检查角色绑定开关。 [影响计算](../../../apps/backend/src/application/resources/resource-service.ts#L306) · [运行时解析](../../../apps/backend/src/application/resources/model-binding-resolver.ts#L94) | 影响报告、提交前校验和运行时使用相同解析规则。全局停用且无续用的资源不扩大暂停范围。记忆回退能计入实际目标。只有旧任务依赖时，只暂缓该任务。 |
 | R05 · P2 | **模型保存被拒绝前已经暂停角色。** 本地 API 复现。跨站点改地址并保留旧密钥，接口返回 400 `RESOURCE_CREDENTIAL_STALE`，角色已停止，响应没有本次暂停名单。 [维护路由](../../../apps/backend/src/http/routes.ts#L618) | 可预判的校验在停止前完成。停止后保存失败时，原页面保留草稿、展示实际状态，并提供恢复本次暂停角色的入口。 |
 | R06 · P2 | **并发改绑同一用途会合并出两条模型绑定。** Electron 复现。两边分别把对话绑定改成不同供应商，桌面端自动提交后收到「每个角色最多绑定一个对话模型」，没有出现重读入口。 [自动合并](../../../apps/desktop/renderer/src/pages/Settings.tsx#L459) | 对话和记忆按用途分别合并，同一用途改动冲突时保留草稿并提供重读。MCP 和 Skill 仍按用途与资源区分多条绑定。补验互不重叠的修改自动合并一次。 |
 | R07 · P2 | **已停止的角色无法从对话页就地恢复。** Electron 复现。发送被拒绝后草稿保留，页面提示「角色活动已停止，请先恢复活动」，没有「恢复活动」按钮。按钮目前只随已接收消息的等待状态出现。 [对话活动状态](../../../apps/desktop/renderer/src/pages/Conversation.tsx#L71) · [等待提示](../../../apps/desktop/renderer/src/conversation/ChatPane.tsx#L278) | 已知角色停止及发送被拒绝两条路径都提供就地恢复入口。保留原角色、窗口和草稿，恢复成功后由用户提交尚未接收的新消息。 |
@@ -40,9 +40,9 @@
 
 | 编号 | 已通过的复验 | 仍需修复及复验 |
 | --- | --- | --- |
-| R01 · P1 | 维护期间新增依赖和依赖角色恢复被拒绝，无关角色可恢复，维护结束后保护释放。 | **已开始的后台记忆调用未纳入等待。** 用离线记忆模型挂起一次整理，修改其服务地址返回 200，角色已为 `stopped`，整理仍在运行。记忆运行时只在批次入口检查维护状态，角色停止判定也未计入该调用。复验时在调用结算前保持维护等待，并覆盖同一批后续模型调用。 [记忆运行时](../../../apps/backend/src/application/memory-runtime.ts#L362) · [角色运行判定](../../../apps/backend/src/application/conversation-service.ts#L1065) |
+| R01 · P1 | 维护期间新增依赖和依赖角色恢复被拒绝，无关角色可恢复，维护结束后保护释放。 | **已开始的后台记忆调用未纳入等待。** 用离线记忆模型挂起一次整理，修改其服务地址返回 200，角色已为 `stopped`，整理仍在运行。记忆运行时只在批次入口检查维护状态，角色停止判定也未计入该调用。复验时在调用结算前保持维护等待，并覆盖同一批后续模型调用。 [记忆运行时](../../../apps/backend/src/application/memory/memory-runtime.ts#L362) · [角色运行判定](../../../apps/backend/src/application/conversation/conversation-service.ts#L1065) |
 | R02 · P2 | 后端重新启用模型后自动生成一次回复。原提交标识可以解除窗口阻塞并重试，用户消息无重复。 | **回复已显示，旧等待提示仍在。** Electron 用本地离线模型复现。恢复服务后自动收到「复验成功回复」，输入区仍显示缺少对话模型及配置和重试按钮。根据原消息对应的 SSE 执行或回复事件清除等待状态，其他窗口或自主消息不得提前清除它。 [执行事件](../../../apps/desktop/renderer/src/conversation/use-window-session.ts#L480) |
-| R03 · P1 | 工具调用未结算时，已终结任务仍占用扩展，晚到结果写回原任务。 | **工具目录仍在关闭时已经放行。** 使用可控目录关闭操作，观察到 `closingTaskCatalogs` 仍持有任务，引用接口同时返回 `canUpdate=true`、`canDelete=true`。数据库查询在结果写回后即忽略终态任务，未等目录收尾。复验应分别控制结果结算与连接关闭两个节点。 [目录关闭](../../../apps/backend/src/application/conversation-service.ts#L1567) · [引用查询](../../../apps/backend/src/storage/role-store.ts#L1702) |
+| R03 · P1 | 工具调用未结算时，已终结任务仍占用扩展，晚到结果写回原任务。 | **工具目录仍在关闭时已经放行。** 使用可控目录关闭操作，观察到 `closingTaskCatalogs` 仍持有任务，引用接口同时返回 `canUpdate=true`、`canDelete=true`。数据库查询在结果写回后即忽略终态任务，未等目录收尾。复验应分别控制结果结算与连接关闭两个节点。 [目录关闭](../../../apps/backend/src/application/conversation/conversation-service.ts#L1567) · [引用查询](../../../apps/backend/src/storage/role/role-store.ts#L1702) |
 | R04 | 停用资源不再扩大角色级暂停范围，失效的独立记忆绑定回退到对话服务。运行时与影响报告使用同一绑定解析。 | 仅旧任务依赖时的完整调度、在途调用与维护交错继续随 R01 验收。 |
 | R05 · P2 | 跨站点沿用旧密钥在暂停前返回 400，角色保持活动。 | **多角色暂停超时未返回已暂停名单。** 一个角色确认停止，另一个一直等待模型调用，PATCH 超时返回 409 `ROLES_NOT_STOPPED`，响应没有 `maintenance`，已停止角色无法从模型详情恢复。暂停过程应记录本次操作实际发起的停止，并在超时或后续失败时保留名单与实际状态。 [暂停协调](../../../apps/backend/src/bootstrap/app.ts#L97) · [错误详情](../../../apps/backend/src/http/routes.ts#L639) |
 | R06 | Electron 复验同一对话用途被双方改成不同供应商，显示「绑定冲突：对话模型」，保留本地草稿并提供重读。桌面回归也覆盖了互不重叠的改动及扩展逐项合并。 | 本轮覆盖的场景通过。 |
@@ -58,7 +58,7 @@
 
 | 编号 | 已通过的复验 | 仍需修复及复验 |
 | --- | --- | --- |
-| R01 · P1 | 单独挂起后台记忆整理时，模型维护保持等待，记忆结算后才提交地址变更。 | **前台对话与记忆同时在途时，仍会提前写入。** 先挂起后台记忆，再挂起同角色的下一轮对话。维护进入等待后只放行对话，PATCH 已返回 200，活动状态为 `stopped`，记忆调用仍在运行。节点暂停及对话收尾绕过了包含记忆的运行判定。复验需在两个调用均到达安全边界后才确认停止与提交。 [对话暂停节点](../../../apps/backend/src/application/conversation-service.ts#L2169) · [对话收尾](../../../apps/backend/src/application/conversation-service.ts#L2306) |
+| R01 · P1 | 单独挂起后台记忆整理时，模型维护保持等待，记忆结算后才提交地址变更。 | **前台对话与记忆同时在途时，仍会提前写入。** 先挂起后台记忆，再挂起同角色的下一轮对话。维护进入等待后只放行对话，PATCH 已返回 200，活动状态为 `stopped`，记忆调用仍在运行。节点暂停及对话收尾绕过了包含记忆的运行判定。复验需在两个调用均到达安全边界后才确认停止与提交。 [对话暂停节点](../../../apps/backend/src/application/conversation/conversation-service.ts#L2169) · [对话收尾](../../../apps/backend/src/application/conversation/conversation-service.ts#L2306) |
 | R02 · P2 | Electron 正常收到 `MODEL_MISSING` 后启用模型，原回复显示，等待提示清除。 | **发送响应晚于 SSE 时，页面仍会漏掉原回复。** 在桌面端延迟转交已成功的 POST 响应，启用模型并等原回复入库，再交付响应。桌面仍显示「没有可用的对话模型」，回复也未显示。需在确认原消息标识后按顺序处理已缓冲的事件，覆盖发送响应和原执行事件的两种先后顺序。 [接收响应和缓冲事件](../../../apps/desktop/renderer/src/conversation/use-window-session.ts#L733) |
 | R03 | 工具未结算时保持占用。结果写回后挂起工具目录关闭，修改和删除仍受阻，目录关闭后才放行。 | 本轮覆盖的结算与连接收尾场景通过。 |
 | R05 · P2 | 多角色暂停超时返回已停止名单和仍在等待的角色，已停止的角色可以在原处恢复。 | **用户先行停止的角色被算作本次暂停。** 用户先发停止请求，使角色进入 `stopping`，再开始模型维护。待记忆结算后，PATCH 成功并把该角色列入 `maintenance.pausedRoleIds`。应只允许恢复由本次操作发起暂停且仍处于该次停止状态的角色。 [暂停名单收集](../../../apps/backend/src/bootstrap/app.ts#L97) |
@@ -73,7 +73,7 @@ R04、R06、R08 沿用第 4 节的通过范围，本轮 Electron 再验了并发
 
 | 编号 | 原场景复验 | 扩展场景 |
 | --- | --- | --- |
-| R01 · P1 | 对话和记忆同时在途时，先结束对话，角色仍为 `stopping`，模型地址保持原值。记忆结算后，PATCH 才返回 200。 | **已停止的角色仍可能有记忆调用在途，维护会跳过等待。** 角色确认 `stopped` 后，通过现有记忆整理接口发起整理并挂起模型调用。修改同一服务地址返回 200，同时活动接口返回 `state=stopped`、`running=true`，原调用仍在运行。维护等待须覆盖目标服务上的实际在途调用，且已停止的角色不应加入恢复名单。 [记忆整理入口](../../../apps/backend/src/http/routes.ts#L900) · [维护范围](../../../apps/backend/src/application/resource-service.ts#L469) |
+| R01 · P1 | 对话和记忆同时在途时，先结束对话，角色仍为 `stopping`，模型地址保持原值。记忆结算后，PATCH 才返回 200。 | **已停止的角色仍可能有记忆调用在途，维护会跳过等待。** 角色确认 `stopped` 后，通过现有记忆整理接口发起整理并挂起模型调用。修改同一服务地址返回 200，同时活动接口返回 `state=stopped`、`running=true`，原调用仍在运行。维护等待须覆盖目标服务上的实际在途调用，且已停止的角色不应加入恢复名单。 [记忆整理入口](../../../apps/backend/src/http/routes.ts#L900) · [维护范围](../../../apps/backend/src/application/resources/resource-service.ts#L469) |
 | R02 · P2 | Electron 让原回复 SSE 先于发送响应到达，随后交付响应。原回复显示，旧等待提示消失，之后发送相同文本会使用新标识。 | **正常等待恢复后，再发送相同文本会被当作旧消息。** Electron 先收到 `MODEL_MISSING`，启用模型后原回复显示且提示清除。再次输入相同文本并发送，桌面复用原 `submissionId`，后端只有一条用户消息。原执行被确认时应同步结束对应的重试记录，保留对尚未确认提交的去重保护。两种响应先后顺序均需验收同文本的新发送。 [等待清除](../../../apps/desktop/renderer/src/conversation/use-window-session.ts#L491) · [提交标识复用](../../../apps/desktop/renderer/src/conversation/use-window-session.ts#L717) |
 | R05 | 用户先发停止请求，随后开始模型维护。记忆结算后维护成功，`maintenance.pausedRoleIds` 为空，角色保持停止。 | 本轮覆盖的暂停归属场景通过。 |
 | R09 | Electron 注入乙套首次上传失败与服饰列表 GET 503。乙套的失败原因仍显示，三次上传请求依次为甲、乙、乙，最终两套均入库。 | 本轮覆盖的列表刷新失败与导入重试场景通过。 |
@@ -86,7 +86,7 @@ R04、R06、R08 沿用第 4 节的通过范围，本轮 Electron 再验了并发
 
 | 编号 | 原场景复验 | 扩展场景 |
 | --- | --- | --- |
-| R01 · P1 | 已停止角色在目标服务 A 上整理记忆。挂起该调用时，修改地址保持等待，地址仍为原值。结算后 PATCH 返回 200，暂停名单为空，角色继续保持停止。 | **服务停用或角色改绑后，维护仍会漏等旧调用。** 分别在同一在途调用挂起期间全局停用 A，或将角色改绑到 B。两次修改 A 的地址均在旧调用释放前返回 200，地址已经改写。当前代码将实际在途角色与当前影响范围取交集，绑定或启用状态变化后旧调用仍属于 A，却从等待名单中消失。等待条件应直接根据目标服务的在途调用，暂停及恢复名单仍按当前角色状态和操作归属计算。 [影响范围与等待名单](../../../apps/backend/src/application/resource-service.ts#L478) |
+| R01 · P1 | 已停止角色在目标服务 A 上整理记忆。挂起该调用时，修改地址保持等待，地址仍为原值。结算后 PATCH 返回 200，暂停名单为空，角色继续保持停止。 | **服务停用或角色改绑后，维护仍会漏等旧调用。** 分别在同一在途调用挂起期间全局停用 A，或将角色改绑到 B。两次修改 A 的地址均在旧调用释放前返回 200，地址已经改写。当前代码将实际在途角色与当前影响范围取交集，绑定或启用状态变化后旧调用仍属于 A，却从等待名单中消失。等待条件应直接根据目标服务的在途调用，暂停及恢复名单仍按当前角色状态和操作归属计算。 [影响范围与等待名单](../../../apps/backend/src/application/resources/resource-service.ts#L478) |
 | R02 · P2 | Electron 分别覆盖发送响应先到和 SSE 先到。模型恢复后原回复显示、等待提示消失，再次发送相同文本使用新的提交标识，两次用户消息都入库。 | **切到其他窗口期间生成回复，切回来再次发送同文本仍被去重。** 主窗口收到 `MODEL_MISSING` 后切到第二个窗口，启用模型并等待原回复入库，再切回主窗口。原回复已显示，再发相同文本却复用了原 `submissionId`，后端仍只有一条用户消息。切换窗口会重建等待状态，重试记录仍保留。读取窗口快照或补放事件时应对照原提交与执行结果收敛重试记录，保留尚未确认提交的去重保护。 [窗口快照](../../../apps/desktop/renderer/src/conversation/use-window-session.ts#L333) · [提交标识复用](../../../apps/desktop/renderer/src/conversation/use-window-session.ts#L725) |
 
 整条链路暂未通过。第 3 节所列待实施流程、真实服务及完整桌面交付仍待验收。
@@ -97,7 +97,7 @@ R04、R06、R08 沿用第 4 节的通过范围，本轮 Electron 再验了并发
 
 | 编号 | 原场景复验 | 相邻场景 |
 | --- | --- | --- |
-| R01 · P1 | 分别在 A 的记忆调用挂起期间停用 A 或把角色改绑到 B。修改 A 地址均保持等待，旧调用释放后返回 200，暂停名单为空，角色保持停止。另验前台对话在全局停用后仍阻挡 A 的地址修改，无关服务可同时保存。 | **删除服务仍会跳过实际在途调用。** 在记忆调用挂起时把角色改绑到 B，旧服务的引用接口返回 `canDelete=true`。DELETE 返回 200，随后查询旧服务得到 404，旧调用仍未结算。删除预检和提交应核对目标服务实际在途状态，等待或返回可重试的占用原因。补验旧调用结束后允许删除，并核对无关服务不被拦截。 [引用与删除](../../../apps/backend/src/application/resource-service.ts#L574) |
+| R01 · P1 | 分别在 A 的记忆调用挂起期间停用 A 或把角色改绑到 B。修改 A 地址均保持等待，旧调用释放后返回 200，暂停名单为空，角色保持停止。另验前台对话在全局停用后仍阻挡 A 的地址修改，无关服务可同时保存。 | **删除服务仍会跳过实际在途调用。** 在记忆调用挂起时把角色改绑到 B，旧服务的引用接口返回 `canDelete=true`。DELETE 返回 200，随后查询旧服务得到 404，旧调用仍未结算。删除预检和提交应核对目标服务实际在途状态，等待或返回可重试的占用原因。补验旧调用结束后允许删除，并核对无关服务不被拦截。 [引用与删除](../../../apps/backend/src/application/resources/resource-service.ts#L574) |
 | R02 · P2 | Electron 中在其他窗口等待模型恢复和原回复入库，切回主窗口后原回复可见。重新输入相同文本使用新 `submissionId`，后端保存两条用户消息。 | **发送回执丢失后，快照清掉旧标识却仍保留同一次发送的草稿。** Electron 让后端成功接收消息，在页面收到回执前模拟响应丢失。页面恢复旧草稿。模型仍停用时切窗再切回，快照显示已入库的消息，输入框仍有原草稿。用户未重输文字，直接点击发送即使用新标识，后端保存两条相同的待处理消息。快照确认接收时，应同时收敛对应的失败提示与恢复草稿，或让明确的重试继续使用原标识。用户手动重输的相同文本仍可作为新消息发送。 [快照收敛](../../../apps/desktop/renderer/src/conversation/use-window-session.ts#L371) · [失败恢复草稿](../../../apps/desktop/renderer/src/conversation/use-window-session.ts#L789) |
 
 整条链路暂未通过。第 3 节所列待实施流程、真实服务及完整桌面交付仍待验收。
@@ -149,9 +149,9 @@ R01、R02 在上述本机复验范围内关闭，本轮未发现新增阻塞项�
 | 编号 | 复现结果 | 修复后的复验条件 |
 | --- | --- | --- |
 | 292-R01 · P1 | **已经发出的标注或过场图规划未计入在途。** 分别挂起两类模型调用，引用报告均未列出 `INFLIGHT_CALL`。修改该模型地址均返回 200，此时角色显示已停止，但原调用还未结算。装配层只汇总记忆和对话执行。 [在途汇总](../../../apps/backend/src/bootstrap/app.ts#L220) | 两类调用从领取到结算都登记在实际使用的模型服务上。维护等待目标调用收尾，删除在调用结算前受阻。无关服务的操作继续。 |
-| 292-R02 · P2 | **等待后改绑会绕过新服务的维护窗口。** 让规划先等待 A，角色改绑到 B，再开始 B 的维护。结束 A 的维护后，B 仍在维护，规划已调用 B 并成功完成。重新解析后的绑定未再检查维护状态。 [规划领取](../../../apps/backend/src/scene/model-planner.ts#L98) · [标注领取](../../../apps/backend/src/application/segment-annotation-service.ts#L101) | 重新解析后的实际服务也须通过维护检查。覆盖 A→B 改绑、同一服务连续维护，以及等待时取消。 |
-| 292-R03 · P2 | **已停止且只剩搁置续行的角色无法删除。** 在临时后端准备一条属于已停止角色的暂停续行，无正在运行的模型或工具。带历史保留选项的 DELETE 等待约 15 秒后返回 409 `ROLE_BUSY`，待续行仍在队列。删除前检查仍要求队列为空。 [删除前等待](../../../apps/backend/src/application/conversation-service.ts#L436) | 角色保持停止即可删除。搁置、不会再运行的续行由删除流程处理，已发出的调用继续按原规则收尾。覆盖保留与清理两条路径。 |
-| 292-R04 · P2 | **旧任务占用仍阻止整个角色恢复。** 角色当前对话和记忆均解析到 B，仅有一条旧任务依赖 A。A 的影响报告只有 `task`，维护 A 时角色恢复仍返回 409 `RESOURCE_MAINTENANCE`。这是第 3 节待办在复验中确认的具体场景。 [角色恢复检查](../../../apps/backend/src/application/resource-service.ts#L388) | 恢复角色后允许使用 B，仅暂缓依赖 A 的旧任务。A 维护结束后原任务可以继续，期间无需再次切换角色活动状态。 |
+| 292-R02 · P2 | **等待后改绑会绕过新服务的维护窗口。** 让规划先等待 A，角色改绑到 B，再开始 B 的维护。结束 A 的维护后，B 仍在维护，规划已调用 B 并成功完成。重新解析后的绑定未再检查维护状态。 [规划领取](../../../apps/backend/src/scene/model-planner.ts#L98) · [标注领取](../../../apps/backend/src/application/conversation/segment-annotation-service.ts#L101) | 重新解析后的实际服务也须通过维护检查。覆盖 A→B 改绑、同一服务连续维护，以及等待时取消。 |
+| 292-R03 · P2 | **已停止且只剩搁置续行的角色无法删除。** 在临时后端准备一条属于已停止角色的暂停续行，无正在运行的模型或工具。带历史保留选项的 DELETE 等待约 15 秒后返回 409 `ROLE_BUSY`，待续行仍在队列。删除前检查仍要求队列为空。 [删除前等待](../../../apps/backend/src/application/conversation/conversation-service.ts#L436) | 角色保持停止即可删除。搁置、不会再运行的续行由删除流程处理，已发出的调用继续按原规则收尾。覆盖保留与清理两条路径。 |
+| 292-R04 · P2 | **旧任务占用仍阻止整个角色恢复。** 角色当前对话和记忆均解析到 B，仅有一条旧任务依赖 A。A 的影响报告只有 `task`，维护 A 时角色恢复仍返回 409 `RESOURCE_MAINTENANCE`。这是第 3 节待办在复验中确认的具体场景。 [角色恢复检查](../../../apps/backend/src/application/resources/resource-service.ts#L388) | 恢复角色后允许使用 B，仅暂缓依赖 A 的旧任务。A 维护结束后原任务可以继续，期间无需再次切换角色活动状态。 |
 
 草稿生图、未保存录音试听和设置导航收敛继续列为待实施。真实服务、跨页返回与重连及完整桌面交付仍待联调。
 
@@ -161,9 +161,9 @@ R01、R02 在上述本机复验范围内关闭，本轮未发现新增阻塞项�
 
 | 编号 | 原场景复验 | 扩展场景 |
 | --- | --- | --- |
-| 292-R01／R02 · P2 | 分别挂起已经开始的标注和规划，引用报告列出 `INFLIGHT_CALL`，修改地址等调用结算才返回 200。规划等待 A 时改绑到也在维护的 B，A 释放后仍等待，B 释放后才调用并成功完成。 | **检查维护状态和登记调用之间仍有空档。** 在离线规划测试中控制微任务顺序，让服务在最后一次可用检查之后、模型调用登记之前开启维护窗口。模型请求随后在该服务仍处于维护时发出。两类后台调用应在同一步协调内完成维护检查和在途登记，并在结束或取消时释放。 [共享解析](../../../apps/backend/src/application/model-maintenance.ts#L12) · [规划登记](../../../apps/backend/src/scene/model-planner.ts#L102) |
-| 292-R03 · P2 | 已停止角色只剩搁置续行时，DELETE 返回 200，清除续行队列。Electron 同页暂停删除、历史保留与清理、失败后恢复均再次通过。 | **尚未发出的标注仍会阻塞删除。** 标注在模型维护窗口排队、模型调用尚未发出时，停止角色后执行删除，等待约 15 秒后返回 409 `ROLE_BUSY`，标注仍在等待。删除流程应取消尚未领取的标注，并继续等待已经发出的工作结算。 [标注队列](../../../apps/backend/src/application/conversation-service.ts#L307) · [删除前等待](../../../apps/backend/src/application/conversation-service.ts#L445) |
-| 292-R04 · P2 | 当前对话和记忆使用 B、仅旧任务依赖 A 时，维护 A 期间恢复返回 200，角色进入 `active`。 | **全局停用的记忆绑定仍会错误阻塞恢复。** 对话绑定 B，独立记忆绑定 A 后全局停用 A，记忆实际回退到 B，A 的影响报告为空。开启 A 的维护窗口后恢复角色仍返回 409 `RESOURCE_MAINTENANCE`。恢复检查应按实际解析的对话与记忆目标判断，旧任务继续由调度按目标暂缓。 [恢复检查](../../../apps/backend/src/application/resource-service.ts#L388) · [运行时解析](../../../apps/backend/src/application/model-binding-resolver.ts#L94) |
+| 292-R01／R02 · P2 | 分别挂起已经开始的标注和规划，引用报告列出 `INFLIGHT_CALL`，修改地址等调用结算才返回 200。规划等待 A 时改绑到也在维护的 B，A 释放后仍等待，B 释放后才调用并成功完成。 | **检查维护状态和登记调用之间仍有空档。** 在离线规划测试中控制微任务顺序，让服务在最后一次可用检查之后、模型调用登记之前开启维护窗口。模型请求随后在该服务仍处于维护时发出。两类后台调用应在同一步协调内完成维护检查和在途登记，并在结束或取消时释放。 [共享解析](../../../apps/backend/src/application/resources/model-maintenance.ts#L12) · [规划登记](../../../apps/backend/src/scene/model-planner.ts#L102) |
+| 292-R03 · P2 | 已停止角色只剩搁置续行时，DELETE 返回 200，清除续行队列。Electron 同页暂停删除、历史保留与清理、失败后恢复均再次通过。 | **尚未发出的标注仍会阻塞删除。** 标注在模型维护窗口排队、模型调用尚未发出时，停止角色后执行删除，等待约 15 秒后返回 409 `ROLE_BUSY`，标注仍在等待。删除流程应取消尚未领取的标注，并继续等待已经发出的工作结算。 [标注队列](../../../apps/backend/src/application/conversation/conversation-service.ts#L307) · [删除前等待](../../../apps/backend/src/application/conversation/conversation-service.ts#L445) |
+| 292-R04 · P2 | 当前对话和记忆使用 B、仅旧任务依赖 A 时，维护 A 期间恢复返回 200，角色进入 `active`。 | **全局停用的记忆绑定仍会错误阻塞恢复。** 对话绑定 B，独立记忆绑定 A 后全局停用 A，记忆实际回退到 B，A 的影响报告为空。开启 A 的维护窗口后恢复角色仍返回 409 `RESOURCE_MAINTENANCE`。恢复检查应按实际解析的对话与记忆目标判断，旧任务继续由调度按目标暂缓。 [恢复检查](../../../apps/backend/src/application/resources/resource-service.ts#L388) · [运行时解析](../../../apps/backend/src/application/resources/model-binding-resolver.ts#L94) |
 
 整条链路暂未通过。草稿生图、未保存录音试听、设置导航收敛以及真实服务和完整桌面交付继续按原计划推进。
 
@@ -173,13 +173,13 @@ R01、R02 在上述本机复验范围内关闭，本轮未发现新增阻塞项�
 
 | 编号 | 独立复验结果 |
 | --- | --- |
-| 292-R01／R02 | 在维护检查与领取边界控制事件顺序。维护先取得窗口时，后台调用继续等待；调用先取得登记时，新维护可查到其在途记录。规划等待 A 期间改绑到维护中的 B，A 释放后仍等待，B 释放后才调用。连续维护、等待取消及在途标注和规划阻挡地址修改的回归用例通过。 [领取协调](../../../apps/backend/src/application/model-maintenance.ts#L18) · [资源登记](../../../apps/backend/src/application/resource-service.ts#L361) |
+| 292-R01／R02 | 在维护检查与领取边界控制事件顺序。维护先取得窗口时，后台调用继续等待；调用先取得登记时，新维护可查到其在途记录。规划等待 A 期间改绑到维护中的 B，A 释放后仍等待，B 释放后才调用。连续维护、等待取消及在途标注和规划阻挡地址修改的回归用例通过。 [领取协调](../../../apps/backend/src/application/resources/model-maintenance.ts#L18) · [资源登记](../../../apps/backend/src/application/resources/resource-service.ts#L361) |
 | 292-R03 | 标注尚在维护窗口排队、未领取模型调用时，删除已停止角色返回 200，等待项已取消，标注没有发出。Electron 再次通过同页暂停删除、历史保留与清理、失败后恢复。 |
-| 292-R04 | 独立记忆模型 A 停用、实际回退到对话模型 B 时，维护 A 期间恢复返回 200，角色进入 `active`。仅旧任务依赖 A 的恢复场景也通过。 [实际目标检查](../../../apps/backend/src/application/resource-service.ts#L426) |
+| 292-R04 | 独立记忆模型 A 停用、实际回退到对话模型 B 时，维护 A 期间恢复返回 200，角色进入 `active`。仅旧任务依赖 A 的恢复场景也通过。 [实际目标检查](../../../apps/backend/src/application/resources/resource-service.ts#L426) |
 
 ### 删除期间仍可接收新的过场图任务
 
-**292-R03 扩展场景 · P2。** 使用离线标注模型挂起已发出的调用，让删除请求在首次取消过场图任务之后等待标注结算。此时通过另一请求为同一角色的历史回复生成过场图，接口返回 201，规划开始调用模型。随后只释放标注，删除返回 200，角色从列表移除且目录已清理，新的规划调用仍未结算。当前删除流程先取消当时已有的过场图任务，后续等待未阻止该角色的新任务进入。 [删除收尾](../../../apps/backend/src/bootstrap/app.ts#L291) · [过场图任务入口](../../../apps/backend/src/application/scene-image-service.ts)
+**292-R03 扩展场景 · P2。** 使用离线标注模型挂起已发出的调用，让删除请求在首次取消过场图任务之后等待标注结算。此时通过另一请求为同一角色的历史回复生成过场图，接口返回 201，规划开始调用模型。随后只释放标注，删除返回 200，角色从列表移除且目录已清理，新的规划调用仍未结算。当前删除流程先取消当时已有的过场图任务，后续等待未阻止该角色的新任务进入。 [删除收尾](../../../apps/backend/src/bootstrap/app.ts#L291) · [过场图任务入口](../../../apps/backend/src/application/media/scene-image-service.ts)
 
 复验条件是在删除持有该角色的写入保护期间，阻止这个角色的新任务领取，并确保已接收的工作按原规则结算或取消后才清理目录。覆盖保留与清理两种删除路径，另验删除失败后该角色可以继续正常使用，其他角色不受影响。
 
@@ -194,7 +194,7 @@ R01、R02 在上述本机复验范围内关闭，本轮未发现新增阻塞项�
 
 | 编号 | 扩展场景与结果 | 复验条件 |
 | --- | --- | --- |
-| 292-R03 · P2 | **已发出的过场图规划仍在结算时，角色已经被移除。** 先发起过场图并等模型调用开始，再停止角色并删除。离线模型收到取消信号后仍在收尾，两条历史路径均返回 200 并移除角色索引，清理历史时实测角色目录已删除。资源引用仍列出该角色的 `INFLIGHT_CALL`，直到模型结束才释放。取消时任务的外层等待立即结束，删除流程只等到这一层。 [取消任务](../../../apps/backend/src/application/scene-image-service.ts#L270) · [规划等待](../../../apps/backend/src/application/scene-image-service.ts#L395) · [调用释放](../../../apps/backend/src/scene/model-planner.ts#L252) | 让已经领取的规划取消并真正结算后再提交删除。若无法在现有等待期限内收尾，返回可重试的失败并保留角色。 |
+| 292-R03 · P2 | **已发出的过场图规划仍在结算时，角色已经被移除。** 先发起过场图并等模型调用开始，再停止角色并删除。离线模型收到取消信号后仍在收尾，两条历史路径均返回 200 并移除角色索引，清理历史时实测角色目录已删除。资源引用仍列出该角色的 `INFLIGHT_CALL`，直到模型结束才释放。取消时任务的外层等待立即结束，删除流程只等到这一层。 [取消任务](../../../apps/backend/src/application/media/scene-image-service.ts#L270) · [规划等待](../../../apps/backend/src/application/media/scene-image-service.ts#L395) · [调用释放](../../../apps/backend/src/scene/model-planner.ts#L252) | 让已经领取的规划取消并真正结算后再提交删除。若无法在现有等待期限内收尾，返回可重试的失败并保留角色。 |
 | 292-R03 · P2 | **删除期间仍能发起同角色的手动记忆整理。** 已发出的标注挂起删除时，`POST /v1/roles/:roleId/memory/batches` 返回 202 并启动新模型调用。释放原标注后，删除继续等待这次新调用。 [手动整理入口](../../../apps/backend/src/http/routes.ts#L914) | 同一角色处于删除收尾时拒绝新建手动整理，覆盖已有任务的正常收尾、删除失败后可用及其他角色照常提交。 |
 
 295 的原修复场景通过，角色删除链路因上述两项暂未通过独立复验。
@@ -208,7 +208,7 @@ R01、R02 在上述本机复验范围内关闭，本轮未发现新增阻塞项�
 
 ### 已在途的记忆整理仍可让删除一直等待
 
-**292-R03 扩展场景 · P2。** 先停止角色，再手动发起有待处理证据的记忆整理，挂起模型后提交删除。约 15.4 秒后，删除仍未返回，角色一直处于删除保护中，同时提交的另一角色 DELETE 也在等待。释放记忆模型后两个删除才返回 200。记忆运行时在自己的映射中登记在途服务，规划与标注的 15 秒等待只查询调用领取表。随后 `memoryRuntime.disposeRole()` 等待整条记忆队列且没有删除期限，这一步也在全局删除队列内。 [删除收尾](../../../apps/backend/src/bootstrap/app.ts#L294) · [记忆队列清理](../../../apps/backend/src/application/memory-runtime.ts#L188) · [在途登记](../../../apps/backend/src/application/memory-runtime.ts#L413) · [全局删除队列](../../../apps/backend/src/application/role-deletion-service.ts#L62)
+**292-R03 扩展场景 · P2。** 先停止角色，再手动发起有待处理证据的记忆整理，挂起模型后提交删除。约 15.4 秒后，删除仍未返回，角色一直处于删除保护中，同时提交的另一角色 DELETE 也在等待。释放记忆模型后两个删除才返回 200。记忆运行时在自己的映射中登记在途服务，规划与标注的 15 秒等待只查询调用领取表。随后 `memoryRuntime.disposeRole()` 等待整条记忆队列且没有删除期限，这一步也在全局删除队列内。 [删除收尾](../../../apps/backend/src/bootstrap/app.ts#L294) · [记忆队列清理](../../../apps/backend/src/application/memory/memory-runtime.ts#L188) · [在途登记](../../../apps/backend/src/application/memory/memory-runtime.ts#L413) · [全局删除队列](../../../apps/backend/src/application/role/role-deletion-service.ts#L62)
 
 复验条件是已启动的记忆整理有机会完成，超过删除等待期限时返回可重试的 `ROLE_BUSY` 并保留角色与记忆队列。超时后应释放删除保护和全局删除队列，原角色可继续使用，另一角色的删除可以推进。
 
@@ -224,7 +224,7 @@ R01、R02 在上述本机复验范围内关闭，本轮未发现新增阻塞项�
 
 ### 删除超时后遗漏已排队整理的自动唤醒
 
-**292-R03 扩展场景 · P2。** 角色已经停止，记忆服务 B 在维护中，手动整理返回 202 并保留待处理触发。挂起对话服务 A 上已发出的过场图规划，开始删除角色，此时结束 B 的维护。B 已恢复可用，删除期保护拒绝这次唤醒。随后删除返回 409 `ROLE_BUSY`，A 上的规划也已释放，原触发仍留在 SQLite，B 收到的请求数为 0。再次结束 B 的维护窗口后，实际 HTTP 适配器向本机模拟 SSE 服务发起一次请求并消费原触发。删除期应阻止新工作领取，删除失败后需要补发这次唤醒，让已接收的整理自动继续。 [维护结束唤醒](../../../apps/backend/src/application/resource-service.ts#L341) · [记忆入队](../../../apps/backend/src/application/memory-runtime.ts#L211) · [删除保护释放](../../../apps/backend/src/application/role-deletion-service.ts#L83)
+**292-R03 扩展场景 · P2。** 角色已经停止，记忆服务 B 在维护中，手动整理返回 202 并保留待处理触发。挂起对话服务 A 上已发出的过场图规划，开始删除角色，此时结束 B 的维护。B 已恢复可用，删除期保护拒绝这次唤醒。随后删除返回 409 `ROLE_BUSY`，A 上的规划也已释放，原触发仍留在 SQLite，B 收到的请求数为 0。再次结束 B 的维护窗口后，实际 HTTP 适配器向本机模拟 SSE 服务发起一次请求并消费原触发。删除期应阻止新工作领取，删除失败后需要补发这次唤醒，让已接收的整理自动继续。 [维护结束唤醒](../../../apps/backend/src/application/resources/resource-service.ts#L341) · [记忆入队](../../../apps/backend/src/application/memory/memory-runtime.ts#L211) · [删除保护释放](../../../apps/backend/src/application/role/role-deletion-service.ts#L83)
 
 297 的原问题通过，角色删除链路因上述恢复场景暂未通过独立复验。
 
@@ -237,7 +237,7 @@ R01、R02 在上述本机复验范围内关闭，本轮未发现新增阻塞项�
 
 ### 删除期间确认结束的任务遗漏记忆整理
 
-**292-R03 扩展场景 · P2。** 为已停止角色准备含一条待整理工具结果的任务，用已发出的过场图规划挂起删除。在删除收尾期间调用任务结束接口，返回 200，任务变为 `completed`。删除随后返回 409 `ROLE_BUSY`。角色保留，但原任务没有 `task_end` 触发，模型调用为 0，工具证据仍待整理。对照场景在普通状态结束同样的任务会写入一条 `task_end` 并调用模型一次。任务结束通知在删除期被入队守卫拦截，任务 ID 尚未形成持久化触发。删除失败后补发的通用唤醒无法重建这条任务结束通知。 [任务结束通知](../../../apps/backend/src/application/conversation-service.ts#L434) · [记忆入队保护](../../../apps/backend/src/application/memory-runtime.ts#L211) · [任务结束触发](../../../apps/backend/src/application/memory-runtime.ts#L450)
+**292-R03 扩展场景 · P2。** 为已停止角色准备含一条待整理工具结果的任务，用已发出的过场图规划挂起删除。在删除收尾期间调用任务结束接口，返回 200，任务变为 `completed`。删除随后返回 409 `ROLE_BUSY`。角色保留，但原任务没有 `task_end` 触发，模型调用为 0，工具证据仍待整理。对照场景在普通状态结束同样的任务会写入一条 `task_end` 并调用模型一次。任务结束通知在删除期被入队守卫拦截，任务 ID 尚未形成持久化触发。删除失败后补发的通用唤醒无法重建这条任务结束通知。 [任务结束通知](../../../apps/backend/src/application/conversation/conversation-service.ts#L434) · [记忆入队保护](../../../apps/backend/src/application/memory/memory-runtime.ts#L211) · [任务结束触发](../../../apps/backend/src/application/memory/memory-runtime.ts#L450)
 
 复验条件是删除期间若任务结束请求已确认成功，且随后删除失败，保留该任务的整理意图并在删除保护解除后执行一次。
 
@@ -252,7 +252,7 @@ R01、R02 在上述本机复验范围内关闭，本轮未发现新增阻塞项�
 
 ### 记忆服务晚于删除超时恢复时遗漏整理
 
-**292-R03 扩展场景 · P2。** 删除收尾期间结束含待处理工具结果的任务，接口返回 200，任务状态变为 `completed`。保持记忆模型在维护中，等删除返回 409 `ROLE_BUSY` 后再结束维护。两条历史路径均未生成 `task_end`，记忆模型调用为 0，工具证据仍待处理。手动提交整理能调用模型，但原任务仍没有 `task_end`。删除失败后的 `kick` 在模型可用前先移除暂存的任务 ID，`runOnce` 遇到维护时提前返回，尚未写入任务触发。 [补发暂存任务](../../../apps/backend/src/application/memory-runtime.ts#L161) · [维护检查](../../../apps/backend/src/application/memory-runtime.ts#L444) · [任务结束触发](../../../apps/backend/src/application/memory-runtime.ts#L476)
+**292-R03 扩展场景 · P2。** 删除收尾期间结束含待处理工具结果的任务，接口返回 200，任务状态变为 `completed`。保持记忆模型在维护中，等删除返回 409 `ROLE_BUSY` 后再结束维护。两条历史路径均未生成 `task_end`，记忆模型调用为 0，工具证据仍待处理。手动提交整理能调用模型，但原任务仍没有 `task_end`。删除失败后的 `kick` 在模型可用前先移除暂存的任务 ID，`runOnce` 遇到维护时提前返回，尚未写入任务触发。 [补发暂存任务](../../../apps/backend/src/application/memory/memory-runtime.ts#L161) · [维护检查](../../../apps/backend/src/application/memory/memory-runtime.ts#L444) · [任务结束触发](../../../apps/backend/src/application/memory/memory-runtime.ts#L476)
 
 复验条件是记忆服务仍不可用时保留原任务整理意图，服务恢复后自动形成一次 `task_end`，无需再次结束任务或手动发起整理。
 
@@ -268,7 +268,7 @@ R01、R02 在上述本机复验范围内关闭，本轮未发现新增阻塞项�
 
 ### 等待维护时重启会丢失已确认任务的整理通知
 
-**292-R03 扩展场景 · P2。** 任务结束接口返回 200，任务已经持久化为 `completed`。删除随后超时，记忆模型仍在维护。此时正常关闭临时后端并用同一角色库重启，再触发模型维护结束的正常唤醒。两种历史选项下，角色与任务状态均保留，但 `task_end` 触发和模型调用均为 0，工具证据仍待整理。手动提交整理后模型可以调用。任务结束通知暂存在运行时内存，关闭会清空，启动恢复也不会重建这条通知。 [任务通知暂存](../../../apps/backend/src/application/memory-runtime.ts#L131) · [关闭清理](../../../apps/backend/src/application/memory-runtime.ts#L192) · [启动恢复](../../../apps/backend/src/application/memory-runtime.ts#L96)
+**292-R03 扩展场景 · P2。** 任务结束接口返回 200，任务已经持久化为 `completed`。删除随后超时，记忆模型仍在维护。此时正常关闭临时后端并用同一角色库重启，再触发模型维护结束的正常唤醒。两种历史选项下，角色与任务状态均保留，但 `task_end` 触发和模型调用均为 0，工具证据仍待整理。手动提交整理后模型可以调用。任务结束通知暂存在运行时内存，关闭会清空，启动恢复也不会重建这条通知。 [任务通知暂存](../../../apps/backend/src/application/memory/memory-runtime.ts#L131) · [关闭清理](../../../apps/backend/src/application/memory/memory-runtime.ts#L192) · [启动恢复](../../../apps/backend/src/application/memory/memory-runtime.ts#L96)
 
 复验条件是任务结束已确认、角色仍保留时，待整理意图跨重启可恢复。模型恢复后应自动形成一次 `task_end` 并整理，无需用户重新结束任务或手动整理。
 
@@ -283,7 +283,7 @@ R01、R02 在上述本机复验范围内关闭，本轮未发现新增阻塞项�
 
 ### 触发写入失败时已确认的整理仍无法跨重启恢复
 
-**292-R03 扩展场景 · P2。** 在临时 SQLite 库仅对 `task_end` 的插入注入写入失败，任务状态写入保持正常。删除期间结束任务仍返回 200，任务状态已保存；删除随后返回 409 `ROLE_BUSY`，模型仍在维护。恢复触发写入后，用同一角色库重启并再次唤醒。两种历史选项均未恢复整理，触发记录和模型调用都为 0，工具证据仍为待处理。实现捕获写入错误后退回内存暂存，退出时这部分意图会丢失。 [任务结束成功响应](../../../apps/backend/src/application/conversation-service.ts#L436) · [触发写入与回退](../../../apps/backend/src/application/memory-runtime.ts#L138)
+**292-R03 扩展场景 · P2。** 在临时 SQLite 库仅对 `task_end` 的插入注入写入失败，任务状态写入保持正常。删除期间结束任务仍返回 200，任务状态已保存；删除随后返回 409 `ROLE_BUSY`，模型仍在维护。恢复触发写入后，用同一角色库重启并再次唤醒。两种历史选项均未恢复整理，触发记录和模型调用都为 0，工具证据仍为待处理。实现捕获写入错误后退回内存暂存，退出时这部分意图会丢失。 [任务结束成功响应](../../../apps/backend/src/application/conversation/conversation-service.ts#L436) · [触发写入与回退](../../../apps/backend/src/application/memory/memory-runtime.ts#L138)
 
 复验条件是接口已确认任务结束且角色仍保留时，即使触发写入暂时失败，重启后仍能从持久化状态恢复原整理。也可让任务状态与整理意图在同一事务提交，失败时返回可重试错误。
 
@@ -298,7 +298,7 @@ R01、R02 在上述本机复验范围内关闭，本轮未发现新增阻塞项�
 
 ### 单项任务补写失败会阻塞角色的其他整理
 
-**292-R03 扩展场景 · P2。** 保持记忆模型可用，仅让临时 SQLite 库拒绝 `task_end` 插入。任务结束仍返回 200，手动整理返回 202 且触发成功入库，但运行时在处理该触发前先执行任务补写，写入异常导致本轮退出，模型调用为 0。独立对话证据也停在待整理状态。删除超时后带故障重启，即使原运行时暂存已清空，仍可复现手动整理被阻塞。解除故障后，手动触发继续留在库中，直至再次唤醒才处理。 [批次补写入口](../../../apps/backend/src/application/memory-runtime.ts#L518) · [处理已有触发](../../../apps/backend/src/application/memory-runtime.ts#L554)
+**292-R03 扩展场景 · P2。** 保持记忆模型可用，仅让临时 SQLite 库拒绝 `task_end` 插入。任务结束仍返回 200，手动整理返回 202 且触发成功入库，但运行时在处理该触发前先执行任务补写，写入异常导致本轮退出，模型调用为 0。独立对话证据也停在待整理状态。删除超时后带故障重启，即使原运行时暂存已清空，仍可复现手动整理被阻塞。解除故障后，手动触发继续留在库中，直至再次唤醒才处理。 [批次补写入口](../../../apps/backend/src/application/memory/memory-runtime.ts#L518) · [处理已有触发](../../../apps/backend/src/application/memory/memory-runtime.ts#L554)
 
 复验条件是个别任务触发补写失败时保留可重试状态，已有的手动或其他正常整理触发继续处理。
 
@@ -313,7 +313,7 @@ R01、R02 在上述本机复验范围内关闭，本轮未发现新增阻塞项�
 
 ### 任务补写退避到期时模型仍在维护会持续重复扫库
 
-**292-R03 扩展场景 · P2。** 单项 `task_end` 写入失败后，让记忆模型保持维护，等待真实 30 秒退避到期。首个约 250 毫秒内观察到约 20 次待补写任务扫描，期间模型调用为 0。解除写入故障并结束维护后，原任务整理一次。维护分支提前返回后，定时器沿用已过期的 `retryAt`，持续以零延迟重新排队并打开角色库。 [定时器调度](../../../apps/backend/src/application/memory-runtime.ts#L390) · [退避状态读取](../../../apps/backend/src/application/memory-runtime.ts#L465) · [维护分支](../../../apps/backend/src/application/memory-runtime.ts#L514)
+**292-R03 扩展场景 · P2。** 单项 `task_end` 写入失败后，让记忆模型保持维护，等待真实 30 秒退避到期。首个约 250 毫秒内观察到约 20 次待补写任务扫描，期间模型调用为 0。解除写入故障并结束维护后，原任务整理一次。维护分支提前返回后，定时器沿用已过期的 `retryAt`，持续以零延迟重新排队并打开角色库。 [定时器调度](../../../apps/backend/src/application/memory/memory-runtime.ts#L390) · [退避状态读取](../../../apps/backend/src/application/memory/memory-runtime.ts#L465) · [维护分支](../../../apps/backend/src/application/memory/memory-runtime.ts#L514)
 
 复验条件是退避到期且模型仍在维护时，不重复安排已到期的零延迟唤醒。待处理任务应继续保留，维护结束后自动整理一次。
 
@@ -327,7 +327,7 @@ R01、R02 在上述本机复验范围内关闭，本轮未发现新增阻塞项�
 
 ### 定时器读取绑定失败会终止后端
 
-**292-R03 扩展场景 · P1。** 通过真实手动整理接口发起后台处理，仅在整理收尾的 `canScheduleNow` 注入一次 `SQLITE_BUSY`。接口已返回 202，模型调用完成，工具证据已处理，但该次绑定读取错误使后台 Promise 未处理拒绝。另在 Node 默认设置的隔离进程中复验同一错误路径，进程以退出码 1 终止。新增的调度可用性检查在 `armTimer` 原存储保护之外，只处理缺少绑定的异常。单角色的暂时读库故障会影响整个后端。 [定时器保护边界](../../../apps/backend/src/application/memory-runtime.ts#L365) · [手动整理入口](../../../apps/backend/src/http/routes.ts#L929)
+**292-R03 扩展场景 · P1。** 通过真实手动整理接口发起后台处理，仅在整理收尾的 `canScheduleNow` 注入一次 `SQLITE_BUSY`。接口已返回 202，模型调用完成，工具证据已处理，但该次绑定读取错误使后台 Promise 未处理拒绝。另在 Node 默认设置的隔离进程中复验同一错误路径，进程以退出码 1 终止。新增的调度可用性检查在 `armTimer` 原存储保护之外，只处理缺少绑定的异常。单角色的暂时读库故障会影响整个后端。 [定时器保护边界](../../../apps/backend/src/application/memory/memory-runtime.ts#L365) · [手动整理入口](../../../apps/backend/src/http/routes.ts#L929)
 
 复验条件是定时器收尾读取角色库失败时，后端保持运行，已持久化的待处理触发能够在存储恢复后继续。
 
@@ -339,7 +339,7 @@ R01、R02 在上述本机复验范围内关闭，本轮未发现新增阻塞项�
 
 ### 启动读库失败后，遗留整理批次无法自动恢复
 
-**292-R03 扩展场景 · P2。** 在临时角色库保留一条已消费触发、状态为 `running` 的整理批次，模拟进程在整理中断开。重启时只给该角色的存储打开注入临时 `SQLITE_BUSY`，后端健康检查返回 200。解除锁后，遗留批次仍为 `running`，新手动整理返回 202，但模型调用保持为 0。再次重启后原批次变为 `failed`，待处理证据自动整理一次。启动异常路径安排的是普通唤醒，它不会重做启动时跳过的 `recoverInterruptedBatches`，遗留批次因此继续占据运行中的位置。 [启动恢复](../../../apps/backend/src/application/memory-runtime.ts#L121) · [定时唤醒](../../../apps/backend/src/application/memory-runtime.ts#L394) · [批次冲突](../../../apps/backend/src/storage/memory-store.ts#L404)
+**292-R03 扩展场景 · P2。** 在临时角色库保留一条已消费触发、状态为 `running` 的整理批次，模拟进程在整理中断开。重启时只给该角色的存储打开注入临时 `SQLITE_BUSY`，后端健康检查返回 200。解除锁后，遗留批次仍为 `running`，新手动整理返回 202，但模型调用保持为 0。再次重启后原批次变为 `failed`，待处理证据自动整理一次。启动异常路径安排的是普通唤醒，它不会重做启动时跳过的 `recoverInterruptedBatches`，遗留批次因此继续占据运行中的位置。 [启动恢复](../../../apps/backend/src/application/memory/memory-runtime.ts#L121) · [定时唤醒](../../../apps/backend/src/application/memory/memory-runtime.ts#L394) · [批次冲突](../../../apps/backend/src/storage/memory/memory-store.ts#L404)
 
 复验条件是启动时角色库暂不可用，读库恢复后先完成该角色遗漏的中断批次恢复，再继续处理已持久化触发，无需再次重启，也不应重置正常运行中的批次。
 
@@ -350,10 +350,10 @@ R01、R02 在上述本机复验范围内关闭，本轮未发现新增阻塞项�
 2026-11-13。复验 [306](./306-305-reverification-fixes.md)，并按任务结束后的记忆整理链路合并检查删除、维护、存储故障、退避、重启和重复唤醒。专项使用临时角色库和正式 HTTP 适配器连接本机模拟 SSE 服务。
 
 - **启动锁冲突通过。** 启动时打开角色库遇到 `SQLITE_BUSY`，解除故障后自动恢复遗留批次并整理一次。正常运行的批次在重复唤醒中保持原状态。
-- **目录暂不可用的恢复已补修。** 306 将路径缺失视为停止轮询的条件，同时清掉待启动恢复标记，恢复目录后普通唤醒无法处理遗留批次。补修后，路径缺失或非法期间暂停轮询并保留恢复标记。实际移开并还原临时角色目录后，手动整理和维护结束唤醒分别通过，遗留批次标记为 `PROCESS_INTERRUPTED`，随后自动整理一次。 [定时器异常处理](../../../apps/backend/src/application/memory-runtime.ts#L492) · [启动批次恢复](../../../apps/backend/src/application/memory-runtime.ts#L650)
+- **目录暂不可用的恢复已补修。** 306 将路径缺失视为停止轮询的条件，同时清掉待启动恢复标记，恢复目录后普通唤醒无法处理遗留批次。补修后，路径缺失或非法期间暂停轮询并保留恢复标记。实际移开并还原临时角色目录后，手动整理和维护结束唤醒分别通过，遗留批次标记为 `PROCESS_INTERRUPTED`，随后自动整理一次。 [定时器异常处理](../../../apps/backend/src/application/memory/memory-runtime.ts#L492) · [启动批次恢复](../../../apps/backend/src/application/memory/memory-runtime.ts#L650)
 - **删除与持久化回归通过。** 两种历史选项下，写入故障和删除超时后的任务整理可跨重启恢复一次，重复重启未产生额外调用。两种删除成功路径均未启动整理。按真实 30 秒退避计时，模型维护期间没有待补写任务扫描或模型调用，维护结束后整理一次。
-- **空手动整理轮询已补修。** 无可处理证据或精炼候选时，领取事务结算触发。连续两次空请求均返回 202，均未调用模型，也没有遗留待处理触发。存储异常或批次冲突发生时保留触发。 [空触发结算](../../../apps/backend/src/storage/memory-store.ts#L442)
-- **跨窗口手动整理已补修。** 手动触发首次领取时，在同一事务中将当时已延后的证据纳入待处理，并持久记录已领取的批次。独立复验中，两窗口各处理一次。在首窗口处理完成且模型再次将其延后时重启，只处理剩余窗口，保留首窗口的延后状态，最后结算原手动触发。 [手动整理入口](../../../apps/backend/src/application/memory-runtime.ts#L734) · [首次领取](../../../apps/backend/src/storage/memory-store.ts#L421)
+- **空手动整理轮询已补修。** 无可处理证据或精炼候选时，领取事务结算触发。连续两次空请求均返回 202，均未调用模型，也没有遗留待处理触发。存储异常或批次冲突发生时保留触发。 [空触发结算](../../../apps/backend/src/storage/memory/memory-store.ts#L442)
+- **跨窗口手动整理已补修。** 手动触发首次领取时，在同一事务中将当时已延后的证据纳入待处理，并持久记录已领取的批次。独立复验中，两窗口各处理一次。在首窗口处理完成且模型再次将其延后时重启，只处理剩余窗口，保留首窗口的延后状态，最后结算原手动触发。 [手动整理入口](../../../apps/backend/src/application/memory/memory-runtime.ts#L734) · [首次领取](../../../apps/backend/src/storage/memory/memory-store.ts#L421)
 
 最终工作区通过后端 402 项、桌面逻辑 115 项、前后端类型检查、渲染端构建和 21 步离线验收。离线报告位于 `apps/backend/test-results/p5-2026-11-13T13-30-53-725Z-7ae3285b/summary.json`，真实服务调用为 0。
 
@@ -367,9 +367,9 @@ R01、R02 在上述本机复验范围内关闭，本轮未发现新增阻塞项�
 
 | 编号 | 实际行为 | 复验条件 |
 | --- | --- | --- |
-| 292-R05 · P2 | **保存已停用的生图服务会误停角色。** 乙已绑定备用生图。在设置停用该服务并恢复角色活动后，回到乙的配置页点击「暂停并保存配置」，后端返回 `IMAGE_SERVICE_DISABLED`，乙从 `active` 变为 `stopped`。前端在暂停前只判断服务是否存在。 [保存入口](../../../apps/desktop/renderer/src/components/image/ImagePanel.tsx#L192) · [后端校验](../../../apps/backend/src/application/scene-image-settings.ts#L97) | 在已停用且存在、已删除两种情况下，保存均提示具体原因并保持角色 `active`。换到启用服务之后仍可按原流程保存。 |
+| 292-R05 · P2 | **保存已停用的生图服务会误停角色。** 乙已绑定备用生图。在设置停用该服务并恢复角色活动后，回到乙的配置页点击「暂停并保存配置」，后端返回 `IMAGE_SERVICE_DISABLED`，乙从 `active` 变为 `stopped`。前端在暂停前只判断服务是否存在。 [保存入口](../../../apps/desktop/renderer/src/components/image/ImagePanel.tsx#L192) · [后端校验](../../../apps/backend/src/application/media/scene-image-settings.ts#L97) | 在已停用且存在、已删除两种情况下，保存均提示具体原因并保持角色 `active`。换到启用服务之后仍可按原流程保存。 |
 | 292-R06 · P2 | **服务被删除后旧模型候选仍可选。** 在乙的生图页探测备用服务，得到 `backup-image-model.safetensors`。从设置删除备用服务并返回后，页面同时显示「当前所选生图服务已不存在」和可点击的旧模型候选。跨页同步刷新了服务列表，却保留探测结果。 [服务同步](../../../apps/desktop/renderer/src/components/image/ImagePanel.tsx#L153) · [候选绘制](../../../apps/desktop/renderer/src/components/image/ImagePanel.tsx#L329) | 跨页删除、停用或修改当前服务连接后，过时探测和预览不得继续归于当前服务。验证已返回结果和迟到响应，同时保留用户填写的配置草稿。 |
-| 292-R07 · P2 | **测试生图跳过服饰归属校验。** 用仅存在于甲衣柜的服饰 ID 请求乙的 `/scene-image/preview`，并在乙的草稿提供该 ID 的提示词。接口返回 200，提示词进入样图，ComfyUI 收到一次生成。268 §6 已要求生成前校验角色归属。 [测试生图实现](../../../apps/backend/src/application/scene-image-settings.ts#L154) · [现有测试数据](../../../apps/backend/tests/p13-comfyui.test.ts#L1149) | 当前角色的服饰与不指定服饰仍可测试。其他角色、已删除或不存在的服饰在发起生成前拒绝，模拟 ComfyUI 调用数保持为零。 |
+| 292-R07 · P2 | **测试生图跳过服饰归属校验。** 用仅存在于甲衣柜的服饰 ID 请求乙的 `/scene-image/preview`，并在乙的草稿提供该 ID 的提示词。接口返回 200，提示词进入样图，ComfyUI 收到一次生成。268 §6 已要求生成前校验角色归属。 [测试生图实现](../../../apps/backend/src/application/media/scene-image-settings.ts#L154) · [现有测试数据](../../../apps/backend/tests/p13-comfyui.test.ts#L1149) | 当前角色的服饰与不指定服饰仍可测试。其他角色、已删除或不存在的服饰在发起生成前拒绝，模拟 ComfyUI 调用数保持为零。 |
 | 292-R08 · P2 | **新 E2E 依赖根目录旧 Electron。** 脚本从根 `node_modules` 直接启动 `electron.exe`，根目录没有 `package.json`。按项目安装说明，桌面依赖由 `apps/desktop/package.json` 声明。本机测试通过依赖旧工作区残留，按现行目录单独安装依赖的检出无法执行该命令。 [启动路径](../../../apps/desktop/tests/e2e/workflow-real-backend-chain.e2e.cjs#L294) · [桌面依赖](../../../apps/desktop/package.json#L16) | 只安装后端、桌面与渲染器的项目依赖并构建，在没有根 `node_modules` 的环境中按文档命令执行成功。 |
 
 ### 27.2 已验证范围

@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import type { ModelEvent, ModelPort } from "../src/domain/model.js";
 import { rolePaths } from "../src/bootstrap/config.js";
-import { MemoryStore } from "../src/storage/memory-store.js";
+import { MemoryStore } from "../src/storage/memory/memory-store.js";
 import { createFixture, createFixtureWithModel, addBinding, seedEvent, withStorage, type Fixture } from "../tests/p2-05-fixture.js";
 
 const root = path.resolve(

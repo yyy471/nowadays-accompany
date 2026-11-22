@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MemoryService } from "../src/application/memory-service.js";
-import { MemoryStore } from "../src/storage/memory-store.js";
-import { RoleStorage } from "../src/storage/role-storage.js";
+import { MemoryService } from "../src/application/memory/memory-service.js";
+import { MemoryStore } from "../src/storage/memory/memory-store.js";
+import { RoleStorage } from "../src/storage/core/role-storage.js";
 import { rolePaths } from "../src/bootstrap/config.js";
 import {
   DEFAULT_MEMORY_BUDGET_CHARS,

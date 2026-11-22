@@ -2,48 +2,48 @@ import type http from "node:http";
 import {
   ConversationService,
   type ChatModelPortFactory,
-} from "../application/conversation-service.js";
-import { AutonomyService } from "../application/autonomy-service.js";
-import { AppearanceService } from "../application/appearance-service.js";
-import { GlobalVoiceService } from "../application/global-voice-service.js";
-import { VoiceService } from "../application/voice-service.js";
-import { ImageServiceService } from "../application/image-service.js";
-import { SceneImageSettingsService } from "../application/scene-image-settings.js";
-import { MemoryQueryService } from "../application/memory-query-service.js";
+} from "../application/conversation/conversation-service.js";
+import { AutonomyService } from "../application/conversation/autonomy-service.js";
+import { AppearanceService } from "../application/media/appearance-service.js";
+import { GlobalVoiceService } from "../application/media/global-voice-service.js";
+import { VoiceService } from "../application/media/voice-service.js";
+import { ImageServiceService } from "../application/media/image-service.js";
+import { SceneImageSettingsService } from "../application/media/scene-image-settings.js";
+import { MemoryQueryService } from "../application/memory/memory-query-service.js";
 import {
   MemoryRuntime,
   type MemoryModelFactory,
-} from "../application/memory-runtime.js";
-import { MessageService } from "../application/message-service.js";
-import { ModelBindingResolver } from "../application/model-binding-resolver.js";
-import { ModelService } from "../application/model-service.js";
-import { CredentialResolver } from "../application/credential-resolver.js";
-import { ResourceService } from "../application/resource-service.js";
-import { RoleAccess } from "../application/role-access.js";
-import { RoleService } from "../application/role-service.js";
+} from "../application/memory/memory-runtime.js";
+import { MessageService } from "../application/conversation/message-service.js";
+import { ModelBindingResolver } from "../application/resources/model-binding-resolver.js";
+import { ModelService } from "../application/resources/model-service.js";
+import { CredentialResolver } from "../application/resources/credential-resolver.js";
+import { ResourceService } from "../application/resources/resource-service.js";
+import { RoleAccess } from "../application/role/role-access.js";
+import { RoleService } from "../application/role/role-service.js";
 import { RolesNotStoppedError } from "../domain/errors.js";
-import { RoleActivityService } from "../application/role-activity-service.js";
-import { RoleDeletionService } from "../application/role-deletion-service.js";
-import { TokenUsageService } from "../application/token-usage-service.js";
-import { ensurePresetAssistant } from "../application/preset-assistant.js";
-import type { AdminToolServices } from "../application/admin-tools.js";
+import { RoleActivityService } from "../application/role/role-activity-service.js";
+import { RoleDeletionService } from "../application/role/role-deletion-service.js";
+import { TokenUsageService } from "../application/resources/token-usage-service.js";
+import { ensurePresetAssistant } from "../application/role/preset-assistant.js";
+import type { AdminToolServices } from "../application/role/admin-tools.js";
 import { AppError } from "../domain/errors.js";
 import {
   SceneImageService,
   type SceneImageServiceOptions,
-} from "../application/scene-image-service.js";
+} from "../application/media/scene-image-service.js";
 import { createHttpServer } from "../http/server.js";
 import type { ApiServices } from "../http/routes.js";
-import { AppStore } from "../storage/app-store.js";
-import { SecretStore } from "../storage/secret-store.js";
+import { AppStore } from "../storage/core/app-store.js";
+import { SecretStore } from "../storage/core/secret-store.js";
 import { SecretCipher } from "../security/secret-cipher.js";
 import { FixedSceneImagePlanner } from "../scene/fixed-planner.js";
 import { FakeSceneImageGenerator } from "../scene/fake-generator.js";
 import { ConfiguredSceneImageGenerator } from "../scene/comfyui-generator.js";
 import { ModelSceneImagePlanner } from "../scene/model-planner.js";
 import type { BackendConfig } from "./config.js";
-import { checkAppDatabaseFiles, lockInstallation } from "../storage/installation-lock.js";
-import { recoverRoleTransfer } from "../application/role-transfer-publication.js";
+import { checkAppDatabaseFiles, lockInstallation } from "../storage/core/installation-lock.js";
+import { recoverRoleTransfer } from "../application/transfer/role-transfer-publication.js";
 
 export interface BackendAppOptions {
   now?: () => Date;
@@ -67,7 +67,7 @@ export interface BackendAppOptions {
   maintenancePauseTimeoutMs?: number;
 }
 
-import { MediaMaintenance } from '../application/media-maintenance.js';
+import { MediaMaintenance } from '../application/media/media-maintenance.js';
 
 export interface BackendApp {
   config: BackendConfig;

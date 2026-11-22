@@ -48,9 +48,9 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p2-06-r05-r09-fix-20261104"
 
 修改：
 
-- [memory-runtime.ts:432](../../../apps/backend/src/application/memory-runtime.ts#L432) 的 `create_event` 协议把标签维度改为契约单数名 `person`、`topic`、`place`、`emotion`、`source`。
-- [memory-runtime.ts:442](../../../apps/backend/src/application/memory-runtime.ts#L442) 增加字段解释：标签键只能使用上述单数名，值为字符串数组。
-- [memory-runtime.ts:443](../../../apps/backend/src/application/memory-runtime.ts#L443) 的完整示例改为包含全部五个单数键，避免模型从省略 tags 的示例推断复数名。
+- [memory-runtime.ts:432](../../../apps/backend/src/application/memory/memory-runtime.ts#L432) 的 `create_event` 协议把标签维度改为契约单数名 `person`、`topic`、`place`、`emotion`、`source`。
+- [memory-runtime.ts:442](../../../apps/backend/src/application/memory/memory-runtime.ts#L442) 增加字段解释：标签键只能使用上述单数名，值为字符串数组。
+- [memory-runtime.ts:443](../../../apps/backend/src/application/memory/memory-runtime.ts#L443) 的完整示例改为包含全部五个单数键，避免模型从省略 tags 的示例推断复数名。
 - 未修改 [memory.ts:15](../../../apps/backend/src/domain/memory.ts#L15) 的固定契约；174 的标签维度保持单数，错误字段仍按严格 schema 拒绝。
 
 自验：
@@ -64,8 +64,8 @@ $env:NOWADAYS_REVIEW_OUTPUT="test-results/p2-06-r05-r09-fix-20261104"
 
 修改：
 
-- [model-service.ts:22](../../../apps/backend/src/application/model-service.ts#L22) 增加连接测试内部输出预算 `CONNECTION_TEST_MAX_OUTPUT_TOKENS = 1024`；[model-service.ts:58](../../../apps/backend/src/application/model-service.ts#L58) 用它替代原来的 16。该值是测试内部实现预算，不是用户配置项，也不改变正常工作请求的额度。
-- [model-service.ts:78](../../../apps/backend/src/application/model-service.ts#L78) 读取终态的显式截断标记；[model-service.ts:87](../../../apps/backend/src/application/model-service.ts#L87) 仅在“已完成、无正文且未被显式截断”时返回 `EMPTY_RESPONSE`。思考模型或正文被测试预算截断时视为服务可达，不把测试自身限额报成服务配置不可用。
+- [model-service.ts:22](../../../apps/backend/src/application/resources/model-service.ts#L22) 增加连接测试内部输出预算 `CONNECTION_TEST_MAX_OUTPUT_TOKENS = 1024`；[model-service.ts:58](../../../apps/backend/src/application/resources/model-service.ts#L58) 用它替代原来的 16。该值是测试内部实现预算，不是用户配置项，也不改变正常工作请求的额度。
+- [model-service.ts:78](../../../apps/backend/src/application/resources/model-service.ts#L78) 读取终态的显式截断标记；[model-service.ts:87](../../../apps/backend/src/application/resources/model-service.ts#L87) 仅在“已完成、无正文且未被显式截断”时返回 `EMPTY_RESPONSE`。思考模型或正文被测试预算截断时视为服务可达，不把测试自身限额报成服务配置不可用。
 - 空流仍按 `STREAM_TRUNCATED` 失败；上游 HTTP 错误仍按 `MODEL_REQUEST_FAILED` 失败；连接测试仍不携带角色上下文、不发送工具、不写业务消息，只保存既有 `model_test_calls` 记录。
 
 自验：[p2-04-model.test.ts:845](../../../apps/backend/tests/p2-04-model.test.ts#L845) 新增用例，按顺序覆盖正常正文、仅思考后 `max_tokens`、正文部分截断、已完成但无正文、空流和上游 503。断言前三项成功、后三项失败；请求 `max_tokens` 不小于 256、system／user 固定为连接测试内容且不包含工具；六次测试结果按 `succeeded`／`succeeded`／`succeeded`／`failed`／`failed`／`failed` 写入 `model_test_calls`。

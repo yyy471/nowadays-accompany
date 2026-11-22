@@ -16,19 +16,19 @@
 
 ### R01　快照与 SSE 之间会漏掉回复终态（P1）
 
-离线模型先输出一句完整台词后暂停。HTTP 消息列表读到 `activeReply.text`，句段仍为空。随后放行模型，等到两段句段及完成事件已经写入，再建立未传 `after` 的 SSE 连接。该连接从连接时的最新事件开始，观察窗口内未收到任何回复事件。改用 `after=0` 能读到两次增量、句段和完成事件，但会从窗口起点重放。快照仅包含 `items`、`nextAfter`、`segments`、`activeReply`，没有与读取边界对应的 SSE 游标。消息列表也仍按 `sequence > after` 升序读取，`limit=1` 取第一条，带 `before=4` 的请求仍返回第一条。 [消息列表](../../../apps/backend/src/application/message-service.ts#L32) · [历史查询](../../../apps/backend/src/storage/role-store.ts#L642) · [SSE 起点](../../../apps/backend/src/application/conversation-service.ts#L374)
+离线模型先输出一句完整台词后暂停。HTTP 消息列表读到 `activeReply.text`，句段仍为空。随后放行模型，等到两段句段及完成事件已经写入，再建立未传 `after` 的 SSE 连接。该连接从连接时的最新事件开始，观察窗口内未收到任何回复事件。改用 `after=0` 能读到两次增量、句段和完成事件，但会从窗口起点重放。快照仅包含 `items`、`nextAfter`、`segments`、`activeReply`，没有与读取边界对应的 SSE 游标。消息列表也仍按 `sequence > after` 升序读取，`limit=1` 取第一条，带 `before=4` 的请求仍返回第一条。 [消息列表](../../../apps/backend/src/application/conversation/message-service.ts#L32) · [历史查询](../../../apps/backend/src/storage/role/role-store.ts#L642) · [SSE 起点](../../../apps/backend/src/application/conversation/conversation-service.ts#L374)
 
 复验要求为进入窗口一次获取最近历史、未完成回复及同一读取边界的 SSE 游标，并支持向前翻页。覆盖终态或表情结果在快照返回与 SSE 建连之间写入的场景，确保续接后文字和终态均可恢复且不会重复追加。桌面若要在生成期间逐段追加气泡，还需明确句段首次发布的时机。
 
 ### R02　省略差分时无法回放换装后的原服饰（P2）
 
-第一轮提交黑裙并标注微笑，第二轮提交白裙，标注模型按允许的格式返回 `{"segments":[]}`。第二轮句段的 `outfitId`、`spriteAssetId` 均为空。历史只保留第一轮黑裙差分，第二轮没有保存白裙这一回退依据。若桌面延续前段差分会跨服饰保留黑裙，若改读角色当前状态则会随以后换装改变历史呈现。模型省略标注、服饰没有差分以及标注失败都应走同一服饰内的回退。 [写入句段](../../../apps/backend/src/storage/conversation-store.ts#L675) · [空标注处理](../../../apps/backend/src/application/segment-annotation-service.ts#L132)
+第一轮提交黑裙并标注微笑，第二轮提交白裙，标注模型按允许的格式返回 `{"segments":[]}`。第二轮句段的 `outfitId`、`spriteAssetId` 均为空。历史只保留第一轮黑裙差分，第二轮没有保存白裙这一回退依据。若桌面延续前段差分会跨服饰保留黑裙，若改读角色当前状态则会随以后换装改变历史呈现。模型省略标注、服饰没有差分以及标注失败都应走同一服饰内的回退。 [写入句段](../../../apps/backend/src/storage/conversation/conversation-store.ts#L675) · [空标注处理](../../../apps/backend/src/application/conversation/segment-annotation-service.ts#L132)
 
 复验要求为服饰随对应回复或句段持久化，差分保持可选。覆盖从黑裙切到白裙、白裙无差分或省略标注、后来再次换装及回看历史。没有有效差分时按对应服饰回退，历史有明确服饰归属。
 
 ### R03　附加模型调用绕过既有调用记录（P2）
 
-两轮用户对话含换装和表情标注，离线模型实际收到 6 次请求，`model_calls` 与 `call_metering` 只各有 4 条模型记录。另将自主额度设为 1 点并用完，再调用主动分享入口写入一条分享。异步标注仍发出了 1 次额外模型请求。该样例复验的是主动分享入口及其后置标注，未走完整的自主调度流程。标注直接调用模型流，跳过了既有用途、额度检查和计量记录。 [标注调用](../../../apps/backend/src/application/segment-annotation-service.ts#L97) · [对话调用登记](../../../apps/backend/src/application/agent-graph.ts#L212) · [DL-110／DL-111](../../161-digital-life-direction-decisions.md#dl-110-消耗按任务来源归属用户任务不扣自主额度自主任务继续扣点)
+两轮用户对话含换装和表情标注，离线模型实际收到 6 次请求，`model_calls` 与 `call_metering` 只各有 4 条模型记录。另将自主额度设为 1 点并用完，再调用主动分享入口写入一条分享。异步标注仍发出了 1 次额外模型请求。该样例复验的是主动分享入口及其后置标注，未走完整的自主调度流程。标注直接调用模型流，跳过了既有用途、额度检查和计量记录。 [标注调用](../../../apps/backend/src/application/conversation/segment-annotation-service.ts#L97) · [对话调用登记](../../../apps/backend/src/application/conversation/agent-graph.ts#L212) · [DL-110／DL-111](../../161-digital-life-direction-decisions.md#dl-110-消耗按任务来源归属用户任务不扣自主额度自主任务继续扣点)
 
 复验要求为按实际调用记录标注的用途、结果和用量，明确用户对话及主动分享的计量归属。用户对话所需的标注记录调用而不扣自主点数，属于自主活动的调用接入既有额度判定。跳过或失败的标注不影响已保存的正文。
 
@@ -62,7 +62,7 @@
 
 ### R03 补充　自主扣点先于调用登记提交（P2）
 
-为自主标注注入 `call_metering` 写入失败，已用点数从 2 升到 3，模型请求增加 0 次，调用记录仍为 7 条。主动分享正文保持可读。扣点与调用登记使用不同的数据库事务，后者失败时前者无法回滚。复验需确保派发前的登记失败不消耗额度，账本与额度一致，且不影响已提交的分享。 [扣点与登记](../../../apps/backend/src/application/segment-annotation-service.ts#L95)
+为自主标注注入 `call_metering` 写入失败，已用点数从 2 升到 3，模型请求增加 0 次，调用记录仍为 7 条。主动分享正文保持可读。扣点与调用登记使用不同的数据库事务，后者失败时前者无法回滚。复验需确保派发前的登记失败不消耗额度，账本与额度一致，且不影响已提交的分享。 [扣点与登记](../../../apps/backend/src/application/conversation/segment-annotation-service.ts#L95)
 
 ### R04 补充　两段行内动作之间的台词被吞进旁白（P2）
 
@@ -83,7 +83,7 @@
 
 ### R03 补充　凭据初始化失败仍扣自主点数（P2）
 
-用默认模型适配器和本机假模型服务验证主动分享入口。绑定的 `file:` 凭据不存在时，模型服务收到 0 次请求，已用点数从 0 升到 1，账本记为 `MODEL_CREDENTIAL_UNAVAILABLE`、`counted=1`。补齐样例凭据后，服务实际收到 1 次请求并返回 HTTP 503，已用点数再加 1。前一条在初始化模型适配器时就失败，扣点和调用登记却已经提交，与 [DL-105](../../161-digital-life-direction-decisions.md#dl-105-统一额度扣减一次实际模型或工具调用扣-1-点) 的实际发起口径不一致。样例验证的是主动分享入口及其后置标注。 [标注事务与派发](../../../apps/backend/src/application/segment-annotation-service.ts#L97) · [默认适配器初始化](../../../apps/backend/src/application/conversation-service.ts#L166)
+用默认模型适配器和本机假模型服务验证主动分享入口。绑定的 `file:` 凭据不存在时，模型服务收到 0 次请求，已用点数从 0 升到 1，账本记为 `MODEL_CREDENTIAL_UNAVAILABLE`、`counted=1`。补齐样例凭据后，服务实际收到 1 次请求并返回 HTTP 503，已用点数再加 1。前一条在初始化模型适配器时就失败，扣点和调用登记却已经提交，与 [DL-105](../../161-digital-life-direction-decisions.md#dl-105-统一额度扣减一次实际模型或工具调用扣-1-点) 的实际发起口径不一致。样例验证的是主动分享入口及其后置标注。 [标注事务与派发](../../../apps/backend/src/application/conversation/segment-annotation-service.ts#L97) · [默认适配器初始化](../../../apps/backend/src/application/conversation/conversation-service.ts#L166)
 
 复验需在扣点前完成凭据和适配器初始化，或让初始化失败与额度结算保持一致。缺少凭据时不扣点，也不增加实际调用计量，已保存的分享仍可读取。请求实际派发后收到上游错误时，仍保留失败调用记录并按既有规则计量。
 
@@ -91,7 +91,7 @@ Node.js 24.22.2 下统一离线验收 21／21 步、228 项正式测试及 2 项
 
 ## 6. 217 第 7 节补修独立复验
 
-2026-11-09，`dev-front` 工作树，基线 `8d6dd08`。用默认模型适配器和本机 HTTP 假服务重跑主动分享后的标注，验证凭据初始化和实际发出请求的计量边界。 [217 第 7 节](./217-conversation-performance-review-fixes.md#7-216-第-5-节补修凭据初始化失败仍扣自主点数) · [适配器初始化](../../../apps/backend/src/application/segment-annotation-service.ts#L97)
+2026-11-09，`dev-front` 工作树，基线 `8d6dd08`。用默认模型适配器和本机 HTTP 假服务重跑主动分享后的标注，验证凭据初始化和实际发出请求的计量边界。 [217 第 7 节](./217-conversation-performance-review-fixes.md#7-216-第-5-节补修凭据初始化失败仍扣自主点数) · [适配器初始化](../../../apps/backend/src/application/conversation/segment-annotation-service.ts#L97)
 
 | 场景 | 假模型服务收到的请求 | 自主点数变化 | 调用与计量 |
 | --- | --- | --- | --- |

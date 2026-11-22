@@ -5,10 +5,10 @@
 ## 修复内容
 
 - **维护／删除／无绑定期间停止安排零延迟扫库与唤醒**：
-  - 在 [`MemoryRuntime.canScheduleNow`](../../../apps/backend/src/application/memory-runtime.ts#L350-L363) 与 [`armTimer`](../../../apps/backend/src/application/memory-runtime.ts#L365-L433) 中，先清掉旧定时器，若角色处于删除收尾、缺少可用记忆模型绑定或目标模型服务正在维护，立即返回，不再打开角色库读取 `nextFailedRetryAt`、`maintenanceRetryAt`、`maintenanceCheckAt`、阈值窗口或 `reconcileRetryAt`，也不再安排 `delay = 0` 的定时回调。
-  - 在 [`runOnce`](../../../apps/backend/src/application/memory-runtime.ts#L532-L551) 因缺少绑定、角色删除或目标服务维护提前返回时，同步清理过期的 `reconcileRetryState`；已结束但未补写触发的任务继续保留在角色库 `tasks` 与待整理工具证据中，待维护结束、恢复绑定或删除失败后由 `wakePendingWork` / `kick` 重新唤醒对账并执行一次整理。
+  - 在 [`MemoryRuntime.canScheduleNow`](../../../apps/backend/src/application/memory/memory-runtime.ts#L350-L363) 与 [`armTimer`](../../../apps/backend/src/application/memory/memory-runtime.ts#L365-L433) 中，先清掉旧定时器，若角色处于删除收尾、缺少可用记忆模型绑定或目标模型服务正在维护，立即返回，不再打开角色库读取 `nextFailedRetryAt`、`maintenanceRetryAt`、`maintenanceCheckAt`、阈值窗口或 `reconcileRetryAt`，也不再安排 `delay = 0` 的定时回调。
+  - 在 [`runOnce`](../../../apps/backend/src/application/memory/memory-runtime.ts#L532-L551) 因缺少绑定、角色删除或目标服务维护提前返回时，同步清理过期的 `reconcileRetryState`；已结束但未补写触发的任务继续保留在角色库 `tasks` 与待整理工具证据中，待维护结束、恢复绑定或删除失败后由 `wakePendingWork` / `kick` 重新唤醒对账并执行一次整理。
 - **非维护路径下保证补写退避始终向未来推进**：
-  - 抽取 [`advanceReconcileRetry`](../../../apps/backend/src/application/memory-runtime.ts#L484-L494)，并将 [`runOnce` 批内退避结算](../../../apps/backend/src/application/memory-runtime.ts#L672-L692) 收拢到 `finally`：当 `reconcileFinishedTaskTriggers` 顶层抛错、返回 `failedTaskIds` 或既有 `retryAt` 已到期而角色库仍有待补写任务时，都会推进下一次退避时间戳，避免后续 `armTimer` 读到过期 `retryAt` 触发零延迟循环。
+  - 抽取 [`advanceReconcileRetry`](../../../apps/backend/src/application/memory/memory-runtime.ts#L484-L494)，并将 [`runOnce` 批内退避结算](../../../apps/backend/src/application/memory/memory-runtime.ts#L672-L692) 收拢到 `finally`：当 `reconcileFinishedTaskTriggers` 顶层抛错、返回 `failedTaskIds` 或既有 `retryAt` 已到期而角色库仍有待补写任务时，都会推进下一次退避时间戳，避免后续 `armTimer` 读到过期 `retryAt` 触发零延迟循环。
 
 ## 验证
 

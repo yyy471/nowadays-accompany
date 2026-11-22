@@ -16,8 +16,8 @@ import type {
 } from "../src/domain/scene-image.js";
 import { FakeSceneImageGenerator } from "../src/scene/fake-generator.js";
 import { FixedSceneImagePlanner } from "../src/scene/fixed-planner.js";
-import { SceneImageStore } from "../src/storage/scene-image-store.js";
-import { ConversationStore } from "../src/storage/conversation-store.js";
+import { SceneImageStore } from "../src/storage/media/scene-image-store.js";
+import { ConversationStore } from "../src/storage/conversation/conversation-store.js";
 import {
   addBinding,
   createFixtureWithModel,

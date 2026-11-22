@@ -41,7 +41,7 @@
 
 ### 2.1 应用目录与 SQLite 分库规范
 
-由 [config.ts](../../apps/backend/src/bootstrap/config.ts#L6-L89) 与 [role-storage.ts](../../apps/backend/src/storage/role-storage.ts#L8-L72) 约束数据路径：
+由 [config.ts](../../apps/backend/src/bootstrap/config.ts#L6-L89) 与 [role-storage.ts](../../apps/backend/src/storage/core/role-storage.ts#L8-L72) 约束数据路径：
 
 | 路径 | 职责与版本 | 关键约束 |
 | --- | --- | --- |
@@ -51,7 +51,7 @@
 | `.../roles/<roleId>/execution.sqlite` | 图检查点库（`EXECUTION_SCHEMA_VERSION = 1`） | `@langchain/langgraph-checkpoint-sqlite` 的 `SqliteSaver` 专用 |
 | `.../roles/<roleId>/workspace/` | 角色独立工作空间 | 本地 MCP 根目录；日记落盘 `diaries/YYYY-MM-DD/<diaryId>.md`；外观／语音／过场图分置同级 `appearance/`、`voice/`、`scene-images/` |
 
-- **统一 PRAGMA 与强校验**（[schema.ts](../../apps/backend/src/storage/schema.ts#L1644-L1738)）：全部连接强制开启 `journal_mode = WAL`、`foreign_keys = ON`、`busy_timeout = 5000`。打开时在同一事务内校验 `user_version`、必需表、索引（含部分索引 `WHERE`）、必需列以及 `memory_search_fts`（FTS5 `trigram`），缺任一项直接 fail-closed；跨库变更通过 [transaction-group.ts](../../apps/backend/src/storage/transaction-group.ts#L14-L45) 的 `runWithDecisionCommit` 由 `app.sqlite` 先提交，从库失败留待读侧过滤或启动清理。
+- **统一 PRAGMA 与强校验**（[schema.ts](../../apps/backend/src/storage/core/schema.ts#L1644-L1738)）：全部连接强制开启 `journal_mode = WAL`、`foreign_keys = ON`、`busy_timeout = 5000`。打开时在同一事务内校验 `user_version`、必需表、索引（含部分索引 `WHERE`）、必需列以及 `memory_search_fts`（FTS5 `trigram`），缺任一项直接 fail-closed；跨库变更通过 [transaction-group.ts](../../apps/backend/src/storage/core/transaction-group.ts#L14-L45) 的 `runWithDecisionCommit` 由 `app.sqlite` 先提交，从库失败留待读侧过滤或启动清理。
 
 ### 2.2 核心 HTTP API 与 CLI 约定
 
@@ -88,25 +88,25 @@
 
 ### 3.1 角色创建与 4 步初始化
 
-[RoleService](../../apps/backend/src/application/role-service.ts#L66-L153) 创建角色按顺序执行：(1) `app.sqlite` 插入 `initializing` 索引与初始 payload；(2) `role_activity` 默认设为 `stopped`（`268 §4`：先配置模型再显式开始）；(3) 创建角色目录、初始化 `business.sqlite`／`execution.sqlite` 并生成默认 `main` 窗口（`source="nowadays"`）；(4) 标记 `ready`。任一步失败记录错误信息为 `failed` 并抛出 `ROLE_INITIALIZATION_FAILED`，后续 `POST /v1/roles/:roleId/initialize` 幂等补齐缺失结构。
+[RoleService](../../apps/backend/src/application/role/role-service.ts#L66-L153) 创建角色按顺序执行：(1) `app.sqlite` 插入 `initializing` 索引与初始 payload；(2) `role_activity` 默认设为 `stopped`（`268 §4`：先配置模型再显式开始）；(3) 创建角色目录、初始化 `business.sqlite`／`execution.sqlite` 并生成默认 `main` 窗口（`source="nowadays"`）；(4) 标记 `ready`。任一步失败记录错误信息为 `failed` 并抛出 `ROLE_INITIALIZATION_FAILED`，后续 `POST /v1/roles/:roleId/initialize` 幂等补齐缺失结构。
 
 ### 3.2 Agent 图执行、慢工具转后台与任务链决策（`GAP-01`～`GAP-03`、`GAP-05`）
 
-- **图编排与模型续轮**：[AgentGraphRunner](../../apps/backend/src/application/agent-graph.ts#L159-L260) 构建 `START -> model <-> tools -> END` 双节点 `StateGraph`（以 `execution.sqlite` 持久化检查点，默认最多 `8` 轮模型／工具回合）。[ModelPort](../../apps/backend/src/model/protocols.ts) 统一适配 `openai-chat`、`openai-responses`、`anthropic-messages` 与 `google-gemini`；同一模型绑定中保留可合法续传的厂商 `continuation` 块，配置变更则切回归一化历史；上游请求异常或提前 EOF 直接报错并保留已收到增量，**不自动切换其他模型**。
-- **工具目录与本地 MCP 隔离**（[agent-tools.ts](../../apps/backend/src/application/agent-tools.ts#L48-L1552)）：
+- **图编排与模型续轮**：[AgentGraphRunner](../../apps/backend/src/application/conversation/agent-graph.ts#L159-L260) 构建 `START -> model <-> tools -> END` 双节点 `StateGraph`（以 `execution.sqlite` 持久化检查点，默认最多 `8` 轮模型／工具回合）。[ModelPort](../../apps/backend/src/model/protocols.ts) 统一适配 `openai-chat`、`openai-responses`、`anthropic-messages` 与 `google-gemini`；同一模型绑定中保留可合法续传的厂商 `continuation` 块，配置变更则切回归一化历史；上游请求异常或提前 EOF 直接报错并保留已收到增量，**不自动切换其他模型**。
+- **工具目录与本地 MCP 隔离**（[agent-tools.ts](../../apps/backend/src/application/conversation/agent-tools.ts#L48-L1552)）：
   - **内部工具**：`memory_{search,event,evidence,summary,summary_evidence,correct_event,correct_summary,diary}`、`diary_write`、`state_update`、`autonomy_{schedule,share}`、`skill_{read,run}`、`task_{progress,pause,finish}`、`tool_reconcile`。
   - **本地 stdio MCP**（[local-server.ts](../../apps/backend/src/mcp/local-server.ts#L21-L260)）：提供 `workspace_{read,write,search}` 与 `command_run`（`shell: false`、继承用户环境，不做额外内容审批或沙箱）；`safePath` 在读前和写建目录前校验 `realpath`（含最近存在祖先）严格位于 `workspace/` 内，拒绝经 junction／symlink 越界。
-- **内部步骤幂等（`executeInternal`）**：[executeInternal](../../apps/backend/src/application/agent-graph.ts#L1005-L1061) 生成稳定步骤键 `tool:<executionId>:<round>:<index>:<name>`，执行副作用前先写 `tool_started` 凭据并记自主计量；恢复或重放遇到仅开始凭据时归档 `unknown / PROCESS_INTERRUPTED`，不重复写日记或外部副作用。
-- **慢工具自动转后台（`GAP-01`／`R04`）**：[executeExternalTracked](../../apps/backend/src/application/agent-graph.ts#L756-L955) 默认以 `DEFAULT_TOOL_FOREGROUND_WAIT_MS = 2000` 毫秒为前台窗口（包含 MCP 二次握手）。超时而当前执行未停止时，切换工具调用模式为 `background`、追加 `tool_backgrounded` 流事件、结束当前前台图等待同时保留用户消息认领与 `task_resource_continuations`；后台结算由 [handleBackgroundToolSettled](../../apps/backend/src/application/conversation-service.ts#L2431) 用全新数据库句柄重查任务状态并排队续行。若超时前已被新消息替代，则不再转后台，等待该调用自然收尾。
-- **任务暂停、继续、结束与 `unknown` 补录（`GAP-02`／`GAP-03`／`R01`～`R02`）**：`task_pause` 与 `task_finish` 在回复提交同一事务中写入 `executions.task_decision_json`，由 [applyCommittedTaskDecision](../../apps/backend/src/application/conversation-service.ts#L2515) 落实暂停（保留原任务号与 `task_resource_continuations`）或终结（触发记忆整理）；未声明决策按 `completed / 回复完成` 收尾。`tool_reconcile` 经 `resolveToolCallReference` 将模型 wire ID 映射到业务 `toolCallId`，并在事务内强制校验 `requireReconciledFromUnknown`（`pending`/`running`/已定案调用一律拒绝为 `409 TOOL_CALL_STATUS_CONFLICT`），冲突结论报 `TOOL_RESULT_CONFLICT`。
+- **内部步骤幂等（`executeInternal`）**：[executeInternal](../../apps/backend/src/application/conversation/agent-graph.ts#L1005-L1061) 生成稳定步骤键 `tool:<executionId>:<round>:<index>:<name>`，执行副作用前先写 `tool_started` 凭据并记自主计量；恢复或重放遇到仅开始凭据时归档 `unknown / PROCESS_INTERRUPTED`，不重复写日记或外部副作用。
+- **慢工具自动转后台（`GAP-01`／`R04`）**：[executeExternalTracked](../../apps/backend/src/application/conversation/agent-graph.ts#L756-L955) 默认以 `DEFAULT_TOOL_FOREGROUND_WAIT_MS = 2000` 毫秒为前台窗口（包含 MCP 二次握手）。超时而当前执行未停止时，切换工具调用模式为 `background`、追加 `tool_backgrounded` 流事件、结束当前前台图等待同时保留用户消息认领与 `task_resource_continuations`；后台结算由 [handleBackgroundToolSettled](../../apps/backend/src/application/conversation/conversation-service.ts#L2431) 用全新数据库句柄重查任务状态并排队续行。若超时前已被新消息替代，则不再转后台，等待该调用自然收尾。
+- **任务暂停、继续、结束与 `unknown` 补录（`GAP-02`／`GAP-03`／`R01`～`R02`）**：`task_pause` 与 `task_finish` 在回复提交同一事务中写入 `executions.task_decision_json`，由 [applyCommittedTaskDecision](../../apps/backend/src/application/conversation/conversation-service.ts#L2515) 落实暂停（保留原任务号与 `task_resource_continuations`）或终结（触发记忆整理）；未声明决策按 `completed / 回复完成` 收尾。`tool_reconcile` 经 `resolveToolCallReference` 将模型 wire ID 映射到业务 `toolCallId`，并在事务内强制校验 `requireReconciledFromUnknown`（`pending`/`running`/已定案调用一律拒绝为 `409 TOOL_CALL_STATUS_CONFLICT`），冲突结论报 `TOOL_RESULT_CONFLICT`。
 - **Skill 按需与脚本执行（`GAP-05`／`R03`）**：上下文仅加载 `SKILL.md` frontmatter 元数据；[SkillLibrary.resolveScript](../../apps/backend/src/skills/skill-library.ts#L104-L135) 校验目标位于启用 Skill 目录内的 `.js`/`.mjs` 后，由 `skill_run` 以 `shell: false`、Skill 目录为 `cwd`、注入 `NOWADAYS_WORKSPACE` 启动子进程；即使前台收到用户插话替代回复，已派发脚本仍运行至结束或触发 `SKILL_SCRIPT_TIMEOUT` 才结算归原调用。
 
 ### 3.3 记忆形成、容量预算、检索与主客观演化（`GAP-04`、`GAP-06`、`306`）
 
-- **触发、串行与模型继承**：证据在消息入库与工具结算时写入 `evidence_records` 并按当时配置时区固定 `experience_date`。同一角色经 `idx_memory_batch_single_running` 与 [MemoryRuntime](../../apps/backend/src/application/memory-runtime.ts#L60-L413) 双重约束保持单批串行且不阻塞聊天。触发条件为同窗待处理消息 `>=50`（`message_threshold`）、`>=30` 且停歇 `60s`（`idle`）、任务进入 `completed`/`failed` 或晚到工具结果补记（`task_end`）及 `manual`。模型通过 `resolveMemory` 取启用的 `memory_model`，未单独绑定则继承 `chat_model`；缺绑定、角色删除中或模型维护时保留触发与进度、暂不调度；失败按 `[30s, 2m, 10m, 1h]` 退避（之后维持 1 小时），**不自动换模型**；角色目录暂时缺失或 `SQLITE_BUSY` 时暂停轮询并保留启动恢复标记（[283 §26](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#26-306-补修独立复验)）。
-- **容量分批与严谨 JSON 校验（`GAP-04`／`R06`）**：[MemoryService](../../apps/backend/src/application/memory-service.ts#L112-L345) 在绑定模型声明 `maxInputChars`／`maxOutputChars` 时，按完整请求（系统提示 ＋ `1000` 骨架冗余 ＋ 候选元数据 ＋ JSON 转义后证据分段 `memory_evidence_segments` ＋ 输出预留）核算预算并在发送前复检 `assertRequestCapacity`；未声明时使用保守默认（`DEFAULT_MEMORY_BUDGET_CHARS = 24_000`、`DEFAULT_OUTPUT_RESERVE_CHARS = 4_000`、`requestOverheadChars = 2_000`）。每子批校验严格 JSON schema 后原子提交并推进证据状态，任一操作失败整批回滚（已提交前序子批保留）。
-- **混合检索与实际召回**。角色可按关键词、日期、人物和地点取回经历、日常摘要与日记。检索先登记候选，模型接受请求后按实际出站内容更新送达状态。自动概况、工具结果与原任务续行共用这套规则。同一次执行读同一条只计一次，容量裁掉的正文、仅供回查的编号及人工查找均不增加计数。[检索服务](../../apps/backend/src/application/memory-query-service.ts) · [上下文裁选](../../apps/backend/src/application/agent-context.ts)
-- **低频经历精炼**。自创建或最近补充至少经过 100 个决策轮，且近 100 轮实际召回至多一次的活跃事件可供整理器精炼。同日事件可归入日常摘要。精炼后，普通检索通过摘要或单独保留的珍惜细节、兴趣、承诺、实践及相关成长线索找到这段经历。原始事件、各次理解及证据仍可按编号核查。升级和角色迁移按同样规则重建索引。[记忆存储](../../apps/backend/src/storage/memory-store.ts)
+- **触发、串行与模型继承**：证据在消息入库与工具结算时写入 `evidence_records` 并按当时配置时区固定 `experience_date`。同一角色经 `idx_memory_batch_single_running` 与 [MemoryRuntime](../../apps/backend/src/application/memory/memory-runtime.ts#L60-L413) 双重约束保持单批串行且不阻塞聊天。触发条件为同窗待处理消息 `>=50`（`message_threshold`）、`>=30` 且停歇 `60s`（`idle`）、任务进入 `completed`/`failed` 或晚到工具结果补记（`task_end`）及 `manual`。模型通过 `resolveMemory` 取启用的 `memory_model`，未单独绑定则继承 `chat_model`；缺绑定、角色删除中或模型维护时保留触发与进度、暂不调度；失败按 `[30s, 2m, 10m, 1h]` 退避（之后维持 1 小时），**不自动换模型**；角色目录暂时缺失或 `SQLITE_BUSY` 时暂停轮询并保留启动恢复标记（[283 §26](../archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#26-306-补修独立复验)）。
+- **容量分批与严谨 JSON 校验（`GAP-04`／`R06`）**：[MemoryService](../../apps/backend/src/application/memory/memory-service.ts#L112-L345) 在绑定模型声明 `maxInputChars`／`maxOutputChars` 时，按完整请求（系统提示 ＋ `1000` 骨架冗余 ＋ 候选元数据 ＋ JSON 转义后证据分段 `memory_evidence_segments` ＋ 输出预留）核算预算并在发送前复检 `assertRequestCapacity`；未声明时使用保守默认（`DEFAULT_MEMORY_BUDGET_CHARS = 24_000`、`DEFAULT_OUTPUT_RESERVE_CHARS = 4_000`、`requestOverheadChars = 2_000`）。每子批校验严格 JSON schema 后原子提交并推进证据状态，任一操作失败整批回滚（已提交前序子批保留）。
+- **混合检索与实际召回**。角色可按关键词、日期、人物和地点取回经历、日常摘要与日记。检索先登记候选，模型接受请求后按实际出站内容更新送达状态。自动概况、工具结果与原任务续行共用这套规则。同一次执行读同一条只计一次，容量裁掉的正文、仅供回查的编号及人工查找均不增加计数。[检索服务](../../apps/backend/src/application/memory/memory-query-service.ts) · [上下文裁选](../../apps/backend/src/application/conversation/agent-context.ts)
+- **低频经历精炼**。自创建或最近补充至少经过 100 个决策轮，且近 100 轮实际召回至多一次的活跃事件可供整理器精炼。同日事件可归入日常摘要。精炼后，普通检索通过摘要或单独保留的珍惜细节、兴趣、承诺、实践及相关成长线索找到这段经历。原始事件、各次理解及证据仍可按编号核查。升级和角色迁移按同样规则重建索引。[记忆存储](../../apps/backend/src/storage/memory/memory-store.ts)
 - **日记文件与主观分离（`GAP-06`）**：日记写入工作空间 Markdown 文件，读取 `getDiary`／Agent 工具 `memory_diary`（经 `getDiarySegment` 按 Unicode 码点切片，默认 `4000`、上限 `20_000` 字符）时比对 SHA-256，外部修改实时回写快照与检索索引。角色 `state_update` 仅在决策提交同一事务内浅合并更新（乐观锁），后台整理不可直接改动当前状态；纠错仅改事件／摘要并写 `memory_revisions`。
 
 ### 3.4 自主活动调度与统一额度预算（`186`＋`190`）
@@ -114,7 +114,7 @@
 角色用 `autonomy_schedule` 自选未来时间。省略 `taskId` 会建立独立计划，显式带上当前任务编号可在到期后续做原任务。活动中转入后台的工具完成后，后续执行产生的主动分享归回当时的活动，主窗口消息与活动链接同时保存。首次思考选择安静结束时，系统保存私有活动记录。
 
 - **优先级与窗口**：调度优先处理待处理用户消息 → 到期或中断后待续任务（含带原 `taskId` 唤醒）→ 到期 `autonomy_wakes`；自主推进使用懒创建的 `nowadays-autonomy` 自定义窗口，仅当角色显式调用 `autonomy_share` 时向主窗口写入主动消息并推送 SSE。
-- **额度口径与跨日预留**：[AutonomyService](../../apps/backend/src/application/autonomy-service.ts#L35-L475) 默认每日 `200` 点（可设 `unlimited`），在本地零点随 `localDate` 重置且不累计余额。**只有 `autonomous` 来源执行与其工具调用扣点**；由带原 `taskId` 唤醒续跑的 `origin="user"` 任务沿用 `user_chat / counted=0`（`198 R05`）。外部工具在连接建立前按派发时刻写入 `autonomy_tool_reservations`；实际派发立即提交（跨日重启补记仍归原 `localDate`），未派发失败则退还预留；额度耗尽时 `pauseForBudget` 保留原任务进度并自动安排次日零点 `budget_resume` 唤醒（`AUTONOMY_BUDGET_EXHAUSTED`）。
+- **额度口径与跨日预留**：[AutonomyService](../../apps/backend/src/application/conversation/autonomy-service.ts#L35-L475) 默认每日 `200` 点（可设 `unlimited`），在本地零点随 `localDate` 重置且不累计余额。**只有 `autonomous` 来源执行与其工具调用扣点**；由带原 `taskId` 唤醒续跑的 `origin="user"` 任务沿用 `user_chat / counted=0`（`198 R05`）。外部工具在连接建立前按派发时刻写入 `autonomy_tool_reservations`；实际派发立即提交（跨日重启补记仍归原 `localDate`），未派发失败则退还预留；额度耗尽时 `pauseForBudget` 保留原任务进度并自动安排次日零点 `budget_resume` 唤醒（`AUTONOMY_BUDGET_EXHAUSTED`）。
 
 ### 3.5 启动崩溃恢复顺序（`app.ts`＋`P4`＋`198 R01`＋`306`）
 
@@ -136,13 +136,13 @@
 
 新建角色在自己的业务库登记一次首次思考资格。首次显式启用且对话模型就绪后，调度器在同一事务登记唤醒并消费资格。角色可选择行动、安排以后再做或继续等待。用户消息优先，额度与分享入口沿用 §3.4。凭据稍后就绪和进程重启都可补办资格。V22 及更早库中的已有角色升级后沿用原来的生活进度。
 
-每次回复、办事与恢复续轮都按本次绑定的协议计算最终请求体的 UTF-16 字符数。未配置时总容量为 128,000，输出预留为 4,096。工具定义、附件和原生续轮块计入容量。优先保留必要人设、状态、本轮要求、任务目标和当前步骤引用的证据。历史消息或回执可用 `history_lookup` 在当前窗口或任务中搜索、按编号分页取原文。最低必需输入仍超限时产生 `MODEL_CONTEXT_EXCEEDED`，该轮没有模型调用或扣点。任务跨轮累计用量继续按 DL-157 计算。[请求选择实现](../../apps/backend/src/application/agent-context.ts)
+每次回复、办事与恢复续轮都按本次绑定的协议计算最终请求体的 UTF-16 字符数。未配置时总容量为 128,000，输出预留为 4,096。工具定义、附件和原生续轮块计入容量。优先保留必要人设、状态、本轮要求、任务目标和当前步骤引用的证据。历史消息或回执可用 `history_lookup` 在当前窗口或任务中搜索、按编号分页取原文。最低必需输入仍超限时产生 `MODEL_CONTEXT_EXCEEDED`，该轮没有模型调用或扣点。任务跨轮累计用量继续按 DL-157 计算。[请求选择实现](../../apps/backend/src/application/conversation/agent-context.ts)
 
 ### 3.8 网页原文与续读（DL-162、DL-163）
 
 本地 MCP 可返回 HTTP(S) 文本资源或带页面来源、版本与可定位原文的结构化结果。原始工具回执保存预取内容。只有最终生成请求被提供方接受时，其中实际携带的原文区间才成为角色的阅读证据。每段记录 URL、页面版本、UTF-16 起止偏移、原文、工具及模型调用归属。明确拒绝的请求、仅有网址的结果和输入摘要均不推进位置。重叠阅读在同一页面版本内去重，换版和跳读保留各自区间。
 
-角色通过 `web_reading` 的 `positions` 查询读过的版本和区间，通过 `read` 按工具编号和偏移继续阅读。记忆形成、事件证据和历史回查使用已送达原文。历史库升级会撤下尚未整理的预取证据，保留已形成的事件和引用。[网页证据实现](../../apps/backend/src/storage/web-reading.ts)
+角色通过 `web_reading` 的 `positions` 查询读过的版本和区间，通过 `read` 按工具编号和偏移继续阅读。记忆形成、事件证据和历史回查使用已送达原文。历史库升级会撤下尚未整理的预取证据，保留已形成的事件和引用。[网页证据实现](../../apps/backend/src/storage/conversation/web-reading.ts)
 
 ### 3.9 单角色迁移（DL-165、DL-166）
 
@@ -220,9 +220,9 @@ node scripts/check-docs.mjs
 | 分层 | 核心文件 |
 | --- | --- |
 | 启动、配置与加密 | [config.ts](../../apps/backend/src/bootstrap/config.ts) · [app.ts](../../apps/backend/src/bootstrap/app.ts) · [secret-cipher.ts](../../apps/backend/src/security/secret-cipher.ts) |
-| 存储引擎与事务 | [schema.ts](../../apps/backend/src/storage/schema.ts) · [role-storage.ts](../../apps/backend/src/storage/role-storage.ts) · [checkpoint-store.ts](../../apps/backend/src/storage/checkpoint-store.ts) · [transaction-group.ts](../../apps/backend/src/storage/transaction-group.ts) · [app-store.ts](../../apps/backend/src/storage/app-store.ts) · [role-store.ts](../../apps/backend/src/storage/role-store.ts) · [conversation-store.ts](../../apps/backend/src/storage/conversation-store.ts) · [memory-store.ts](../../apps/backend/src/storage/memory-store.ts) · [autonomy-store.ts](../../apps/backend/src/storage/autonomy-store.ts) |
-| 角色、图执行与工具 | [role-access.ts](../../apps/backend/src/application/role-access.ts) · [role-service.ts](../../apps/backend/src/application/role-service.ts) · [conversation-service.ts](../../apps/backend/src/application/conversation-service.ts) · [agent-graph.ts](../../apps/backend/src/application/agent-graph.ts) · [agent-tools.ts](../../apps/backend/src/application/agent-tools.ts) · [model-binding-resolver.ts](../../apps/backend/src/application/model-binding-resolver.ts) · [local-server.ts](../../apps/backend/src/mcp/local-server.ts) · [client.ts](../../apps/backend/src/mcp/client.ts) · [skill-library.ts](../../apps/backend/src/skills/skill-library.ts) |
-| 记忆、自主与通信 | [memory-service.ts](../../apps/backend/src/application/memory-service.ts) · [memory-runtime.ts](../../apps/backend/src/application/memory-runtime.ts) · [memory-query-service.ts](../../apps/backend/src/application/memory-query-service.ts) · [autonomy-service.ts](../../apps/backend/src/application/autonomy-service.ts) · [routes.ts](../../apps/backend/src/http/routes.ts) · [errors.ts](../../apps/backend/src/domain/errors.ts) · [commands.ts](../../apps/backend/src/cli/commands.ts) |
+| 存储引擎与事务 | [schema.ts](../../apps/backend/src/storage/core/schema.ts) · [role-storage.ts](../../apps/backend/src/storage/core/role-storage.ts) · [checkpoint-store.ts](../../apps/backend/src/storage/conversation/checkpoint-store.ts) · [transaction-group.ts](../../apps/backend/src/storage/core/transaction-group.ts) · [app-store.ts](../../apps/backend/src/storage/core/app-store.ts) · [role-store.ts](../../apps/backend/src/storage/role/role-store.ts) · [conversation-store.ts](../../apps/backend/src/storage/conversation/conversation-store.ts) · [memory-store.ts](../../apps/backend/src/storage/memory/memory-store.ts) · [autonomy-store.ts](../../apps/backend/src/storage/conversation/autonomy-store.ts) |
+| 角色、图执行与工具 | [role-access.ts](../../apps/backend/src/application/role/role-access.ts) · [role-service.ts](../../apps/backend/src/application/role/role-service.ts) · [conversation-service.ts](../../apps/backend/src/application/conversation/conversation-service.ts) · [agent-graph.ts](../../apps/backend/src/application/conversation/agent-graph.ts) · [agent-tools.ts](../../apps/backend/src/application/conversation/agent-tools.ts) · [model-binding-resolver.ts](../../apps/backend/src/application/resources/model-binding-resolver.ts) · [local-server.ts](../../apps/backend/src/mcp/local-server.ts) · [client.ts](../../apps/backend/src/mcp/client.ts) · [skill-library.ts](../../apps/backend/src/skills/skill-library.ts) |
+| 记忆、自主与通信 | [memory-service.ts](../../apps/backend/src/application/memory/memory-service.ts) · [memory-runtime.ts](../../apps/backend/src/application/memory/memory-runtime.ts) · [memory-query-service.ts](../../apps/backend/src/application/memory/memory-query-service.ts) · [autonomy-service.ts](../../apps/backend/src/application/conversation/autonomy-service.ts) · [routes.ts](../../apps/backend/src/http/routes.ts) · [errors.ts](../../apps/backend/src/domain/errors.ts) · [commands.ts](../../apps/backend/src/cli/commands.ts) |
 | 桌面首次配置入口 | [App.tsx](../../apps/desktop/renderer/src/App.tsx) · [Home.tsx](../../apps/desktop/renderer/src/pages/Home.tsx) · [Conversation.tsx](../../apps/desktop/renderer/src/pages/Conversation.tsx) · [Settings.tsx](../../apps/desktop/renderer/src/pages/Settings.tsx) · [ChatPane.tsx](../../apps/desktop/renderer/src/conversation/ChatPane.tsx) · [use-window-session.ts](../../apps/desktop/renderer/src/conversation/use-window-session.ts) |
 
 ### 5.3 归档与独立复核溯源

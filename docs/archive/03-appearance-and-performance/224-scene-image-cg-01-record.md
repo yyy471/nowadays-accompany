@@ -18,7 +18,7 @@
 
 业务库版本升至 v13，新增两张表：
 
-- `scene_image_tasks`：一条任务一行，含角色、窗口、消息、锚点执行、触发来源、图层模式、起止句段、状态、幂等键、尝试序号、规划 JSON、错误码与摘要、时间。 [schema.ts](../../../apps/backend/src/storage/schema.ts#L1292)
+- `scene_image_tasks`：一条任务一行，含角色、窗口、消息、锚点执行、触发来源、图层模式、起止句段、状态、幂等键、尝试序号、规划 JSON、错误码与摘要、时间。 [schema.ts](../../../apps/backend/src/storage/core/schema.ts#L1292)
 - `scene_image_assets`：生成结果素材，含任务、角色、窗口、消息、媒体类型、相对路径、宽高、字节数与时间；`task_id` 唯一，一个任务最多一个已提交结果。
 
 索引按契约固定：
@@ -63,7 +63,7 @@
 | 消息分页 / 单条消息详情 | 增加 `sceneImages`，按消息顺序返回任务与结果引用 |
 | 窗口 SSE | `scene_image_task` 携带任务编号、消息编号、状态、区间、规划、结果与错误摘要 |
 
-拒绝规则：用户消息、仍在生成的回复、缺少执行归属的回复返回 409 `SCENE_IMAGE_ANCHOR_INVALID`；没有句段返回 409 `SCENE_IMAGE_SEGMENTS_MISSING`；消息不存在返回 404 `MESSAGE_NOT_FOUND`。 [路由](../../../apps/backend/src/http/scene-image-routes.ts#L8) · [服务](../../../apps/backend/src/application/scene-image-service.ts#L58)
+拒绝规则：用户消息、仍在生成的回复、缺少执行归属的回复返回 409 `SCENE_IMAGE_ANCHOR_INVALID`；没有句段返回 409 `SCENE_IMAGE_SEGMENTS_MISSING`；消息不存在返回 404 `MESSAGE_NOT_FOUND`。 [路由](../../../apps/backend/src/http/scene-image-routes.ts#L8) · [服务](../../../apps/backend/src/application/media/scene-image-service.ts#L58)
 
 受管图片读取校验角色归属、文件签名与记录字节数，格式或长度不一致返回 500 `SCENE_IMAGE_ASSET_CORRUPT`；像素可解码性在写入前由既有 `inspectImage` 完整解码确认。相对路径与真实服务配置不通过接口暴露。
 

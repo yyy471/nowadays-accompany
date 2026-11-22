@@ -10,14 +10,14 @@
 
 ## 2. CG-R02 配置读写不解析生图凭据
 
-- 全局生图服务新增只读记录查询，不解析密钥；角色生图配置的 GET 与 PUT 改用该查询，服务存在且启用即可读取和修正。[记录查询](../../../apps/backend/src/application/image-service.ts#L160) · [配置读取与保存](../../../apps/backend/src/application/scene-image-settings.ts#L77)
+- 全局生图服务新增只读记录查询，不解析密钥；角色生图配置的 GET 与 PUT 改用该查询，服务存在且启用即可读取和修正。[记录查询](../../../apps/backend/src/application/media/image-service.ts#L160) · [配置读取与保存](../../../apps/backend/src/application/media/scene-image-settings.ts#L77)
 - 探测、测试生图、任务生成仍解析凭据；引用无法解析时返回 500 `MODEL_CREDENTIAL_UNAVAILABLE`，不会静默跳过认证。
 - 测试将已关联服务改为缺失的 `env:` 引用：配置仍可 GET 和 PUT，探测与测试生图返回该错误；补上环境变量后同一份配置可继续测试生图。[用例](../../../apps/backend/tests/p13-comfyui.test.ts#L646)
 
 ## 3. CG-R03 任务接收时固定服务、模型与锚点
 
-- 业务库升到 V16，`scene_image_tasks` 增加 `config_json`，在任务接收时保存当前角色生图配置、服务地址与超时快照。[迁移](../../../apps/backend/src/storage/schema.ts#L1478)
-- 生成器新增锁定入口：接收任务时取当前设置与服务记录，不解析凭据；任务开始后把快照原样交给生成器。[锁定](../../../apps/backend/src/scene/comfyui-generator.ts#L164) · [接收时快照](../../../apps/backend/src/application/scene-image-service.ts#L108)
+- 业务库升到 V16，`scene_image_tasks` 增加 `config_json`，在任务接收时保存当前角色生图配置、服务地址与超时快照。[迁移](../../../apps/backend/src/storage/core/schema.ts#L1478)
+- 生成器新增锁定入口：接收任务时取当前设置与服务记录，不解析凭据；任务开始后把快照原样交给生成器。[锁定](../../../apps/backend/src/scene/comfyui-generator.ts#L164) · [接收时快照](../../../apps/backend/src/application/media/scene-image-service.ts#L108)
 - 生成阶段优先使用快照中的模型、锚点、工作流与采样参数，以及固定的服务地址和超时；服务是否存在、是否启用和凭据仍按生成时的状态检查，删除返回 `SCENE_IMAGE_NOT_CONFIGURED`，停用返回 `IMAGE_SERVICE_DISABLED`，不回退占位生成器。[固定配置生成](../../../apps/backend/src/scene/comfyui-generator.ts#L206)
 - 测试在规划期间保存新模型与新锚点：完成后假服务收到的仍是接收时的模型与锚点；规划期间停用服务则任务失败为 `IMAGE_SERVICE_DISABLED`，假服务收到 0 次工作流提交。[配置固定用例](../../../apps/backend/tests/p13-comfyui.test.ts#L710) · [停用用例](../../../apps/backend/tests/p13-comfyui.test.ts#L774)
 - 快照同时记录「接收时尚未配置真实服务」：这类任务固定使用占位生成器，规划期间新增配置不会切换真实服务。[未配置任务用例](../../../apps/backend/tests/p13-comfyui.test.ts#L903)
@@ -25,7 +25,7 @@
 ## 4. CG-R04 中止清理与有效超时
 
 - ComfyUI 客户端在提交成功后的轮询外层补一次兜底：轮询请求因信号中止而抛错时，尝试一次 `POST /queue` 删除远端任务再抛出原错误；循环顶部的取消分支只清理一次，不重复删除。[轮询清理](../../../apps/backend/src/scene/comfyui-client.ts#L122)
-- 过场图外层等待上限改为采用任务固定快照中的服务超时；没有快照或未配置真实服务时默认 180 秒，与 ComfyUI 客户端的默认生成上限一致，不再让 120 秒外层上限提前截断 180 秒的服务等待。[外层超时](../../../apps/backend/src/application/scene-image-service.ts#L418)
+- 过场图外层等待上限改为采用任务固定快照中的服务超时；没有快照或未配置真实服务时默认 180 秒，与 ComfyUI 客户端的默认生成上限一致，不再让 120 秒外层上限提前截断 180 秒的服务等待。[外层超时](../../../apps/backend/src/application/media/scene-image-service.ts#L418)
 - 测试在 `/history` 挂起时中止客户端，假服务收到 `/queue` 删除请求；配置 5 秒服务超时后任务按 `SCENE_IMAGE_GENERATION_TIMEOUT` 结算，并同样清理远端任务。[中止用例](../../../apps/backend/tests/p13-comfyui.test.ts#L817) · [超时用例](../../../apps/backend/tests/p13-comfyui.test.ts#L849)
 
 ## 5. CG-R05 旧任务跨站点不复用新凭据

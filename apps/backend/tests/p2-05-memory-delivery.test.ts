@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import test from "node:test";
 import { listen } from "../src/bootstrap/app.js";
 import { HttpModelAdapter } from "../src/model/protocols.js";
-import { MemoryStore } from "../src/storage/memory-store.js";
+import { MemoryStore } from "../src/storage/memory/memory-store.js";
 import type {ModelEvent} from "../src/domain/model.js";
 import { createFixture, createFixtureWithModel, seedEvent, updateResourceConfigDirect, withStorage } from "./p2-05-fixture.js";
 

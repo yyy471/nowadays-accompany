@@ -8,8 +8,8 @@ import { createBackendApp, type BackendApp } from "../src/bootstrap/app.js";
 import { rolePaths } from "../src/bootstrap/config.js";
 import { HttpModelAdapter } from "../src/model/protocols.js";
 import type { ModelPort } from "../src/domain/model.js";
-import type { ChatModelPortFactory } from "../src/application/conversation-service.js";
-import { MemoryStore } from "../src/storage/memory-store.js";
+import type { ChatModelPortFactory } from "../src/application/conversation/conversation-service.js";
+import { MemoryStore } from "../src/storage/memory/memory-store.js";
 import { createFixtureWithModel, addBinding, withStorage } from "../tests/p2-05-fixture.js";
 
 const credentialPath = process.env.NOWADAYS_ACCEPTANCE_CREDENTIAL_FILE;

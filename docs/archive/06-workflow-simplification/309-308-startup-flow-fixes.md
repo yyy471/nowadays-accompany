@@ -12,7 +12,7 @@
    - [App.tsx](../../../apps/desktop/renderer/src/App.tsx) 增加单调 `workspaceRequestSeq` 与 `onWorkspaceRequestHandled` 消费清除回调；
    - [Settings.tsx](../../../apps/desktop/renderer/src/pages/Settings.tsx) 的 `SettingsWorkspace` 使用 `handledWorkspaceKey` 记录已处理的请求键并在消费时通知外层清空，避免创建完成刷新角色列表或切回「角色配置」时重复弹出空白创建窗。
 2. **#2 连续两轮实时对话消息顺序倒错**：
-   - 后端 [conversation-store.ts](../../../apps/backend/src/storage/conversation-store.ts) 在 SSE 事件（`message_segments`、`message_completed`、`message_interrupted`）写入并广播真实数据库序号 `replySequence` 与 `replyCreatedAt`；
+   - 后端 [conversation-store.ts](../../../apps/backend/src/storage/conversation/conversation-store.ts) 在 SSE 事件（`message_segments`、`message_completed`、`message_interrupted`）写入并广播真实数据库序号 `replySequence` 与 `replyCreatedAt`；
    - 前端 [window-model.js](../../../apps/desktop/renderer/src/conversation/window-model.ts) 新增 `nextMessageSequence(messages)` 替代 `Number.MAX_SAFE_INTEGER` 兜底；[use-window-session.ts](../../../apps/desktop/renderer/src/conversation/use-window-session.ts) 在 `PendingReply` 上承接 `replySequence` / `replyCreatedAt` 并用于 `finalizePending`，彻底消除首轮 SSE 回复排到第二轮真实用户消息之后的问题。
 3. **#3 与外观显示裁决（首次进入对话 & 设置页衣柜）**：
    - [App.tsx](../../../apps/desktop/renderer/src/App.tsx) 以 `appearanceRoleId` 派生同角色刷新不清空快照的 `appearanceLoading`，并在收到会话终态/标注事件时触发 `onRoleStateChanged` 及时同步最新服饰状态；
@@ -22,7 +22,7 @@
    - [use-window-session.ts](../../../apps/desktop/renderer/src/conversation/use-window-session.ts) 新增 `advanceAll()`；
    - [ChatPane.tsx](../../../apps/desktop/renderer/src/conversation/ChatPane.tsx) 与 [conversation.css](../../../apps/desktop/renderer/src/styles/conversation.css) 在 `.dialogue-zone` 增加 `.dialogue-advance-bar`：显示剩余句数、操作提示、「继续下一句」与当剩余超过 1 句时的「全部展开」按钮（等待中亦显示明确状态，不再塌陷为空白区）。
 5. **#5 草稿测通结果保存继承与 `/models` 失败指引**：
-   - 后端 [model.ts](../../../apps/backend/src/domain/model.ts)、[app-store.ts](../../../apps/backend/src/storage/app-store.ts)、[model-service.ts](../../../apps/backend/src/application/model-service.ts)、[schemas.ts](../../../apps/backend/src/http/schemas.ts) 与 [resource-service.ts](../../../apps/backend/src/application/resource-service.ts) 在 `/v1/model-services/test` 返回 `testCallId`，创建或更新模型服务支持传入 `draftTestCallId`；服务端在同一事务内严格核对协议、地址、密钥指纹及可选 `modelName` 完全一致后挂载为资源最近测试结果，不一致时安全忽略；
+   - 后端 [model.ts](../../../apps/backend/src/domain/model.ts)、[app-store.ts](../../../apps/backend/src/storage/core/app-store.ts)、[model-service.ts](../../../apps/backend/src/application/resources/model-service.ts)、[schemas.ts](../../../apps/backend/src/http/schemas.ts) 与 [resource-service.ts](../../../apps/backend/src/application/resources/resource-service.ts) 在 `/v1/model-services/test` 返回 `testCallId`，创建或更新模型服务支持传入 `draftTestCallId`；服务端在同一事务内严格核对协议、地址、密钥指纹及可选 `modelName` 完全一致后挂载为资源最近测试结果，不一致时安全忽略；
    - 前端 [use-model-probe.ts](../../../apps/desktop/renderer/src/components/model/use-model-probe.ts)、[Settings.tsx](../../../apps/desktop/renderer/src/pages/Settings.tsx) 与 [ModelNamePicker.tsx](../../../apps/desktop/renderer/src/components/model/ModelNamePicker.tsx) 透传 `draftTestCallId`，并在 `/models` 读取失败或返回空列表时明确提示部分兼容接口属正常现象、可手填模型名后直接测试保存。
 6. **#6 新创建角色状态立即同步与生图／语音预览可取消**：
    - [Settings.tsx](../../../apps/desktop/renderer/src/pages/Settings.tsx) 在 `createRole()` 成功后立即递增值刷新 `/v1/activities` 并区分 `正在同步状态` 与 `状态未获取`，使新建角色的写入操作即时解锁；

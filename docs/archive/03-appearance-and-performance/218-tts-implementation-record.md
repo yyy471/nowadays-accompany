@@ -79,7 +79,7 @@
 - 成功响应必须声明 `audio/wav`、`audio/x-wav` 或 `audio/wave`；其他媒体类型按 502 `TTS_SYNTHESIS_FAILED` 拒绝。
 - 响应体按流读取并限制为 16 MiB，超过上限时取消读取并报错，不再先完整缓冲再判断。
 - 新增 PCM WAV 校验：RIFF/WAVE 头、RIFF 长度、`fmt ` 块（PCM、单/多声道、有效采样率、8／16／24／32 位）、非空 `data` 块，且所有块范围不越界；伪造媒体类型、普通文本、截断 WAV 和空 data 均拒绝。
-- [响应校验](../../../apps/backend/src/tts/indextts-client.ts#L80) · [WAV 校验](../../../apps/backend/src/application/audio-inspect.ts#L31)
+- [响应校验](../../../apps/backend/src/tts/indextts-client.ts#L80) · [WAV 校验](../../../apps/backend/src/application/media/audio-inspect.ts#L31)
 
 ### 7.2 R02 错误响应体的超时和取消
 
@@ -92,7 +92,7 @@
 
 - 保存 `baseUrl` 时拒绝查询串、片段和 URL 内嵌账号信息；路径前缀允许保留，末尾斜杠归一化。
 - 适配器直接按 `baseUrl` 的 `pathname` 拼接 `/tts`，不再依赖相对 URL 解析，`/bridge` 会请求 `/bridge/tts`，不会被查询串吞掉路径。
-- [地址校验](../../../apps/backend/src/application/voice-service.ts#L316) · [路径拼接](../../../apps/backend/src/tts/indextts-client.ts#L113)
+- [地址校验](../../../apps/backend/src/application/media/voice-service.ts#L316) · [路径拼接](../../../apps/backend/src/tts/indextts-client.ts#L113)
 
 ### 7.4 验证
 
@@ -105,8 +105,8 @@
 
 [219 复验与补修](./219-indextts-integration-spec.md#218-第-7-节修复复验及补修)确认 R01～R03 原复现路径通过，同时提出三处边界缺口，本轮补齐：
 
-- **WAV 帧与格式字段**：`isPcmWav` 校验 RIFF 块边界、`fmt ` 的 PCM 格式、声道、采样率、位深、`byteRate` 与 `blockAlign` 的一致性，以及 `data` 长度按完整音频帧对齐。16 位单声道仅 3 个数据字节、错误字节率和错误帧宽均拒绝；奇数长度的元数据块按 RIFF 填充规则仍可读取。[WAV 校验](../../../apps/backend/src/application/audio-inspect.ts#L31)
+- **WAV 帧与格式字段**：`isPcmWav` 校验 RIFF 块边界、`fmt ` 的 PCM 格式、声道、采样率、位深、`byteRate` 与 `blockAlign` 的一致性，以及 `data` 长度按完整音频帧对齐。16 位单声道仅 3 个数据字节、错误字节率和错误帧宽均拒绝；奇数长度的元数据块按 RIFF 填充规则仍可读取。[WAV 校验](../../../apps/backend/src/application/media/audio-inspect.ts#L31)
 - **错误媒体类型的连接收尾**：成功状态但媒体类型不是 WAV 时，客户端先中止上游请求再抛出 502，假服务能观察到连接关闭，不再等客户端超时。[媒体类型拒绝](../../../apps/backend/src/tts/indextts-client.ts#L81)
-- **空查询串和空片段**：`baseUrl` 以 `?` 或 `#` 结尾时 URL 的 `search`／`hash` 为空字符串，原校验会放行；现改为检查序列化地址中的分隔符，空查询串和空片段同样按 `VOICE_BASE_URL_INVALID` 拒绝。[地址校验](../../../apps/backend/src/application/voice-service.ts#L333)
+- **空查询串和空片段**：`baseUrl` 以 `?` 或 `#` 结尾时 URL 的 `search`／`hash` 为空字符串，原校验会放行；现改为检查序列化地址中的分隔符，空查询串和空片段同样按 `VOICE_BASE_URL_INVALID` 拒绝。[地址校验](../../../apps/backend/src/application/media/voice-service.ts#L333)
 
 验证：`p8-voice.test.ts` 11 项通过，覆盖媒体类型拒绝后的连接关闭、空 `?`／`#` 和带奇数长度填充元数据块的有效 WAV；类型检查通过；全量正式测试 241 项、交付回归 2 项通过；统一离线验收 21／21 步，`sourceUnchanged=true`，真实服务调用 0，运行目录为 `apps/backend/test-results/p5-2026-11-09T03-20-24-682Z-0d76318a/`。补修仍待独立复验，复核通过前不提交。
