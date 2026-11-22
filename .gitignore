@@ -1,15 +1,16 @@
 # Dependencies and generated builds (including renderer builds)
 node_modules/
 dist/
-/desktop-dist/
+/apps/desktop/release/
 /.packaging*/
 /release/
 /release-*/
 *.tsbuildinfo
 
 # Test results and local tool caches; test/ contains versioned source
-/.tools/
+.tools/
 /test-results/
+/apps/backend/test-results/
 /coverage/
 /playwright-report/
 /.nyc_output/

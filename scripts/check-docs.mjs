@@ -2,8 +2,8 @@
 /**
  * 仓库文档结构与链接巡检脚本：
  *   1. 体积与单行守卫：防止 AGENTS.md 超限截断，防止 STATUS.md / README.md 再现万字单行
- *   2. 目录纯净与分层检查：禁止在 devDoc/ 下存放 .log；禁止在 devDoc/ 根目录继续平铺 NNN-*.md
- *   3. 索引与编号检查：devDoc/ 全部 .md 文档均需在 devDoc/README.md 登记、specs/ 文档需在 specs/README.md 登记、全局无重复编号
+ *   2. 目录纯净与分层检查：禁止在 docs/ 下存放 .log；禁止在 docs/ 根目录继续平铺 NNN-*.md
+ *   3. 索引与编号检查：docs/ 全部 .md 文档均需在 docs/README.md 登记、specs/ 文档需在 specs/README.md 登记、全局无重复编号
  *   4. 链接完整性检查：核心文档与归档文档的本地相对链接有效性验证（核心文档额外检查标题锚点）
  *
  * 用法：node scripts/check-docs.mjs [--json]
@@ -13,9 +13,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const devDocDir = path.join(root, 'devDoc');
-const specsDir = path.join(devDocDir, 'specs');
-const archiveDir = path.join(devDocDir, 'archive');
+const docsDir = path.join(root, 'docs');
+const specsDir = path.join(docsDir, 'specs');
+const archiveDir = path.join(docsDir, 'archive');
 
 const MAX_AGENTS_BYTES = 12 * 1024;
 const MAX_LINE_CHARS = 1000;
@@ -29,7 +29,17 @@ const LEGACY_REMOVED_TARGETS = new Set([
   'desktop/desk-preview/tools/render_desk.py',
   'desktop/desk-preview/tools/render_portrait.py',
   'desktop/desk-preview/tools/package_assets.py',
+  'tools/art-pipeline/render_desk.py',
+  'tools/art-pipeline/render_portrait.py',
+  'tools/art-pipeline/package_assets.py',
+  'apps/desktop/index.html',
 ]);
+// 归档记录保留当时路径：退役目录不在现行结构中出现，但历史链接不要求复活目标。
+const LEGACY_REMOVED_PREFIXES = ['prototypes/', 'desktop/desk-preview/'];
+const isLegacyRemoved = target => {
+  const normalized = rel(target);
+  return LEGACY_REMOVED_TARGETS.has(normalized) || LEGACY_REMOVED_PREFIXES.some(prefix => normalized.startsWith(prefix));
+};
 
 const errors = [];
 const warnings = [];
@@ -37,7 +47,7 @@ const addError = (rule, file, message) => errors.push({ rule, file, message });
 const addWarn = (rule, file, message) => warnings.push({ rule, file, message });
 
 const rel = target => path.relative(root, target).split(path.sep).join('/');
-const relDevDoc = target => path.relative(devDocDir, target).split(path.sep).join('/');
+const relDocs = target => path.relative(docsDir, target).split(path.sep).join('/');
 
 function walk(dir) {
   const out = [];
@@ -103,7 +113,7 @@ function checkSizeAndLines(filePath, { maxBytes = Infinity, maxLineChars = MAX_L
   });
 }
 
-function checkLinks(filePath, { checkAnchors = false, allowLegacyBlender = false } = {}) {
+function checkLinks(filePath, { checkAnchors = false, allowLegacy = false } = {}) {
   if (!fs.existsSync(filePath)) return;
   const text = fs.readFileSync(filePath, 'utf8');
   const dir = path.dirname(filePath);
@@ -145,7 +155,7 @@ function checkLinks(filePath, { checkAnchors = false, allowLegacyBlender = false
       const anchor = hashIdx >= 0 ? decodeURIComponent(rawTarget.slice(hashIdx + 1)) : '';
       const resolved = path.resolve(dir, relPart);
       if (!fs.existsSync(resolved)) {
-        if (allowLegacyBlender && LEGACY_REMOVED_TARGETS.has(rel(resolved))) continue;
+        if (allowLegacy && isLegacyRemoved(resolved)) continue;
         addError('docs/broken-link', rel(filePath), `第 ${idx + 1} 行目标不存在：${rawTarget}`);
         continue;
       }
@@ -162,32 +172,32 @@ function checkLinks(filePath, { checkAnchors = false, allowLegacyBlender = false
 // 1. 体积与单行守卫
 checkSizeAndLines(path.join(root, 'AGENTS.md'), { maxBytes: MAX_AGENTS_BYTES, maxLineChars: 600 });
 checkSizeAndLines(path.join(root, 'README.md'));
-checkSizeAndLines(path.join(root, 'backend', 'README.md'));
-checkSizeAndLines(path.join(devDocDir, 'STATUS.md'));
-checkSizeAndLines(path.join(devDocDir, 'README.md'));
+checkSizeAndLines(path.join(root, 'apps', 'backend', 'README.md'));
+checkSizeAndLines(path.join(docsDir, 'STATUS.md'));
+checkSizeAndLines(path.join(docsDir, 'README.md'));
 
-// 2. 禁止运行日志混入 devDoc/，禁止在 devDoc/ 根目录继续平铺编号文档
-for (const file of walk(devDocDir)) {
+// 2. 禁止运行日志混入 docs/，禁止在 docs/ 根目录继续平铺编号文档
+for (const file of walk(docsDir)) {
   if (/\.log$/i.test(file)) {
-    addError('docs/no-logs', rel(file), '禁止在 devDoc/ 下存放 .log 文件，请放入被忽略的 test-results/');
+    addError('docs/no-logs', rel(file), '禁止在 docs/ 下存放 .log 文件，请放入被忽略的 test-results/');
   }
 }
 
-for (const entry of fs.readdirSync(devDocDir, { withFileTypes: true })) {
+for (const entry of fs.readdirSync(docsDir, { withFileTypes: true })) {
   if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
   if (!ALLOWED_DEVDOC_ROOT_MD.has(entry.name)) {
-    addError('docs/flat-root', `devDoc/${entry.name}`, 'devDoc/ 根目录仅保留 README.md、STATUS.md 与 161；长期规范请放入 specs/，阶段记录请放入 archive/');
+    addError('docs/flat-root', `docs/${entry.name}`, 'docs/ 根目录仅保留 README.md、STATUS.md 与 161；长期规范请放入 specs/，阶段记录请放入 archive/');
   }
 }
 
-// 3. devDoc/ 全树索引与全局编号唯一性
-const devDocReadme = fs.readFileSync(path.join(devDocDir, 'README.md'), 'utf8');
+// 3. docs/ 全树索引与全局编号唯一性
+const docsReadme = fs.readFileSync(path.join(docsDir, 'README.md'), 'utf8');
 const seenNumbers = new Map();
-for (const file of walk(devDocDir).filter(f => f.endsWith('.md'))) {
-  const r = relDevDoc(file);
+for (const file of walk(docsDir).filter(f => f.endsWith('.md'))) {
+  const r = relDocs(file);
   if (r === 'README.md') continue;
-  if (!devDocReadme.includes(r)) {
-    addError('docs/unindexed', rel(file), `未在 devDoc/README.md 中以路径 ${r} 登记`);
+  if (!docsReadme.includes(r)) {
+    addError('docs/unindexed', rel(file), `未在 docs/README.md 中以路径 ${r} 登记`);
   }
   const base = path.basename(file);
   const numMatch = /^(\d+)-/.exec(base);
@@ -205,13 +215,13 @@ for (const file of walk(devDocDir).filter(f => f.endsWith('.md'))) {
 if (fs.existsSync(specsDir)) {
   const specsReadmePath = path.join(specsDir, 'README.md');
   if (!fs.existsSync(specsReadmePath)) {
-    addError('docs/missing', 'devDoc/specs/README.md', '缺少规范总览索引');
+    addError('docs/missing', 'docs/specs/README.md', '缺少规范总览索引');
   } else {
     const specsReadme = fs.readFileSync(specsReadmePath, 'utf8');
     for (const entry of fs.readdirSync(specsDir, { withFileTypes: true })) {
       if (entry.isFile() && entry.name.endsWith('.md') && entry.name !== 'README.md') {
         if (!specsReadme.includes(entry.name)) {
-          addError('docs/unindexed', `devDoc/specs/${entry.name}`, '未在 devDoc/specs/README.md 中登记');
+          addError('docs/unindexed', `docs/specs/${entry.name}`, '未在 docs/specs/README.md 中登记');
         }
       }
     }
@@ -222,11 +232,11 @@ if (fs.existsSync(specsDir)) {
 const coreDocs = [
   path.join(root, 'AGENTS.md'),
   path.join(root, 'README.md'),
-  path.join(root, 'backend', 'README.md'),
-  path.join(root, 'prototypes', 'p0', 'README.md'),
-  path.join(devDocDir, 'README.md'),
-  path.join(devDocDir, 'STATUS.md'),
-  path.join(devDocDir, '161-digital-life-direction-decisions.md'),
+  path.join(root, 'apps', 'backend', 'README.md'),
+  path.join(root, 'apps', 'desktop', 'ART-GENERATION-GUIDE.md'),
+  path.join(docsDir, 'README.md'),
+  path.join(docsDir, 'STATUS.md'),
+  path.join(docsDir, '161-digital-life-direction-decisions.md'),
   ...(fs.existsSync(specsDir) ? walk(specsDir).filter(f => f.endsWith('.md')) : []),
 ];
 const coreSet = new Set(coreDocs.map(p => path.resolve(p)));
@@ -235,8 +245,7 @@ const archiveDocs = fs.existsSync(archiveDir) ? walk(archiveDir).filter(f => f.e
 for (const doc of coreDocs) checkLinks(doc, { checkAnchors: true });
 for (const doc of archiveDocs) {
   if (coreSet.has(path.resolve(doc))) continue;
-  const allowLegacyBlender = /20[1-4]-desktop-desk-/.test(path.basename(doc));
-  checkLinks(doc, { checkAnchors: false, allowLegacyBlender });
+  checkLinks(doc, { checkAnchors: false, allowLegacy: true });
 }
 
 if (process.argv.includes('--json')) {

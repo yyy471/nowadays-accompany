@@ -15,7 +15,7 @@ import {
 import { ensureToolsDirectories } from "./ensure-tools.mjs";
 
 const self = fileURLToPath(import.meta.url);
-const desktopDir = path.join(repoRoot, "desktop", "desk-preview");
+const desktopDir = path.join(repoRoot, "apps", "desktop");
 const compileCache = path.join(toolsDir, "compile-cache");
 const baseEnv = {
   ...process.env,
@@ -64,19 +64,19 @@ function backendTestFiles() {
 
 function targetedBackendTests(files) {
   const all = backendTestFiles();
-  const directTests = files.filter((file) => /^backend\/tests\/[^/]+\.test\.ts$/.test(file))
-    .map((file) => file.slice("backend/".length));
-  const source = files.filter((file) => file.startsWith("backend/src/"));
+  const directTests = files.filter((file) => /^apps\/backend\/tests\/[^/]+\.test\.ts$/.test(file))
+    .map((file) => file.slice("apps/backend/".length));
+  const source = files.filter((file) => file.startsWith("apps/backend/src/"));
   if (source.length === 0) {
     if (directTests.length) return directTests;
     // 验收脚本、reviews 或共享配置改动无法由文件名推断覆盖面，回退全量。
-    if (files.some((file) => file.startsWith("backend/scripts/") || file.startsWith("backend/reviews/"))) return all;
+    if (files.some((file) => file.startsWith("apps/backend/scripts/") || file.startsWith("apps/backend/reviews/"))) return all;
     return [];
   }
   const pick = (...names) => names.filter((name) => all.includes(name));
   const targets = new Set();
   for (const file of source) {
-    const relative = file.slice("backend/src/".length);
+    const relative = file.slice("apps/backend/src/".length);
     if (relative.startsWith("mcp/")) {
       for (const test of pick("tests/p2-04-mcp.test.ts", "tests/p2-05-mcp.test.ts")) targets.add(test);
     } else if (relative.startsWith("skills/")) {
@@ -101,6 +101,9 @@ const commands = {
   docs() {
     return { name: "docs", cmd: process.execPath, args: [path.join(repoRoot, "scripts", "check-docs.mjs")] };
   },
+  hygiene() {
+    return { name: "hygiene", cmd: process.execPath, args: [path.join(repoRoot, "scripts", "check-repo-hygiene.mjs")] };
+  },
   backendTypecheck() {
     return {
       name: "backend-typecheck",
@@ -124,17 +127,17 @@ const commands = {
     return { name: "renderer-build", cmd: process.execPath, args: [npmCli, "run", "build"], cwd: rendererDir };
   },
   desktopTests() {
-    const tests = fs.readdirSync(path.join(desktopDir, "tests"))
+    const tests = fs.readdirSync(path.join(desktopDir, "tests", "unit"))
       .filter((file) => file.endsWith(".test.cjs"))
       .sort()
-      .map((file) => `tests/${file}`);
+      .map((file) => `tests/unit/${file}`);
     return { name: "desktop-tests", cmd: process.execPath, args: ["--test", ...tests], cwd: desktopDir };
   },
   feedIntegration() {
     return {
       name: "feed-integration",
       cmd: process.execPath,
-      args: ["--import", "tsx", "--test", "tests/feed-integration.test.ts"],
+      args: ["--import", "tsx", "--test", "tests/integration/feed-integration.test.ts"],
       cwd: desktopDir,
     };
   },
@@ -150,7 +153,7 @@ const commands = {
     return {
       name: "desktop-e2e",
       cmd: process.execPath,
-      args: ["tests/run-e2e.cjs", ...args],
+      args: ["tests/helpers/run-e2e.cjs", ...args],
       cwd: desktopDir,
     };
   },
@@ -198,16 +201,16 @@ async function runParallel(commandList) {
 }
 
 async function fastCommands(files) {
-  if (files.length === 0) return [commands.docs(), commands.backendTypecheck(), commands.rendererCheck(), commands.desktopTests()];
-  const list = [commands.docs()];
+  if (files.length === 0) return [commands.docs(), commands.hygiene(), commands.backendTypecheck(), commands.rendererCheck(), commands.desktopTests()];
+  const list = [commands.docs(), commands.hygiene()];
   const backendChanged = files.some((file) =>
-    file.startsWith("backend/") || file === "scripts/repo-paths.mjs" || file === "scripts/ensure-tools.mjs");
-  const rendererChanged = files.some((file) => file.startsWith("desktop/desk-preview/renderer/"));
+    file.startsWith("apps/backend/") || file === "scripts/repo-paths.mjs" || file === "scripts/ensure-tools.mjs");
+  const rendererChanged = files.some((file) => file.startsWith("apps/desktop/renderer/"));
   const desktopChanged = files.some((file) =>
-    file.startsWith("desktop/desk-preview/tests/") || [
-      "desktop/desk-preview/main.cjs",
-      "desktop/desk-preview/backend-paths.cjs",
-      "desktop/desk-preview/settings-preload.cjs",
+    file.startsWith("apps/desktop/tests/") || [
+      "apps/desktop/electron/main.cjs",
+      "apps/desktop/electron/backend-paths.cjs",
+      "apps/desktop/electron/settings-preload.cjs",
     ].includes(file));
   if (backendChanged) {
     list.push(commands.backendTypecheck());
@@ -222,6 +225,7 @@ async function fastCommands(files) {
 async function unitCommands() {
   return runParallel([
     commands.docs(),
+    commands.hygiene(),
     commands.backendTypecheck(),
     commands.backendTests(),
     commands.rendererCheck(),
@@ -243,6 +247,7 @@ async function gateCommands() {
     commands.desktopTests(),
     commands.feedIntegration(),
     commands.docs(),
+    commands.hygiene(),
   ]);
   const e2e = await run(commands.e2e());
   return [...first, ...parallel, e2e];

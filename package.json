@@ -12,6 +12,7 @@
     "verify:gate": "node scripts/verify.mjs gate",
     "verify:e2e": "node scripts/verify.mjs e2e",
     "check:docs": "node scripts/check-docs.mjs",
+    "check:hygiene": "node scripts/check-repo-hygiene.mjs",
     "clean:artifacts": "node scripts/clean-artifacts.mjs"
   }
 }
