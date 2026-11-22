@@ -155,10 +155,10 @@ send 只登记输入并返回执行关联，不等待完整答复；稍后查询
 业务库保存正式身份、状态、消息、记忆、任务和调用事实；execution.sqlite 为图检查点，不替代正式业务数据。`secrets/master.key` 是模型服务直填密钥的本地加密主密钥，首次保存密钥时生成；备份时应保留整个 app-root（至少 `data/` 与 `secrets/`），丢失主密钥后已保存密钥会显示为不可解密，需要重新填写。备份时先停止后端，不要只复制其中一个 SQLite 文件。
 
 ```powershell
-npx -y node@24 scripts/accept-offline.mjs
+npx -y node@24 scripts/verify/accept-offline.mjs
 ```
 
-统一离线入口在 Node 24 下运行，也可执行 `npm run accept:offline`。它依次运行类型检查、交付回归、当前正式测试、真实进程／CLI 重启冒烟，以及 P2、P3、P4 定向场景。每次运行在新的 `test-results/p5-.../` 下保存 summary.json、源码哈希、逐步日志和业务报告。失败、报告缺失或用例数量不完整均返回非零退出码。
+统一离线入口在 Node 24 下运行，也可执行 `npm run accept:offline`。测试按 `tests/{unit,integration,acceptance,fixtures}/` 分层组织，工程脚本按 `scripts/{verify,eval}/` 分类；入口依次运行类型检查、交付回归、当前正式测试（递归收集并校验最低文件与用例数）、真实进程／CLI 重启冒烟，以及 P2～P5 定向场景。每次运行在仓库根目录 `test-results/backend-acceptance/p5-.../` 下保存 summary.json、源码哈希、逐步日志和业务报告。失败、报告缺失或用例数量不完整均返回非零退出码。
 
 命令使用本机回环 HTTP、子进程和临时数据。最新报告见[当前状态看板](../../docs/STATUS.md)，首轮交付与既往复验见 [194](../../docs/archive/01-backend-prototype/194-p5-prototype-delivery-record.md) 和 [283 第 26 节](../../docs/archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#26-306-补修独立复验)。
 

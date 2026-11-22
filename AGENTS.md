@@ -15,12 +15,12 @@
 - **依赖隔离**：根目录旧 `node_modules`、构建产物和日志属于旧工作区残留，不得与 `apps/backend/node_modules`（Node 24 ABI 编译的 `better-sqlite3`）或 `apps/desktop/` 依赖混用；本地 Node 24 运行时固定在 `.tools/node-v24/`（不入库）。
 - **常用验证命令**：
   - **仓库级**：`node scripts/verify.mjs fast|unit|gate|e2e` 分层验证（`fast` 按改动映射、`unit` 覆盖类型/单测/构建、`gate` 加完整离线验收与桌面 E2E）。
-  - **后端**（`apps/backend/`，必须使用 Node 24）：`npx -y node@24 --import tsx ...`、`npm run typecheck`、`npm test`、`npx -y node@24 scripts/accept-offline.mjs`（说明见 [apps/backend/README.md](./apps/backend/README.md)）。
+  - **后端**（`apps/backend/`，必须使用 Node 24）：`npx -y node@24 --import tsx ...`、`npm run typecheck`、`npm test`、`npx -y node@24 scripts/verify/accept-offline.mjs`（说明见 [apps/backend/README.md](./apps/backend/README.md)）。
   - **桌面端**：
-    - 渲染器自检（修改 CSS/TSX/令牌后必跑）：`cd apps/desktop/renderer && npm run check`（`tokens:check` + `lint:styles` + `typecheck`）与 `npm run build`；
+    - 渲染器自检（修改 CSS/TSX/令牌后必跑）：`cd apps/desktop/renderer && npm run check`（`tokens:check` + `lint:styles` + `typecheck`）、`npm test` 与 `npm run build`；
     - 修改 [`tokens.json`](./docs/design/character-studio/tokens.json) 后先运行 `npm run tokens`，禁止手改 `ui/character-tokens.css`；
-    - 桌面单测：`cd apps/desktop && npx -y node@24 --test tests/unit/*.test.cjs`；Electron E2E 统一走 `node scripts/verify.mjs e2e`。
-  - **文档巡检**：`node scripts/check-docs.mjs`。
+    - 桌面壳单测：`cd apps/desktop && npx -y node@24 --test tests/unit/*.test.cjs`；Electron E2E 统一走 `node scripts/verify.mjs e2e`。
+  - **文档与仓库巡检**：`node scripts/check-docs.mjs`、`node scripts/check-repo-hygiene.mjs`。
 
 ## 3. 与用户协作
 

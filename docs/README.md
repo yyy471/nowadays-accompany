@@ -61,7 +61,8 @@ docs/
 | 文档 | 定位 |
 | --- | --- |
 | [项目文档、开发规范与修复验收组织优化方案](./archive/07-documentation/documentation-optimization-plan.md) | 三类阅读入口、现行契约与验收清单；[第 7 节](./archive/07-documentation/documentation-optimization-plan.md#7-导航与现行契约独立复核)记录导航验收与契约差异，[第 7.1 节](./archive/07-documentation/documentation-optimization-plan.md#71-现行规范勘误独立复验)记录勘误复验 |
-| [405 仓库结构重组与验证提速执行记录](./archive/07-documentation/405-repo-optimization-execution-record.md) | Monorepo 迁移、分层验证与并发、产物清理与仓库护栏；含与方案的差异、终验结果与暂缓项 |
+| [仓库治理与架构优化方案（P0 → P3 归档）](./archive/07-documentation/repo-optimization-plan.md) | Monorepo 目录结构重组、命名标准化、磁盘清理与验证提速定稿方案（P0～P3 已全部实施并归档） |
+| [405 仓库结构重组与验证提速执行记录](./archive/07-documentation/405-repo-optimization-execution-record.md) | Phase A–E（P0～P3 含 Wave 1～6）完整落地细节、与方案差异、冷热终验实测与独立复核结论 |
 
 ### 06 · 项目操作链路简化与闭环复验（`archive/06-workflow-simplification/`，`277`–`310`）
 

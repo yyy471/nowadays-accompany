@@ -163,7 +163,7 @@ async function startDesk() {
   try {
     await ensureBackendRunning();
   } catch (err) {
-    console.error("[desk-preview] Failed to start managed backend:", err);
+    console.error("[desktop] Failed to start managed backend:", err);
   }
 
   protocol.handle("desk", async (request) => {

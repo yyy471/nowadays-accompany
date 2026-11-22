@@ -22,7 +22,7 @@ test('干净检出仅安装 apps/desktop 依赖时可直接解析本地 Electron
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nowadays-r08-'));
   try {
     const repoRoot = path.join(tmp, 'repo');
-    const desktopDir = path.join(repoRoot, 'desktop', 'desk-preview');
+    const desktopDir = path.join(repoRoot, 'apps', 'desktop');
     fs.mkdirSync(desktopDir, { recursive: true });
     fs.writeFileSync(path.join(desktopDir, 'package.json'), '{"name":"nowadays-desk","private":true}');
 
@@ -55,7 +55,7 @@ test('无本地 electron 时支持环境变量覆盖与开发机根目录兜底�
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nowadays-r08-fallback-'));
   try {
     const repoRoot = path.join(tmp, 'repo');
-    const desktopDir = path.join(repoRoot, 'desktop', 'desk-preview');
+    const desktopDir = path.join(repoRoot, 'apps', 'desktop');
     fs.mkdirSync(desktopDir, { recursive: true });
     fs.writeFileSync(path.join(desktopDir, 'package.json'), '{"name":"nowadays-desk","private":true}');
 

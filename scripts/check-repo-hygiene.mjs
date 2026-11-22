@@ -1,8 +1,12 @@
 #!/usr/bin/env node
 /**
- * 仓库卫生巡检：拦住已退役目录回流、被误提交的构建产物、新增的 JS/声明配对，
- * 以及代码与现行文档中指向旧结构的硬编码路径。
- * 历史归档（docs/archive/）保留当时路径，不参与旧路径检查。
+ * 仓库卫生巡检：落地 6 条防反弹护栏并拦住退役目录与跟踪产物回流：
+ * 1. hygiene/root-allowlist：根目录已跟踪顶层目录仅允许 apps、docs、scripts、tools；
+ * 2. hygiene/no-js-dts-pairs：apps/desktop/renderer/src/ 禁止 .js + .d.ts 配对；
+ * 3. hygiene/test-naming：apps/backend/tests/ 禁止 p\d+- 或 202\d{5}- 前缀命名；
+ * 4. hygiene/no-legacy-refs：代码、脚本与现行文档禁止残留旧路径硬编码（docs/archive/ 保留历史）；
+ * 5. hygiene/no-large-tracked-blobs：禁止跟踪非资产白名单目录的 > 2 MB 文件；
+ * 6. hygiene/file-size-budget：超过 100 KB 的源码单文件温和告警。
  */
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -29,13 +33,42 @@ function gitLsFiles() {
   return result.stdout.split("\0").filter(Boolean);
 }
 
+const ROOT_DIR_ALLOWLIST = new Set(["apps", "docs", "scripts", "tools"]);
+const LARGE_BLOB_LIMIT = 2 * 1024 * 1024;
+const LARGE_BLOB_ALLOWLIST = [
+  "apps/backend/assets/",
+  "apps/desktop/renderer/src/assets/",
+  "apps/desktop/assets/",
+  "tools/art-pipeline/source/",
+];
+const SOURCE_SIZE_BUDGET = 100 * 1024;
+const SOURCE_EXTENSIONS = /\.(ts|tsx|js|jsx|mjs|cjs|css)$/;
+
 const tracked = gitLsFiles();
 for (const file of tracked) {
+  if (file.includes("/")) {
+    const topDir = file.split("/")[0];
+    if (!ROOT_DIR_ALLOWLIST.has(topDir)) {
+      errors.push(`[hygiene/root-allowlist] 根目录不允许出现非白名单已跟踪目录：${topDir}/ (${file})`);
+    }
+  }
   if (/(^|\/)(node_modules|dist|test-results|release)\//.test(file)) {
     errors.push(`构建/运行产物被跟踪：${file}`);
   }
   if (/\.(log|tsbuildinfo)$/.test(file) || /\.stackdump$/.test(file)) {
     errors.push(`日志或编译缓存被跟踪：${file}`);
+  }
+  const fullPath = path.join(repoRoot, file);
+  if (fs.existsSync(fullPath)) {
+    const stat = fs.statSync(fullPath);
+    if (stat.isFile()) {
+      if (stat.size > LARGE_BLOB_LIMIT && !LARGE_BLOB_ALLOWLIST.some((prefix) => file.startsWith(prefix))) {
+        errors.push(`[hygiene/no-large-tracked-blobs] 非资产白名单大文件被跟踪：${file} (${(stat.size / 1048576).toFixed(2)} MB)`);
+      }
+      if (SOURCE_EXTENSIONS.test(file) && stat.size > SOURCE_SIZE_BUDGET) {
+        warnings.push(`[hygiene/file-size-budget] 超大源码单文件：${file} (${(stat.size / 1024).toFixed(1)} KB > 100 KB)`);
+      }
+    }
   }
 }
 for (const target of ["test-results", ".tools", "node_modules"]) {
@@ -44,10 +77,8 @@ for (const target of ["test-results", ".tools", "node_modules"]) {
   }
 }
 
-// 前端保留既有的 JS/声明配对基线（已在 Wave 4 归零；新增必须直接写 .ts）。
-const JS_DTS_BASELINE = new Set([]);
-
 function walk(directory, out = []) {
+  if (!fs.existsSync(directory)) return out;
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
     if (["node_modules", "dist", ".git", "test-results"].includes(entry.name)) continue;
     const full = path.join(directory, entry.name);
@@ -57,6 +88,8 @@ function walk(directory, out = []) {
   return out;
 }
 
+// 规则 2：apps/desktop/renderer/src/ 禁止任何 .js + .d.ts 配对。
+const JS_DTS_BASELINE = new Set([]);
 const rendererSource = path.join(repoRoot, "apps", "desktop", "renderer", "src");
 const pairs = new Set();
 for (const file of walk(rendererSource)) {
@@ -66,14 +99,39 @@ for (const file of walk(rendererSource)) {
   pairs.add(path.relative(rendererSource, file.slice(0, -3)).split(path.sep).join("/"));
 }
 for (const pair of pairs) {
-  if (!JS_DTS_BASELINE.has(pair)) errors.push(`新增 JS/.d.ts 配对：renderer/src/${pair}.js（请直接写 .ts）`);
+  if (!JS_DTS_BASELINE.has(pair)) {
+    errors.push(`[hygiene/no-js-dts-pairs] 存在 JS/.d.ts 配对：renderer/src/${pair}.js（请直接写 .ts）`);
+  }
 }
 for (const pair of JS_DTS_BASELINE) {
   if (!pairs.has(pair)) warnings.push(`已合并或移除的配对可从基线删除：renderer/src/${pair}.js`);
 }
 
+// 规则 3：apps/backend/tests/ 禁止再出现 p\d+- 或 202\d{5}- 前缀命名。
+const BAD_TEST_PREFIX_RE = /^(p\d+-|202\d{5}-)/;
+const backendTestsDir = path.join(repoRoot, "apps", "backend", "tests");
+const backendTestNamesChecked = new Set();
+for (const file of walk(backendTestsDir)) {
+  const rel = path.relative(repoRoot, file).split(path.sep).join("/");
+  backendTestNamesChecked.add(rel);
+  if (BAD_TEST_PREFIX_RE.test(path.basename(file))) {
+    errors.push(`[hygiene/test-naming] 后端测试禁止流水号/日期前缀：${rel}`);
+  }
+}
+for (const file of tracked) {
+  if (!file.startsWith("apps/backend/tests/") || backendTestNamesChecked.has(file)) continue;
+  if (BAD_TEST_PREFIX_RE.test(path.posix.basename(file))) {
+    errors.push(`[hygiene/test-naming] 后端测试禁止流水号/日期前缀：${file}`);
+  }
+}
+
+// 规则 4：代码、脚本与现行文档禁止残留旧路径硬编码。
 const LEGACY_REFERENCES = [
-  { pattern: /desktop\/desk-preview/g, label: "desktop/desk-preview" },
+  { pattern: /prototypes\/p0\/\.runtime/g, label: "prototypes/p0/.runtime" },
+  {
+    pattern: /desktop[\/\\]desk-preview|\[desk-preview\]|['"`]desk-preview['"`]|(^|[^A-Za-z0-9_\-])desk-preview\//g,
+    label: "desk-preview",
+  },
   { pattern: /(^|[^A-Za-z0-9_\-/])devDoc\//g, label: "devDoc/" },
   { pattern: /(^|[^A-Za-z0-9_\-/])prototypes\//g, label: "prototypes/" },
 ];
@@ -103,7 +161,7 @@ for (const file of SCAN_FILES.flatMap(textFiles)) {
     for (const rule of LEGACY_REFERENCES) {
       rule.pattern.lastIndex = 0;
       if (rule.pattern.test(line)) {
-        errors.push(`${path.relative(repoRoot, file)}:${index + 1} 仍引用旧路径 ${rule.label}`);
+        errors.push(`[hygiene/no-legacy-refs] ${relative}:${index + 1} 仍引用旧路径 ${rule.label}`);
       }
     }
   }

@@ -144,7 +144,7 @@ Change the time of day to a quiet, cozy Night with the desk lamp turned ON:
 
 ## 四、其他相关确认内容与下一阶段工程衔接清单
 
-等你把满意的样图生成出来后（可直接放在 `E:\tmp\testWorkSpace\materailPhoto\` 或 `desktop\desk-preview\tools\source\` 下告诉我），我们下一步将一次性完成以下合成与界面改造工作：
+等你把满意的样图生成出来后（可直接放在 `E:\tmp\testWorkSpace\materailPhoto\` 或 `tools\art-pipeline\source\` 下告诉我），我们下一步将一次性完成以下合成与界面改造工作：
 
 1. **高精人物背景分离与「桌面融合三明治」合成**
    - 对你生成的 6 张「樱」动作图进行高精度发丝级背景去除，**保留她身前与木桌接触的手臂、书本/信纸/茶杯及桌面接触阴影**。

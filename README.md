@@ -44,41 +44,52 @@ npm start
 | --- | --- |
 | `apps/backend/src/` | TypeScript 后端、LangGraph 执行、SQLite 存储、HTTP／SSE 与 CLI |
 | `apps/backend/examples/` | 角色设定、模型配置、资源绑定、本地 MCP 和 Skill 样例 |
-| `apps/backend/tests/` & `apps/backend/reviews/` | 后端自动化测试与阶段专项验收脚本 |
-| `apps/desktop/` | Electron 主进程、桌面测试与 `renderer/` React 前端 |
+| `apps/backend/tests/` & `apps/backend/scripts/` | 后端分层测试（`unit/`、`integration/`、`acceptance/`、`fixtures/`）与验证/评测脚本（`verify/`、`eval/`） |
+| `apps/desktop/` | Electron 主进程、桌面测试与 `renderer/` React 前端（`src/pages/`、`styles/` 与 `tests/`） |
 | `apps/desktop/scripts/` | 设计令牌 CSS 生成与样式规则检查脚本（`lint:styles`） |
-| `apps/desktop/tests/` | `unit/` 逻辑单测、`e2e/` Electron 端到端、`integration/` 与 `live/` 联调脚本 |
+| `apps/desktop/tests/` | `unit/` 壳与打包单测（CJS）、`integration/` 跨端联调、`e2e/` Electron 端到端、`live/` 实机脚本 |
 | `docs/` | 当前状态、活规范（`specs/`）、产品决策（`161`）与阶段记录 |
 | `tools/art-pipeline/` | 美术资产生成流水线（与桌面构建解耦） |
-| `scripts/` | 仓库级工程辅助脚本（分层验证 `verify.mjs`、文档巡检、产物清理） |
+| `scripts/` | 仓库级工程辅助脚本（分层验证 `verify.mjs`、文档巡检、仓库卫生巡检、产物清理） |
 
 ## 开发与验证
+
+### 仓库级统一入口（根目录，Node 24）
+
+```powershell
+npm run verify:fast   # 按改动域映射的快速自检
+npm run verify:unit   # 全量单测、类型检查与前端构建
+npm run verify:gate   # 离线全量门禁（21 步验收 + 15 条 Electron E2E）
+```
 
 ### 后端（在 `apps/backend/` 目录运行）
 
 ```powershell
 npm run typecheck
 npm test
-npx -y node@24 scripts/accept-offline.mjs
+npx -y node@24 scripts/verify/accept-offline.mjs
 ```
 
-`accept-offline.mjs` 汇总类型检查、交付回归、全量后端测试、真实进程冒烟及 P2/P3/P4 定向业务场景（使用离线模型与本地工具，报告写入 `apps/backend/test-results/`）。
+`scripts/verify/accept-offline.mjs` 汇总类型检查、交付回归、全量后端测试、真实进程冒烟及 P2/P3/P4/P5 定向业务场景（使用离线模型与本地工具，报告写入根目录 `test-results/backend-acceptance/`）。
 
 ### 桌面端（修改样式、组件或前端逻辑后）
 
 ```powershell
-# 1. 令牌同步、样式规则检查与 TypeScript 检查（apps/desktop/renderer）
+# 1. 令牌同步、样式检查、TypeScript 检查与渲染器单测（在 apps/desktop/renderer 运行）
 npm run check
+npm test
 npm run build
 
-# 2. 桌面测试（在 apps/desktop 运行）
+# 2. 桌面壳单测与 E2E（在 apps/desktop 运行；全套 E2E 也可用根目录 npm run verify:e2e）
 npx -y node@24 --test tests/unit/*.test.cjs
+npx -y node@24 --import tsx --test tests/integration/feed-integration.test.ts
 ```
 
-### 文档巡检（仓库根目录）
+### 文档与仓库卫生巡检（仓库根目录）
 
 ```powershell
 node scripts/check-docs.mjs
+node scripts/check-repo-hygiene.mjs
 ```
 
 ## 开发进度

@@ -43,11 +43,10 @@
 
 ## 3. 验收基线与命令
 
-- **2026-11-22 仓库结构重组与验证提速（通过，离线范围）**：
-  - 目录：后端整体迁入 `apps/backend/`，文档整体迁入 `docs/`，桌面端迁入 `apps/desktop/`，生图工具迁入 `tools/art-pipeline/`；早期原型目录与旧书桌死文件退役。
-  - 根入口：`node scripts/verify.mjs fast|unit|gate|e2e`；`gate` **8／8** 通过（196.2 s），后端 **551／551**、桌面单测 **145／145**、Electron E2E **15／15**、离线验收 **21／21**、文档与卫生巡检 0 错误。
-  - 产物：单次验收约 MB 级；本轮清理临时目录与旧轮转释放约 3.91 GiB；`scripts/check-repo-hygiene.mjs` 阻止退役目录、跟踪产物与新增 JS/声明配对回流。
-  - 暂缓：24 组 `.js/.d.ts` 合并与后端 `application/`、`storage/` 二级分包，详见 [405 执行记录](./archive/07-documentation/405-repo-optimization-execution-record.md)。
+- **2026-11-22 仓库结构重组、命名标准化与验证提速全量收口（通过，实施方离线自验）**：
+  - 结构与命名：完成 Monorepo 顶层迁移（`apps/backend/`、`apps/desktop/`、`docs/`、`tools/art-pipeline/`、`scripts/`）、前端 23 组 `.js/.d.ts` + 1 份 `.js` 合并为 `.ts` 与 `Relations.tsx`/CSS 收敛、桌面单测拆分为渲染器 ESM（18 个文件 **132／132**）+ 桌面壳 CJS（3 个文件 **13／13**）+ 跨端集成（**3／3**）、后端 `src/application/`（6 子域 42 文件）与 `src/storage/`（5 子域 23 文件）二级分包、`tests/{unit,integration,acceptance,fixtures}/`（69 个测试文件、16 个验收脚本，淘汰 `p\d+-` 与日期前缀）与 `scripts/{verify,eval}/` 规范化、验收产物收口至根 `test-results/backend-acceptance/`。
+  - 冷热三连跑门禁（Node 24，离线模型与本地工具）：清缓存冷跑 `npm run verify:gate` **9／9** 通过（墙钟 **130.9 s**，`accept-offline` **89.9 s**，Electron E2E **40.9 s**）；两轮热跑 `verify:fast` **1.3 s / 1.4 s**（`verify:fast -- model` **3.3 s / 3.0 s**）、`verify:unit` **40.5 s / 39.4 s**（后端 **551／551** 耗时 37.9 s / 36.7 s）、`verify:gate` **125.1 s / 125.8 s**（`accept-offline` **21／21** 耗时 84.8 s / 85.1 s，`delivery-tests` **5／5**，`sourceUnchanged=true`，`realServiceCalls=0`，单次报告 `test-results/backend-acceptance/p5-2026-11-22T05-45-19-258Z-e913a791/summary.json` 体积 **1.00 MiB**；`desktop-e2e` **15／15** 耗时 40.3 s / 40.7 s，孤儿 `electron.exe` 进程 **0**）。
+  - 磁盘与护栏：仓库总占用 **1.081 GiB（1.161 GB）**（`≤ 1.2 GB`），`.git/` **181.48 MiB**（`≤ 200 MB`，`git fsck --full` 0 错误）；`node scripts/check-docs.mjs`（核心 13 份、归档 156 份，**0 错误、0 警告**）、`node scripts/check-repo-hygiene.mjs`（6 条规则 **0 错误**）、`lint:styles`（28 个 CSS，**0 违规**，豁免 387）。方案已归档至 [repo-optimization-plan.md](./archive/07-documentation/repo-optimization-plan.md)，完整记录见 [405 执行记录](./archive/07-documentation/405-repo-optimization-execution-record.md)。
 
 - **2026-11-21 全局 Token 消耗统计（DL-183）二次复核与补修复验（通过，离线与本地模拟端点范围）**：
   - 后端（Node 24）：`cd apps/backend && npx -y node@24 ./node_modules/typescript/bin/tsc --noEmit` 通过；`npx -y node@24 --import tsx --test tests/*.test.ts` **551／551** 通过（0 失败，0 跳过，p26 **6／6**）；`npx -y node@24 scripts/accept-offline.mjs` **21／21 步**通过（`delivery-tests` 2／2、`tests` 551／551、`realServiceCalls=0`、`sourceUnchanged=true`，报告：`apps/backend/test-results/p5-2026-11-21T13-11-21-968Z-cfbceea9/summary.json`）。

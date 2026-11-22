@@ -190,19 +190,22 @@ cd apps/backend
 npm run typecheck
 npm test
 
-# 2. 后端 P0～P5 + 离线完整 21 步验收脚本（输出到 apps/backend/test-results/）
-npx -y node@24 scripts/accept-offline.mjs
+# 2. 后端 P0～P5 + 离线完整 21 步验收脚本（报告输出到根目录 test-results/backend-acceptance/）
+npx -y node@24 scripts/verify/accept-offline.mjs
 
-# 3. 桌面渲染器检查 + 桌面逻辑测试（electron-executable.cjs 从 apps/desktop 解析，无需根 node_modules）
+# 3. 桌面渲染器检查/单测 + 桌面壳单测（electron-executable.cjs 从 apps/desktop 解析，无需根 node_modules）
 cd ../desktop/renderer
 npm run check
+npm test
 npm run build
 cd ..
 npx -y node@24 --test tests/unit/*.test.cjs
 
-# 4. 文档链接与规范巡检
+# 4. 仓库级分层门禁、文档链接与仓库卫生巡检
 cd ../..
+npm run verify:unit
 node scripts/check-docs.mjs
+node scripts/check-repo-hygiene.mjs
 ```
 
 ---

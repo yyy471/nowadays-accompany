@@ -1,7 +1,7 @@
 # Nowadays 仓库治理与架构优化锚点方案（P0 → P1 → P2 + P3）
 
 > **定位**：本项目目录结构重组、命名标准化、磁盘清理与测试提速专项的**唯一根锚点文件**（v2 复核定稿）。  
-> **当前状态**：方案已全部确认并完成代码级复核，**尚未开始实施**。建议新开独立分支（如 `codex/repo-cleanup-and-restructure`）按下方阶段与波次顺序推进；全部验收收口后可将本文件归档至 `docs/archive/` 或移除。
+> **当前状态**：**已全量实施完成（P0 → P1 → P2 Wave 1～6 + P3）并归档**至 [docs/archive/07-documentation/repo-optimization-plan.md](./repo-optimization-plan.md)，各波次与冷热终验实测见 [405 执行记录](./405-repo-optimization-execution-record.md)。
 
 ---
 
@@ -42,13 +42,10 @@
 - [x] **P2-Wave 1**：新增 `scripts/rewrite-doc-links.mjs`；清理 `prototypes/`、`.archify/`、8 个旧书桌死文件 + 2 条旧单测
 - [x] **P2-Wave 2**：顶层骨架迁移 `backend/` → `apps/backend/`、`devDoc/` → `docs/`、`desktop/desk-preview/tools/` → `tools/art-pipeline/` + 全树文档链接重写
 - [x] **P2-Wave 3**：`desktop/desk-preview/` 扁平迁入 `apps/desktop/` + 5 处硬编码路径修复 + `paths.cjs` + 重跑 `npm run tokens` + 文档链接重写
-- [ ] **P2-Wave 4**：合并 24 组 `.js/.d.ts` → `.ts` + `renderer/tests/`（ESM）与 `desktop/tests/unit/`（CJS）与 `tests/integration/`（跨端）分治 + `Relations.tsx` 与 CSS 收敛 + 文档链接重写
-  - （部分完成：测试已分 `unit/e2e/integration/live` 并统一调度；JS/.d.ts 合并暂缓，见执行记录）
-- [ ] **P2-Wave 5**：`apps/backend/src/application/` 与 `storage/` 按业务域二级分包 + 文档链接重写
-  - （暂缓：纯目录churn 风险高于收益，见执行记录）
-- [ ] **P2-Wave 6**：`apps/backend/tests/` 分层重命名 + `reviews/` 归并清理 + `scripts/` 拆 `verify/eval` + 递归测试发现与最低用例数守卫 + `test-results/backend-acceptance/` 收口 + 文档链接重写
-  - （暂缓：同上）
-- [x] **P3**：落地 `scripts/check-repo-hygiene.mjs` 并完成全链路终验
+- [x] **P2-Wave 4**：合并 23 组 `.js/.d.ts` + 1 份无配对 `.js` → `.ts` + `renderer/tests/`（ESM）与 `desktop/tests/unit/`（CJS）与 `tests/integration/`（跨端）分治 + `Relations.tsx` 与 CSS 收敛 + 文档链接重写
+- [x] **P2-Wave 5**：`apps/backend/src/application/` 与 `storage/` 按业务域二级分包 + 文档链接重写
+- [x] **P2-Wave 6**：`apps/backend/tests/` 分层重命名 + `reviews/` 归并清理 + `scripts/` 拆 `verify/eval` + 递归测试发现与最低文件/用例数守卫 + `test-results/backend-acceptance/` 收口 + 文档链接重写
+- [x] **P3**：落地 `scripts/check-repo-hygiene.mjs`（6 条护栏规则）并完成冷热全链路终验
 
 ---
 
