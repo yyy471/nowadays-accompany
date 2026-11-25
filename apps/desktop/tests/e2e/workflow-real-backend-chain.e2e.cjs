@@ -669,7 +669,8 @@ async function run() {
   const deleteMcp = button('删除 MCP…');
   assert.equal(await ev(`${deleteMcp}?.disabled`), true, '被启用角色绑定的扩展禁止删除');
   await clickWhen(element('.config-prose:not([hidden]) .config-occupancy-details summary'));
-  await clickWhen(button('关闭全部启用绑定'));
+  assert.equal(await ev("document.querySelector('.config-occupancy-details[open]').innerText.includes('关闭全部启用绑定')"), false, '单角色占用时只显示该角色的解绑按钮');
+  await clickWhen(button('关闭该角色绑定'));
   await until(async () => (await request(`/v1/roles/${roleA.roleId}/bindings`)).items.some(item => item.resourceId === extension.resourceId && !item.enabled), 'ext-unbound');
   await until(async () => (await request(`/v1/roles/${roleA.roleId}/activity`)).activity.state === 'active', '关闭绑定后甲角色应自动恢复活动');
   await clickWhen(element('[role=switch][aria-label="全局启用文件工具"]'));
@@ -946,8 +947,8 @@ async function run() {
   await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings' && document.querySelector('.config-kind-tabs button[aria-pressed=true]')?.textContent==='语音' && document.querySelector('.config-sheet h3')?.textContent==='添加语音服务'"), 'open-add-voice-service');
   await setInput(field('input[aria-label="语音服务名称"]'), '主本地语音');
   await setInput(field('input[aria-label="语音服务地址"]'), tts.baseUrl);
-  await clickWhen(sheetButton('探测服务'));
-  await until(() => ev("document.querySelector('.config-sheet')?.innerText.includes('探测到')"), 'global-tts-probe');
+  await clickWhen(sheetButton('测试连接'));
+  await until(() => ev("document.querySelector('.config-sheet')?.innerText.includes('服务未提供引擎列表')"), 'global-tts-probe');
   await clickWhen(sheetButton('添加'));
   await waitService('主本地语音');
   const voiceSvc = (await request('/v1/voice-services')).items[0];

@@ -4,7 +4,7 @@ import { Field, Input, announceLive } from '../../ui';
 import type { RoleListItem } from '../../types';
 import { MediaGroup } from '../config/MediaSheet';
 import {
-  ServiceDeleteEntry, ServiceDeleteSheet, ServiceHeading, ServiceManagementRow, ServicePauseNotice, ServiceProbeAction,
+  ServiceDeleteEntry, ServiceDeleteSheet, ServiceHeading, ServiceManagementRow, ServiceProbeAction,
   ServiceRow, ServiceSheet, ServiceSheetActions, ServiceUseRow, serviceHost, serviceMaintenanceOf, serviceProbeNotice, serviceWriteFailure, useServiceSheetExit,
 } from '../config/ServiceParts';
 import { T10, T12, T16, T32 } from '../config/config-texts';
@@ -246,16 +246,14 @@ function ImageServiceEditor({ service, trigger, occupancy, roleName = id => id, 
         <MediaGroup title="名称" group={group}><div className="config-service-field-one"><Field label="生图服务名称"><Input aria-label="生图服务名称" maxLength={200} value={name} disabled={busy} placeholder={creating ? '起一个好认的名字' : undefined} onChange={event => setName(event.target.value)}/></Field></div></MediaGroup>
         <MediaGroup title="连接" group={group}>
           <div className="config-service-unlabelled"><Field label="服务地址"><Input spellCheck={false} value={url} disabled={busy} placeholder="http://127.0.0.1:8188" onChange={event => { setUrl(event.target.value); setDraftTest(null); setProbeNeedsUrl(null); probe.reset(); }}/></Field></div>
-          <ServiceProbeAction busy={probe.testBusy} disabled={busy || mustReplace || probe.listBusy} notice={probeGroup === 'connection' ? probeNotice : null}
-            onClick={() => runProbe('test', 'connection')}/>
+          {group === '连接' && <ServiceProbeAction busy={probe.testBusy} disabled={busy || mustReplace || probe.listBusy} notice={probeGroup === 'connection' ? probeNotice : null}
+            onClick={() => runProbe('test', 'connection')}/>}
           {mustReplace && <p className="config-service-form-note">{T12}</p>}
-          <ServicePauseNotice names={pauseNames}/>
         </MediaGroup>
         <MediaGroup title="密钥" group={group}><SecretInput aria-label="生图密钥" placeholder={secret.hasExisting ? '留空则保留原密钥' : '选填'} disabled={busy}
           value={secret.value} visible={visible} onToggleVisible={() => setVisible(previous => !previous)}
           onFocus={event => { if (!secret.dirty && secret.value === SECRET_MASK_SENTINEL) event.currentTarget.select(); }}
           onChange={value => { setSecret(previous => nextSecretDraftOnInput(previous, value)); setDraftTest(null); probe.reset(); }}/>
-          <ServicePauseNotice names={pauseNames}/>
         </MediaGroup>
         <MediaGroup title="默认模型" group={group}><ImageModelPicker settings label="默认模型" placeholder="可选，如 xxx.safetensors" value={model} onChange={value => { setModel(value); setDraftTest(null); probe.invalidateTest(); }}
           models={probe.models} listBusy={probe.listBusy} testBusy={probe.testBusy} notice={probeGroup === 'model' ? probeNotice : null}

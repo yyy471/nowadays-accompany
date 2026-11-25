@@ -341,7 +341,7 @@ async function run() {
   await setInput("document.querySelector('.config-sheet .config-connection input')", fakeAi.baseUrl);
   await setInput("document.querySelector('.config-sheet input[type=password]')", 'sk-test');
   await ev("[...document.querySelectorAll('.config-sheet button')].find(x=>x.textContent==='读取列表').click()");
-  await until(() => fakeAi.list404Count >= 1 && ev("document.querySelector('.config-sheet')?.innerText.includes('部分兼容接口不开放模型列表属正常现象')"), 'list-404-guidance');
+  await until(() => fakeAi.list404Count >= 1 && ev("document.querySelector('.config-sheet')?.innerText.includes('可手填模型名后测试连接')"), 'list-404-guidance');
 
   await setInput("document.querySelector('.config-sheet input[role=combobox]')", 'custom-chat');
   await ev("[...document.querySelectorAll('.config-sheet .config-grp:has(input[role=combobox]) button')].find(x=>x.textContent==='测试连接').click()");
@@ -365,10 +365,10 @@ async function run() {
   await setInput("document.querySelector('.config-sheet input[aria-label=\"语音服务地址\"]')", fakeTts.baseUrl);
   await ev("[...document.querySelectorAll('.config-sheet button')].find(x=>x.textContent==='测试连接').click()");
   await until(() => fakeTts.healthChecks > 0 && ev("document.querySelector('.config-sheet')?.innerText.includes('测试通过')"), 'voice-test-ok');
-  await ev("[...document.querySelectorAll('.config-sheet button')].find(x=>x.textContent==='探测服务').click()");
-  await until(() => ev("document.querySelector('.config-sheet')?.innerText.includes('探测到')"), 'voice-probe-ok');
+  assert.ok(await ev("document.querySelector('.config-sheet').innerText.includes('服务未提供引擎列表')"), '连接成功但服务未返回引擎时给出明确反馈');
   await ev("[...document.querySelectorAll('.config-sheet button')].find(x=>x.textContent==='添加').click()");
-  await until(async () => (await request('/v1/voice-services')).items.length === 1 && ev("!document.querySelector('.config-sheet')"), 'voice-saved');
+  await until(async () => (await request('/v1/voice-services')).items.length === 1 && ev("!document.querySelector('.config-sheet') && document.querySelector('.config-leaf-body > .config-prose:not([hidden]) h2')?.textContent === '慢速试听服务'"), 'voice-saved');
+  assert.equal(await ev("document.querySelector('[data-service-group=引擎]').innerText.includes('尚未探测')"), false, '已测通的服务不会因缺少引擎列表而显示尚未探测');
   await ev("document.querySelector('.config-return-link').click()");
   await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='role-config' && !!document.querySelector('.config-role-editor:not([hidden]) [data-edit=\"media:voice\"] .config-sum-edit')"), 'voice-row-return');
   await ev("document.querySelector('.config-role-editor:not([hidden]) [data-edit=\"media:voice\"] .config-sum-edit').click()");

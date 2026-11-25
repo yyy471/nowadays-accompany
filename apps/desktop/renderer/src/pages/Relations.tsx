@@ -316,7 +316,6 @@ export function Relations({ roles, error, currentId, visit, onSelect, onOpenSett
                   {definition.quote && <h2 className="profile-quote">{definition.quote}</h2>}
                   <p className="profile-text" data-testid="profile-definition">{profile.loading ? '正在读取角色介绍。' : (definition.body || definition.quote || '还没有写下角色设定。')}</p>
                   {!!profile.lines.length && <dl className="profile-lines">{profile.lines.map(line => <Fragment key={line.key}><dt>{line.label}</dt><dd>{line.value}</dd></Fragment>)}</dl>}
-                  <p className="profile-note">设定、近况和外观都来自已经保存的资料。服饰和模型放在设置里。</p>
                 </div>
                 <figure className="profile-image">{packet?.portraitUrl && !portraitFailed ? <img src={packet.portraitUrl} alt={`${profile.name}的主页立绘`} /> : <div className="portrait-empty">外观还没配置</div>}<span>{profile.name}</span></figure>
               </div>}
@@ -325,7 +324,7 @@ export function Relations({ roles, error, currentId, visit, onSelect, onOpenSett
           </div>
           <div className="unfold-trace" aria-hidden="true"><i /><i /><i /></div>
         </section>}
-        <footer className="sheet-footer"><span>{roles.length ? `${roles.length} 位角色` : '还没有角色'}</span><button type="button" className="footer-hint" onClick={onOpenSettings}>角色资料在角色配置里</button><span className="sheet-code">本地藏页 / {pageCode}</span></footer>
+        <footer className="sheet-footer"><span>{roles.length ? `${roles.length} 位角色` : '还没有角色'}</span><button type="button" className="footer-hint" onClick={onOpenSettings}>打开角色配置</button><span className="sheet-code">本地藏页 / {pageCode}</span></footer>
       </div>
     </div>
     <div className="fold-morph" aria-hidden="true" />

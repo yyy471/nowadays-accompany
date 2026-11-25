@@ -52,11 +52,11 @@ export const T11 = "需要 JSON 对象，值须为字符串";
 export const T12 = "换了站点，请重新填写密钥。";
 /** T13 保存时会先暂停 {角色、角色}（>3 位折叠为「A、B 等 N 位角色」）。 */
 export const T13 = (names: string[]) =>
-  `保存时会先暂停${foldNames(names)}，保存后可在页脚「继续活动」。`;
+  `保存会暂停${foldNames(names)}。可从页脚恢复活动。`;
 /** T14 保存时先暂停 {角色}（纸笺脚，单行省略，title 全名单）。 */
 export const T14 = (names: string[]) => `保存时先暂停${foldNames(names)}`;
-/** T15 先探测服务，再选择默认引擎。 */
-export const T15 = "先探测服务，再选择默认引擎。";
+/** T15 测试连接后可选择引擎。 */
+export const T15 = "测试连接后可选择引擎。";
 /** T16 设置页测试/探测/读取反馈。 */
 export const T16 = {
   needUrl: "请先填写服务地址。",

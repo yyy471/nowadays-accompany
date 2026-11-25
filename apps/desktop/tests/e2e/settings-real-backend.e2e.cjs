@@ -100,6 +100,8 @@ async function verifyModelProviders(roleId) {
     await click(button('设置', '.ui-menu-panel:not([inert])'));
     await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings'"));
     await tab('模型');
+    await until(() => ev("!!document.querySelector('.config-index-new')"));
+    assert.equal(await ev("[...document.querySelectorAll('.config-workspace button')].filter(b => b.getClientRects().length && b.textContent.includes('添加模型服务')).length"), 1, '目录只有一个添加入口');
     await openSheet(element('.config-index-new'));
     const select = element(`${sheet} select`);
     const address = element(`${sheet} .config-connection input`);

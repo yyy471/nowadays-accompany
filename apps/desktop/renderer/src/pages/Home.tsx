@@ -67,8 +67,7 @@ export function HomePage({ accounts, selectedAccountId, outfitHomeUrl, outfitNam
             <div className="home-account"><AccountAvatar dataUrl={account.avatarDataUrl} label={`${account.nickname}头像`} className="home-avatar" iconSize={28} />
               <div><h2 title={account.nickname?.trim() || account.accountId}>{account.nickname?.trim() || '未命名角色'}</h2><p>角色档案</p></div>
             </div>
-            <p className="home-account-signature" title={account.signature || undefined}>{account.signature || (night ? '灯还亮着，今晚的话可以慢慢说。' : '把小事慢慢说，把普通的日子认真过。')}</p>
-            {!account.signature ? <span className="home-quiet-caption">主题寄语</span> : null}
+            {account.signature && <p className="home-account-signature" title={account.signature}>{account.signature}</p>}
           </> : <p className="home-welcome">{night ? '晚风已经到站，留一盏灯给自己。' : '新的一天，为日常留一个位置。'}</p>}
         </ReadingGroup>
         <ReadingGroup index={2}>

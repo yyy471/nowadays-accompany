@@ -235,7 +235,7 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
           text:
             next.length === 0
               ? '服务没有返回模型，可继续手填。'
-              : `已读取 ${next.length} 个模型，可展开选择或输入。`,
+              : `已读取 ${next.length} 个模型。`,
         });
       }
       if (target.kind === 'saved') {
@@ -251,7 +251,7 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
         setNotice({
           source: 'list',
           role: 'alert',
-          text: `读取失败：${msg}。部分兼容接口不开放模型列表属正常现象，可直接在上方手填模型名称后测试连接。`,
+          text: `读取失败：${msg}。可手填模型名后测试连接。`,
         });
       }
     } finally {

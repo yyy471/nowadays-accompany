@@ -366,6 +366,12 @@ async function run() {
   const discard = () => click(button('放弃修改', sheet + ' .config-sheet-confirm'));
   const select = id => click(element(`.config-index-item[data-resource-id="${id}"]`));
   const edit = () => openSheet(element(`${body} .config-service-edit`));
+  const assertSingleProbe = async () => assert.equal(await ev("[...document.querySelectorAll('.config-sheet button')].filter(b => b.getClientRects().length && ['测试连接','探测服务'].includes(b.textContent.trim())).length"), 1, '每个可见表单只有一个连接测试入口');
+  async function checkCompactProbe(groupName) {
+    await openSheet(element(`${body} [data-service-group="${groupName}"] .config-sum-edit`));
+    await assertSingleProbe();
+    await close();
+  }
   const add = title => openSheet(element('.config-index .config-index-new'), title);
   const kind = async text => {
     await click(button(text, '.config-kind-tabs'));
@@ -497,11 +503,14 @@ async function run() {
   // 模型列表与测试日志、跨页 T9、只在明确点击时显示密钥、保留密钥不提交。
   await openModelSettings();
   await heading('测试模型');
+  await checkCompactProbe('连接');
+  await checkCompactProbe('模型');
   await edit();
   await click(sheetButton('读取列表'));
   await sheetText('已读取 1 个模型');
   await value(modelName, 'local-model');
-  await click(button('测试连接', sheet + ' .config-grp:has(input[role=combobox])'));
+  await assertSingleProbe();
+  await click(sheetButton('测试连接'));
   await sheetText('测试通过');
   assert.ok(!(await ev(`${element(sheet)}.innerText`)).includes('已读取 1 个模型'), '测试日志应覆盖列表日志');
   assert.equal(await ev(`${element(`${actions} .config-save-btn`)}?.disabled`), true, '读取列表与测试不点亮保存');
@@ -553,10 +562,15 @@ async function run() {
   await until(() => !resources.some(item => item.resourceId === 'm2'));
 
   // MCP/Skill 创建、编辑、引用守卫、全局停用与删除，关联模型应保留。
+  const secondRoleBinding = { capability: 'mcp', resourceId: 'x1', enabled: true, modelName: null };
+  bindings.a.push(secondRoleBinding);
   bindings.b.find(item => item.capability === 'mcp').enabled = true;
   await tab('MCP');
   await heading('文件工具');
   await until(() => ev(`${button('删除 MCP…')}?.disabled`));
+  await click(element(`${body} .config-occupancy-details summary`));
+  await until(() => ev("[...document.querySelectorAll('.config-occupancy-details[open] button')].filter(b => b.textContent === '关闭该角色绑定').length === 2"));
+  assert.ok(await ev("document.querySelector('.config-occupancy-details[open]').innerText.includes('关闭全部启用绑定')"), '多角色占用保留批量解绑');
   await edit();
   await value('input', '有引用时不可写入');
   await sheetText('请先解除正在使用的绑定或任务。');
@@ -565,6 +579,7 @@ async function run() {
   await click(field('.config-sheet-x'));
   await discard();
   await closed();
+  bindings.a = bindings.a.filter(item => item !== secondRoleBinding);
   bindings.b.find(item => item.capability === 'mcp').enabled = false;
   await tab('模型');
   await tab('MCP');
@@ -603,9 +618,10 @@ async function run() {
   await kind('语音');
   await add('添加语音服务');
   await setFields([['input[aria-label="语音服务名称"]', '本机测试语音'], ['input[aria-label="语音服务地址"]', 'http://127.0.0.1:8880']]);
-  await click(sheetButton('探测服务'));
+  await assertSingleProbe();
+  await click(sheetButton('测试连接'));
   await until(() => voiceServiceProbes.length === 1);
-  await sheetText('探测到');
+  await sheetText('个引擎');
   await value('select[aria-label="默认语音引擎"]', 'cosyvoice');
   const voiceCreateArrived = new Promise(resolve => { pendingVoiceCreate = { arrived: resolve, release: null }; });
   await click(sheetButton('添加'));
@@ -620,6 +636,8 @@ async function run() {
   } finally { releaseVoiceCreate(); }
   await heading('本机测试语音');
   assert.equal(voiceServices[0].config.defaultEngine, 'cosyvoice');
+  await checkCompactProbe('连接');
+  await checkCompactProbe('引擎');
   await returnRole();
   await tab('模型');
   await openRoleRow('media:voice');
@@ -640,7 +658,8 @@ async function run() {
   await click(sheetButton('读取模型列表'));
   await sheetText('已读取 2 个模型');
   await chooseModel('moss-v1.safetensors', 2);
-  await click(button('测试连接', sheet + ' .config-grp:has(input[role=combobox])'));
+  await assertSingleProbe();
+  await click(sheetButton('测试连接'));
   await until(() => imageServiceProbes.length === 2);
   await sheetText('已确认模型「moss-v1.safetensors」');
   assert.ok(!(await ev(`${element(sheet)}.innerText`)).includes('已读取 2 个模型'), '单次探测后只显示最新日志');
@@ -648,6 +667,8 @@ async function run() {
   await heading('本机测试生图');
   assert.equal(imageServices[0].config.timeoutMs, 15000);
   assert.equal(imageServices[0].config.modelName, 'moss-v1.safetensors');
+  await checkCompactProbe('连接');
+  await checkCompactProbe('默认模型');
   await edit();
   await value('input[aria-label="生图服务名称"]', '默认 ComfyUI');
   await value('input[aria-label="生图密钥"]', 'img-secret-2');
@@ -657,7 +678,8 @@ async function run() {
   await heading('默认 ComfyUI');
   assert.equal(imageServices[0].config.timeoutMs, 15000, '保存新界面字段时保留既有生图等待上限');
   await edit();
-  await click(button('测试连接', sheet + ' .config-grp:has(input[role=combobox])'));
+  await assertSingleProbe();
+  await click(sheetButton('测试连接'));
   await until(() => imageServiceProbes.length === 4);
   await sheetText('已确认模型「moss-v1.safetensors」');
   await close();
@@ -699,6 +721,7 @@ async function run() {
   await close();
   for (const [width,height] of [[1440,840],[720,540]]) {
     await cmd('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+    await ev('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
     assert.equal(await ev('document.documentElement.scrollWidth<=innerWidth+1'), true, `${width} 横向溢出`);
     const bounds = await ev("(()=>{const a=document.querySelector('.config-book').getBoundingClientRect(),b=document.querySelector('.config-leaf-foot').getBoundingClientRect(),c=document.querySelector('.ui-page-dock').getBoundingClientRect();return {bookBottom:a.bottom,footBottom:b.bottom,dockBottom:c.bottom,height:innerHeight}})()");
     assert.ok(bounds.footBottom<=bounds.bookBottom+1 && bounds.dockBottom<=bounds.height+1, JSON.stringify({width,bounds}));
@@ -765,6 +788,7 @@ async function run() {
   assert.equal(sceneImages.b, undefined, '草稿试生图不落库');
   for (const [width,height] of [[1280,800],[1440,840],[720,540]]) {
     await cmd('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+    await ev('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
     assert.equal(await ev('document.documentElement.scrollWidth<=innerWidth+1'), true, `role-image ${width} 横向溢出`);
     await shot(`image-${width}.png`);
   }

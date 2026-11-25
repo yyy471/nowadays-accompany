@@ -881,8 +881,8 @@ export function VoicePanel({
             capabilities !== null && capabilities.presetVoices === false
               ? T3
               : voices && voices.length > 0
-                ? '列表来自最近一次连接测试。'
-                : '可以先在设置或此处点击「测试连接」获取列表，也可以直接填写音色 ID。'
+                ? undefined
+                : '可手填音色 ID，或测试连接以获取音色列表。'
           }
         >
           {voices && voices.length > 0 ? (
@@ -998,7 +998,7 @@ export function VoicePanel({
           ) : isLegacy ? null : (
             <p className="nd-appearance-hint">
               {capabilities === null
-                ? '当前服务还没有能力声明，先点「测试连接」，再选择参考模式。'
+                ? '测试连接后可选择参考模式。'
                 : '当前服务未声明参考音频模式，不能使用参考音频音色，请改用预置音色。'}
             </p>
           )}

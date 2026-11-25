@@ -4,7 +4,7 @@ import { Field, Input, Select, announceLive } from '../../ui';
 import type { RoleListItem } from '../../types';
 import { MediaGroup } from '../config/MediaSheet';
 import {
-  ServiceDeleteEntry, ServiceDeleteSheet, ServiceHeading, ServiceManagementRow, ServicePauseNotice, ServiceProbeAction,
+  ServiceDeleteEntry, ServiceDeleteSheet, ServiceHeading, ServiceManagementRow, ServiceProbeAction,
   ServiceRow, ServiceSheet, ServiceSheetActions, ServiceUseRow, serviceMaintenanceOf, serviceWriteFailure, useServiceSheetExit,
 } from '../config/ServiceParts';
 import { useMediaOccupancy } from '../config/use-media-occupancy';
@@ -73,7 +73,7 @@ function VoiceServiceEditor({ service, trigger, occupancy, roleName = id => id, 
   const [draft, setDraft] = useState(baseline);
   const [operation, setOperation] = useState<'save' | 'toggle' | 'delete' | null>(null);
   const [error, setError] = useState('');
-  const [probeAction, setProbeAction] = useState<'test' | 'probe' | null>(null);
+  const [probeRequested, setProbeRequested] = useState(false);
   const [draftTest, setDraftTest] = useState<boolean | null>(null);
   const [probeNeedsUrl, setProbeNeedsUrl] = useState(false);
   const creating = !service;
@@ -84,7 +84,7 @@ function VoiceServiceEditor({ service, trigger, occupancy, roleName = id => id, 
   const probe = useVoiceProbe(matchesSaved ? savedKey : `${savedKey}|draft|${draft.protocol}|${draft.baseUrl}`, { shared: matchesSaved });
   const savedEngines = matchesSaved ? probe.result?.engines : undefined;
   useEffect(() => { if (creating) sheet.open({ id: sheetId, title: '添加语音服务', shape: 'full', focusReturn: trigger }); }, [creating, sheetId]);
-  useServiceSheetExit(sheetId, () => { probe.cancelPending(); setProbeAction(null); setProbeNeedsUrl(false); });
+  useServiceSheetExit(sheetId, () => { probe.cancelPending(); setProbeRequested(false); setProbeNeedsUrl(false); });
   useServiceSheetExit(deleteId, () => setError(''));
   useEffect(() => () => { probe.cancelPending(); }, [probe.cancelPending]);
 
@@ -100,14 +100,14 @@ function VoiceServiceEditor({ service, trigger, occupancy, roleName = id => id, 
   const updateConnection = (patch: Partial<VoiceDraft>) => {
     setDraft(previous => ({ ...previous, ...patch }));
     setDraftTest(null);
-    setProbeAction(null);
+    setProbeRequested(false);
     setProbeNeedsUrl(false);
     setError('');
     probe.reset();
   };
-  const runProbe = async (action: 'test' | 'probe') => {
+  const runProbe = async () => {
     if (probe.busy || draft.protocol === 'indextts') return;
-    setProbeAction(action);
+    setProbeRequested(true);
     if (!draft.baseUrl.trim()) { setProbeNeedsUrl(true); return; }
     setProbeNeedsUrl(false);
     setError('');
@@ -118,11 +118,11 @@ function VoiceServiceEditor({ service, trigger, occupancy, roleName = id => id, 
   };
   // 用探测日志确定真实成功或失败；取消或被更晚的字段变更取代时不会留下结果。
   useEffect(() => {
-    if (!probe.notice || !probeAction) return;
+    if (!probe.notice || !probeRequested) return;
     const success = probe.notice.kind === 'status';
     setDraftTest(success);
     if (matchesSaved) onTested?.(success);
-  }, [probe.notice, probeAction, matchesSaved]);
+  }, [probe.notice, probeRequested, matchesSaved]);
 
   const submit = async () => {
     if (operation || invalid || !count) return;
@@ -206,19 +206,22 @@ function VoiceServiceEditor({ service, trigger, occupancy, roleName = id => id, 
   };
   const names = (occupancy?.names ?? []).map(name => `${name} · 语音`);
   const engines = Object.keys(probe.result?.engines ?? {});
-  const probeNotice = probeNeedsUrl ? { role: 'alert', text: T16.needUrl } : probe.notice && probeAction ? {
+  const engineSummary = engines.length ? `${engines.length} 个引擎` : '服务未提供引擎列表';
+  const probeNotice = probeNeedsUrl ? { role: 'alert', text: T16.needUrl } : probe.notice && probeRequested ? {
     role: probe.notice.kind,
-    text: probe.notice.kind === 'alert' ? probeAction === 'test' ? T16.testFail(probe.notice.text) : T16.probeFail(probe.notice.text)
-      : probeAction === 'test' && probe.notice.elapsedMs !== undefined ? T16.testOk(probe.notice.elapsedMs) : T16.probeOk(engines.length),
+    text: probe.notice.kind === 'alert' ? T16.testFail(probe.notice.text)
+      : `${probe.notice.elapsedMs === undefined ? '连接正常' : T16.testOk(probe.notice.elapsedMs)} · ${engineSummary}`,
   } : null;
   const busy = operation !== null || write.busy;
   const supportsProbe = draft.protocol !== 'indextts';
+  const probeButton = supportsProbe && <ServiceProbeAction busy={probe.busy} disabled={busy} notice={probeNotice} onClick={() => void runProbe()}/>;
   return <div className="config-prose">
     {service && <>
       <ServiceHeading title={service.name} address={service.config.baseUrl} enabled={service.enabled} tested={tested ?? undefined} onEdit={anchor => open(undefined, anchor)}/>
       <ServiceRow label="连接" value={service.config.protocol === 'indextts' ? '旧 IndexTTS 协议' : '统一语音协议'} keys={[service.config.baseUrl]} onOpen={anchor => open('连接', anchor)}/>
       <ServiceRow label="引擎" value={service.config.defaultEngine || '由服务决定'} keys={savedEngines ? [`${Object.keys(savedEngines).length} 个引擎`] : []}
-        status={tested === false ? 'error' : savedEngines ? 'ok' : 'off'} statusText={tested === false ? '连接失败' : savedEngines ? '已探测' : '尚未探测'} onOpen={anchor => open('引擎', anchor)}/>
+        status={tested === false ? 'error' : savedEngines || tested ? 'ok' : 'off'}
+        statusText={tested === false ? '连接失败' : savedEngines ? '已探测' : tested ? '连接正常' : '尚未探测'} onOpen={anchor => open('引擎', anchor)}/>
       <ServiceManagementRow name={service.name} enabled={service.enabled} busy={busy} onChange={enabled => void toggle(enabled)}/>
       <ServiceUseRow entries={names} loading={occupancy?.loading} error={occupancy?.error}/>
       <ServiceDeleteEntry id={deleteId} kind="voice" disabled={busy || !!occupancy?.loading || !!occupancy?.error} activeNames={affected.map(roleName)}/>
@@ -237,17 +240,16 @@ function VoiceServiceEditor({ service, trigger, occupancy, roleName = id => id, 
             }}><option value={DEFAULT_PROTOCOL}>统一语音协议（nowadays-tts-v1）</option><option value="indextts">旧 IndexTTS 协议</option></Select></Field>
             <Field label="语音服务地址"><Input aria-label="语音服务地址" disabled={busy} placeholder="http://127.0.0.1:9890" value={draft.baseUrl} spellCheck={false} onChange={event => updateConnection({ baseUrl: event.target.value })}/></Field>
           </div>
-          <ServiceProbeAction busy={probe.busy && probeAction === 'test'} disabled={busy || probe.busy || !supportsProbe} notice={probeAction === 'test' ? probeNotice : null} onClick={() => void runProbe('test')}/>
-          {affected.length > 0 && <div className="config-connection-feedback"><ServicePauseNotice names={pauseNames}/></div>}
+          {group !== '引擎' && probeButton}
         </MediaGroup>
         <MediaGroup title="引擎" group={group}>
-          <div className="config-service-field-one"><Field label="默认引擎" hint={supportsProbe && !engines.length ? T15 : undefined}><Select aria-label="默认语音引擎" disabled={busy || !supportsProbe} value={draft.defaultEngine}
+          <div className="config-service-field-one"><Field label="默认引擎" hint={supportsProbe && !probe.result && !engines.length ? T15 : undefined}><Select aria-label="默认语音引擎" disabled={busy || !supportsProbe} value={draft.defaultEngine}
             onChange={event => setDraft(previous => ({ ...previous, defaultEngine: event.target.value }))}>
             <option value="">由服务决定</option>
             {engines.map(id => <option key={id} value={id}>{id}</option>)}
             {draft.defaultEngine && !engines.includes(draft.defaultEngine) && <option value={draft.defaultEngine}>{draft.defaultEngine}</option>}
           </Select></Field></div>
-          <ServiceProbeAction label="探测服务" busy={probe.busy && probeAction === 'probe'} disabled={busy || probe.busy || !supportsProbe} notice={probeAction === 'probe' ? probeNotice : null} onClick={() => void runProbe('probe')}/>
+          {group === '引擎' && probeButton}
         </MediaGroup>
       </>}
     </ServiceSheet>

@@ -14,7 +14,7 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const { resolveElectronExecutableInfo } = require('../helpers/electron-executable.cjs');
 
-const { repoRoot: root, desktopDir, backendDir, xiachengPortraitFixture } = require('../helpers/paths.cjs');
+const { repoRoot: root, desktopDir, backendDir, xiachengPortraitFixture, testResultsDir } = require('../helpers/paths.cjs');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'nowadays-p3-entry-'));
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -46,6 +46,41 @@ async function ev(expression) {
   const result = await cmd('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
   if (result.exceptionDetails) throw Error(JSON.stringify(result.exceptionDetails));
   return result.result.value;
+}
+
+const layoutIssues = [];
+async function checkLayout(page) {
+  const out = path.join(testResultsDir, 'page-layout');
+  fs.mkdirSync(out, { recursive: true });
+  for (const [width, height] of [[720, 540], [920, 600], [1024, 640], [1280, 800]]) {
+    await cmd('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+    await ev('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
+    await ev("Promise.allSettled((document.querySelector('.config-sheet')?.getAnimations() ?? []).map(animation => animation.finished))");
+    const issues = await ev(`(() => {
+      const issues = [];
+      for (const el of document.querySelectorAll('main, .studio-content, .role-entry-stage, .role-entry-card, .ui-page-dock')) {
+        if (!el.clientWidth || !el.getClientRects().length) continue;
+        if (el.scrollWidth > el.clientWidth + 2) issues.push(el.className + ' overflows by ' + (el.scrollWidth-el.clientWidth));
+      }
+      for (const el of document.querySelectorAll('.role-entry-name em,.role-entry-figure,.role-entry-meta')) {
+        const r = el.getBoundingClientRect(), card = el.closest('button').getBoundingClientRect();
+        if (r.right > card.right+1 || r.left < card.left-1 || r.bottom > card.bottom+1) issues.push(el.className || el.tagName);
+      }
+      const rect = selector => document.querySelector(selector)?.getBoundingClientRect();
+      const theme = rect('.studio-header .ui-theme-switcher'), motion = rect('.studio-header .config-motion-toggle');
+      if (theme && motion && motion.width && motion.left < theme.right && motion.right > theme.left && motion.top < theme.bottom && motion.bottom > theme.top) issues.push('主题与动效控件重叠');
+      for (const selector of ['.ui-page-dock', '.config-sheet', '.config-sheet-actions', '.dialogue-history[data-open]']) {
+        const r = rect(selector);
+        if (r?.width && (r.left < -2 || r.top < -2 || r.bottom > innerHeight + 2 || r.right > innerWidth + 2)) issues.push(selector + ' outside window');
+      }
+      const enter = rect('.home-primary-actions button'), content = rect('.studio-content');
+      if (enter && content && enter.bottom > content.bottom + 1) issues.push('主页按钮被裁切');
+      return issues;
+    })()`);
+    if (page === 'entry') assert.ok(await ev("document.querySelector('.role-entry-card').getBoundingClientRect().bottom <= document.querySelector('.role-entry-actions').getBoundingClientRect().top + 1"), '单个角色的完整卡片在页脚上方');
+    layoutIssues.push(...issues.map(issue => page + ' ' + width + ' ' + issue));
+    if (width === 720) fs.writeFileSync(path.join(out, page + '.png'), Buffer.from((await cmd('Page.captureScreenshot', {format:'png'})).data, 'base64'));
+  }
 }
 
 async function run() {
@@ -104,6 +139,7 @@ async function run() {
   assert.ok(builtin, '内置夏澄应带内置标识');
   assert.equal(builtin.badge, '主角色 / 内置管理员 · 不可删除');
   assert.ok(builtin.bio.trim().length > 10, '入口页应显示首次播种的人物介绍');
+  await checkLayout('entry');
 
   // 3. 进入工作区，主页显示当前角色。
   await ev("[...document.querySelectorAll('.role-entry-actions button')].find(b => b.textContent === '进入书房')?.click()");
@@ -112,8 +148,24 @@ async function run() {
   assert.equal(await ev("document.body.innerText.includes('陪伴')"), false, '全站不应残留「陪伴」文案');
 
   const { click, tab, openSheet } = configControls(ev, until);
-  await click(element('.ui-menu-trigger'));
-  await click(button('角色配置', '.ui-menu-panel:not([inert])'));
+  await checkLayout('home');
+  for (const [page, label, menu] of [['roles','关系'], ['conversation','对话'], ['feed','动态',true], ['extensions','扩展',true], ['settings','设置',true], ['role-config','角色配置',true]]) {
+    if (menu) await click(element('.ui-menu-trigger'));
+    await click(button(label, menu ? '.ui-menu-panel:not([inert])' : '.ui-page-dock'));
+    await until(() => ev(`document.querySelector('.studio-shell').dataset.page === ${JSON.stringify(page)}`), page);
+    await delay(350);
+    await checkLayout(page);
+    if (page === 'settings' || page === 'conversation') {
+      const settings = page === 'settings';
+      await click(element(settings ? '.config-index-new' : '.dialogue-history-button'));
+      await until(() => ev(settings ? "!!document.querySelector('.config-sheet')" : "!!document.querySelector('.dialogue-history[data-open]')"));
+      await delay(350);
+      await checkLayout(settings ? 'model-editor' : 'history');
+      await click(element(settings ? '.config-sheet-x' : '.dialogue-history-close'));
+      await until(() => ev(settings ? "!document.querySelector('.config-sheet')" : "!document.querySelector('.dialogue-history')"));
+    }
+  }
+  assert.deepEqual(layoutIssues, [], '各页面的内容应适应窗口宽度');
   await tab('设定');
   const nameField = element(`${editor} input[aria-label="显示名"]`);
   const bioField = element(`${editor} textarea[aria-label="人物介绍"]`);
@@ -129,6 +181,8 @@ async function run() {
   await until(() => ev(`!${save}`), 'bio-cleared');
   await tab('外观');
   await openSheet(element(editor + ' .config-outfit-card'), '编辑服饰');
+  await checkLayout('outfit-editor');
+  assert.deepEqual(layoutIssues, []);
   for (const target of [
     element(sheet + ' [data-sheet-focus]'), button('上传差分', sheet),
     button('替换主页立绘', sheet), element(sheet + ' [data-delete-trigger="outfit"]'),
@@ -178,6 +232,24 @@ async function run() {
   await until(() => ev("!!document.querySelector('.exlibris') && !!document.querySelector('[data-testid=\"plate-name\"]')"), 'relations-loaded');
   const plateName = await ev("document.querySelector('[data-testid=\"plate-name\"]').textContent.trim()");
   assert.equal(plateName, '岚', '关系页应停在选角页选定的角色上');
+
+  for (let i = 0; i < 12; i++) {
+    const response = await fetch(base + '/v1/roles', { method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ displayName: 'ArchiveKeeperWithAnUnbrokenName' + i, definition: {text:'选角布局测试'} }) });
+    assert.ok(response.ok, '创建长名称测试角色');
+  }
+  await cmd('Page.reload');
+  await until(() => ev("document.querySelectorAll('.role-entry-card').length >= 13"), 'multi-row-entry');
+  await checkLayout('entry-many');
+  assert.deepEqual(layoutIssues, []);
+  assert.ok(await ev(`(() => {
+    const stage = document.querySelector('.role-entry-stage');
+    stage.scrollTop = 0;
+    const cards = document.querySelectorAll('.role-entry-card');
+    const first = cards[0].getBoundingClientRect().top >= stage.getBoundingClientRect().top;
+    stage.scrollTop = stage.scrollHeight;
+    return first && cards[cards.length - 1].getBoundingClientRect().bottom <= stage.getBoundingClientRect().bottom + 1;
+  })()`), '多行选角可滚动到首尾');
 
   console.log(JSON.stringify({ entryVisible: true, builtinBadge: builtin.badge, plateName, errors }, null, 2));
   assert.deepEqual(errors, []);

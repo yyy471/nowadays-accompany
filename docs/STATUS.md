@@ -6,6 +6,10 @@
 
 桌面对话已接入结构化回复阅读和整轮过场图查看、重画。每轮回复末尾共用一个图片入口，背景图、人物场景图和重画记录按最近成功的一张展示。Electron 的本机后端联调覆盖 Markdown、JSON 和舞台换图。[对话演出规范](./specs/conversation-performance-and-scene-images.md) · [桌面对话联调](../apps/desktop/tests/e2e/workflow-real-backend-chain.e2e.cjs)
 
+设置页已合并模型、生图和语音表单内的重复测试入口。语音测试同时读取引擎列表，服务目录统一从左栏添加，保存涉及的角色暂停提示集中在操作区。模型、MCP 与 Skill 的占用详情按角色展示解绑操作，多名角色在用时提供批量关闭。
+
+桌面布局回归覆盖启动选角和七个主页面。选角卡片支持长名称及多行滚动，窄窗口单独检查主页按钮与设置页顶栏的可达性。[Electron 布局用例](../apps/desktop/tests/e2e/pack3-entry.e2e.cjs)
+
 | 模块 / 专项 | 当前状态（离线范围） | 核心证据 | 未决 / 下一阶段 |
 | --- | --- | --- | --- |
 | 桌面热扩展（Phase 4，DL-188） | **开发完成（待后续验证）**。受控资产出口、独立事件流和 `nd-ext://` 沙箱已接入。Dock「全部菜单 → 扩展」提供启停、微页与挂件，浮层和通知可跨页关闭。 | [桌面槽位契约](./specs/frontend-design-system.md#扩展槽位dl-188) · [Electron 实机场景](../apps/desktop/tests/e2e/extension-ui-slots.e2e.cjs) | 离线自验通过（见下方），尚未验证完毕，待完整复核、真实模型联调与打包实测。 |

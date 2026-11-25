@@ -6,7 +6,7 @@ import { SheetHost } from './MediaSheet';
 import { Sheet } from './sheet/Sheet';
 import { useSheet } from './sheet/sheet-context';
 import { useWrite } from './write-runner';
-import { ARIA, T8, T13, T14, T16, T17, T29, T31, T32, T35, T35_RETRY, T36 } from './config-texts';
+import { ARIA, T8, T13, T16, T17, T29, T31, T32, T35, T35_RETRY, T36 } from './config-texts';
 
 export type ServiceKind = 'model' | 'voice' | 'image' | 'mcp' | 'skill';
 export const SERVICE_NAMES: Record<ServiceKind, string> = { model: '模型服务', voice: '语音服务', image: '生图服务', mcp: 'MCP', skill: 'Skill' };
@@ -52,18 +52,17 @@ export function ServiceIndex({ kind, entries, selected, loading, onSelect, onAdd
   </div>;
 }
 
-export function ServiceIndexState({ kind, loading, error, onRetry, onAdd }: {
+export function ServiceIndexState({ kind, loading, error, onRetry }: {
   kind: ServiceKind;
   loading: boolean;
   error: string;
   onRetry: () => void;
-  onAdd: (anchor: HTMLElement) => void;
 }) {
   return <div className="config-prose">
     <header className="config-sec-head" aria-busy={loading || undefined}><h2 tabIndex={-1}>{SERVICE_NAMES[kind]}</h2></header>
     {loading ? <div aria-busy="true">{Array.from({ length: SERVICE_ROW_COUNTS[kind] }, (_, index) => <div key={index} className="config-sum config-skel" aria-hidden="true"><i/><span><i/><i className="short"/></span></div>)}</div>
       : error ? <div className="config-catalog-empty" role="alert"><StatusDot status="error" label={T35(error)}/><Button size="sm" onClick={onRetry}>{T35_RETRY}</Button></div>
-      : <div className="config-catalog-empty"><p>{T36.kind(SERVICE_NAMES[kind])}</p><Button size="sm" data-empty-add onClick={event => onAdd(event.currentTarget)}>＋ {serviceAction('添加', kind)}</Button></div>}
+      : <div className="config-catalog-empty"><p>{T36.kind(SERVICE_NAMES[kind])}</p></div>}
   </div>;
 }
 
@@ -105,23 +104,21 @@ export function ServiceDeleteEntry({ id, kind, disabled, activeNames, blocker }:
   </div>;
 }
 
-export function ServicePauseNotice({ names }: { names: string[] }) {
-  return names.length ? <p className="config-service-form-note">{T13(names)}</p> : null;
-}
-
 export function serviceProbeNotice(notice: ProbeNotice | null, count: number): ProbeNotice | null {
   if (!notice) return null;
   const reason = notice.text.replace(/^(读取失败|测试失败|连接失败)[：:]\s*/, '');
-  const text = notice.role === 'alert'
-    ? notice.source === 'list' ? T16.readFail(reason) : T16.testFail(reason)
-    : notice.source === 'list' ? T16.readOk(count) : `✓ ${notice.text}`;
-  return { ...notice, text };
+  if (notice.role === 'alert') {
+    if (reason === notice.text) return notice;
+    return { ...notice, text: notice.source === 'list' ? T16.readFail(reason) : T16.testFail(reason) };
+  }
+  if (notice.source === 'list') return { ...notice, text: count ? T16.readOk(count) : '未返回模型列表，可手填模型名。' };
+  return { ...notice, text: `✓ ${notice.text}` };
 }
 
-export function ServiceProbeAction({ label = '测试连接', busy = false, disabled, notice, onClick }: {
-  label?: string; busy?: boolean; disabled?: boolean; notice?: { role: string; text: string } | null; onClick: () => void;
+export function ServiceProbeAction({ busy = false, disabled, notice, onClick }: {
+  busy?: boolean; disabled?: boolean; notice?: { role: string; text: string } | null; onClick: () => void;
 }) {
-  return <div className="config-service-probe-action"><Button size="sm" disabled={busy || disabled} onClick={onClick}>{busy ? label === '探测服务' ? T16.probing : T16.testing : label}</Button>
+  return <div className="config-service-probe-action"><Button size="sm" disabled={busy || disabled} onClick={onClick}>{busy ? T16.testing : '测试连接'}</Button>
     {notice && <p className={notice.role === 'alert' ? 'config-sheet-error' : 'config-muted'} role={notice.role === 'alert' ? 'alert' : 'status'}>{notice.text}</p>}
   </div>;
 }
@@ -173,9 +170,9 @@ export function ServiceSheetActions({ count, creating, busy, invalid, blockedRea
   const label = busy ? pausing ? T29.pausing : T29.saving : error ? T29.retry(creating ? '添加' : '保存') : creating ? T29.add : waiting ? '暂停并保存' : '保存';
   return <div className="config-sheet-actions config-service-actions">
     <div className="config-service-action-status">
-      {error ? <span className="config-sheet-error" role="alert">{error}</span> : busy ? pausing ? T29.pausingRoles(pauseNames) : T29.saving : typeof invalid === 'string' && invalid && count ? invalid : showBlockedReason ? <span id={reasonId}>{blockedReason}</span> : count ? creating ? T8.filled(count) : T8.dirty(count) : null}
+      {error ? <span className="config-sheet-error" role="alert">{error}</span> : busy ? pausing ? T29.pausingRoles(pauseNames) : null : typeof invalid === 'string' && invalid && count ? invalid : showBlockedReason ? <span id={reasonId}>{blockedReason}</span> : count ? creating ? T8.filled(count) : T8.dirty(count) : null}
     </div>
-    {!busy && !error && waiting && <span className="config-service-action-dep" title={pauseNames.join('、')}>{T14(pauseNames)}</span>}
+    {!busy && !error && waiting && <span className="config-service-action-dep" title={pauseNames.join('、')}>{T13(pauseNames)}</span>}
     <button className="config-sheet-cancel" type="button" disabled={busy} onClick={() => requestClose()}>取消</button>
     <button className="config-save-btn" type="button" data-on={count > 0 && !invalid && !blockedReason || undefined} disabled={blocked} onClick={onSubmit} aria-describedby={showBlockedReason ? reasonId : undefined}
       aria-label={!busy && !error ? creating ? invalid ? ARIA.addNeedRequired : undefined : count === 0 ? ARIA.saveIdle : invalid ? ARIA.saveInvalid : waiting ? T29.pauseAndSave(count) : ARIA.saveCount(count) : undefined}>{label}{!creating && <span className="config-save-n" data-count-hidden={!showCount || undefined} aria-hidden="true">{showCount ? ` ${count}` : ''}</span>}</button>

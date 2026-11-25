@@ -16,11 +16,11 @@ import { chatRowStatus, memoryRowStatus, quotaLimitBad, rowDotVisible } from '..
 import { MediaGroup, MediaStateRow, RoleSaveActions, type MediaSummaryStatus } from '../components/config/MediaSheet';
 import {
   ServiceDeleteEntry, ServiceDeleteSheet, ServiceHeading, ServiceIndex, ServiceIndexState, ServiceManagementRow,
-  ServicePauseNotice, ServiceProbeAction, ServiceRow, ServiceSheet, ServiceSheetActions, ServiceUseRow,
+  ServiceProbeAction, ServiceRow, ServiceSheet, ServiceSheetActions, ServiceUseRow,
   serviceHost, serviceMaintenanceOf, serviceProbeNotice, serviceStatus, serviceWriteFailure, useServiceSheetExit, type ServiceIndexEntry, type ServiceKind,
 } from '../components/config/ServiceParts';
 import { captureSavedSummary, sweepSavedElement } from '../components/config/sheet/save-feedback';
-import { T1, T2, T6, T7, T8, T19, T10, T11, T12, T13, T16, T20, T21, T23, T25, T26, T28, T29, T30, T31, T32, T33, T34, T36, T37, T38 } from '../components/config/config-texts';
+import { T1, T2, T6, T7, T8, T19, T10, T11, T12, T16, T20, T21, T23, T25, T26, T28, T29, T30, T31, T32, T33, T34, T36, T37, T38 } from '../components/config/config-texts';
 import { VoicePanel } from '../components/voice/VoicePanel';
 import { VoiceServiceCreate, VoiceServiceDetail } from '../components/voice/VoiceServiceEditor';
 import { ImagePanel } from '../components/image/ImagePanel';
@@ -169,7 +169,6 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
   const [modelBusy, setModelBusy] = useState(false);
   const [modelError, setModelError] = useState('');
   const [newModelProbePrompt, setNewModelProbePrompt] = useState<ReturnType<typeof serviceProbeNotice>>(null);
-  const [newModelProbeGroup, setNewModelProbeGroup] = useState<'connection' | 'model'>('model');
   const writeController = useRef<ReturnType<typeof useWrite> | null>(null);
   const hasDrafts = () => !!sheetController.current?.dirty || [...editorActions.current.values()].some(item => Object.values(item.dirty).some(Boolean));
   useLayoutEffect(() => {
@@ -325,8 +324,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
   };
   useEffect(() => setNewModelProbePrompt(null), [modelUrl, modelAdapter, modelSecret, newModelName, newModelVisible]);
   const newModelTarget = (): ModelProbeTarget => ({ kind: 'draft', config: { ...modelConnectionFields(modelAdapter, modelUrl), ...(modelSecret ? { secret: modelSecret } : {}) } });
-  const runNewModelProbe = (action: 'test' | 'list', group: 'connection' | 'model' = 'model') => {
-    setNewModelProbeGroup(group);
+  const runNewModelProbe = (action: 'test' | 'list') => {
     const required = !modelUrl.trim() ? T16.needUrl : action === 'test' && !newModelName.trim() ? T16.needModel : '';
     setNewModelProbePrompt(required ? { source: action, role: 'alert', text: required } : null);
     if (required) { newModelProbe.clearLog(); return; }
@@ -608,7 +606,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
           {(['mcp', 'skill'] as const).map(kind => <ExtensionCreate key={kind} kind={kind} active={settingsActive && settingsSection === kind && newExtension === kind} trigger={addTrigger.current}
             onCancel={() => setNewExtension(null)}
             onCreated={resource => { setResources(previous => [...previous, resource]); setRefreshVersion(v => v + 1); if (viewRef.current.settingsActive && viewRef.current.settingsSection === kind && viewRef.current.newExtension === kind) { selectAfterChange(resource.resourceId, true); setNewExtension(null); } }}/>)}
-          {settingsActive && catalogKind && (catalogLoading || catalogError || !indexEntries.length) && <ServiceIndexState kind={catalogKind} loading={catalogLoading} error={catalogError} onAdd={addCatalogItem} onRetry={() => {
+          {settingsActive && catalogKind && (catalogLoading || catalogError || !indexEntries.length) && <ServiceIndexState kind={catalogKind} loading={catalogLoading} error={catalogError} onRetry={() => {
             setCatalogReady(previous => ({ ...previous, [catalogSource]: false }));
             setRefreshVersion(v => v + 1);
           }}/>}
@@ -633,9 +631,6 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
               <MediaGroup title="连接" group={group}>
                 <ModelConnectionInputs adapter={modelAdapter} address={modelUrl} disabled={modelBusy} onAdapter={changeNewModelAdapter}
                   onAddress={value => { setModelUrl(value); newModelProbe.reset(); }}/>
-                <ServiceProbeAction disabled={modelBusy || newModelProbe.listBusy} busy={newModelProbe.testBusy}
-                  notice={newModelProbeGroup === 'connection' ? newModelNotice : null} onClick={() => runNewModelProbe('test', 'connection')}/>
-                <div className="config-connection-feedback"/>
               </MediaGroup>
               <MediaGroup title="密钥" group={group}>
                 <SecretInput aria-label="模型密钥" placeholder="选填" disabled={modelBusy} value={modelSecret} visible={showNewSecret}
@@ -645,7 +640,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, onRol
                 <ModelNamePicker settings value={newModelName} onChange={value => { setNewModelName(value); newModelProbe.invalidateTest(); }}
                   presets={modelPresets(modelAdapter, modelUrl)} models={newModelProbe.models} listBusy={newModelProbe.listBusy} listError={newModelProbe.listError}
                   listLoaded={newModelProbe.listLoaded} testBusy={newModelProbe.testBusy} testNote={newModelProbe.testModel === newModelName ? newModelProbe.testNote : ''}
-                  notice={newModelProbeGroup === 'model' ? newModelNotice : null} onRefresh={() => runNewModelProbe('list')} onTest={() => runNewModelProbe('test')} disabled={modelBusy}/>
+                  notice={newModelNotice} onRefresh={() => runNewModelProbe('list')} onTest={() => runNewModelProbe('test')} disabled={modelBusy}/>
               </MediaGroup>
             </>}
           </NewModelSheet>
@@ -1272,7 +1267,7 @@ function ModelSheetHost({ active, draft, setDraft, resources, bindings, loaded, 
         <div>
           <div className="config-sheet-row config-model-test">
             <Button size="sm" disabled={!resourceId || !modelName.trim() || probe.listBusy || probe.testBusy} busy={probe.testBusy} onClick={() => void probe.test({ kind: 'saved', resourceId, cacheKey }, modelName.trim())}>测试</Button>
-            <span className={probe.notice?.role === 'alert' ? 'config-sheet-error' : 'config-sheet-note'}>{probe.testBusy ? '正在测试…' : probe.testModel === modelName ? probe.testNote : ''}</span>
+            <span className={probe.notice?.role === 'alert' ? 'config-sheet-error' : 'config-sheet-note'}>{!probe.testBusy && probe.testModel === modelName ? probe.testNote : ''}</span>
           </div>
           <p className="config-sheet-note"><button type="button" className="config-sheet-link" onClick={() => requestClose(() => onOpenSettings('model', resourceId ? { modelKind: 'model', resourceId } : { modelKind: 'model' }))}>{T25.viewModel}</button></p>
         </div>
@@ -1721,10 +1716,10 @@ function ResourceDetail({ resource, roles, activities, active, canWrite, testedO
         <MediaGroup title="连接" group={group}>
           <ModelConnectionInputs adapter={draftAdapter} address={draftUrl} disabled={busy} onAdapter={changeDraftAdapter}
             onAddress={value => { setDraftUrl(value); probe.reset(); }}/>
-          <ServiceProbeAction busy={probe.testBusy} disabled={busy || probe.listBusy} notice={probeGroup === 'connection' ? probeNotice : null} onClick={() => runProbe('test', 'connection')}/>
-          <div className="config-connection-feedback">{staleSite && <p className="config-service-form-note">{credentialNotice}</p>}<ServicePauseNotice names={pauseNames}/>
+          {group === '连接' && <ServiceProbeAction busy={probe.testBusy} disabled={busy || probe.listBusy} notice={probeGroup === 'connection' ? probeNotice : null} onClick={() => runProbe('test', 'connection')}/>}
+          <div className="config-connection-feedback">{staleSite && <p className="config-service-form-note">{credentialNotice}</p>}
             {impactError && connectionDirty && <p role="alert">影响范围读取失败：{impactError}</p>}</div></MediaGroup>
-        <MediaGroup title="密钥" group={group}><SecretInput aria-label="模型密钥" disabled={busy} loading={secretLoading} value={secretDraft.value} visible={secretVisible} placeholder={secretDraft.hasExisting ? '留空则保留原密钥' : '选填'} onFocus={event => { if (!secretDraft.dirty && secretDraft.baselineSecret === null && secretDraft.value === SECRET_MASK_SENTINEL) event.currentTarget.select(); }} onToggleVisible={() => void toggleSecretVisible()} onChange={nextValue => { setSecretDraft(previous => nextSecretDraftOnInput(previous, nextValue)); setSecretError(''); probe.reset(); }}/>{secretError && <p role="alert">{secretError}</p>}<ServicePauseNotice names={pauseNames}/></MediaGroup>
+        <MediaGroup title="密钥" group={group}><SecretInput aria-label="模型密钥" disabled={busy} loading={secretLoading} value={secretDraft.value} visible={secretVisible} placeholder={secretDraft.hasExisting ? '留空则保留原密钥' : '选填'} onFocus={event => { if (!secretDraft.dirty && secretDraft.baselineSecret === null && secretDraft.value === SECRET_MASK_SENTINEL) event.currentTarget.select(); }} onToggleVisible={() => void toggleSecretVisible()} onChange={nextValue => { setSecretDraft(previous => nextSecretDraftOnInput(previous, nextValue)); setSecretError(''); probe.reset(); }}/>{secretError && <p role="alert">{secretError}</p>}</MediaGroup>
         <MediaGroup title="模型" group={group}><ModelNamePicker settings presets={modelPresets(draftAdapter, draftUrl)} value={model} onChange={value => { setModel(value); probe.invalidateTest(); }} models={probe.models} listBusy={probe.listBusy} listError={probe.listError} listLoaded={probe.listLoaded} testBusy={probe.testBusy} testNote={probe.testModel === model ? probe.testNote : ''} notice={probeGroup === 'model' ? probeNotice : null} onRefresh={() => runProbe('list')} onTest={() => runProbe('test')} disabled={busy}/></MediaGroup>
       </>}
     </ServiceSheet>
@@ -1746,6 +1741,26 @@ function referenceUsers(entries: ResourceReferences['references'], roles: RoleLi
   return [...byId].map(([roleId, usages]) => ({
     roleId, usages, name: roleDisplayName(roles, roleId), state: activities.find(activity => activity.roleId === roleId)?.state,
   }));
+}
+
+function ResourceUseDetails({ entries, roles, busy, closingBindings, closeBinding, closeAllBindings, endTask }: {
+  entries: ResourceReferences['references']; roles: RoleListItem[]; busy: boolean; closingBindings: boolean;
+  closeBinding: (roleId: string) => Promise<void>; closeAllBindings: () => Promise<void>; endTask: (roleId: string, taskId: string) => Promise<void>;
+}) {
+  if (!entries.length) return null;
+  const boundRoles = [...new Set(entries.filter(item => item.reason === 'ROLE_BINDING' && item.bindingEnabled).map(item => item.roleId))];
+  return <details className="config-occupancy-details"><summary>查看占用详情</summary>
+    <ul>
+      {boundRoles.map(roleId => <li key={roleId}>{roleDisplayName(roles, roleId)} · 已绑定
+        <button type="button" disabled={busy || closingBindings} onClick={() => void closeBinding(roleId)}>关闭该角色绑定</button>
+      </li>)}
+      {entries.filter(item => item.reason !== 'ROLE_BINDING').map((item, index) => <li key={`${item.reason}-${item.roleId}-${item.taskId ?? index}`}>
+        {roleDisplayName(roles, item.roleId)} · {item.reason === 'TASK_CHAIN' ? '任务仍在使用' : '后台调用进行中'}
+        {item.reason === 'TASK_CHAIN' && item.taskId && <button type="button" disabled={busy} onClick={() => void endTask(item.roleId, item.taskId!)}>结束任务</button>}
+      </li>)}
+    </ul>
+    {boundRoles.length > 1 && <button type="button" disabled={busy || closingBindings} onClick={() => void closeAllBindings()}>关闭全部启用绑定</button>}
+  </details>;
 }
 
 /** 资源详情中的任务终结：只结束指定任务的后续执行（278 §3）。 */
@@ -1908,9 +1923,9 @@ function ModelManagement({ resource, roles, activities, impact, active, canWrite
   return <>
     <ServiceManagementRow name={resource.name} enabled={resource.enabled} busy={busy || write.busy} disabled={closingBindings || !report || (resource.enabled && !report.canDisable)} onChange={enabled => void toggle(enabled)}/>
     <ServiceUseRow entries={names} loading={!report} error={error}/>
-    {report && entries.length > 0 && <details className="config-occupancy-details"><summary>查看占用详情</summary><ul>{entries.map((item, index) => <li key={`${item.roleId}-${item.taskId || index}`}>{roleDisplayName(roles, item.roleId)} · {item.reason === 'TASK_CHAIN' ? '任务仍在使用' : item.reason === 'INFLIGHT_CALL' ? '后台调用进行中' : '角色已选择并启用'}{item.reason === 'TASK_CHAIN' && item.taskId && <button type="button" disabled={busy} onClick={() => void endTask(item.roleId, item.taskId!)}>结束任务</button>}{item.reason === 'ROLE_BINDING' && item.bindingEnabled && <button type="button" disabled={busy || closingBindings} onClick={() => void closeBinding(item.roleId)}>关闭该角色绑定</button>}</li>)}</ul>{report.references.some(item => item.reason === 'ROLE_BINDING' && item.bindingEnabled) && <button type="button" disabled={busy || closingBindings} onClick={() => void closeAllBindings()}>关闭全部启用绑定</button>}</details>}
+    <ResourceUseDetails entries={entries} roles={roles} busy={busy} closingBindings={closingBindings} closeBinding={closeBinding} closeAllBindings={closeAllBindings} endTask={endTask}/>
     <ServiceDeleteEntry id={deleteId} kind="model" disabled={busy || write.busy || !canWrite || !report?.canDelete} activeNames={activeUsers.map(item => item.name)}
-      blocker={report && !report.canDelete ? '有角色绑定、任务或后台调用在用。' : undefined}/>
+      blocker={report && !report.canDelete ? '资源仍在使用，请查看占用详情。' : undefined}/>
     <ServiceDeleteSheet id={deleteId} active={active} name={resource.name} occupied={names} busy={busy} disabled={!report?.canDelete || activeUsers.length > 0} error={deleteError} onRemove={() => void remove()}/>
   </>;
 }
@@ -1931,10 +1946,10 @@ function sameExtensionEnv(next: Record<string, string>, saved: unknown): boolean
   return keys.length === Object.keys(baseline).length && keys.every(key => Object.hasOwn(baseline, key) && baseline[key] === next[key]);
 }
 
-function ExtensionFields({ kind, group, name, onName, command, onCommand, args, onArgs, env, onEnv, source, onSource, busy, creating, pauseNames = [] }: {
+function ExtensionFields({ kind, group, name, onName, command, onCommand, args, onArgs, env, onEnv, source, onSource, busy, creating }: {
   kind: 'mcp' | 'skill'; group?: string; name: string; onName: (value: string) => void;
   command: string; onCommand: (value: string) => void; args: string; onArgs: (value: string) => void;
-  env: string; onEnv: (value: string) => void; source: string; onSource: (value: string) => void; busy: boolean; creating?: boolean; pauseNames?: string[];
+  env: string; onEnv: (value: string) => void; source: string; onSource: (value: string) => void; busy: boolean; creating?: boolean;
 }) {
   const [choosing, setChoosing] = useState(false);
   const [chooseError, setChooseError] = useState('');
@@ -1944,9 +1959,8 @@ function ExtensionFields({ kind, group, name, onName, command, onCommand, args, 
     {kind === 'mcp' ? <>
       <MediaGroup title="启动" group={group}><div className="config-service-launch-command"><Field label="启动命令"><Input value={command} disabled={busy} placeholder="例如 npx、uvx、node" spellCheck={false} onChange={event => onCommand(event.target.value)}/></Field></div>
         <Field label="启动参数"><Textarea className="config-service-code" rows={3} value={args} disabled={busy} placeholder="每行一个参数" spellCheck={false} onChange={event => onArgs(event.target.value)}/></Field>
-        <ServicePauseNotice names={pauseNames}/>
       </MediaGroup>
-      <MediaGroup title="环境变量" group={group}><div className="config-service-unlabelled"><Field label="环境变量" error={parseExtensionEnv(env) ? undefined : T11}><Textarea className="config-service-code" rows={4} value={env} disabled={busy} placeholder='{"KEY": "value"}' spellCheck={false} onChange={event => onEnv(event.target.value)}/></Field></div><ServicePauseNotice names={pauseNames}/></MediaGroup>
+      <MediaGroup title="环境变量" group={group}><div className="config-service-unlabelled"><Field label="环境变量" error={parseExtensionEnv(env) ? undefined : T11}><Textarea className="config-service-code" rows={4} value={env} disabled={busy} placeholder='{"KEY": "value"}' spellCheck={false} onChange={event => onEnv(event.target.value)}/></Field></div></MediaGroup>
     </> : <MediaGroup title="来源目录" group={group}><div className="config-service-folder config-service-unlabelled"><Field label="来源目录"><Input value={source} disabled={busy || choosing} placeholder="SKILL.md 所在目录" spellCheck={false} onChange={event => onSource(event.target.value)}/></Field>
       {chooser && <Button size="sm" disabled={busy || choosing} onClick={async () => {
         setChoosing(true);
@@ -2117,13 +2131,13 @@ function ExtensionManagement({ resource, roles, activities, active, onRemoved, o
     {isMcp ? <><ServiceRow label="启动" value={`${String(resource.config.command || '')} ${argsText.replaceAll('\n', ' ')}`.trim()} keys={['stdio']} onOpen={trigger => open('启动', trigger)}/><ServiceRow label="环境变量" value={envKeys.join('、') || '无'} status={envKeys.length ? 'ok' : 'none'} statusText={envKeys.length ? '值已保存' : '未设置'} onOpen={trigger => open('环境变量', trigger)}/></> : <ServiceRow label="来源目录" value={String(resource.config.sourcePath || '')} onOpen={trigger => open('来源目录', trigger)}/>}
     <ServiceManagementRow name={resource.name} enabled={resource.enabled} busy={busy || write.busy} disabled={closingBindings || !report || (resource.enabled && !report.canDisable)} onChange={enabled => void run(enabled ? 'enable' : 'disable')}/>
     <ServiceUseRow entries={names} loading={!report} error={reportError}/>
-    {report && entries.length > 0 && <details className="config-occupancy-details"><summary>查看占用详情</summary><ul>{entries.map((item, index) => <li key={`${item.roleId}-${item.taskId || index}`}>{roleDisplayName(roles, item.roleId)} · {item.reason === 'TASK_CHAIN' ? '任务仍在使用' : item.reason === 'INFLIGHT_CALL' ? '后台调用进行中' : '角色已开启'}{item.reason === 'TASK_CHAIN' && item.taskId && <button type="button" disabled={busy} onClick={() => void endTask(item.roleId, item.taskId!)}>结束任务</button>}{item.reason === 'ROLE_BINDING' && item.bindingEnabled && <button type="button" disabled={busy || closingBindings} onClick={() => void closeBinding(item.roleId)}>关闭该角色绑定</button>}</li>)}</ul>{report.references.some(item => item.reason === 'ROLE_BINDING' && item.bindingEnabled) && <button type="button" disabled={busy || closingBindings} onClick={() => void closeAllBindings()}>关闭全部启用绑定</button>}</details>}
+    <ResourceUseDetails entries={entries} roles={roles} busy={busy} closingBindings={closingBindings} closeBinding={closeBinding} closeAllBindings={closeAllBindings} endTask={endTask}/>
     <ServiceDeleteEntry id={deleteId} kind={kind} disabled={busy || write.busy || !report?.canDelete} activeNames={activeUsers.map(item => item.name)}
-      blocker={report && !report.canDelete ? '有角色绑定、任务或后台调用在用。' : undefined}/>
+      blocker={report && !report.canDelete ? '资源仍在使用，请查看占用详情。' : undefined}/>
     {message && <p role="alert">{message}</p>}
     <ServiceSheet id={sheetId} active={active} count={count} busy={busy} onDiscard={discard}
       footer={<ServiceSheetActions count={count} busy={busy} invalid={invalid} blockedReason={report ? !report.canUpdate ? '请先解除正在使用的绑定或任务。' : undefined : reportError || '正在检查占用…'} error={writeError} pauseNames={pauseNames} onSubmit={() => void run('save')}/>}>
-      {group => <><ExtensionFields kind={kind} group={group} name={name} onName={setName} command={command} onCommand={setCommand} args={args} onArgs={setArgs} env={env} onEnv={setEnv} source={sourcePath} onSource={setSourcePath} busy={busy} pauseNames={pauseNames}/></>}
+      {group => <><ExtensionFields kind={kind} group={group} name={name} onName={setName} command={command} onCommand={setCommand} args={args} onArgs={setArgs} env={env} onEnv={setEnv} source={sourcePath} onSource={setSourcePath} busy={busy}/></>}
     </ServiceSheet>
     <ServiceDeleteSheet id={deleteId} active={active} name={resource.name} occupied={names} busy={busy} disabled={!report?.canDelete || activeUsers.length > 0} error={deleteError} onRemove={() => void run('delete')}/>
   </div>;

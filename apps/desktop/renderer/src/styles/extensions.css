@@ -13,6 +13,8 @@
   border: 1px solid var(--nd-semantic-color-line-decorative);
   border-radius: var(--nd-semantic-radius-surface);
 }
+.extension-page section, .extension-overlays article { grid-template-columns: minmax(0, 1fr); overflow-wrap: anywhere; }
+.extension-page select { max-width: 100%; }
 .extension-page section + section { margin-top: var(--nd-semantic-space-field-group); }
 .extension-page h1 { font-size: var(--nd-semantic-type-page-size); }
 .extension-page h2 { font-size: var(--nd-semantic-type-section-size); margin: 0; }
@@ -20,6 +22,7 @@
 .extension-page li, .extension-overlays header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: var(--nd-semantic-space-icon-label);
 }

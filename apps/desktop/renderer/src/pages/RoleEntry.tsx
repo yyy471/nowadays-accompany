@@ -47,20 +47,17 @@ export function RoleEntry({
     <div className="role-entry" data-theme={night ? 'night' : 'day'} data-motion={motion.reduced ? 'reduced' : 'full'}>
       <header className="role-entry-header">
         <span className="role-entry-brand"><BrandMark/><span>Nowadays<small>A NOTE FOR YOUR EVERYDAY.</small></span></span>
-        <span className="role-entry-caption">选择之后，主页、关系与对话都会停在这一位。</span>
       </header>
       <main className="role-entry-stage" aria-label="选择角色">
         <div className="role-entry-copy">
-          <span className="role-entry-eyebrow">ENTRY / 选择角色</span>
-          <h1>从哪一页，<br />开始今天？</h1>
-          <p>每一位角色都有自己的设定、经历和对话窗口。选定一位进入书房，之后可以随时换人。</p>
+          <h1>选择角色</h1>
+          <p>进入书房后，也可以切换角色。</p>
         </div>
         {loading && cards.length === 0 ? <p className="role-entry-note" role="status">正在读取角色…</p>
           : error && cards.length === 0 ? <div className="role-entry-note" role="alert"><p>{error}</p><Button onClick={onRetry}>重试</Button></div>
-            : <div className="role-entry-grid" role="list">
+            : <div className="role-entry-grid" role="group" aria-label="角色列表">
               {cards.map((role, index) => <button
                 type="button"
-                role="listitem"
                 key={role.roleId}
                 ref={index === 0 ? firstCard : undefined}
                 className="role-entry-card"
@@ -71,15 +68,10 @@ export function RoleEntry({
               >
                 <span className="role-entry-figure"><RolePortrait roleId={role.roleId}/></span>
                 <span className="role-entry-meta">
-                  <span className="role-entry-name">{role.displayName}{entryBadge(role) && <em>{entryBadge(role)}</em>}</span>
+                  <span className="role-entry-name"><strong title={role.displayName}>{role.displayName}</strong>{entryBadge(role) && <em>{entryBadge(role)}</em>}</span>
                   <span className="role-entry-bio">{entrySubtitle(role)}</span>
                 </span>
-                <span className="role-entry-mark" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
               </button>)}
-              <button type="button" role="listitem" className="role-entry-card role-entry-new" onClick={onCreate}>
-                <span className="role-entry-figure"><i aria-hidden="true">＋</i></span>
-                <span className="role-entry-meta"><span className="role-entry-name">创建角色</span><span className="role-entry-bio">先填显示名与人设，之后再配置外观和模型。</span></span>
-              </button>
             </div>}
         {error && cards.length > 0 && <p className="role-entry-note" role="alert">{error}</p>}
       </main>
