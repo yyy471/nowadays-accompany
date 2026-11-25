@@ -27,6 +27,7 @@ export const ROLE_CONFIG_WRITES: ReadonlySet<string> = new Set([
   "DELETE /v1/roles/:roleId/appearance/outfits/:outfitId",
   "POST /v1/roles/:roleId/appearance/outfits/:outfitId/sprites",
   "DELETE /v1/roles/:roleId/appearance/outfits/:outfitId/sprites/:assetId",
+  "DELETE /v1/roles/:roleId/appearance/outfits/:outfitId/home/:assetId",
 ]);
 
 /** 媒体服务写入由服务维护协调器按依赖角色处理，不再要求所有角色停止。 */

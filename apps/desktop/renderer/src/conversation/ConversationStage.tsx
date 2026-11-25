@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { PerformanceSnapshot, PerfScene, SceneLayerMode } from './performance';
+import type { PerformanceSnapshot, PerfScene } from './performance';
 import type { PerfRow } from './history';
 import { spriteForRow } from './window-model';
 import { Icon, useMotionPolicy } from '../ui';
@@ -58,9 +58,6 @@ function CrossfadeLayer({ src, alt, className, onDecodeError }: { src: string | 
   </div>;
 }
 
-function sceneLabel(mode: SceneLayerMode): string {
-  return mode === 'background' ? '背景图' : '人物场景图';
-}
 
 export function ConversationStage({
   snapshot,
@@ -72,6 +69,7 @@ export function ConversationStage({
   waitingOutfit = false,
   waitingText,
   onDismiss,
+  onRegenerate, regenerating,
 }: {
   snapshot: PerformanceSnapshot;
   current: PerfRow | null;
@@ -85,6 +83,8 @@ export function ConversationStage({
   waitingOutfit?: boolean;
   waitingText?: string;
   onDismiss: () => void;
+  onRegenerate: (scene: PerfScene) => void;
+  regenerating: boolean;
 }) {
   const policy = useMotionPolicy();
   const visible = visibleScene;
@@ -120,6 +120,7 @@ export function ConversationStage({
     <div className="dialogue-stage-cue" aria-hidden="true" data-live={day ? 'cue' : ''} />
     <i className="dialogue-sun-beam" aria-hidden="true" />
     {visible ? <button type="button" className="dialogue-scene-dismiss" onClick={onDismiss}>收起过场图</button> : null}
-    {visible ? <span className="dialogue-stage-note" aria-hidden="true">{sceneLabel(visible.mode)}</span> : null}
+    {visible ? <button type="button" className="dialogue-scene-regenerate" disabled={regenerating}
+      onClick={() => onRegenerate(visible)}>{regenerating ? '生成中…' : '重新生成'}</button> : null}
   </section>;
 }

@@ -1,0 +1,41 @@
+.share-slip {
+  position: fixed;
+  inset-inline-end: var(--nd-semantic-space-panel-inset);
+  bottom: var(--nd-semantic-size-dock-zone);
+  width: min(22rem, calc(100% - 2 * var(--nd-semantic-space-panel-inset)));
+  z-index: var(--nd-semantic-layer-notice);
+}
+.share-slip aside {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--nd-semantic-space-icon-label);
+  padding: var(--nd-semantic-space-field-group);
+  border: 1px solid var(--nd-semantic-color-line-decorative);
+  border-radius: var(--nd-semantic-radius-card);
+  background: var(--nd-semantic-color-surface);
+  color: var(--nd-semantic-color-text);
+  box-shadow: var(--nd-semantic-shadow-raised);
+}
+.share-slip img, .share-monogram {
+  width: 3rem;
+  height: 3rem;
+  object-fit: cover;
+  object-position: center top;
+  border-radius: var(--nd-semantic-radius-round);
+}
+.share-monogram {
+  display: grid;
+  place-items: center;
+  background: var(--nd-semantic-color-selection);
+}
+.share-slip p {
+  overflow-wrap: anywhere;
+  margin: var(--nd-semantic-space-field-hint) 0 0;
+  font-size: var(--nd-semantic-type-body-size);
+  line-height: var(--nd-semantic-type-body-line);
+}
+.share-slip aside > button:last-child {
+  grid-column: 2 / -1;
+  justify-self: end;
+}

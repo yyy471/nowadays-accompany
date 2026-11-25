@@ -27,7 +27,7 @@ interface ToolEvidenceRow {
 
 interface EvidenceInput {
   roleId: string;
-  sourceKind: "message" | "tool_result";
+  sourceKind: "message" | "tool_result" | "role_exchange";
   sourceId: string;
   windowId: string | null;
   taskId: string | null;
@@ -266,7 +266,7 @@ export function registerWebReadingEvidence(
   }, input.now);
 }
 
-function upsertEvidence(
+export function upsertEvidence(
   db: Database.Database,
   input: EvidenceInput,
   now = new Date().toISOString(),

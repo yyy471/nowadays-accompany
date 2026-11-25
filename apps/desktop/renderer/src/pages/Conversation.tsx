@@ -10,7 +10,7 @@ import type { PerfRow } from '../conversation/history';
 import { dayKey, dateLabel } from '../conversation/history';
 import { useWindowSession, type ConversationSnapshot, type SessionEvent } from '../conversation/use-window-session';
 import { useSegmentVoice } from '../conversation/use-segment-voice';
-import { shouldClearRecoveredDraft } from '../conversation/window-model';
+import { sceneForEachReply, shouldClearRecoveredDraft } from '../conversation/window-model';
 import { pickCancelableTask, taskCancelLabel, taskCancelNotice, taskCancelTitle, type CancelableTask } from '../conversation/task-actions';
 import { ConversationStage, type StageSources } from '../conversation/ConversationStage';
 import { ChatPane } from '../conversation/ChatPane';
@@ -49,6 +49,7 @@ export function ConversationPage({
   onRoleStateChanged,
   initialTarget,
   onTargetHandled,
+  onVisibleWindow,
   onReturnFeed,
 }: {
   roles: RoleListItem[];
@@ -68,6 +69,7 @@ export function ConversationPage({
   onRoleStateChanged?: () => void;
   initialTarget?: { roleId: string; windowId: string; messageId?: string } | null;
   onTargetHandled?: () => void;
+  onVisibleWindow: (id: string | null) => void;
   onReturnFeed?: () => void;
 }) {
   const { preset } = useThemePreset();
@@ -174,10 +176,19 @@ export function ConversationPage({
     onEvent: (snapshot, event) => handleEventRef.current(snapshot, event)
   });
   const snapshot = session.snapshot;
+  const visibleWindow = snapshot?.roleId === currentId ? snapshot.windowId : null;
+  useLayoutEffect(() => {
+    onVisibleWindow(visibleWindow);
+    return () => onVisibleWindow(null);
+  }, [onVisibleWindow, visibleWindow]);
   const targetRequest = useRef(false);
   useEffect(() => {
     if (!initialTarget || initialTarget.roleId !== currentId || !snapshot || snapshot.roleId !== currentId || snapshot.loading || snapshot.loadError || targetRequest.current) return;
     if (snapshot.windowId !== initialTarget.windowId) {
+      if (snapshot.windows.some(item => item.windowId === initialTarget.windowId)) {
+        session.selectWindow(initialTarget.windowId);
+        return;
+      }
       showToast('无法打开原对话窗口。');
       onTargetHandled?.();
       return;
@@ -361,11 +372,13 @@ export function ConversationPage({
     ? snapshot?.messages.find(row => row.id === stageRow.id) ?? stageRow
     : null;
   const stageLive = follow && !historyLock && !historyOpen;
-  const liveScene = stageLive && sceneAuto && visibleStageRow && snapshot
-    ? snapshot.scenes.slice().reverse().find(item => item.status === 'succeeded' && item.messageId === visibleStageRow.messageId
-      && item.start <= visibleStageRow.ordinal && visibleStageRow.ordinal <= item.end && !dismissed.has(item.id)) ?? null
-    : null;
-  const visibleScene = scenePreview ?? (stageLive ? liveScene : frozenScene.current);
+  const replyScenes = useMemo(() => sceneForEachReply(snapshot?.scenes ?? []), [snapshot?.scenes]);
+  const candidate = visibleStageRow && replyScenes.get(visibleStageRow.messageId);
+  const liveScene = stageLive && sceneAuto && visibleStageRow && candidate?.status === 'succeeded'
+    && candidate.start <= visibleStageRow.ordinal && visibleStageRow.ordinal <= candidate.end && !dismissed.has(candidate.id) ? candidate : null;
+  const preview = scenePreview && replyScenes.get(scenePreview.messageId);
+  const visibleScene = scenePreview ? (preview?.status === 'succeeded' ? preview : scenePreview)
+    : stageLive ? liveScene : frozenScene.current;
   useLayoutEffect(() => {
     if (stageLive) frozenScene.current = visibleScene;
   }, [stageLive, visibleScene]);
@@ -413,8 +426,9 @@ export function ConversationPage({
 
   const dismissScene = () => {
     const visible = visibleScene;
-    if (visible) setDismissed(current => new Set(current).add(visible.id));
-    if (!scenePreview || frozenScene.current?.id === scenePreview.id) frozenScene.current = null;
+    if (visible) setDismissed(current => new Set([...current, ...(snapshot?.scenes ?? [visible])
+      .filter(scene => scene.messageId === visible.messageId).map(scene => scene.id)]));
+    frozenScene.current = null;
     setScenePreview(null);
   };
 
@@ -501,7 +515,9 @@ export function ConversationPage({
           visibleScene={visibleScene} live={stageLive} cue={cue}
           waitingOutfit={appearanceLoading || awaitingInitialOutfit}
           waitingText={appearanceLoading ? '正在整理画面…' : `${roleName} 正在换装，即将赶来…`}
-          onDismiss={dismissScene} />
+          onDismiss={dismissScene} regenerating={!!visibleScene && (!!snapshot?.sceneRequests.has(visibleScene.messageId)
+            || !!snapshot?.scenes.some(s => s.messageId === visibleScene.messageId && s.status === 'generating'))}
+          onRegenerate={image => { setScenePreview(image); session.requestScene(image.messageId, image.mode); }} />
         <section className="dialogue-pane" aria-label={historyOpen ? '历史消息' : `与 ${roleName} 的对话`}>
         <div className="dialogue-pane-toolbar" inert={historyOpen} aria-hidden={historyOpen || undefined}>
           <div className="dialogue-pane-switches">

@@ -5,6 +5,33 @@ import * as targetModule from "../src/conversation/window-model.ts";
 
 const load = async () => targetModule;
 
+test("同轮跨图层、重画中和失败时只选一张图，不影响另一轮", () => {
+  const first = { id: "bg", messageId: "m1", mode: "background", status: "succeeded" };
+  const next = { id: "full", messageId: "m1", mode: "full_scene", status: "generating" };
+  const failed = { ...next, status: "failed" };
+  const done = { ...next, status: "succeeded" };
+  const other = { ...first, id: "other", messageId: "m2" };
+  const pick = (...scenes) => targetModule.sceneForEachReply(scenes).get("m1");
+  assert.equal(pick(next, failed), next);
+  assert.equal(pick(first, next), first);
+  assert.equal(pick(first, failed), first);
+  assert.equal(pick(first, done, other), done);
+  assert.equal(targetModule.sceneForEachReply([first, done, other]).get("m2"), other);
+});
+
+test("历史结构化消息按保存的原文重建，历史与实时的行标识相同", () => {
+  const text = "### 权限\n\n- **查看**状态";
+  const registry = targetModule.createRowIdRegistry();
+  const [historical] = targetModule.rowsForMessage(message({content: text}), [
+    segment(0, "speech", "### 权限"), segment(1, "narration", "查看"),
+  ], registry.id);
+  const [live] = targetModule.rowsForMessage(message({status: "generating"}), [segment(0, "speech", text)], registry.id);
+  assert.equal(historical.text, text);
+  assert.equal(historical.format, "markdown");
+  assert.equal(historical.id, live.id);
+  assert.equal(historical.segmentId, "m1-1");
+});
+
 const message = (overrides = {}) => ({
   messageId: "m1",
   windowId: "w1",

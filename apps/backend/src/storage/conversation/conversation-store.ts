@@ -1,4 +1,6 @@
+import { isAdminSeat } from "../../domain/admin-seat.js";
 import { randomUUID } from "node:crypto";
+import { observeDialogue } from "./dialogue-batches.js";
 import type Database from "better-sqlite3";
 import { SceneImageStore } from "../media/scene-image-store.js";
 import type {
@@ -112,6 +114,7 @@ export interface CommitConversationTaskDecision {
 }
 
 export interface CommitConversationInput {
+  batchDelayMs?: number;
   automaticScene?: import("../../domain/scene-image.js").SceneImageConfigSnapshot | null;
   executionId: string;
   content: string;
@@ -129,6 +132,7 @@ export interface SegmentAnnotationInput {
 }
 
 export interface CommitConversationResult {
+  observedBatch: boolean;
   execution: ExecutionRecord;
   replyMessage: MessageRecord;
   stateVersion: number;
@@ -1013,7 +1017,7 @@ export class ConversationStore {
     }
     return {
       builtinKey: row.builtin_key,
-      isBuiltin: row.builtin_key !== null,
+      isBuiltin: isAdminSeat(row.builtin_key),
       displayName: row.display_name,
       bioText: row.bio_text,
       definitionText: row.definition_text,
@@ -1064,6 +1068,7 @@ export class ConversationStore {
   }
 
   appendProactiveMessage(input: {
+    source?: "autonomy_share" | "task_circuit_breaker";
     windowId: string;
     content: string;
     executionId: string;
@@ -1131,6 +1136,11 @@ export class ConversationStore {
           replySequence: message.sequence,
           replyCreatedAt: message.createdAt,
           proactive: true,
+          source: input.source ?? "system",
+          ...(input.source === "autonomy_share" ? {
+            summary: Array.from(input.content).slice(0, 140).join(""),
+            homeAssetId: segments[0]?.homeAssetId ?? null,
+          } : {}),
         },
         now,
       });
@@ -1238,6 +1248,7 @@ export class ConversationStore {
         const round = this.decisionRoundOf(input.executionId);
         return {
           execution,
+          observedBatch: false,
           replyMessage: mapMessage(reply),
           stateVersion: execution.stateVersionCommitted ?? 0,
           state: this.readRoleState(),
@@ -1250,10 +1261,10 @@ export class ConversationStore {
       }
       const role = this.db
         .prepare(
-          "SELECT state_json, state_version FROM roles WHERE role_id = ?",
+          "SELECT state_json, state_version, builtin_key FROM roles WHERE role_id = ?",
         )
         .get(this.roleId) as
-        | { state_json: string; state_version: number }
+        | { state_json: string; state_version: number; builtin_key: string | null }
         | undefined;
       if (!role) {
         throw new ExecutionNotRunningError(input.executionId, "role_missing");
@@ -1337,9 +1348,19 @@ export class ConversationStore {
         .run(input.executionId, now, input.executionId);
       const userMessages = this.db
         .prepare(
-          "SELECT message_id FROM messages WHERE processed_by_execution_id = ? AND sender = 'user' ORDER BY sequence ASC",
+          "SELECT message_id, sequence FROM messages WHERE processed_by_execution_id = ? AND sender = 'user' AND window_id = ? ORDER BY sequence ASC",
         )
-        .all(input.executionId) as Array<{ message_id: string }>;
+        .all(input.executionId, windowId) as Array<{ message_id: string; sequence: number }>;
+      const observedBatch = round !== null && execution.triggerType !== "autonomous" &&
+        userMessages.length > 0 && !isAdminSeat(role.builtin_key);
+      if (observedBatch && userMessages[0]) {
+        observeDialogue(this.db, {
+          roleId: this.roleId, windowId, executionId: input.executionId,
+          replyId: replyMessage.messageId, replySeq: replyMessage.sequence,
+          firstUserSeq: userMessages[0].sequence, userCount: userMessages.length,
+          delayMs: input.batchDelayMs ?? 3000, now,
+        });
+      }
       const segments = this.insertMessageSegments(
         replyMessage.messageId,
         windowId,
@@ -1396,6 +1417,7 @@ export class ConversationStore {
       }
       return {
         execution: this.getExecution(input.executionId),
+        observedBatch,
         replyMessage: this.getMessage(replyMessage.messageId),
         stateVersion: nextVersion,
         state: nextState,

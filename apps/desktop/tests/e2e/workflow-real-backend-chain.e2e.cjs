@@ -112,6 +112,9 @@ function startFakeOpenAi(name, modelIds) {
           ...(lastSeg ? { endSegmentId: lastSeg } : {}),
         });
       }
+      const lastUser = body.messages?.filter(message => message.role === 'user').at(-1)?.content;
+      if (lastUser === '请列出两项权限') reply = '权限如下。\n\n---\n\n### 管理权限\n\n- **查看**状态\n- 更新角色';
+      if (lastUser === '请返回清单原文') reply = '{\n  "note": "（不要拆开）",\n  "ids": [1, 2]\n}';
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
       res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: reply } }] })}\n\n`);
       res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 16, completion_tokens: 12 } })}\n\n`);
@@ -1064,10 +1067,47 @@ async function run() {
   await clickWhen("[...document.querySelectorAll('.dialogue-round-tools .dialogue-scene-chip')].find(x=>x.textContent.startsWith('查看'))");
   await until(() => ev("(() => { const full = document.querySelector('.dialogue-scene-full img'); return (full && full.complete && full.naturalWidth > 0) || !!document.querySelector('.dialogue-stage')?.dataset.scene; })()"), 'scene-displayed');
   await shot('dialogue-scene.png');
+  assert.equal(await ev(`(() => {
+    const tools = [...document.querySelectorAll('.dialogue-round-tools')].find(el => el.textContent.includes('查看'));
+    const row = tools.closest('article');
+    const group = [...document.querySelectorAll('article')].filter(el => el.dataset.messageId === row.dataset.messageId);
+    return group.length > 1 && group.at(-1) === row && !tools.textContent.includes('生成过场图');
+  })()`), true);
+  const oldImage = await ev("document.querySelector('.dialogue-scene-full img').src");
+  await clickWhen("document.querySelector('.dialogue-scene-regenerate')");
+  await until(() => ev(`document.querySelector('.dialogue-scene-full img')?.src !== ${JSON.stringify(oldImage)} && document.querySelector('.dialogue-scene-full img')?.naturalWidth > 0`), 'redrawn-image');
+  // 已有多版人物图的旧回复又生成背景图时，聊天、历史和已经打开的舞台都要切换到同一张。
+  const roundId = await ev("document.querySelector('.dialogue-round-tools .dialogue-scene-chip').closest('article').dataset.messageId");
+  const mainWindow = (await request(`/v1/roles/${roleA.roleId}/windows`)).items.find(item => item.kind === 'main');
+  await request(`/v1/roles/${roleA.roleId}/windows/${mainWindow.windowId}/messages/${roundId}/scene-images`, jsonReq({ idempotencyKey: 'second-layer-for-same-reply', layerMode: 'background' }));
+  await until(() => ev(`(() => {
+    const rows = [...document.querySelectorAll('article')].filter(row => row.dataset.messageId === ${JSON.stringify(roundId)});
+    const controls = rows.flatMap(row => [...row.querySelectorAll('.dialogue-round-tools > *')]);
+    return controls.length === 1 && controls[0].textContent === '查看背景图' && rows.at(-1).contains(controls[0])
+      && document.querySelector('.dialogue-stage').dataset.scene === 'background';
+  })()`), 'one-scene-per-reply-across-layers');
+  await clickWhen("document.querySelector('.dialogue-history-button')");
+  await until(() => ev("document.querySelectorAll('.dialogue-history .dialogue-scene-chip').length === 1 && document.querySelector('.dialogue-history .dialogue-scene-chip').textContent === '查看背景图'"), 'one-scene-in-history');
+  await clickWhen("document.querySelector('.dialogue-history-close')");
+  for (const [prompt, selector] of [['请列出两项权限', '.dialogue-document h3'], ['请返回清单原文', 'pre.dialogue-document']]) {
+    await setInput("document.querySelector('.dialogue-composer textarea')", prompt);
+    await clickWhen("document.querySelector('.dialogue-send')");
+    await until(() => ev(`!!document.querySelector(${JSON.stringify(selector)})`), prompt);
+    assert.equal(await ev(`(() => {
+      const row = document.querySelector(${JSON.stringify(selector)}).closest('article');
+      return [...document.querySelectorAll('article')].filter(el => el.dataset.messageId === row.dataset.messageId).length === 1
+        && !row.querySelector('.dialogue-speaker');
+    })()`), true);
+  }
+  assert.equal(await ev("document.querySelector('.dialogue-document li strong').textContent"), '查看');
+  assert.equal(await ev("document.querySelector('pre.dialogue-document').textContent"), '{\n  "note": "（不要拆开）",\n  "ids": [1, 2]\n}');
+  await shot('dialogue-formatted.png');
 
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({
     realBackend: true,
+    structuredReplyRendered: true,
+    sceneRedrawnFromStage: true,
     navigationBug1Fixed: true,
     navigationBug2Fixed: true,
     modelMainAndSelectivePauseBranch: true,

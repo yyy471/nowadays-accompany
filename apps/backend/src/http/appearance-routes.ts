@@ -71,6 +71,7 @@ export function registerAppearanceRoutes(
           params.roleId ?? "",
           params.outfitId ?? "",
           toImage(sprites[0]!),
+          form.fields.get("replaceAssetId"),
         ),
       };
     },
@@ -141,6 +142,15 @@ export function registerAppearanceRoutes(
         params.outfitId ?? "",
         params.assetId ?? "",
       ),
+    }),
+  );
+
+  router.add(
+    "DELETE",
+    "/v1/roles/:roleId/appearance/outfits/:outfitId/home/:assetId",
+    ({ params }): RouteResponse => ({
+      status: 200,
+      body: services.appearance.deleteAsset(params.roleId ?? "", params.outfitId ?? "", params.assetId ?? "", "home"),
     }),
   );
 

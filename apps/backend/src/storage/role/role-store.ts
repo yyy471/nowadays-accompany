@@ -1,3 +1,4 @@
+import { isAdminSeat } from "../../domain/admin-seat.js";
 import { createHash, randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import {
@@ -92,6 +93,8 @@ export interface ListMessagesResult {
 }
 
 export interface MessagePageQuery {
+  upToSeq?: number;
+  batchId?: string;
   after?: number | null;
   before?: number | null;
   limit: number;
@@ -471,7 +474,7 @@ export class RoleStore {
     return mapRole(row);
   }
 
-  /** 系统内部同步预置只读展示介绍（仅 builtin 角色启动初始化使用，不走定义改写接口）。 */
+  /** 仅在主角色首次初始化或恢复半初始化时补齐席位与默认介绍。 */
   syncBuiltinRoleIdentity(input: {
     roleId: string;
     builtinKey: string;
@@ -512,6 +515,7 @@ export class RoleStore {
   updateDefinition(input: {
     roleId: string;
     displayName?: string;
+    bioText?: string;
     definitionText?: string;
     definitionPayload?: Record<string, unknown>;
     expectedRevision?: number;
@@ -530,10 +534,11 @@ export class RoleStore {
       const now = new Date().toISOString();
       this.db
         .prepare(
-          "UPDATE roles SET display_name = ?, definition_text = ?, definition_payload_json = ?, definition_revision = ?, updated_at = ? WHERE role_id = ?",
+          "UPDATE roles SET display_name = ?, bio_text = ?, definition_text = ?, definition_payload_json = ?, definition_revision = ?, updated_at = ? WHERE role_id = ?",
         )
         .run(
           input.displayName ?? current.displayName,
+          input.bioText ?? current.bioText,
           input.definitionText ?? current.definition.text,
           JSON.stringify(
             input.definitionPayload ?? current.definition.payload,
@@ -745,9 +750,12 @@ export class RoleStore {
     if (query.after !== undefined && query.after !== null) {
       const rows = this.db
         .prepare(
-          `SELECT ${columns} FROM messages WHERE window_id = ? AND sequence > ? ORDER BY sequence ASC LIMIT ?`,
+          `SELECT ${columns} FROM messages WHERE window_id = ? AND sequence > ? AND sequence <= ?
+           ${query.batchId === undefined ? "" : "AND message_id IN (SELECT message_id FROM observed_dialogue_members WHERE batch_id = ?)"}
+           ORDER BY sequence ASC LIMIT ?`,
         )
-        .all(windowId, query.after, limit + 1) as MessageRow[];
+        .all(windowId, query.after, query.upToSeq ?? Number.MAX_SAFE_INTEGER,
+          ...(query.batchId === undefined ? [] : [query.batchId]), limit + 1) as MessageRow[];
       const hasMore = rows.length > limit;
       const page = hasMore ? rows.slice(0, limit) : rows;
       return {
@@ -2044,7 +2052,7 @@ function mapRole(row: RoleRow): RoleRecord {
   return {
     roleId: row.role_id,
     builtinKey: row.builtin_key,
-    isBuiltin: row.builtin_key !== null,
+    isBuiltin: isAdminSeat(row.builtin_key),
     displayName: row.display_name,
     bioText: row.bio_text,
     definition: {

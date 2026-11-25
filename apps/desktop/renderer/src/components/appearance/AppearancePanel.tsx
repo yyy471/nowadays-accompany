@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { api, apiUpload, ApiError } from '../../api';
-import type { Outfit, RoleStateResponse } from '../../types';
-import { assetLocked, outfitWritePolicy } from './preset-lock';
+import type { Outfit, OutfitAsset, RoleStateResponse } from '../../types';
 import { appearanceAssetUrl } from '../../types';
 import { Button, createMotionScope, Field, Select, useMotionPolicy } from '../../ui';
 import { Sheet } from '../config/sheet/Sheet';
@@ -53,16 +52,21 @@ const SKIP_REASON_LABELS: Record<string, string> = {
   UNRECOGNIZED: '无法归类',
 };
 
-/** 纸笺内的编辑草稿：只有名称与说明走草稿，其余素材操作即时写入。 */
-type OutfitDraft = { name: string; description: string };
+/** 纸笺内的编辑草稿：服饰名称、说明与素材显示名走草稿，其余素材操作即时写入。 */
+type OutfitDraft = { name: string; description: string; assetNames: Record<string, string> };
 
 function draftOf(outfit: Outfit): OutfitDraft {
-  return { name: outfit.name, description: outfit.description ?? '' };
+  return { name: outfit.name, description: outfit.description ?? '', assetNames: {} };
 }
 
-function draftChanges(outfit: Outfit, draft: OutfitDraft): number {
-  const saved = draftOf(outfit);
-  return (draft.name.trim() !== saved.name ? 1 : 0) + (draft.description.trim() !== saved.description ? 1 : 0);
+function changedAssetNames(outfit: Outfit, draft: OutfitDraft): Record<string, string> {
+  const changes: Record<string, string> = {};
+  for (const asset of [outfit.home, ...outfit.sprites]) {
+    if (!asset) continue;
+    const name = draft.assetNames[asset.assetId]?.trim();
+    if (name !== undefined && name !== asset.displayName) changes[asset.assetId] = name;
+  }
+  return changes;
 }
 
 export function AppearancePanel({
@@ -88,14 +92,16 @@ export function AppearancePanel({
   const [deleteNotice, setDeleteNotice] = useState('');
   const [draft, setDraft] = useState<OutfitDraft | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [spriteDelete, setSpriteDelete] = useState<{ assetId: string; displayName: string } | null>(null);
+  const [assetDelete, setAssetDelete] = useState<OutfitAsset | null>(null);
+  const [selectedAssetId, setSelectedAssetId] = useState('');
+  const replacingSprite = useRef<string | null>(null);
   const [confirmationMotion] = useState(createMotionScope);
   const closingConfirmation = useRef<Animation | null>(null);
   const deleteTrigger = useRef('');
   const cancelConfirmation = () => {
     if (write.busy || closingConfirmation.current) return;
     const restore = () => {
-      flushSync(() => { setConfirmDelete(false); setSpriteDelete(null); setError(''); setBusy(false); });
+      flushSync(() => { setConfirmDelete(false); setAssetDelete(null); setError(''); setBusy(false); });
       requestAnimationFrame(() => requestAnimationFrame(() => {
         document.querySelector<HTMLElement>(`.config-sheet [data-delete-trigger="${CSS.escape(deleteTrigger.current)}"]`)?.focus({ preventScroll: true });
       }));
@@ -311,9 +317,13 @@ export function AppearancePanel({
   const activeOutfit = ownsSheet && sheet
     ? items.find(item => item.outfitId === sheet.id.slice('outfit:'.length)) ?? null
     : null;
-  const activePolicy = outfitWritePolicy(activeOutfit);
-  const presetLocked = !!activeOutfit && activeOutfit.isPreset === true;
-  const dirtyCount = activeOutfit && draft ? draftChanges(activeOutfit, draft) : 0;
+  const assets = activeOutfit ? [activeOutfit.home, ...activeOutfit.sprites].filter((asset): asset is OutfitAsset => asset !== null) : [];
+  const selectedAsset = assets.find(asset => asset.assetId === selectedAssetId) ?? assets[0];
+  const assetNames = activeOutfit && draft ? changedAssetNames(activeOutfit, draft) : {};
+  const invalidAssetName = Object.values(assetNames).includes('');
+  const dirtyCount = activeOutfit && draft
+    ? Number(draft.name.trim() !== activeOutfit.name) + Number(draft.description.trim() !== (activeOutfit.description ?? '')) + Object.keys(assetNames).length
+    : 0;
 
   // 草稿改动同步到纸笺状态：关闭时才会出 T9 确认，页脚才会出 T8。
   useEffect(() => {
@@ -322,7 +332,8 @@ export function AppearancePanel({
 
   const openOutfit = (outfit: Outfit, trigger: HTMLElement) => {
     setDraft(draftOf(outfit));
-    setConfirmDelete(false); setSpriteDelete(null);
+    setSelectedAssetId('');
+    setConfirmDelete(false); setAssetDelete(null);
     setError(''); setNotice('');
     open({ id: `outfit:${outfit.outfitId}`, title: '编辑服饰', shape: 'full', anchor: trigger, focusReturn: trigger });
     onPreview?.(outfit);
@@ -332,17 +343,14 @@ export function AppearancePanel({
     ? T27
     : reason instanceof ApiError && reason.code === 'ROLE_NOT_STOPPED'
       ? '角色尚未停止，请先到角色状态中停止。'
-      : reason instanceof ApiError && reason.code === 'PRESET_APPEARANCE_LOCKED'
-        ? '预置服饰与素材随应用交付，不能改名、替换或删除；可以新增自己的服饰。'
-        : reason instanceof Error ? reason.message : String(reason);
+      : reason instanceof Error ? reason.message : String(reason);
 
   const saveOutfit = async () => {
     if (!activeOutfit || !draft || write.busy || !canWrite) return;
     const name = draft.name.trim();
-    if (!name) return;
+    if (!name || invalidAssetName) return;
     const description = draft.description.trim();
-    const changes = draftChanges(activeOutfit, draft);
-    if (changes === 0) return;
+    if (dirtyCount === 0) return;
     setBusy(true);
     const result = await write.runWrite({
       roleIds: [roleId],
@@ -350,7 +358,7 @@ export function AppearancePanel({
       commit: async () => {
         await api(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits/${encodeURIComponent(activeOutfit.outfitId)}`, {
           method: 'PATCH',
-          body: { name, description: description.length === 0 ? null : description },
+          body: { name, description: description.length === 0 ? null : description, ...(Object.keys(assetNames).length ? { assetNames } : {}) },
         });
       },
     });
@@ -362,7 +370,7 @@ export function AppearancePanel({
     if (isStale(roleToken.current)) return;
     if (list !== null) setItems(list.items);
     const refreshed = list?.items.find(item => item.outfitId === activeOutfit.outfitId);
-    setDraft(refreshed ? draftOf(refreshed) : { name, description });
+    setDraft(refreshed ? draftOf(refreshed) : { name, description, assetNames: {} });
     // 先让外层清掉旧预览，再把纸笺当前服饰设为左页预览：左页在纸笺打开期间始终显示正在编辑的那套。
     onChanged?.();
     closeNow();
@@ -401,27 +409,29 @@ export function AppearancePanel({
   const uploadSprite = async (files: FileList | null) => {
     const file = files?.[0];
     if (!file || write.busy || !canWrite || !activeOutfit) return;
-    if (!activePolicy.uploadSprite) { setError('预置服饰不能补传差分，请选择自己的服饰。'); return; }
+    const replaceAssetId = replacingSprite.current;
+    replacingSprite.current = null;
     setBusy(true); setError(''); setNotice('');
     const result = await write.runWrite({
       roleIds: [roleId],
-      verb: '上传差分',
+      verb: replaceAssetId ? '替换差分' : '上传差分',
       commit: async () => {
         const form = new FormData();
         form.append('sprite', file, file.name);
+        if (replaceAssetId) form.append('replaceAssetId', replaceAssetId);
         await apiUpload(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits/${encodeURIComponent(activeOutfit.outfitId)}/sprites`, form);
       },
     });
     setBusy(false);
     if (spriteInput.current) spriteInput.current.value = '';
     if (!result.ok) { setError(result.failure.message); return; }
-    setNotice(`已添加差分「${file.name.replace(/\.[^.]+$/, '')}」`);
+    setNotice(`已${replaceAssetId ? '替换' : '添加'}差分「${file.name.replace(/\.[^.]+$/, '')}」`);
     await load();
     if (!isStale(roleToken.current)) onChanged?.();
   };
 
   const replaceHome = async (file: File) => {
-    if (!activeOutfit || write.busy || !canWrite || !activePolicy.replaceHome) return;
+    if (!activeOutfit || write.busy || !canWrite) return;
     setBusy(true); setError(''); setNotice('');
     const result = await write.runWrite({
       roleIds: [roleId],
@@ -440,21 +450,22 @@ export function AppearancePanel({
     if (!isStale(roleToken.current)) onChanged?.();
   };
 
-  const removeSprite = async (assetId: string, displayName: string) => {
+  const removeAsset = async ({ assetId, displayName, usage }: OutfitAsset) => {
+    const label = usage === 'home' ? '主页立绘' : '差分';
     if (!activeOutfit || write.busy || closingConfirmation.current || !canWrite) return;
     setBusy(true); setError(''); setNotice('');
     const result = await write.runWrite({
       roleIds: [roleId],
-      verb: '删除差分',
+      verb: `删除${label}`,
       announceSuccess: false,
       commit: async () => {
-        await api(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits/${encodeURIComponent(activeOutfit.outfitId)}/sprites/${encodeURIComponent(assetId)}`, { method: 'DELETE' });
+        await api(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits/${encodeURIComponent(activeOutfit.outfitId)}/${usage === 'home' ? 'home' : 'sprites'}/${encodeURIComponent(assetId)}`, { method: 'DELETE' });
       },
     });
     setBusy(false);
     if (!result.ok) { setError(result.failure.message); return; }
-    setSpriteDelete(null);
-    const text = `已删除差分「${displayName}」，历史引用的素材已保留。`;
+    setAssetDelete(null);
+    const text = `已删除${label}「${displayName}」，历史引用的素材已保留。`;
     setDeleteNotice(text); announceLive(text);
     await load();
     if (!isStale(roleToken.current)) onChanged?.();
@@ -468,18 +479,18 @@ export function AppearancePanel({
     return [...counts.entries()].map(([reason, count]) => `${SKIP_REASON_LABELS[reason] ?? reason} ${count}`);
   }, [scan]);
 
-  const confirmationTitle = confirmDelete ? '删除服饰' : spriteDelete ? '删除差分' : undefined;
+  const confirmationTitle = confirmDelete ? '删除服饰' : assetDelete ? (assetDelete.usage === 'home' ? '删除主页立绘' : '删除差分') : undefined;
   const sheetFooter = activeOutfit ? (confirmationTitle
     ? <div className="config-sheet-actions">
       {error && <p className="config-sheet-error" role="alert">{error}</p>}
       <span className="config-sheet-spacer" />
       <button type="button" data-sheet-focus disabled={write.busy} onClick={cancelConfirmation}>{T31.cancel}</button>
       <Button variant="danger" busy={write.busy} disabled={write.busy || (confirmDelete && items.length <= 1)}
-        onClick={() => spriteDelete ? void removeSprite(spriteDelete.assetId, spriteDelete.displayName) : void deleteOutfit()}>
+        onClick={() => assetDelete ? void removeAsset(assetDelete) : void deleteOutfit()}>
         {write.busy ? write.phase === 'pause' ? T29.pausing : T29.deleting : error ? T29.retry('删除') : pausedWrite ? T31.pauseAndDelete : T31.delete}
       </Button>
     </div>
-    : <RoleSaveActions count={dirtyCount} pause={pausedWrite} busy={write.busy} invalid={!canWrite || presetLocked || !draft?.name.trim()} error={error} onSave={() => void saveOutfit()}/>) : null;
+    : <RoleSaveActions count={dirtyCount} pause={pausedWrite} busy={write.busy} invalid={!canWrite || invalidAssetName || !draft?.name.trim()} error={error} onSave={() => void saveOutfit()}/>) : null;
 
   return <div className="nd-appearance">
     <ConfigNotice message={deleteNotice} onDismiss={() => setDeleteNotice('')}/>
@@ -579,7 +590,7 @@ export function AppearancePanel({
           <div className="config-grp" data-sheet-group>
             <div className="config-grp-label"><b>删除</b></div>
             <div>
-              <p className="config-sheet-ask">{spriteDelete ? `删除「${spriteDelete.displayName}」？历史消息里引用的图仍保留。` : T31.outfit.ask(activeOutfit.name)}</p>
+              <p className="config-sheet-ask">{assetDelete ? `删除「${assetDelete.displayName}」？历史消息里引用的图仍保留。` : T31.outfit.ask(activeOutfit.name)}</p>
               {confirmDelete && activeOutfit.outfitId === currentOutfitId && <p className="config-sheet-note">{T31.outfit.current}</p>}
             </div>
           </div>
@@ -593,12 +604,11 @@ export function AppearancePanel({
               </span>
               <div className="config-grp-fields">
                 <Field label="名称">
-                  <input ref={renameInput} className="ui-input" data-sheet-focus value={draft.name} maxLength={200} disabled={write.busy || presetLocked} onChange={event => setDraft({ ...draft, name: event.target.value })} />
+                  <input ref={renameInput} className="ui-input" data-sheet-focus value={draft.name} maxLength={200} disabled={write.busy} onChange={event => setDraft({ ...draft, name: event.target.value })} />
                 </Field>
                 <Field label="说明">
-                  <textarea className="ui-textarea" rows={3} maxLength={500} value={draft.description} disabled={write.busy || presetLocked} onChange={event => setDraft({ ...draft, description: event.target.value })} />
+                  <textarea className="ui-textarea" rows={3} maxLength={500} value={draft.description} disabled={write.busy} onChange={event => setDraft({ ...draft, description: event.target.value })} />
                 </Field>
-                {presetLocked && <p className="config-sheet-note">预置服饰随应用交付，不能改名、替换立绘或删除；可以新增自己的服饰。</p>}
               </div>
             </div>
           </div>
@@ -615,13 +625,27 @@ export function AppearancePanel({
               <div className="config-sheet-row">
                 <input ref={spriteInput} type="file" accept="image/png,image/jpeg,image/webp" className="nd-visually-hidden" onChange={event => void uploadSprite(event.target.files)} />
                 <input ref={homeInput} type="file" accept="image/png,image/jpeg,image/webp" className="nd-visually-hidden" onChange={event => { const file = event.target.files?.[0]; if (file) void replaceHome(file); }} />
-                <Button disabled={write.busy || !canWrite || !activePolicy.uploadSprite} onClick={() => spriteInput.current?.click()}>上传差分</Button>
-                <Button disabled={write.busy || !canWrite || !activePolicy.replaceHome} onClick={() => homeInput.current?.click()}>{activeOutfit.home ? '替换主页立绘' : '补传主页立绘'}</Button>
+                <Button disabled={write.busy || !canWrite} onClick={() => { replacingSprite.current = null; spriteInput.current?.click(); }}>上传差分</Button>
+                <Button disabled={write.busy || !canWrite} onClick={() => homeInput.current?.click()}>{activeOutfit.home ? '替换主页立绘' : '补传主页立绘'}</Button>
               </div>
+              {selectedAsset && <div className="config-grp-fields">
+                <Field label="编辑素材">
+                  <Select aria-label="编辑素材" value={selectedAsset.assetId} onChange={event => setSelectedAssetId(event.target.value)}>
+                    {assets.map(asset => <option key={asset.assetId} value={asset.assetId}>{asset.usage === 'home' ? '立绘' : '差分'} · {asset.displayName}</option>)}
+                  </Select>
+                </Field>
+                <Field label="素材显示名">
+                  <input className="ui-input" aria-label="素材显示名" maxLength={100} disabled={write.busy || !canWrite} value={draft.assetNames[selectedAsset.assetId] ?? selectedAsset.displayName}
+                    onChange={event => setDraft({ ...draft, assetNames: { ...draft.assetNames, [selectedAsset.assetId]: event.target.value } })}/>
+                </Field>
+                <div className="config-sheet-row">{selectedAsset.usage === 'home'
+                  ? <Button data-delete-trigger={selectedAsset.assetId} disabled={write.busy || !canWrite} onClick={() => { deleteTrigger.current = selectedAsset.assetId; setAssetDelete(selectedAsset); setError(''); }}>删除主页立绘</Button>
+                  : <Button disabled={write.busy || !canWrite} onClick={() => { replacingSprite.current = selectedAsset.assetId; spriteInput.current?.click(); }}>替换此差分</Button>}</div>
+              </div>}
               {activeOutfit.sprites.length > 0 && <ul className="config-sprite-list">
                 {activeOutfit.sprites.map(sprite => <li key={sprite.assetId}>
                   <button type="button" className="config-sprite-open" onClick={() => onPreviewAsset?.(sprite.assetId)}>{sprite.displayName}</button>
-                  <button type="button" data-delete-trigger={sprite.assetId} disabled={write.busy || !canWrite || assetLocked(sprite)} onClick={() => { deleteTrigger.current = sprite.assetId; setSpriteDelete(sprite); setError(''); }}>删除</button>
+                  <button type="button" data-delete-trigger={sprite.assetId} disabled={write.busy || !canWrite} onClick={() => { deleteTrigger.current = sprite.assetId; setAssetDelete(sprite); setError(''); }}>删除</button>
                 </li>)}
               </ul>}
             </div>
@@ -640,7 +664,7 @@ export function AppearancePanel({
               <div className="config-danger-row">
                 <Button
                   variant="danger"
-                  disabled={write.busy || !canWrite || items.length <= 1 || presetLocked}
+                  disabled={write.busy || !canWrite || items.length <= 1}
                   aria-describedby={items.length <= 1 ? 'outfit-last' : undefined}
                   data-delete-trigger="outfit"
                   onClick={() => { deleteTrigger.current = 'outfit'; setConfirmDelete(true); setError(''); }}

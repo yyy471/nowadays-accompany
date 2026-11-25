@@ -5,9 +5,21 @@
 import type { MessageView, SceneTaskView, SegmentView } from './api-types';
 import type { PerfRow } from './history';
 import type { PerfScene } from './performance';
+import { replyFormat } from '../../../../backend/src/domain/reply-format';
 
 export interface RowIdRegistry {
   id(anchor: string): number;
+}
+
+/** 同轮共用一个入口。优先看最近成功的图片，没有成图才显示任务状态。 */
+export function sceneForEachReply(scenes: readonly PerfScene[]): Map<string, PerfScene> {
+  const replies = new Map<string, PerfScene>();
+  const priority = { succeeded: 2, generating: 1, failed: 0 };
+  for (const scene of scenes) {
+    const previous = replies.get(scene.messageId);
+    if (!previous || priority[scene.status] >= priority[previous.status]) replies.set(scene.messageId, scene);
+  }
+  return replies;
 }
 
 export function sceneAssetUrl(roleId: string, assetId: string): string {
@@ -55,6 +67,18 @@ export function rowsForMessage(message: MessageView, segments: SegmentView[], id
     }];
   }
   const ordered = [...segments].sort((left, right) => left.ordinal - right.ordinal);
+  // 旧记录可能已把 Markdown 语法拆成台词与动作，直接读取原消息才能还原标点和换行。
+  const wholeSegment = ordered.length === 1 && ordered[0].startOffset === 0 ? ordered[0].text : '';
+  const original = wholeSegment.length > message.content.length ? wholeSegment : message.content;
+  const format = replyFormat(original);
+  if (format) {
+    const last = ordered.at(-1);
+    return [{ id: idFor(`message:${message.messageId}`), messageId: message.messageId,
+      segmentId: last?.segmentId ?? '', ordinal: last?.ordinal ?? 0, role: 'assistant', text: original, format,
+      action: '', actionVisible: false, sprite: last?.spriteAssetId ?? null, outfitId: last?.outfitId,
+      homeAssetId: last?.homeAssetId, status: message.status === 'interrupted' ? 'interrupted' : 'completed',
+      createdAt: parseTime(message.createdAt) }];
+  }
   // 早期保存的消息可能没有句段：保留原文，但不能伪造可供语音或生图使用的句段 ID。
   if (ordered.length === 0 && message.status !== 'generating' && message.content) {
     return [{

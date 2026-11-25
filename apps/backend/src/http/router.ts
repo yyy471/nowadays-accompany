@@ -47,6 +47,10 @@ export class Router {
     const source = pattern
       .split("/")
       .map((segment) => {
+        if (segment.startsWith("*")) {
+          keys.push(segment.slice(1));
+          return "(.+)";
+        }
         if (segment.startsWith(":")) {
           keys.push(segment.slice(1));
           return "([^/]+)";
@@ -77,6 +81,12 @@ export class Router {
         response,
         new HttpError(400, "INVALID_URL", "请求地址格式不正确"),
       );
+      return;
+    }
+    // 资产请求必须按清单中的原路径匹配，避免 URL 规范化先将其改写为其他路由。
+    const rawPath = request.url?.split("?", 1)[0];
+    if (rawPath && /^\/v1\/extensions\/[^/]+\/ui\//.test(rawPath) && rawPath !== url.pathname) {
+      writeError(response, new HttpError(404, "EXTENSION_ASSET_NOT_FOUND", "此扩展资源不可用"));
       return;
     }
     if (request.method === "OPTIONS") {

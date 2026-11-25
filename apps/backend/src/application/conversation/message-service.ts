@@ -7,6 +7,7 @@ import type {
 import type { SceneImageTaskRecord } from "../../domain/scene-image.js";
 import type {
   ListMessagesResult,
+  MessagePageQuery,
   SubmitMessageInput,
   SubmitMessageResult,
 } from "../../storage/role/role-store.js";
@@ -78,6 +79,10 @@ export class MessageService {
         };
       })();
     });
+  }
+
+  records(roleId: string, windowId: string, query: MessagePageQuery): ListMessagesResult {
+    return this.access.withStore(roleId, storage => storage.business.listMessagePage(roleId, windowId, query));
   }
 
   get(

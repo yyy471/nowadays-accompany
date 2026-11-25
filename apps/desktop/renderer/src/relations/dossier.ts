@@ -16,7 +16,7 @@ export interface RelationPending {
 export interface RelationPacket {
   roleId: string;
   displayName: string;
-  /** 只读预置人物介绍（内置角色）；普通角色为空串。 */
+  /** 设置页维护的人物介绍，可为空串。 */
   bioText: string;
   isBuiltin: boolean;
   definitionText: string;

@@ -8,6 +8,19 @@ import {
 import type { MessageSegmentRecord } from "../../src/domain/conversation.js";
 import type { OutfitRecord } from "../../src/domain/appearance.js";
 import { segmentMessage, settledMessageSegments } from "../../src/domain/message-segments.js";
+
+test("结构化回复保留整条原文、缩进与星号，普通动作仍可单独演出", () => {
+  for (const content of [
+    "先看权限。\n\n---\n\n### 管理\n- **查看**角色\n- 创建角色",
+    '{\n  "text": "（不是旁白）",\n  "id": 9007199254740993\n}',
+    "\x60\x60\x60sql\nSELECT * FROM records;\n\x60\x60\x60",
+    "name: Alice\nitems:\n  - tea", "<note>\n（雨）\n</note>",
+  ]) {
+    assert.deepEqual(segmentMessage(content), [{ ordinal: 0, kind: "speech", text: content, startOffset: 0, endOffset: content.length }]);
+    assert.deepEqual(settledMessageSegments(content), []);
+  }
+  assert.deepEqual(segmentMessage("你好。\n*她挥了挥手*").map(segment => segment.kind), ["speech", "narration"]);
+});
 import type { ModelEvent, ModelRequest } from "../../src/domain/model.js";
 import { resolveCredential } from "../../src/model/credentials.js";
 import { ConversationStore } from "../../src/storage/conversation/conversation-store.js";

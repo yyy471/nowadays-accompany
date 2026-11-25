@@ -145,7 +145,7 @@ html[data-theme-transition="relationship-journal"] .exlibris[data-motion="full"]
   .exlibris .bookplate-stage .plate-switch{top:356px;width:211px}
   .exlibris .bookplate-stage:has(.plate-switch) .plate-under{display:none}
 }
-/* 内置角色的官方介绍：只读展示，与可编辑角色卡正文分开（DL-153）。 */
+/* 主角色的人物介绍，与角色卡正文分开展示（DL-153）。 */
 .exlibris .profile-official{margin:0 0 20px;padding:14px 16px;border:1px solid var(--rule);border-left:3px solid var(--entry);border-radius:var(--nd-semantic-radius-action);background:var(--surface)}
 .exlibris .profile-official .eyebrow{display:block;font:10px/18px var(--nd-semantic-font-code);letter-spacing:.08em;color:var(--muted)}
 .exlibris .profile-official p{margin:6px 0 0;font-size:14px;line-height:25px;color:var(--text)}

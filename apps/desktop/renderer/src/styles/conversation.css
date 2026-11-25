@@ -78,7 +78,14 @@
 .dialogue-stage-cue[data-live="cue"] { animation: dialogue-cue-light 1s ease both; }
 .dialogue-scene-dismiss { position: absolute; z-index: 5; left: 10px; bottom: 10px; min-height: 34px; padding: 6px 12px; border: 1px solid var(--dlg-rule); border-radius: var(--nd-semantic-radius-action); background: var(--dlg-paper); color: var(--dlg-ink); font-size: 12px; box-shadow: var(--nd-semantic-shadow-rest); }
 .dialogue-scene-dismiss:hover { background: var(--dlg-selection); }
-.dialogue-stage-note { position: absolute; right: 10px; bottom: 10px; z-index: 5; padding: 5px 9px; border-radius: var(--nd-semantic-radius-action); background: color-mix(in srgb, var(--dlg-paper) 86%, transparent); color: var(--dlg-muted); font-size: 11px; pointer-events: none; backdrop-filter: blur(4px); }
+.dialogue-scene-regenerate { position: absolute; right: 10px; bottom: 10px; z-index: 5; min-height: 34px; padding: 6px 12px; border: 0; border-radius: var(--nd-semantic-radius-action); background: color-mix(in srgb, var(--dlg-paper) 48%, transparent); color: var(--dlg-ink); backdrop-filter: blur(4px); }
+.dialogue-scene-regenerate:hover { background: color-mix(in srgb, var(--dlg-paper) 80%, transparent); }
+.dialogue-document { min-width: 0; max-width: 100%; overflow-x: auto; white-space: normal; }
+pre.dialogue-document, .dialogue-document pre { white-space: pre; overflow: auto; font-family: var(--nd-semantic-font-code); }
+.dialogue-document > :first-child { margin-top: 0; }
+.dialogue-document > :last-child { margin-bottom: 0; }
+.dialogue-document table { border-collapse: collapse; }
+.dialogue-document :is(th, td) { padding: 4px 8px; border: 1px solid var(--dlg-rule); }
 .dialogue-stage-arriving { position: absolute; left: 50%; bottom: 24px; translate: -50% 0; z-index: 2; display: inline-flex; align-items: center; gap: 10px; max-width: calc(100% - 32px); padding: 9px 16px; border: 1px solid var(--dlg-rule); border-radius: var(--nd-semantic-radius-field); background: color-mix(in srgb, var(--dlg-paper) 88%, transparent); color: var(--dlg-ink); font-size: 13px; line-height: 20px; box-shadow: var(--nd-semantic-shadow-rest); backdrop-filter: blur(6px); pointer-events: none; animation: dialogue-date-notice var(--nd-semantic-motion-linger) var(--nd-semantic-motion-ease-out) both; }
 
 /* ---------- Conversation pane ---------- */
@@ -361,7 +368,7 @@
   .dialogue-snippet-line:not(.main) { display: none; }
 }
 @media (hover: none) {
-  .dialogue-stage-note { right: 10px; bottom: 42px; }
+  .dialogue-scene-regenerate { right: 10px; bottom: 42px; }
 }
 
 /* ---------- 换光：舞台光线先走，纸面再逐行推进 ---------- */

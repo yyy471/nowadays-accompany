@@ -1,4 +1,5 @@
 /** 角色回复的自然句段：文字先独立可读，表情与语音按段关联。 */
+import { replyFormat } from "./reply-format.js";
 export type MessageSegmentKind = "speech" | "narration";
 
 export interface MessageSegmentDraft {
@@ -47,6 +48,7 @@ interface CollectedPiece extends TextPiece {
  * 片段范围始终满足 content.slice(startOffset, endOffset) === text。
  */
 export function segmentMessage(content: string): MessageSegmentDraft[] {
+  if (replyFormat(content)) return [{ ordinal: 0, kind: "speech", text: content, startOffset: 0, endOffset: content.length }];
   const collected: CollectedPiece[] = [];
   let spanIndex = 0;
   for (const line of splitLines(content)) {
@@ -89,6 +91,7 @@ export function segmentMessage(content: string): MessageSegmentDraft[] {
 
 /** 排除仍会被续写、短句合并或未闭合标记改变的尾部。 */
 export function settledMessageSegments(content: string): MessageSegmentDraft[] {
+  if (replyFormat(content)) return [];
   const drafts = segmentMessage(content);
   const lineStart = Math.max(content.lastIndexOf("\n"), content.lastIndexOf("\r")) + 1;
   const last = drafts.at(-1);

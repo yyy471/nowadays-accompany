@@ -4,16 +4,17 @@ import { ConfigThemeTransition } from '../ui/config-theme-transition';
 import { useThemePreset } from '../ui/presets';
 import type { RoleListItem } from '../types';
 import {
-  loadFeed, loadUpcoming, messageKey,
+  loadFeed, loadUpcoming, loadTranscript, messageKey, type Exchange, type ExchangeTurn,
   type Activity, type FeedData, type MemoryBatch, type RoleActivity, type SharedMessage, type Task, type Wake,
 } from '../feed/data';
 
-type FeedType = 'share' | 'activity' | 'wake' | 'system';
+type FeedType = 'exchange' | 'share' | 'activity' | 'wake' | 'system';
 type FeedEvent = {
   id: string;
   roleId: string;
   at: string;
   type: FeedType;
+  exchange?: Exchange;
   wake?: Wake;
   activity?: Activity;
   batch?: MemoryBatch;
@@ -25,11 +26,13 @@ type Status = { status: DotStatus; label: string; bare?: boolean; faint?: boolea
 type ChatTarget = { roleId: string; windowId: string; messageId?: string; eventId: string };
 
 const types: Array<[FeedType | 'all', string]> = [
-  ['all', '全部'], ['share', '分享'], ['activity', '活动'], ['wake', '安排'], ['system', '系统'],
+  ['all', '全部'], ['exchange', '往来'], ['share', '分享'], ['activity', '活动'], ['wake', '安排'], ['system', '系统'],
 ];
 const ranges: Array<[Range, string]> = [['today', '今天'], ['week', '7 天'], ['all', '全部']];
-const labels: Record<FeedType, string> = { share: '分享', activity: '活动', wake: '安排', system: '系统' };
+const labels: Record<FeedType, string> = { exchange: '往来', share: '分享', activity: '活动', wake: '安排', system: '系统' };
 const errorDescriptions: Record<string, string> = {
+  ROLE_STOPPED: '角色已停止活动',
+  ROLE_EXCHANGE_NO_REPLY: '角色结束了本次活动，未发送下一轮发言',
   EXECUTION_FAILED: '执行没有完成',
   MEMORY_MODEL_FAILED: '整理用的模型没有返回结果',
   MEMORY_CAPACITY_EXCEEDED: '这一批太长，只整理了一部分',
@@ -84,6 +87,10 @@ function useFeedRead<T>(roles: RoleListItem[], loader: (roles: RoleListItem[], s
 
 function eventList(data: FeedData): FeedEvent[] {
   const events: FeedEvent[] = [
+    ...data.exchanges.map(exchange => ({
+      id: JSON.stringify(['exchange', exchange.sessionId]), roleId: exchange.initiatorRoleId,
+      at: exchange.startedAt, type: 'exchange' as const, exchange,
+    })),
     ...data.wakes.map(wake => ({
       id: JSON.stringify([wake.roleId, 'wake', wake.wakeId]), roleId: wake.roleId,
       at: wake.createdAt, type: wake.kind === 'budget_resume' ? 'system' as const : 'wake' as const, wake,
@@ -207,7 +214,30 @@ function Intent({ children }: { children: ReactNode }) {
   </div>;
 }
 
+function ExchangeTranscript({ exchange }: { exchange: Exchange }) {
+  const [turns, setTurns] = useState<ExchangeTurn[] | null>(null);
+  const [error, setError] = useState('');
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    const controller = new AbortController();
+    setError('');
+    void loadTranscript(exchange.sessionId, controller.signal).then(detail => {
+      if (!controller.signal.aborted) setTurns(detail.turns);
+    }).catch(reason => {
+      if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : String(reason));
+    });
+    return () => controller.abort();
+  }, [exchange.sessionId, exchange.turnCount, retry]);
+  if (error) return <p role="alert">{error} <Button size="sm" onClick={() => setRetry(n => n + 1)}>重试</Button></p>;
+  if (!turns) return <p role="status">正在读取聊天记录…</p>;
+  return <ol className="feed-transcript" aria-label="完整聊天记录">{turns.map(turn => <li key={turn.exchangeId}>
+    <strong>{turn.speakerName}</strong> · <time dateTime={turn.createdAt}>{dateTime(turn.createdAt)}</time>
+    <p className="feed-letter-text">{turn.content}</p>
+  </li>)}</ol>;
+}
+
 function EventContent({ event, message, task }: { event: FeedEvent; message?: SharedMessage; task?: Task }) {
+  if (event.exchange) return <p>{event.exchange.topic} · {event.exchange.turnCount} 轮</p>;
   if (message) return <p className="feed-letter-text">{message.content}</p>;
   if (event.type === 'share') return <p className="feed-muted">分享原文不可用</p>;
   if (event.activity) {
@@ -353,7 +383,7 @@ export function FeedPage({ active, roles, rolesLoading, roleError, onRetryRoles,
   }, [active]);
   const events = useMemo(() => feed.data ? eventList(feed.data) : [], [feed.data]);
   const selected = useMemo(() => {
-    if (!selectedSnapshot || !roles.some(role => role.roleId === selectedSnapshot.roleId)) return null;
+    if (!selectedSnapshot || (!selectedSnapshot.exchange && !roles.some(role => role.roleId === selectedSnapshot.roleId))) return null;
     if (selectedSnapshot.wake && upcoming.data && upcoming.readStarted >= feed.readStarted) {
       const wake = upcoming.data.wakes.find(item => item.roleId === selectedSnapshot.roleId && item.wakeId === selectedSnapshot.wake?.wakeId);
       return wake ? { ...selectedSnapshot, wake, type: wake.kind === 'budget_resume' ? 'system' as const : 'wake' as const } : null;
@@ -366,7 +396,7 @@ export function FeedPage({ active, roles, rolesLoading, roleError, onRetryRoles,
       setAnnouncement('这条记录已不可用');
     }
   }, [sheetOpen, selectedSnapshot, selected]);
-  const filtered = events.filter(event => (displayedFilter.roleId === 'all' || event.roleId === displayedFilter.roleId) && (displayedFilter.type === 'all' || event.type === displayedFilter.type)
+  const filtered = events.filter(event => (displayedFilter.roleId === 'all' || event.roleId === displayedFilter.roleId || event.exchange?.targetRoleId === displayedFilter.roleId) && (displayedFilter.type === 'all' || event.type === displayedFilter.type)
     && (displayedFilter.range === 'all' || (displayedFilter.range === 'today' ? dateKey(event.at) === dateKey(new Date(now)) : now - Date.parse(event.at) <= 7 * 86400000)));
   const pending = (upcoming.data?.wakes ?? []).filter(wake => wake.status === 'pending' && (displayedFilter.roleId === 'all' || wake.roleId === displayedFilter.roleId))
     .sort((a, b) => Date.parse(a.scheduledAt) - Date.parse(b.scheduledAt));
@@ -461,7 +491,11 @@ export function FeedPage({ active, roles, rolesLoading, roleError, onRetryRoles,
   const detailRows: Array<[string, ReactNode]> = [];
   if (selected) {
     const status = showStatus(selected);
-    if (selected.activity) {
+    if (selected.exchange) {
+      const exchange = selected.exchange;
+      detailRows.push(['话题', exchange.topic], ['状态', {active: '进行中', completed: '已结束', failed: '未完成', cancelled: '已取消'}[exchange.status]]);
+      if (exchange.reason) detailRows.push(['原因', errorDescriptions[exchange.reason] || exchange.reason]);
+    } else if (selected.activity) {
       const activity = selected.activity;
       const task = taskFor(selected.roleId, activity.taskId);
       const wake = wakeFor(selected.roleId, activity.wakeId);
@@ -571,14 +605,14 @@ export function FeedPage({ active, roles, rolesLoading, roleError, onRetryRoles,
                 }}>
                 <div className="feed-slip-main">
                   <div className="feed-event-title">
-                    <strong>{role?.displayName || '角色'}</strong><span>· {labels[event.type]}</span>
+                    <strong>{event.exchange ? `${event.exchange.initiatorName} 与 ${event.exchange.targetName} 进行了对话` : role?.displayName || '角色'}</strong><span>· {labels[event.type]}</span>
                     {isNew && <span className="feed-new" data-fading={fading.has(event.id) || undefined}>新</span>}
                   </div>
                   <EventContent event={event} message={message} task={task}/>
                 </div>
                 <div className="feed-event-end">
                   {event.type !== 'share' && status && <StatusView value={status}/>}
-                  <Button className="feed-detail" size="sm" aria-label={`${role?.displayName || '角色'}的${labels[event.type]}详情`}
+                  <Button className="feed-detail" size="sm" aria-label={event.exchange ? `查看「${event.exchange.topic}」的完整聊天记录` : `${role?.displayName || '角色'}的${labels[event.type]}详情`}
                     onClick={click => open(event, click.currentTarget)}>详情</Button>
                 </div>
                 {activity && (event.type === 'share' || status?.label === '等你回复') && <div className="feed-letter-actions">
@@ -593,7 +627,7 @@ export function FeedPage({ active, roles, rolesLoading, roleError, onRetryRoles,
       </section>
       <aside className="feed-next"><h2>接下来</h2><div ref={nextRef}>{nextContent}</div></aside>
     </div>
-    <Modal open={sheetOpen} title={selected ? `${labels[selected.type]} · ${roleFor(selected.roleId)?.displayName || '角色'}` : '详情'}
+    <Modal open={sheetOpen} title={selected ? `${labels[selected.type]} · ${selected.exchange ? selected.exchange.initiatorName + ' 与 ' + selected.exchange.targetName : roleFor(selected.roleId)?.displayName || '角色'}` : '详情'}
       description={selected ? dateTime(selected.at) : undefined} source={source} className="feed-dialog"
       backdropClassName="feed-dialog-backdrop" onClose={() => setSheetOpen(false)} onExited={() => {
         if (!pendingChat.current) {
@@ -609,6 +643,7 @@ export function FeedPage({ active, roles, rolesLoading, roleError, onRetryRoles,
       <dl className="feed-detail-grid">
         {detailRows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
       </dl>
+      {sheetOpen && selected?.exchange && <ExchangeTranscript key={selected.exchange.sessionId} exchange={selected.exchange}/>}
       {selected?.activity && (selected.type === 'share' || showStatus(selected)?.label === '等你回复') && <div className="feed-dialog-actions">
         <Button variant="primary" size="sm" disabled={selected.type === 'share' && !chatTarget(selected)} onClick={() => goChat(selected, true)}>打开对话</Button>
       </div>}

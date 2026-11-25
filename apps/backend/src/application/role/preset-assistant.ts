@@ -1,22 +1,23 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { rolePaths, type RolePaths } from "../../bootstrap/config.js";
+import { XIA_CHENG_BUILTIN_KEY } from "../../domain/admin-seat.js";
+import type { RolePaths } from "../../bootstrap/config.js";
 import type { OutfitAssetRecord, OutfitRecord } from "../../domain/appearance.js";
 import type { AppStore, RoleIndexRecord } from "../../storage/core/app-store.js";
 import {
   AppearanceStore,
   type NewAssetInput,
 } from "../../storage/media/appearance-store.js";
-import { RoleStorage } from "../../storage/core/role-storage.js";
+import type { RoleStorage } from "../../storage/core/role-storage.js";
 import { detectImageFormat } from "../media/image-inspect.js";
 import type { RoleService } from "./role-service.js";
 
-export const XIA_CHENG_BUILTIN_KEY = "xiacheng";
+export { XIA_CHENG_BUILTIN_KEY };
 export const XIA_CHENG_DISPLAY_NAME = "夏澄";
 
 export const XIA_CHENG_BIO_TEXT =
-  "夏澄是 Nowadays 的系统预置默认助手，既能在日常对话中陪伴交流，也能在你开启授权后协助调用工具与技能处理多步骤事务或整理其他角色配置。你可以自由调整她的人设语气；预置身份与官方服饰保持不变，也可继续追加自定义服饰。";
+  "夏澄是 Nowadays 的系统预置默认助手，既能在日常对话中陪伴交流，也能在你启用相应工具后协助调用工具与技能处理多步骤事务或整理其他角色配置。";
 
 export const XIA_CHENG_DEFAULT_DEFINITION_TEXT = [
   "你是夏澄，清醒温和、条理分明。",
@@ -26,7 +27,6 @@ export const XIA_CHENG_DEFAULT_DEFINITION_TEXT = [
 export interface EnsurePresetAssistantDeps {
   appStore: AppStore;
   roleService: RoleService;
-  dataRoot: string;
   presetAssetsDir: string;
   now?: () => Date;
 }
@@ -39,56 +39,35 @@ interface PresetOutfitSource {
   sprites: Array<{ fileName: string; displayName: string; data: Buffer }>;
 }
 
-/**
- * 启动预置系统默认助手「夏澄」（DL-147 / DL-153）。
- *
- * 1. 按唯一索引 `builtin_key = 'xiacheng'` 查找，不覆盖已有同名为「夏澄」的普通角色；
- * 2. 缺失时复用四步初始化生成新实例（初始活动态 `stopped`）；若半途失败则续跑 `initializeRole`；
- * 3. 已存在且已就绪时保留用户修订过的设定正文、状态、模型/工具绑定与自定义服饰；
- * 4. 从 `presetAssetsDir/xiacheng/outfits/` 同步预置服饰与差分（无图时保持无图空态，放图重启后自动载入并设默认穿着）。
- */
-export function ensurePresetAssistant(
-  deps: EnsurePresetAssistantDeps,
-): RoleIndexRecord {
-  const nowFn = deps.now ?? (() => new Date());
+/** 首次初始化及失败恢复时播种，就绪后完全保留用户维护的外壳。 */
+export function ensurePresetAssistant(deps: EnsurePresetAssistantDeps): RoleIndexRecord {
   let index = deps.appStore.getRoleIndexByBuiltinKey(XIA_CHENG_BUILTIN_KEY);
+  if (index?.initStatus === "ready") return index;
   if (index === null) {
-    const created = deps.roleService.createRole(
-      {
+    const roleId = randomUUID();
+    index = deps.appStore.createRoleIndex({
+      roleId,
+      relativeDir: `roles/${roleId}`,
+      initPayload: {
+        builtinKey: XIA_CHENG_BUILTIN_KEY,
         displayName: XIA_CHENG_DISPLAY_NAME,
-        definition: { text: XIA_CHENG_DEFAULT_DEFINITION_TEXT },
+        bioText: XIA_CHENG_BIO_TEXT,
+        definition: { text: XIA_CHENG_DEFAULT_DEFINITION_TEXT, payload: {} },
         state: {},
       },
-      {
-        builtinKey: XIA_CHENG_BUILTIN_KEY,
-        bioText: XIA_CHENG_BIO_TEXT,
-      },
-    );
-    index = deps.appStore.getRoleIndex(created.roleId)!;
-  } else if (index.initStatus !== "ready") {
-    deps.roleService.initializeRole(index.roleId);
-    index = deps.appStore.getRoleIndex(index.roleId)!;
+    });
   }
-
-  const paths = rolePaths(deps.dataRoot, index.roleId);
-  const storage = RoleStorage.openExisting(paths);
-  try {
+  const { roleId } = index;
+  deps.roleService.initializeRole(roleId, (storage) => {
     storage.business.syncBuiltinRoleIdentity({
-      roleId: index.roleId,
-      builtinKey: XIA_CHENG_BUILTIN_KEY,
-      bioText: XIA_CHENG_BIO_TEXT,
+      roleId, builtinKey: XIA_CHENG_BUILTIN_KEY, bioText: XIA_CHENG_BIO_TEXT,
     });
     syncPresetOutfits({
-      roleId: index.roleId,
-      storage,
-      paths,
-      presetAssetsDir: deps.presetAssetsDir,
-      now: nowFn().toISOString(),
+      roleId, storage, paths: storage.paths, presetAssetsDir: deps.presetAssetsDir,
+      now: (deps.now?.() ?? new Date()).toISOString(),
     });
-  } finally {
-    storage.close();
-  }
-  return deps.appStore.getRoleIndex(index.roleId)!;
+  });
+  return deps.appStore.getRoleIndex(roleId)!;
 }
 
 function syncPresetOutfits(input: {

@@ -1,4 +1,5 @@
 import type http from "node:http";
+import { ExtensionHost } from "../application/extensions/extension-host.js";
 import {
   ConversationService,
   type ChatModelPortFactory,
@@ -46,6 +47,8 @@ import { checkAppDatabaseFiles, lockInstallation } from "../storage/core/install
 import { recoverRoleTransfer } from "../application/transfer/role-transfer-publication.js";
 
 export interface BackendAppOptions {
+  extensionTimeouts?: { initMs: number; callMs: number };
+  batchDelayMs?: number;
   now?: () => Date;
   timeZone?: string;
   typingMs?: number;
@@ -262,7 +265,9 @@ function assembleBackendApp(
         },
       );
   // 管理工具需要反向引用对话服务（任务查询与记忆触发），构造完成后再补上。
+  const extensions = new ExtensionHost(config.appRoot, options.extensionTimeouts);
   const adminServices: AdminToolServices = {
+    extensions,
     roles: roleService,
     activity,
     messages: messageService,
@@ -286,6 +291,7 @@ function assembleBackendApp(
       credentialResolver: credentials,
       ...(options.timeZone === undefined ? {} : { timeZone: options.timeZone }),
       ...(options.typingMs === undefined ? {} : { typingMs: options.typingMs }),
+      ...(options.batchDelayMs === undefined ? {} : { batchDelayMs: options.batchDelayMs }),
       ...(options.autoRecallLimit === undefined
         ? {}
         : { autoRecallLimit: options.autoRecallLimit }),
@@ -358,6 +364,7 @@ function assembleBackendApp(
       conversation.isRunning(roleId) ||
       (memoryRuntime?.isBusy(roleId) ?? false),
     // 恢复后把停止时暂停的原任务链与到期待办接回调度（RA-R02）。
+    stopExchanges: (roleId) => conversation.exchanges.stop(roleId),
     resumeWork: (roleId) => conversation.rescheduleAfterStop(roleId),
   });
   memoryRuntime?.recoverOnStartup();
@@ -497,18 +504,20 @@ function assembleBackendApp(
     roleDeletion,
     mediaMaintenance,
     tokenUsage,
+    extensions,
   };
   if (options.disablePresetAssistant !== true) {
     ensurePresetAssistant({
       appStore,
       roleService,
-      dataRoot: config.dataRoot,
       presetAssetsDir: config.presetAssetsDir,
       now,
     });
   }
+  conversation.batchDelivery.recover();
   const server = createHttpServer({ version: "0.1.0", services });
 
+  extensions.restore();
   let closing: Promise<void> | undefined;
   return {
     config,
@@ -524,7 +533,10 @@ function assembleBackendApp(
           try { await conversation.close(); }
           finally {
             try { await sceneImages.close(); }
-            finally { appStore.close(); }
+            finally {
+              try { await extensions.close(); }
+              finally { appStore.close(); }
+            }
           }
         }
       })();

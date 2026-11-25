@@ -138,6 +138,7 @@ export class RoleActivityService {
       return { activity: this.view(roleId), confirmed: true };
     }
     this.store.requestStop(roleId, this.iso());
+    if (this.appStore.getRoleIndex(roleId)?.initStatus === "ready") this.runtime?.stopExchanges?.(roleId);
     if (this.runtime?.isRunning(roleId) === true) {
       return { activity: this.view(roleId), confirmed: false };
     }

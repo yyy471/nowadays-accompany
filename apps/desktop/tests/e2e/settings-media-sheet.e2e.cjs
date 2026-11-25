@@ -32,8 +32,10 @@ const bindings = {
   b: [{ capability: 'chat_model', resourceId: 'm1', modelName: 'deepseek-chat', enabled: true }],
 };
 let voiceProbeCount = 0;
+let scenarioRoute;
 const server = http.createServer((req, res) => {
   const p = new URL(req.url, 'http://127.0.0.1').pathname;
+  if (scenarioRoute?.(p, req, res)) return;
   const json = (data, status = 200) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(data)); };
   if (p === '/v1/health') return json({ status: 'ok' });
   // 新建角色纸笺：创建后要能读到新角色，才能验证「纸笺关闭且不残留」。
@@ -184,7 +186,8 @@ async function run(verify) {
   console.log(JSON.stringify({ imageGroup:true, imageDiscard:true, voiceSessionDraft:true, voiceDiscard:true, voiceAnnounce:true, lateProbeIgnored:true }));
 
 }
-function check(verify) {
+function check(verify, route) {
+  scenarioRoute = route;
   return run(verify).catch(error => { console.error(error, errors, logs.slice(-1200)); process.exitCode = 1; }).finally(async () => {
     try { if (ws?.readyState === 1) { ws.send(JSON.stringify({ id: 999999, method: 'Browser.close' })); ws.close(); } } catch {}
     await delay(400); if (proc && proc.exitCode === null) proc.kill(); server.close();

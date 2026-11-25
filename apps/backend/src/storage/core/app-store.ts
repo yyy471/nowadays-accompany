@@ -1,3 +1,4 @@
+import { isAdminSeat } from "../../domain/admin-seat.js";
 import { randomUUID } from "node:crypto";
 import {
   ResourceNotFoundError,
@@ -208,7 +209,7 @@ export class AppStore {
       roleId: input.roleId,
       relativeDir: input.relativeDir,
       builtinKey,
-      isBuiltin: builtinKey !== null,
+      isBuiltin: isAdminSeat(builtinKey),
       initStatus: "initializing",
       initError: null,
       initPayload: input.initPayload,
@@ -480,7 +481,7 @@ function mapRoleIndex(row: RoleIndexRow): RoleIndexRecord {
     roleId: row.role_id,
     relativeDir: row.relative_dir,
     builtinKey: row.builtin_key,
-    isBuiltin: row.builtin_key !== null,
+    isBuiltin: isAdminSeat(row.builtin_key),
     initStatus: row.init_status,
     initError: row.init_error,
     initPayload:

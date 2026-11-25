@@ -12,7 +12,7 @@ import { MemoryStore } from "../memory/memory-store.js";
 import { retireLegacyWebPrefetchEvidence, WEB_READING_SCHEMA_SQL } from "../conversation/web-reading.js";
 
 export const APP_SCHEMA_VERSION = 12;
-export const BUSINESS_SCHEMA_VERSION = 27;
+export const BUSINESS_SCHEMA_VERSION = 29;
 export const EXECUTION_SCHEMA_VERSION = 1;
 
 export const APP_TABLES = [
@@ -81,6 +81,10 @@ export const BUSINESS_TABLES = [
   "web_reading_deliveries",
   "role_worldbooks",
   "worldbook_usage",
+  "role_exchange_sessions",
+  "role_exchange_turns",
+  "observed_dialogue_batches",
+  "observed_dialogue_members",
 ] as const;
 
 const APP_V2_SQL = `
@@ -693,6 +697,10 @@ interface RequiredColumns {
 }
 
 const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
+  { table: "role_exchange_sessions", columns: ["sessionId", "initiatorRoleId", "targetRoleId", "initiatorName", "targetName", "topic", "status", "maxTurns", "turnCount", "startedAt", "endedAt", "reason", "mirrorPending"] },
+  { table: "role_exchange_turns", columns: ["sessionId", "turnIndex", "exchangeId", "speakerRoleId", "speakerName", "content", "createdAt"] },
+  { table: "observed_dialogue_batches", columns: ["batch_id", "role_id", "window_id", "after_seq", "up_to_seq", "message_count", "completed_at", "due_at", "delivered_at"] },
+  { table: "observed_dialogue_members", columns: ["message_id", "batch_id"] },
   { table: "memory_search_documents", columns: ["related_text"] },
   { table: "role_worldbooks", columns: ["role_id", "revision", "books_json"] },
   { table: "worldbook_usage", columns: ["role_id", "execution_id", "model_call_id", "revision", "book_id", "entry_id", "status", "matched_message_ids_json"] },
@@ -2099,6 +2107,53 @@ export function openAppDatabase(dbPath: string): OpenedDatabase {
   );
 }
 
+const BUSINESS_V28_SQL = `
+CREATE TABLE IF NOT EXISTS observed_dialogue_batches (
+  batch_id TEXT PRIMARY KEY,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  window_id TEXT NOT NULL REFERENCES windows(window_id),
+  after_seq INTEGER NOT NULL,
+  up_to_seq INTEGER NOT NULL,
+  message_count INTEGER NOT NULL,
+  completed_at TEXT NOT NULL,
+  due_at TEXT NOT NULL,
+  delivered_at TEXT
+);
+CREATE INDEX IF NOT EXISTS observed_batches_pending ON observed_dialogue_batches(due_at) WHERE delivered_at IS NULL;
+CREATE TABLE IF NOT EXISTS observed_dialogue_members (
+  message_id TEXT PRIMARY KEY REFERENCES messages(message_id),
+  batch_id TEXT NOT NULL REFERENCES observed_dialogue_batches(batch_id)
+);
+CREATE INDEX IF NOT EXISTS observed_members_by_batch ON observed_dialogue_members(batch_id);
+`;
+
+const EXCHANGE_SOURCE_SQL = `
+CREATE TABLE IF NOT EXISTS role_exchange_sessions (
+  sessionId TEXT PRIMARY KEY, initiatorRoleId TEXT NOT NULL, targetRoleId TEXT NOT NULL,
+  initiatorName TEXT NOT NULL, targetName TEXT NOT NULL, topic TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('active','completed','failed','cancelled')),
+  maxTurns INTEGER NOT NULL CHECK(maxTurns BETWEEN 2 AND 12),
+  turnCount INTEGER NOT NULL CHECK(turnCount BETWEEN 1 AND maxTurns),
+  startedAt TEXT NOT NULL, endedAt TEXT, reason TEXT, mirrorPending INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_role_exchange_time ON role_exchange_sessions(startedAt DESC, sessionId DESC);
+CREATE TABLE IF NOT EXISTS role_exchange_turns (
+  sessionId TEXT NOT NULL REFERENCES role_exchange_sessions(sessionId), turnIndex INTEGER NOT NULL,
+  exchangeId TEXT NOT NULL UNIQUE, speakerRoleId TEXT NOT NULL, speakerName TEXT NOT NULL,
+  content TEXT NOT NULL, createdAt TEXT NOT NULL, PRIMARY KEY(sessionId, turnIndex)
+);
+`;
+
+// 保留证据主键及其所有外键引用，只替换带来源枚举约束的一列。
+const BUSINESS_V29_SQL = `DROP INDEX idx_evidence_source;
+    ALTER TABLE evidence_records RENAME COLUMN source_kind TO previous_kind;
+    ALTER TABLE evidence_records ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'message'
+      CHECK(source_kind IN ('message','tool_result','role_exchange'));
+    UPDATE evidence_records SET source_kind = previous_kind;
+    ALTER TABLE evidence_records DROP COLUMN previous_kind;
+    CREATE UNIQUE INDEX idx_evidence_source ON evidence_records(role_id, source_kind, source_id);
+    ${EXCHANGE_SOURCE_SQL}`;
+
 export const BUSINESS_SCHEMA_V22_SQL = BUSINESS_SCHEMA_SQL +
       BUSINESS_V2_SQL +
       BUSINESS_V3_SQL +
@@ -2129,7 +2184,7 @@ export function openBusinessDatabase(
   return openVersionedDatabase(
     dbPath,
     BUSINESS_SCHEMA_VERSION,
-    BUSINESS_SCHEMA_V22_SQL + BUSINESS_V23_SQL + BUSINESS_V24_SQL + BUSINESS_V26_SQL + BUSINESS_V27_SQL,
+    BUSINESS_SCHEMA_V22_SQL + BUSINESS_V23_SQL + BUSINESS_V24_SQL + BUSINESS_V26_SQL + BUSINESS_V27_SQL + BUSINESS_V28_SQL + BUSINESS_V29_SQL,
     {
       1: (db) => {
         db.exec(BUSINESS_V2_SQL);
@@ -2178,6 +2233,8 @@ export function openBusinessDatabase(
       },
       25: (db) => db.exec(BUSINESS_V26_SQL),
       26: (db) => db.exec(BUSINESS_V27_SQL),
+      27: (db) => db.exec(BUSINESS_V28_SQL),
+      28: (db) => db.exec(BUSINESS_V29_SQL),
     },
     BUSINESS_TABLES,
     BUSINESS_INDEXES,

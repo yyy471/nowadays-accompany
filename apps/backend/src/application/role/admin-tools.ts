@@ -1,4 +1,7 @@
 import { AppError } from "../../domain/errors.js";
+import type { ExtensionHost } from "../extensions/extension-host.js";
+import { upsertSchema } from "../extensions/extension-files.js";
+import { z } from "zod";
 import type {
   ConversationTool,
   ConversationToolContext,
@@ -17,7 +20,7 @@ import type { RoleActivityService } from "./role-activity-service.js";
 import type { RoleService } from "./role-service.js";
 
 /**
- * 夏澄内部管理工具（DL-159，方案 A）。
+ * 主角色内部管理工具（DL-159，方案 A）。
  *
  * 只在 `builtin_key = 'xiacheng'` 的预置助手上挂载：直接调用现有应用服务，
  * 不走本地 HTTP 自循环，保留操作来源与任务记录。
@@ -25,10 +28,11 @@ import type { RoleService } from "./role-service.js";
  * 读写边界（方案 A）：
  * - 只读：可查询全部角色、活动三态、任务／用量、记忆、资源与媒体服务；
  * - 写：可管理**其他普通角色**的设定、绑定、额度与启停，以及全局模型／MCP／Skill；
- * - 红线：修改夏澄自身配置、其正在使用的模型连接、以及任何全局语音／生图服务
+ * - 红线：修改主角色自身配置、其正在使用的模型连接、以及任何全局语音／生图服务
  *   一律返回 `409 SELF_MODIFICATION_VIA_SETTINGS_ONLY`，引导用户去设置页。
  */
 export interface AdminToolServices {
+  extensions?: ExtensionHost;
   /** 当前内置助手角色编号；由 loadAgentTools 按实际角色注入。 */
   builtinRoleId?: string;
   roles: RoleService;
@@ -148,7 +152,7 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
     throw error;
   };
 
-  /** 资源被夏澄自身占用（对话／记忆模型或任务续用）时禁止改写或删除。 */
+  /** 资源被主角色自身占用（对话／记忆模型或任务续用）时禁止改写或删除。 */
   const assertResourceNotUsedBySelf = (
     resourceId: string,
     action: string,
@@ -167,7 +171,7 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
 
   /**
    * 全局语音／生图服务的写入要求全员角色停止（GLOBAL_CONFIG_WRITES），
-   * 包含夏澄自己，因此对话内一律拒绝并引导去设置页（DL-159 红线 3）。
+   * 包含主角色自己，因此对话内一律拒绝并引导去设置页（DL-159 红线 3）。
    */
   const assertNotMediaService = (serviceId: string, action: string): void => {
     const voice = voiceServices.findRecord(serviceId);
@@ -204,7 +208,7 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
     ),
     defineTool(
       "app_role_get",
-      "读取单个角色的详细状态：设定正文摘要、只读介绍、活动态、自主额度、最近任务与绑定数量。只读。",
+      "读取单个角色的详细状态：设定正文摘要、人物介绍、活动态、自主额度、最近任务与绑定数量。只读。",
       {
         type: "object",
         properties: { roleId: { type: "string" } },
@@ -261,6 +265,9 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
             enum: ["messages", "tasks", "task", "memories", "diaries", "budget", "wakes"],
           },
           windowId: { type: "string", description: "可选：默认取角色主窗口" },
+          batchId: { type: "string", description: "仅返回该批次实际处理的消息，可用 nextAfter 续页" },
+          afterSeq: { type: "integer", minimum: 0, description: "排除的序号下界，配合 batchId 或 upToSeq" },
+          upToSeq: { type: "integer", minimum: 1, description: "包含的序号上界" },
           taskId: { type: "string", description: "kind=task 时必填" },
           query: { type: "string", description: "kind=memories 的检索词" },
           limit: { type: "integer", minimum: 1, maximum: 100 },
@@ -278,10 +285,26 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
         switch (kind) {
           case "messages": {
             const role = roles.getRole(roleId);
-            const windowId = stringArg(args, "windowId") ?? role.defaultWindowId;
-            const page = messages.list(roleId, windowId, null, limit);
+            const selectedWindow = stringArg(args, "windowId");
+            if (args.windowId !== undefined && !selectedWindow) return badArguments("windowId 需要窗口编号");
+            const windowId = selectedWindow ?? role.defaultWindowId;
+            const batchId = stringArg(args, "batchId");
+            const after = args.afterSeq === undefined ? 0 : args.afterSeq;
+            const upper = args.upToSeq;
+            if ((args.batchId !== undefined && !batchId) ||
+                typeof after !== "number" || !Number.isSafeInteger(after) || after < 0 ||
+                (upper !== undefined && (typeof upper !== "number" || !Number.isSafeInteger(upper) || upper <= after)) ||
+                (args.afterSeq !== undefined && !batchId && upper === undefined)) {
+              return badArguments("查阅批次需要有效的 batchId 或消息序号范围");
+            }
+            const page = messages.records(roleId, windowId, {
+              limit: Math.min(limit, 100), after: batchId || upper !== undefined ? after : null,
+              ...(batchId ? {batchId} : {}), ...(typeof upper === "number" ? {upToSeq: upper} : {}),
+            });
             return {
-              windowId,
+              roleId, roleName: role.displayName, windowId, batchId,
+              consultedAt: input.now().toISOString(),
+              provenance: roleId === builtinRoleId ? "本角色窗口记录" : "查阅其他角色窗口的引述记录",
               items: page.items.map((message) => ({
                 messageId: message.messageId,
                 sender: message.sender,
@@ -327,6 +350,7 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
             return badArguments(`不支持的查询类型 ${kind}`);
         }
       },
+      args => args.kind === "messages" && stringArg(args, "roleId") !== builtinRoleId,
     ),
     defineTool(
       "app_resources_list",
@@ -463,7 +487,7 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
     ),
     defineTool(
       "app_role_activity",
-      "启动或停止指定普通角色（不能操作夏澄自己）。停止会等后端确认停止后再返回。",
+      "启动或停止指定普通角色（不能操作主角色自己）。停止会等后端确认停止后再返回。",
       {
         type: "object",
         properties: {
@@ -638,7 +662,7 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
     ),
     defineTool(
       "app_role_autonomy_set",
-      "设置其他普通角色的自主活动每日额度（或无限）。不能修改夏澄自己的额度。",
+      "设置其他普通角色的自主活动每日额度（或无限）。不能修改主角色自己的额度。",
       {
         type: "object",
         properties: {
@@ -667,7 +691,7 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
   const resourceWriteTools: ConversationTool[] = [
     defineTool(
       "app_resource_create",
-      "新建全局资源：模型／MCP／Skill／语音服务／生图服务。不能修改夏澄正在使用的模型连接。",
+      "新建全局资源：模型／MCP／Skill／语音服务／生图服务。不能修改主角色正在使用的模型连接。",
       {
         type: "object",
         properties: {
@@ -856,7 +880,7 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
     ),
     defineTool(
       "app_resource_delete",
-      "删除全局模型／MCP／Skill。正在被夏澄使用或仍有活跃任务依赖时会被拒绝。",
+      "删除全局模型／MCP／Skill。正在被主角色使用或仍有活跃任务依赖时会被拒绝。",
       {
         type: "object",
         properties: { resourceId: { type: "string" } },
@@ -956,7 +980,24 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
     ),
   ];
 
-  return [...listTools, ...roleWriteTools, ...resourceWriteTools];
+  const host = input.extensions;
+  const extId = { type: "string" };
+  const byId = { type: "object", properties: { extId }, required: ["extId"] };
+  const idOf = (args: Record<string, unknown>) => stringArg(args, "extId") ?? badArguments("请提供扩展编号");
+  const extensionTools = host ? [
+    defineTool("app_extensions_list", "列出热扩展及其版本、工具、UI 声明和最近错误。", { type: "object", properties: {} }, () => host.list()),
+    defineTool("app_extension_get", "读取一个扩展的状态和声明。", byId, args => host.get(idOf(args))),
+    defineTool("app_extension_upsert", "写入完整新版本并热加载。files 为相对路径到源码的映射。入口 export default async (ctx, api) => {}，可相对导入 .mjs。api.tools.register({name,description,inputSchema,scope}, fn) 返回注销函数，scope 为 admin_only 或 all_roles。api.events.on('dialogue_batch' 或 'role_exchange', fn)，api.kv.get/set，api.notify({message,data?})。ctx.effect 管理清理。ui 数组使用 {slot,file}，page/widget/overlay 指定 ui/ 内 HTML，asset 声明引用的静态文件。页面通过 host:theme 接收 preset 与 tokens，ext:ready 请求同步。", z.toJSONSchema(upsertSchema),
+      args => host.upsert(args)),
+    defineTool("app_extension_toggle", "启用、停用或重载扩展。", { ...byId, properties: { extId, action: { enum: ["enable","disable","reload"] } }, required: ["extId","action"] },
+      args => {
+        const action = args.action;
+        if (action !== "enable" && action !== "disable" && action !== "reload") return badArguments("请指定启停或重载操作");
+        return host.toggle(idOf(args), action);
+      }),
+    defineTool("app_extension_delete", "删除扩展的代码与专属存储。", byId, args => host.delete(idOf(args))),
+  ] : [];
+  return [...listTools, ...roleWriteTools, ...resourceWriteTools, ...extensionTools];
 }
 
 function defineTool(
@@ -967,14 +1008,20 @@ function defineTool(
     args: Record<string, unknown>,
     context: ConversationToolContext,
   ) => Promise<unknown> | unknown,
+  recordWhen?: (args: Record<string, unknown>) => boolean,
 ): ConversationTool {
   return {
     name,
     description,
     inputSchema,
-    // 内部管理工具直接调用应用服务，按内部工具保存回执，不走 HTTP 自循环。
+    // 跨角色查阅须进入可回溯的工具证据表，其余管理操作沿用内部步骤回执。
+    ...(recordWhen ? { recorded: recordWhen } : {}),
     source: "admin",
     async execute(args, context): Promise<ConversationToolOutcome> {
+      if (recordWhen?.(args)) {
+        context.checkDispatch?.();
+        context.onDispatch?.();
+      }
       try {
         const result = await handler(args, context);
         return { status: "success", rawResponse: result, adaptedResult: result };

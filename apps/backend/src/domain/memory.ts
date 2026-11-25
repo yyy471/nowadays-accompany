@@ -10,7 +10,7 @@ export const memoryTriggerKindSchema = z.enum([
 ]);
 export type MemoryTriggerKind = z.infer<typeof memoryTriggerKindSchema>;
 
-export const memorySourceKindSchema = z.enum(["message", "tool_result"]);
+export const memorySourceKindSchema = z.enum(["message", "tool_result", "role_exchange"]);
 export type MemorySourceKind = z.infer<typeof memorySourceKindSchema>;
 
 const tagValuesSchema = z.object({

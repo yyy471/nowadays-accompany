@@ -1,0 +1,136 @@
+{
+  "1": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "moss_image_sft_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    },
+    "_meta": { "title": "MOSS-Image UNET Loader" }
+  },
+  "2": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3.5_9b_w4a8_gptq.safetensors",
+      "type": "moss_image",
+      "device": "default"
+    },
+    "_meta": { "title": "MOSS-Image CLIP Loader" }
+  },
+  "3": {
+    "class_type": "VAELoader",
+    "inputs": { "vae_name": "flux2-vae_small.safetensors" },
+    "_meta": { "title": "MOSS-Image VAE Loader" }
+  },
+  "4": {
+    "class_type": "CLIPTextEncode",
+    "inputs": { "text": "", "clip": ["2", 0] },
+    "_meta": { "title": "正向提示词" }
+  },
+  "5": {
+    "class_type": "CLIPTextEncode",
+    "inputs": { "text": "", "clip": ["2", 0] },
+    "_meta": { "title": "负向提示词" }
+  },
+  "6": {
+    "class_type": "LoadImage",
+    "inputs": { "image": "nowadays/placeholder.png" },
+    "_meta": { "title": "角色锚点参考图（服饰参考图）" }
+  },
+  "7": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": ["6", 0],
+      "upscale_method": "lanczos",
+      "width": 1024,
+      "height": 1536,
+      "crop": "disabled"
+    },
+    "_meta": { "title": "参考图缩放到出图尺寸" }
+  },
+  "8": {
+    "class_type": "VAEEncode",
+    "inputs": { "pixels": ["7", 0], "vae": ["3", 0] },
+    "_meta": { "title": "参考图编码为起手潜空间" }
+  },
+  "9": {
+    "class_type": "SpectrumMOSSImageManual",
+    "inputs": {
+      "model": ["1", 0],
+      "warmup_steps": 8,
+      "tail_actual_steps": 1,
+      "window_size": 2,
+      "flex_window": 0.75,
+      "max_consecutive_forecasts": 2,
+      "history_points": 8,
+      "chebyshev_degree": 4,
+      "ridge_lambda": 0.1,
+      "blend_weight": 0.5,
+      "cache_device": "main_device",
+      "force_actual_on_control": true,
+      "debug": false,
+      "warn_unverified_sampler": true
+    }
+  },
+  "10": {
+    "class_type": "SkipLayerGuidanceDiTSimple",
+    "inputs": {
+      "model": ["9", 0],
+      "double_layers": "",
+      "single_layers": "22",
+      "start_percent": 0,
+      "end_percent": 1
+    }
+  },
+  "11": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["10", 0],
+      "positive": ["4", 0],
+      "negative": ["5", 0],
+      "latent_image": ["8", 0],
+      "seed": 42,
+      "steps": 25,
+      "cfg": 2.5,
+      "sampler_name": "er_sde",
+      "scheduler": "simple",
+      "denoise": 0.55
+    }
+  },
+  "12": {
+    "class_type": "VAEDecode",
+    "inputs": { "samples": ["11", 0], "vae": ["3", 0] }
+  },
+  "13": {
+    "class_type": "SaveImage",
+    "inputs": { "images": ["12", 0], "filename_prefix": "nowadays_i2i" },
+    "_meta": { "title": "人物全景输出（含参考图分支）" }
+  },
+  "14": {
+    "class_type": "EmptyFlux2LatentImage",
+    "inputs": { "width": 1024, "height": 1536, "batch_size": 1 }
+  },
+  "15": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["10", 0],
+      "positive": ["4", 0],
+      "negative": ["5", 0],
+      "latent_image": ["14", 0],
+      "seed": 42,
+      "steps": 25,
+      "cfg": 2.5,
+      "sampler_name": "er_sde",
+      "scheduler": "simple",
+      "denoise": 1
+    }
+  },
+  "16": {
+    "class_type": "VAEDecode",
+    "inputs": { "samples": ["15", 0], "vae": ["3", 0] }
+  },
+  "17": {
+    "class_type": "SaveImage",
+    "inputs": { "images": ["16", 0], "filename_prefix": "nowadays_bg" },
+    "_meta": { "title": "纯背景输出（不读取参考图）" }
+  }
+}

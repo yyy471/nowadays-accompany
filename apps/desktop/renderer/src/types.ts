@@ -7,10 +7,10 @@ export interface RoleListItem {
   status: string;
   initError: string | null;
   defaultWindowId?: string | null;
-  /** 后端标记的内置角色（夏澄）；普通角色为 false。 */
+  /** 后端标记的主角色席位；普通角色为 false。 */
   isBuiltin?: boolean;
   builtinKey?: string | null;
-  /** 只读预置人物介绍；与可编辑的角色卡正文分开保存。 */
+  /** 人物介绍；与可编辑的角色卡正文分开保存。 */
   bio?: string;
 }
 export interface RoleDetail {

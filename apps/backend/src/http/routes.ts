@@ -88,6 +88,7 @@ import { putWorldbooksSchema } from "../domain/worldbook.js";
 import type { MediaMaintenance } from '../application/media/media-maintenance.js';
 
 export interface ApiServices {
+  extensions: import("../application/extensions/extension-host.js").ExtensionHost;
   roles: RoleService;
   messages: MessageService;
   resources: ResourceService;
@@ -126,6 +127,49 @@ export function registerApiRoutes(
     return handler;
   });
   registerRoleActivityRoutes(router, activity);
+  router.add("GET", "/v1/extension-events", ({ response }) => {
+    response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store",
+      "access-control-allow-origin": "desk://bundle" });
+    const unsubscribe = services.extensions.subscribeUi((event, data) => {
+      response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    });
+    response.once("close", unsubscribe);
+    return undefined;
+  });
+  router.add("GET", "/v1/extensions/:extId/ui/*asset", ({ params, url, response }) => {
+    const file = "ui/" + params.asset;
+    const body = services.extensions.uiAsset(params.extId ?? "", file, url.searchParams.get("v"));
+    const types: Record<string, string> = { html: "text/html; charset=utf-8", htm: "text/html; charset=utf-8",
+      css: "text/css; charset=utf-8", js: "text/javascript; charset=utf-8", txt: "text/plain; charset=utf-8",
+      svg: "image/svg+xml", json: "application/json", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
+      webp: "image/webp", gif: "image/gif" };
+    // 直接打开 HTTP 出口时保持无脚本沙箱，桌面协议自行签发独立 CSP。
+    response.setHeader("content-security-policy", "sandbox; default-src 'none'");
+    response.setHeader("x-content-type-options", "nosniff");
+    return { status: 200, contentType: types[file.split(".").pop()!.toLowerCase()] ?? "application/octet-stream", body };
+  });
+  router.add("GET", "/v1/extensions", () => ({ status: 200, body: { items: services.extensions.list() } }));
+  router.add("GET", "/v1/extensions/:extId", ({ params }) => ({ status: 200, body: services.extensions.get(params.extId ?? "") }));
+  for (const action of ["enable", "disable", "reload"] as const) {
+    router.add("POST", `/v1/extensions/:extId/${action}`, async ({ params }) =>
+      ({ status: 200, body: await services.extensions.toggle(params.extId ?? "", action) }));
+  }
+  router.add("DELETE", "/v1/extensions/:extId", async ({ params }) =>
+    ({ status: 200, body: await services.extensions.delete(params.extId ?? "") }));
+  router.add("GET", "/v1/role-exchanges", ({ url }) => {
+    const date = (name: string) => {
+      const raw = url.searchParams.get(name);
+      if (raw === null) return null;
+      if (!Number.isFinite(Date.parse(raw))) throw new HttpError(400, "INVALID_QUERY", "时间格式无效");
+      return new Date(raw).toISOString();
+    };
+    const items = services.conversation.exchanges.list(queryInt(url, "limit", { min: 1, max: 500, defaultValue: 100 }),
+      queryInt(url, "offset", { min: 0, max: Number.MAX_SAFE_INTEGER, defaultValue: 0 }), date("from"), date("to"));
+    return { status: 200, body: { items } };
+  });
+  router.add("GET", "/v1/role-exchanges/:sessionId", ({ params }) => ({
+    status: 200, body: services.conversation.exchanges.detail(params.sessionId ?? ""),
+  }));
   router.add("GET", "/v1/roles/:roleId/worldbooks", ({ params }) => ({
     status: 200, body: services.roles.getWorldbooks(params.roleId ?? ""),
   }));
@@ -415,6 +459,14 @@ export function registerApiRoutes(
       };
     },
   );
+
+  router.add("GET", "/v1/roles/:roleId/share-events", async ({ request, response, params, url }) => {
+    const seat = services.roles.getRole(params.roleId ?? "");
+    if (!seat.isBuiltin) throw new HttpError(404, "ADMIN_SEAT_REQUIRED", "分享通知仅来自主角色席位");
+    await services.conversation.streamEvents({roleId: seat.roleId, windowId: seat.defaultWindowId,
+      after: parseSseCursor(request, url), clientId: null, sharesOnly: true, request, response});
+    return undefined;
+  });
 
   router.add(
     "GET",

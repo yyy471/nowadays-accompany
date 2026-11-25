@@ -17,11 +17,12 @@ import type {
   SkillBrief,
 } from "../../domain/conversation.js";
 import { MemoryQueryService } from "../memory/memory-query-service.js";
+import type { RoleExchangeService } from "./role-exchanges.js";
 import type { AutonomyService } from "./autonomy-service.js";
 import { McpToolClient, type McpToolInfo } from "../../mcp/client.js";
 import { SkillLibrary } from "../../skills/skill-library.js";
 import { createAdminTools, type AdminToolServices } from "../role/admin-tools.js";
-import { XIA_CHENG_BUILTIN_KEY } from "../role/preset-assistant.js";
+import { isAdminSeat } from "../../domain/admin-seat.js";
 import type { AppStore } from "../../storage/core/app-store.js";
 import { AppearanceStore } from "../../storage/media/appearance-store.js";
 import type { RoleAccess } from "../role/role-access.js";
@@ -37,6 +38,8 @@ export interface AgentToolCatalog {
 }
 
 export interface LoadAgentToolsInput {
+  exchanges?: RoleExchangeService;
+  exchangeTurn?: { sessionId: string; after: number } | null;
   roleId: string;
   appStore: AppStore;
   roleAccess: RoleAccess;
@@ -77,18 +80,49 @@ export async function loadAgentTools(
     taskFinishTool(input.roleId, input.roleAccess),
     toolReconcileTool(input.roleId, input.roleAccess),
   ];
+  const exchanges = input.exchanges;
+  const bound = input.exchangeTurn;
+  if (exchanges && bound) {
+    const reply: ConversationTool = {
+      name: "role_chat_reply", source: "autonomy", description: "向本次角色间会话发送一轮发言，可同时结束对话。",
+      inputSchema: { type: "object", properties: { content: { type: "string" }, endConversation: { type: "boolean" } }, required: ["content"] },
+      execute: (args, context) => runTool(async () => {
+        context.checkDispatch?.();
+        if (typeof args.content !== "string" || (args.endConversation !== undefined && typeof args.endConversation !== "boolean"))
+          return failedOutcome("INVALID_TOOL_ARGUMENTS", "请提供发言和可选的结束标记");
+        const result = exchanges.reply(input.roleId, bound.sessionId, bound.after, args.content, args.endConversation === true);
+        return { status: "success", adaptedResult: result };
+      }),
+    };
+    return { tools: [reply, memorySearchTool(input.roleId, input.memory), memoryEventTool(input.roleId, input.memory), memoryEvidenceTool(input.roleId, input.memory)], skillBriefs: [], warnings: [], close: async () => {} };
+  }
+  let adminSeat = false;
+  const extensions = input.admin?.extensions;
   if (input.admin !== undefined && input.admin !== null) {
     let builtinKey: string | null = null;
     try {
       const role = input.roleAccess.withStore(input.roleId, (storage) =>
         storage.business.getRole(input.roleId),
       );
-      builtinKey = role.isBuiltin ? role.builtinKey : null;
+      builtinKey = role.builtinKey;
     } catch {
       // 角色档案读不到时不挂载管理工具，交由后续正常错误路径处理。
       builtinKey = null;
     }
-    if (builtinKey === XIA_CHENG_BUILTIN_KEY) {
+    adminSeat = isAdminSeat(builtinKey);
+    if (adminSeat) {
+      if (exchanges) tools.push({
+        name: "app_role_chat_start", source: "admin", description: "就指定话题与另一角色发起一次有界对话。默认最多 6 轮。",
+        inputSchema: { type: "object", properties: { targetRoleId: { type: "string" }, topic: { type: "string" },
+          opening: { type: "string" }, maxTurns: { type: "integer", minimum: 2, maximum: 12 } }, required: ["targetRoleId","topic","opening"] },
+        execute: (args, context) => runTool(async () => {
+          context.checkDispatch?.();
+          if (typeof args.targetRoleId !== "string" || typeof args.topic !== "string" || typeof args.opening !== "string" ||
+            (args.maxTurns !== undefined && typeof args.maxTurns !== "number")) return failedOutcome("INVALID_TOOL_ARGUMENTS", "请提供目标角色、话题和开场白");
+          const result = exchanges.start(input.roleId, args.targetRoleId, args.topic, args.opening, args.maxTurns);
+          return { status: "success", adaptedResult: result };
+        }),
+      });
       // 只有内置默认助手挂载内部管理工具；普通角色看不到这些能力（DL-159）。
       tools.push(
         ...createAdminTools({
@@ -226,7 +260,21 @@ export async function loadAgentTools(
     );
   }
   return {
-    tools,
+    get tools() {
+      if (!extensions) return tools;
+      const registered = extensions.tools(adminSeat).map(({ extId, spec }): ConversationTool => ({
+        ...spec, name: `ext_${extId}__${spec.name}`, source: "extension", recorded: true,
+        execute: (args, context) => runTool(async () => {
+          context.checkDispatch?.();
+          const result = extensions.call(extId, spec.name, adminSeat, args, {
+            roleId: context.roleId, executionId: context.executionId, windowId: context.windowId,
+            taskId: context.taskId, autonomous: context.autonomous ?? false,
+          }, context.onDispatch);
+          return { status: "success", adaptedResult: await result };
+        }),
+      }));
+      return [...tools, ...registered];
+    },
     skillBriefs: dedupeSkills(skillBriefs),
     warnings,
     async close() {

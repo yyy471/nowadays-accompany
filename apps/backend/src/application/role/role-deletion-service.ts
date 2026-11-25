@@ -1,3 +1,4 @@
+import { isAdminSeat } from "../../domain/admin-seat.js";
 import fs from "node:fs";
 import { rolePaths } from "../../bootstrap/config.js";
 import { AppError, BuiltinRoleProtectedError } from "../../domain/errors.js";
@@ -82,7 +83,7 @@ export class RoleDeletionService {
       return this.finishCleanup(roleId);
     }
     const index = this.roleAccess.getIndex(roleId);
-    if (index.builtinKey !== null) {
+    if (isAdminSeat(index.builtinKey)) {
       throw new BuiltinRoleProtectedError(roleId, index.builtinKey);
     }
     if (this.appStore.listRoleIndexes().length <= 1) {
@@ -111,7 +112,7 @@ export class RoleDeletionService {
     // 与移除索引同事务，避免两个请求各删一个后剩零个角色（AD-R01）。
     this.appStore.db.transaction(() => {
       const current = this.appStore.getRoleIndex(roleId);
-      if (current !== null && current.builtinKey !== null) {
+      if (current !== null && isAdminSeat(current.builtinKey)) {
         throw new BuiltinRoleProtectedError(roleId, current.builtinKey);
       }
       if (this.appStore.listRoleIndexes().length <= 1) {

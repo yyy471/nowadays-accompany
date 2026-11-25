@@ -140,7 +140,7 @@ html[data-config-switching] .studio-shell *,html[data-config-switching] .studio-
 .config-prose .config-ledger .nd-secret-row .ui-input { flex: 1 1 auto; min-width: 0; max-width: none; }
 .nd-secret-row .ui-input { flex: 1 1 auto; min-width: 0; }
 .nd-secret-row .ui-button { flex: none; white-space: nowrap; }
-/* 内置角色说明（DL-153）：显示名与官方介绍只读，正文可修订。 */
+/* 主角色席位说明（DL-153）。 */
 .config-builtin-note{margin:0 0 14px;padding:12px 14px;border:1px solid var(--nd-semantic-color-line-decorative);border-left:3px solid var(--nd-semantic-color-accent-decorative);border-radius:var(--nd-semantic-radius-action);background:var(--nd-semantic-color-surface)}
 .config-builtin-note b{display:block;font-family:var(--nd-semantic-font-title);font-size:var(--nd-semantic-type-control-size);color:var(--nd-semantic-color-text)}
 .config-builtin-note p{margin:6px 0 0;font-size:var(--nd-semantic-type-caption-size);line-height:var(--nd-semantic-type-caption-line);color:var(--nd-semantic-color-text-muted)}

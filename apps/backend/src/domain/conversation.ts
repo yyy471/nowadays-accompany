@@ -147,6 +147,7 @@ export type ConversationToolSource =
   | "state"
   | "autonomy"
   | "task"
+  | "extension"
   | "admin";
 
 export interface ConversationToolContext {
@@ -178,10 +179,10 @@ export interface ConversationToolOutcome {
 export interface ConversationTool extends ModelToolSpec {
   source: ConversationToolSource;
   /**
-   * 为 true 时按外部工具记录管道落库（tool_calls／tool_results／计量），
+   * 为 true 或本次参数匹配时按工具记录管道落库（tool_calls／tool_results／计量），
    * 但执行体仍由运行时提供，例如 skill_run。
    */
-  recorded?: boolean;
+  recorded?: boolean | ((args: Record<string, unknown>) => boolean);
   execute(
     args: Record<string, unknown>,
     context: ConversationToolContext,

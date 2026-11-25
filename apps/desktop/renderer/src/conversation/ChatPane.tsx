@@ -3,6 +3,8 @@ import { Icon, useMotionPolicy } from '../ui';
 import { dayKey, dateLabel } from './history';
 import type { PerfRow } from './history';
 import type { PerfScene } from './performance';
+import { ReplyContent } from './ReplyContent';
+import { sceneForEachReply } from './window-model';
 import type { ConversationSnapshot } from './use-window-session';
 import { shouldAdvanceFromClick, shouldAdvanceFromKey } from './advance';
 
@@ -117,19 +119,7 @@ export function ChatPane({
     onClearDraftApplied();
   }, [clearDraft, onClearDraftApplied]);
 
-  const scenesByAnchor = new Map<string, PerfScene[]>();
-  const anchors = new Set(snapshot.messages.filter(row => row.role === 'assistant' && row.segmentId).map(row => JSON.stringify([row.messageId, row.segmentId])));
-  const unanchoredScenes: PerfScene[] = [];
-  for (const scene of snapshot.scenes) {
-    const key = JSON.stringify([scene.messageId, scene.startSegmentId]);
-    if (!anchors.has(key)) {
-      if (snapshot.availableRounds.has(scene.messageId)) unanchoredScenes.push(scene);
-      continue;
-    }
-    const list = scenesByAnchor.get(key) ?? [];
-    list.push(scene);
-    scenesByAnchor.set(key, list);
-  }
+  const scenesByReply = sceneForEachReply(snapshot.scenes);
   const lastOfRound = new Map<string, number>();
   for (const row of snapshot.messages) lastOfRound.set(row.messageId, row.id);
 
@@ -202,12 +192,6 @@ export function ChatPane({
     }
   };
 
-  const sceneControl = (scene: PerfScene) => scene.status === 'generating'
-    ? <span key={scene.id} className="dialogue-scene-pending" role="status">{scene.mode === 'background' ? '背景图' : '人物场景图'}生成中…</span>
-    : scene.status === 'failed'
-      ? <span key={scene.id} className="dialogue-scene-pending" role="status">{scene.mode === 'background' ? '背景图' : '人物场景图'}生成失败</span>
-      : <button key={scene.id} type="button" className="dialogue-scene-chip" onClick={() => onOpenScene(scene)}>查看{scene.mode === 'background' ? '背景图' : '人物场景图'}</button>;
-
   // 首句等待与「已展示到最后一段、模型仍在生成」都给出等待反馈。
   const waitingText = !advancing
     ? null
@@ -255,8 +239,20 @@ export function ChatPane({
         const divider = key !== lastDay;
         lastDay = key;
         const isLive = liveRowId === row.id;
-        const roundScenes = scenesByAnchor.get(JSON.stringify([row.messageId, row.segmentId])) ?? [];
-        const canDraw = snapshot.sceneImagesAvailable && row.role === 'assistant' && !!row.segmentId && lastOfRound.get(row.messageId) === row.id && snapshot.availableRounds.has(row.messageId);
+        const atEnd = row.role === 'assistant' && lastOfRound.get(row.messageId) === row.id && snapshot.activeId !== row.messageId && snapshot.availableRounds.has(row.messageId);
+        const scene = atEnd ? scenesByReply.get(row.messageId) : undefined;
+        const pending = atEnd && (snapshot.sceneRequests.has(row.messageId) || scene?.status === 'generating');
+        const canDraw = atEnd && snapshot.sceneImagesAvailable && !!row.segmentId;
+        let sceneControl: ReactNode = null;
+        if (scene?.status === 'succeeded') {
+          sceneControl = <button type="button" className="dialogue-scene-chip" onClick={() => onOpenScene(scene)}>查看{scene.mode === 'background' ? '背景图' : '人物场景图'}</button>;
+        } else if (pending) {
+          sceneControl = <span className="dialogue-scene-pending" role="status">过场图生成中…</span>;
+        } else if (canDraw) {
+          sceneControl = <button type="button" className="dialogue-scene-chip" onClick={() => onGenerateScene(row.messageId)}><Icon name="image" size={15} />{scene?.status === 'failed' ? '生成失败，点击重试' : '生成过场图'}</button>;
+        } else if (scene?.status === 'failed') {
+          sceneControl = <span className="dialogue-scene-pending" role="status">过场图生成失败</span>;
+        }
         const located = locatedRowId === row.id;
         const parts: ReactNode[] = [];
         if (row.action) {
@@ -266,8 +262,8 @@ export function ChatPane({
           </div>);
         } else {
           parts.push(<div key={`speech-${row.id}`} className="dialogue-speech" data-live={isLive ? '' : undefined}>
-            <div className="dialogue-bubble">{row.text}</div>
-            {row.role === 'assistant' && row.segmentId && <button type="button" className="dialogue-speaker" aria-label={`播放这句：${row.text.slice(0, 28)}`} title="播放这句"
+            <div className="dialogue-bubble"><ReplyContent row={row} /></div>
+            {row.role === 'assistant' && !row.format && row.segmentId && <button type="button" className="dialogue-speaker" aria-label={`播放这句：${row.text.slice(0, 28)}`} title="播放这句"
               aria-pressed={playingId === row.id} data-playing={playingId === row.id ? '' : undefined} onClick={() => onSpeaker(row)}>
               <Icon name="speaker" size={16} />
             </button>}
@@ -281,16 +277,10 @@ export function ChatPane({
           aria-label={`${row.role === 'user' ? '你' : '角色'}，${dateCaption(key)} ${timeLabel(row.createdAt)}`}>
           {divider ? <div className="dialogue-date" aria-hidden="true">{dateCaption(key)}</div> : null}
           {parts}
-          {row.role === 'assistant' && (canDraw || roundScenes.length) ? <div className="dialogue-round-tools" data-tools>
-            {roundScenes.map(sceneControl)}
-            {canDraw ? <button type="button" className="dialogue-scene-chip" onClick={() => onGenerateScene(row.messageId)}><Icon name="image" size={15} />生成过场图</button> : null}
-          </div> : null}
+          {sceneControl && <div className="dialogue-round-tools" data-tools>{sceneControl}</div>}
           <time className="dialogue-time" title={`${dateCaption(key)} ${timeLabel(row.createdAt)}`}>{timeLabel(row.createdAt)}</time>
         </article>;
       })}
-      {unanchoredScenes.length > 0 && <div className="dialogue-round-tools" aria-label="未能定位句段的过场图">
-        <span className="dialogue-scene-pending">未找到对应句段</span>{unanchoredScenes.map(sceneControl)}
-      </div>}
       {waitingText ? <div className="dialogue-waiting" role="status">
         <span>{waitingText}</span>
         {!policy.reduced ? <span className="dialogue-waiting-dots" aria-hidden="true"><i /><i /><i /></span> : null}

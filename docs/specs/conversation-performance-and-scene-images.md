@@ -30,7 +30,7 @@
 | `DL-121`～`DL-122` | 后端同时提供进程内异步调用与本机 HTTP + SSE 实时流；消息提交通过 `submissionId` 幂等去重，防网络抖动与重复发送 |
 | `DL-136`～`DL-140` | 对话共用角色衣柜与每日穿搭素材；单轮助手回复保存一条消息并按自然句段切分展示；差分与表情保持可选；支持按句调用统一 TTS 直接返回音频 |
 | `DL-141` | 桌面对话点击或快捷键按句推进；生成或待展示期间隐藏输入框并在末句出现后恢复；旁白只展现动作／神态不调用 TTS，且不主动打断正在播放的上一句台词 |
-| `DL-142`～`DL-143` | 过场图支持手动与（后续）自动触发；分为 `background`（仅替换背景保留立绘）与 `full_scene`（临时覆盖双层并带服饰参考图）；迟到或不在实时窗口时不强切当前阅读，挂载在所属句段旁且允许关闭 |
+| `DL-142`～`DL-143`、`DL-189` | 过场图支持手动与自动触发。背景图保留立绘，人物场景图覆盖双层。查看入口位于所属回复末尾，迟到的图保留在原回复，可在左侧查看、重画或收起。 |
 | `DL-144`～`DL-146` | 精简对话页独立顶栏，演出设置与历史入口并入对话栏右上角；性能设置内提供本地偏好的「隐藏底部导航栏」；模型服务失败或未配置等状态明确可见 |
 
 ---
@@ -52,6 +52,7 @@
 | `POST /v1/roles/:roleId/windows/:windowId/input-state` | JSON：`{ clientId, typing }` | `200` 输入态或清空确认 | 请求体结构校验失败（空或空白 `clientId`、非布尔 `typing`、缺少 `typing` 或多余字段，[schemas.ts](../../apps/backend/src/http/schemas.ts#L130-L135)）返回 `400 INVALID_REQUEST`；省略 `clientId` 或空白路径标识触发输入态业务校验（`InputStateInvalidError`，[input-state.ts](../../apps/backend/src/application/conversation/input-state.ts#L144-L154)）返回 `400 INPUT_STATE_INVALID`；更新内存态并在 `typing=false` 时顺带触发 `schedule` |
 | `DELETE /v1/roles/:roleId/windows/:windowId/input-state` | `?clientId=`（必填） | `200 { cleared: true }` | `clientId` 缺失或为空返回 `400 INPUT_STATE_INVALID`；清理指定客户端状态并触发 `schedule` |
 | `GET /v1/roles/:roleId/windows/:windowId/events` | `?after=` 与／或 Header `Last-Event-ID`，可选 `?clientId=` | `200 text/event-stream` | 游标非法或非本窗口有效事件编号返回 `400 SSE_CURSOR_INVALID`；见 §2.4 重放与心跳 |
+| `GET /v1/roles/:roleId/share-events` | `?after=` 或 `Last-Event-ID` | 主角色分享 SSE，`ready` 给出起始游标，`share` 携带消息编号、来源、窗口、摘要与可用立绘编号 | 独立订阅正式 `autonomy_share` 完成事件。首次连接从当前游标起，重连按游标重放，断开仅释放订阅资源。普通角色返回 `404 ADMIN_SEAT_REQUIRED` |
 | `GET /v1/roles/:roleId/executions/:executionId` | — | `200` 执行详情 | 不存在返回 `404 EXECUTION_NOT_FOUND` |
 | `POST /v1/roles/:roleId/windows/:windowId/segments/:segmentId/speech` | 可选 JSON：`{ emotion? }` | `200` 音频字节流（`cache-control: no-store`） | 空文本 `400 VOICE_SEGMENT_EMPTY`；角色语音停用 `409 VOICE_DISABLED`；未找到句段 `404 MESSAGE_SEGMENT_NOT_FOUND`；缺省 `emotion` 时等待并消费 `segment.voice_emotion`（至多 `1800ms`）；上游异常 `409 TTS_VOICE_UNAVAILABLE` / `502 TTS_SYNTHESIS_FAILED` / `503 TTS_SERVICE_UNAVAILABLE` / `504 TTS_TIMEOUT` |
 
@@ -69,7 +70,7 @@
 
 | 存储层级 | 具体载体 | 归属与生命周期说明 |
 | --- | --- | --- |
-| **每角色业务库**（`BUSINESS_SCHEMA_VERSION = 27`，见 [schema.ts](../../apps/backend/src/storage/core/schema.ts)） | `windows`、`messages`、`executions`、`message_segments`、`execution_stream_events`、`scene_image_tasks`、`scene_image_assets`、`role_scene_references`、`model_calls` | 一轮回复在 `messages` 保持一条；`message_segments` 记录 `segment_id`、`ordinal`、`kind`（`speech` / `narration`）、字符起止偏移、`outfit_id`、`home_asset_id`、`sprite_asset_id`、`voice_emotion`（V19 新增，仅 `speech` 句段写入）、`annotated_at`；`scene_image_tasks` 记录锚点消息／执行、`trigger_source`（`manual` / `auto`，`idx_scene_image_auto_attempt` 约束同消息至多一条自动单号）、`layer_mode`、`start_segment_id`～`end_segment_id`、`attempt_no`、`config_json`（固定服务、自动配置与锚点快照）；`scene_image_assets` 按 `task_id` 唯一索引约束每任务最多一张成图；`role_scene_references`（V27）保存 `img2img` 每套服饰专属参考图元数据 |
+| **每角色业务库**（`BUSINESS_SCHEMA_VERSION = 28`，见 [schema.ts](../../apps/backend/src/storage/core/schema.ts)） | `windows`、`messages`、`executions`、`message_segments`、`execution_stream_events`、`scene_image_tasks`、`scene_image_assets`、`role_scene_references`、`model_calls` | 一轮回复在 `messages` 保持一条；`message_segments` 记录 `segment_id`、`ordinal`、`kind`（`speech` / `narration`）、字符起止偏移、`outfit_id`、`home_asset_id`、`sprite_asset_id`、`voice_emotion`（V19 新增，仅 `speech` 句段写入）、`annotated_at`；`scene_image_tasks` 记录锚点消息／执行、`trigger_source`（`manual` / `auto`，`idx_scene_image_auto_attempt` 约束同消息至多一条自动单号）、`layer_mode`、`start_segment_id`～`end_segment_id`、`attempt_no`、`config_json`（固定服务、自动配置与锚点快照）；`scene_image_assets` 按 `task_id` 唯一索引约束每任务最多一张成图；`role_scene_references`（V27）保存 `img2img` 每套服饰专属参考图元数据 |
 | **每角色文件系统** | `<roleDir>/scene-images/<assetId>.<ext>`、`<roleDir>/appearance/<assetId>.<ext>` | 过场图成图仅通过 `readAsset(roleId, assetId)` 校验路径与魔数读取，相对路径不通过 HTTP 暴露；`img2img` 服饰参考图存放于 `<roleDir>/appearance/<assetId>.<ext>` 并通过受管路由存取 |
 | **后端进程内存态** | `InputStateRegistry`（[input-state.ts](../../apps/backend/src/application/conversation/input-state.ts#L12)）与 `blockedWindows` | 输入状态 1 秒自动过期，重启动清空，不持久化；执行异常写入 `blockedWindows`（同时排除因进程中断 `PROCESS_INTERRUPTED` 结算的历史异常），直到该窗口收到新消息或用户显式重试（`retryFailedReply`） |
 | **桌面渲染器内存与本地存储** | `useWindowSession` 会话状态与 `drafts`；`localStorage` | `drafts` 按 `${roleId}:${windowId}` 分键隔离；失败回复保留 `failedReply`（结合 SSE `execution_failed.failedMessageId` 与快照 `failedReply`/`awaitingReply`）在 `ChatPane` 渲染原地重试入口；`nowadays-dialogue-voice` / `nowadays-dialogue-scene` 与 `nowadays-dialogue-dock`（见 [Conversation.tsx](../../apps/desktop/renderer/src/pages/Conversation.tsx#L22-L27)）记录演出本地偏好；音频缓存（`MAX_CACHE = 48`）通过 `URL.createObjectURL` 驻留并在切换角色／窗口／卸载时释放 |
@@ -148,7 +149,8 @@
   - 写入受管文件采用排他打开 `fs.openSync(..., "wx")` 并立即登记清理路径；中途 `ENOSPC` 等失败会删去半写入文件，即使清理被 `EPERM` 拒绝仍按原失败原因持久化任务终态与 SSE 通知并打警告日志（`227 R05/R06`）。
   - 进程启动执行 `recoverOnStartup()`：`auto` 且尚处于 `queued` 的待触发任务保留队列并恢复调度；`auto` 且处于 `generating` 的任务结算为 `failed`（`SCENE_IMAGE_GENERATION_OUTCOME_UNKNOWN`）；其余未结束任务统一结算为 `failed`（`SCENE_IMAGE_INTERRUPTED`）。
 - **前端展示与晚到归属**：
-  - 前端只认任务的 `startSegmentId` 挂载操作入口（查看／生成中／失败）；`sceneView` 自动隐藏 `skipped` 与尚处于规划／排队的 `auto` 任务；若引用句段不在当前列表则展示于独立「未找到对应句段」栏（`FE-R03`）；当 `sceneAuto` 开启、未被用户手动「收起过场图」（`dismissed`）且当前 `stageLive` 句段序号落在 `[start, end]` 时自动演示。
+  - 图片操作跟随消息编号显示在整条回复末尾。每个图层显示最近成功的一张。查看后，左侧画面右下角可为同一回复、同一图层重新生成。重画期间保留旧图，成功后更新正在查看的图片。实时舞台仍按规划的起止句段演示。
+  - 结构化回复（DL-189）以一条阅读块展示。Markdown 支持标题、列表、引用、代码块和表格，JSON、XML 与可识别的 YAML 保留原文。历史消息从保存的正文重建。阅读块跳过语音预取与播放，普通对白与星号动作沿用逐句演出。
 
 ---
 
@@ -180,7 +182,7 @@
 - **生图配置未就绪占位 vs 失败策略**：当前未配置真实生图服务时仍沿用 `FakeSceneImageGenerator` 产出样例图（`248 §10` 指出正式版需收口为明确失败或开关边界）。
 - **服务端历史按日期统计与关键词检索接口**：当前桌面 `HistoryPanel` 通过循环 `before` 分页拉取全部历史并在前端 [history.ts](../../apps/desktop/renderer/src/conversation/history.ts) 建立索引（`231 §1`）。
 - **半写入残留自动清扫任务**：当前依赖单次失败删除及管理员／日志定位，`227 §7` 遗留后台清扫尚未实施。
-- **`DL-142` 未定交互细则**（[223 §4](../archive/03-appearance-and-performance/223-conversation-performance-development-guide.md)）：指定句段范围出图、重画／替换同轮旧图等产品交互仍未拍板。
+- 指定句段范围出图仍待确认。按 DL-189，每轮只有一个生成或查看入口，历史与舞台查看同一张。重画期间及失败时保留上一张成功图，新图成功后替换。
 - **尚未真实联调的能力**：真实模型长时间流式断开恢复、真实 TTS / IndexTTS 中文听感与设备输出、真实 ComfyUI + MOSS-Image 显存与耗时（[STATUS.md §2](../STATUS.md#2-当前待推进事项backlog)）、Windows 打包后整包运行。
 
 ### 4.4 可执行验证命令

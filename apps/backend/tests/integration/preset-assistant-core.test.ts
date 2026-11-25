@@ -9,6 +9,7 @@ import test from "node:test";
 import { pathToFileURL } from "node:url";
 import Database from "better-sqlite3";
 import sharp from "sharp";
+import { applyRoleTransfer, exportRoleTransfer, preflightRoleTransfer } from "../../src/application/transfer/role-transfer.js";
 import { configFetch } from "../fixtures/config-write.js";
 import { createLegacyRole, seedLegacyPresetAssistant } from "../fixtures/legacy-role-fixture.js";
 import {
@@ -364,7 +365,7 @@ test("包1：Schema V9/V20 无损迁移升级至 V10/V23", async () => {
   }
 });
 
-test("包1：预置外观加载与锁定保护、自定义服饰自由增删改、角色与字段写入保护及分层系统底座", async () => {
+test("包1：预置外观与人物介绍可编辑，席位不可删除并独立注入管理底座", async () => {
   const root = tempRoot();
   const presetsDir = path.join(root, "presets");
   const defaultOutfitDir = path.join(presetsDir, "xiacheng", "outfits", "default");
@@ -406,7 +407,7 @@ test("包1：预置外观加载与锁定保护、自定义服饰自由增删改�
       definition: { text: "我是普通朋友" },
     });
 
-    // 1. 预置外观已自动导入并设为初始穿着，且不可修改或删除。
+    // 1. 预置外观已自动导入并设为初始穿着，随后通过设置写接口维护。
     const outfitsRes = await jsonApi(
       baseUrl,
       "GET",
@@ -427,19 +428,18 @@ test("包1：预置外观加载与锁定保护、自定义服饰自由增删改�
       presetOutfit.outfitId,
     );
 
-    const renameLocked = await configFetch(
+    const rename = await configFetch(
       `${baseUrl}/v1/roles/${builtin.roleId}/appearance/outfits/${presetOutfit.outfitId}`,
       {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: "改名测试" }),
+        body: JSON.stringify({ name: "改名测试", assetNames: { [presetOutfit.home!.assetId]: "日常立绘", [presetOutfit.sprites[0]!.assetId]: "笑意" } }),
       },
     );
-    assert.equal(renameLocked.status, 409);
-    assert.equal(
-      errorCodeOf((await renameLocked.json()) as Record<string, unknown>),
-      "PRESET_APPEARANCE_LOCKED",
-    );
+    assert.equal(rename.status, 200);
+    const renamedOutfit = await rename.json() as OutfitRecord;
+    assert.equal(renamedOutfit.home?.displayName, "日常立绘");
+    assert.equal(renamedOutfit.sprites[0]?.displayName, "笑意");
 
     const replaceHomeForm = new FormData();
     replaceHomeForm.append(
@@ -447,15 +447,18 @@ test("包1：预置外观加载与锁定保护、自定义服饰自由增删改�
       new Blob([await tinyPng()], { type: "image/png" }),
       "new-home.png",
     );
-    const replaceLocked = await configFetch(
+    const replace = await configFetch(
       `${baseUrl}/v1/roles/${builtin.roleId}/appearance/outfits/${presetOutfit.outfitId}/home`,
       { method: "POST", body: replaceHomeForm },
     );
-    assert.equal(replaceLocked.status, 409);
-    assert.equal(
-      errorCodeOf((await replaceLocked.json()) as Record<string, unknown>),
-      "PRESET_APPEARANCE_LOCKED",
+    assert.equal(replace.status, 201);
+    const homeId = (await replace.json() as { assetId: string }).assetId;
+    const removeHome = await configFetch(
+      `${baseUrl}/v1/roles/${builtin.roleId}/appearance/outfits/${presetOutfit.outfitId}/home/${homeId}`,
+      { method: "DELETE" },
     );
+    assert.equal(removeHome.status, 200);
+    assert.equal(app.services.appearance.getOutfit(builtin.roleId, presetOutfit.outfitId).home, null);
 
     const spriteForm = new FormData();
     spriteForm.append(
@@ -463,34 +466,29 @@ test("包1：预置外观加载与锁定保护、自定义服饰自由增删改�
       new Blob([await tinyPng()], { type: "image/png" }),
       "开心.png",
     );
-    const addSpriteLocked = await configFetch(
+    spriteForm.append("replaceAssetId", presetOutfit.sprites[0]!.assetId);
+    const addSprite = await configFetch(
       `${baseUrl}/v1/roles/${builtin.roleId}/appearance/outfits/${presetOutfit.outfitId}/sprites`,
       { method: "POST", body: spriteForm },
     );
-    assert.equal(addSpriteLocked.status, 409);
-    assert.equal(
-      errorCodeOf((await addSpriteLocked.json()) as Record<string, unknown>),
-      "PRESET_APPEARANCE_LOCKED",
-    );
+    assert.equal(addSprite.status, 201);
 
-    const deleteSpriteLocked = await configFetch(
-      `${baseUrl}/v1/roles/${builtin.roleId}/appearance/outfits/${presetOutfit.outfitId}/sprites/${presetOutfit.sprites[0]!.assetId}`,
+    const replacementId = (await addSprite.json() as { assetId: string }).assetId;
+    assert.deepEqual(app.services.appearance.getOutfit(builtin.roleId, presetOutfit.outfitId).sprites.map(s => s.assetId), [replacementId]);
+    const deleteSprite = await configFetch(
+      `${baseUrl}/v1/roles/${builtin.roleId}/appearance/outfits/${presetOutfit.outfitId}/sprites/${replacementId}`,
       { method: "DELETE" },
     );
-    assert.equal(deleteSpriteLocked.status, 409);
-    assert.equal(
-      errorCodeOf((await deleteSpriteLocked.json()) as Record<string, unknown>),
-      "PRESET_APPEARANCE_LOCKED",
-    );
+    assert.equal(deleteSprite.status, 200);
 
-    const deletePresetLocked = await configFetch(
+    const deleteLastOutfit = await configFetch(
       `${baseUrl}/v1/roles/${builtin.roleId}/appearance/outfits/${presetOutfit.outfitId}`,
       { method: "DELETE" },
     );
-    assert.equal(deletePresetLocked.status, 409);
+    assert.equal(deleteLastOutfit.status, 409);
     assert.equal(
-      errorCodeOf((await deletePresetLocked.json()) as Record<string, unknown>),
-      "PRESET_APPEARANCE_LOCKED",
+      errorCodeOf((await deleteLastOutfit.json()) as Record<string, unknown>),
+      "LAST_OUTFIT_REQUIRED",
     );
 
     // 允许给夏澄新增自定义服饰并自由增删改。
@@ -533,46 +531,28 @@ test("包1：预置外观加载与锁定保护、自定义服饰自由增删改�
 
     // 再次创建普通角色用于系统提示词对照。
     const ordinary2 = createLegacyRole(app, {
-      displayName: "普通对照",
+      displayName: "换个名字",
       definition: { text: "普通对照设定" },
     });
 
-    // 3. 修改夏澄显示名返回 409 BUILTIN_FIELD_LOCKED，改写人设正文成功且不覆盖只读 bio。
-    const renameRoleBlocked = await configFetch(
+    // 名称、介绍与角色卡共用受保护接口及修订号，清空也是一次写入。
+    const patchProfile = (fields: Record<string, unknown>) => configFetch(
       `${baseUrl}/v1/roles/${builtin.roleId}/definition`,
-      {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ displayName: "换个名字" }),
-      },
+      { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(fields) },
     );
-    assert.equal(renameRoleBlocked.status, 409);
-    assert.equal(
-      errorCodeOf((await renameRoleBlocked.json()) as Record<string, unknown>),
-      "BUILTIN_FIELD_LOCKED",
-    );
-
-    const sameNameAllowed = await configFetch(
-      `${baseUrl}/v1/roles/${builtin.roleId}/definition`,
-      {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          displayName: XIA_CHENG_DISPLAY_NAME,
-          definition: { text: "高冷简短，但绝对可靠" },
-        }),
-      },
-    );
-    assert.equal(sameNameAllowed.status, 200);
-    const bioFieldBlocked = await configFetch(
-      `${baseUrl}/v1/roles/${builtin.roleId}/definition`,
-      {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ bio: "试图覆盖展示介绍" }),
-      },
-    );
-    assert.equal(bioFieldBlocked.status, 400);
+    const revision = app.services.roles.getRole(builtin.roleId).definitionRevision;
+    const renamed = await patchProfile({
+      displayName: "换个名字", bio: "新的介绍", expectedRevision: revision,
+      definition: { text: "高冷简短，但绝对可靠" },
+    });
+    assert.equal(renamed.status, 200);
+    assert.equal(app.services.roles.getRole(builtin.roleId).bio, "新的介绍");
+    const stale = await patchProfile({ bio: "", expectedRevision: revision });
+    assert.equal(stale.status, 409);
+    assert.equal(errorCodeOf(await stale.json() as Record<string, unknown>), "REVISION_CONFLICT");
+    assert.equal(app.services.roles.getRole(builtin.roleId).bio, "新的介绍");
+    assert.equal((await patchProfile({ bio: "", expectedRevision: revision + 1 })).status, 200);
+    assert.equal(app.services.roles.getRole(builtin.roleId).bio, "");
 
     // 4. 模型、MCP/Skill、自主额度绑定开放配置；检查系统底座与可编辑人设分层生效。
     const modelRes = app.services.resources.create({
@@ -630,6 +610,9 @@ test("包1：预置外观加载与锁定保护、自定义服饰自由增删改�
 
     app.services.activity.resume(builtin.roleId);
     app.services.activity.resume(ordinary2.roleId);
+    const activeWrite = await jsonApi(baseUrl, "PATCH", `/v1/roles/${builtin.roleId}/definition`, { bio: "运行中改写" });
+    assert.equal(activeWrite.status, 409);
+    assert.equal(errorCodeOf(activeWrite.body), "ROLE_NOT_STOPPED");
     const builtinRoleView = app.services.roles.getRole(builtin.roleId);
     await jsonApi(
       baseUrl,
@@ -650,6 +633,11 @@ test("包1：预置外观加载与锁定保护、自定义服饰自由增删改�
     const builtinSystem = model.requests[0]!.system;
     const ordinarySystem = model.requests[1]!.system;
     assert.ok(builtinSystem.includes("系统核心能力与行为底座"));
+    assert.ok(builtinSystem.includes("平台管理者「换个名字」"));
+    assert.ok(builtinSystem.includes("平台管理知识"));
+    assert.equal(ordinarySystem.includes("平台管理知识"), false);
+    assert.ok(model.requests[0]!.tools.some(tool => tool.name.startsWith("app_")));
+    assert.equal(model.requests[1]!.tools.some(tool => tool.name.startsWith("app_")), false);
     assert.ok(builtinSystem.includes("高冷简短，但绝对可靠"));
     assert.equal(ordinarySystem.includes("系统核心能力与行为底座"), false);
   } finally {
@@ -1498,7 +1486,7 @@ test("包1：夏澄默认预置服饰资源（日常常服与时序织梦）真�
   }
 });
 
-test("包1：预置 manifest.json 更新 spriteNames 时原地同步展示名而不重复写盘", async () => {
+test("包1：就绪后更新预置 manifest.json 保留已播种的差分名与素材文件", async () => {
   const root = tempRoot();
   const presetsDir = path.join(root, "presets");
   const defaultDir = path.join(presetsDir, "xiacheng", "outfits", "default");
@@ -1557,7 +1545,7 @@ test("包1：预置 manifest.json 更新 spriteNames 时原地同步展示名而
       const outfits = second.services.appearance.list(roleId).items;
       assert.equal(outfits[0]?.sprites.length, 1);
       assert.equal(outfits[0]?.sprites[0]?.assetId, firstSpriteId);
-      assert.equal(outfits[0]?.sprites[0]?.displayName, "温暖微笑");
+      assert.equal(outfits[0]?.sprites[0]?.displayName, "微笑");
       assert.deepEqual(fs.readdirSync(appearanceDir).sort(), filesBefore);
     } finally {
       await second.close();
@@ -1752,109 +1740,82 @@ test("包1 复核 R01：cancel 写任务终态或写取消事件失败时整笔�
   }
 });
 
-test("包1 复核 R02：同名自定义服饰并存下重复重启不重复导入预置且修改预置名称沿用原 outfitId", async () => {
+test("预置素材首次读取失败时保留恢复载荷，修复后沿用席位完成播种", async () => {
   const root = tempRoot();
-  const presetsDir = path.join(root, "presets");
-  const config = parseBackendConfig([
-    "--app-root",
-    path.join(root, "app"),
-    "--preset-assets-dir",
-    presetsDir,
-    "--port",
-    "0",
-  ]);
-  const homeBytes = await tinyPng({ r: 120, g: 160, b: 210 });
-  let app: BackendApp | undefined = createBackendApp(config, {
-    disableMemoryRuntime: true,
-  });
+  const presets = path.join(root, "presets");
+  const home = path.join(presets, "xiacheng", "outfits", "default", "home.png");
+  const config = parseBackendConfig(["--app-root", path.join(root, "app"), "--preset-assets-dir", presets]);
+  const options = { disableMemoryRuntime: true };
   try {
-    const builtinRoleId = app.appStore.getRoleIndexByBuiltinKey(
-      XIA_CHENG_BUILTIN_KEY,
-    )!.roleId;
-    // 无图预置下，先由用户新增同名自定义「日常常服」。
-    const customOutfit = await app.services.appearance.importOutfit(builtinRoleId, {
-      name: "日常常服",
-      home: { fileName: "custom-home.png", data: homeBytes },
-    });
-    assert.equal(customOutfit.isPreset, false);
-    assert.equal(customOutfit.presetKey, null);
+    fs.mkdirSync(home, { recursive: true });
+    assert.throws(() => createBackendApp(config, options));
+    const db = new Database(config.appDatabasePath, { readonly: true });
+    let row: { role_id: string; init_status: string };
+    try {
+      row = db.prepare("SELECT role_id, init_status FROM roles WHERE builtin_key = 'xiacheng'").get() as typeof row;
+      assert.equal(row.init_status, "failed");
+    } finally {
+      db.close();
+    }
+    fs.rmdirSync(home);
+    fs.writeFileSync(home, await tinyPng());
+    const recovered = createBackendApp(config, options);
+    try {
+      assert.deepEqual(recovered.services.roles.listRoles().map(role => [role.roleId, role.status]), [[row.role_id, "ready"]]);
+      assert.ok(recovered.services.appearance.list(row.role_id).items[0]?.home);
+    } finally {
+      await recovered.close();
+    }
+  } finally {
+    cleanupDir(root);
+  }
+});
 
-    // 放入名为「日常常服」的 default 官方预置素材。
-    const defaultDir = path.join(presetsDir, "xiacheng", "outfits", "default");
-    fs.mkdirSync(defaultDir, { recursive: true });
-    fs.writeFileSync(path.join(defaultDir, "home.png"), homeBytes);
-    fs.writeFileSync(
-      path.join(defaultDir, "manifest.json"),
-      JSON.stringify({ name: "日常常服", description: "初版说明" }),
-    );
-
-    let stablePresetId: string | undefined;
-    for (let round = 0; round < 3; round += 1) {
+test("主角色改名、编辑或清空介绍、替换和删除官方外观后，重启与单角色迁移保留外壳", async () => {
+  const root = tempRoot();
+  const presets = path.join(root, "presets");
+  const configFor = (name: string) => parseBackendConfig([
+    "--app-root", path.join(root, name), "--preset-assets-dir", presets, "--port", "0",
+  ]);
+  const original = await tinyPng();
+  const replacement = await tinyPng({ r: 10, g: 20, b: 30 });
+  for (const slug of ["default", "other"]) {
+    const dir = path.join(presets, "xiacheng", "outfits", slug);
+    fs.mkdirSync(path.join(dir, "sprites"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "home.png"), original);
+    fs.writeFileSync(path.join(dir, "sprites", "微笑.png"), original);
+  }
+  const source = configFor("source");
+  const options = { disableMemoryRuntime: true };
+  let app = createBackendApp(source, options);
+  try {
+    const id = app.services.roles.listRoles()[0]!.roleId;
+    const [keep, remove] = app.services.appearance.list(id).items;
+    assert.ok(keep && remove);
+    await app.services.appearance.renameOutfit(id, keep.outfitId, { name: "新装" });
+    const home = await app.services.appearance.replaceHome(id, keep.outfitId, { fileName: "新立绘.png", data: replacement });
+    app.services.appearance.deleteSprite(id, keep.outfitId, keep.sprites[0]!.assetId);
+    app.services.appearance.deleteOutfit(id, remove.outfitId);
+    for (const [index, bio] of ["我的新介绍", ""].entries()) {
+      app.services.roles.updateDefinition(id, { displayName: "岚", bio });
       await app.close();
-      app = createBackendApp(config, { disableMemoryRuntime: true });
-      assert.equal(
-        app.appStore.getRoleIndexByBuiltinKey(XIA_CHENG_BUILTIN_KEY)!.roleId,
-        builtinRoleId,
-      );
-      const outfits = app.services.appearance.list(builtinRoleId).items;
-      const custom = outfits.find((item) => item.outfitId === customOutfit.outfitId);
-      const presets = outfits.filter((item) => item.isPreset);
-      assert.ok(custom);
-      assert.equal(custom.name, "日常常服");
-      assert.equal(presets.length, 1);
-      assert.equal(presets[0]?.name, "日常常服（预置）");
-      assert.equal(presets[0]?.presetKey, "default");
-      if (stablePresetId === undefined) {
-        stablePresetId = presets[0]!.outfitId;
-      } else {
-        assert.equal(presets[0]!.outfitId, stablePresetId);
+      const packet = path.join(root, `seat-${index}.json`);
+      const target = configFor(`target-${index}`);
+      exportRoleTransfer(source, id, packet);
+      const preview = preflightRoleTransfer(target, packet);
+      assert.equal(applyRoleTransfer(target, packet, preview.token).outcome, "published");
+      for (const installation of [target, source]) {
+        app = createBackendApp(installation, options);
+        assert.deepEqual(app.services.roles.listRoles().map(r => [r.roleId, r.builtinKey, r.displayName, r.bio]),
+          [[id, "xiacheng", "岚", bio]]);
+        const wardrobe = app.services.appearance.list(id).items;
+        assert.deepEqual(wardrobe.map(o => [o.outfitId, o.name, o.home?.assetId, o.sprites]), [[keep.outfitId, "新装", home.assetId, []]]);
+        assert.deepEqual(app.services.appearance.readAsset(id, home.assetId).data, replacement);
+        if (installation === target) await app.close();
       }
     }
-
-    // 修改预置显示名与说明后重启：沿用同一个 presetKey 与 outfitId，并继续保留同名自定义服饰。
-    fs.writeFileSync(
-      path.join(defaultDir, "manifest.json"),
-      JSON.stringify({ name: "日常常服·四季", description: "更新说明" }),
-    );
-    await app.close();
-    app = createBackendApp(config, { disableMemoryRuntime: true });
-    const afterRename = app.services.appearance.list(builtinRoleId).items;
-    const renamedPresets = afterRename.filter((item) => item.isPreset);
-    assert.equal(renamedPresets.length, 1);
-    assert.equal(renamedPresets[0]?.outfitId, stablePresetId);
-    assert.equal(renamedPresets[0]?.presetKey, "default");
-    assert.equal(renamedPresets[0]?.name, "日常常服·四季");
-    assert.equal(renamedPresets[0]?.description, "更新说明");
-    assert.ok(
-      afterRename.some(
-        (item) =>
-          item.outfitId === customOutfit.outfitId &&
-          !item.isPreset &&
-          item.name === "日常常服",
-      ),
-    );
-
-    // 模拟历史 V21 数据库遗留的 `is_preset=1, preset_key=NULL`：重启后应按历史名称回填 preset_key 且不重复创建。
-    await app.close();
-    app = undefined;
-    const roleDb = new Database(rolePaths(config.dataRoot, builtinRoleId).businessDatabasePath);
-    roleDb
-      .prepare("UPDATE outfits SET preset_key = NULL, name = '日常常服（预置）' WHERE outfit_id = ?")
-      .run(stablePresetId);
-    roleDb.close();
-    fs.writeFileSync(
-      path.join(defaultDir, "manifest.json"),
-      JSON.stringify({ name: "日常常服", description: "初版说明" }),
-    );
-    app = createBackendApp(config, { disableMemoryRuntime: true });
-    const afterBackfill = app.services.appearance.list(builtinRoleId).items;
-    const backfilledPresets = afterBackfill.filter((item) => item.isPreset);
-    assert.equal(backfilledPresets.length, 1);
-    assert.equal(backfilledPresets[0]?.outfitId, stablePresetId);
-    assert.equal(backfilledPresets[0]?.presetKey, "default");
-    assert.equal(backfilledPresets[0]?.name, "日常常服（预置）");
   } finally {
-    await app?.close();
+    await app.close();
     cleanupDir(root);
   }
 });

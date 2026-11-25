@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { rolePaths } from "../../bootstrap/config.js";
 import {
-  BuiltinFieldLockedError,
   RoleInitializationError,
   WindowNotFoundError,
 } from "../../domain/errors.js";
@@ -145,7 +144,7 @@ export class RoleService {
     }
   }
 
-  initializeRole(roleId: string): RoleView {
+  initializeRole(roleId: string, beforeReady?: (storage: RoleStorage) => void): RoleView {
     const index = this.access.getIndex(roleId);
     if (index.initStatus === "ready") {
       return this.getRole(roleId);
@@ -193,6 +192,7 @@ export class RoleService {
         role = created.role;
         window = created.window;
       }
+      beforeReady?.(storage);
       storage.close();
       storage = undefined;
       this.appStore.markRoleReady(roleId);
@@ -272,6 +272,7 @@ export class RoleService {
     roleId: string,
     input: {
       displayName?: string | undefined;
+      bio?: string | undefined;
       definition?:
         | {
             text: string;
@@ -282,17 +283,9 @@ export class RoleService {
     },
   ): { definitionRevision: number; updatedAt: string } {
     return this.access.withStore(roleId, (storage) => {
-      const current = storage.business.getRole(roleId);
-      // DL-153：内置角色显示名锁定，传入不同值拒绝；同值或省略允许编辑设定正文。
-      if (
-        current.isBuiltin &&
-        input.displayName !== undefined &&
-        input.displayName.trim() !== current.displayName
-      ) {
-        throw new BuiltinFieldLockedError(roleId, "displayName");
-      }
       const updated = storage.business.updateDefinition({
         roleId,
+        ...(input.bio === undefined ? {} : { bioText: input.bio }),
         ...(input.displayName === undefined
           ? {}
           : { displayName: input.displayName }),

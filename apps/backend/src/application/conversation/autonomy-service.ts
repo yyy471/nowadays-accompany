@@ -285,7 +285,7 @@ export class AutonomyService {
       const now = this.now().toISOString();
       const message = storage.business.db.transaction(() => {
         const message = store.appendProactiveMessage({
-          windowId: window.windowId, content, executionId: input.executionId, now,
+          source: "autonomy_share", windowId: window.windowId, content, executionId: input.executionId, now,
         });
         const autonomy = this.store(storage.business.db, roleId);
         const activity = autonomy.getActivityByExecution(input.executionId);

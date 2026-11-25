@@ -39,7 +39,7 @@ export async function loadRelationPacket(
   const packet: RelationPacket = {
     roleId,
     displayName: role.displayName,
-    // 内置角色的官方介绍只读展示，与可编辑的角色卡正文分开（DL-153）。
+    // 主角色的人物介绍，与可编辑的角色卡正文分开（DL-153）。
     bioText: typeof role.bio === 'string' ? role.bio : '',
     isBuiltin: role.isBuiltin === true,
     definitionText: role.definition?.text ?? '',

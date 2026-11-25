@@ -25,7 +25,7 @@
 | [DL-118](../161-digital-life-direction-decisions.md#dl-118-首批模型接入openai-与-anthropic-协议获取列表后选择模型) · [DL-119](../161-digital-life-direction-decisions.md#dl-119-模型配置手动填写列表失败保留与主动测试连接) · [DL-120](../161-digital-life-direction-decisions.md#dl-120-测试连接行为简短实际请求独立于角色对话与自主额度) | 模型支持列表探测、手动填写与独立连接测试（不占对话与自主额度） | `POST /v1/model-services/*` 与 `/v1/resources/:id/{models,model-test}` |
 | [DL-121](../161-digital-life-direction-decisions.md#dl-121-本地客户端通信http-api-与-ssecli-和桌面共用入口) · [DL-124](../161-digital-life-direction-decisions.md#dl-124-记忆整理模型默认继承对话模型支持角色单独绑定) | CLI 与桌面共用本地 HTTP API；记忆模型未单独绑定时继承对话模型 | `impact()` 与运行时使用同一套模型解析规则 |
 | [DL-147](../161-digital-life-direction-decisions.md#dl-147-移除陪伴角色概念按角色查看和编辑) | 移除陪伴角色状态及相关操作，冷启动先经角色选择页再共享当前角色；设置页只改编辑对象，异步操作按发起时的 `roleId` 归属。 | 现有请求按 `roleId` 与请求令牌结算。冷启动选角页与陪伴入口移除待实施。 |
-| [DL-153](../161-digital-life-direction-decisions.md#dl-153-夏澄作为预置默认助手沿用现有对话链路) | 夏澄不可删除、显示名与预置展示介绍／预置外观锁定；允许改角色卡正文（不覆盖底座）、对话模型、MCP/Skill 开关、自主额度、语音/生图与自添服饰。 | 预置与配置边界按 `310` 待实施。 |
+| [DL-153](../161-digital-life-direction-decisions.md#dl-153-唯一主角色席位默认播种夏澄沿用现有对话链路) | 主角色席位不可删除。设置页可修改显示名、编辑或清空介绍、维护预置服饰和素材。管理员职责与管理知识随席位注入。 | 人设写入沿用停机守卫与修订号校验，外观沿用普通角色维护约束。 |
 | [DL-148](../161-digital-life-direction-decisions.md#dl-148-配置修改直接删除与运行限制) | 改删角色前由后端确认已停止；「已请求停止」与「已停止」分离且以后端为准；模型维护按具体服务只暂停实际依赖目标；删角色由用户选保留或清理记忆与对话；恢复保留待办与自主额度 | **规范文本滞后注记**：`161` 正文仍写着「MCP/Skill 被占用时后端拒绝全局关闭」，实现已按 `278 §3` / `282 §2` 先行放行全局单独停用（`canDisable: true`），待统一修订 `161` 正文 |
 | [DL-149](../161-digital-life-direction-decisions.md#dl-149-角色语音只保留当前一份配置) | 每角色只保留一份语音配置；停用保留配置，新配置覆盖旧配置 | `PUT /v1/roles/:roleId/voice` 与 `/voice/enabled` |
 | [DL-152](../161-digital-life-direction-decisions.md#dl-152-全局管理语音服务角色从设置中选择服务并配置专属音色与试听) | 设置「模型 -> 语音」全局管理语音服务（协议、地址、可选默认引擎、启停与删除受全局守卫）；角色选服务配音色 | `/v1/voice-services*` 与 `PATCH/DELETE` 入 `GLOBAL_CONFIG_WRITES` |
@@ -56,10 +56,10 @@
 
 策略清单元头在 [config-writes.ts](../../apps/backend/src/http/config-writes.ts)，实际路由守卫绑定在 [routes.ts](../../apps/backend/src/http/routes.ts#L99-L108) 与 [write-guard.ts](../../apps/backend/src/http/write-guard.ts)：
 
-1. **角色级写入（`ROLE_CONFIG_WRITES`，共 15 个路由，经 `Router.setGuard` 自动包装 `roleWrite`）**：
+1. **角色级写入（`ROLE_CONFIG_WRITES`，经 `Router.setGuard` 自动包装 `roleWrite`）**：
    - **角色档案、删除与绑定**：
      - `DELETE /v1/roles/:roleId?keepHistory=0|1|true|false`：必填 `keepHistory`（缺省 `400 KEEP_HISTORY_REQUIRED`，非法 `400 INVALID_QUERY`）；返回 `{ roleId, keepHistory, filesRemoved }`。
-     - `PATCH /v1/roles/:roleId/definition`（CLI：`role update`）：`{ displayName?, definition?: { text, payload? }, expectedRevision? }`（至少提供 `displayName` 或 `definition`）。
+     - `PATCH /v1/roles/:roleId/definition`（CLI：`role update`）：`{ displayName?, bio?, definition?: { text, payload? }, expectedRevision? }`。名称、介绍和角色卡至少提供一项；`bio: ""` 清空介绍，省略时保留原值。三者共享角色卡修订号。
      - `PUT /v1/roles/:roleId/bindings`（CLI：`binding put`）：`{ bindings: Array<{ capability: "chat_model" \| "memory_model" \| "mcp" \| "skill", resourceId, modelName?, enabled? }>, expectedRevision? }`；返回 `{ items, revision }`。
    - **自主额度**：
      - `PUT /v1/roles/:roleId/autonomy/budget`：`{ unlimited: boolean, dailyLimit?: number }`（`dailyLimit` 为 `1..1_000_000` 整数）。
@@ -67,7 +67,8 @@
      - `PUT /v1/roles/:roleId/voice`（JSON 或 `multipart/form-data` 含 `payload` 与 `file`）、`PUT /v1/roles/:roleId/voice/enabled`（`{ enabled }`）、`POST /v1/roles/:roleId/voice/reference`、`DELETE /v1/roles/:roleId/voice/references/:assetId`
      - `PUT /v1/roles/:roleId/scene-image`
    - **外观衣柜**：
-     - `POST /v1/roles/:roleId/appearance/outfits`、`PATCH /v1/roles/:roleId/appearance/outfits/:outfitId`、`POST /v1/roles/:roleId/appearance/outfits/:outfitId/home`、`DELETE /v1/roles/:roleId/appearance/outfits/:outfitId`、`POST /v1/roles/:roleId/appearance/outfits/:outfitId/sprites`、`DELETE /v1/roles/:roleId/appearance/outfits/:outfitId/sprites/:assetId`
+     - `POST /v1/roles/:roleId/appearance/outfits`、`PATCH /v1/roles/:roleId/appearance/outfits/:outfitId`、`POST /v1/roles/:roleId/appearance/outfits/:outfitId/home`、`DELETE /v1/roles/:roleId/appearance/outfits/:outfitId`、`POST /v1/roles/:roleId/appearance/outfits/:outfitId/sprites`、`DELETE /v1/roles/:roleId/appearance/outfits/:outfitId/sprites/:assetId`、`DELETE /v1/roles/:roleId/appearance/outfits/:outfitId/home/:assetId`。
+     - 服饰 PATCH 可附带 `assetNames`（素材 ID 至显示名的映射），与名称、说明同时提交。上传单张差分时可附带 `replaceAssetId` 替换指定差分。立绘与差分的历史引用沿用原素材，删除服饰仍须至少保留一套。
 
 2. **全局语音／生图服务写入**：
    - `PATCH` 和 `DELETE /v1/voice-services/:serviceId`、`/v1/image-services/:serviceId` 由服务维护协调器按当前依赖处理。`GLOBAL_CONFIG_WRITES` 现为空，后端这四条路由允许无关角色继续活动。见 [§3.2.1](#321-语音生图服务维护窗口)。
@@ -208,6 +209,34 @@
 | 绑定并行并发合并 | `PUT /bindings` 校验 `expectedRevision`，过期抛 `409 BINDING_REVISION_CONFLICT` | 捕获冲突后自动拉取最新 `/bindings`，调用 [mergeBindingDrafts](../../apps/desktop/renderer/src/components/model/binding-merge.ts) 按范围字段级合并（`models` 按能力名、`ext` 按 `capability:resourceId`）；无互斥改动时带最新 `revision` 自动重提一次，有互斥冲突则清空 `bindingRevision`、保留草稿并提示重新读取确认 |
 
 ---
+
+### 3.5 后端热扩展（DL-184、DL-188）
+
+主角色通过 `app_extension_upsert({extId, manifest, files})` 安装和升级扩展。`extId` 由小写字母开头，可含数字及连字符，最长 24 字符。`manifest` 指定 `version`、相对入口 `entry` 及可选 `ui: [{slot, file}]`。`files` 将相对路径映射到完整文本，可提交多份 `.mjs` 与 `ui/` 文本资源。每次更新使用新的版本目录，重载当前版本使用 `reload`。
+
+后端从 `config.appRoot` 派生 `extensions/<extId>/`，在每级路径核实真实位置并拒绝 junction。源码放在 `versions/<version>/`。每个扩展的 `manifest.json` 原子保存现行版本、工具声明、启停状态、最近错误与该扩展的 KV。管理查询仅投影公开字段。删除扩展会同时删除所有版本和 KV。
+
+固定 runner 在独立 Node 24 子进程中创建 Cordis Context，通过文件 URL 导入入口。入口导出 `default(ctx, api)` 或具名 `apply(ctx, api)`。依赖文件使用相对导入；Cordis Context 由 runner 传入。平台服务如下。
+
+| 接口 | 契约 |
+| --- | --- |
+| `api.tools.register({name, description, inputSchema, scope}, handler)` | 返回注销函数。`inputSchema.type` 为 `object`。处理器接收参数和角色、窗口、执行、任务、自主执行标记，返回 JSON。模型看到的工具名为 `ext_<extId>__<name>`，每次模型请求刷新目录。范围可选 `admin_only` 或 `all_roles`。 |
+| `api.events.on(name, handler)` | 返回退订函数。`dialogue_batch` 投递已向席位交付的批次事实，`role_exchange` 投递双边已落库的会话状态。向当时已订阅的扩展发送，业务提交无需等待处理器。 |
+| `await api.kv.get(key)`、`await api.kv.set(key, value)` | 键为非空字符串，值为 JSON，缺失返回 `null`。候选初始化的写入在版本切换时提交。 |
+| `await api.notify({message, data?})` | 后端订阅者通过 `extensions.onNotice(listener)` 接收含真实 `extId` 的结构化提示。候选初始化期间暂存，激活后发出。 |
+| `ctx.effect(() => dispose)` | 在子进程中登记清理函数。停用、删除、升级和应用关闭均先排空在途调用，再停止 Context 并等待 PID 退出。 |
+
+同一扩展的管理操作串行。候选握手成功后切换工具与事件注册，旧进程只排空已派发工作。新版语法或初始化失败保持旧版可用，管理工具回执提供错误码、版本及诊断。新调用遇到停用、删除或已撤销的工具时得到 `EXTENSION_UNAVAILABLE`。初始化默认限时 10 秒，工具与事件单次调用默认限时 15 秒。运行中崩溃或超时置为 `failed`，关闭时清理超过 2 秒的进程由父进程强制回收。启动时仅恢复上次启用的扩展。
+
+| HTTP 接口 | 对应主角色管理工具 |
+| --- | --- |
+| `GET /v1/extensions`、`GET /v1/extensions/:extId` | `app_extensions_list`、`app_extension_get` |
+| `POST /v1/extensions/:extId/enable`、`disable`、`reload`（同一路径前缀） | `app_extension_toggle({extId, action})` |
+| `DELETE /v1/extensions/:extId` | `app_extension_delete({extId})` |
+
+桌面订阅独立的 `GET /v1/extension-events`（SSE）。连接及重连首先收到 `snapshot`，内容为各扩展的标识、版本、状态、UI 声明和最近错误。激活、停用、删除及失败时更新快照。当前活动版本的 `api.notify` 产生 `notice`（`extId`、`version`、`message`），候选版本的初始化通知在版本切换成功后投递。该流独立于角色、对话窗口和输入客户端。
+
+`GET /v1/extensions/:extId/ui/<相对文件>` 逐级核实活动版本目录及文件真实路径，只读取当前启用版本在 `manifest.ui` 明确列出的普通文件。可附 `?v=<版本>` 精确匹配。未声明、越界、链接、后端模块、私有清单及过期版本的资产请求均不可用。直接打开 HTTP 资源时响应带无脚本 CSP 沙箱。桌面协议和布局契约见[扩展槽位](./frontend-design-system.md#扩展槽位dl-188)。
 
 ## 4. 验收场景与可运行命令
 

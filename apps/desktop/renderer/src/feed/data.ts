@@ -51,7 +51,18 @@ export interface RoleActivity {
   requestedAt: string | null;
   confirmedAt: string | null;
 }
+export interface Exchange {
+  sessionId: string; initiatorRoleId: string; targetRoleId: string; initiatorName: string; targetName: string;
+  topic: string; startedAt: string; turnCount: number; status: 'active' | 'completed' | 'failed' | 'cancelled'; reason: string | null;
+}
+export interface ExchangeTurn {
+  exchangeId: string; turnIndex: number; speakerName: string; createdAt: string; content: string;
+}
+export function loadTranscript(sessionId: string, signal: AbortSignal) {
+  return api<Exchange & {turns: ExchangeTurn[]}>(`/v1/role-exchanges/${encodeURIComponent(sessionId)}`, { signal });
+}
 export interface FeedData {
+  exchanges: Exchange[];
   wakes: Wake[];
   activities: Activity[];
   tasks: Task[];
@@ -92,11 +103,12 @@ export async function loadUpcoming(roles: RoleListItem[], signal: AbortSignal): 
     api<{ items: RoleActivity[] }>('/v1/activities', { signal }),
     Promise.all(readyRoles(roles).map(role => allPages<Wake>(`${rolePath(role.roleId)}/autonomy/wakes`, 500, signal, item => item.wakeId))),
   ]);
-  return { roleActivities: roleActivities.items, wakes: wakes.flat() };
+  return { roleActivities: roleActivities.items, wakes: wakes.flat().filter(w => !w.wakeId.startsWith('role-exchange:')) };
 }
 
 export async function loadFeed(roles: RoleListItem[], signal: AbortSignal): Promise<FeedData> {
-  const [roleActivities, snapshots] = await Promise.all([
+  const [exchanges, roleActivities, snapshots] = await Promise.all([
+    allPages<Exchange>('/v1/role-exchanges', 500, signal, s => s.sessionId),
     api<{ items: RoleActivity[] }>('/v1/activities', { signal }),
     Promise.all(readyRoles(roles).map(async role => {
       const path = rolePath(role.roleId);
@@ -115,8 +127,9 @@ export async function loadFeed(roles: RoleListItem[], signal: AbortSignal): Prom
     })),
   ]);
   return {
-    wakes: snapshots.flatMap(item => item.wakes),
-    activities: snapshots.flatMap(item => item.activities),
+    exchanges,
+    wakes: snapshots.flatMap(item => item.wakes).filter(w => !w.wakeId.startsWith('role-exchange:')),
+    activities: snapshots.flatMap(item => item.activities).filter(a => !a.wakeId?.startsWith('role-exchange:')),
     tasks: snapshots.flatMap(item => item.tasks),
     batches: snapshots.flatMap(item => item.batches),
     roleActivities: roleActivities.items,

@@ -10,6 +10,7 @@ export interface PerfRow {
   ordinal: number;
   role: 'user' | 'assistant';
   text: string;
+  format?: 'markdown' | 'literal';
   action: string;
   actionVisible: boolean;
   sprite: string | null;

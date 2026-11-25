@@ -1,6 +1,6 @@
 # 夏澄系统预置服饰资源位置
 
-本目录为系统默认助手「夏澄（`builtin_key = "xiacheng"`）」的预置外观目录，打包与启动时由后端配置 `presetAssetsDir`（环境变量 `NOWADAYS_PRESET_ASSETS_DIR` / 启动参数 `--preset-assets-dir`，默认指向本目录的上级 `backend/assets/presets`）自动加载。
+本目录为主角色席位（`builtin_key = "xiacheng"`）提供夏澄的初始外观。后端通过配置 `presetAssetsDir`（环境变量 `NOWADAYS_PRESET_ASSETS_DIR` / 启动参数 `--preset-assets-dir`，默认指向本目录的上级 `backend/assets/presets`）读取播种素材。
 
 ## 当前已配置套系
 
@@ -20,6 +20,6 @@ backend/assets/presets/xiacheng/
 
 ## 说明
 
-1. `outfits/default/` 会在启动时优先排序并在角色当前未选服饰时自动激活为默认穿着（`state.outfitId`）；其余 `outfits/<slug>/` 子目录均作为预置服饰（`isPreset: true`）载入衣柜。
-2. 当某套预置目录中尚无有效图片时，默认保持无图空态；放入或更新图片并重启后端后会自动同步最新立绘、差分图片及 `manifest.json` 中的中文展示名，历史句段已引用的旧预置图会受管保留。
-3. 运行中的用户仍可在界面中为夏澄**新增自定义服饰**（`isPreset: false`），预置服饰及其素材本身禁止改名、替换、覆盖上传或删除（返回 `409 PRESET_APPEARANCE_LOCKED`）。
+1. `outfits/default/` 会在首次播种时优先排序并在角色当前未选服饰时自动激活为默认穿着（`state.outfitId`）；其余 `outfits/<slug>/` 子目录均作为预置服饰（`isPreset: true`）载入衣柜。
+2. 首次初始化及中断恢复时读取目录与 `manifest.json`。缺少有效图片时保留无图空态。已就绪的席位在重启时直接使用保存的外观，之后更新本目录只影响新初始化的席位。
+3. 用户可在角色配置的「外观」分区维护预置和自添服饰、立绘与差分。`isPreset` 标记素材来源。删除服饰须至少保留一套，历史句段引用的图片保留供回放。

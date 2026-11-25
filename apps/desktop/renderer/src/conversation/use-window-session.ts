@@ -33,6 +33,7 @@ export interface SessionEvent {
 export interface ConversationSnapshot extends PerformanceSnapshot {
   roleId: string;
   sceneImagesAvailable: boolean;
+  sceneRequests: ReadonlySet<string>;
   connection: ConnectionState;
   loading: boolean;
   loadError: string;
@@ -80,6 +81,7 @@ interface SessionState {
   extraSegments: Map<string, SegmentView[]>;
   pending: PendingReply | null;
   scenes: Map<string, SceneTaskView>;
+  sceneRequests: Set<string>;
   sceneImagesAvailable: boolean;
   current: PerfRow | null;
   error: string;
@@ -121,6 +123,7 @@ function emptyState(): SessionState {
     extraSegments: new Map(),
     pending: null,
     scenes: new Map(),
+    sceneRequests: new Set(),
     sceneImagesAvailable: false,
     current: null,
     error: '',
@@ -263,7 +266,9 @@ export function useWindowSession({
       }
     }
     const currentRow = current.current ?? lastRowOf(rows);
-    const scenes = [...current.scenes.values()].map(task => sceneView(task, segmentsByMessage, roleId)).filter(scene => scene !== null);
+    // 历史分页可能在实时事件之后返回，按任务创建时间决定哪张属于最新版本。
+    const scenes = [...current.scenes.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map(task => sceneView(task, segmentsByMessage, roleId)).filter(scene => scene !== null);
     const availableRounds = new Set(
       entries
         .filter(entry => entry.record.sender === 'assistant' && entry.record.status !== 'generating')
@@ -277,6 +282,7 @@ export function useWindowSession({
       error: current.pending?.error || current.error,
       scenes,
       sceneImagesAvailable: current.sceneImagesAvailable,
+      sceneRequests: new Set(current.sceneRequests),
       availableRounds,
       upcoming,
       awaiting: current.pending !== null && current.pending.segments.length === 0,
@@ -915,6 +921,11 @@ export function useWindowSession({
     const targetRole = roleRef.current;
     const targetWindow = state.current.windowId;
     if (!targetRole || !targetWindow || !state.current.sceneImagesAvailable) return;
+    const requests = state.current.sceneRequests;
+    if (requests.has(messageId) || [...state.current.scenes.values()].some(task => task.messageId === messageId
+      && ['queued', 'planning', 'generating'].includes(task.status))) return;
+    requests.add(messageId);
+    emit({ reason: 'ready' });
     const generation = state.current.generation;
     void api<{ task: SceneTaskView; duplicate: boolean }>(`/v1/roles/${encodeURIComponent(targetRole)}/windows/${encodeURIComponent(targetWindow)}/messages/${encodeURIComponent(messageId)}/scene-images`, {
       method: 'POST',
@@ -926,6 +937,9 @@ export function useWindowSession({
     }).catch(error => {
       if (state.current.generation !== generation || roleRef.current !== targetRole || state.current.windowId !== targetWindow) return;
       emit({ reason: 'error', message: describeError(error) });
+    }).finally(() => {
+      requests.delete(messageId);
+      if (state.current.generation === generation) emit({ reason: 'ready' });
     });
   }, [emit]);
 

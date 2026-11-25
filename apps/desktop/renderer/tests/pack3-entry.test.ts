@@ -3,11 +3,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as roleEntryModule from "../src/entry/role-entry.ts";
 import * as taskActionsModule from "../src/conversation/task-actions.ts";
-import * as presetLockModule from "../src/components/appearance/preset-lock.ts";
 
 const roleEntry = Promise.resolve(roleEntryModule);
 const taskActions = Promise.resolve(taskActionsModule);
-const presetLock = Promise.resolve(presetLockModule);
 
 const role = (roleId, displayName, extra = {}) => ({ roleId, displayName, status: "ready", initError: null, ...extra });
 
@@ -18,11 +16,12 @@ test("选角页把内置助手排在最前，其余保持创建顺序", async ()
   assert.equal(ordered[1].displayName, "林夕");
 });
 
-test("内置标识与卡片副标题优先使用只读介绍", async () => {
+test("内置标识与卡片副标题使用自定义介绍与空态", async () => {
   const { entryBadge, entrySubtitle } = await roleEntry;
-  assert.equal(entryBadge(role("x", "夏澄", { isBuiltin: true })), "内置助手");
+  assert.equal(entryBadge(role("x", "岚", { isBuiltin: true })), "主角色 / 内置管理员 · 不可删除");
   assert.equal(entryBadge(role("a", "林夕")), null);
-  assert.equal(entrySubtitle(role("x", "夏澄", { bio: "预置的办事助手" })), "预置的办事助手");
+  assert.equal(entrySubtitle(role("x", "岚", { bio: "我的介绍" })), "我的介绍");
+  assert.equal(entrySubtitle(role("x", "岚", { isBuiltin: true, bio: "" })), "还没有写下介绍");
   assert.equal(entrySubtitle(role("b", "周野")), "还没有写下介绍");
   assert.equal(entrySubtitle(role("c", "未就绪", { status: "initializing" })), "尚未就绪");
 });
@@ -76,12 +75,10 @@ test("取消入口的文案区分办理中与等待答复", async () => {
   assert.equal(taskCancelLabel(null), "");
 });
 
-test("预置服饰只读、自添服饰开放，预置素材的差分不可删", async () => {
-  const { outfitWritePolicy, assetLocked } = await presetLock;
-  assert.deepEqual(outfitWritePolicy({ isPreset: true }), { rename: false, replaceHome: false, remove: false, uploadSprite: false });
-  assert.deepEqual(outfitWritePolicy({ isPreset: false }), { rename: true, replaceHome: true, remove: true, uploadSprite: true });
-  assert.deepEqual(outfitWritePolicy(null), { rename: false, replaceHome: false, remove: false, uploadSprite: false });
-  assert.equal(assetLocked({ isPreset: true }), true);
-  assert.equal(assetLocked({ isPreset: false }), false);
-  assert.equal(assetLocked(undefined), false);
+test("换名与普通角色重名后，入口仍默认选择唯一管理员席位", () => {
+  const ordinary = role("first", "岚", { isBuiltin: false });
+  const admin = role("seat", "岚", { isBuiltin: true, builtinKey: "xiacheng", bio: "" });
+  assert.equal(roleEntryModule.defaultEntryChoice([ordinary, admin]), admin.roleId);
+  assert.equal(roleEntryModule.entryBadge(ordinary), null);
+  assert.equal(roleEntryModule.resolveEntryChoice([ordinary, admin], ordinary.roleId), ordinary.roleId);
 });

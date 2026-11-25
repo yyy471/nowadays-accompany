@@ -194,7 +194,7 @@ export function useSegmentVoice({ roleId, windowId, onToast }: { roleId: string;
 
   const prefetch = useCallback((rows: PerfRow[]) => {
     for (const row of rows) {
-      if (row.role !== 'assistant' || !row.segmentId || row.action || !row.text) continue;
+      if (row.role !== 'assistant' || row.format || !row.segmentId || row.action || !row.text) continue;
       void ensureAudio(row, false);
     }
   }, [ensureAudio]);
@@ -217,7 +217,7 @@ export function useSegmentVoice({ roleId, windowId, onToast }: { roleId: string;
   }, [cancelPending]);
 
   const play = useCallback((row: PerfRow, automatic = false) => {
-    if (row.role !== 'assistant' || !row.segmentId || row.action || !row.text) return;
+    if (row.role !== 'assistant' || row.format || !row.segmentId || row.action || !row.text) return;
     if (pendingTimer.current) window.clearTimeout(pendingTimer.current);
     discardCandidate();
     const token = ++playToken.current;

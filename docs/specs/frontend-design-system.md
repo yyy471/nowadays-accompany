@@ -12,6 +12,14 @@
 - **样式里禁止直接写**字体栈、`cubic-bezier()`、`ms`/`s` 时长、十六进制与 `rgb()`/`hsl()` 颜色、带模糊的 `box-shadow`、`border-radius` 的 px 字面量（第 11 节）。确需例外，写带原因的豁免注释。
 - 自检：在 `apps/desktop/renderer` 运行 `npm run check`（令牌同步 + 样式检查 + 类型检查），`apps/desktop` 的 `npm test` 也包含样式检查。
 
+## 扩展槽位（DL-188）
+
+Dock 的「全部菜单 → 扩展」提供启停开关、微页选择和挂件区。跨页浮层与通知位于左下角，宿主提供关闭按钮，主角色的分享纸笺位于右下角。停用或删除扩展立即卸载其槽位。
+
+每个 `manifest.ui` 项用 `slot` 与 `file` 声明。独立微页用 `page`、挂件用 `widget`、浮层用 `overlay`。这些入口指向 `ui/` 下的 HTML，需要引用的 CSS、JS 等逐个用 `asset` 声明。桌面通过 `nd-ext://<extId>/ui/<文件>?v=<版本>` 载入，升级时重新挂载。Electron 只代理该扩展的受控资产出口。子页响应 CSP 限制脚本、样式和图片来源，禁止连接网络、加载嵌套框架、对象及提交表单。
+
+iframe 使用 `sandbox="allow-scripts"`。宿主按当前元素的 `contentWindow` 识别消息。子页可发送 `{type:'ext:ready'}` 请求当前主题、`{type:'ext:resize',height:数值}` 请求有界高度，或发送 `{type:'ext:dismiss'}` 关闭自身浮层。宿主在加载、收到 ready 和昼夜切换时向该窗口发送 `{type:'host:theme',preset,tokens}`。子页先检查 `event.source === parent`，再将 `tokens` 中的 `--nd-semantic-*` 计算值应用到自己的样式。
+
 ## 1. 字体
 
 ### 1.1 字体角色（`--nd-semantic-font-*`）

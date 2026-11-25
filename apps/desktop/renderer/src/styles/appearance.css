@@ -44,5 +44,5 @@
 .nd-appearance-notice { margin: 0; color: var(--ok); font-size: 13px; }
 .nd-appearance-error { margin: 0; color: var(--bad); font-size: 13px; }
 .nd-visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
-/* 预置服饰只读标识（DL-153）。 */
+/* 预置服饰来源标识（DL-153）。 */
 .nd-outfit-preset{display:inline-block;margin-left:8px;padding:0 7px;border:1px solid var(--nd-semantic-color-accent-decorative);border-radius:var(--nd-semantic-radius-chip);font-family:var(--nd-semantic-font-body);font-size:10px;font-style:normal;font-weight:400;letter-spacing:.06em;color:var(--nd-semantic-color-text-muted);vertical-align:1px}

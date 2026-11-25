@@ -499,6 +499,9 @@ export class MemoryStore {
            FROM evidence_records er
            JOIN evidence_processing ep ON ep.evidence_id = er.evidence_id
            WHERE er.role_id = ?
+             AND (er.source_kind <> 'role_exchange' OR EXISTS (
+               SELECT 1 FROM role_exchange_turns t JOIN role_exchange_sessions s USING(sessionId)
+               WHERE t.exchangeId=er.source_id AND s.status <> 'active'))
              AND (
                ep.status = 'pending'
                OR (ep.status = 'failed' AND (ep.next_retry_at IS NULL OR ep.next_retry_at <= ?))
@@ -2511,6 +2514,12 @@ export class MemoryStore {
     source_kind: MemorySourceKind;
     source_id: string;
   }): string {
+    if (row.source_kind === "role_exchange") {
+      const turn = this.db.prepare(`SELECT t.sessionId, t.turnIndex, t.speakerRoleId, t.speakerName, t.createdAt, t.content,
+          s.topic, s.initiatorName, s.targetName, s.initiatorRoleId, s.targetRoleId
+        FROM role_exchange_turns t JOIN role_exchange_sessions s USING(sessionId) WHERE exchangeId = ?`).get(row.source_id);
+      return JSON.stringify({ source: "角色间对话", perspectiveRoleId: row.role_id, turn });
+    }
     if (row.source_kind === "message") {
       const message = this.db
         .prepare("SELECT content FROM messages WHERE message_id = ?")

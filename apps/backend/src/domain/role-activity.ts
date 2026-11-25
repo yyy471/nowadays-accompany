@@ -45,5 +45,6 @@ export interface ActivityRuntime {
    * 恢复成功后把因停止而暂停的原任务链与到期待办接回调度。
    * 不清理任何待办、不重置自主额度；失败不回滚已恢复的活动状态。
    */
+  stopExchanges?(roleId: string): void;
   resumeWork?(roleId: string): void;
 }

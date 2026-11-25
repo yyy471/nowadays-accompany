@@ -37,24 +37,26 @@ export const createRoleSchema = z
 export const updateDefinitionSchema = z
   .object({
     displayName: z.string().trim().min(1).max(200).optional(),
+    bio: z.string().optional(),
     definition: definitionSchema.optional(),
     expectedRevision: z.number().int().min(1).optional(),
   })
   .strict()
   .refine(
-    (value) => value.displayName !== undefined || value.definition !== undefined,
-    { message: "displayName 或 definition 至少提供一项" },
+    (value) => value.bio !== undefined || value.displayName !== undefined || value.definition !== undefined,
+    { message: "displayName、bio 或 definition 至少提供一项" },
   );
 
 export const renameOutfitBodySchema = z
   .object({
+    assetNames: z.record(z.string().uuid(), z.string().trim().min(1).max(100)).optional(),
     name: z.string().trim().min(1).max(100).optional(),
     description: z.string().max(500).nullable().optional(),
   })
   .strict()
   .refine(
-    (value) => value.name !== undefined || value.description !== undefined,
-    { message: "name 或 description 至少提供一项" },
+    (value) => value.name !== undefined || value.description !== undefined || Object.keys(value.assetNames ?? {}).length > 0,
+    { message: "name、description 或 assetNames 至少提供一项" },
   );
 
 export const putStateSchema = z

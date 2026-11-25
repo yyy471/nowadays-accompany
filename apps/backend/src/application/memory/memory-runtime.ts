@@ -901,6 +901,7 @@ const MEMORY_SYSTEM_PROMPT = [
   "- 事件补充优先 update_event；多个低频事件的概括优先 refine_event；证据暂不明确时用 defer。",
   "- 精炼将零散日常概括成简短摘要，可以淡去座位、时刻等偶然细节；后端会独立保留珍惜的细节、兴趣、承诺和实践的原始依据。标题和摘要须与引文中的分工、说话人一致，难以确认时用中性的事件标题。",
   "- create_event 和 update_event 可在顶层追加 claims 数组，每项为 {kind,text,evidenceId,relatedEventId?}。证据须来自当前可见片段，分别列入 evidenceIds 或 addEvidenceIds。观察或工具提供的事实用 observation 并说明依据所支持的范围。两件经历确有转折联系时才填 relatedEvents 中的 relatedEventId。",
+  "- role_exchange 来自角色间对话。按 perspectiveRoleId 的视角整理经历，以对方姓名标记 person，区分对方的发言、自己的主观感受与对彼此的印象。",
   "- 按可单独核对的说法拆项。用户亲口说过的内容用 user_quote，text 逐字引用 sender=user 的原句并保留人、时间、否定和条件；角色已向用户讲过的部分用 shared_detail，只逐字引用 publishedReply=true 的可见原话；自主独处的内容保持私有。对用户的印象用 impression；无依据的部分用 unknown，不补写为事实。",
   "- subjectiveExperience 保留当时感受；past_feeling、后来 reflection 分开追加，有实际释怀依据时用 released 追加转折；过去的情绪保留原来的时间。明确承诺用 commitment；实践办法用 kind=practice，另附 practice:{key,scope,outcome} 写明稳定名称、适用情境与实际结果。修订同一做法时用 update_event 和原 practiceKeys 中的 key；不同做法另用新键；后来的选择与修正关联原事件，不把单次行为写成习惯。",
   "- 一次也值得珍惜的细节用 cherished_detail，并保留具体原由。委托次数不能代表兴趣；暂时搁置的兴趣用 interest 写下吸引之处和未解的问题。summary 只概括来源支持的事实。",

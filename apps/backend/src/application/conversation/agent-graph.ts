@@ -659,7 +659,7 @@ export class AgentGraphRunner {
       const tool = this.toolMap.get(call.name);
       if (!tool) {
         const outcome = failedOutcome(
-          "UNKNOWN_TOOL",
+          call.name.startsWith("ext_") ? "EXTENSION_UNAVAILABLE" : "UNKNOWN_TOOL",
           `模型请求了不存在的工具 ${call.name}`,
         );
         roundRecords.push({
@@ -694,8 +694,15 @@ export class AgentGraphRunner {
         }));
         continue;
       }
-      if (tool.source !== "mcp" && tool.recorded !== true) {
+      const recorded = typeof tool.recorded === "function" ? tool.recorded(asObject(call.arguments) ?? {}) : tool.recorded;
+      if (tool.source !== "mcp" && !recorded) {
         const outcome = await this.executeInternal(tool, call, state, taskId, index, checkDispatch);
+        // 一次互聊唤醒只决策一个发言。工具已双边落库后直接结束该图，无需再消耗一轮模型额度。
+        if (tool.source === "autonomy" && tool.name === "role_chat_reply" && outcome.status === "success") {
+          roundRecords.push({ wireCallId: call.wireCallId, toolCallId: null, name: call.name, arguments: call.arguments, result: outcome });
+          taskAction = { kind: "finish", status: "completed", endReason: "ROLE_EXCHANGE_DELIVERED" };
+          break;
+        }
         if (tool.source === "task" && outcome.status === "success") {
           taskAction = taskActionFromArgs(call.name, call.arguments) ?? taskAction;
           if (call.name === "task_progress") {
@@ -861,6 +868,7 @@ export class AgentGraphRunner {
           })
         : state.messages;
     return {
+      ...(roundRecords.at(-1)?.name === "role_chat_reply" && taskAction?.kind === "finish" && taskAction.endReason === "ROLE_EXCHANGE_DELIVERED" ? {text: "本轮角色间发言已送达。"} : {}),
       messages: [...normalizedMessages, ...toolMessages],
       pendingCalls: [],
       rounds: [
@@ -1299,7 +1307,10 @@ export class AgentGraphRunner {
   }
 
   private toolSpecs(): ModelToolSpec[] {
-    return this.deps.tools.map((tool) => ({
+    const tools = this.deps.tools;
+    this.toolMap.clear();
+    for (const tool of tools) this.toolMap.set(tool.name, tool);
+    return tools.map((tool) => ({
       name: tool.name,
       description: tool.description,
       inputSchema: tool.inputSchema,
@@ -1393,9 +1404,11 @@ function buildGraph(deps: AgentGraphRunner, checkpointer: SqliteSaver) {
       state.pendingCalls.length > 0 ? "tools" : END,
     )
     // 本段已决定停止派发时，工具节点之后只做一轮无工具的收尾说明就结束。
-    .addConditionalEdges("tools", (state) =>
-      state.stopKind !== null ? "closing" : "model",
-    )
+    .addConditionalEdges("tools", (state) => {
+      if (state.taskAction?.kind === "finish" && state.taskAction.endReason === "ROLE_EXCHANGE_DELIVERED" &&
+        state.rounds.at(-1)?.toolCalls.at(-1)?.name === "role_chat_reply") return END;
+      return state.stopKind !== null ? "closing" : "model";
+    })
     .addEdge("closing", END)
     .compile({ checkpointer });
 }

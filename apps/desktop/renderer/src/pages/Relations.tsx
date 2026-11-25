@@ -310,9 +310,8 @@ export function Relations({ roles, error, currentId, visit, onSelect, onOpenSett
                 <div>
                   <p className="profile-title" data-testid="profile-name">{profile.name}</p>
                   {packet?.isBuiltin && packet.bioText.trim() && <section className="profile-official" data-testid="profile-official-intro">
-                    <span className="eyebrow">内置助手 · 官方介绍</span>
+                    <span className="eyebrow">主角色 · 人物介绍</span>
                     <p>{packet.bioText}</p>
-                    <small>官方介绍只读；下面是可以自行修订的角色卡正文。</small>
                   </section>}
                   {definition.quote && <h2 className="profile-quote">{definition.quote}</h2>}
                   <p className="profile-text" data-testid="profile-definition">{profile.loading ? '正在读取角色介绍。' : (definition.body || definition.quote || '还没有写下角色设定。')}</p>

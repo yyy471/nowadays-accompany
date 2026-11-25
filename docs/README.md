@@ -7,6 +7,7 @@
 
 | 入口分类 | 关心的问题 | 先看哪里 | 说明 |
 | --- | --- | --- | --- |
+| **后端热扩展** | 主角色如何写入、升级与停用扩展 | [后端热扩展契约](./specs/role-config-and-activity.md#35-后端热扩展dl-184dl-188) | 工具、事件、KV、进程生命周期与[桌面沙箱槽位](./specs/frontend-design-system.md#扩展槽位dl-188) |
 | **模型服务** | 如何配置模型服务商、获取目录或选择预置 | [服务商入口与模型候选](./specs/role-config-and-activity.md#231-模型服务商与候选来源) | 六个专用适配与 Gemini 两种入口的地址、鉴权和资料来源 |
 | **项目** | 做什么、边界是什么、现在做到哪、下一步做什么 | [161 持续决策记录](./161-digital-life-direction-decisions.md) · [当前状态看板](./STATUS.md) | `161` 收录已确认需求。`STATUS.md` 维护当前总表、待办与通过基线。 |
 | **开发** | 环境怎么起、接口/状态/报错怎么写、设计规范是什么 | [现行规范总览](./specs/README.md) · [前端设计规范](./specs/frontend-design-system.md) · [后端使用说明](../apps/backend/README.md) · [美术资产生成指南](../apps/desktop/ART-GENERATION-GUIDE.md) | 汇总 `specs/` 活规范、[`tokens.json`](./design/character-studio/tokens.json) 与当前仍生效的契约章节；桌面端开发必读前端设计规范 |
@@ -128,7 +129,7 @@ docs/
 
 </details>
 
-### 04 · 角色配置、全局设置、活动护栏与媒体适配（`archive/04-role-settings-and-media/`，`236`、`241`–`267`）
+### 04 · 角色配置、全局设置、活动护栏与媒体适配（`archive/04-role-settings-and-media/`，`236`、`241`–`267`、`406`）
 
 <details>
 <summary>展开 04 专项 28 份文档索引（`236`、`241`–`267`）</summary>
@@ -163,6 +164,7 @@ docs/
 | [265 角色配置与设置前端第三包接入记录](./archive/04-role-settings-and-media/265-role-settings-frontend-third-package.md) | 外观、角色删除、历史素材与资源同步接入；独立结论见 266 |
 | [266 253 角色配置与设置前端独立复核](./archive/04-role-settings-and-media/266-role-settings-frontend-independent-review.md) | CF-R01～CF-R05 在已验本机范围关闭，真实服务待联调 |
 | [267 角色配置与设置前端复核修复](./archive/04-role-settings-and-media/267-role-settings-frontend-review-fixes.md) | CF-R01～CF-R05 均通过独立复验 |
+| [406 角色生图锚点适配：夏澄实测与方案](./archive/04-role-settings-and-media/406-role-image-anchor-adaptation.md) | 走现有 `probe → 角色生图配置 → preview` 流程实测 20 张；分离出 text2img／img2img 两档的位移规律，并给出基础锚点、服饰锚点、负向提示词与参数的可照抄方案（实施方自验，待独立复核） |
 
 </details>
 

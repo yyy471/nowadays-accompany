@@ -525,9 +525,10 @@ test("包2：夏澄内部管理工具只挂载到内置助手，读写边界与�
       },
     ]);
 
-    // 普通角色不应拿到管理工具。
+    // 主角色换名后，普通同名角色仍然不能获得管理工具。
+    app.services.roles.updateDefinition(builtinId, { displayName: "岚" });
     const ordinary = app.services.roles.createRole({
-      displayName: "普通角色",
+      displayName: "岚",
       definition: { text: "普通人设" },
     });
     const ordinaryCatalog = await loadAgentTools({
@@ -607,7 +608,7 @@ test("包2：夏澄内部管理工具只挂载到内置助手，读写边界与�
       assert.equal(rejected.status, "failed", `${name} 应被拒绝`);
       assert.equal(rejected.diagnosticCode, SELF_MODIFICATION_CODE);
     }
-    assert.equal(app.services.roles.getRole(builtinId).displayName, "夏澄");
+    assert.equal(app.services.roles.getRole(builtinId).displayName, "岚");
     assert.equal(app.services.resources.getView(modelRes.resourceId).name, "管理测试模型");
 
     // 全局 MCP 只切换开关，不需要停止角色。

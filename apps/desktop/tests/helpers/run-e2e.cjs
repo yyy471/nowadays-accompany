@@ -15,7 +15,7 @@ const distDir = path.join(desktop, "renderer", "dist");
 const timeoutMs = Number(process.env.E2E_TIMEOUT_MS ?? "180000");
 const poolSize = Math.max(1, Number(process.env.E2E_CONCURRENCY ?? "3"));
 const keepRuns = Math.max(0, Number(process.env.E2E_KEEP_RUNS ?? "5"));
-const expectedSuiteSize = 15;
+const expectedSuiteSize = 18;
 
 const SUITE = [
   "startup-flow-fixes.e2e.cjs",
@@ -27,6 +27,9 @@ const SUITE = [
   "settings-binding-recovery.e2e.cjs",
   "token-usage.e2e.cjs",
   "dialogue-layout.e2e.cjs",
+  "cross-page-share.e2e.cjs",
+  "role-exchanges.e2e.cjs",
+  "extension-ui-slots.e2e.cjs",
   "pack3-entry.e2e.cjs",
   "theme-transition.e2e.cjs",
   "settings-media-sheet.e2e.cjs",
@@ -231,12 +234,16 @@ async function main() {
   const exclusive = selected.filter((name) => EXCLUSIVE_STEPS.includes(name));
   const pool = selected.filter((name) => !serialSelected.has(name) && !exclusive.includes(name));
 
-  const [chains, pooled] = await Promise.all([
-    Promise.all(selectedSerialChains.map((chain) => runPool(chain, runDir, 1))),
-    runPool(pool, runDir, poolSize),
-  ]);
-  const exclusiveResults = await runPool(exclusive, runDir, 1);
-  summary.results = [...chains.flat(), ...pooled, ...exclusiveResults];
+  if (poolSize === 1) {
+    summary.results = await runPool(selected, runDir, 1);
+  } else {
+    const [chains, pooled] = await Promise.all([
+      Promise.all(selectedSerialChains.map((chain) => runPool(chain, runDir, 1))),
+      runPool(pool, runDir, poolSize),
+    ]);
+    const exclusiveResults = await runPool(exclusive, runDir, 1);
+    summary.results = [...chains.flat(), ...pooled, ...exclusiveResults];
+  }
   const afterHash = hashDist();
   summary.entryStable = beforeHash === afterHash;
   summary.complete = !summary.partial && summary.results.length === expectedSuiteSize;

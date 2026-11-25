@@ -3,6 +3,7 @@ import { Icon, useMotionPolicy } from '../ui';
 import { buildDays, calendarDays, dateLabel, dayKey, daySnippets, dotTier, findHits, keyToDate, rangesFor, snippet, termsFor, textFor } from './history';
 import type { DaySummary, PerfRow } from './history';
 import type { PerfScene } from './performance';
+import { sceneForEachReply } from './window-model';
 
 const WEEK = '日一二三四五六';
 const weekday = (key: string) => `周${WEEK[keyToDate(key).getDay()]}`;
@@ -322,6 +323,8 @@ export function HistoryPanel({
   })();
 
   if (!present) return null;
+  const target = cards[cardIndex]?.lines.find(line => line.main);
+  const scene = target ? sceneForEachReply(scenes).get(target.messageId) : undefined;
   return <section className="dialogue-history" data-leaving={leaving ? '' : undefined} role="dialog" aria-modal="false" aria-labelledby="dialogue-history-title" data-open={open ? '' : undefined}>
     <header className="dialogue-history-head">
       <h2 id="dialogue-history-title"><Icon name="history" size={18} />历史消息</h2>
@@ -445,12 +448,7 @@ export function HistoryPanel({
         <button type="button" className="dialogue-card" aria-label="下一张片段" disabled={cardIndex >= cards.length - 1} onClick={() => moveCard(1)}><Icon name="chev-right" size={17} /></button>
         <span className="dialogue-card-hint">点片段，回到这句话</span>
       </div>
-      {cards[cardIndex] && scenes.filter(scene => {
-        const target = cards[cardIndex].lines.find(line => line.main);
-        return scene.status === 'succeeded' && !!target?.segmentId && scene.messageId === target.messageId && scene.startSegmentId === target.segmentId;
-      }).map(scene =>
-        <button key={scene.id} type="button" className="dialogue-scene-chip" onClick={() => onOpenScene(scene)}>查看{scene.mode === 'background' ? '背景图' : '人物场景图'}</button>
-      )}
+      {scene?.status === 'succeeded' && <button type="button" className="dialogue-scene-chip" onClick={() => onOpenScene(scene)}>查看{scene.mode === 'background' ? '背景图' : '人物场景图'}</button>}
     </div>
   </section>;
 }

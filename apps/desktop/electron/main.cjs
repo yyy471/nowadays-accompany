@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const { join, resolve } = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { resolveBackendLayout, resolveNodeExecutable } = require("./backend-paths.cjs");
+const { extensionHandler, allowSlotNavigation } = require("./extension-protocol.cjs");
 
 const home = "desk://bundle/index.html";
 const icon = join(__dirname, "..", "assets", "window.png");
@@ -13,6 +14,7 @@ const assets = /^\/(?:index\.html|assets\/[a-z0-9-_]+\.(?:js|css|webp|svg|woff|p
 const rendererRoot = join(__dirname, "..", "renderer", "dist");
 
 protocol.registerSchemesAsPrivileged([
+  { scheme: "nd-ext", privileges: { standard: true, secure: true } },
   {
     scheme: "desk",
     privileges: {
@@ -190,6 +192,8 @@ async function startDesk() {
 
     // 2. 同源代理 /v1/* 请求至真实本地后端
     if (pathname.startsWith("/v1/")) {
+      // 扩展文件只通过 nd-ext 加载，避免同一份代码也能从桌面来源取得。
+      if (/^\/v1\/extensions\/[^/]+\/ui\//.test(pathname)) return new Response(null, { status: 404 });
       if (!backendBaseUrl) {
         return new Response(
           JSON.stringify({ error: { code: "BACKEND_OFFLINE", message: "本地后端尚未就绪" } }),
@@ -235,6 +239,10 @@ async function startDesk() {
     }
     const result = await dialog.showOpenDialog(window, { properties: ["openDirectory"] });
     return result.canceled ? null : result.filePaths[0] ?? null;
+  });
+  window.webContents.session.protocol.handle("nd-ext", extensionHandler(backendBaseUrl, net.fetch.bind(net)));
+  window.webContents.on("will-frame-navigate", event => {
+    if (!event.isMainFrame && !allowSlotNavigation(event, window.webContents.mainFrame)) event.preventDefault();
   });
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event) => event.preventDefault());

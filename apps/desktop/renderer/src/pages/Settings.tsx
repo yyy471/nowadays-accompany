@@ -682,7 +682,7 @@ function RoleFooterIdentity({ role, activity, error, englishName }: { role?: Rol
   const stopping = role && activity?.state !== 'stopped' && write.pendingPauseIds.includes(role.roleId);
   const state = resuming ? 'resuming' : stopping ? 'stopping' : activity?.state;
   const label = error ? '状态获取失败' : state ? T19[state] : '正在同步状态';
-  const subtitle = typeof englishName === 'string' && englishName.trim() ? englishName.trim() : role?.isBuiltin ? 'Xia Cheng' : '';
+  const subtitle = typeof englishName === 'string' && englishName.trim() ? englishName.trim() : '';
   return <div className="config-footer-ident"><strong title={role?.displayName}>{role?.displayName || '角色配置'}</strong>
     <span data-activity={state}><StatusDot status={error ? 'error' : state === 'active' ? 'ok' : 'off'} label={label}/></span>
     {subtitle && <small title={subtitle}>{subtitle}</small>}
@@ -847,7 +847,7 @@ function RoleEditor({ roleId, roleCount, active, activity, activityLoading = fal
         roleIds: [roleId],
         verb: '保存设定',
         commit: async () => {
-          const saved = await api<{ definitionRevision: number; updatedAt: string }>(`/v1/roles/${encodeURIComponent(roleId)}/definition`, { method: 'PATCH', body: { displayName: draft.name.trim(), definition: { text: draft.definition.trim(), payload: draft.payload }, expectedRevision: draft.revision } });
+          const saved = await api<{ definitionRevision: number; updatedAt: string }>(`/v1/roles/${encodeURIComponent(roleId)}/definition`, { method: 'PATCH', body: { displayName: draft.name.trim(), ...(draft.isBuiltin ? { bio: draft.bio } : {}), definition: { text: draft.definition.trim(), payload: draft.payload }, expectedRevision: draft.revision } });
           const next = { ...draft, name: draft.name.trim(), definition: draft.definition.trim(), payload: draft.payload, revision: saved.definitionRevision };
           setSavedProfile(next); setDraft(next);
           await onRefresh();
@@ -933,11 +933,12 @@ function RoleEditor({ roleId, roleCount, active, activity, activityLoading = fal
   };
   const savedChat = bindings.find(item => item.capability === 'chat_model');
   const savedMemory = bindings.find(item => item.capability === 'memory_model');
-  const dirtyProfile = !!draft && !!savedProfile && (draft.name !== savedProfile.name || draft.definition !== savedProfile.definition);
-  const profileCount = !draft || !savedProfile ? 0 : (draft.name !== savedProfile.name ? 1 : 0) + (draft.definition !== savedProfile.definition ? 1 : 0);
   // 设定字段的改动细线（M19）：逐字段比较，不共用整体 dirty 标记。
   const nameDirty = !!draft && !!savedProfile && draft.name !== savedProfile.name;
   const definitionDirty = !!draft && !!savedProfile && draft.definition !== savedProfile.definition;
+  const bioDirty = !!draft && !!savedProfile && draft.bio !== savedProfile.bio;
+  const profileCount = Number(nameDirty) + Number(definitionDirty) + Number(bioDirty);
+  const dirtyProfile = profileCount > 0;
   // 人设自动增高（§5）：最小 136，上限 max(140, 窗口高×0.4 与正文可视高−120 的较小者)。
   const definitionRef = useRef<HTMLTextAreaElement>(null);
   const growDefinition = useCallback(() => {
@@ -1013,8 +1014,8 @@ function RoleEditor({ roleId, roleCount, active, activity, activityLoading = fal
     <div hidden={!active || section !== 'profile'} className="config-prose">
       <header className="config-sec-head"><h2 tabIndex={-1}>设定</h2></header>
       {!draft && <MediaStateRow label="设定" loading={!detailError} error={detailError} onRetry={() => setDetailRead(previous => previous + 1)}/>}
-      {draft && <><div className="config-ledger"><div className="config-ledger-label"><b>显示名</b></div><div><div className="config-ctl" data-dirty={nameDirty || undefined}><Input aria-label="显示名" aria-describedby={draft.isBuiltin ? `config-builtin-name-${roleId}` : undefined} disabled={saveBusy || draft.isBuiltin} value={draft.name} maxLength={200} onChange={event => setDraft({ ...draft, name: event.target.value })}/></div>{draft.isBuiltin && <small className="config-inline-hint" id={`config-builtin-name-${roleId}`}>内置角色的显示名不能修改。</small>}</div></div>
-      {draft.isBuiltin && draft.bio.trim() && <div className="config-ledger"><div className="config-ledger-label"><b>官方介绍</b></div><div><p className="config-muted" data-testid="builtin-bio">{draft.bio}</p></div></div>}
+      {draft && <><div className="config-ledger"><div className="config-ledger-label"><b>显示名</b></div><div><div className="config-ctl" data-dirty={nameDirty || undefined}><Input aria-label="显示名" aria-describedby={draft.isBuiltin ? `config-builtin-name-${roleId}` : undefined} disabled={saveBusy} value={draft.name} maxLength={200} onChange={event => setDraft({ ...draft, name: event.target.value })}/></div>{draft.isBuiltin && <small className="config-inline-hint" id={`config-builtin-name-${roleId}`}>主角色 / 内置管理员 · 不可删除</small>}</div></div>
+      {draft.isBuiltin && <div className="config-ledger"><div className="config-ledger-label"><b>人物介绍</b></div><div className="config-ctl" data-dirty={bioDirty || undefined}><Textarea aria-label="人物介绍" disabled={saveBusy} rows={3} value={draft.bio} onChange={event => setDraft({ ...draft, bio: event.target.value })}/></div></div>}
       <div className="config-ledger"><div className="config-ledger-label"><b>人设</b></div><div><div className="config-ctl" data-dirty={definitionDirty || undefined}><Textarea ref={definitionRef} aria-label="角色设定" aria-describedby="config-definition-count" className="config-ruled" disabled={saveBusy} rows={4} value={draft.definition} onChange={event => setDraft({ ...draft, definition: event.target.value })}/></div><div className="config-field-foot"><span/><span className="config-count" id="config-definition-count"><b>{draft.definition.length}</b> 字</span></div></div></div>
       <RoleDeleteEntry roleCount={roleCount} isBuiltin={draft.isBuiltin}/>
       <RoleSheetHost active={active} roleId={roleId} roleName={draft.name} roleCount={roleCount} needsPause={activity?.state !== 'stopped'} onDeleted={onDeleted}/></>}
@@ -1473,7 +1474,7 @@ function RoleDeleteEntry({ roleCount, isBuiltin }: { roleCount: number; isBuilti
   const { open } = useSheet();
   const reasonId = useId();
   const write = useWrite();
-  const reason = roleCount < 2 ? T38 : isBuiltin ? '内置默认助手随应用提供，不能删除。' : '';
+  const reason = isBuiltin ? '主角色席位不可删除。' : roleCount < 2 ? T38 : '';
   return <div className="config-ledger"><div className="config-ledger-label"><b>{T31.role.title}</b></div><div className="config-role-delete-entry">
     <Button variant="default" size="sm" className="config-role-delete-button" disabled={Boolean(reason) || write.busy}
       aria-describedby={reason ? reasonId : undefined} onClick={event => open({ id: 'delete-role', title: T31.role.title, shape: 'confirm', anchor: event.currentTarget })}>{T31.role.title}</Button>
