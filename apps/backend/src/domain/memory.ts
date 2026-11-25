@@ -167,6 +167,7 @@ export interface DailySummaryBrief {
 
 export interface MemoryFormationInput {
   roleId: string;
+  roleName?: string;
   batchId: string;
   currentRound: number;
   evidence: MemoryEvidenceInput[];

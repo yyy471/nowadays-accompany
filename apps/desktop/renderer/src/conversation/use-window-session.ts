@@ -32,6 +32,7 @@ export interface SessionEvent {
 }
 
 export interface ConversationSnapshot extends PerformanceSnapshot {
+  pendingReceipt?: string;
   roleId: string;
   sceneImagesAvailable: boolean;
   sceneRequests: ReadonlySet<string>;
@@ -61,6 +62,7 @@ export interface ConversationSnapshot extends PerformanceSnapshot {
 type SubmissionKind = 'send' | 'retry';
 
 interface PendingReply {
+  receiptSummary?: string;
   submissionKind: SubmissionKind | null;
   executionId: string | null;
   replyMessageId: string | null;
@@ -315,6 +317,7 @@ export function useWindowSession({
         awaitingReceipt: current.pending.awaitingSubmission,
       } : null,
       failedReply: current.failedReply,
+      pendingReceipt: current.pending?.receiptSummary,
       roleRejected: current.roleRejected,
       confirmedDraft: current.confirmedDraft
     };
@@ -462,6 +465,7 @@ export function useWindowSession({
         submittedMessageId: page.awaitingReply.messageId, awaitingSubmission: false, awaitingExecution: false };
     }
     current.sceneImagesAvailable = Array.isArray(page.sceneImages);
+    if (current.pending && page.awaitingReply?.receiptSummary) current.pending.receiptSummary = page.awaitingReply.receiptSummary;
     for (const task of page.sceneImages ?? []) rememberScene(current, task);
     if (current.pending === null) {
       const entries = [...current.messages.values()].sort((left, right) => left.record.sequence - right.record.sequence);
@@ -560,6 +564,7 @@ export function useWindowSession({
         const messageIds = Array.isArray(payload.messageIds) ? payload.messageIds.filter(item => typeof item === 'string') as string[] : [];
         const triggerType = typeof payload.triggerType === 'string' ? payload.triggerType : '';
         if (current.failedReply && messageIds.includes(current.failedReply.messageId) && triggerType === 'user_message') {
+          if (current.pending?.terminal === 'failed') finalizePending();
           current.pending ??= { ...pendingSubmission(), submittedMessageId: current.failedReply.messageId, awaitingSubmission: false };
           current.failedReply = null;
           current.error = '';
@@ -579,6 +584,9 @@ export function useWindowSession({
           }
         }
         const pending = current.pending;
+        if (pending && typeof payload.receiptSummary === 'string' && messageIds.includes(pending.submittedMessageId ?? '')) {
+          pending.receiptSummary = payload.receiptSummary;
+        }
         if (pending !== null && pending.executionId === null) {
           const matches = pending.submittedMessageId !== null && messageIds.includes(pending.submittedMessageId);
           if (matches && triggerType === 'user_message') {
@@ -665,6 +673,7 @@ export function useWindowSession({
         const pending = bindPending(payload as Record<string, unknown>);
         if (pending !== null) {
           pending.terminal = 'completed';
+          if (payload.receiptReply === true) pending.shown = pending.segments.length;
           settlePending();
           return;
         }
@@ -689,9 +698,16 @@ export function useWindowSession({
       case 'execution_failed': {
         const pending = current.pending;
         const executionId = typeof payload.executionId === 'string' ? payload.executionId : null;
-        if (payload.type === 'execution_failed' && executionId && typeof payload.failedMessageId === 'string') {
+        if (payload.type === 'execution_failed' && typeof payload.failedMessageId === 'string' && typeof payload.deliveredReceipt === 'string') {
+          const origin = current.messages.get(payload.failedMessageId);
+          if (origin) origin.record = { ...origin.record, status: 'receipt_delivered', deliveredReceipt: payload.deliveredReceipt };
+          else void ingestExtraMessage(payload.failedMessageId, 'receipt_delivered');
+          current.failedReply = null;
+          emit({ reason: 'ready' });
+        } else if (payload.type === 'execution_failed' && executionId && typeof payload.failedMessageId === 'string') {
           current.failedReply = { executionId, messageId: payload.failedMessageId,
-            errorCode: typeof payload.errorCode === 'string' ? payload.errorCode : 'EXECUTION_FAILED' };
+            errorCode: typeof payload.errorCode === 'string' ? payload.errorCode : 'EXECUTION_FAILED',
+            ...(typeof payload.receiptSummary === 'string' ? { receiptSummary: payload.receiptSummary } : {}) };
           if (pending?.executionId !== executionId) emit({ reason: 'ready' });
         }
         if (pending === null) return;
@@ -704,8 +720,9 @@ export function useWindowSession({
           if (pending.segments.length === 0) pending.error = '这轮回复暂时停了下来。';
         } else {
           pending.terminal = 'failed';
+          if (payload.deliveredReceipt) pending.shown = pending.segments.length;
           const code = typeof payload.errorCode === 'string' ? payload.errorCode : 'EXECUTION_FAILED';
-          if (pending.segments.length === 0 && !current.failedReply) pending.error = `这轮回复暂时没有送达（${code}）。`;
+          if (pending.segments.length === 0 && !current.failedReply && !payload.deliveredReceipt) pending.error = `这轮回复暂时没有送达（${code}）。`;
         }
         settlePending();
         return;

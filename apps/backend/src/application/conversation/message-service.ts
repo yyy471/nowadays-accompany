@@ -19,7 +19,7 @@ export interface MessagePageResult extends ListMessagesResult {
   segments: MessageSegmentRecord[];
   activeReply: ConversationActiveReply | null;
   failedReply: FailedReply | null;
-  awaitingReply: { executionId: string; messageId: string } | null;
+  awaitingReply: ReturnType<ConversationStore["getAwaitingReply"]>;
   /** 与本次读取同一快照边界的 SSE 游标。 */
   cursor: number;
   /** 本页消息关联的过场图任务与结果引用。 */

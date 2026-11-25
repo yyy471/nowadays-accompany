@@ -10,6 +10,12 @@ function component(value: string) {
 }
 export const extIdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,23}$/).refine(component);
 const relativeFile = z.string().max(240).refine(s => s.split("/").every(component));
+const sourceFile = relativeFile.refine(s => s.endsWith(".mjs") || s.startsWith("ui/"),
+  "文件名须使用原始相对路径，例如 index.mjs 或 ui/index.html，并与清单一致");
+export const sourceQuery = z.object({
+  extId: extIdSchema, file: sourceFile.optional(), version: z.string().max(64).refine(component).optional(),
+  offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
+});
 export const definition = z.object({
   version: z.string().max(64).refine(component),
   entry: relativeFile.refine(s => s.endsWith(".mjs")),
@@ -17,7 +23,7 @@ export const definition = z.object({
 });
 export const upsertSchema = z.object({
   extId: extIdSchema, manifest: definition,
-  files: z.record(relativeFile.refine(s => s.endsWith(".mjs") || s.startsWith("ui/")), z.string()),
+  files: z.record(sourceFile, z.string()),
 });
 export const toolSpec = z.object({
   name: z.string().regex(/^[a-z][a-z0-9_]{0,31}$/),
@@ -83,14 +89,45 @@ export class ExtensionFiles {
     try { fs.renameSync(temp, target); }
     finally { fs.rmSync(this.checked(id, path.basename(temp)), { force: true }); }
   }
-  private verifyTree(parts: string[]): void {
+  private verifyTree(parts: string[], visit?: (parts: string[]) => void): void {
     const base = this.checked(...parts);
     for (const name of fs.readdirSync(base)) {
       const child = [...parts, name];
       const stat = fs.statSync(this.checked(...child));
-      if (stat.isDirectory()) this.verifyTree(child);
+      if (stat.isDirectory()) this.verifyTree(child, visit);
       else if (!stat.isFile()) throw new AppError(400, "EXTENSION_PATH_INVALID", "扩展目录包含非普通文件");
+      else visit?.(child);
     }
+  }
+  source(id: string, version: string, file: string | undefined, offset: number) {
+    const parts = [id, "versions", version];
+    if (file === undefined) {
+      const names: string[] = [];
+      this.verifyTree(parts, child => {
+        const name = child.slice(parts.length).join("/");
+        if (sourceFile.safeParse(name).success) names.push(name);
+      });
+      names.sort();
+      const files = names.slice(offset, offset + 50);
+      const end = offset + files.length;
+      return { extId: id, version, files, nextOffset: end < names.length ? end : null };
+    }
+    const target = this.checked(...parts, file);
+    const stat = fs.statSync(target, { throwIfNoEntry: false });
+    if (!stat?.isFile()) throw new AppError(404, "EXTENSION_FILE_MISSING", "此版本没有该源码文件", { file });
+    const invalidOffset = () => new AppError(400, "EXTENSION_SOURCE_OFFSET_INVALID", "请使用上一页返回的 UTF-8 字节偏移");
+    if (offset > stat.size) throw invalidOffset();
+    const fd = fs.openSync(target, "r");
+    try {
+      // 多读一字节以判断分页边缘，完整保留中文和非 BMP 字符。
+      const buffer = Buffer.alloc(Math.min(6001, stat.size - offset));
+      const size = fs.readSync(fd, buffer, 0, buffer.length, offset);
+      if (size && (buffer[0]! & 0xc0) === 0x80) throw invalidOffset();
+      let end = Math.min(6000, size);
+      while (end < size && (buffer[end]! & 0xc0) === 0x80) end--;
+      return { extId: id, version, file, content: buffer.toString("utf8", 0, end),
+        nextOffset: offset + end < stat.size ? offset + end : null };
+    } finally { fs.closeSync(fd); }
   }
   entry(id: string, spec: Definition) {
     const parts = [id, "versions", spec.version];

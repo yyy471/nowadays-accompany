@@ -48,6 +48,7 @@ export interface MemoryServiceOptions {
 
 /** 整理请求中除证据片段以外的固定与上下文内容。 */
 interface BatchContext {
+  roleName: string;
   currentRound: number;
   refineCandidates: RefineCandidateBrief[];
   summaryCandidates: DailySummaryBrief[];
@@ -150,6 +151,7 @@ export class MemoryService {
     return Array.from(
       JSON.stringify({
         roleId,
+        roleName: context.roleName,
         batchId,
         currentRound: context.currentRound,
         evidence: [],
@@ -532,6 +534,7 @@ export class MemoryService {
       refineCandidates.map((candidate) => candidate.experienceDate),
     );
     return {
+      roleName: this.store.roleName(roleId),
       currentRound,
       refineCandidates,
       summaryCandidates,
@@ -547,6 +550,7 @@ export class MemoryService {
   ): MemoryFormationInput {
     return {
       roleId,
+      roleName: context.roleName,
       batchId: batch.batchId,
       currentRound: context.currentRound,
       evidence: next.map((item) => {

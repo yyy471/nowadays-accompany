@@ -214,6 +214,8 @@
 
 主角色通过 `app_extension_upsert({extId, manifest, files})` 安装和升级扩展。`extId` 由小写字母开头，可含数字及连字符，最长 24 字符。`manifest` 指定 `version`、相对入口 `entry` 及可选 `ui: [{slot, file}]`。`files` 将相对路径映射到完整文本，可提交多份 `.mjs` 与 `ui/` 文本资源。每次更新使用新的版本目录，重载当前版本使用 `reload`。
 
+主角色可用 `app_extension_source({extId, file?, version?, offset?})` 在新窗口查阅已安装的项目（DL-192）。省略 `file` 时按相对路径排序，每页列出最多 50 个文件；指定路径时，每页返回最多 6000 个 UTF-8 字节的完整字符。用返回的 `nextOffset` 续页，传回 `version` 可在版本切换时得到明确冲突。停用期间仍可维护源码。普通角色和桌面资源接口沿用各自的权限。
+
 后端从 `config.appRoot` 派生 `extensions/<extId>/`，在每级路径核实真实位置并拒绝 junction。源码放在 `versions/<version>/`。每个扩展的 `manifest.json` 原子保存现行版本、工具声明、启停状态、最近错误与该扩展的 KV。管理查询仅投影公开字段。删除扩展会同时删除所有版本和 KV。
 
 固定 runner 在独立 Node 24 子进程中创建 Cordis Context，通过文件 URL 导入入口。入口导出 `default(ctx, api)` 或具名 `apply(ctx, api)`。依赖文件使用相对导入；Cordis Context 由 runner 传入。平台服务如下。
@@ -225,6 +227,7 @@
 | `await api.kv.get(key)`、`await api.kv.set(key, value)` | 键为非空字符串，值为 JSON，缺失返回 `null`。候选初始化的写入在版本切换时提交。 |
 | `await api.notify({message, data?})` | 后端订阅者通过 `extensions.onNotice(listener)` 接收含真实 `extId` 的结构化提示。候选初始化期间暂存，激活后发出。 |
 | `ctx.effect(() => dispose)` | 在子进程中登记清理函数。停用、删除、升级和应用关闭均先排空在途调用，再停止 Context 并等待 PID 退出。 |
+| `api.onDispose(cleanup)` | 在扩展停止时执行额外的清理函数，支持异步清理。通过 `api.tools.register` 和 `api.events.on` 登记的资源自动注销。 |
 
 同一扩展的管理操作串行。候选握手成功后切换工具与事件注册，旧进程只排空已派发工作。新版语法或初始化失败保持旧版可用，管理工具回执提供错误码、版本及诊断。新调用遇到停用、删除或已撤销的工具时得到 `EXTENSION_UNAVAILABLE`。初始化默认限时 10 秒，工具与事件单次调用默认限时 15 秒。运行中崩溃或超时置为 `failed`，关闭时清理超过 2 秒的进程由父进程强制回收。启动时仅恢复上次启用的扩展。
 

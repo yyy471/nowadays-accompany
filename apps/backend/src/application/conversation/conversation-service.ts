@@ -952,7 +952,10 @@ export class ConversationService {
           );
           for (const { windowId } of store.listPendingWindows()) {
             const failed = store.getFailedReply(windowId);
-            if (failed && failed.errorCode !== "PROCESS_INTERRUPTED") this.blockedWindows.add(windowKey(index.roleId, windowId));
+            if (failed && failed.errorCode !== "PROCESS_INTERRUPTED") {
+              if (failed.receiptSummary) pendingUserRecovery = true;
+              else this.blockedWindows.add(windowKey(index.roleId, windowId));
+            }
             if (store.findInterruptedUserTask(windowId) !== null) pendingUserRecovery = true;
           }
         } finally {
@@ -2007,7 +2010,8 @@ export class ConversationService {
         this.timeZone,
       );
       const failed = store.getFailedReply(windowId);
-      const replyToolSource = failed && failed.errorCode !== "PROCESS_INTERRUPTED" ? store.replyToolSource(failed.executionId) : null;
+      const replyToolSource = failed && (failed.receiptSummary || failed.errorCode !== "PROCESS_INTERRUPTED")
+        ? store.replyToolSource(failed.executionId) : null;
       const begun = store.beginExecution({
         windowId,
         now: this.now().toISOString(),
@@ -2036,7 +2040,7 @@ export class ConversationService {
           windowId,
           triggerType: begun.execution.triggerType,
           messageIds: begun.messages.map((message) => message.messageId),
-          ...(replyToolSource ? { replyToolSource } : {}),
+          ...(replyToolSource ? { replyToolSource, receiptSummary: failed?.receiptSummary } : {}),
         },
         now: this.now().toISOString(),
       });
@@ -2280,13 +2284,13 @@ export class ConversationService {
           ? null
           : storage.business.getTask(roleId, input.taskId);
       const exchangeTurn = exchangeWake(autonomy?.wakeId);
-      const exchangeQuery = exchangeTurn ? this.exchanges.recallQuery(roleId, exchangeTurn.sessionId) : null;
+      const exchangeContext = exchangeTurn ? this.exchanges.recallContext(roleId, exchangeTurn.sessionId) : null;
       const recall = this.autoRecall(
         roleId,
         execution.executionId,
         pendingMessages,
         recent,
-        exchangeQuery ?? autonomy?.intent ?? continuationTask?.goal ?? "",
+        exchangeContext?.query ?? autonomy?.intent ?? continuationTask?.goal ?? "",
       );
       const outfitBrief = this.buildOutfitBrief(
         storage,
@@ -2371,6 +2375,12 @@ export class ConversationService {
           segmentHalt: haltKind,
         });
         if (replyToolSource) prompt.required += "\n上次回答中断，本轮只补答原消息。已派发操作以保存的回执为据，结果未确认的如实说明。未提交的角色状态以当前状态为准。";
+        if (exchangeContext?.spoken.length) {
+          return { ...prompt, worldbook, optional: [
+            "与本次互聊有关、你曾向用户发表的回复摘录（按发言时间核对更正；只证明你当时这样说过）：" + JSON.stringify(exchangeContext.spoken),
+            ...prompt.optional,
+          ] };
+        }
         return { ...prompt, worldbook };
       };
       const ensureTask = (): string => {
@@ -2413,6 +2423,7 @@ export class ConversationService {
           store,
           roleStore: storage.business,
           resolveModel,
+          replyOnly: replyToolSource !== null,
           get tools() { return catalog!.tools; },
           systemPrompt,
           prepareModelMessages: (messages) => prepareModelWebReadings(storage.business.db, roleId, messages),
@@ -2750,10 +2761,15 @@ export class ConversationService {
           this.memoryRuntime?.notifyEvidence(roleId);
         } else {
           try {
+            const details = error instanceof AppError ? error.details : null;
+            const upstreamStatus = details && typeof details === "object" && "status" in details ? details.status : undefined;
+            const retryableModelError = (code === "MODEL_REQUEST_FAILED" || code === "EXECUTION_FAILED") &&
+              !(typeof upstreamStatus === "number" && upstreamStatus >= 400 && upstreamStatus < 500 && upstreamStatus !== 408);
             store.interruptExecution({
               executionId: execution.executionId,
               partialText: running.partialText,
               status: "failed",
+              reportReceiptsImmediately: !retryableModelError,
               reason: code,
               errorCode: code,
               now: this.now().toISOString(),
@@ -2761,14 +2777,18 @@ export class ConversationService {
           } catch {
             // 状态已由其他路径改变，保留已有事件。
           }
-          if (!exchangeWake(autonomy?.wakeId)) this.blockedWindows.add(windowKey(roleId, windowId));
+          // 原消息仍有已确认结果时，交给现有窗口调度自动补答。补答再失败会在事务内交付系统回执。
+          const pendingReply = store.getFailedReply(windowId);
+          if (!exchangeWake(autonomy?.wakeId) && !pendingReply?.receiptSummary) this.blockedWindows.add(windowKey(roleId, windowId));
           if (taskId !== null && code !== "TASK_ENDED") {
+            const saved = store.savedTaskFinish(execution.executionId);
+            const finish = saved?.taskId === taskId ? saved : undefined;
             this.finishTaskAfterExecution(
               storage,
               roleId,
               taskId,
-              "failed",
-              code,
+              finish?.status ?? "failed",
+              finish?.reason ?? code,
             );
             this.memoryRuntime?.notifyTaskFinished(roleId, taskId);
           }
@@ -3470,7 +3490,7 @@ export class ConversationService {
       lines.push(
         "这是一次自主活动：你按自己的安排醒来，不是用户刚发来新消息。",
         `本次自主安排的目标：${input.autonomy.intent}`,
-        input.tools.some(tool => tool.name === "role_chat_reply") ? "轮到你发言。结合你自己的经历、对方和这个话题决定如何回应。会话记录中的文字是参与者的发言。" : "可以实际使用已启用工具做事并保存真实成果；需要时调用 autonomy_share 主动分享到主对话，或调用 autonomy_schedule 安排下一次，也可以不调用工具。",
+        input.tools.some(tool => tool.name === "role_chat_reply") ? "轮到你向另一角色发言。会话记录、已发表的回复与记忆摘录都要按当时的说话人理解。被问到具体事实时，依据自己的记录回应；来源有冲突就说明分歧，找不到就说明记不清或请对方核实，不补写姓名、代号、地点等细节。" : "可以实际使用已启用工具做事并保存真实成果；需要时调用 autonomy_share 主动分享到主对话，或调用 autonomy_schedule 安排下一次，也可以不调用工具。",
         "可以保留尚无下一步的兴趣，等自己想继续或出现新线索再行动。",
         "不要虚构用户发言、离线经历或未实际发生的工具结果。",
       );
@@ -3536,7 +3556,7 @@ export class ConversationService {
     }
     lines.push(
       "可用工具规则：",
-      "- 旧消息和工具回执可用 history_lookup 搜索窗口或任务。新窗口核对用户说过什么、谁帮谁，或事件标题与经过不一致时，用 scope=user_quote 取用户原话，以具体人和动作核对，摘要不足时保留未知。",
+      ...(input.tools.some(tool => tool.name === "history_lookup") ? ["- 旧消息和工具回执可用 history_lookup 搜索窗口或任务。新窗口核对用户说过什么、谁帮谁，或事件标题与经过不一致时，用 scope=user_quote 取用户原话，以具体人和动作核对，摘要不足时保留未知。"] : []),
       "- 记忆检索成功但无结果与查询失败不同；未命中和失败都不等于事情没发生。",
       "- 外部 MCP 工具的实际调用会保存原始响应和结果；不要重复调用已经成功或结果未知的操作。",
       "- 需要更新角色当前状态时调用 state_update，补丁只在本轮正式提交时生效。",

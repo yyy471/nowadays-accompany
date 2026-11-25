@@ -35,7 +35,7 @@ export default async (ctx, api) => {
   for (const name of ["dialogue_batch","role_exchange"]) {
     api.events.on(name, data => api.notify({message:name, data}));
   }
-  ctx.effect(()=>async ()=>{
+  api.onDispose(async ()=>{
     await new Promise(resolve=>setTimeout(resolve,10));
     await api.notify({message:"disposed",data:version});
   });
@@ -86,6 +86,7 @@ test("主角色在真实对话图中创建扩展，同一任务调用新工具�
     app.services.extensions.onNotice(n => notices.push(n));
     await send(id,seat.defaultWindowId,"创建工具并试用");
     assert.ok(model.requests[0]!.tools.some(t=>t.name === "app_extension_upsert"));
+    assert.ok(model.requests[0]!.tools.some(t=>t.name === "app_extension_source"));
     assert.ok(model.requests[1]!.tools.some(t=>t.name === "ext_demo__private"));
     assert.match(JSON.stringify(model.requests[2]!.messages), /v1/);
     // 停用席位活动以保留批次唤醒，避免该唤醒消费普通角色的离线脚本。
@@ -107,6 +108,40 @@ test("主角色在真实对话图中创建扩展，同一任务调用新工具�
   } finally { await f.close(); }
 });
 
+test("扩展已写入并调用后回复失败，原消息补答显示回执且不重派模型再次提出的工具", async () => {
+  const model = new ScriptedChatModel([
+    event("app_extension_upsert", source("receipt","v1")), event("ext_receipt__hello",{}),
+    event("task_finish",{status:"completed",endReason:"验证完成"}),
+    () => { throw Error("model connection closed"); },
+    request => {
+      assert.deepEqual(request.tools, []);
+      const evidence = JSON.stringify(request.messages);
+      assert.match(evidence, /ext_receipt__hello/);
+      assert.match(evidence, /v1/);
+      return [{type:"text_delta",text:"扩展已启用，工具已验证。"}, ...event("ext_receipt__hello",{})];
+    },
+  ]);
+  const f = createFixtureWithModel(model);
+  try {
+    const {app} = f;
+    seedLegacyPresetAssistant(app.config);
+    const id = app.appStore.getRoleIndexByBuiltinKey("xiacheng")!.roleId;
+    const win = app.services.roles.initializeRole(id).defaultWindowId;
+    app.services.resources.replaceBindings(id, [{resourceId:app.services.resources.listBindings(f.roleId)[0]!.resourceId,
+      capability:"chat_model",enabled:true,modelName:"offline"}]);
+    app.services.activity.resume(id);
+    const list = () => app.services.messages.list(id,win,null,30);
+    app.conversation.submitMessage(id,win,{content:"创建扩展并验证一次",sourcePlatform:"nowadays",submissionId:randomUUID()});
+    await app.conversation.waitForIdle(id);
+    const page = list();
+    assert.equal(page.failedReply,null);
+    assert.deepEqual(page.items.map(m=>[m.sender,m.content]),[["user","创建扩展并验证一次"],["assistant","扩展已启用，工具已验证。"]]);
+    assert.equal(model.requests.length,5);
+    assert.ok(app.conversation.listTasks(id).some(task=>task.status==="completed" && task.endReason==="验证完成"));
+    assert.equal(JSON.parse(fs.readFileSync(path.join(f.root,"extensions","receipt","manifest.json"),"utf8")).kv.count,1);
+  } finally { await f.close(); }
+});
+
 test("仓库外版本目录原子升级、失败回滚、KV 隔离、在途排空、HTTP 启停删除与关闭回收", async () => {
   const f = createFixtureWithModel(new ScriptedChatModel([]));
   const host = f.app.services.extensions;
@@ -121,6 +156,11 @@ test("仓库外版本目录原子升级、失败回滚、KV 隔离、在途排�
       assert.equal(res.status,200); return await res.json() as T;
     };
     const v1 = await host.upsert(source("demo","v1"));
+    assert.throws(() => host.upsert({...source("demo","bad-file"),files:{index_mjs:""}}), /ui\/index\.html/);
+    await assert.rejects(host.upsert(source("demo","bad-effect",
+      "export default (ctx,api)=>{const off=api.tools.register({name:'stamp',scope:'all_roles',description:'stamp',inputSchema:{type:'object'}},()=>1); ctx.effect(()=>{off()})}")),
+      /EXTENSION_EFFECT_INVALID.*onDispose/u);
+    assert.equal(host.get("demo").version, "v1");
     assert.deepEqual(await call("hello"),{version:"v1",count:1,roleId:f.roleId});
     const slow = call("slow");
     await until(()=>notices.some(n=>n.message==="started"),"旧调用已进入");
@@ -243,7 +283,11 @@ test("UI 资产只读取已启用版本的声明文件，每次请求重新核�
     fs.writeFileSync(path.join(privateDir,"index.html"),"private");
     fs.renameSync(ui,ui+"-original");
     fs.symlinkSync(privateDir,ui,"junction");
-    try { assert.equal((await fetch(base+"index.html")).status,404); }
+    try {
+      assert.equal((await fetch(base+"index.html")).status,404);
+      assert.throws(()=>host.source({extId:"ui-test",file:"ui/index.html"}), {code:"EXTENSION_PATH_INVALID"});
+      assert.throws(()=>host.source({extId:"ui-test"}), {code:"EXTENSION_PATH_INVALID"});
+    }
     finally { fs.unlinkSync(ui); fs.renameSync(ui+"-original",ui); }
     await host.toggle("ui-test","disable");
     assert.equal((await fetch(base+"index.html")).status,404);
@@ -266,4 +310,40 @@ test("受管路径逐级检查，拒绝越界文件与 Windows junction，保留
     assert.throws(()=>host.upsert({...input,files:{"../other.mjs":"x"}}),{code:"EXTENSION_ARGUMENTS_INVALID"});
     assert.deepEqual(fs.readdirSync(outside.path),[]);
   } finally { await host.close(); fs.unlinkSync(link); root.remove(); outside.remove(); }
+});
+
+test("按需读取当前扩展的目录与源码，续页保留 Unicode，换版后拒绝旧游标", async () => {
+  const f = createFixtureWithModel(new ScriptedChatModel([]));
+  const host = f.app.services.extensions;
+  try {
+    const project = source("readable", "v1");
+    const content = "x".repeat(5999) + "🎭道具";
+    await host.upsert({ ...project, files: { ...project.files, "lib/cards.mjs": "//" + content, "ui/notes.txt": content } });
+    const query = {extId:"readable", version:"v1"};
+    const directory = host.source(query);
+    assert.deepEqual(directory.files, ["entry.mjs", "helper.mjs", "lib/cards.mjs", "ui/index.html", "ui/notes.txt"]);
+    assert.equal(directory.content, undefined);
+    assert.equal(directory.nextOffset, null);
+    const file = {...query, file:"ui/notes.txt"};
+    const first = host.source(file);
+    assert.equal(first.nextOffset, 5999);
+    const second = host.source({...file, offset:first.nextOffset});
+    assert.equal(first.content! + second.content!, content);
+    assert.equal(second.nextOffset, null);
+    assert.throws(()=>host.source({...file,offset:6000}), {code:"EXTENSION_SOURCE_OFFSET_INVALID"});
+    assert.throws(()=>host.source({...query,file:"not-found.mjs"}), {code:"EXTENSION_FILE_MISSING"});
+    assert.throws(()=>host.source({...query,file:"../manifest.json"}), {code:"EXTENSION_ARGUMENTS_INVALID"});
+    await host.toggle("readable","disable");
+    assert.equal(host.source({...query,file:"helper.mjs"}).content,project.files["helper.mjs"]);
+    const next = source("readable","v2");
+    const extras = Object.fromEntries(Array.from({length:51}, (_,i)=>[`ui/n${i}.txt`,""]));
+    await host.upsert({...next,files:{...next.files,...extras}});
+    assert.throws(()=>host.source(file), {code:"EXTENSION_VERSION_CHANGED"});
+    assert.equal(host.source({extId:"readable",file:"helper.mjs"}).content, 'export default "v2"');
+    const page = host.source({extId:"readable"});
+    assert.equal(page.nextOffset,50);
+    const tail = host.source({extId:"readable",version:page.version,offset:page.nextOffset});
+    assert.equal(tail.nextOffset,null);
+    assert.deepEqual([...(page.files ?? []), ...(tail.files ?? [])],Object.keys({...next.files,...extras}).sort());
+  } finally { await f.close(); }
 });

@@ -63,6 +63,7 @@ export interface WindowRecord {
 }
 
 export interface MessageRecord {
+  deliveredReceipt?: string;
   messageId: string;
   windowId: string;
   sender: "user" | "assistant";
@@ -289,6 +290,7 @@ interface WindowRow {
 }
 
 interface MessageRow {
+  delivered_receipt?: string;
   message_id: string;
   window_id: string;
   sender: "user" | "assistant";
@@ -393,6 +395,12 @@ interface TaskResourceContinuationRow {
   granted_at: string;
   ended_at: string | null;
 }
+
+// 系统回执独立于发言正文，两种读取入口都从原执行的终态事件恢复。
+export const deliveredReceiptColumn = `CASE WHEN m.status='receipt_delivered' THEN
+  (SELECT json_extract(s.payload_json,'$.deliveredReceipt') FROM execution_stream_events s
+   WHERE s.execution_id=m.processed_by_execution_id AND s.event_type='execution_failed'
+   ORDER BY s.stream_event_id DESC LIMIT 1) END AS delivered_receipt`;
 
 export class RoleStore {
   readonly db: Database.Database;
@@ -746,11 +754,11 @@ export class RoleStore {
     this.getWindow(roleId, windowId);
     const limit = query.limit;
     const columns =
-      "message_id, window_id, sender, content, source_platform, status, sequence, submission_id, submission_hash, created_at, updated_at";
+      "m.*, " + deliveredReceiptColumn;
     if (query.after !== undefined && query.after !== null) {
       const rows = this.db
         .prepare(
-          `SELECT ${columns} FROM messages WHERE window_id = ? AND sequence > ? AND sequence <= ?
+          `SELECT ${columns} FROM messages m WHERE window_id = ? AND sequence > ? AND sequence <= ?
            ${query.batchId === undefined ? "" : "AND message_id IN (SELECT message_id FROM observed_dialogue_members WHERE batch_id = ?)"}
            ORDER BY sequence ASC LIMIT ?`,
         )
@@ -770,7 +778,7 @@ export class RoleStore {
         : Number.MAX_SAFE_INTEGER;
     const rows = this.db
       .prepare(
-        `SELECT ${columns} FROM messages WHERE window_id = ? AND sequence < ? ORDER BY sequence DESC LIMIT ?`,
+        `SELECT ${columns} FROM messages m WHERE window_id = ? AND sequence < ? ORDER BY sequence DESC LIMIT ?`,
       )
       .all(windowId, before, limit + 1) as MessageRow[];
     const hasMore = rows.length > limit;
@@ -2083,6 +2091,7 @@ function mapWindow(row: WindowRow): WindowRecord {
 
 function mapMessage(row: MessageRow): MessageRecord {
   return {
+    ...(row.delivered_receipt ? { deliveredReceipt: row.delivered_receipt } : {}),
     messageId: row.message_id,
     windowId: row.window_id,
     sender: row.sender,

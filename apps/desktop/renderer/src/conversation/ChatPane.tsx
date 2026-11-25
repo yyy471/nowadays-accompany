@@ -221,7 +221,7 @@ export function ChatPane({
   const waitingText = !advancing
     ? null
     : snapshot.awaiting || !snapshot.current
-      ? firstReplyText
+      ? snapshot.pendingReceipt ? `${snapshot.pendingReceipt} 正在整理回复…` : firstReplyText
       : !snapshot.canAdvance
         ? '下一句还在准备…'
         : null;
@@ -308,6 +308,7 @@ export function ChatPane({
           {divider ? <div className="dialogue-date" aria-hidden="true">{dateCaption(key)}</div> : null}
           <div className="dialogue-message-content">
             {parts}
+            {row.deliveredReceipt && <div className="dialogue-status" role="status">系统回执 · {row.deliveredReceipt}</div>}
             {sceneControl && <div className="dialogue-round-tools" data-tools>{sceneControl}</div>}
             <time className="dialogue-time" title={`${dateCaption(key)} ${timeLabel(row.createdAt)}`}>{timeLabel(row.createdAt)}</time>
             {located && <span key={located.sequence} className="dialogue-location-ink" data-from-history={located.fromHistory || undefined} aria-hidden="true" />}
@@ -328,8 +329,10 @@ export function ChatPane({
     </div>
     <div className="dialogue-zone">
       {snapshot.failedReply && !advancing && !waitReason && <div className="dialogue-wait-notice" role="status" data-failed-message-id={snapshot.failedReply.messageId}>
-        <span>上一条消息已保存，回复中断了。<small>（{snapshot.failedReply.errorCode}）</small></span>
-        <button type="button" onClick={onRetryFailedReply} disabled={stoppedNotice}>重新回复</button>
+        <span>{snapshot.failedReply.receiptSummary
+          ? `${snapshot.failedReply.receiptSummary}角色的完整回复暂未送达。`
+          : '上一条消息已保存，回复中断了。'}<small>（{snapshot.failedReply.errorCode}）</small></span>
+        {!snapshot.failedReply.receiptSummary && <button type="button" onClick={onRetryFailedReply} disabled={stoppedNotice}>重新回复</button>}
       </div>}
       {waitReason || roleStopped || snapshot.roleRejected ? <div className="dialogue-wait-notice" role="status">
         <span>{waitReason === 'MODEL_MISSING'

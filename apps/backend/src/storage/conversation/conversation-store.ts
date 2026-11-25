@@ -32,6 +32,7 @@ import {
 } from "../../domain/errors.js";
 import { registerMessageEvidence } from "../memory/evidence.js";
 import { readWebToolProjection } from "./web-reading.js";
+import { deliveredReceiptColumn } from "../role/role-store.js";
 import type { ModelProtocol, ModelUsage } from "../../domain/model.js";
 import type {
   ExecutionRecord,
@@ -70,6 +71,7 @@ interface StreamRow {
 }
 
 interface MessageRow {
+  delivered_receipt?: string;
   message_id: string;
   window_id: string;
   sender: "user" | "assistant";
@@ -142,6 +144,7 @@ export interface CommitConversationResult {
 }
 
 export interface InterruptExecutionInput {
+  reportReceiptsImmediately?: boolean;
   executionId: string;
   partialText: string;
   status: "superseded" | "failed" | "paused";
@@ -636,7 +639,7 @@ export class ConversationStore {
   getMessageDetail(windowId: string, messageId: string): MessageDetail {
     const row = this.db
       .prepare(
-        `SELECT m.* FROM messages m JOIN windows w ON w.window_id = m.window_id
+        `SELECT m.*, ${deliveredReceiptColumn} FROM messages m JOIN windows w ON w.window_id = m.window_id
           WHERE m.message_id = ? AND m.window_id = ? AND w.role_id = ?`,
       )
       .get(messageId, windowId, this.roleId) as MessageRow | undefined;
@@ -719,13 +722,15 @@ export class ConversationStore {
     };
   }
 
-  getAwaitingReply(windowId: string): { executionId: string; messageId: string } | null {
-    const row = this.db.prepare(`SELECT e.execution_id AS executionId, m.message_id AS messageId
+  getAwaitingReply(windowId: string) {
+    const row = this.db.prepare(`SELECT e.execution_id AS executionId, m.message_id AS messageId,
+      (SELECT json_extract(s.payload_json,'$.receiptSummary') FROM execution_stream_events s
+        WHERE s.execution_id=e.execution_id AND s.event_type='execution_started' LIMIT 1) AS receipt
       FROM messages m JOIN executions e ON e.execution_id = m.claimed_by_execution_id
       WHERE e.role_id = ? AND e.window_id = ? AND m.window_id = e.window_id
         AND e.status = 'running' AND m.sender = 'user' AND m.processed_by_execution_id IS NULL
-      ORDER BY m.sequence DESC LIMIT 1`).get(this.roleId, windowId) as { executionId: string; messageId: string } | undefined;
-    return row ?? null;
+      ORDER BY m.sequence DESC LIMIT 1`).get(this.roleId, windowId) as { executionId: string; messageId: string; receipt: string | null } | undefined;
+    return row ? {executionId:row.executionId, messageId:row.messageId, ...(row.receipt ? {receiptSummary:row.receipt} : {})} : null;
   }
 
   getFailedReply(windowId: string): FailedReply | null {
@@ -745,7 +750,38 @@ export class ConversationStore {
          AND m.processed_by_execution_id IS NULL AND m.claimed_by_execution_id IS NULL
          AND m.status <> 'transfer_interrupted' AND m.submission_id IS NOT NULL
     `).get(windowId, this.roleId, this.roleId) as FailedReply | undefined;
-    return row ?? null;
+    if (!row) return null;
+    // 多次补答失败仍显示原执行的回执。只读取已保存的事实，不把模型拟写的结束原因当作结果。
+    const source = this.savedReplyToolSource(row.executionId) ?? row.executionId;
+    const { count } = this.db.prepare(`SELECT count(*) AS count FROM tool_calls c
+      JOIN tool_results r USING(tool_call_id) WHERE c.execution_id=? AND r.status='success'`).get(source) as { count: number };
+    const extension = this.db.prepare(`SELECT json_extract(payload_json, '$.outcome.adaptedResult.extId') AS id,
+        json_extract(payload_json,'$.outcome.adaptedResult.version') AS version
+      FROM execution_stream_events WHERE execution_id=? AND event_type='tool_result_saved'
+        AND json_extract(payload_json,'$.toolName')='app_extension_upsert'
+        AND json_extract(payload_json,'$.status')='success'
+        AND json_extract(payload_json,'$.outcome.adaptedResult.status')='enabled'
+      ORDER BY stream_event_id DESC LIMIT 1`).get(source) as {id: string; version: string} | undefined;
+    const receipts = [];
+    if (extension?.id && extension.version) receipts.push(`扩展 ${extension.id}（${extension.version}）启用成功`);
+    if (count) receipts.push(`${count} 次工具调用成功`);
+    if (!receipts.length) {
+      const finish = this.savedTaskFinish(source);
+      if (finish?.status === "completed") receipts.push("任务已标记为完成");
+      if (finish?.status === "failed") receipts.push("任务已标记为失败");
+    }
+    if (!receipts.length) return row;
+    let receiptSummary = receipts.join("，") + "。";
+    if (count) {
+      const last = this.db.prepare(`SELECT CASE WHEN json_type(r.adapted_result_json)='text'
+        AND length(json_extract(r.adapted_result_json,'$')) BETWEEN 1 AND 240
+        THEN json_extract(r.adapted_result_json,'$') END AS result
+        FROM tool_calls c JOIN tool_results r USING(tool_call_id)
+        WHERE c.execution_id=? AND r.status='success' ORDER BY r.saved_at DESC, r.rowid DESC LIMIT 1`)
+        .get(source) as { result: string | null } | undefined;
+      if (last?.result) receiptSummary += `工具返回：${last.result}`;
+    }
+    return { ...row, receiptSummary };
   }
 
   /** 一次补答可多次失败，始终沿用最早已派发工具的执行及其真实回执。 */
@@ -775,6 +811,16 @@ export class ConversationStore {
       SELECT DISTINCT json_extract(payload_json, '$.toolCallId') AS id FROM execution_stream_events
        WHERE role_id = ? AND execution_id = ? AND event_type = 'tool_started' ORDER BY stream_event_id DESC LIMIT 40
     `).all(this.roleId, executionId) as { id: string }[]).map(row => row.id);
+  }
+
+  savedTaskFinish(executionId: string) {
+    return this.db.prepare(`SELECT json_extract(payload_json,'$.outcome.adaptedResult.taskId') AS taskId,
+      json_extract(payload_json,'$.outcome.adaptedResult.status') AS status,
+      json_extract(payload_json,'$.outcome.adaptedResult.endReason') AS reason
+      FROM execution_stream_events WHERE execution_id=? AND event_type='tool_result_saved'
+      AND json_extract(payload_json,'$.toolName')='task_finish' AND json_extract(payload_json,'$.status')='success'
+      AND json_extract(payload_json,'$.outcome.adaptedResult.status') IN ('completed','failed')
+      ORDER BY stream_event_id DESC LIMIT 1`).get(executionId) as {taskId:string;status:"completed"|"failed";reason:string} | undefined;
   }
 
   /** 读取指定回复之前的最近若干条已完成消息，供情绪与动作标注参考上下文。 */
@@ -1399,6 +1445,7 @@ export class ConversationStore {
         type: "message_completed",
         payload: {
           executionId: input.executionId,
+          ...(this.savedReplyToolSource(input.executionId) ? { receiptReply: true } : {}),
           replyMessageId: replyMessage.messageId,
           replySequence: replyMessage.sequence,
           replyCreatedAt: replyMessage.createdAt,
@@ -1542,6 +1589,19 @@ export class ConversationStore {
           .run(input.status, now, input.executionId);
       }
       const failedReply = input.status === "failed" && execution.windowId !== null ? this.getFailedReply(execution.windowId) : null;
+      // 补答失败或遇到不能重试的错误时，保留模型失败与半句，系统回执附在用户原消息下。
+      const deliveredReceipt = failedReply?.executionId === input.executionId &&
+        (input.reportReceiptsImmediately || this.savedReplyToolSource(input.executionId)) ? failedReply.receiptSummary : undefined;
+      if (deliveredReceipt && failedReply) {
+        const handled = this.db.prepare(`SELECT message_id FROM messages WHERE execution_id=? AND sender='user'
+          AND processed_by_execution_id IS NULL`).all(input.executionId) as {message_id: string}[];
+        this.db.prepare(`UPDATE messages SET processed_by_execution_id=?, updated_at=?,
+          status=CASE WHEN message_id=? THEN 'receipt_delivered' ELSE status END
+          WHERE execution_id=? AND sender='user' AND processed_by_execution_id IS NULL`)
+          .run(input.executionId, now, failedReply.messageId, input.executionId);
+        registerMessageEvidence(this.db, {roleId:this.roleId, executionId:input.executionId,
+          messageIds:handled.map(row=>row.message_id), now, ...(this.timeZone ? {timeZone:this.timeZone} : {})});
+      }
       events.push(
         this.appendStreamEventInternal({
           windowId: execution.windowId,
@@ -1562,7 +1622,11 @@ export class ConversationStore {
               : {
                   executionId: input.executionId,
                   errorCode: input.errorCode ?? "EXECUTION_FAILED",
-                  ...(failedReply?.executionId === input.executionId ? { failedMessageId: failedReply.messageId } : {}),
+                  ...(failedReply?.executionId === input.executionId ? {
+                    failedMessageId: failedReply.messageId,
+                    ...(failedReply.receiptSummary ? { receiptSummary: failedReply.receiptSummary } : {}),
+                    ...(deliveredReceipt ? { deliveredReceipt } : {}),
+                  } : {}),
                 },
           now,
         }),
@@ -2423,6 +2487,7 @@ function mapStreamEvent(row: StreamRow): ConversationStreamEvent {
 
 function mapMessage(row: MessageRow): MessageRecord {
   return {
+    ...(row.delivered_receipt ? { deliveredReceipt: row.delivered_receipt } : {}),
     messageId: row.message_id,
     windowId: row.window_id,
     sender: row.sender,

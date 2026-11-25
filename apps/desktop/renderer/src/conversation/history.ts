@@ -4,6 +4,7 @@
  */
 
 export interface PerfRow {
+  deliveredReceipt?: string;
   id: number;
   messageId: string;
   segmentId: string;

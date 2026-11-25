@@ -2,9 +2,10 @@ import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import { AppError } from "../../domain/errors.js";
 import { isAdminSeat } from "../../domain/admin-seat.js";
+import { memoryQueryTokens } from "../../domain/memory-query-tokens.js";
 import type { AppStore } from "../../storage/core/app-store.js";
 import { AutonomyStore } from "../../storage/conversation/autonomy-store.js";
-import { localDateFromIso, upsertEvidence } from "../../storage/memory/evidence.js";
+import { localDateFromIso, SPOKEN_REPLY_SQL, upsertEvidence } from "../../storage/memory/evidence.js";
 import { MemoryStore } from "../../storage/memory/memory-store.js";
 import type { RoleAccess } from "../role/role-access.js";
 
@@ -78,9 +79,27 @@ export class RoleExchangeService {
     return local.initiatorRoleId === roleId ? local : this.withDb(local.initiatorRoleId, db => summary(db, sessionId));
   }
 
-  recallQuery(roleId: string, sessionId: string) {
-    const s = this.withDb(roleId, db => summary(db, sessionId));
-    return `${roleId === s.initiatorRoleId ? s.targetName : s.initiatorName} ${s.topic}`;
+  recallContext(roleId: string, sessionId: string) {
+    return this.withDb(roleId, db => {
+      const session = summary(db, sessionId);
+      const last = db.prepare("SELECT content FROM role_exchange_turns WHERE sessionId=? ORDER BY turnIndex DESC LIMIT 1")
+        .get(sessionId) as {content: string};
+      const topic = session.topic.slice(0, 180) + " " + last.content.slice(0, 240);
+      const peer = roleId === session.initiatorRoleId ? session.targetName : session.initiatorName;
+      const terms = memoryQueryTokens(topic, "auto").filter(term => term.length >= 2);
+      // 仅检索自己在本机直接窗口实际发表的回复，避免把用户私下原话带进互聊。
+      const recent = db.prepare(`SELECT m.created_at AS at, substr(m.content,1,2000) AS text FROM messages m
+        JOIN windows w USING(window_id) WHERE w.role_id=? AND w.source='nowadays' AND ${SPOKEN_REPLY_SQL}
+        ORDER BY m.created_at DESC,m.rowid DESC LIMIT 32`).all(roleId) as {at: string; text: string}[];
+      const spoken = recent.flatMap(row => {
+        const text = row.text.toLowerCase();
+        const hits = terms.filter(term => text.includes(term));
+        if (!hits.length) return [];
+        const start = Math.max(0, text.indexOf(hits[0]!) - 80);
+        return [{at: row.at, excerpt: row.text.slice(start, start + 400), score: hits.length}];
+      }).sort((a,b) => b.score - a.score).slice(0,3).map(({at,excerpt}) => ({at,excerpt}));
+      return { query: peer + " " + topic, spoken };
+    });
   }
 
   private turn(s: ExchangeSession, id: string, content: string, createdAt: string): ExchangeTurn {

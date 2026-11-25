@@ -66,6 +66,7 @@ export interface AgentGraphDeps {
   roleStore: RoleStore;
   resolveModel: () => AgentModelHandle;
   tools: ConversationTool[];
+  replyOnly?: boolean;
   systemPrompt: (messages: readonly ModelMessage[], round: number) => string | AgentSystemPrompt;
   evidenceQuery?: (taskId: string | null) => string;
   selectEvidence?: (input: {
@@ -305,7 +306,7 @@ export class AgentGraphRunner {
   }
 
   async modelNode(state: AgentStateValue): Promise<Partial<AgentGraphValue>> {
-    return this.modelRound(state, true);
+    return this.modelRound(state, !this.deps.replyOnly);
   }
 
   /** 收尾轮：工具清单照旧提供以保持上下文稳定，但返回的调用一律不派发。 */

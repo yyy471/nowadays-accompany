@@ -227,11 +227,19 @@ async function runStep(id, argv, inspect = () => ({})) {
   let child;
   let timedOut = false;
   let cleanupError;
+  // 扩展集成测试会检验仓库外加载。保留同一递归删除保护，只把它的根指向本次专用临时目录。
+  let testTemp;
   try {
+    const stepEnv = { ...env, NOWADAYS_REVIEW_OUTPUT: output };
+    if (id === "tests") {
+      testTemp = fs.mkdtempDisposableSync(path.join(fs.realpathSync(os.tmpdir()), "nowadays-accept-tests-"));
+      row.tempDirectory = testTemp.path;
+      Object.assign(stepEnv, { TEMP: testTemp.path, TMP: testTemp.path, TMPDIR: testTemp.path, P1_REVIEW_TMP_ROOT: testTemp.path });
+    }
     const exit = await new Promise((resolve, reject) => {
       child = spawn(process.execPath, argv, {
         cwd: backend,
-        env: { ...env, NOWADAYS_REVIEW_OUTPUT: output },
+        env: stepEnv,
         stdio: ["ignore", fd, fd],
         windowsHide: true,
       });
@@ -255,6 +263,15 @@ async function runStep(id, argv, inspect = () => ({})) {
     row.error = error instanceof Error ? error.message : String(error);
     row.status = "failed";
   } finally {
+    if (testTemp && row.passed && !args.keepTmp) {
+      try {
+        testTemp.remove();
+      } catch (error) {
+        row.passed = false;
+        row.status = "failed";
+        row.error = `TEST_TEMP_CLEANUP_FAILED: ${error.message}`;
+      }
+    }
     try {
       fs.closeSync(fd);
     } catch (error) {

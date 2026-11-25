@@ -54,7 +54,8 @@ function claimSearchText(claim: MemoryClaimRecord): string {
   const scope = claim.practice ? `；适用：${claim.practice.scope}；实际结果：${claim.practice.outcome}` : "";
   const origin = claim.sourceSender === "assistant" ? "，据角色当时的发言" :
     claim.sourceSender === "user" ? "，据用户当时的发言" :
-    claim.sourceKind === "tool_result" ? "，据工具回执" : "";
+    claim.sourceKind === "tool_result" ? "，据工具回执" :
+    claim.sourceKind === "role_exchange" ? "，据角色间发言" : "";
   return `${claimLabels[claim.kind]}（${claim.sourceAt}${origin}） ${claim.quoteContext ?? claim.text}${scope}`;
 }
 
@@ -253,6 +254,11 @@ export class MemoryStore {
 
   getDatabase(): Database.Database {
     return this.db;
+  }
+
+  roleName(roleId: string): string {
+    const row = this.db.prepare("SELECT display_name FROM roles WHERE role_id=?").get(roleId) as {display_name: string};
+    return row.display_name;
   }
 
   getCurrentRound(roleId: string): number {
@@ -494,14 +500,14 @@ export class MemoryStore {
       }
       const rows = this.db
         .prepare(
-          `SELECT er.*, ep.status AS processing_status, ep.next_retry_at,
+          `SELECT er.*, turn.sessionId AS exchange_session_id, ep.status AS processing_status, ep.next_retry_at,
                   ep.deferred_after_sequence, ep.attempt_count
            FROM evidence_records er
            JOIN evidence_processing ep ON ep.evidence_id = er.evidence_id
+           LEFT JOIN role_exchange_turns turn ON er.source_kind='role_exchange' AND turn.exchangeId=er.source_id
            WHERE er.role_id = ?
              AND (er.source_kind <> 'role_exchange' OR EXISTS (
-               SELECT 1 FROM role_exchange_turns t JOIN role_exchange_sessions s USING(sessionId)
-               WHERE t.exchangeId=er.source_id AND s.status <> 'active'))
+               SELECT 1 FROM role_exchange_sessions s WHERE s.sessionId=turn.sessionId AND s.status <> 'active'))
              AND (
                ep.status = 'pending'
                OR (ep.status = 'failed' AND (ep.next_retry_at IS NULL OR ep.next_retry_at <= ?))
@@ -520,7 +526,7 @@ export class MemoryStore {
            ORDER BY er.role_sequence ASC`,
         )
         .all(input.roleId, now, input.includeDeferred ? 1 : 0) as Array<
-        EvidenceRow & { attempt_count: number }
+        EvidenceRow & { attempt_count: number; exchange_session_id: string | null }
       >;
       if (rows.length === 0) {
         if (input.includeRefinement !== true) {
@@ -536,9 +542,10 @@ export class MemoryStore {
         }
         return maintenance;
       }
-      const windowKey = rows[0]?.window_id ?? "";
+      // 互聊没有用户窗口，按会话归组，避免一次整理把不同往来的发言归给同一个人。
+      const first = rows[0]!;
       const grouped = rows.filter(
-        (row) => (row.window_id ?? "") === windowKey,
+        (row) => row.window_id === first.window_id && row.exchange_session_id === first.exchange_session_id,
       );
       const selected: Array<{ row: EvidenceRow & { attempt_count: number }; content: string }> = [];
       let usedChars = 0;

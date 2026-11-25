@@ -5,6 +5,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { createFixtureWithModel, deferred, type Fixture } from "../fixtures/conversation-fixture.js";
 import { seedLegacyPresetAssistant } from "../fixtures/legacy-role-fixture.js";
 import { RoleAccess } from "../../src/application/role/role-access.js";
+import { MemoryStore } from "../../src/storage/memory/memory-store.js";
 import { createBackendApp, listen } from "../../src/bootstrap/app.js";
 import type { ModelEvent, ModelPort, ModelRequest } from "../../src/domain/model.js";
 import type { MemoryFormationInput } from "../../src/domain/memory.js";
@@ -43,6 +44,57 @@ function form(input: MemoryFormationInput) {
     tags: {person: [peer]}, occurredAtStart: e.occurredAt, experienceDate: e.localDate, evidenceIds: exchanges.map(item => item.evidenceId),
     claims: [{kind: "impression", text: "我觉得" + peer + "很细心", evidenceId: e.evidenceId}]}]};
 }
+
+test("记忆仍未整理时，互聊可以参考本角色近期已说过的相关内容", async () => {
+  const requests: ModelRequest[] = [];
+  const model: ModelPort = {async *stream(req) {
+    if (req.tools.some(tool => tool.name === "role_chat_reply")) {
+      requests.push(req);
+      yield {type: "tool_call", name: "role_chat_reply", callId: randomUUID(),
+        arguments: {content: "收到。", endConversation: true}};
+    } else {
+      const book = req.messages.some(m => m.content.includes("银杏书签"));
+      yield {type: "text_delta", text: book ? "银杏书签折桂731放在东窗第二格。" : "乐谱放进红色琴盒。"};
+    }
+    yield {type: "completed", stopReason: "stop"};
+  }};
+  const f = createFixtureWithModel(model);
+  try {
+    const send = async (content: string) => {
+      f.app.conversation.submitMessage(f.roleId, f.windowId, {content, submissionId: randomUUID(), sourcePlatform: "nowadays"});
+      await f.app.conversation.waitForIdle(f.roleId);
+    };
+    await send("银杏书签的代号是折桂731，放在东窗第二格。我的私人留言是晚霞。");
+    await send("乐谱收好了吗？");
+    const seat = prepareSeat(f);
+    const session = f.app.conversation.exchanges.start(seat.id, f.roleId, "核对登记", "银杏书签的代号和位置是什么？", 2);
+    await until(() => f.app.conversation.exchanges.detail(session.sessionId).status === "completed", "互聊已答复");
+    const prompt = requests[0]!.system;
+    assert.match(prompt, /折桂731放在东窗第二格/);
+    assert.doesNotMatch(prompt, /私人留言|红色琴盒/);
+    const other = f.app.conversation.exchanges.start(seat.id, f.roleId, "秋日摄影", "镜头焦距是多少？", 2);
+    await until(() => f.app.conversation.exchanges.detail(other.sessionId).status === "completed", "核对另一话题");
+    assert.doesNotMatch(requests.at(-1)!.system, /折桂731|私人留言|红色琴盒/);
+    assert.match(requests.at(-1)!.system, /记不清/);
+  } finally { await f.close(); }
+});
+
+test("两场互聊的证据分别交给整理器", async () => {
+  const f = createFixtureWithModel({async *stream(){ yield {type:"completed",stopReason:"stop"}; }});
+  try {
+    const seat = prepareSeat(f);
+    const exchanges = f.app.conversation.exchanges;
+    for (const topic of ["银杏书签","蓝色信封"]) {
+      const s = exchanges.start(seat.id, f.roleId, topic, "放在哪里？", 2);
+      exchanges.reply(f.roleId, s.sessionId, 1, "东窗。", true);
+    }
+    const access = new RoleAccess(f.app.appStore, f.app.config.dataRoot);
+    access.withStore(f.roleId, storage => {
+      const batch = new MemoryStore(storage.business.db).startBatch({roleId:f.roleId,budgetChars:24000,outputReserveChars:4000});
+      assert.deepEqual(batch?.evidence.map(x => JSON.parse(x.content).turn.topic), ["银杏书签","银杏书签"]);
+    });
+  } finally { await f.close(); }
+});
 
 test("真实工具链按轮次唤醒，提前结束与硬上限均封口，双边记忆可召回，删除一方保留历史", {timeout: 60000}, async () => {
   let target = "";

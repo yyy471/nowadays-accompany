@@ -112,7 +112,7 @@ test("the default foreground wait window stays short and can be overridden", () 
   assert.equal(DEFAULT_TOOL_FOREGROUND_WAIT_MS, 2_000);
 });
 
-test("工具派发后连续两次模型中断，补答读取原回执且不重复执行工具", { timeout: 45_000 }, async () => {
+test("收到工具回执后自动补答一次，模型持续断流则在原消息持久显示系统回执", { timeout: 45_000 }, async () => {
   const fixture = createFixture([
     (request) => {
       const tool = request.tools.find(item => item.name.includes("slow_op"));
@@ -125,11 +125,7 @@ test("工具派发后连续两次模型中断，补答读取原回执且不重�
       assert.match(JSON.stringify(request.messages), /slow-result/);
       throw Error("second interruption");
     },
-    (request) => {
-      assert.equal(request.tools.length, 0);
-      assert.match(JSON.stringify(request.messages), /slow-result/);
-      return [{ type: "text_delta", text: "拿到了，结果还在。" }, { type: "completed", stopReason: "stop" }];
-    },
+    [{ type: "text_delta", text: "新消息已收到。" }, { type: "completed", stopReason: "stop" }],
   ], { toolForegroundWaitMs: 10_000 });
   try {
     const { roleId, windowId } = fixture;
@@ -138,19 +134,15 @@ test("工具派发后连续两次模型中断，补答读取原回执且不重�
     addSlowOpMcp(fixture, workspace);
     submit(fixture, "取一次结果给我。");
     const page = () => fixture.app.services.messages.list(roleId, windowId, null, 30);
-    const failures = new Set<string>();
-    for (let i = 0; i < 2; i++) {
-      await fixture.app.conversation.waitForIdle(roleId);
-      const failed = page().failedReply;
-      assert.ok(failed);
-      failures.add(failed.executionId);
-      fixture.app.conversation.retryFailedReply(roleId, windowId, failed.messageId, failed.executionId);
-    }
     await fixture.app.conversation.waitForIdle(roleId);
-    assert.equal(failures.size, 2);
     assert.equal(page().failedReply, null);
-    assert.equal(page().items.filter(message => message.sender === "user").length, 1);
-    assert.equal(page().items.at(-1)?.content, "拿到了，结果还在。");
+    const origin = page().items.find(message => message.sender === "user")!;
+    assert.match(origin.deliveredReceipt ?? "", /1 次工具调用成功/);
+    assert.equal(fixture.app.services.messages.get(roleId,windowId,origin.messageId).message.deliveredReceipt, origin.deliveredReceipt);
+    submit(fixture,"下一件事");
+    await fixture.app.conversation.waitForIdle(roleId);
+    assert.equal(page().items.at(-1)?.content, "新消息已收到。");
+    assert.equal(page().items.find(m=>m.messageId===origin.messageId)?.deliveredReceipt,origin.deliveredReceipt);
     assert.equal(withStorage(fixture, ({business}) => business.db.prepare("SELECT tool_call_id FROM tool_calls").all().length), 1);
   } finally { await fixture.close(); }
 });

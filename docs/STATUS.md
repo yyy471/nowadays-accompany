@@ -4,6 +4,10 @@
 
 ## 1. 当前结论概览
 
+已用桌面配置的 Gemini 检查四张角色卡。两名普通角色分别写出、运行了能换数据复用的对账脚本，两种主角色人设各自从空项目交付了可在 Electron 打开的票号扩展。跨窗口维护已支持按需读取已安装的源码。真实模型自行查阅三份 v1 文件后交付 v2；重启后封签仍可读，票号格式和旧工具权限已复验。独立复核和安装包实测待跟进。[多人设工具与扩展实测](./archive/09-role-runtime-and-transfer/402-long-dialogue-quality.md#多人设工具与扩展实测)
+
+互聊事实与记忆归属已在隔离角色库使用桌面配置的真实模型复测。小栀在直接对话和角色互聊中给出相同的书签代号与位置，整理后的两条经历分别保留用户登记与夏澄询问的来源。旧书签扩展升级后成功返回工具结果，Electron 扩展页已显示真实模型生成的展签。工具完成后若最后的回复断流，后端会自动补答一次；持续断流时，系统把已有回执保存在原消息下。隔离桌面已验证自动收到 Gemini 回复和断流回显两条路径，扩展写入与工具调用各一次。[书签互聊与扩展复验](./archive/09-role-runtime-and-transfer/402-long-dialogue-quality.md#书签互聊与记忆归属复验)
+
 桌面书房界面已按设计方案分批实施。首轮视觉复核发现的回执遮挡、搜索框双重焦点、空扩展目录布局、过场图按钮、文案及页签悬停问题已补修，原交付与补修复验记录在同一份报告。[桌面界面实施与复验](./archive/02-desktop-ui-and-relations/407-frontend-polish.md)
 
 桌面对话已接入结构化回复阅读和整轮过场图查看、重画。每轮回复末尾共用一个图片入口，背景图、人物场景图和重画记录按最近成功的一张展示。Electron 的本机后端联调覆盖 Markdown、JSON 和舞台换图。[对话演出规范](./specs/conversation-performance-and-scene-images.md) · [桌面对话联调](../apps/desktop/tests/e2e/workflow-real-backend-chain.e2e.cjs)
@@ -14,10 +18,10 @@
 
 | 模块 / 专项 | 当前状态（离线范围） | 核心证据 | 未决 / 下一阶段 |
 | --- | --- | --- | --- |
-| 桌面热扩展（Phase 4，DL-188） | **开发完成（待后续验证）**。受控资产出口、独立事件流和 `nd-ext://` 沙箱已接入。Dock「全部菜单 → 扩展」提供启停、微页与挂件，浮层和通知可跨页关闭。 | [桌面槽位契约](./specs/frontend-design-system.md#扩展槽位dl-188) · [Electron 实机场景](../apps/desktop/tests/e2e/extension-ui-slots.e2e.cjs) | 离线自验通过（见下方），尚未验证完毕，待完整复核、真实模型联调与打包实测。 |
-| 后端热扩展（Phase 3，DL-184、DL-188 后端部分） | **开发完成（待后续验证）**。上游 `cordis@3.18.1` 子进程宿主、主角色管理工具、对话与自主工具目录、平台事件和专属 KV 已接入。 | [热扩展契约](./specs/role-config-and-activity.md#35-后端热扩展dl-184dl-188) · [仓库外集成测试](../apps/backend/tests/integration/extension-host.test.ts) | Windows Node 24.22.2 仓库外探针与离线自验 563/563 通过（退出后仓库 Node 24 进程为 0）；尚未验证完毕，待实机联调。 |
+| 桌面热扩展（Phase 4，DL-188） | **开发完成（待后续验证）**。受控资产出口、独立事件流和 `nd-ext://` 沙箱已接入。Dock「全部菜单 → 扩展」提供启停、微页与挂件，浮层和通知可跨页关闭。 | [桌面槽位契约](./specs/frontend-design-system.md#扩展槽位dl-188) · [Electron 实机场景](../apps/desktop/tests/e2e/extension-ui-slots.e2e.cjs) | 离线自验通过，另已在 Electron 打开两张主角色卡分别生成的微页。待独立复核及 Windows 安装包实测。 |
+| 后端热扩展（Phase 3，DL-184、DL-188 后端部分） | **开发完成（待后续验证）**。上游 `cordis@3.18.1` 子进程宿主、主角色管理工具、对话与自主工具目录、平台事件和专属 KV 已接入。 | [热扩展契约](./specs/role-config-and-activity.md#35-后端热扩展dl-184dl-188) · [仓库外集成测试](../apps/backend/tests/integration/extension-host.test.ts) | Windows Node 24.22.2 仓库外探针与离线自验 563/563 通过。已用真实模型从空项目编写并启用票号工具，待完整独立复核。 |
 | 角色间会话与往来动态（Phase 2，DL-187） | **开发完成（待后续验证）**。有界会话、双边独立证据和记忆整理、按次查看完整往来记录已接入。 | [存储规范](./specs/storage-memory-and-autonomy.md#313-角色间会话存证与动态dl-187) · [后端集成](../apps/backend/tests/integration/role-exchanges.test.ts) · [Electron 场景](../apps/desktop/tests/e2e/role-exchanges.e2e.cjs) | 离线自验通过（后端 559/559、渲染器 135/135、桌面壳 13/13、Electron 17/17）；尚未验证完毕，真实模型待联调。 |
-| 跨角色批次与主角色分享（Phase 1B，DL-186） | **开发完成（待后续验证）**。普通角色来信按窗口合批，主角色按批次查阅并保留来源；正式分享可在其他页面和角色窗口显示纸笺。 | [存储与查阅规范](./specs/storage-memory-and-autonomy.md#312-普通角色对话批次与查阅来源dl-186) · [后端恢复与证据测试](../apps/backend/tests/integration/dialogue-batches.test.ts) · [跨页分享 Electron 场景](../apps/desktop/tests/e2e/cross-page-share.e2e.cjs) | 离线自验通过；尚未验证完毕，真实模型的查阅和分享选择待联调。 |
+| 跨角色批次与主角色分享（Phase 1B，DL-186） | **开发完成（待后续验证）**。普通角色来信按窗口合批，主角色按批次查阅并保留来源；正式分享可在其他页面和角色窗口显示纸笺。 | [存储与查阅规范](./specs/storage-memory-and-autonomy.md#312-普通角色对话批次与查阅来源dl-186) · [后端恢复与证据测试](../apps/backend/tests/integration/dialogue-batches.test.ts) · [跨页分享 Electron 场景](../apps/desktop/tests/e2e/cross-page-share.e2e.cjs) | 真实模型在换乘场景分别选择查阅后保持安静、跳过查阅。失物场景中，主角色按批翻看后主动告知柜号，Electron 在普通角色窗口实际收到纸笺。各次主动发声与所属执行见[实测记录](./archive/09-role-runtime-and-transfer/402-long-dialogue-quality.md#主角色按人设查阅普通角色对话)。独立复核待跟进。 |
 | 主角色席位与外壳（Phase 1A） | **开发完成（待后续验证）**。席位永久保留，设置页可自定义名称、介绍及预置服饰、立绘与差分。旧数据库与迁移包 v1 沿用 `xiacheng`；初始化失败可恢复，就绪后重启保留用户数据。 | [DL-153 与后续决策](./161-digital-life-direction-decisions.md#dl-153-唯一主角色席位默认播种夏澄沿用现有对话链路) · [后端回归](../apps/backend/tests/integration/preset-assistant-core.test.ts) · [桌面回归](../apps/desktop/tests/e2e/pack3-entry.e2e.cjs) | 离线自验通过；尚未验证完毕，待完整复核。 |
 | 全局 Token 消耗统计（DL-183） | `app.sqlite` V12 持久记录 7 类独立模型调用用量，支持一次性回填本机历史且单角色迁移不叠入外部历史；删角色与删模型服务保留快照；全局设置「用量」分区按 `BigInt` 只读聚合与自适应单位展示（无手动清零）。**离线自验与两轮复核补修通过**。 | [404 实施与复核记录](./archive/08-config-pages-v6/404-token-usage-statistics.md) · [存储与接口](./specs/storage-memory-and-autonomy.md#21-应用目录与-sqlite-分库规范) · [设置与用量查询](./specs/role-config-and-activity.md#23-新建只读与草稿探测入口不触发停机守卫) · [p26-token-usage.test.ts](../apps/backend/tests/unit/token-usage.test.ts) · [token-usage-check.cjs](../apps/desktop/tests/e2e/token-usage.e2e.cjs) | 真实上游模型服务 `usage`／缓存字段实测 |
 | 角色世界书与对话展示（DL-182） | 角色独立保存作者设定，按关键词与知情范围投递。Electron 已实测编辑、角色隔离、冲突保留草稿，真实桌面发消息后逐句显示并恢复差分。 | [世界书与个人经历](./specs/storage-memory-and-autonomy.md#311-世界书与个人经历dl-182) · [真实消息与桌面联调](./archive/09-role-runtime-and-transfer/402-long-dialogue-quality.md#世界书接入后的正式消息与桌面联调) | 各卡的跨窗行为、模型误答与范围分别记录在联调报告中 |

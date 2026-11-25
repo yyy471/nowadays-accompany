@@ -95,6 +95,7 @@ export interface FailedReply {
   messageId: string;
   executionId: string;
   errorCode: string;
+  receiptSummary?: string;
 }
 
 export interface ConversationExecutionDetail {

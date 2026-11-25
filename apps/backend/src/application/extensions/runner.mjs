@@ -9,7 +9,13 @@ let serial = 0;
 let ready = false;
 let disposing = false;
 const send = message => process.send(message);
-const diagnostic = error => String(error?.stack ?? error).slice(0, 4000);
+function diagnostic(error) {
+  const stack = String(error?.stack ?? error);
+  if (error instanceof TypeError && stack.includes("reading 'dispose'") && stack.includes("Scope.effect")) {
+    return "EXTENSION_EFFECT_INVALID: ctx.effect 的初始化函数必须返回清理函数。api.tools.register 和 api.events.on 已自动清理。额外释放资源可用 api.onDispose(fn)。请用新版本号重新提交。\n" + stack.slice(0, 1000);
+  }
+  return stack.slice(0, 4000);
+}
 ctx.on("internal/error", error => send({ type: "fatal", error: diagnostic(error) }));
 const inventory = () => ({
   tools: [...handlers.values()].map(item => item.spec),
@@ -25,6 +31,10 @@ function service(method, args) {
   });
 }
 const platform = {
+  onDispose(cleanup) {
+    if (typeof cleanup !== "function") throw Error("EXTENSION_DISPOSER_INVALID");
+    return ctx.effect(() => cleanup);
+  },
   tools: {
     register(spec, handler) {
       if (typeof handler !== "function" || handlers.has(spec.name)) throw Error("EXTENSION_TOOL_INVALID");

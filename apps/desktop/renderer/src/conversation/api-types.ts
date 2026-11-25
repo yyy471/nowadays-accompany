@@ -10,6 +10,7 @@ export interface WindowView {
 }
 
 export interface MessageView {
+  deliveredReceipt?: string;
   messageId: string;
   windowId: string;
   sender: 'user' | 'assistant';
@@ -85,7 +86,7 @@ export interface MessagePageView {
   segments: SegmentView[];
   activeReply: { messageId: string; executionId: string; text: string } | null;
   failedReply?: FailedReplyView | null;
-  awaitingReply?: { executionId: string; messageId: string } | null;
+  awaitingReply?: { executionId: string; messageId: string; receiptSummary?: string } | null;
   cursor: number;
   sceneImages?: SceneTaskView[];
 }
@@ -94,6 +95,7 @@ export interface FailedReplyView {
   messageId: string;
   executionId: string;
   errorCode: string;
+  receiptSummary?: string;
 }
 
 export interface MessageDetailView {

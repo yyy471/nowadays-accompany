@@ -69,6 +69,7 @@ export function rowsForMessage(message: MessageView, segments: SegmentView[], id
       segmentId: message.messageId,
       ordinal: 0,
       role: 'user',
+      deliveredReceipt: message.deliveredReceipt,
       text: message.content,
       action: '',
       actionVisible: false,

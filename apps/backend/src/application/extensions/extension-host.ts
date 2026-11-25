@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { AppError } from "../../domain/errors.js";
-import { ExtensionFiles, extIdSchema, upsertSchema, type Definition, type Manifest, type ToolSpec } from "./extension-files.js";
+import { ExtensionFiles, extIdSchema, sourceQuery, upsertSchema, type Definition, type Manifest, type ToolSpec } from "./extension-files.js";
 import { ExtensionProcess, type PlatformEvent, type ServiceCall } from "./extension-process.js";
 
 export type Notice = { extId: string; message: string; data?: unknown };
@@ -76,6 +76,13 @@ export class ExtensionHost {
       pid: process?.child.pid ?? null };
   }
   list() { return [...this.records.keys()].sort().map(id => this.get(id)); }
+  source(input: unknown) {
+    const { extId, version, file, offset } = validated(sourceQuery, input);
+    const current = this.record(extId);
+    if (version !== undefined && version !== current.version)
+      throw new AppError(409, "EXTENSION_VERSION_CHANGED", "扩展版本已切换，请重新列出当前版本的文件", { version: current.version });
+    return this.files.source(extId, current.version, file, offset);
+  }
   uiAsset(id: string, file: string, version: string | null) {
     const record = this.records.get(id);
     if (!record || !this.active.has(id) || record.status !== "enabled" || (version !== null && version !== record.version))

@@ -1366,6 +1366,7 @@ test("shared details only record the delivered part of replies in user-visible w
       }] }]);
       assert.equal((await service.runBatch(fixture.roleId)).status, allowed ? "completed" : "failed");
       assert.equal(model.requests[0]?.evidence[0]?.publishedReply, source === "nowadays");
+      assert.equal(model.requests[0]?.roleName, "记忆验证角色");
       assert.equal(memory.listEvents(fixture.roleId).length, allowed ? 1 : 0);
     } finally {
       fixture.store.close();
