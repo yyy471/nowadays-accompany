@@ -124,10 +124,38 @@ check(async ({cmd, ev, until, errors}) => {
 
   await click(element('.ui-studio-brand'));
   await until(() => ev("document.querySelector('.studio-shell').dataset.page==='home'"), '主页');
+  await cmd('Emulation.setEmulatedMedia', {features: [{name: 'prefers-reduced-motion', value: 'reduce'}]});
+  await ev("document.documentElement.dataset.motion='full'");
   publish('主页分享');
   await waitCard('主页分享');
   await until(() => ev("document.querySelector('.share-slip img')?.naturalWidth > 0 && document.querySelector('.share-slip strong').textContent==='乙角色'"), '角色名与立绘');
+  await until(() => ev(`(() => {
+    const style = getComputedStyle(document.querySelector('.share-slip aside'));
+    return style.opacity === '1' && parseFloat(style.transitionDuration) > 0;
+  })()`), '显式完整动效覆盖系统偏好，等待纸笺进入完成');
+  const exitStarted = await ev(`new Promise(resolve => {
+    const slip = document.querySelector('.share-slip aside');
+    slip.style.setProperty('--nd-semantic-motion-micro-exit', '1s');
+    const finish = value => { clearTimeout(timeout); slip.removeEventListener('transitionrun', onRun); resolve(value); };
+    const onRun = event => {
+      if (event.target !== slip || event.propertyName !== 'opacity' || !slip.hasAttribute('data-closing')) return;
+      const fade = slip.getAnimations().find(animation => animation.transitionProperty === 'opacity');
+      fade?.pause();
+      finish(!!fade);
+    };
+    const timeout = setTimeout(() => finish(false), 3000);
+    slip.addEventListener('transitionrun', onRun);
+    slip.querySelector('[aria-label="关闭分享提示"]').click();
+  })`);
+  assert.equal(exitStarted, true, '收到纸笺透明度退场事件');
+  publish('退场期间的新分享');
+  await ev("document.documentElement.dataset.motion='reduced'");
+  await waitCard('退场期间的新分享');
+  assert.equal(await ev("document.querySelector('.share-slip aside').getAnimations().length"), 0);
   await click(element('[aria-label="关闭分享提示"]'));
+  await until(() => ev("!document.querySelector('.share-slip')"), '减少动效下立即撤下纸笺');
+  await ev("delete document.documentElement.dataset.motion");
+  await cmd('Emulation.setEmulatedMedia', {features: []});
   for (const res of notices) res.end();
   await until(() => reconnects.length > 1 && notices.size === 1, 'SSE 重连');
   assert.ok(reconnects.at(-1), '保留 Last-Event-ID');

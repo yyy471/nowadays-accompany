@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../../api';
-import { Button, announceLive } from '../../../ui';
+import { Button } from '../../../ui';
 import { T29, T31 } from '../config-texts';
 import { Sheet } from '../sheet/Sheet';
 import { useSheet } from '../sheet/sheet-context';
@@ -52,10 +52,7 @@ export function RoleSheetHost({
     if (result.ok && deleted) {
       const response = deleted;
       write.forgetPaused(roleId);
-      closeNow(() => {
-        announceLive(`已删除角色「${roleName}」${response.keepHistory ? '，本机数据已保留。' : response.filesRemoved ? '，本机数据已删除。' : '，部分本机文件尚待清理。'}`);
-        void onDeleted(response.roleId, response.keepHistory, response.filesRemoved);
-      });
+      closeNow(() => { void onDeleted(response.roleId, response.keepHistory, response.filesRemoved); });
       return;
     }
     if (!result.ok) setError(result.failure.message);

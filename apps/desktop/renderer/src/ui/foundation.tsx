@@ -1,7 +1,7 @@
-import { useLayoutEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, type ReactNode } from 'react';
 import type { InstanceState } from '../types';
 import { Icon, type IconName } from './icons';
-import { ControlButton } from './controls';
+import { ControlButton, type ControlButtonProps } from './controls';
 import { useUiAppearance } from './appearance';
 const STATE_LABELS: Record<InstanceState, string> = {
   provisioning: '准备中',
@@ -44,10 +44,9 @@ export function Tag({ children, tone = 'idle' }: { children: ReactNode; tone?: s
   return <span className={`tag tag-${tone}`}>{children}</span>;
 }
 
-export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+export type ButtonProps = ControlButtonProps & {
   variant?: 'default' | 'primary' | 'danger' | 'ghost' | 'entry';
   size?: 'sm' | 'md';
-  busy?: boolean;
   icon?: IconName;
   feedback?: 'error' | 'success';
   /** 真实结果代际；相同键不会重复播放勾画与落款。 */
@@ -81,9 +80,8 @@ export function Button({
   const element = useRef<HTMLButtonElement>(null);
   const restingWidth = useRef(0);
   useLayoutEffect(() => {
-    if (appearance.theme === 'xiacheng' && !busy && element.current) restingWidth.current = element.current.getBoundingClientRect().width;
+    if (!busy && element.current) restingWidth.current = element.current.getBoundingClientRect().width;
   }, [appearance.theme, busy, children, size, variant]);
-  const blocked = disabled || busy || rest['aria-disabled'] === true || rest['aria-disabled'] === 'true';
   const leading = busy ? <span className="spinner" aria-hidden="true" />
     : feedback === 'error' ? <Icon name="warning" size={16} />
     : feedback === 'success' ? <SuccessCheck key={`check-${feedbackKey ?? 'default'}`} />
@@ -93,16 +91,16 @@ export function Button({
     <ControlButton
       {...rest}
       ref={element}
-      style={appearance.theme === 'xiacheng' && busy && restingWidth.current ? { ...style, minWidth: restingWidth.current } : style}
-      aria-busy={busy || undefined}
-      disabled={disabled || (busy && appearance.theme !== 'xiacheng')}
-      aria-disabled={blocked || undefined}
+      style={busy && restingWidth.current ? { ...style, minWidth: restingWidth.current } : style}
+      busy={busy}
+      disabled={disabled}
+      aria-disabled={disabled || rest['aria-disabled']}
       aria-invalid={rest['aria-invalid'] ?? (feedback === 'error' || undefined)}
       data-feedback={feedback}
-      onClick={(event) => { if (blocked) { event.preventDefault(); event.stopPropagation(); return; } onClick?.(event); }}
+      onClick={onClick}
       className={`btn btn-${variant} btn-${size}${className ? ` ${className}` : ''}`}
     >
-      {appearance.theme === 'xiacheng' ? <span className="ui-button-leading" aria-hidden="true">{leading}</span> : leading}
+      {appearance.theme === 'xiacheng' && leading ? <span className="ui-button-leading" aria-hidden="true">{leading}</span> : leading}
       {variant === 'entry' ? <><span className="ui-button-label">{children}</span><span className="ui-button-end" aria-hidden="true"><Icon name="chevron" size={20} /></span></> : children}
       {feedback === 'success' && resultLabel !== false
         ? <span key={`stamp-${feedbackKey ?? 'default'}`} className="ui-button-stamp" aria-hidden="true">{resultLabel}</span>
@@ -163,14 +161,15 @@ export function Empty({
   );
 }
 
-export function ErrorNote({ message, onRetry }: { message: string; onRetry?: () => void }) {
+export function ErrorNote({ message, onRetry, busy }: { message: string; onRetry?: () => void; busy?: boolean }) {
   return (
     <div className="error-note" role="alert">
       <Icon name="warning" size={16} />
       <span>{message}</span>
       {onRetry ? (
-        <ControlButton type="button" className="link-btn" onClick={onRetry}>
-          重试
+        <ControlButton className="link-btn" busy={busy} onClick={onRetry}>
+          <span>重试</span>
+          {busy ? <span className="spinner" aria-hidden="true" /> : null}
         </ControlButton>
       ) : null}
     </div>

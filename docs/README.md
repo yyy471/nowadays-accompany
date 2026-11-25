@@ -25,7 +25,7 @@ docs/
   archive/                                # 历史阶段与专项记录（01～06 业务专项，07 文档治理）
 ```
 
-> **设计资产与参考底稿**：[`design/character-studio/tokens.json`](./design/character-studio/tokens.json) 是桌面 `--nd-*` 令牌唯一源文件（由 `apps/desktop/scripts/generate-character-theme.mjs` 生成 CSS，勿移动路径）；[用户参考底稿](./design/digital-life/langgraph-roleplay-engine-v2.reference.md) 为历史参考材料，原样归档，未整体采纳。
+> **设计资产与参考底稿**：[`design/character-studio/tokens.json`](./design/character-studio/tokens.json) 是桌面 `--nd-*` 令牌唯一源文件（由 `apps/desktop/scripts/generate-character-theme.mjs` 生成 CSS，勿移动路径）；[`frontend-polish-plan.md`](./design/character-studio/frontend-polish-plan.md) 为桌面前端视觉、文案与微交互优化交付方案；[用户参考底稿](./design/digital-life/langgraph-roleplay-engine-v2.reference.md) 为历史参考材料，原样归档，未整体采纳。
 
 ## 常用专项
 
@@ -226,6 +226,7 @@ docs/
 | [239 对话页 Dock 显示设置](./archive/02-desktop-ui-and-relations/239-dialogue-dock-visibility.md) | 对话页可隐藏底部导航、其他页面保留导航及本地偏好（DL-145）；实现方自验，**独立复核待执行** |
 | [240 关系页顶部栏精简](./archive/02-desktop-ui-and-relations/240-relations-header-removal.md) | 移除关系页顶部标题栏并将日夜装饰条移入书页右上方（DL-146）；2026-11-10 经用户确认通过 |
 | [403 动态页 v2 迁移](./archive/02-desktop-ui-and-relations/403-feed-v2-migration.md) | 原型结构、数据适配、三项修复与 Electron 独立离线复验 |
+| [407 桌面书房界面分批实施与复验](./archive/02-desktop-ui-and-relations/407-frontend-polish.md) | 各批范围、布局与动效回归、昼夜截图及最终离线交付证据 |
 
 </details>
 

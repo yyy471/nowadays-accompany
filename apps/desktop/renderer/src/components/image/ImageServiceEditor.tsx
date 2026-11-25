@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../../api';
-import { Field, Input, announceLive } from '../../ui';
+import { Field, Input } from '../../ui';
 import type { RoleListItem } from '../../types';
 import { MediaGroup } from '../config/MediaSheet';
 import {
@@ -153,11 +153,10 @@ function ImageServiceEditor({ service, trigger, occupancy, roleName = id => id, 
         setModel(savedImageModelOf(result.service));
         setSecret(createSecretDraft(result.service.credential.status));
         if (secretOp.action !== 'keep') setSecretUpdated(secretOp.action === 'replace');
-        sheet.closeNow();
+        sheet.closeNow(undefined, `${result.service.name} 已保存`);
       } else {
-        sheet.closeNow(() => onCreated?.(result.service, nextStatus));
+        sheet.closeNow(() => onCreated?.(result.service, nextStatus), `${result.service.name} 已添加`);
       }
-      announceLive(`${result.service.name} ${service ? '已保存' : '已添加'}`);
     } catch (reason) {
       write.recordPaused(serviceMaintenanceOf(reason).paused);
       setError(serviceWriteFailure(reason, service ? '保存' : '添加', imageErrorText(reason), roleName));
@@ -179,7 +178,7 @@ function ImageServiceEditor({ service, trigger, occupancy, roleName = id => id, 
         onTested?.(null);
       }
       onUpdated?.(service.serviceId, result.service);
-      announceLive(`${service.name} ${enabled ? '已全局启用' : '已全局停用'}`);
+      write.reportResult(`${service.name} ${enabled ? '已全局启用' : '已全局停用'}`);
       feedback();
     } catch (reason) {
       write.recordPaused(serviceMaintenanceOf(reason).paused);
@@ -196,7 +195,6 @@ function ImageServiceEditor({ service, trigger, occupancy, roleName = id => id, 
       await api(`/v1/image-services/${encodeURIComponent(service.serviceId)}`, { method: 'DELETE' });
       clearImageModelCache(savedKey);
       sheet.closeNow(() => onRemoved?.(service.serviceId));
-      announceLive(`已删除生图服务「${service.name}」`);
     } catch (reason) { setError(T32.saveFail('删除', imageErrorText(reason))); } finally { setOperation(null); finish(); }
   };
 
@@ -235,7 +233,7 @@ function ImageServiceEditor({ service, trigger, occupancy, roleName = id => id, 
         statusText={hasSecret ? '已设置' : '未设置（选填）'} onOpen={anchor => open('密钥', anchor)}/>
       <ServiceRow label="默认模型" value={savedModel || '未设置'} keys={matchesSaved && probe.listLoaded ? [`${probe.models.length} 个可选`] : []}
         status={tested === false ? 'error' : tested ? 'ok' : 'off'} statusText={tested === false ? '连接失败' : tested ? '连接正常' : savedModel ? '尚未测试' : '未设置'} onOpen={anchor => open('默认模型', anchor)}/>
-      <ServiceManagementRow name={service.name} enabled={service.enabled} busy={busy} onChange={enabled => void toggle(enabled)}/>
+      <ServiceManagementRow name={service.name} enabled={service.enabled} busy={operation === 'toggle'} disabled={busy || write.resuming} onChange={enabled => void toggle(enabled)}/>
       <ServiceUseRow entries={names} loading={occupancy?.loading} error={occupancy?.error}/>
       <ServiceDeleteEntry id={deleteId} kind="image" disabled={busy || !!occupancy?.loading || !!occupancy?.error} activeNames={affected.map(roleName)}/>
       <ServiceDeleteSheet id={deleteId} name={service.name} occupied={names} busy={operation === 'delete'} disabled={affected.length > 0}

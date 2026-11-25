@@ -1,0 +1,66 @@
+.config-probe-feedback {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  gap: var(--nd-semantic-space-icon-label);
+  min-inline-size: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--nd-semantic-color-text-muted);
+  font-size: var(--nd-semantic-type-caption-size);
+  line-height: var(--nd-semantic-type-caption-line);
+  font-variant-numeric: tabular-nums;
+}
+.config-probe-feedback:is([data-state="busy"], [data-state="success"], [data-state="error"]) {
+  padding: var(--nd-primitive-space-1) var(--nd-primitive-space-2);
+  border: 1px solid var(--nd-semantic-color-line-decorative);
+  border-radius: var(--nd-semantic-radius-action);
+}
+.config-probe-feedback[data-state="busy"] {
+  color: var(--nd-semantic-color-entry);
+  background: color-mix(in srgb, var(--nd-semantic-color-selection) 52%, var(--nd-semantic-color-surface));
+}
+.config-probe-feedback[data-state="success"] {
+  color: var(--nd-semantic-color-success);
+  background: color-mix(in srgb, var(--nd-semantic-color-success-surface) 60%, var(--nd-semantic-color-surface));
+}
+.config-probe-feedback[data-state="error"] {
+  color: var(--nd-semantic-color-danger);
+  background: color-mix(in srgb, var(--nd-semantic-color-danger-surface) 65%, var(--nd-semantic-color-surface));
+}
+.config-probe-copy { position: relative; min-inline-size: 0; overflow-wrap: anywhere; }
+.config-probe-marker {
+  position: relative;
+  flex: none;
+  align-self: baseline;
+  inline-size: var(--nd-primitive-space-1);
+  block-size: var(--nd-primitive-space-1);
+  border-radius: var(--nd-semantic-radius-round);
+  background: currentColor;
+  transform: translateY(-2px);
+}
+[data-state="busy"] > .config-probe-marker {
+  animation: config-probe-pulse var(--nd-semantic-motion-scene) var(--nd-semantic-motion-ease-standard) infinite alternate;
+}
+.config-probe-sweep {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 16%, var(--nd-semantic-color-success-surface) 48%, transparent 74%);
+  pointer-events: none;
+  animation: config-probe-sweep var(--nd-semantic-motion-linger) var(--nd-semantic-motion-ease-out) both;
+}
+@keyframes config-probe-pulse { to { opacity: .4; } }
+@keyframes config-probe-sweep {
+  0% { transform: translateX(-85%); opacity: 0; }
+  38% { opacity: .8; }
+  100% { transform: translateX(85%); opacity: 0; }
+}
+[data-motion="reduced"] .config-probe-marker { animation: none; }
+[data-motion="reduced"] .config-probe-sweep { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion="full"]) .config-probe-marker { animation: none; }
+  html:not([data-motion="full"]) .config-probe-sweep { display: none; }
+}
+@media (forced-colors: active) {
+  .config-probe-marker, .config-probe-sweep { display: none; }
+}

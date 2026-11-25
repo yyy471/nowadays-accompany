@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ChangeEvent, type SetSta
 import { api, ApiError } from '../../api';
 import { appearanceAssetUrl, type Outfit } from '../../types';
 import { Button, Field, Input, Select, Textarea } from '../../ui';
+import { PhotoDevelopment } from '../../ui/photo-development';
 import { announceLive } from '../../ui/live-announcer';
 import type { ConfigDraftState } from '../config-draft';
 import { MediaGroup, MediaRow, MediaSheet, MediaStateRow, RoleSaveActions, type MediaSummaryStatus } from '../config/MediaSheet';
@@ -36,7 +37,7 @@ type Props = {
   onChanged?: () => void;
   onDraftStateChange?: (state: ConfigDraftState) => void;
   onSummaryStatus?: (status: MediaSummaryStatus) => void;
-  guardWrite?: <T>(action: () => Promise<T>, verb?: string) => Promise<T>;
+  guardWrite?: <T>(action: () => Promise<T>, verb?: string, announceSuccess?: boolean) => Promise<T>;
   pausedWrite?: boolean;
 };
 
@@ -74,6 +75,7 @@ interface AnchorPromptResponse {
 interface TaggedPreview {
   serviceId: string;
   snapshotKey: string;
+  sequence: number;
   result: ImagePreview;
 }
 
@@ -123,6 +125,7 @@ export function ImagePanel({
   const [readRetry, setReadRetry] = useState(0);
   const [busy, setBusy] = useState(false);
   const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewError, setPreviewError] = useState('');
   const [previewElapsed, setPreviewElapsed] = useState(0);
   const [anchorBusyKey, setAnchorBusyKey] = useState('');
   const [anchorNotes, setAnchorNotes] = useState<Record<string, string>>({});
@@ -193,6 +196,7 @@ export function ImagePanel({
     previewAbortRef.current?.abort();
     previewAbortRef.current = null;
     setPreviewBusy(false);
+    setPreviewError('');
     if (clearResult) {
       setPreview(null);
       if (noticeKindRef.current === 'preview') { setNotice(''); setNoticeKind(''); }
@@ -447,17 +451,17 @@ export function ImagePanel({
       }
       const sourceText =
         result.source.kind === 'uploaded'
-          ? `已读取上传参考图「${result.source.fileName}」生成`
-          : `已读取「${result.source.outfitName || result.source.fileName}」立绘（${result.source.fileName}）生成`;
+          ? `参考图「${result.source.fileName}」`
+          : `「${result.source.outfitName || result.source.fileName}」的立绘（${result.source.fileName}）`;
       setAnchorNotes(previous => ({
         ...previous,
-        [key]: `${sourceText}；可微调或再次重新生成，确认后点保存。`,
+        [key]: `提示词参考了${sourceText}，可以调整后保存。`,
       }));
       setNoticeKind('anchor');
       setNotice(
         target === 'base'
-          ? '已用对话模型更新基础锚点提示词，当前仅在草稿生效。'
-          : '已用对话模型更新服饰锚点提示词，当前仅在草稿生效。',
+          ? '基础提示词已更新到草稿。'
+          : '服饰提示词已更新到草稿。',
       );
     } catch (reason) {
       if (controller.signal.aborted || isStale(token) || anchorSeq.current !== seq) {
@@ -521,11 +525,11 @@ export function ImagePanel({
       const saved = await guardWrite(() => api<ImageSettingsViewPayload>(
         `/v1/roles/${encodeURIComponent(roleId)}/scene-image`,
         { method: 'PUT', body: toImagePayload(submittedForm) },
-      ), '保存生图配置');
+      ), '保存生图配置', false);
       if (isStale(token)) return;
       setView(saved);
       setForms(previous => ({ ...previous, savedForm: submittedForm }));
-      closeNow();
+      closeNow(undefined, '已保存生图配置');
       onChanged?.();
     } catch (reason) {
       if (!isStale(token)) setError(failureText(reason));
@@ -535,16 +539,16 @@ export function ImagePanel({
   };
 
   const runPreview = async () => {
-    if (previewBusy) return;
+    if (previewAbortRef.current) return;
     const issues = validateImageForm(form);
-    if (issues.length > 0) { setError(issues[0]!.message); return; }
+    if (issues.length > 0) { setPreviewError(issues[0]!.message); return; }
     const currentLocal = services.find(service => service.serviceId === form.serviceId);
     if (!currentLocal) {
-      setError('当前所选生图服务已不存在，请重新选择或前往设置新建。');
+      setPreviewError('当前所选生图服务已不存在，请重新选择或前往设置新建。');
       return;
     }
     if (!currentLocal.enabled) {
-      setError(describeImageFailure('IMAGE_SERVICE_DISABLED', ''));
+      setPreviewError(describeImageFailure('IMAGE_SERVICE_DISABLED', ''));
       return;
     }
     const targetServiceId = currentLocal.serviceId;
@@ -552,9 +556,10 @@ export function ImagePanel({
     const token = roleToken.current;
     const seq = ++previewSeq.current;
     const controller = new AbortController();
-    previewAbortRef.current?.abort();
     previewAbortRef.current = controller;
-    setPreviewBusy(true); setError(''); setNotice(''); setNoticeKind('');
+    setPreviewBusy(true); setPreviewError(''); setError(''); setNotice(''); setNoticeKind('');
+    const isCurrent = () => !controller.signal.aborted && !isStale(token) && previewSeq.current === seq && activeRef.current
+      && formRef.current.serviceId === targetServiceId && snapshotKeyFor(targetServiceId) === requestKey;
     try {
       const result = await api<ImagePreview>(
         `/v1/roles/${encodeURIComponent(roleId)}/scene-image/preview`,
@@ -567,30 +572,16 @@ export function ImagePanel({
           signal: controller.signal,
         },
       );
-      if (
-        controller.signal.aborted ||
-        isStale(token) ||
-        previewSeq.current !== seq ||
-        !activeRef.current ||
-        formRef.current.serviceId !== targetServiceId ||
-        snapshotKeyFor(targetServiceId) !== requestKey
-      ) {
-        return;
-      }
-      setPreview({ serviceId: targetServiceId, snapshotKey: requestKey, result });
+      if (!isCurrent()) return;
+      const photo = new Image();
+      photo.src = `data:${result.mediaType};base64,${result.dataBase64}`;
+      await photo.decode().catch(() => { throw new Error('返回的样图无法解码。'); });
+      if (!isCurrent()) return;
+      setPreview({ serviceId: targetServiceId, snapshotKey: requestKey, sequence: seq, result });
       setNoticeKind('preview');
-      setNotice(`已用当前草稿生成测试样图（${result.width}×${result.height}），未改动已保存配置。`);
+      setNotice(`已用当前草稿生成 ${result.width}×${result.height} 的样图。`);
     } catch (reason) {
-      if (
-        !controller.signal.aborted &&
-        !isStale(token) &&
-        previewSeq.current === seq &&
-        activeRef.current &&
-        formRef.current.serviceId === targetServiceId &&
-        snapshotKeyFor(targetServiceId) === requestKey
-      ) {
-        setError(failureText(reason));
-      }
+      if (isCurrent()) setPreviewError(failureText(reason));
     } finally {
       if (previewAbortRef.current === controller) previewAbortRef.current = null;
       if (!isStale(token) && previewSeq.current === seq) setPreviewBusy(false);
@@ -666,7 +657,7 @@ export function ImagePanel({
       onChange={handleUploadChange}
     />
 
-    <MediaGroup title="服务" group={group}><Field label="生图服务" hint="切换服务会自动带入该服务的默认模型；未设置默认模型时可展开候选或手填。">
+    <MediaGroup title="服务" group={group}><Field label="生图服务" hint="切换服务时会带入它的默认模型。">
       <div className="nd-image-service-row">
         <Select value={form.serviceId} disabled={busy} onChange={event => selectService(event.target.value)}>
           {services.length === 0 && <option value="">还没有生图服务</option>}
@@ -695,8 +686,8 @@ export function ImagePanel({
     <Field label="生成方式"><Select value={form.modelType} disabled={busy} onChange={e => patch({ modelType: e.target.value as ImageForm['modelType'] })}>
       <option value="text2img">文生图</option><option value="img2img">图生图</option>
     </Select></Field>
-    <Field label="ComfyUI 工作流" hint={form.workflow ? '已导入自定义工作流，可重新选择 API 格式 JSON。' :
-      form.modelType === 'img2img' ? '需导入 API 格式 JSON，选定图片输出须接有一个 LoadImage 参考图节点。' : '当前使用内置 MOSS-Image 文生图工作流。'}>
+    <Field label="ComfyUI 工作流" hint={form.workflow ? '可以另选一个 API 格式的 JSON 文件来替换当前工作流。' :
+      form.modelType === 'img2img' ? '请导入 API 格式的 JSON 文件，并让选定的图片输出连接到一个 LoadImage 参考图节点。' : '当前使用内置的 MOSS-Image 工作流。'}>
       <Input type="file" accept=".json,application/json" disabled={busy} onChange={async e => {
         const file = e.target.files?.[0]; e.target.value = ''; if (!file) return;
         const token = roleToken.current;
@@ -715,7 +706,7 @@ export function ImagePanel({
     <ImageModelPicker
       label="模型名称或目录"
       testAnnouncedExternally
-      hint="与文本模型选取一致：点击聚焦展开或输入筛选；自定义工作流可填本地模型目录。"
+      hint="可以从列表选取模型，自定义工作流也可以填写本地模型目录。"
       value={form.modelPath}
       onChange={value => patch({ modelPath: value })}
       models={roleProbeTarget ? imageProbe.models : []}
@@ -732,7 +723,7 @@ export function ImagePanel({
       <div className="nd-image-section-head">
         <div className="nd-image-section-title">
           <h3>基础锚点提示词</h3>
-          <p className="nd-appearance-hint">脸型、发型、发色、瞳色与画风质感等跨场景恒定特征（不含服装与背景）。</p>
+          <p className="nd-appearance-hint">记下角色在不同画面里都保留的特征，如脸型、发色、瞳色和画风。</p>
         </div>
         <div className="nd-image-inline-actions">
           <Button
@@ -764,7 +755,7 @@ export function ImagePanel({
         aria-label="基础锚点提示词"
         value={form.basePrompt}
         maxLength={2000}
-        placeholder="点击右侧「用对话模型生成」自动读取当前角色立绘，或手动填写外貌与画风特征"
+        placeholder="可填写外貌与画风，或用对话模型参考立绘生成"
         onChange={event => patch({ basePrompt: event.target.value })}
       />
       {anchorNotes.base && <p className="nd-image-source-note">{anchorNotes.base}</p>}
@@ -774,10 +765,10 @@ export function ImagePanel({
       onChanged={() => invalidatePreview(true)} /> : <section className="nd-image-section" aria-label="服饰锚点提示词">
       <div className="nd-image-section-title">
         <h3>服饰锚点提示词</h3>
-        <p className="nd-appearance-hint">生成含人物画面时接在基础提示词之后；每套服饰均可读取对应立绘交由对话模型反复生成。</p>
+        <p className="nd-appearance-hint">画面里出现角色时，服饰提示词会接在基础提示词之后。</p>
       </div>
       {outfits.length === 0 ? (
-        <p className="nd-appearance-hint">衣柜中暂无服饰；前往左侧「外观」导入立绘后，可在此逐套生成服饰提示词。</p>
+        <p className="nd-appearance-hint">可以先到「外观」添加服饰，再回来为它写提示词。</p>
       ) : (
         <div className="nd-image-outfits">
           {outfits.map(outfit => {
@@ -799,7 +790,7 @@ export function ImagePanel({
                         ? '使用主页立绘'
                         : anchorAsset
                           ? '使用差分立绘'
-                          : '尚无立绘，可点传参考图生成'}
+                          : '还没有立绘，可以上传参考图'}
                     </small>
                   </div>
                   <div className="nd-image-inline-actions">
@@ -844,7 +835,7 @@ export function ImagePanel({
       )}
     </section>}
 
-      <Field label="负向提示词" hint="留空也可出图；人物或复杂场景可填入防崩坏词提升稳定性。">
+      <Field label="负向提示词" hint="可以留空，也可以写下希望画面避开的细节。">
         <Input
           value={form.negativePrompt}
           maxLength={2000}
@@ -876,10 +867,17 @@ export function ImagePanel({
         </Field>}
       </div>
     </MediaGroup><MediaGroup title="试生图" group={group}><div className="nd-image-preview">
-      {activePreview && <figure className="nd-image-figure">
-        <img src={`data:${activePreview.mediaType};base64,${activePreview.dataBase64}`} alt="测试生图结果" />
-        <figcaption title={activePreview.prompt}>{activePreview.prompt}</figcaption>
-      </figure>}
+      {previewBusy || previewError || activePreview ? <figure className="nd-image-figure">
+        {previewBusy ? <PhotoDevelopment state="pending" pendingLabel={`相纸显影中（${previewElapsed}s）…`} />
+          : previewError ? <PhotoDevelopment state="failed" failureLabel="样图没有生成" reason={previewError} onRetry={() => void runPreview()} />
+            : activePreview ? <>
+              <div className="photo-preview-frame">
+                <img src={`data:${activePreview.mediaType};base64,${activePreview.dataBase64}`} alt="测试生图结果" />
+                <PhotoDevelopment key={preview?.sequence} state="developed" />
+              </div>
+              <figcaption title={activePreview.prompt}>{activePreview.prompt}</figcaption>
+            </> : null}
+      </figure> : null}
       <div className="nd-image-preview-controls">
         <Field label="测试画面描述">
           <Input
@@ -903,7 +901,7 @@ export function ImagePanel({
             {outfits.map(outfit => <option key={outfit.outfitId} value={outfit.outfitId}>{outfit.name}</option>)}
           </Select>
         </Field>
-        <div className="nd-image-actions"><Button variant="ghost" disabled={previewBusy} onClick={() => void runPreview()}>
+        <div className="nd-image-actions"><Button variant="ghost" busy={previewBusy} disabled={busy} onClick={() => void runPreview()}>
           {previewBusy ? `正在出图（${previewElapsed}s）…` : '测试生图'}
         </Button>
         {previewBusy && <Button variant="ghost" onClick={cancelPreview}>取消</Button>}</div>

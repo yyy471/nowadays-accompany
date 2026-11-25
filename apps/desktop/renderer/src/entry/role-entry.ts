@@ -15,9 +15,9 @@ export function entryRoles(roles: RoleListItem[] | undefined): RoleListItem[] {
     .map(item => item.role);
 }
 
-/** 内置角色在入口页与配置页使用的固定标识文案。 */
+/** 内置角色在入口页的席位标识。 */
 export function entryBadge(role: RoleListItem | undefined): string | null {
-  return role && role.isBuiltin ? '主角色 / 内置管理员 · 不可删除' : null;
+  return role && role.isBuiltin ? '常驻主角色 · 默认保留' : null;
 }
 
 /** 卡片副标题：优先人物介绍，其次初始化状态。 */
@@ -25,8 +25,8 @@ export function entrySubtitle(role: RoleListItem | undefined): string {
   if (!role) return '';
   const bio = typeof role.bio === 'string' ? role.bio.trim() : '';
   if (bio) return bio;
-  if (role.status && role.status !== 'ready') return '尚未就绪';
-  return '还没有写下介绍';
+  if (role.status && role.status !== 'ready') return '准备中';
+  return '暂未写下介绍';
 }
 
 /**

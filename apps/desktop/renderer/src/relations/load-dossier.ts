@@ -133,7 +133,7 @@ export async function loadRelationPacket(
         const publishDiaries = () => {
           if (signal.aborted) return;
           packet.diaries = slots.filter((entry): entry is RelationDiary => entry !== null);
-          packet.diaryError = failed ? `${failed} 篇日记读取失败。` : '';
+          packet.diaryError = failed ? `${failed} 篇日记暂时无法读取。` : '';
           publish();
         };
         const worker = async () => {

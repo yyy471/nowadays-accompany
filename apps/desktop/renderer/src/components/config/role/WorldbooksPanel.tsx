@@ -14,7 +14,7 @@ type Book = { id: string; name: string; enabled: boolean; entries: Entry[] };
 type Collection = { revision: number; books: Book[] };
 type Props = {
   roleId: string; active: boolean; pausedWrite: boolean;
-  guardWrite: <T,>(action: () => Promise<T>, verb: string) => Promise<T>;
+  guardWrite: <T,>(action: () => Promise<T>, verb: string, announceSuccess?: boolean) => Promise<T>;
   onDraftChange: (state: ConfigDraftState) => void;
 };
 
@@ -117,10 +117,10 @@ export function WorldbooksPanel({ roleId, active, pausedWrite, guardWrite, onDra
           setConflict(true);
           throw new Error('其他窗口已修改世界书，请复制需要保留的草稿，再读取最新版本。');
         }
-      }, '保存世界书');
+      }, '保存世界书', false);
       setSaved(result);
       setDraft(result.books);
-      sheet.closeNow();
+      sheet.closeNow(undefined, '已保存世界书');
     } catch (error) { setWriteError(error instanceof Error ? error.message : String(error)); }
     finally { saving.current = false; setBusy(false); }
   };
@@ -130,7 +130,7 @@ export function WorldbooksPanel({ roleId, active, pausedWrite, guardWrite, onDra
   const enabledCount = saved.books.filter(item => item.enabled).length;
   return <>
     <ServiceRow label="世界书" value={saved.books.length ? `已启用 ${enabledCount} / ${saved.books.length} 本` : '尚未添加'}
-      keys={['当前角色专用，按关键词引用设定']} status={count ? 'dirty' : enabledCount ? 'ok' : 'none'}
+      keys={['角色可按关键词查阅设定']} status={count ? 'dirty' : enabledCount ? 'ok' : 'none'}
       statusText={count ? '有改动未保存' : enabledCount ? '已启用' : '未启用'}
       onOpen={anchor => sheet.open({ id: 'worldbooks', title: '编辑世界书', shape: 'full', anchor: anchor.closest<HTMLElement>('.config-sum'), focusReturn: anchor.matches('button') ? anchor : anchor.querySelector('button') })}/>
     <SheetHost id="worldbooks" active={active} state={{ dirty: count > 0, count, busy, discard }}
@@ -159,7 +159,7 @@ export function WorldbooksPanel({ roleId, active, pausedWrite, guardWrite, onDra
           </div>
           {entry && <>
             <Field label="条目标题"><Input value={entry.title} maxLength={80} disabled={busy} onChange={event => editEntry({ title: event.target.value })}/></Field>
-            <Field label="关键词" hint="每行一个，提及其中任意一个就可能引用此条。"><Textarea rows={3} value={entry.keywords.join('\n')} disabled={busy} onChange={event => editEntry({ keywords: event.target.value.split('\n') })}/></Field>
+            <Field label="关键词" hint="每行写一个关键词，提到其中任意一个时就可能引用这条设定。"><Textarea rows={3} value={entry.keywords.join('\n')} disabled={busy} onChange={event => editEntry({ keywords: event.target.value.split('\n') })}/></Field>
             <Field label="设定正文"><Textarea rows={5} maxLength={1800} value={entry.content} disabled={busy} onChange={event => editEntry({ content: event.target.value })}/></Field>
             <Field label="角色知情范围"><Select value={entry.visibility} disabled={busy} onChange={event => editEntry({ visibility: event.target.value as Entry['visibility'] })}>
               <option value="known">角色知道</option><option value="author_only">仅作者可见</option>

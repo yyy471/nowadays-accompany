@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { api } from '../api';
 import type { Outfit, RoleListItem } from '../types';
 import { appearanceAssetUrl } from '../types';
-import { Button, ControlButton, Icon, IconButton, Modal, UiThemeScope, useMotionPolicy } from '../ui';
+import { Button, ControlButton, Icon, IconButton, Modal, UiThemeScope, readMotionTime, useMotionPolicy } from '../ui';
 import { useThemePreset, useThemeTransitionStrategy } from '../ui/presets';
 import { dialogueThemeTransition } from '../conversation/dialogue-theme';
 import type { PerfScene, SceneLayerMode } from '../conversation/performance';
@@ -10,10 +10,10 @@ import type { PerfRow } from '../conversation/history';
 import { dayKey, dateLabel } from '../conversation/history';
 import { useWindowSession, type ConversationSnapshot, type SessionEvent } from '../conversation/use-window-session';
 import { useSegmentVoice } from '../conversation/use-segment-voice';
-import { sceneForEachReply, shouldClearRecoveredDraft } from '../conversation/window-model';
+import { sceneFeedback, sceneForEachReply, shouldClearRecoveredDraft } from '../conversation/window-model';
 import { pickCancelableTask, taskCancelLabel, taskCancelNotice, taskCancelTitle, type CancelableTask } from '../conversation/task-actions';
 import { ConversationStage, type StageSources } from '../conversation/ConversationStage';
-import { ChatPane } from '../conversation/ChatPane';
+import { ChatPane, type DialogueLocation } from '../conversation/ChatPane';
 import { HistoryPanel } from '../conversation/HistoryPanel';
 import scene from '../assets/themes/xiacheng/scene-ink.png';
 import nightScene from '../assets/themes/xiacheng/scene-night.png';
@@ -106,7 +106,7 @@ export function ConversationPage({
   const [historyLock, setHistoryLock] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [locatingHistory, setLocatingHistory] = useState(false);
-  const [locatedRow, setLocatedRow] = useState<number | null>(null);
+  const [location, setLocation] = useState<DialogueLocation | null>(null);
   const [dateNotice, setDateNotice] = useState<string | null>(null);
   const [scenePreview, setScenePreview] = useState<PerfScene | null>(null);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
@@ -139,9 +139,10 @@ export function ConversationPage({
   const voiceAutoRef = useRef(voiceAuto); voiceAutoRef.current = voiceAuto;
   const reducedRef = useRef(motion.reduced); reducedRef.current = motion.reduced;
   const cueTimer = useRef<number | undefined>(undefined);
+  const pageRef = useRef<HTMLDivElement>(null);
   const toastTimer = useRef<number | undefined>(undefined);
   const noticeTimer = useRef<number | undefined>(undefined);
-  const locatedTimer = useRef<number | undefined>(undefined);
+  const locationSequence = useRef(0);
   const historyLocationRequest = useRef(0);
   const historyButton = useRef<HTMLButtonElement>(null);
   const frozenScene = useRef<PerfScene | null>(null);
@@ -176,6 +177,20 @@ export function ConversationPage({
     onEvent: (snapshot, event) => handleEventRef.current(snapshot, event)
   });
   const snapshot = session.snapshot;
+  const placeLocation = useCallback((rowId: number) => {
+    const fromHistory = historyOpenRef.current;
+    if (fromHistory) {
+      historyLocationRequest.current += 1;
+      setLocatingHistory(false);
+      setHistoryOpen(false);
+      session.cancelHistory();
+    }
+    // 分页读取之后，保持回看位置并把焦点交给找到的消息。
+    setFollow(false);
+    setHistoryLock(true);
+    setRequestDraftFocus(0);
+    setLocation({ rowId, sequence: ++locationSequence.current, fromHistory });
+  }, [session.cancelHistory]);
   const visibleWindow = snapshot?.roleId === currentId ? snapshot.windowId : null;
   useLayoutEffect(() => {
     onVisibleWindow(visibleWindow);
@@ -189,7 +204,7 @@ export function ConversationPage({
         session.selectWindow(initialTarget.windowId);
         return;
       }
-      showToast('无法打开原对话窗口。');
+      showToast('暂时无法打开原对话。');
       onTargetHandled?.();
       return;
     }
@@ -200,20 +215,13 @@ export function ConversationPage({
     let active = true;
     void session.locateMessage(initialTarget.messageId).then(row => {
       if (!active) return;
-      if (row === null) showToast('无法定位这条分享，请在对话中重试。');
-      else {
-        // 分页期间的滚动反馈可能恢复了跟随，定位完成后重新锁定阅读位置。
-        setFollow(false);
-        setHistoryLock(true);
-        setLocatedRow(row);
-        if (locatedTimer.current) window.clearTimeout(locatedTimer.current);
-        locatedTimer.current = window.setTimeout(() => setLocatedRow(null), 2200);
-      }
+      if (row === null) showToast('暂时找不到这条分享，请在对话中再试一次。');
+      else placeLocation(row);
       targetRequest.current = false;
       onTargetHandled?.();
     });
     return () => { active = false; targetRequest.current = false; };
-  }, [initialTarget, currentId, snapshot?.roleId, snapshot?.windowId, snapshot?.loading, snapshot?.loadError, session.locateMessage, onTargetHandled, showToast]);
+  }, [initialTarget, currentId, snapshot?.roleId, snapshot?.windowId, snapshot?.loading, snapshot?.loadError, session.locateMessage, onTargetHandled, showToast, placeLocation]);
   // 办事任务可能在本页之外推进（自主唤醒、续行段），本轮只用 snapshot 判定刷新时机。
   useEffect(() => {
     if (!currentId) { setTask(null); return; }
@@ -257,7 +265,7 @@ export function ConversationPage({
     setHistoryOpen(false);
     historyLocationRequest.current += 1;
     setLocatingHistory(false);
-    setLocatedRow(null);
+    setLocation(null);
     setDateNotice(null);
     setScenePreview(null);
     frozenScene.current = null;
@@ -277,8 +285,13 @@ export function ConversationPage({
     if (cueTimer.current) window.clearTimeout(cueTimer.current);
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
     if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
-    if (locatedTimer.current) window.clearTimeout(locatedTimer.current);
   }, []);
+
+  useEffect(() => {
+    if (!motion.reduced) return;
+    window.clearTimeout(cueTimer.current);
+    setCue(false);
+  }, [motion.reduced]);
 
   useEffect(() => {
     if (!roleMenuOpen && !windowMenuOpen) return;
@@ -308,18 +321,18 @@ export function ConversationPage({
       setFollow(true);
       setHasNew(false);
       setHistoryLock(false);
-      setLocatedRow(null);
+      setLocation(null);
       setDateNotice(null);
       setScenePreview(null);
       frozenScene.current = null;
       setDismissed(new Set());
-      setAnnounce('对话窗口已载入。');
+      setAnnounce('对话已打开。');
     } else if (event.reason === 'send' || event.reason === 'retryReply') {
       setLiveRowId(null);
       voice.cancelPending();
       if (event.reason === 'send' && session.windowId) draftRecovery.current.delete(`${currentId}:${session.windowId}`);
       if (!followRef.current) setHasNew(true);
-      setAnnounce(event.reason === 'retryReply' ? '正在为原消息重新请求回复。' : '消息已发送，等对方开口。');
+      setAnnounce(event.reason === 'retryReply' ? '正在请求重新回复。' : '正在发送消息。');
     } else if (event.reason === 'segment') {
       const row = event.row;
       setLiveRowId(row?.id ?? null);
@@ -328,13 +341,15 @@ export function ConversationPage({
         if (!reducedRef.current) {
           setCue(true);
           if (cueTimer.current) window.clearTimeout(cueTimer.current);
-          cueTimer.current = window.setTimeout(() => setCue(false), 760);
+          cueTimer.current = window.setTimeout(() => setCue(false), readMotionTime(pageRef.current, '--nd-semantic-motion-scene', 900));
         }
       } else if (row?.text && voiceAutoRef.current && followRef.current && !historyOpenRef.current) {
         voice.play(row, true);
       }
       if (!followRef.current) setHasNew(true);
       setAnnounce(row?.action || row?.text || '');
+    } else if (event.reason === 'terminal' && next.current?.status === 'interrupted') {
+      setAnnounce('本轮回复未说完。');
     } else if (event.reason === 'error') {
       if (event.message) showToast(event.message);
       if (event.draft && session.windowId) {
@@ -379,6 +394,7 @@ export function ConversationPage({
   const preview = scenePreview && replyScenes.get(scenePreview.messageId);
   const visibleScene = scenePreview ? (preview?.status === 'succeeded' ? preview : scenePreview)
     : stageLive ? liveScene : frozenScene.current;
+  const sceneState = visibleScene && snapshot ? sceneFeedback(snapshot.scenes, snapshot.sceneRequests, snapshot.sceneRequestErrors, visibleScene.messageId) : null;
   useLayoutEffect(() => {
     if (stageLive) frozenScene.current = visibleScene;
   }, [stageLive, visibleScene]);
@@ -437,7 +453,7 @@ export function ConversationPage({
     setHasNew(false);
     setHistoryLock(false);
     setScenePreview(null);
-    setLocatedRow(null);
+    setLocation(null);
   };
 
   const locate = async (targetId: number) => {
@@ -450,19 +466,15 @@ export function ConversationPage({
     if (historyLocationRequest.current !== request) return;
     setLocatingHistory(false);
     if (!visible) {
-      showToast('无法定位这条消息，请重试。');
+      showToast('暂时找不到这条消息，请再试一次。');
       return;
     }
-    setHistoryOpen(false);
-    session.cancelHistory();
-    setLocatedRow(targetId);
+    placeLocation(targetId);
     const row = snapshot?.historyMessages.find(item => item.id === targetId);
     const key = row ? dayKey(row.createdAt) : '';
     setDateNotice(key ? dateLabel(key) : '');
     if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
     noticeTimer.current = window.setTimeout(() => setDateNotice(null), 1650);
-    if (locatedTimer.current) window.clearTimeout(locatedTimer.current);
-    locatedTimer.current = window.setTimeout(() => setLocatedRow(null), 2200);
   };
 
   const toggleHistory = () => {
@@ -472,6 +484,7 @@ export function ConversationPage({
       session.cancelHistory();
       setHistoryOpen(false);
     } else {
+      setLocation(null);
       setHistoryOpen(true);
       void session.loadHistory();
       voice.cancelPending();
@@ -483,7 +496,7 @@ export function ConversationPage({
   }
   if (!currentId || !role) {
     return <UiThemeScope theme="xiacheng" className="dialogue-host"><div className="dialogue-empty">
-      <p>{error ? `角色资料更新失败${roles.length ? '，当前显示上次资料' : ''}。` : '还没有可对话的角色。'}</p>
+      <p>{error ? `暂时无法更新角色资料${roles.length ? '，先显示上次的资料' : ''}。` : '还没有可对话的角色。'}</p>
       <div className="dialogue-empty-actions">{roles.length === 0 ? <Button variant="entry" onClick={onCreateRole}>创建角色</Button> : null}<Button variant="entry" onClick={onOpenRelations}>查看关系</Button></div>
     </div></UiThemeScope>;
   }
@@ -501,23 +514,24 @@ export function ConversationPage({
   }
 
   const connectionText = snapshot.connection === 'open'
-    ? '实时连接'
+    ? '已连接'
     : snapshot.connection === 'retrying'
-      ? '正在重连'
+      ? '正在重新连接'
       : snapshot.connection === 'closed'
         ? '连接已断开'
         : '正在连接';
 
   return <UiThemeScope theme="xiacheng" motion={motion.reduced ? 'reduced' : 'full'} className="dialogue-host">
-    <div className="dialogue-page" data-theme={night ? 'night' : 'day'} data-motion={motion.reduced ? 'reduced' : 'full'}>
+    <div ref={pageRef} className="dialogue-page" data-theme={night ? 'night' : 'day'} data-motion={motion.reduced ? 'reduced' : 'full'}>
       <main className="dialogue-layout">
         <ConversationStage snapshot={snapshot} current={visibleStageRow} sources={sources}
           visibleScene={visibleScene} live={stageLive} cue={cue}
           waitingOutfit={appearanceLoading || awaitingInitialOutfit}
-          waitingText={appearanceLoading ? '正在整理画面…' : `${roleName} 正在换装，即将赶来…`}
+          waitingText={appearanceLoading ? '正在读取外观…' : `${roleName} 正在换装，即将赶来…`}
           onDismiss={dismissScene} regenerating={!!visibleScene && (!!snapshot?.sceneRequests.has(visibleScene.messageId)
             || !!snapshot?.scenes.some(s => s.messageId === visibleScene.messageId && s.status === 'generating'))}
-          onRegenerate={image => { setScenePreview(image); session.requestScene(image.messageId, image.mode); }} />
+          sceneFailure={sceneState?.error?.reason}
+          onRegenerate={image => { setScenePreview(image); session.requestScene(image.messageId, sceneState?.error?.mode ?? image.mode); }} />
         <section className="dialogue-pane" aria-label={historyOpen ? '历史消息' : `与 ${roleName} 的对话`}>
         <div className="dialogue-pane-toolbar" inert={historyOpen} aria-hidden={historyOpen || undefined}>
           <div className="dialogue-pane-switches">
@@ -556,8 +570,8 @@ export function ConversationPage({
         </div>
           <div className="dialogue-chat-wrap" inert={historyOpen} aria-hidden={historyOpen || undefined}>
             {snapshot.loading && snapshot.messages.length === 0
-              ? <div className="dialogue-chat-loading"><span className="spinner" aria-hidden="true" />正在读取这个窗口的消息…</div>
-              : <ChatPane key={`${currentId}:${session.windowId}`} snapshot={snapshot} playingId={voice.playingId} follow={follow} hasNew={hasNew}
+              ? <div className="dialogue-chat-loading"><span className="spinner" aria-hidden="true" />正在读取消息…</div>
+              : <ChatPane key={`${currentId}:${session.windowId}`} snapshot={snapshot} pendingVoiceId={voice.pendingId} playingId={voice.playingId} follow={follow} hasNew={hasNew}
                   initialDraft={drafts.current.get(`${currentId}:${session.windowId}`) ?? ''}
                   onDraftChange={value => {
                     const key = `${currentId}:${session.windowId}`;
@@ -569,22 +583,27 @@ export function ConversationPage({
                   onRecoveredDraftApplied={() => setRecoveredDraft(null)}
                   clearDraft={clearDraft?.key === `${currentId}:${session.windowId}` ? clearDraft.sequence : null}
                   onClearDraftApplied={() => setClearDraft(null)}
-                  liveRowId={liveRowId} locatedRowId={locatedRow} dateNotice={dateNotice} requestDraftFocus={requestDraftFocus}
+                  liveRowId={liveRowId} location={location} dateNotice={dateNotice} requestDraftFocus={requestDraftFocus}
                   onDraftFocusHandled={() => setRequestDraftFocus(0)}
-                  onScrollFollow={next => { setFollow(next); if (next) { setHasNew(false); setHistoryLock(false); } }}
+                  onScrollFollow={next => { setLocation(null); setFollow(next); if (next) { setHasNew(false); setHistoryLock(false); } }}
                   onLatest={onLatest} onSend={send} onTyping={session.noteTyping} onLoadOlder={() => void session.loadOlder()} onAdvance={advance} onAdvanceAll={advanceAll}
-                  notice={!appearanceLoading && !hasOutfits ? '这个角色还没有主页立绘，可在角色配置的外观里添加服饰' : currentOutfit && currentOutfit.sprites.length === 0 ? '这套服饰没有对话表情，可先补一张差分' : null}
+                  notice={!appearanceLoading && !hasOutfits ? '还没有主页立绘，可在角色配置的「外观」中添加服饰。' : currentOutfit && currentOutfit.sprites.length === 0 ? '这套服饰还没有对话表情，可在「外观」中添加差分。' : null}
                   waitReason={snapshot.waitReason}
                   roleStopped={roleActivity?.state === 'stopped'}
                   onResumeRole={resumeRole}
                   onConfigureModel={onConfigureModel}
                   onRetryWaiting={() => { session.retryWaiting(); }}
                   onRetryFailedReply={() => { session.retryFailedReply(); }}
-                  onSpeaker={row => voice.play(row, false)} onGenerateScene={messageId => { setSceneTarget(messageId); setSceneOpen(true); }}
+                  onSpeaker={row => {
+                    if (voice.playingId === row.id) voice.stop();
+                    else if (voice.pendingId === row.id) voice.cancelPending();
+                    else voice.play(row);
+                  }} onGenerateScene={messageId => { setSceneTarget(messageId); setSceneOpen(true); }}
+                  onRetryScene={(messageId, mode) => session.requestScene(messageId, mode)}
                   onOpenScene={openScene} />}
           </div>
           <HistoryPanel open={historyOpen} messages={snapshot.historyMessages} scenes={snapshot.scenes}
-            loading={snapshot.historyLoading || locatingHistory} complete={snapshot.historyComplete} error={snapshot.historyError}
+            loading={snapshot.historyLoading} locating={locatingHistory} complete={snapshot.historyComplete} error={snapshot.historyError}
             openerRef={historyButton}
             onRetry={() => void session.loadHistory()} onOpenScene={openScene} onLocate={id => void locate(id)}
             onClose={() => { historyLocationRequest.current += 1; setLocatingHistory(false); session.cancelHistory(); setHistoryOpen(false); }} />
@@ -596,7 +615,7 @@ export function ConversationPage({
 
     <Modal open={cancelOpen} title={taskCancelLabel(task) || '取消任务'} onClose={() => setCancelOpen(false)} description={task ? taskCancelTitle(task) : ''}>
       <div className="dialogue-cancel-task">
-        <p>取消后这条任务链会结束；已经保存的进度笔记与工具结果仍会留在本机，之后在这个窗口发消息不会自动接回它。</p>
+        <p>取消会结束当前任务并保留已保存的进度笔记和工具结果，如需继续请重新提出请求。</p>
         <div className="dialogue-cancel-task-actions">
           <Button variant="danger" busy={cancelBusy} onClick={() => void cancelRunningTask()}>确认取消任务</Button>
           <Button onClick={() => setCancelOpen(false)}>继续办理</Button>
@@ -604,7 +623,7 @@ export function ConversationPage({
       </div>
     </Modal>
 
-    <Modal open={performanceOpen} title="演出设置" onClose={() => setPerformanceOpen(false)} description="调整对话页面的演出与显示方式。">
+    <Modal open={performanceOpen} title="演出设置" onClose={() => setPerformanceOpen(false)}>
       <div className="dialogue-settings-options">
         <label className="dialogue-option"><input type="checkbox" checked={hideDock} onChange={event => onHideDockChange(event.target.checked)} /><span>隐藏底部导航栏</span></label>
         <label className="dialogue-option"><input type="checkbox" checked={voiceAuto} onChange={event => {
@@ -615,11 +634,11 @@ export function ConversationPage({
         {snapshot?.sceneImagesAvailable && <label className="dialogue-option"><input type="checkbox" checked={sceneAuto} onChange={event => {
           const next = event.target.checked;
           setSceneAuto(next); savePreference('scene', next);
-        }} /><span>过场图就绪时自动演示</span></label>}
+        }} /><span>自动展示过场图</span></label>}
       </div>
     </Modal>
 
-    <Modal open={sceneOpen} title="为这一轮生成过场图" onClose={() => setSceneOpen(false)} description="由后端规划画面并生成本地样例图；只换背景会保留当前立绘。">
+    <Modal open={sceneOpen} title="为这一轮生成过场图" onClose={() => setSceneOpen(false)} description="只换背景时会保留当前立绘。">
       <div className="dialogue-scene-options">
         <Button size="sm" onClick={() => { requestScene('background'); setSceneOpen(false); }}>只换背景</Button>
         <Button size="sm" onClick={() => { requestScene('full_scene'); setSceneOpen(false); }}>人物与背景</Button>

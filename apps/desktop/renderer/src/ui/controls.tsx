@@ -4,9 +4,23 @@ import { Icon } from './icons';
 const FieldContext = createContext<{ id: string; hintId?: string; errorId?: string; invalid?: boolean } | undefined>(undefined);
 const classes = (...items: Array<string | undefined | false>) => items.filter(Boolean).join(' ');
 
-/** A button primitive for navigation/disclosure layouts; business actions use Button. */
-export const ControlButton = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLButtonElement>>(
-  ({ type = 'button', ...props }, ref) => <button ref={ref} type={type} {...props} />
+export type ControlButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & { busy?: boolean };
+
+/** 忙碌保留焦点，并拦截鼠标或键盘产生的重复点击。 */
+export const ControlButton = forwardRef<HTMLButtonElement, ControlButtonProps>(
+  ({ type = 'button', busy = false, disabled, 'aria-busy': ariaBusy, 'aria-disabled': ariaDisabled, onClick, ...props }, ref) => {
+    const blocked = busy || disabled || ariaDisabled === true || ariaDisabled === 'true';
+    return <button {...props} ref={ref} type={type} disabled={disabled && !busy}
+      aria-busy={busy || ariaBusy} aria-disabled={busy || ariaDisabled}
+      onClick={event => {
+        if (blocked) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        onClick?.(event);
+      }} />;
+  }
 );
 ControlButton.displayName = 'ControlButton';
 

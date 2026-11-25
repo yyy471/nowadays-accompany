@@ -1,12 +1,16 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { Icon, useMotionPolicy } from '../ui';
+import { VoiceWave } from '../ui/voice-wave';
 import { dayKey, dateLabel } from './history';
 import type { PerfRow } from './history';
 import type { PerfScene } from './performance';
 import { ReplyContent } from './ReplyContent';
-import { sceneForEachReply } from './window-model';
+import { sceneFeedback, sceneForEachReply } from './window-model';
+import type { SceneLayerMode } from './performance';
 import type { ConversationSnapshot } from './use-window-session';
 import { shouldAdvanceFromClick, shouldAdvanceFromKey } from './advance';
+import '../styles/conversation-feedback.css';
+import { PhotoDevelopment } from '../ui/photo-development';
 
 function timeLabel(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
@@ -16,13 +20,16 @@ function dateCaption(key: string): string {
   return `${key === dayKey(Date.now()) ? '今天 · ' : ''}${dateLabel(key)}`;
 }
 
+export type DialogueLocation = { rowId: number; sequence: number; fromHistory: boolean };
+
 export function ChatPane({
   snapshot,
+  pendingVoiceId,
   playingId,
   follow,
   hasNew,
   liveRowId,
-  locatedRowId,
+  location,
   dateNotice,
   requestDraftFocus,
   initialDraft,
@@ -41,6 +48,7 @@ export function ChatPane({
   onAdvanceAll,
   onSpeaker,
   onGenerateScene,
+  onRetryScene,
   onOpenScene,
   notice,
   waitReason,
@@ -51,11 +59,12 @@ export function ChatPane({
   onRetryFailedReply,
 }: {
   snapshot: ConversationSnapshot;
+  pendingVoiceId: number | null;
   playingId: number | null;
   follow: boolean;
   hasNew: boolean;
   liveRowId: number | null;
-  locatedRowId: number | null;
+  location: DialogueLocation | null;
   dateNotice: string | null;
   requestDraftFocus: number;
   initialDraft: string;
@@ -76,6 +85,7 @@ export function ChatPane({
   onAdvanceAll?: () => void;
   onSpeaker: (row: PerfRow) => void;
   onGenerateScene: (messageId: string) => void;
+  onRetryScene: (messageId: string, mode: SceneLayerMode) => void;
   onOpenScene: (scene: PerfScene) => void;
   /** 衣柜与当前穿着的提示，例如未选择服饰或服饰没有差分。 */
   notice?: string | null;
@@ -95,6 +105,8 @@ export function ChatPane({
   const composing = useRef(false);
   const focusAdvance = useRef(false);
   const olderAnchor = useRef<{ height: number; top: number } | null>(null);
+  const placedLocation = useRef<DialogueLocation | null>(null);
+  const locationScroll = useRef<number | null>(null);
   const [draftValue, setDraftValue] = useState(initialDraft);
   const recoveredSequence = useRef(0);
   const confirmedSequence = useRef(0);
@@ -140,16 +152,19 @@ export function ChatPane({
   });
 
   useLayoutEffect(() => {
-    if (!locatedRowId) return;
-    const element = rows.current.get(locatedRowId);
+    if (!location || placedLocation.current === location) return;
+    const element = rows.current.get(location.rowId);
     const host = scroller.current;
     if (!element || !host) return;
-    const top = element.getBoundingClientRect().top - host.getBoundingClientRect().top + host.scrollTop - 18;
-    // 定位可能跨多页读取；立即落位避免滚动事件在平滑滚动途中重新开启跟随。
+    placedLocation.current = location;
+    const previousTop = host.scrollTop;
+    const top = element.getBoundingClientRect().top - host.getBoundingClientRect().top + previousTop - 18;
+    // 定位落位的滚动事件不应把阅读位置切回实时跟随。
     olderAnchor.current = null;
     host.scrollTo({ top: Math.max(0, top), behavior: 'instant' });
+    locationScroll.current = host.scrollTop === previousTop ? null : host.scrollTop;
     element.focus({ preventScroll: true });
-  }, [locatedRowId, policy.reduced]);
+  }, [location, snapshot.messages]);
 
   useEffect(() => {
     if (requestDraftFocus <= 0) return;
@@ -160,14 +175,18 @@ export function ChatPane({
   const onScroll = () => {
     const element = scroller.current;
     if (!element) return;
+    const placedTop = locationScroll.current;
+    locationScroll.current = null;
+    if (placedTop !== null && element.scrollTop === placedTop) return;
     const next = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
     onScrollFollow(next);
   };
 
   const resizeDraft = (element: HTMLTextAreaElement) => {
     element.style.height = '';
-    const min = window.innerWidth <= 760 ? (window.innerHeight <= 700 ? 32 : 41) : 46;
-    element.style.height = `${Math.min(window.innerWidth <= 760 ? 76 : 92, Math.max(min, element.scrollHeight))}px`;
+    const { minHeight, maxHeight } = getComputedStyle(element);
+    const height = Math.max(Number.parseFloat(minHeight), element.scrollHeight);
+    element.style.height = `${Math.min(Number.parseFloat(maxHeight), height)}px`;
   };
 
   const send = () => {
@@ -192,11 +211,17 @@ export function ChatPane({
     }
   };
 
-  // 首句等待与「已展示到最后一段、模型仍在生成」都给出等待反馈。
+  const submission = snapshot.submission;
+  const firstReplyText = submission?.kind === 'retry'
+    ? submission.awaitingReceipt ? '正在请求重新回复…' : '正在重新生成回复…'
+    : submission?.kind === 'send'
+      ? submission.awaitingReceipt ? '正在发送消息…' : '消息已接收，正在组织回复…'
+      : '正在组织回复…';
+  // 请求回执与首句等待分开，已展示的回复继续使用逐句反馈。
   const waitingText = !advancing
     ? null
     : snapshot.awaiting || !snapshot.current
-      ? '正在组织回复…'
+      ? firstReplyText
       : !snapshot.canAdvance
         ? '下一句还在准备…'
         : null;
@@ -241,19 +266,17 @@ export function ChatPane({
         const isLive = liveRowId === row.id;
         const atEnd = row.role === 'assistant' && lastOfRound.get(row.messageId) === row.id && snapshot.activeId !== row.messageId && snapshot.availableRounds.has(row.messageId);
         const scene = atEnd ? scenesByReply.get(row.messageId) : undefined;
-        const pending = atEnd && (snapshot.sceneRequests.has(row.messageId) || scene?.status === 'generating');
+        const feedback = sceneFeedback(snapshot.scenes, snapshot.sceneRequests, snapshot.sceneRequestErrors, row.messageId);
+        const pending = atEnd && feedback.pending;
+        const failure = atEnd ? feedback.error : null;
         const canDraw = atEnd && snapshot.sceneImagesAvailable && !!row.segmentId;
         let sceneControl: ReactNode = null;
-        if (scene?.status === 'succeeded') {
-          sceneControl = <button type="button" className="dialogue-scene-chip" onClick={() => onOpenScene(scene)}>查看{scene.mode === 'background' ? '背景图' : '人物场景图'}</button>;
-        } else if (pending) {
-          sceneControl = <span className="dialogue-scene-pending" role="status">过场图生成中…</span>;
-        } else if (canDraw) {
-          sceneControl = <button type="button" className="dialogue-scene-chip" onClick={() => onGenerateScene(row.messageId)}><Icon name="image" size={15} />{scene?.status === 'failed' ? '生成失败，点击重试' : '生成过场图'}</button>;
-        } else if (scene?.status === 'failed') {
-          sceneControl = <span className="dialogue-scene-pending" role="status">过场图生成失败</span>;
-        }
-        const located = locatedRowId === row.id;
+        if (scene?.status === 'succeeded' || pending || failure || canDraw) sceneControl = <>
+          {scene?.status === 'succeeded' && <button type="button" className="dialogue-scene-chip" onClick={() => onOpenScene(scene)}>查看{scene.mode === 'background' ? '背景图' : '人物场景图'}</button>}
+          {pending ? <PhotoDevelopment state="pending" /> : failure ? <PhotoDevelopment state="failed" reason={failure.reason} onRetry={canDraw ? () => onRetryScene(row.messageId, failure.mode) : undefined} />
+            : !scene && canDraw ? <button type="button" className="dialogue-scene-chip" onClick={() => onGenerateScene(row.messageId)}><Icon name="image" size={15} />生成过场图</button> : null}
+        </>;
+        const located = location?.rowId === row.id ? location : null;
         const parts: ReactNode[] = [];
         if (row.action) {
           parts.push(<div key={`action-${row.id}`} className="dialogue-direction" data-reveal={isLive ? '' : undefined}>
@@ -261,27 +284,38 @@ export function ChatPane({
             <span className="sr-only">动作：</span><span className="cue-text">{row.action}</span>
           </div>);
         } else {
+          const voiceState = playingId === row.id ? 'playing' : pendingVoiceId === row.id ? 'synthesizing' : null;
+          const voiceAction = voiceState === 'playing' ? '停止播放这句' : voiceState === 'synthesizing' ? '合成中，可取消' : '播放这句';
           parts.push(<div key={`speech-${row.id}`} className="dialogue-speech" data-live={isLive ? '' : undefined}>
             <div className="dialogue-bubble"><ReplyContent row={row} /></div>
-            {row.role === 'assistant' && !row.format && row.segmentId && <button type="button" className="dialogue-speaker" aria-label={`播放这句：${row.text.slice(0, 28)}`} title="播放这句"
-              aria-pressed={playingId === row.id} data-playing={playingId === row.id ? '' : undefined} onClick={() => onSpeaker(row)}>
-              <Icon name="speaker" size={16} />
+            {row.role === 'assistant' && !row.format && row.segmentId && <button type="button" className="dialogue-speaker" aria-label={`${voiceAction}：${row.text.slice(0, 28)}`} title={voiceAction}
+              aria-busy={voiceState === 'synthesizing' || undefined} data-playing={voiceState === 'playing' ? '' : undefined} data-voice={voiceState ?? undefined} onClick={() => onSpeaker(row)}>
+              {voiceState ? <>
+                <VoiceWave state={voiceState} />
+                <span aria-hidden="true">{voiceState === 'playing' ? '停止' : '合成中'}</span>
+              </> : <Icon name="speaker" size={16} />}
             </button>}
           </div>);
         }
-        if (row.status === 'interrupted') parts.push(<div key={`status-${row.id}`} className="dialogue-status">未说完</div>);
+        if (row.status === 'interrupted') {
+          parts.push(<div key={`status-${row.id}`} className="dialogue-status dialogue-interrupted"><Icon name="warning" size={13} />未说完</div>);
+        }
         return <article key={row.id} className={`dialogue-message ${row.role}`} data-segment-id={row.segmentId} data-message-id={row.messageId}
           ref={element => { if (element) rows.current.set(row.id, element); else rows.current.delete(row.id); }}
           tabIndex={-1}
-          data-live={isLive ? '' : undefined} data-located={located ? '' : undefined}
+          data-live={isLive ? '' : undefined} data-located={located?.sequence}
           aria-label={`${row.role === 'user' ? '你' : '角色'}，${dateCaption(key)} ${timeLabel(row.createdAt)}`}>
           {divider ? <div className="dialogue-date" aria-hidden="true">{dateCaption(key)}</div> : null}
-          {parts}
-          {sceneControl && <div className="dialogue-round-tools" data-tools>{sceneControl}</div>}
-          <time className="dialogue-time" title={`${dateCaption(key)} ${timeLabel(row.createdAt)}`}>{timeLabel(row.createdAt)}</time>
+          <div className="dialogue-message-content">
+            {parts}
+            {sceneControl && <div className="dialogue-round-tools" data-tools>{sceneControl}</div>}
+            <time className="dialogue-time" title={`${dateCaption(key)} ${timeLabel(row.createdAt)}`}>{timeLabel(row.createdAt)}</time>
+            {located && <span key={located.sequence} className="dialogue-location-ink" data-from-history={located.fromHistory || undefined} aria-hidden="true" />}
+          </div>
         </article>;
       })}
-      {waitingText ? <div className="dialogue-waiting" role="status">
+      {waitingText ? <div className="dialogue-waiting" data-submitting={submission?.awaitingReceipt || undefined}
+        role={submission?.awaitingReceipt ? undefined : 'status'}>
         <span>{waitingText}</span>
         {!policy.reduced ? <span className="dialogue-waiting-dots" aria-hidden="true"><i /><i /><i /></span> : null}
       </div> : null}
@@ -325,21 +359,21 @@ export function ChatPane({
             <button type="button" className="dialogue-advance-primary" onClick={onAdvance}>继续下一句</button>
           </div>
         </> : <span className="dialogue-advance-meta">
-          {!policy.reduced ? <span className="dialogue-waiting-dots" aria-hidden="true"><i /><i /><i /></span> : null}
           <span>{waitingText || '正在组织回复…'}</span>
         </span>}
       </div> : <form className="dialogue-composer" onSubmit={submit}>
             <div className="dialogue-writing">
               <label className="sr-only" htmlFor="dialogue-draft">输入消息</label>
               <textarea ref={draft} id="dialogue-draft" rows={2} maxLength={2000} placeholder="想说什么，就慢慢说。"
+                aria-describedby="dialogue-composer-hint"
                 spellCheck={false} value={draftValue} onChange={event => { setDraftValue(event.target.value); onDraftChange(event.target.value); resizeDraft(event.target); onTyping(); }}
                 onInput={event => resizeDraft(event.currentTarget)}
                 onCompositionStart={() => { composing.current = true; }}
                 onCompositionEnd={event => { composing.current = false; resizeDraft(event.currentTarget); }}
                 onKeyDown={onKeyDown} />
               <div className="dialogue-composer-row">
-                <span className="dialogue-demo-label">按句演出 · 本地后端</span>
-                <button type="submit" className="dialogue-send" disabled={!draftValue.trim()} aria-disabled={!draftValue.trim()} title="Enter 发送；Shift + Enter 换行">
+                <span className="dialogue-composer-hint" id="dialogue-composer-hint">Enter 发送 · Shift + Enter 换行</span>
+                <button type="submit" className="dialogue-send" disabled={!draftValue.trim()} aria-disabled={!draftValue.trim()}>
                   <span>发送</span><Icon name="send" size={16} />
                 </button>
               </div>

@@ -15,6 +15,8 @@ const emptyPresets = path.join(temp, 'presets');
 fs.mkdirSync(emptyPresets, { recursive: true });
 const node = process.execPath;
 const imagePath = xiachengPortraitFixture;
+const invalidImagePath = path.join(temp, 'bad.png');
+fs.writeFileSync(invalidImagePath, 'invalid image');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(fn) { let last; for (const start = Date.now(); Date.now() - start < 25000;) { try { const value = await fn(); if (value) return value; } catch (error) { last = error; } await delay(100); } throw Error(`等待超时: ${last || ''}`); }
 let backend, electron, ws, backendLog = '', electronLog = '', nextId = 0, base = '';
@@ -210,10 +212,18 @@ async function run() {
   await until(() => ev(`!${element(sheet)}`));
   await openSheet(outfitCard('春日'), '编辑服饰');
   await until(() => ev(`!!${button('替换主页立绘', sheet)} && !${button('替换主页立绘', sheet)}.disabled`));
+  await until(() => ev("document.querySelector('.config-sheet .config-outfit-hero-thumb[data-photo-state=developed] img')?.naturalWidth > 0"));
+  const previousImage = await ev("document.querySelector('.config-sheet .config-outfit-hero-thumb img')?.getAttribute('src')");
   const doc = await cmd('DOM.getDocument'); const input = await cmd('DOM.querySelector', { nodeId: doc.root.nodeId, selector: `${sheet} input[type=file]:nth-of-type(2)` });
   assert.ok(input.nodeId, '替换立绘所用的本机文件控件');
+  await cmd('DOM.setFileInputFiles', { nodeId: input.nodeId, files: [invalidImagePath] });
+  await until(() => ev("document.querySelector('.config-outfit-upload [role=alert]')?.textContent.includes('图片格式不受支持')"));
+  assert.ok(await ev(`!!${button('重试', `${sheet} .config-outfit-upload`)}`), '上传失败在相纸框内提供重试');
+  assert.equal(await ev("document.querySelector('.config-sheet .config-outfit-hero-thumb img')?.getAttribute('src')"), previousImage);
   await cmd('DOM.setFileInputFiles', { nodeId: input.nodeId, files: [imagePath] });
-  await until(() => ev("document.querySelector('.config-sheet')?.innerText.includes('主页立绘已更新') || document.querySelector('.config-role-editor:not([hidden])')?.innerText.includes('主页立绘已更新')"));
+  await until(() => ev("document.querySelector('.config-result-notice')?.innerText.includes('主页立绘已更新')"));
+  await until(() => ev(`(() => { const preview = document.querySelector('.config-sheet .config-outfit-hero-thumb[data-photo-state=developed] img');
+    return preview?.naturalWidth > 0 && preview.getAttribute('src') !== ${JSON.stringify(previousImage)}; })()`));
   await click(button('删除', `${sheet} .config-sprite-list`));
   await click(button('删除', `${sheet} .config-sheet-actions`));
   await until(async () => (await request(`/v1/roles/${a.roleId}/appearance/outfits`)).items.find(item => item.name === '春日')?.sprites.length === 0);

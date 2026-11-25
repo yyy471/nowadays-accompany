@@ -6,6 +6,7 @@ import { App } from './App';
 import { applyMotionPreference, readMotionPreference } from './preferences';
 import './styles.css';
 import './ui/theme.css';
+import './ui/fonts.css';
 import './ui/character-tokens.css';
 import './ui/motion-reduced.css';
 import './ui/character-theme.css';
@@ -23,10 +24,6 @@ import './styles/conversation.css';
 import './styles/feed.css';
 import './ui/preset-appearance.css';
 import './ui/status-dot.css';
-import './styles/relationship-journal.css';
-import './styles/relationship-journal-integration.css';
-import './styles/relationship-journal-transition.css';
-import './styles/studio-overrides.css';
 
 applyMotionPreference(readMotionPreference());
 createRoot(document.getElementById('root')!).render(

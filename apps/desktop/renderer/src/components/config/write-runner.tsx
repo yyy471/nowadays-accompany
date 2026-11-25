@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useMemo, useRef, useState, type
 import { api } from '../../api';
 import { LIVE, T29, T32 } from './config-texts';
 import { announceLive } from '../../ui/live-announcer';
+import { ConfigNotice, type ConfigNoticeTone } from './ConfigNotice';
 
 export type WriteFailure =
   | { phase: 'pause'; message: string }
@@ -31,6 +32,9 @@ interface WriteContextValue {
   recordPaused: (roleIds: string[]) => void;
   statusError: string;
   reportFailure: (message: string) => void;
+  reportResult: (message: string, tone?: ConfigNoticeTone) => void;
+  result: { message: string; tone: ConfigNoticeTone; key: number } | null;
+  dismissResult: (key?: number) => void;
 }
 
 const WriteContext = createContext<WriteContextValue | null>(null);
@@ -48,11 +52,21 @@ export function WriteProvider({ children, roleName, onActivityChanged }: { child
   const [pausedRoleIds, setPausedRoleIds] = useState<string[]>([]);
   const [resuming, setResuming] = useState(false);
   const [statusError, setStatusError] = useState('');
+  const [result, setResult] = useState<WriteContextValue['result']>(null);
+  const resultKey = useRef(0);
   const lock = useRef(false);
   const rolesRef = useRef<string[]>([]);
   const resumeLock = useRef(false);
   const callbacks = useRef({ roleName, onActivityChanged });
   callbacks.current = { roleName, onActivityChanged };
+
+  const reportResult = useCallback((message: string, tone: ConfigNoticeTone = 'success') => {
+    const key = ++resultKey.current;
+    setResult({ message, tone, key });
+    announceLive(message);
+  }, []);
+
+  const dismissResult = useCallback((key?: number) => setResult(previous => previous?.key === key ? null : previous), []);
 
   const recordPaused = useCallback((ids: string[]) => {
     if (ids.length === 0) return;
@@ -141,7 +155,7 @@ export function WriteProvider({ children, roleName, onActivityChanged }: { child
       setPhase('commit');
       if (targets.length) callbacks.current.onActivityChanged?.();
       await input.commit();
-      if (input.announceSuccess !== false) announceLive(LIVE.saved(input.verb));
+      if (input.announceSuccess !== false) reportResult(LIVE.saved(input.verb));
       return { ok: true as const };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -156,7 +170,7 @@ export function WriteProvider({ children, roleName, onActivityChanged }: { child
       if (targets.length && paused.length === 0 && pausingRole) callbacks.current.onActivityChanged?.();
       finish();
     }
-  }, [beginWrite, recordPaused]);
+  }, [beginWrite, recordPaused, reportResult]);
 
   const resumePaused = useCallback(async () => {
     if (lock.current || resumeLock.current || rolesRef.current.length === 0) return;
@@ -176,13 +190,13 @@ export function WriteProvider({ children, roleName, onActivityChanged }: { child
         } catch { failed.push(callbacks.current.roleName?.(roleId) ?? roleId); }
       }
       if (failed.length) setStatusError(`${failed.join('、')}恢复活动失败，请重试。`);
-      if (restored.length) announceLive(`${restored.join('、')} ${LIVE.resumed}`);
+      if (restored.length) reportResult(`${restored.join('、')} ${LIVE.resumed}`, failed.length ? 'warning' : 'success');
     } finally {
       callbacks.current.onActivityChanged?.();
       resumeLock.current = false;
       setResuming(false);
     }
-  }, [forgetPaused]);
+  }, [forgetPaused, reportResult]);
 
   const clearPaused = useCallback(() => {
     rolesRef.current = [];
@@ -192,8 +206,8 @@ export function WriteProvider({ children, roleName, onActivityChanged }: { child
   const value = useMemo<WriteContextValue>(() => ({
     busy: phase !== null, phase, pendingPauseIds,
     pauseNotice: pendingPauseIds.length ? T29.pausingRoles(pendingPauseIds.map(id => callbacks.current.roleName?.(id) ?? id)) : '',
-    pausedRoleIds, resuming, beginWrite, runWrite, resumePaused, clearPaused, forgetPaused, recordPaused, statusError, reportFailure: setStatusError,
-  }), [phase, pendingPauseIds, pausedRoleIds, resuming, beginWrite, runWrite, resumePaused, clearPaused, forgetPaused, recordPaused, statusError]);
+    pausedRoleIds, resuming, beginWrite, runWrite, resumePaused, clearPaused, forgetPaused, recordPaused, statusError, reportFailure: setStatusError, reportResult, result, dismissResult,
+  }), [phase, pendingPauseIds, pausedRoleIds, resuming, beginWrite, runWrite, resumePaused, clearPaused, forgetPaused, recordPaused, statusError, reportResult, result, dismissResult]);
 
   return <WriteContext.Provider value={value}>{children}</WriteContext.Provider>;
 }
@@ -202,4 +216,9 @@ export function useWrite(): WriteContextValue {
   const value = useContext(WriteContext);
   if (!value) throw new Error('WRITE_PROVIDER_MISSING');
   return value;
+}
+
+export function WriteResultNotice() {
+  const { result, dismissResult } = useWrite();
+  return <ConfigNotice key={result?.key} message={result?.message ?? ''} noticeKey={result?.key} tone={result?.tone} onDismiss={() => dismissResult(result?.key)}/>;
 }

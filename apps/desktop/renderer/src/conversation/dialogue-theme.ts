@@ -1,13 +1,10 @@
+import { readMotionTime } from '../ui/motion';
 import type { ThemeTransitionStrategy } from '../ui/theme-transition';
 
 /**
  * 对话页换光：舞台先起光，纸面再按 14 档推进，最后一次性收束。
- * 时序与参考稿一致（stage 40 / palette 360 / end 1200），纸面推进占 820ms，
- * 因此收尾落在 1180ms，仍在换光保护期内，结束帧与过渡最后一帧相同。
+ * 从页面动效档读取主题提交时间，保留一次错峰间隔供纸面收尾。
  */
-const PALETTE_MS = 360;
-const END_MS = 1200;
-const SWEEP_MS = 820;
 const SWEEP_STEPS = 14;
 
 function reduced(): boolean {
@@ -58,7 +55,7 @@ function collectRows(pane: HTMLElement): { rows: SweepRow[]; history: boolean } 
   };
   const scroller = pane.querySelector('.dialogue-messages');
   const history = pane.querySelector<HTMLElement>('.dialogue-history');
-  const historyOpen = !!history && !history.hidden;
+  const historyOpen = !!history?.hasAttribute('data-open');
   if (history && historyOpen) {
     // 历史层盖住整个面板时，逐行推进的是它的分区，而不是被盖住的聊天区。
     for (const child of Array.from(history.children)) push(child);
@@ -81,6 +78,9 @@ export const dialogueThemeTransition: ThemeTransitionStrategy = (request) => {
 
   const pane = page.querySelector<HTMLElement>('.dialogue-pane');
   const toNight = request.to === 'nightwave';
+  const paletteTime = readMotionTime(page, '--nd-semantic-motion-page', 360);
+  const total = 2 * readMotionTime(page, '--nd-semantic-motion-linger', 600);
+  const sweepTime = Math.max(0, total - paletteTime - readMotionTime(page, '--nd-semantic-motion-stagger-fine', 16));
   const life: number[] = [];
   const steps: number[] = [];
   let swept: HTMLElement[] = [];
@@ -138,7 +138,7 @@ export const dialogueThemeTransition: ThemeTransitionStrategy = (request) => {
     // 历史层是整面板覆盖，推进期间要把下面的聊天区藏掉，色带才不会被两层内容叠住。
     pane.classList.toggle('sweeping-history', history);
     pane.classList.add('sweeping');
-    const slot = SWEEP_MS / SWEEP_STEPS;
+    const slot = sweepTime / SWEEP_STEPS;
     const byStep: HTMLElement[][] = Array.from({ length: SWEEP_STEPS + 1 }, () => []);
     for (const row of rows) {
       const progress = toNight ? row.at : 1 - row.at;
@@ -146,11 +146,11 @@ export const dialogueThemeTransition: ThemeTransitionStrategy = (request) => {
       byStep[step].push(row.element);
       swept.push(row.element);
     }
-    pane.style.setProperty('--band', '0%');
+    pane.style.setProperty('--band', '0');
     for (let step = 1; step <= SWEEP_STEPS; step += 1) {
       steps.push(window.setTimeout(() => {
         if (!request.isCurrent()) return;
-        pane.style.setProperty('--band', `${(step / SWEEP_STEPS * 100).toFixed(2)}%`);
+        pane.style.setProperty('--band', String(step / SWEEP_STEPS));
         for (const element of byStep[step]) {
           pin(element, request.to);
           element.classList.add('flipped');
@@ -158,13 +158,13 @@ export const dialogueThemeTransition: ThemeTransitionStrategy = (request) => {
         if (step === SWEEP_STEPS) releaseSweep();
       }, step * slot));
     }
-  }, PALETTE_MS));
+  }, paletteTime));
 
   life.push(window.setTimeout(() => {
     if (!request.isCurrent()) return;
     releaseSweep();
     request.finish();
-  }, END_MS));
+  }, total));
 
   return cleanup;
 };

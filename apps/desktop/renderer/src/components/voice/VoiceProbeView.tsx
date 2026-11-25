@@ -4,6 +4,12 @@ import {
   type VoiceProbeResult,
 } from '../../voice-config';
 import { Field, Input, Select } from '../../ui';
+import { ProbeFeedback } from '../config/ProbeFeedback';
+import type { VoiceProbeNotice } from './use-voice-probe';
+
+export function VoiceProbeFeedback({ busy, notice }: { busy: boolean; notice: VoiceProbeNotice | null }) {
+  return <ProbeFeedback busy={busy} notice={notice && { ...notice, role: notice.kind }} testAnnouncedExternally/>;
+}
 
 export function formatVoiceEngineLabel(
   id: string,

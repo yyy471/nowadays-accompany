@@ -5,6 +5,7 @@
  * 2. 列表展示已建角色，主角色显示席位标识和当前人物介绍；
  * 3. 选定后进入共享工作区（主页），页面不残留「陪伴」概念。
  * 运行：node tests/e2e/pack3-entry.e2e.cjs（在 apps/desktop 下）
+ * 夜间截图：$env:PAGE_LAYOUT_THEME="nightwave"; node tests/e2e/pack3-entry.e2e.cjs
  */
 const { button, configControls, editor, element, setValue, sheet } = require('../helpers/config-page-controls.cjs');
 const { spawn } = require('node:child_process');
@@ -48,14 +49,26 @@ async function ev(expression) {
   return result.result.value;
 }
 
+const layoutTheme = process.env.PAGE_LAYOUT_THEME || 'daylight';
+assert.ok(['daylight', 'nightwave'].includes(layoutTheme), 'PAGE_LAYOUT_THEME 应为 daylight 或 nightwave');
 const layoutIssues = [];
 async function checkLayout(page) {
   const out = path.join(testResultsDir, 'page-layout');
   fs.mkdirSync(out, { recursive: true });
-  for (const [width, height] of [[720, 540], [920, 600], [1024, 640], [1280, 800]]) {
+  for (const [width, height] of [[720, 540], [920, 600], [1024, 640], [1280, 800], [1440, 840]]) {
     await cmd('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
-    await ev('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
-    await ev("Promise.allSettled((document.querySelector('.config-sheet')?.getAnimations() ?? []).map(animation => animation.finished))");
+    // 只等待可见元素上的有限动画，循环动画不能阻塞截图或常规验收。
+    await ev(`(async () => {
+      await document.fonts.ready;
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const animations = document.getAnimations().filter(animation => {
+        const target = animation.effect?.target;
+        return target instanceof Element && target.getClientRects().length &&
+          Number.isFinite(animation.effect.getComputedTiming().endTime);
+      });
+      await Promise.race([Promise.allSettled(animations.map(animation => animation.finished)),
+        new Promise(resolve => setTimeout(resolve, 1500))]);
+    })()`);
     const issues = await ev(`(() => {
       const issues = [];
       for (const el of document.querySelectorAll('main, .studio-content, .role-entry-stage, .role-entry-card, .ui-page-dock')) {
@@ -69,17 +82,29 @@ async function checkLayout(page) {
       const rect = selector => document.querySelector(selector)?.getBoundingClientRect();
       const theme = rect('.studio-header .ui-theme-switcher'), motion = rect('.studio-header .config-motion-toggle');
       if (theme && motion && motion.width && motion.left < theme.right && motion.right > theme.left && motion.top < theme.bottom && motion.bottom > theme.top) issues.push('主题与动效控件重叠');
+      const brand = rect('.studio-header .ui-studio-brand');
+      if (innerWidth === 720 && brand && theme && (brand.bottom <= theme.top || theme.bottom <= brand.top || brand.right > theme.left + 1)) {
+        issues.push('窄窗品牌与主题切换未在同一行分开排列');
+      }
       for (const selector of ['.ui-page-dock', '.config-sheet', '.config-sheet-actions', '.dialogue-history[data-open]']) {
         const r = rect(selector);
         if (r?.width && (r.left < -2 || r.top < -2 || r.bottom > innerHeight + 2 || r.right > innerWidth + 2)) issues.push(selector + ' outside window');
       }
       const enter = rect('.home-primary-actions button'), content = rect('.studio-content');
       if (enter && content && enter.bottom > content.bottom + 1) issues.push('主页按钮被裁切');
+      const art = rect('.home-scene-art'), caption = rect('.home-scene-caption');
+      if (art && caption && (art.height === 0 || caption.top < art.bottom - 1)) issues.push('主页图注侵入绘图区');
       return issues;
     })()`);
     if (page === 'entry') assert.ok(await ev("document.querySelector('.role-entry-card').getBoundingClientRect().bottom <= document.querySelector('.role-entry-actions').getBoundingClientRect().top + 1"), '单个角色的完整卡片在页脚上方');
     layoutIssues.push(...issues.map(issue => page + ' ' + width + ' ' + issue));
-    if (width === 720) fs.writeFileSync(path.join(out, page + '.png'), Buffer.from((await cmd('Page.captureScreenshot', {format:'png'})).data, 'base64'));
+    if ((width === 720 && height === 540) || (width === 1280 && height === 800) || (width === 1440 && height === 840)) {
+      const screenshot = Buffer.from((await cmd('Page.captureScreenshot', { format: 'png' })).data, 'base64');
+      const sizeDir = path.join(out, layoutTheme, width + 'x' + height);
+      fs.mkdirSync(sizeDir, { recursive: true });
+      fs.writeFileSync(path.join(sizeDir, page + '.png'), screenshot);
+      if (width === 720 && layoutTheme === 'daylight') fs.writeFileSync(path.join(out, page + '.png'), screenshot);
+    }
   }
 }
 
@@ -137,8 +162,19 @@ async function run() {
   assert.ok(cards.length >= 1, '至少展示一位角色');
   const builtin = cards.find(card => card.builtin);
   assert.ok(builtin, '内置夏澄应带内置标识');
-  assert.equal(builtin.badge, '主角色 / 内置管理员 · 不可删除');
+  assert.equal(builtin.badge, '常驻主角色 · 默认保留');
   assert.ok(builtin.bio.trim().length > 10, '入口页应显示首次播种的人物介绍');
+  if (layoutTheme === 'nightwave') {
+    // 通过实际主题控件保存偏好，再冷启动选角页，覆盖入口本身的夜间样式。
+    await ev("[...document.querySelectorAll('.role-entry-actions button')].find(b => b.textContent === '进入书房')?.click()");
+    await until(() => ev("!!document.querySelector('.studio-shell[data-page=\"home\"]')"), 'theme-workspace-home');
+    await until(() => ev("!!document.querySelector('.ui-theme-switcher [data-theme-choice=\"nightwave\"]')"), 'night-theme-control');
+    await ev("document.querySelector('.ui-theme-switcher [data-theme-choice=\"nightwave\"]').click()");
+    await until(() => ev("document.querySelector('.ui-theme-switcher [data-theme-choice=\"nightwave\"]')?.getAttribute('aria-pressed') === 'true'"), 'night-theme-selected');
+    await until(() => ev("localStorage.getItem('nowadays.theme-preset.v1') === 'nightwave'"), 'night-theme-saved');
+    await cmd('Page.reload');
+    await until(() => ev("!!document.querySelector('.role-entry-card[data-builtin]')"), 'night-role-entry');
+  }
   await checkLayout('entry');
 
   // 3. 进入工作区，主页显示当前角色。
@@ -223,7 +259,7 @@ async function run() {
   await until(async () => !(await readOutfit()), 'preset-outfit-removed');
   await cmd('Page.reload');
   await until(() => ev("document.querySelector('.role-entry-card[data-builtin] .role-entry-name')?.firstChild?.textContent === '岚'"), 'entry-renamed');
-  assert.equal(await ev("document.querySelector('.role-entry-card[data-builtin] .role-entry-bio').textContent"), '还没有写下介绍');
+  assert.equal(await ev("document.querySelector('.role-entry-card[data-builtin] .role-entry-bio').textContent"), '暂未写下介绍');
   await click(button('进入书房', '.role-entry-actions'));
 
   // 关系页也读取用户保存的名字。

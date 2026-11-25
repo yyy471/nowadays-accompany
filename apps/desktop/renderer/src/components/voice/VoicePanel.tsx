@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type SetStateAction } from 'react';
 import { api, apiBinary } from '../../api';
 import { Button, Field, Input, Select, Textarea } from '../../ui';
+import { VoiceWave } from '../../ui/voice-wave';
 import { announceLive } from '../../ui/live-announcer';
+import { useWrite } from '../config/write-runner';
 import type { ConfigDraftState } from '../config-draft';
 import { MediaGroup, MediaRow, MediaSheet, MediaStateRow, RoleSaveActions, type MediaSummaryStatus } from '../config/MediaSheet';
 import { useSheet } from '../config/sheet/sheet-context';
@@ -26,14 +28,14 @@ import {
 } from '../../voice-config';
 import { voiceServiceCacheKey } from './voice-cache';
 import { useVoiceProbe } from './use-voice-probe';
-import { formatVoiceEngineLabel, VoiceProbeSummaryBox } from './VoiceProbeView';
+import { formatVoiceEngineLabel, VoiceProbeFeedback, VoiceProbeSummaryBox } from './VoiceProbeView';
 
 const PREVIEW_EMOTION_PRESETS = ['温柔', '开心', '傲娇', '撒娇', '俏皮', '委屈', '激动', '生气', '平静'];
 
 const MAX_REFERENCE_AUDIO_BYTES = 32 * 1024 * 1024;
 
 type Props = {
-  guardWrite?: <T>(action: () => Promise<T>, verb?: string) => Promise<T>;
+  guardWrite?: <T>(action: () => Promise<T>, verb?: string, announceSuccess?: boolean) => Promise<T>;
   pausedWrite?: boolean;
   roleId: string;
   active?: boolean;
@@ -46,6 +48,7 @@ type Props = {
 };
 
 const DEFAULT_PREVIEW_TEXT = '这是一段语音试听文本。';
+type PlaybackSource = 'preview' | 'reference';
 
 export function VoicePanel({
   roleId,
@@ -60,6 +63,7 @@ export function VoicePanel({
   pausedWrite = false,
 }: Props) {
   const { sheet, closeNow } = useSheet();
+  const { reportResult } = useWrite();
   const editing = Boolean(active && sheet?.id === 'media:voice');
   const [config, setConfig] = useState<VoiceConfigView | null>(null);
   const [services, setServices] = useState<VoiceServiceItem[]>([]);
@@ -83,7 +87,9 @@ export function VoicePanel({
   const [previewText, setPreviewText] = useState(DEFAULT_PREVIEW_TEXT);
   const [previewEmotion, setPreviewEmotion] = useState('');
   const [previewBusy, setPreviewBusy] = useState(false);
-  const [playing, setPlaying] = useState(false);
+  const [playback, setPlayback] = useState<{ source: PlaybackSource; playing: boolean } | null>(null);
+  const [previewError, setPreviewError] = useState('');
+  const [referenceError, setReferenceError] = useState('');
   const [busy, setBusy] = useState(false);
   const [toggleBusy, setToggleBusy] = useState(false);
   // 启用状态的写入序号：保存的旧响应不能用过期快照覆盖已确认的启停结果。
@@ -170,17 +176,27 @@ export function VoicePanel({
   const stopPreview = () => {
     const audio = audioRef.current;
     if (audio) {
+      audioRef.current = null;
+      audio.onplaying = null;
       audio.onended = null;
       audio.onerror = null;
       audio.pause();
-      audio.src = '';
-      audioRef.current = null;
+      audio.removeAttribute('src');
+      audio.load();
     }
     if (previewUrl.current !== null) {
       URL.revokeObjectURL(previewUrl.current);
       previewUrl.current = null;
     }
-    setPlaying(false);
+    setPlayback(null);
+  };
+
+  const resetPreviewRequest = () => {
+    previewToken.current += 1;
+    previewAbortRef.current?.abort();
+    previewAbortRef.current = null;
+    setPreviewBusy(false);
+    stopPreview();
   };
 
   useEffect(() => {
@@ -193,11 +209,8 @@ export function VoicePanel({
         if (savedForm) setForm(savedForm);
         setPendingFile(null);
         if (fileInput.current) fileInput.current.value = '';
-        previewToken.current += 1;
-        previewAbortRef.current?.abort();
-        previewAbortRef.current = null;
-        stopPreview();
-        setPreviewBusy(false);
+        resetPreviewRequest();
+        setPreviewError(''); setReferenceError('');
         voiceProbe.clearLog();
         setPreviewEmotion('');
         setError('');
@@ -210,11 +223,8 @@ export function VoicePanel({
 
   useEffect(() => {
     if (!editing) {
-      previewToken.current += 1;
-      previewAbortRef.current?.abort();
-      previewAbortRef.current = null;
-      stopPreview();
-      setPreviewBusy(false);
+      resetPreviewRequest();
+      setPreviewError(''); setReferenceError('');
       voiceProbe.cancelPending();
     }
   }, [editing, voiceProbe.cancelPending]);
@@ -253,7 +263,7 @@ export function VoicePanel({
     setBusy(false);
     setToggleBusy(false);
     setLoading(true);
-    setPlaying(false);
+    setPreviewError(''); setReferenceError('');
     stopPreview();
     if (!roleId) {
       setLoading(false);
@@ -343,6 +353,8 @@ export function VoicePanel({
 
   const selectService = (nextServiceId: string) => {
     if (nextServiceId === form.serviceId) return;
+    resetPreviewRequest();
+    setPreviewError(''); setReferenceError('');
     serviceDrafts.current.set(form.serviceId, { form, file: pendingFile, text: previewText, emotion: previewEmotion });
     const picked = services.find(item => item.serviceId === nextServiceId);
     const cached = serviceDrafts.current.get(nextServiceId);
@@ -385,19 +397,31 @@ export function VoicePanel({
     }
   };
 
-  const playBlob = (blob: Blob) => {
+  const playBlob = (blob: Blob, source: PlaybackSource, onPlaying?: () => void) => {
     stopPreview();
     const url = URL.createObjectURL(blob);
     previewUrl.current = url;
     const audio = new Audio(url);
     audioRef.current = audio;
-    audio.onended = () => { stopPreview(); };
-    audio.onerror = () => { setError('试听音频无法播放。'); stopPreview(); };
-    setPlaying(true);
-    void audio.play().catch(() => {
-      setError('试听音频无法播放。');
+    setPlayback({ source, playing: false });
+    audio.onplaying = () => {
+      if (audioRef.current !== audio) return;
+      setPlayback({ source, playing: true });
+      onPlaying?.();
+    };
+    audio.onended = () => {
+      if (audioRef.current !== audio) return;
       stopPreview();
-    });
+      if (source === 'preview') setNotice('试听播放完毕。');
+    };
+    const fail = () => {
+      if (audioRef.current !== audio) return;
+      if (source === 'preview') { setPreviewError('试听音频无法播放。'); setNotice(''); }
+      else setReferenceError('无法播放这段参考录音，请检查文件格式。');
+      stopPreview();
+    };
+    audio.onerror = fail;
+    void audio.play().catch(fail);
   };
 
   const probeSource =
@@ -437,14 +461,15 @@ export function VoicePanel({
   };
 
   const runPreview = async () => {
+    if (previewAbortRef.current) return;
     const text = previewText.trim();
     if (text.length === 0) {
-      setError('试听文本不能为空。');
+      setPreviewError('试听文本不能为空。');
       return;
     }
     const serviceProblem = validateServiceSelectionBeforeAction();
     if (serviceProblem !== null) {
-      setError(serviceProblem);
+      setPreviewError(serviceProblem);
       return;
     }
     const token = roleToken.current;
@@ -461,13 +486,14 @@ export function VoicePanel({
       requireService: form.serviceId.length > 0 || services.length > 0,
     });
     if (issues.length > 0) {
-      setError(issues.map(item => item.message).join('；'));
+      setPreviewError(issues.map(item => item.message).join('；'));
       return;
     }
     const controller = new AbortController();
-    previewAbortRef.current?.abort();
+    stopPreview();
     previewAbortRef.current = controller;
     setPreviewBusy(true);
+    setPreviewError('');
     setError('');
     setNotice('');
     try {
@@ -497,18 +523,17 @@ export function VoicePanel({
       // 切到别的角色或已取消后不再播放上一段试听。
       if (controller.signal.aborted || isStale(token) || preview !== previewToken.current) return;
       if (blob.size === 0) {
-        setError('试听返回了空音频。');
+        setPreviewError('试听返回了空音频。');
         return;
       }
-      playBlob(blob);
-      setNotice(
+      playBlob(blob, 'preview', () => setNotice(
         stagedFile !== null
           ? `已用待上传录音「${stagedFile.name}」生成临时试听（尚未写入目录），正在播放。`
           : '已按当前表单生成试听，正在播放。',
-      );
+      ));
     } catch (reason) {
       if (controller.signal.aborted || isStale(token) || preview !== previewToken.current) return;
-      setError(failureText(reason));
+      setPreviewError(failureText(reason));
     } finally {
       if (previewAbortRef.current === controller) previewAbortRef.current = null;
       if (!isStale(token) && preview === previewToken.current) setPreviewBusy(false);
@@ -516,10 +541,7 @@ export function VoicePanel({
   };
 
   const cancelPreview = () => {
-    previewToken.current += 1;
-    previewAbortRef.current?.abort();
-    previewAbortRef.current = null;
-    setPreviewBusy(false);
+    resetPreviewRequest();
     setNotice('已取消本次试听合成。');
   };
 
@@ -530,6 +552,8 @@ export function VoicePanel({
     setError('');
     if (file.size === 0) { setError('参考音频不能为空。'); return; }
     if (file.size > MAX_REFERENCE_AUDIO_BYTES) { setError('参考音频超过 32 MiB 上限。'); return; }
+    resetPreviewRequest();
+    setReferenceError('');
     setPendingFile(file);
     // 选定新音频必须清空上一段录音遗留的参考文本，但不提前写盘。
     setForm(previous => withPendingReferenceAudio(previous));
@@ -538,6 +562,8 @@ export function VoicePanel({
 
   const clearPendingReference = () => {
     if (pendingFile === null || busy) return;
+    resetPreviewRequest();
+    setReferenceError('');
     setPendingFile(null);
     if (fileInput.current) fileInput.current.value = '';
     patch({ referenceText: '' });
@@ -558,18 +584,18 @@ export function VoicePanel({
       const result = await guardWrite(() => api<{ deleted: boolean; fileRemoved: boolean }>(
         `/v1/roles/${encodeURIComponent(roleId)}/voice/references/${encodeURIComponent(item.assetId)}`,
         { method: 'DELETE' },
-      ), '删除参考音频');
+      ), '删除参考音频', false);
       if (isStale(token)) return;
       if (formRef.current.referenceAssetId === item.assetId) {
         setForm(previous => withReferenceAudio(previous, ''));
       }
-      await refreshReferences(token);
-      if (isStale(token)) return;
-      setNotice(
+      reportResult(
         result.fileRemoved
           ? `已删除参考音频「${item.fileName}」。`
           : `已删除「${item.fileName}」的记录，但文件清理失败，可稍后重试。`,
+        result.fileRemoved ? 'success' : 'warning',
       );
+      await refreshReferences(token);
     } catch (reason) {
       if (isStale(token)) return;
       setError(failureText(reason));
@@ -643,7 +669,7 @@ export function VoicePanel({
           method: 'PUT',
           body,
         },
-      ), '保存声音配置');
+      ), '保存声音配置', false);
       if (isStale(token)) return;
       if (stateSeq.current === configSeq) setConfig(result.voice);
       setPendingFile(null);
@@ -652,7 +678,7 @@ export function VoicePanel({
       serviceDrafts.current.delete(saved.serviceId);
       if (saved.serviceId) savedServiceForms.current.set(saved.serviceId, saved);
       setForms({ form: saved, savedForm: saved });
-      closeNow();
+      closeNow(undefined, '已保存声音配置');
       void refreshReferences(token).catch(() => { /* 配置已保存；再次打开时仍可读取参考音频列表。 */ });
       onChanged?.();
     } catch (reason) {
@@ -676,11 +702,11 @@ export function VoicePanel({
       const result = await guardWrite(() => api<{ voice: VoiceConfigView }>(
         `/v1/roles/${encodeURIComponent(roleId)}/voice/enabled`,
         { method: 'PUT', body: { enabled: next } },
-      ));
+      ), next ? '启用角色语音' : '停用角色语音', false);
       if (isStale(token)) return;
       setConfig(result.voice);
       stateSeq.current += 1;
-      setNotice(
+      reportResult(
         result.voice.enabled
           ? '已启用角色语音，对话会按句合成。'
           : '已停用角色语音，配置已保留，随时可以再启用。',
@@ -779,7 +805,8 @@ export function VoicePanel({
           </Select>
           {selectedService && !isLegacy ? (
             <Button
-              disabled={busy || voiceProbe.busy || disabledSelectedService}
+              busy={voiceProbe.busy}
+              disabled={busy || disabledSelectedService}
               onClick={() => void runProbe()}
             >
               {voiceProbe.busy ? '正在测试…' : '测试连接'}
@@ -816,11 +843,7 @@ export function VoicePanel({
         ) : null}
       </Field>
 
-      {voiceProbe.notice ? (
-        <p className={voiceProbe.notice.kind === 'alert' ? 'config-sheet-error' : 'config-sheet-note'}>
-          {voiceProbe.notice.text}
-        </p>
-      ) : null}
+      <VoiceProbeFeedback busy={voiceProbe.busy} notice={voiceProbe.notice}/>
       <VoiceProbeSummaryBox probe={probeSource !== null ? voiceProbe.result : null} />
 
       {!isLegacy && (availableEngineEntries.length > 0 || form.ttsEngine.length > 0 || activeDefaultEngine) ? (
@@ -920,6 +943,8 @@ export function VoicePanel({
               disabled={busy}
               value={form.referenceAssetId}
               onChange={event => {
+                resetPreviewRequest();
+                setReferenceError('');
                 setPendingFile(null);
                 setForm(previous => withReferenceAudio(previous, event.target.value));
               }}
@@ -955,10 +980,23 @@ export function VoicePanel({
             <small className="nd-voice-note">支持 WAV、MP3、FLAC、OGG，单个不超过 32 MiB；保存后正式上传。</small>
           </div>
           {pendingFile ? (
-            <div className="nd-voice-probe" role="status">
-              <small>
+            <div className="nd-voice-probe nd-voice-reference-playback">
+              <small role="status">
                 待上传：{pendingFile.name}（{(pendingFile.size / 1024).toFixed(1)} KiB）· 点击「保存声音配置」后正式写入
               </small>
+              <Button size="sm" className="nd-voice-playback" disabled={busy || previewBusy}
+                aria-busy={playback?.source === 'reference' && !playback.playing || undefined}
+                onClick={() => {
+                  if (playback?.source === 'reference') { stopPreview(); return; }
+                  setReferenceError(''); setNotice('');
+                  playBlob(pendingFile, 'reference');
+                }}>
+                {playback?.source === 'reference' ? <>
+                  <VoiceWave state={playback.playing ? 'playing' : 'synthesizing'} />
+                  {playback.playing ? '停止参考录音' : '取消载入录音'}
+                </> : '播放参考录音'}
+              </Button>
+              {referenceError && <small role="alert" className="nd-appearance-error">{referenceError}</small>}
             </div>
           ) : null}
           {references.length > 0 ? (
@@ -1092,15 +1130,16 @@ export function VoicePanel({
         />
       </Field>
 
-      <div className="nd-appearance-actions">
-        <Button disabled={busy || previewBusy} onClick={() => void runPreview()}>
-          {previewBusy ? `正在合成（${previewElapsed}s）…` : '生成试听'}
+      <div className="nd-appearance-actions nd-voice-preview-actions">
+        <Button className="nd-voice-playback" disabled={busy} aria-busy={previewBusy || undefined} aria-disabled={previewBusy || undefined} onClick={() => void runPreview()}>
+          {previewBusy ? <><VoiceWave state="synthesizing" />{`正在合成（${previewElapsed}s）…`}</> : '生成试听'}
         </Button>
         {previewBusy && <Button variant="ghost" onClick={cancelPreview}>取消</Button>}
-        <Button disabled={!playing} onClick={stopPreview}>
-          停止播放
+        <Button className="nd-voice-playback" disabled={playback?.source !== 'preview'} onClick={() => { stopPreview(); setNotice('已停止试听。'); }}>
+          {playback?.source === 'preview' && <VoiceWave state={playback.playing ? 'playing' : 'synthesizing'} />}停止播放
         </Button>
       </div>
+      {previewError && <p role="alert" className="nd-appearance-error">{previewError}</p>}
       </MediaGroup>
       {notice ? (
         <p className="nd-appearance-notice" role="status">

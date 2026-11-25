@@ -115,12 +115,34 @@ async function run() {
     }
     const wait = (expr, label) => until(() => ev(expr), label);
     await wait("!!document.querySelector('.ui-menu-trigger')",'桌面');
+    await cmd('Emulation.setDeviceMetricsOverride', { width: 1440, height: 840, deviceScaleFactor: 1, mobile: false });
+    await wait('innerWidth === 1440', '扩展页面宽屏尺寸');
     await ev(`window.slotReports = []; window.addEventListener('message', e => {
       if (e.data?.type === 'test:report' && [...document.querySelectorAll('iframe[data-extension-slot]')].some(f => f.contentWindow === e.source))
         window.slotReports.push(e.data);
     }); document.querySelector('.ui-menu-trigger').click()`);
     await ev("[...document.querySelectorAll('.ui-menu-item')].find(b=>b.textContent.trim()==='扩展').click()");
     await wait("document.querySelector('.extension-page p')?.textContent==='尚未安装扩展。'",'订阅初始空快照');
+    const verifyLayout = async (hasSlots) => {
+      const layout = await ev(`(() => {
+        const page = document.querySelector('.extension-page');
+        const host = page.parentElement.getBoundingClientRect();
+        const heading = page.querySelector('h1').getBoundingClientRect();
+        const catalog = page.querySelector('.extension-catalog').getBoundingClientRect();
+        const slots = page.querySelector('.extension-slots')?.getBoundingClientRect();
+        return { heading: heading.left, headingRight: heading.right, catalog: catalog.left, catalogRight: catalog.right,
+          hostCenter: (host.left + host.right) / 2, layoutCenter: (heading.left + heading.right) / 2,
+          slots: slots?.left ?? null };
+      })()`);
+      assert.ok(Math.abs(layout.heading - layout.catalog) < 1, '扩展标题与目录卡片左侧应对齐');
+      assert.ok(Math.abs(layout.hostCenter - layout.layoutCenter) < 1, '扩展内容应在页面中居中');
+      if (hasSlots) assert.ok(layout.slots > layout.catalogRight, '宽屏微页和挂件应位于独立右栏');
+      else {
+        assert.equal(layout.slots, null, '无显示槽位时只保留目录栏');
+        assert.ok(Math.abs(layout.headingRight - layout.catalogRight) < 1, '单栏标题与目录卡片占用同一宽度');
+      }
+    };
+    await verifyLayout(false);
     const verify = async (version,preset) => {
       for (const slot of ['page','widget','overlay']) {
         const report = await wait(`window.slotReports.find(r=>r.text==='${slot} ${version}' && r.preset==='${preset}')`, slot+' '+version+' '+preset);
@@ -136,6 +158,7 @@ async function run() {
     console.log('桌面已订阅，安装 v1');
     await host.upsert(extension('v1',base));
     await verify('v1','daylight');
+    await verifyLayout(true);
     assert.equal(await ev("fetch('/v1/extensions/slot-demo/ui/page.html').then(r=>r.status)"),404);
     await wait("document.querySelector('.extension-overlays p')?.textContent==='展签已打开'",'实时通知');
     const light = await ev('slotReports[0].color');
@@ -149,6 +172,7 @@ async function run() {
     const removed = () => wait("!document.querySelector('iframe[data-extension-slot], .extension-overlays')",'三类槽位和提示撤销');
     await toggle(); await removed();
     assert.equal(host.get('slot-demo').status,'disabled');
+    await verifyLayout(false);
     // 通过新 iframe 重新读取原协议地址，观察 Chromium 收到的实际响应。
     async function unavailable() {
       await cmd('Network.enable');

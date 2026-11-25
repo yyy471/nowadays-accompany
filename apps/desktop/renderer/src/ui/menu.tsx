@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type Ref } from 'react';
 import { ControlButton } from './controls';
 import { Icon, type IconName } from './icons';
-import { createMotionScope, readMotionTime, readMotionValue, useMotionPolicy } from './motion';
+import { createMotionScope, readMotionPx, readMotionTime, readMotionValue, useMotionPolicy } from './motion';
 
 export type MenuItem = { id: string; label: string; icon?: IconName; disabled?: boolean; onSelect: () => void };
 
@@ -46,7 +46,7 @@ export function DropdownMenu({ label, items, currentLabel, selectedPage, trigger
     setOpen(false);
     if (restore) trigger.current?.focus({ preventScroll: true });
     if (!presentRef.current) return;
-    if (selectedPage || reduced.current || !panel.current) { finishClose(); return; }
+    if (selectedPage || reduced.current || document.hidden || !panel.current) { finishClose(); return; }
     setClosing(true);
   }, [finishClose, selectedPage]);
   const requestOpen = useCallback((last = false) => {
@@ -93,11 +93,12 @@ export function DropdownMenu({ label, items, currentLabel, selectedPage, trigger
     if (!element) return;
     const snapshot = resume.current;
     resume.current = null;
-    const start = snapshot ?? { opacity: 0, transform: selectedPage ? 'translateY(6px)' : 'translateY(4px)' };
     scope.cancelAll();
-    if (reduced.current) return;
-    const duration = selectedPage ? readMotionTime(element, '--nd-semantic-motion-component', 220) : readMotionTime(element, '--nd-component-motion-control', 160);
-    const ease = selectedPage ? readMotionValue(element, '--nd-semantic-motion-ease-out', 'ease-out') : readMotionValue(element, '--nd-component-motion-surface-ease', 'ease-out');
+    if (reduced.current || document.hidden) return;
+    const offset = readMotionPx(element, '--nd-semantic-motion-detail-page-offset', 4);
+    const start = snapshot ?? { opacity: 0, transform: `translateY(${offset}px)` };
+    const duration = readMotionTime(element, '--nd-semantic-motion-component', 220);
+    const ease = readMotionValue(element, '--nd-semantic-motion-ease-out', 'ease-out');
     scope.run(element, [start, { opacity: 1, transform: 'translateY(0)' }], { duration, easing: ease, slot: 'menu', fill: 'backwards' });
   }, [present, open, scope, selectedPage]);
 
@@ -106,13 +107,14 @@ export function DropdownMenu({ label, items, currentLabel, selectedPage, trigger
     const element = panel.current;
     const current = ++generation.current;
     if (!element) { finishClose(); return; }
-    if (reduced.current) { finishClose(); return; }
+    if (reduced.current || document.hidden) { finishClose(); return; }
     const drawn = getComputedStyle(element);
     const from = { opacity: Number.parseFloat(drawn.opacity), transform: drawn.transform === 'none' ? 'translateY(0)' : drawn.transform };
     scope.cancelAll();
-    const duration = readMotionTime(element, '--nd-component-motion-control', 160);
-    const ease = readMotionValue(element, '--nd-component-motion-surface-ease', 'cubic-bezier(0.2, 0.8, 0.2, 1)');
-    const animation = scope.run(element, [from, { opacity: 0, transform: 'translateY(-2px)' }], { duration, easing: ease, slot: 'menu', fill: 'both' });
+    const duration = readMotionTime(element, '--nd-semantic-motion-component-exit', 160);
+    const ease = readMotionValue(element, '--nd-semantic-motion-ease-in', 'ease-in');
+    const offset = readMotionPx(element, '--nd-semantic-motion-detail-page-offset', 4);
+    const animation = scope.run(element, [from, { opacity: 0, transform: `translateY(${-offset}px)` }], { duration, easing: ease, slot: 'menu', fill: 'both' });
     void animation.finished.then(() => { if (generation.current === current) finishClose(); }).catch(() => undefined);
   }, [closing, finishClose, scope]);
 
@@ -124,6 +126,16 @@ export function DropdownMenu({ label, items, currentLabel, selectedPage, trigger
     // 进入途中切到减少动效：取消WAAPI后基础样式即终态，不回退到动画起点的透明/位移。
     if (present && open && policy.reduced) scope.cancelAll();
   }, [present, open, policy.reduced, scope]);
+  useEffect(() => {
+    if (!present) return;
+    const visibility = () => {
+      if (!document.hidden) return;
+      if (closing) finishClose();
+      else scope.cancelAll();
+    };
+    document.addEventListener('visibilitychange', visibility);
+    return () => document.removeEventListener('visibilitychange', visibility);
+  }, [present, closing, finishClose, scope]);
 
   useEffect(() => {
     if (!open) return;

@@ -144,6 +144,19 @@ async function run() {
   await until(() => ev("!!document.querySelector('.ui-page-dock') && !!document.querySelector('.ui-theme-switcher')"));
   await cmd('Emulation.setDeviceMetricsOverride', { width: 1280, height: 820, deviceScaleFactor: 1, mobile: false });
 
+  await cmd('Emulation.setEmulatedMedia', {features: [{name: 'prefers-reduced-motion', value: 'no-preference'}]});
+  await ev(`${themeButton('晚风电台')}.click()`);
+  await until(() => ev(`document.getAnimations().some(animation =>
+    animation.effect?.pseudoElement === '::view-transition-old(root)' &&
+    animation.effect.getKeyframes().some(frame => Number(frame.opacity) === 0)
+  )`));
+  await ev("document.documentElement.dataset.motion='reduced'");
+  await until(() => ev("document.documentElement.dataset.uiPreset==='nightwave' && !document.documentElement.hasAttribute('data-theme-transition') && !document.querySelector('.ui-theme-weather')"));
+  await ev(`${themeButton('白昼来信')}.click()`);
+  await until(() => ev("document.documentElement.dataset.uiPreset==='daylight'"));
+  assert.equal(await ev("document.documentElement.hasAttribute('data-theme-transition')"), false);
+  await ev("delete document.documentElement.dataset.motion");
+
   // ---------- 关系页：保持原有折页刻度（快照推进方案已按用户意见回滚） ----------
   await ev("[...document.querySelectorAll('.ui-dock-item')].find(x=>x.textContent.includes('关系')).click()");
   await until(() => ev("document.querySelector('.exlibris .collection')?.getBoundingClientRect().width > 1100"));
@@ -194,6 +207,28 @@ async function run() {
   assert.match(lighting, /"beam":true/);
   const beam = await ev("(()=>{const b=document.querySelector('.dialogue-sun-beam');const s=getComputedStyle(b);const r=b.getBoundingClientRect();return JSON.stringify({top:s.top,op:s.opacity,name:s.animationName,anim:b.getAnimations().length,h:Math.round(r.height),w:Math.round(r.width),y:Math.round(r.top)})})()");
   timeline.push(`对话 光线: ${beam}`);
+  assert.match(beam, /"name":"dialogue-beam-down"/);
+  const rowSweep = await until(() => ev(`(() => {
+    const pane = document.querySelector('.dialogue-pane.sweeping');
+    if (!pane) return false;
+    const progress = Number(pane.style.getPropertyValue('--band'));
+    if (progress <= 0 || progress >= 1) return false;
+    const bounds = pane.getBoundingClientRect();
+    const visible = [...pane.querySelectorAll('.dialogue-message')].filter(row => {
+      const box = row.getBoundingClientRect();
+      return box.bottom > bounds.top && box.top < bounds.bottom;
+    });
+    const latestFlipped = visible.findLast(row => row.classList.contains('flipped'));
+    const earliestPending = visible.find(row => !row.classList.contains('flipped'));
+    if (!latestFlipped || !earliestPending) return false;
+    const paperColor = row => getComputedStyle(row).getPropertyValue('--dlg-paper').trim();
+    const transform = getComputedStyle(pane, '::before').transform;
+    return { progress, transformScale: new DOMMatrixReadOnly(transform).d,
+      ordered: latestFlipped.getBoundingClientRect().top < earliestPending.getBoundingClientRect().top,
+      distinctPaper: paperColor(latestFlipped) !== paperColor(earliestPending) };
+  })()`), 4500);
+  assert.ok(rowSweep.ordered && rowSweep.distinctPaper && Math.abs(rowSweep.transformScale - rowSweep.progress) < .001, `对话未逐行换色: ${JSON.stringify(rowSweep)}`);
+  timeline.push(`对话 逐行: ${JSON.stringify(rowSweep)}`);
   await burst('dialogue-dusk', 5, 0);
   const sweep = await ev("JSON.stringify({sweeping:document.querySelector('.dialogue-pane')?.classList.contains('sweeping'),band:document.querySelector('.dialogue-pane')?.style.getPropertyValue('--band')||'',pinned:document.querySelectorAll('.dialogue-pane .dlg-pal').length,flipped:document.querySelectorAll('.dialogue-pane .flipped').length,paper:document.querySelector('.dialogue-pane')?.style.getPropertyValue('--sweep-paper')||''})");
   timeline.push(`对话 换光中: ${sweep}`);
@@ -223,6 +258,7 @@ async function run() {
   await delay(520);
   const historySweep = await ev("JSON.stringify({sweeping:document.querySelector('.dialogue-pane')?.classList.contains('sweeping'),band:document.querySelector('.dialogue-pane')?.style.getPropertyValue('--band')||'',pinned:document.querySelectorAll('.dialogue-pane .dlg-pal').length})");
   timeline.push(`对话 历史层换光: ${historySweep}`);
+  assert.match(historySweep, /"sweeping":true/);
   await shot('dialogue-history-dusk.png');
   await delay(1400);
   const historyEnd = await ev("JSON.stringify({theme:document.querySelector('.dialogue-page')?.dataset.theme,pinned:document.querySelectorAll('.dialogue-pane .dlg-pal').length,transition:document.documentElement.dataset.themeTransition||''})");
@@ -245,6 +281,16 @@ async function run() {
   assert.match(reducedState, /"lighting":""/);
   assert.match(reducedState, /"pinned":0/);
   await shot('dialogue-reduced-night.png');
+
+  // 显式开启完整动效时允许折页，恢复系统减少动效则立即收束在最新主题。
+  await ev("[...document.querySelectorAll('.ui-dock-item')].find(x=>x.textContent.includes('关系')).click()");
+  await until(() => ev("document.querySelector('.exlibris')?.dataset.motion === 'reduced'"));
+  await ev("document.documentElement.dataset.motion = 'full'");
+  await until(() => ev("document.querySelector('.exlibris')?.dataset.motion === 'full'"));
+  await ev(`${themeButton('白昼来信')}.click()`);
+  await until(() => ev("document.querySelector('.fold-morph i')?.getAnimations().length"));
+  await ev("delete document.documentElement.dataset.motion");
+  await until(() => ev("document.querySelector('.exlibris')?.dataset.theme === 'day' && !document.querySelector('.fold-morph i') && !document.documentElement.dataset.themeTransition"));
 
   fs.writeFileSync(path.join(results, 'timeline.txt'), `${timeline.join('\n')}\n`);
   assert.deepEqual(errors, [], `页面异常: ${errors.join(' | ')}`);

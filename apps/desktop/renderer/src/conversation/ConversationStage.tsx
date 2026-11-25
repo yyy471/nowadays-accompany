@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { PerformanceSnapshot, PerfScene } from './performance';
 import type { PerfRow } from './history';
 import { spriteForRow } from './window-model';
-import { Icon, useMotionPolicy } from '../ui';
+import { Button, Icon, useMotionPolicy } from '../ui';
+import { PhotoDevelopment } from '../ui/photo-development';
 
 export interface StageSources {
   /** 当前默认背景（随明暗主题）。 */
@@ -27,20 +28,22 @@ function decodeImage(src: string): Promise<void> {
 }
 
 /** 双缓冲图层：新图解码成功后淡入，旧图留在非活动缓冲槽。 */
-function CrossfadeLayer({ src, alt, className, onDecodeError }: { src: string | null; alt: string; className: string; onDecodeError?: (src: string) => void }) {
+function CrossfadeLayer({ src, alt, className, onDecodeError, onReady }: { src: string | null; alt: string; className: string; onDecodeError?: (src: string) => void; onReady?: (src: string) => void }) {
   const [slots, setSlots] = useState<[string, string]>([src ?? '', '']);
   const [active, setActive] = useState(0);
   const generation = useRef(0);
   const errorRef = useRef(onDecodeError);
   errorRef.current = onDecodeError;
+  const readyRef = useRef(onReady);
+  readyRef.current = onReady;
   useEffect(() => {
     const version = ++generation.current;
     if (!src) { if (slots[0] || slots[1]) setSlots(['', '']); if (active !== 0) setActive(0); return; }
     const current = slots[active];
     const other = slots[1 - active];
-    if (src === current) return;
+    if (src === current) { readyRef.current?.(src); return; }
     // 目标图仍在另一缓冲槽时直接切回，不必重新解码。
-    if (src === other) { setActive(1 - active); return; }
+    if (src === other) { setActive(1 - active); readyRef.current?.(src); return; }
     void decodeImage(src).then(() => {
       if (generation.current !== version) return;
       const nextActive = 1 - active;
@@ -48,6 +51,7 @@ function CrossfadeLayer({ src, alt, className, onDecodeError }: { src: string | 
       nextSlots[nextActive] = src;
       setSlots(nextSlots);
       setActive(nextActive);
+      readyRef.current?.(src);
     }).catch(() => { errorRef.current?.(src); });
     return () => { generation.current += 1; };
   }, [src, slots, active]);
@@ -69,7 +73,7 @@ export function ConversationStage({
   waitingOutfit = false,
   waitingText,
   onDismiss,
-  onRegenerate, regenerating,
+  onRegenerate, regenerating, sceneFailure,
 }: {
   snapshot: PerformanceSnapshot;
   current: PerfRow | null;
@@ -85,6 +89,7 @@ export function ConversationStage({
   onDismiss: () => void;
   onRegenerate: (scene: PerfScene) => void;
   regenerating: boolean;
+  sceneFailure?: string | null;
 }) {
   const policy = useMotionPolicy();
   const visible = visibleScene;
@@ -92,13 +97,14 @@ export function ConversationStage({
   // 差分按句段素材编号使用：已有标注就应用，不再要求句段带 outfitId。
   const poseId = spriteForRow(snapshot.messages, current);
   const [failedSources, setFailedSources] = useState<ReadonlySet<string>>(() => new Set());
+  const [readySceneAsset, setReadySceneAsset] = useState<string | null>(null);
   const poseUrl = poseId !== null ? sources.resolveSprite?.(poseId) ?? null : null;
   // 实时回退顺序：差分 → 句段主页快照 → 当前服饰立绘 → 主题图；读取失败继续下一张。
   const chain = [poseUrl, sources.segmentHomeUrl ?? null, sources.outfitUrl ?? null, sources.themeUrl ?? null];
   const characterUrl = chain.find((src): src is string => typeof src === 'string' && src.length > 0 && !failedSources.has(src)) ?? null;
   const sceneAsset = visible?.assetUrl ?? null;
   const backgroundSrc = visible && !full ? (sceneAsset ?? sources.backgroundUrl) : sources.backgroundUrl;
-  const day = !policy.reduced && current?.action && live && cue;
+  const showCue = !policy.reduced && current?.action && live && cue;
   // 任一层图片读取失败时标记该地址，下一次渲染继续尝试后面的回退图。
   const handleCharacterError = (src: string) => {
     if (!chain.includes(src)) return;
@@ -110,17 +116,23 @@ export function ConversationStage({
     });
   };
   return <section className="dialogue-stage" data-scene={visible?.mode ?? ''} aria-label="背景与角色独立的演出画布">
-    <CrossfadeLayer className="dialogue-background" src={backgroundSrc} alt="" />
+    <CrossfadeLayer className="dialogue-background" src={backgroundSrc} alt="" onReady={src => { if (!full && src === sceneAsset) setReadySceneAsset(src); }} />
     <CrossfadeLayer className="dialogue-character" src={characterUrl} alt="角色立绘" onDecodeError={handleCharacterError} />
     {waitingOutfit && characterUrl === null && !full ? <div className="dialogue-stage-arriving" role="status">
       {!policy.reduced ? <span className="dialogue-waiting-dots" aria-hidden="true"><i /><i /><i /></span> : null}
       <span>{waitingText || '角色正在换装，即将赶来…'}</span>
     </div> : null}
-    {full && sceneAsset ? <div className="dialogue-scene-full"><img src={sceneAsset} alt="过场图" /></div> : null}
-    <div className="dialogue-stage-cue" aria-hidden="true" data-live={day ? 'cue' : ''} />
+    {full && sceneAsset ? <div className="dialogue-scene-full"><img src={sceneAsset} alt="过场图" onLoad={() => setReadySceneAsset(sceneAsset)} /></div> : null}
+    {visible && sceneAsset && readySceneAsset === sceneAsset && !regenerating && !sceneFailure ? <PhotoDevelopment key={sceneAsset} state="developed" /> : null}
+    {visible && (regenerating || sceneFailure) ? <div className="dialogue-scene-feedback">
+      <PhotoDevelopment state={regenerating ? 'pending' : 'failed'} reason={sceneFailure} onRetry={() => onRegenerate(visible)} />
+    </div> : null}
+    <div key={showCue ? current?.id : undefined} className="dialogue-stage-cue" aria-hidden="true" data-live={showCue ? 'cue' : ''} />
     <i className="dialogue-sun-beam" aria-hidden="true" />
-    {visible ? <button type="button" className="dialogue-scene-dismiss" onClick={onDismiss}>收起过场图</button> : null}
-    {visible ? <button type="button" className="dialogue-scene-regenerate" disabled={regenerating}
-      onClick={() => onRegenerate(visible)}>{regenerating ? '生成中…' : '重新生成'}</button> : null}
+    {visible ? <div className="dialogue-scene-actions">
+      <Button size="sm" className="dialogue-scene-dismiss" onClick={onDismiss}>收起过场图</Button>
+      <Button size="sm" className="dialogue-scene-regenerate" aria-disabled={regenerating || undefined}
+        aria-busy={regenerating || undefined} onClick={() => onRegenerate(visible)}>{regenerating ? '生成中…' : '重新生成'}</Button>
+    </div> : null}
   </section>;
 }

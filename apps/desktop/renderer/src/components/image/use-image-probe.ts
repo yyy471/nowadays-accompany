@@ -278,6 +278,7 @@ export function useImageProbe(key: string, options: ImageProbeOptions = {}) {
           source: 'test',
           role: checked.role,
           text: checked.text,
+          attempt: logSeq,
           ...(trimmedModel ? { model: trimmedModel } : {}),
         });
       }
@@ -290,6 +291,7 @@ export function useImageProbe(key: string, options: ImageProbeOptions = {}) {
           source: 'test',
           role: 'alert',
           text: `测试失败：${imageErrorText(error)}`,
+          attempt: logSeq,
           ...(trimmedModel ? { model: trimmedModel } : {}),
         });
       }

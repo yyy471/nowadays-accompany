@@ -34,7 +34,7 @@ export function Sheet({ children, footer, idPrefix, enabled = true, confirmation
   if (owned && !closing) lastContents.current = { children, footer };
   // 首帧重渲染可能多次触发聚焦效应，用「同一纸笺只排一帧」去重。
   const pendingFocus = useRef<{ key: string; raf: number } | null>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     setHost(probe.current?.closest<HTMLElement>('.config-leaf') ?? null);
   }, []);
 
@@ -72,7 +72,7 @@ export function Sheet({ children, footer, idPrefix, enabled = true, confirmation
     if (pendingFocus.current) cancelAnimationFrame(pendingFocus.current.raf);
     const raf = requestAnimationFrame(() => {
       pendingFocus.current = null;
-      if (!frame.isConnected) return;
+      if (panel.current !== frame || !frame.isConnected || frame.inert) return;
       const controls = focusableControls(frame);
       const first = controls.find(element => element.hasAttribute('data-sheet-focus'))
         ?? controls.find(element => element.closest('.config-sheet-body'))
@@ -85,24 +85,29 @@ export function Sheet({ children, footer, idPrefix, enabled = true, confirmation
     });
     pendingFocus.current = { key, raf };
   }, [owned?.id, owned?.group, owned, host, closing]);
+  useLayoutEffect(() => () => {
+    if (!pendingFocus.current) return;
+    cancelAnimationFrame(pendingFocus.current.raf);
+    pendingFocus.current = null;
+  }, []);
 
   // M1 / M3 / M4：进入动画。令牌为 0（减少动效）时不建动画对象，满足「16ms 内 getAnimations() 为 0」。
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!owned || reduced) return;
     const frame = panel.current;
     if (!frame) return;
     const duration = readMotionTime(frame, '--nd-semantic-motion-page', 360);
     if (duration <= 0) return;
     const animation = entryMotion.run(frame, [
-      sheetKeyframe(frame),
-      { transform: 'none', boxShadow: getComputedStyle(frame).boxShadow },
+      sheetKeyframe(),
+      { transform: 'none' },
     ], {
       duration,
       easing: readMotionValue(frame, '--nd-semantic-motion-ease-out', 'ease-out'),
       fill: 'both',
     });
     return () => animation.cancel();
-  }, [owned, entryMotion, reduced]);
+  }, [owned, host, entryMotion, reduced]);
 
   const active = owned;
   const exiting = closing && Boolean(owned);

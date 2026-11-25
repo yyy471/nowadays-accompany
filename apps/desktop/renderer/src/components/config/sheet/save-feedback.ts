@@ -1,4 +1,15 @@
-import { readMotionTime, readMotionValue } from '../../../ui/motion';
+import { readMotionPx, readMotionTime, readMotionValue } from '../../../ui/motion';
+
+const SAVE_ANIMATION = 'config-saved-summary';
+
+export function finishSavedFeedback(workspace?: HTMLElement | null) {
+  if (!workspace) return;
+  for (const animation of workspace.getAnimations({ subtree: true })) {
+    if (animation.id === SAVE_ANIMATION) animation.cancel();
+  }
+  workspace.querySelectorAll('.config-save-sweep,.config-old-value').forEach(node => node.remove());
+  workspace.querySelectorAll<HTMLElement>('[data-config-feedback-pending]').forEach(node => { delete node.dataset.configFeedbackPending; });
+}
 
 export function sweepSavedElement(element?: HTMLElement | null) {
   if (!element) return;
@@ -14,6 +25,7 @@ export function sweepSavedElement(element?: HTMLElement | null) {
     { opacity: 1, offset: .75 },
     { transform: 'translateX(260%)', opacity: 0 },
   ], { duration, easing: readMotionValue(element, '--nd-semantic-motion-ease-standard', 'ease'), fill: 'both' });
+  animation.id = SAVE_ANIMATION;
   void animation.finished.then(() => sweep.remove(), () => sweep.remove());
 }
 
@@ -38,8 +50,10 @@ function crossFade(row: HTMLElement, previous: HTMLElement, next: HTMLElement) {
   if (duration <= 0) { previous.remove(); return; }
   attachOldValue(row, previous, next);
   const easing = readMotionValue(row, '--nd-semantic-motion-ease-out', 'ease-out');
+  const offset = readMotionPx(row, '--nd-semantic-motion-detail-page-offset', 4);
   const leaving = previous.animate([{ opacity: 1 }, { opacity: 0 }], { duration, easing, fill: 'both' });
-  const entering = next.animate([{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }], { duration, delay: duration / 4, easing, fill: 'both' });
+  const entering = next.animate([{ opacity: 0, transform: `translateY(${offset}px)` }, { opacity: 1, transform: 'none' }], { duration, delay: duration / 4, easing, fill: 'both' });
+  leaving.id = entering.id = SAVE_ANIMATION;
   void leaving.finished.then(() => previous.remove(), () => previous.remove());
   void entering.finished.then(() => entering.cancel(), () => {});
 }

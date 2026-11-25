@@ -1,4 +1,5 @@
 import type { ThemeTransitionStrategy } from '../ui/theme-transition';
+import { readMotionTime } from '../ui/motion';
 import { buildFoldMarks } from './fold-marks';
 
 function reduced(): boolean {
@@ -38,8 +39,10 @@ export const exlibrisThemeTransition: ThemeTransitionStrategy = (request) => {
   }
   document.documentElement.dataset.themeTransition = 'relationship-journal';
   document.dispatchEvent(new CustomEvent('exlibris-fold', { detail: { on: true, reverse: !toNight } }));
-  const commitTimer = window.setTimeout(() => { if (request.isCurrent()) request.commit(request.to); }, 520);
-  const finishTimer = window.setTimeout(() => { if (request.isCurrent()) request.finish(); }, 1780);
+  const reveal = readMotionTime(page, '--nd-semantic-motion-page', 360) + readMotionTime(page, '--nd-semantic-motion-component-exit', 160);
+  const duration = readMotionTime(page, '--nd-semantic-motion-scene-long', 1800);
+  const commitTimer = window.setTimeout(() => { if (request.isCurrent()) request.commit(request.to); }, reveal);
+  const finishTimer = window.setTimeout(() => { if (request.isCurrent()) request.finish(); }, duration);
   return () => {
     window.clearTimeout(commitTimer);
     window.clearTimeout(finishTimer);

@@ -33,29 +33,26 @@
   color: var(--nd-semantic-color-text-muted);
   font-size: var(--nd-semantic-type-caption-size); line-height: var(--dock-label-line);
   white-space: nowrap; cursor: pointer;
-  transition: color var(--nd-component-motion-control) var(--nd-semantic-motion-ease);
 }
 [data-ui-theme="xiacheng"] .ui-page-dock :is(.ui-dock-item, .ui-menu-trigger):focus-visible { outline-offset: 2px; }
 [data-ui-theme="xiacheng"] .ui-page-dock :is(.ui-dock-icon, .ui-menu-trigger-icon) {
   display: grid; place-items: center; width: 20px; height: 20px; flex-shrink: 0;
   transform: translateY(calc(var(--dock-lift, 0px) + var(--dock-press, 0px))) scale(var(--dock-scale, 1));
-  transition: transform var(--nd-component-motion-feedback) var(--nd-component-motion-surface-ease),
-    color var(--nd-component-motion-control) var(--nd-semantic-motion-ease);
+  transition: transform var(--nd-semantic-motion-micro) var(--nd-semantic-motion-ease-out);
 }
 [data-ui-theme="xiacheng"] .ui-page-dock :is(.ui-dock-icon, .ui-menu-trigger-icon) svg {
   display: block; width: 20px; height: 20px;
   transform: translate(var(--dock-follow-x, 0px), var(--dock-follow-y, 0px));
-  transition: transform var(--nd-component-motion-feedback) var(--nd-component-motion-surface-ease);
+  transition: transform var(--nd-semantic-motion-micro) var(--nd-semantic-motion-ease-out);
 }
 [data-ui-theme="xiacheng"] .ui-page-dock :is(.ui-dock-label, .ui-menu-trigger-label) { pointer-events: none; }
 [data-ui-theme="xiacheng"] .ui-page-dock .ui-dock-surface {
   position: absolute; inset: 1px 2px; z-index: -1; border: 1px solid color-mix(in srgb, var(--nd-semantic-color-line-decorative) var(--nd-component-dock-notebook-item-border-mix), transparent);
   border-radius: var(--nd-semantic-radius-action); opacity: 0; transform: translateY(0);
-  background: radial-gradient(ellipse at var(--dock-local-x, 50%) var(--dock-local-y, 40%), color-mix(in srgb, var(--nd-semantic-color-surface) var(--nd-component-dock-notebook-item-surface-mix), transparent), color-mix(in srgb, var(--nd-semantic-color-selection) var(--nd-component-dock-notebook-item-selection-mix), transparent));
-  box-shadow: var(--dock-shadow-x, 0px) 3px 7px color-mix(in srgb, var(--nd-semantic-color-text) var(--nd-component-dock-notebook-day-shadow-mix), transparent);
-  transition: opacity var(--nd-component-motion-control) var(--nd-semantic-motion-ease),
-    transform var(--nd-component-motion-control) var(--nd-component-motion-surface-ease),
-    box-shadow var(--nd-component-motion-control) var(--nd-semantic-motion-ease);
+  background: radial-gradient(ellipse at var(--nd-component-dock-notebook-pointer-center-x) var(--nd-component-dock-notebook-pointer-center-y), color-mix(in srgb, var(--nd-semantic-color-surface) var(--nd-component-dock-notebook-item-surface-mix), transparent), color-mix(in srgb, var(--nd-semantic-color-selection) var(--nd-component-dock-notebook-item-selection-mix), transparent));
+  box-shadow: var(--nd-semantic-shadow-rest);
+  transition: opacity var(--nd-semantic-motion-micro) var(--nd-semantic-motion-ease-out),
+    transform var(--nd-semantic-motion-micro) var(--nd-semantic-motion-ease-out);
   pointer-events: none;
 }
 @media (hover: hover) {
@@ -86,8 +83,7 @@
   background: linear-gradient(155deg, var(--nd-semantic-color-surface), color-mix(in srgb, var(--nd-semantic-color-surface) var(--nd-component-dock-notebook-marker-surface-mix), var(--nd-semantic-color-selection)));
   box-shadow: 0 2px 0 color-mix(in srgb, var(--nd-semantic-color-line-decorative) var(--nd-component-dock-notebook-marker-hairline-mix), var(--nd-semantic-color-surface)), 0 4px 9px color-mix(in srgb, var(--nd-semantic-color-text) var(--nd-component-dock-notebook-marker-shadow-mix), transparent);
   translate: 0 0; opacity: 0; transform-origin: left center; pointer-events: none;
-  transition: translate var(--nd-component-motion-feedback) var(--nd-semantic-motion-ease),
-    box-shadow var(--nd-component-motion-feedback) var(--nd-semantic-motion-ease);
+  transition: translate var(--nd-semantic-motion-micro) var(--nd-semantic-motion-ease-out);
 }
 [data-ui-theme="xiacheng"] .ui-page-dock .ui-dock-marker::before {
   content: ''; position: absolute; top: -3px; left: 50%; width: var(--nd-component-dock-notebook-day-flag-width); height: var(--nd-component-dock-notebook-day-flag-height);

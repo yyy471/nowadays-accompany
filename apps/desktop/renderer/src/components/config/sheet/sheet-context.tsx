@@ -1,8 +1,9 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { createMotionScope, readMotionTime, readMotionValue, useMotionPolicy } from '../../../ui';
 import { focusableControls } from '../../../ui/focus';
-import { captureSavedSummary } from './save-feedback';
+import { useWrite } from '../write-runner';
+import { captureSavedSummary, finishSavedFeedback } from './save-feedback';
 import { animateSheetExit } from './sheet-motion';
 
 /** 纸笺形态（规范 §2）：完整表单 / 只含一组的紧凑表单 / 删除确认。 */
@@ -35,7 +36,7 @@ export interface SheetContextValue {
   closedSaved: boolean;
   open: (next: SheetState) => void;
   requestClose: (then?: () => void) => void;
-  closeNow: (then?: () => void) => void;
+  closeNow: (then?: () => void, receipt?: string) => void;
   discardNow: (then?: () => void) => void;
   setDirty: (value: boolean, count?: number) => void;
   setBusy: (value: boolean) => void;
@@ -53,6 +54,7 @@ const SheetContext = createContext<SheetContextValue | null>(null);
  * 读到当前纸笺并按关闭规则收尾——纸笺开着时切分区必须先关纸笺（验收 29）。
  */
 export function SheetProvider({ children, controller }: { children: ReactNode; controller?: MutableRefObject<SheetContextValue | null> }) {
+  const { reportResult } = useWrite();
   const [sheet, setSheet] = useState<SheetState | null>(null);
   const [dirty, setDirtyState] = useState(false);
   const [dirtyCount, setDirtyCount] = useState(0);
@@ -102,7 +104,7 @@ export function SheetProvider({ children, controller }: { children: ReactNode; c
     setBusyState(next);
   }, []);
 
-  const close = useCallback((saved: boolean, after?: () => void) => {
+  const close = useCallback((saved: boolean, after?: () => void, receipt?: string) => {
     const target = current.current;
     if (!target || leaving.current) return;
     const then = after ?? pendingThen.current;
@@ -130,6 +132,7 @@ export function SheetProvider({ children, controller }: { children: ReactNode; c
       exitMotion.cancelAll();
       if (saved) savedFeedback.current?.();
       savedFeedback.current = null;
+      if (receipt) reportResult(receipt);
       if (then) then();
       else requestAnimationFrame(() => {
         if (closeSeq.current === seq && !current.current) focusAfterClose(target);
@@ -153,9 +156,9 @@ export function SheetProvider({ children, controller }: { children: ReactNode; c
     });
     // M2/M6 用三层实际动画完成信号；同一提交卸载三个节点，再开始保存反馈或下一步。
     void Promise.allSettled(exits.map(animation => animation.finished)).then(finalize);
-  }, [exitMotion, focusAfterClose, reduced, setBusy]);
+  }, [exitMotion, focusAfterClose, reduced, reportResult, setBusy]);
 
-  const closeNow = useCallback((then?: () => void) => close(true, then), [close]);
+  const closeNow = useCallback((then?: () => void, receipt?: string) => close(true, then, receipt), [close]);
   const discardNow = useCallback((then?: () => void) => close(false, then), [close]);
 
   const open = useCallback((next: SheetState) => {
@@ -192,9 +195,11 @@ export function SheetProvider({ children, controller }: { children: ReactNode; c
     close(false);
   }, [confirming, dirty, close]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (!reduced) return;
+    finishSavedFeedback(document.querySelector<HTMLElement>('.config-workspace'));
     const finalize = pendingFinalization.current;
-    if (reduced && finalize) queueMicrotask(finalize);
+    if (finalize) queueMicrotask(finalize);
   }, [reduced]);
 
   useEffect(() => () => {

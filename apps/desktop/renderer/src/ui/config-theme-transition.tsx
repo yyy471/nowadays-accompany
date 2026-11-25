@@ -9,7 +9,7 @@ import { applySubtractMask, collectWellRects, CONFIG_WELL_SELECTORS } from './do
  *  图片框从副本中挖空，立绘全程只由真实页面绘制（不随主题重新着色）；
  *  切换期间的数据属性让真实页面关闭过渡；完成当前揭开后再处理最终选择。 */
 const configThemeTransition: ThemeTransitionStrategy = ({ from, to, commit, finish, isCurrent }) => {
-  const shell = document.querySelector<HTMLElement>('.studio-shell');
+  const shell = document.querySelector<HTMLElement>('.studio-shell:not(.config-theme-veil)');
   if (!shell) return;
   const root = document.documentElement;
   const height = window.innerHeight;
@@ -64,6 +64,7 @@ const configThemeTransition: ThemeTransitionStrategy = ({ from, to, commit, fini
     cancelAnimationFrame(frame);
     animation?.cancel();
     window.clearTimeout(timer);
+    window.removeEventListener('resize', finishOnce);
     veil.remove();
     void shell.offsetHeight;
     delete root.dataset.configSwitching;
@@ -74,17 +75,18 @@ const configThemeTransition: ThemeTransitionStrategy = ({ from, to, commit, fini
     cleanup();
     finish();
   };
+  window.addEventListener('resize', finishOnce);
 
   commit(to);
   // 保持首个绘制帧为完整旧配色，再揭开真实页面。
   frame = requestAnimationFrame(() => {
     frame = requestAnimationFrame(() => {
+      timer = window.setTimeout(finishOnce, total);
       animation = veil.animate([{ opacity: 1 }, { opacity: 0 }], {
         duration: reveal,
         easing: readMotionValue(shell, '--nd-semantic-motion-ease-standard', 'ease'),
         fill: 'forwards',
       });
-      timer = window.setTimeout(finishOnce, total);
     });
   });
   return cleanup;

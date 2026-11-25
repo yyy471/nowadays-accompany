@@ -35,6 +35,7 @@ export interface VoiceProbeNotice {
   kind: 'status' | 'alert';
   text: string;
   elapsedMs?: number;
+  attempt: number;
 }
 
 export interface UseVoiceProbeOptions {
@@ -64,6 +65,8 @@ export function useVoiceProbe(key: string, options: UseVoiceProbeOptions = {}) {
   const [notice, setNotice] = useState<VoiceProbeNotice | null>(null);
   const generation = useRef(0);
   const epochRef = useRef(getVoiceProbeCacheEpoch(key));
+  const keyRef = useRef(key);
+  keyRef.current = key;
   const hooksRef = useRef(options);
   hooksRef.current = options;
 
@@ -87,6 +90,7 @@ export function useVoiceProbe(key: string, options: UseVoiceProbeOptions = {}) {
     if (epoch !== epochRef.current) {
       epochRef.current = epoch;
       generation.current += 1;
+      setBusy(false);
       setNotice(null);
     }
     setResult(readVoiceProbeCache(key));
@@ -112,6 +116,7 @@ export function useVoiceProbe(key: string, options: UseVoiceProbeOptions = {}) {
   const run = useCallback(async (target: VoiceProbeTarget): Promise<VoiceProbeResult | null> => {
     hooksRef.current.onBeforeProbe?.();
     const currentGen = ++generation.current;
+    const capturedKey = keyRef.current;
     const cacheKey = target.kind === 'savedService' ? target.cacheKey : undefined;
     const startEpoch = cacheKey ? getVoiceProbeCacheEpoch(cacheKey) : null;
     setBusy(true);
@@ -127,7 +132,7 @@ export function useVoiceProbe(key: string, options: UseVoiceProbeOptions = {}) {
               `/v1/voice-services/${encodeURIComponent(target.serviceId)}/probe`,
               { method: 'POST' },
             );
-      if (generation.current !== currentGen) return null;
+      if (generation.current !== currentGen || keyRef.current !== capturedKey) return null;
       if (
         cacheKey &&
         startEpoch !== null &&
@@ -142,14 +147,18 @@ export function useVoiceProbe(key: string, options: UseVoiceProbeOptions = {}) {
       const summary = summarizeProbe(response.probe);
       const voiceCount = summary?.supportsPreset ? `${summary.presetVoiceCount} 个预置音色` : '仅参考音频';
       const engineNames = summary?.engines ? Object.keys(summary.engines).join(' / ') : '';
+      const elapsedMs = typeof response.elapsedMs === 'number' && Number.isFinite(response.elapsedMs)
+        ? Math.max(0, Math.round(response.elapsedMs))
+        : undefined;
       setNotice({
         kind: 'status',
-        elapsedMs: response.elapsedMs,
-        text: `连接成功：${summary?.service || '语音服务'}${engineNames ? ` · 引擎 ${engineNames}` : ''} · ${voiceCount}`,
+        attempt: currentGen,
+        elapsedMs,
+        text: `连接成功：${summary?.service || '语音服务'}${engineNames ? ` · 引擎 ${engineNames}` : ''} · ${voiceCount}${elapsedMs === undefined ? '' : ` · ${elapsedMs} ms`}`,
       });
       return response.probe;
     } catch (reason) {
-      if (generation.current !== currentGen) return null;
+      if (generation.current !== currentGen || keyRef.current !== capturedKey) return null;
       if (
         cacheKey &&
         startEpoch !== null &&
@@ -157,9 +166,13 @@ export function useVoiceProbe(key: string, options: UseVoiceProbeOptions = {}) {
       ) {
         return null;
       }
-      if (cacheKey) clearVoiceProbeCache(cacheKey);
+      if (cacheKey) {
+        const epoch = clearVoiceProbeCache(cacheKey);
+        // 自己刚完成的失败应留在当前纸笺。其他实例仍会按代次清除旧结果。
+        if (cacheKey === capturedKey) epochRef.current = epoch;
+      }
       setResult(null);
-      setNotice({ kind: 'alert', text: voiceErrorText(reason) });
+      setNotice({ kind: 'alert', text: voiceErrorText(reason), attempt: currentGen });
       return null;
     } finally {
       if (generation.current === currentGen) setBusy(false);

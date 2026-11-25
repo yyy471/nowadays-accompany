@@ -368,6 +368,27 @@ async function shot(name) {
   const result = await cmd('Page.captureScreenshot', { format: 'png' });
   fs.writeFileSync(path.join(screenshotDir, name), Buffer.from(result.data, 'base64'));
 }
+async function pressKey(key, windowsVirtualKeyCode, modifiers = 0) {
+  const params = { key, code: key, windowsVirtualKeyCode, modifiers };
+  await cmd('Input.dispatchKeyEvent', { ...params, type: 'keyDown', text: key === 'Enter' ? '\r' : undefined });
+  await cmd('Input.dispatchKeyEvent', { ...params, type: 'keyUp' });
+}
+async function sceneActionStyles() {
+  return ev(`(() => {
+    const [dismiss, regenerate] = document.querySelectorAll('.dialogue-scene-actions .btn');
+    // 用同一画布上实际渲染的 1px 细线校准系统缩放带来的设备像素取整。
+    const reference = document.createElement('span');
+    reference.style.cssText = 'position: absolute; visibility: hidden; border-top: 1px solid var(--nd-semantic-color-line-control)';
+    dismiss.parentElement.append(reference);
+    const referenceBorder = getComputedStyle(reference).borderTop;
+    reference.remove();
+    return [dismiss, regenerate].map(button => {
+      const style = getComputedStyle(button);
+      return { background: style.backgroundColor, color: style.color, border: style.borderTop, referenceBorder,
+        shadow: style.boxShadow, backdrop: style.backdropFilter };
+    });
+  })()`);
+}
 async function request(route, options = {}) {
   const response = await fetch(base + route, options);
   const body = await response.json();
@@ -787,24 +808,33 @@ async function run() {
 
   // 292-R05 / 292-R06 跨页生图与在途编辑恢复回归验证：
   // 0) 出图期间修改测试画面描述、测试服饰或基础草稿参数：旧响应不得写回样图，同时「测试生图」按钮立即/可用最新草稿重测（283 §28）。
+  const previewButton = element('.config-sheet .nd-image-preview-controls .nd-image-actions > button:first-child');
+  const previewPending = `${previewButton}?.matches('[aria-busy=true][aria-disabled=true]:enabled') && ${previewButton}.textContent.includes('正在出图')`;
+  const previewReady = `${previewButton}?.matches(':enabled:not([aria-busy=true], [aria-disabled=true])') && ${previewButton}.textContent.trim() === '测试生图'`;
   const inFlightEdit1 = comfyB.holdNextPrompt('r06-inflight-edit-1-prompt');
-  await clickWhen("[...document.querySelectorAll('.config-sheet .nd-image-preview button')].find(x=>x.textContent==='测试生图')");
+  await until(() => ev(previewReady), 'r06-preview-focusable-before-start');
+  await ev(`${previewButton}.focus({ preventScroll: true })`);
+  const promptsBeforeFirstClick = comfyB.prompts.length;
+  await clickWhen(previewButton);
   await inFlightEdit1.arrived;
-  await until(() => ev("(() => { const btn = document.querySelector('.config-sheet .nd-image-preview button'); return !!btn && btn.disabled && btn.textContent.includes('正在出图'); })()"), 'r06-inflight-busy-1');
+  await until(() => ev(previewPending), 'r06-inflight-busy-1');
+  assert.equal(await ev(`document.activeElement === ${previewButton}`), true, '出图等待期间应保留测试按钮的焦点');
+  assert.equal(await ev(`${previewButton}.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))`), false, '等待期间应拦截重复提交');
   await setInput("document.querySelector('.config-sheet .nd-image-preview input')", '雨夜霓虹街景');
-  await until(() => ev("(() => { const btn = document.querySelector('.config-sheet .nd-image-preview button'); return !!btn && !btn.disabled && btn.textContent === '测试生图'; })()"), 'r06-button-restored-after-prompt-edit');
+  await until(() => ev(previewReady), 'r06-button-restored-after-prompt-edit');
   inFlightEdit1.release();
   await delay(250);
+  assert.equal(comfyB.prompts.length, promptsBeforeFirstClick + 1, '解开挂起请求后只应记录首次点击发出的生图请求');
   assert.equal(await ev("!!document.querySelector('.config-sheet .nd-image-figure')"), false, '出图期间改画面描述后，旧响应不得渲染样图');
 
   const inFlightEdit2 = comfyB.holdNextPrompt('r06-inflight-edit-2-prompt');
   await clickWhen("[...document.querySelectorAll('.config-sheet .nd-image-preview button')].find(x=>x.textContent==='测试生图')");
   await inFlightEdit2.arrived;
-  await until(() => ev("(() => { const btn = document.querySelector('.config-sheet .nd-image-preview button'); return !!btn && btn.disabled && btn.textContent.includes('正在出图'); })()"), 'r06-inflight-busy-2');
+  await until(() => ev(previewPending), 'r06-inflight-busy-2');
   await setSelect("document.querySelector('.config-sheet .nd-image-preview select')", outfitB.outfitId);
   await setInput("document.querySelector('.config-sheet .nd-image textarea')", '银灰挑染，冷静眼神');
   await setInput("document.querySelector('.config-sheet .nd-image-preview input')", '窗边微光特写');
-  await until(() => ev("(() => { const btn = document.querySelector('.config-sheet .nd-image-preview button'); return !!btn && !btn.disabled && btn.textContent === '测试生图'; })()"), 'r06-button-restored-after-draft-edit');
+  await until(() => ev(previewReady), 'r06-button-restored-after-draft-edit');
   inFlightEdit2.release();
   await delay(250);
   assert.equal(await ev("!!document.querySelector('.config-sheet .nd-image-figure')"), false, '出图期间改服饰与草稿后，旧响应不得渲染样图');
@@ -816,9 +846,9 @@ async function run() {
   const inFlightEdit3 = comfyB.holdNextPrompt('r06-inflight-edit-3-prompt');
   await clickWhen("[...document.querySelectorAll('.config-sheet .nd-image-preview button')].find(x=>x.textContent==='测试生图')");
   await inFlightEdit3.arrived;
-  await until(() => ev("(() => { const btn = document.querySelector('.config-sheet .nd-image-preview button'); return !!btn && btn.disabled && btn.textContent.includes('正在出图'); })()"), 'r06-inflight-busy-3');
+  await until(() => ev(previewPending), 'r06-inflight-busy-3');
   await setInput("document.querySelector('.config-sheet .nd-image-preview input')", '最终稳定新描述');
-  await until(() => ev("(() => { const btn = document.querySelector('.config-sheet .nd-image-preview button'); return !!btn && !btn.disabled && btn.textContent === '测试生图'; })()"), 'r06-button-restored-with-existing-preview');
+  await until(() => ev(previewReady), 'r06-button-restored-with-existing-preview');
   inFlightEdit3.release();
   await delay(250);
   assert.equal(await ev("document.querySelector('.config-sheet .nd-image-figure figcaption')?.textContent.includes('将被放弃的旧出图描述')"), false, '已有样图时在途编辑，旧响应不得覆盖样图');
@@ -828,7 +858,7 @@ async function run() {
   await imageNotice('已确认模型「backup-image-model.safetensors」');
   const beforeStep1Prompts = comfyB.prompts.length;
   await clickWhen("[...document.querySelectorAll('.config-sheet .nd-image-preview button')].find(x=>x.textContent==='测试生图')");
-  await until(() => comfyB.prompts.length > beforeStep1Prompts && ev("(() => { const img = document.querySelector('.config-sheet .nd-image-figure img'); const cap = document.querySelector('.config-sheet .nd-image-figure figcaption')?.textContent || ''; const btn = document.querySelector('.config-sheet .nd-image-preview button'); return !!(img && img.complete && img.naturalWidth > 0 && cap.includes('最终稳定新描述') && btn && !btn.disabled && btn.textContent === '测试生图'); })()"), 'r06-preview-before-disable');
+  await until(() => comfyB.prompts.length > beforeStep1Prompts && ev(`(() => { const img = document.querySelector('.config-sheet .nd-image-figure img'); const cap = document.querySelector('.config-sheet .nd-image-figure figcaption')?.textContent || ''; return !!(img && img.complete && img.naturalWidth > 0 && cap.includes('最终稳定新描述') && (${previewReady})); })()`), 'r06-preview-before-disable');
 
   // 2) 先保存角色纸笺中的基础草稿，再走公开设置入口。全局停用只暂停乙，
   // 返回后不能沿用旧探测和试生图结果；已保存的停用绑定仍可随其他字段保存。
@@ -1038,8 +1068,15 @@ async function run() {
 
   const llmBCallsBeforeChat = llmB.chatCalls.length;
   const ttsCallsBeforeChat = tts.synthCalls.length;
-  await setInput("document.querySelector('.dialogue-composer textarea')", '看看窗外，风怎么样？');
-  await clickWhen("document.querySelector('.dialogue-send')");
+  const composer = "document.querySelector('.dialogue-composer textarea')";
+  assert.equal(await ev(`document.getElementById(${composer}.getAttribute('aria-describedby'))?.textContent`), 'Enter 发送 · Shift + Enter 换行');
+  await ev(`${composer}.focus()`);
+  await cmd('Input.insertText', { text: '看看窗外，' });
+  await pressKey('Enter', 13, 8);
+  assert.equal(await ev(`${composer}.value`), '看看窗外，\n', 'Shift + Enter 应在草稿中换行');
+  assert.equal(llmB.chatCalls.length, llmBCallsBeforeChat);
+  await cmd('Input.insertText', { text: '风怎么样？' });
+  await pressKey('Enter', 13);
   await until(() => llmB.chatCalls.length > llmBCallsBeforeChat, 'llmB-called-after-repoint');
   assert.equal(llmB.chatCalls.at(-1).auth, 'Bearer key-b2', '修改模型连接并恢复活动后，对话应使用最新地址与新密钥');
 
@@ -1068,6 +1105,30 @@ async function run() {
   await clickWhen("[...document.querySelectorAll('.dialogue-round-tools .dialogue-scene-chip')].find(x=>x.textContent.startsWith('查看'))");
   await until(() => ev("(() => { const full = document.querySelector('.dialogue-scene-full img'); return (full && full.complete && full.naturalWidth > 0) || !!document.querySelector('.dialogue-stage')?.dataset.scene; })()"), 'scene-displayed');
   await shot('dialogue-scene.png');
+  const daylightActions = await sceneActionStyles();
+  assert.deepEqual(daylightActions[0], daylightActions[1], '白天两个场景操作应共用纸面样式');
+  await cmd('Emulation.setDeviceMetricsOverride', { width: 720, height: 540, deviceScaleFactor: 1, mobile: false });
+  await clickWhen("[...document.querySelectorAll('.ui-theme-switcher button')].find(x=>x.textContent.includes('晚风电台'))");
+  await until(() => ev("document.documentElement.dataset.uiPreset==='nightwave' && !document.documentElement.hasAttribute('data-theme-transition')"), 'scene-nightwave');
+  const nightActions = await sceneActionStyles();
+  assert.deepEqual(nightActions[0], nightActions[1], '夜间两个场景操作应共用纸面样式');
+  assert.notEqual(daylightActions[0].background, nightActions[0].background);
+  for (const [style] of [daylightActions, nightActions]) {
+    assert.match(style.background, /^rgb\(/, '纸面需遮住图像底色');
+    assert.ok(parseFloat(style.border) > 0, '场景操作需保留可见描边');
+    assert.equal(style.border, style.referenceBorder, '细实线应与同一画布上的 1px 设计描边一致');
+    assert.notEqual(style.shadow, 'none');
+    assert.equal(style.backdrop, 'none');
+  }
+  assert.equal(await ev(`(() => {
+    const stage = document.querySelector('.dialogue-stage').getBoundingClientRect();
+    const [a, b] = [...document.querySelectorAll('.dialogue-scene-actions .btn')].map(button => button.getBoundingClientRect());
+    return [a, b].every(box => box.left > stage.left && box.right < stage.right && box.top > stage.top && box.bottom < stage.bottom)
+      && (a.right < b.left || a.bottom < b.top);
+  })()`), true, '窄窗下两个场景操作应可达且互不遮挡');
+  await cmd('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+  await clickWhen("document.querySelectorAll('.ui-theme-switcher button')[0]");
+  await until(() => ev("document.documentElement.dataset.uiPreset==='daylight' && !document.documentElement.hasAttribute('data-theme-transition')"), 'scene-daylight');
   assert.equal(await ev(`(() => {
     const tools = [...document.querySelectorAll('.dialogue-round-tools')].find(el => el.textContent.includes('查看'));
     const row = tools.closest('article');
@@ -1075,8 +1136,29 @@ async function run() {
     return group.length > 1 && group.at(-1) === row && !tools.textContent.includes('生成过场图');
   })()`), true);
   const oldImage = await ev("document.querySelector('.dialogue-scene-full img').src");
-  await clickWhen("document.querySelector('.dialogue-scene-regenerate')");
+  const dismiss = "document.querySelector('.dialogue-scene-dismiss')";
+  const regenerate = "document.querySelector('.dialogue-scene-regenerate')";
+  await ev(`${dismiss}.focus()`);
+  await pressKey('Tab', 9);
+  assert.equal(await ev(`document.activeElement === ${regenerate} && getComputedStyle(${regenerate}).outlineStyle === 'solid'`), true);
+  await pressKey('Tab', 9, 8);
+  assert.equal(await ev(`document.activeElement === ${dismiss} && getComputedStyle(${dismiss}).outlineStyle === 'solid'`), true);
+  await pressKey('Tab', 9);
+  const promptsBeforeRedraw = comfyA.prompts.length;
+  const redraw = comfyA.holdNextPrompt('dialogue-scene-redrawing');
+  try {
+    await pressKey('Enter', 13);
+    await redraw.arrived;
+    await until(() => ev(`${regenerate}?.matches('[aria-busy=true][aria-disabled=true]:focus-visible')`), 'scene-redraw-keeps-focus');
+    assert.equal(await ev(`getComputedStyle(${regenerate}).cursor`), 'progress', '重画等待时沿用共用按钮的忙碌光标');
+    assert.equal(await ev(`${regenerate}.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))`), false, '重画等待时应拦截重复提交');
+    assert.equal(await ev("document.querySelector('.dialogue-scene-full img')?.src"), oldImage, '等待时保留已有成图');
+  } finally {
+    redraw.release();
+  }
   await until(() => ev(`document.querySelector('.dialogue-scene-full img')?.src !== ${JSON.stringify(oldImage)} && document.querySelector('.dialogue-scene-full img')?.naturalWidth > 0`), 'redrawn-image');
+  await until(() => ev(`${regenerate}?.matches(':focus-visible:not([aria-disabled=true])')`), 'scene-redraw-finished');
+  assert.equal(comfyA.prompts.length, promptsBeforeRedraw + 1);
   // 已有多版人物图的旧回复又生成背景图时，聊天、历史和已经打开的舞台都要切换到同一张。
   const roundId = await ev("document.querySelector('.dialogue-round-tools .dialogue-scene-chip').closest('article').dataset.messageId");
   const mainWindow = (await request(`/v1/roles/${roleA.roleId}/windows`)).items.find(item => item.kind === 'main');

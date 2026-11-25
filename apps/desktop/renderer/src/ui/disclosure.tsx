@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent, type ReactNode } from 'react';
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { ControlButton } from './controls';
 import { Icon } from './icons';
 
@@ -21,13 +21,7 @@ export function Disclosure({ title, description, children, defaultOpen = false, 
       trigger.current?.focus();
     }
   }, [expanded]);
-  useEffect(() => {
-    if (!expanded && body.current?.contains(document.activeElement)) trigger.current?.focus();
-  }, [expanded]);
-  const leave = (event: FocusEvent<HTMLElement>): void => {
-    if (event.relatedTarget instanceof Node && !event.currentTarget.contains(event.relatedTarget)) hadFocus.current = false;
-  };
-  return <section className="ui-disclosure" data-open={expanded} onBlur={leave}>
+  return <section className="ui-disclosure" data-open={expanded}>
     <h3><ControlButton ref={trigger} className="ui-disclosure-trigger" aria-expanded={expanded} aria-controls={id}
       disabled={disabled || (open !== undefined && !onOpenChange)} onClick={() => {
         if (body.current?.contains(document.activeElement)) trigger.current?.focus();
@@ -37,6 +31,9 @@ export function Disclosure({ title, description, children, defaultOpen = false, 
       <span>{title}{description ? <small>{description}</small> : null}</span><Icon name="chevron" size={20} />
     </ControlButton></h3>
     <div ref={body} id={id} className="ui-disclosure-body" inert={!expanded || undefined}
+      onBlur={event => {
+        if (event.relatedTarget instanceof Node && !event.currentTarget.contains(event.relatedTarget)) hadFocus.current = false;
+      }}
       onFocusCapture={() => { hadFocus.current = true; }}>
       <div className="ui-disclosure-inner"><div className="ui-disclosure-content">{children}</div></div>
     </div>

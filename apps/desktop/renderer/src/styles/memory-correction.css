@@ -1,7 +1,71 @@
+[data-ui-theme="xiacheng"] .ui-modal-panel.memory-correction {
+  display: flex;
+  flex-direction: column;
+  width: min(680px, 100%);
+  overflow: hidden;
+}
+
+.memory-correction .ui-modal-header,
+.memory-correction .ui-dialog-actions { flex: none; }
+
+.memory-correction .ui-modal-header { border-bottom: 1px solid var(--nd-semantic-color-line-decorative); }
+
+.memory-correction-form {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+}
+
 .memory-correction-fields {
   display: grid;
+  align-content: start;
   gap: var(--nd-semantic-space-field-group);
+  min-block-size: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
+
+[data-ui-theme="xiacheng"] .memory-correction .memory-correction-fields,
+.memory-correction .ui-dialog-actions {
+  padding: var(--nd-semantic-space-field-group) var(--nd-component-modal-padding);
+}
+
+.memory-correction .ui-dialog-actions {
+  border-top: 1px solid var(--nd-semantic-color-line-decorative);
+}
+
+.memory-correction-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--nd-semantic-space-icon-label);
+}
+
+.memory-correction-hits {
+  display: grid;
+  gap: var(--nd-semantic-space-field-hint);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.memory-correction-hits .btn {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: start;
+  white-space: normal;
+}
+
+.memory-correction-loading,
+.memory-correction-conflict-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--nd-semantic-space-icon-label);
+}
+
+[data-motion=reduced] .memory-correction-loading .spinner { animation: none; }
 
 .memory-correction-fields p {
   margin: 0;
@@ -20,6 +84,19 @@
   padding: var(--nd-semantic-space-field-group);
   border: 1px solid var(--nd-semantic-color-line-control);
   border-radius: var(--nd-semantic-radius-field);
+}
+
+.memory-correction-conflict {
+  padding: var(--nd-semantic-space-field-group);
+  border: 1px solid var(--nd-semantic-color-line-decorative);
+  border-inline-start: 3px solid var(--nd-semantic-color-warning);
+  border-radius: var(--nd-semantic-radius-field);
+  background: var(--nd-semantic-color-warning-surface);
+}
+
+.memory-correction-clue + .memory-correction-clue {
+  padding-block-start: var(--nd-semantic-space-icon-label);
+  border-block-start: 1px solid var(--nd-semantic-color-line-decorative);
 }
 
 .memory-correction-fields summary,

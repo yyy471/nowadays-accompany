@@ -1,0 +1,20 @@
+.dialogue-page .dialogue-speech .dialogue-speaker[data-voice] {
+  place-content: center;
+  gap: 1px;
+  padding: 0;
+  border-color: var(--dlg-rule);
+  color: var(--dlg-ink);
+  background: var(--dlg-selection);
+  font-size: 10px;
+  line-height: 12px;
+  cursor: pointer;
+}
+.dialogue-speaker[data-voice="synthesizing"] .ui-voice-wave { color: var(--dlg-entry); }
+.dialogue-status.dialogue-interrupted {
+  display: flex;
+  align-items: center;
+  gap: var(--nd-semantic-space-field-hint);
+  color: var(--dlg-entry);
+}
+.dialogue-waiting[data-submitting="true"] { color: var(--dlg-ink); }
+.dialogue-composer .dialogue-reply-error { color: var(--nd-semantic-color-danger); }

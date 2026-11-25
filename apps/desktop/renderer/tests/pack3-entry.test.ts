@@ -18,12 +18,12 @@ test("选角页把内置助手排在最前，其余保持创建顺序", async ()
 
 test("内置标识与卡片副标题使用自定义介绍与空态", async () => {
   const { entryBadge, entrySubtitle } = await roleEntry;
-  assert.equal(entryBadge(role("x", "岚", { isBuiltin: true })), "主角色 / 内置管理员 · 不可删除");
+  assert.equal(entryBadge(role("x", "岚", { isBuiltin: true })), "常驻主角色 · 默认保留");
   assert.equal(entryBadge(role("a", "林夕")), null);
   assert.equal(entrySubtitle(role("x", "岚", { bio: "我的介绍" })), "我的介绍");
-  assert.equal(entrySubtitle(role("x", "岚", { isBuiltin: true, bio: "" })), "还没有写下介绍");
-  assert.equal(entrySubtitle(role("b", "周野")), "还没有写下介绍");
-  assert.equal(entrySubtitle(role("c", "未就绪", { status: "initializing" })), "尚未就绪");
+  assert.equal(entrySubtitle(role("x", "岚", { isBuiltin: true, bio: "" })), "暂未写下介绍");
+  assert.equal(entrySubtitle(role("b", "周野")), "暂未写下介绍");
+  assert.equal(entrySubtitle(role("c", "未就绪", { status: "initializing" })), "准备中");
 });
 
 test("冷启动先停在选角页，进入后不再拦路", async () => {

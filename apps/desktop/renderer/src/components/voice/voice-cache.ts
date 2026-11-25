@@ -34,11 +34,13 @@ export function writeVoiceProbeCache(key: string, probe: VoiceProbeResult | null
   for (const listener of [...listeners]) listener();
 }
 
-export function clearVoiceProbeCache(key: string): void {
+export function clearVoiceProbeCache(key: string): number {
   cache.delete(key);
-  epochs.set(key, (epochs.get(key) ?? 0) + 1);
+  const epoch = (epochs.get(key) ?? 0) + 1;
+  epochs.set(key, epoch);
   version += 1;
   for (const listener of [...listeners]) listener();
+  return epoch;
 }
 
 export function getVoiceProbeCacheEpoch(key: string): number {

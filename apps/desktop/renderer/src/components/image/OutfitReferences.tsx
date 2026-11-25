@@ -46,9 +46,9 @@ export function OutfitReferences({ roleId, outfits, guardWrite, onChanged }: {
     finally { pending.current = false; if (alive.current) setBusy(''); }
   }
   return <section className="nd-image-section" aria-label="服饰参考图">
-    <h3>服饰参考图</h3><p className="nd-appearance-hint">每套服饰单独保存一张图片，用于含人物的整幅过场图。</p>
+    <h3>服饰参考图</h3><p className="nd-appearance-hint">每套服饰可配一张参考图，用来生成有角色出场的画面。</p>
     {error && <ErrorNote message={error} onRetry={() => refresh(value => value + 1)} />}
-    {!outfits.length && <p className="nd-appearance-hint">先在外观中添加服饰。</p>}
+    {!outfits.length && <p className="nd-appearance-hint">在「外观」添加服饰后，就可以在这里上传参考图。</p>}
     {outfits.length > 0 && <div className="nd-image-outfits">{outfits.map(outfit => {
       const current = refs.find(item => item.outfitId === outfit.outfitId);
       return <div key={outfit.outfitId} className="nd-image-outfit-card">

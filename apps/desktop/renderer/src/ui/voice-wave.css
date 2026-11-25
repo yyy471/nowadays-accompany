@@ -1,0 +1,37 @@
+.ui-voice-wave {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  block-size: var(--nd-semantic-size-icon-small);
+}
+.ui-voice-wave > span {
+  inline-size: 2px;
+  block-size: 75%;
+  border-radius: var(--nd-semantic-radius-round);
+  background: currentColor;
+  transform: scaleY(.6);
+  animation: ui-voice-synthesis var(--nd-semantic-motion-scene) var(--nd-semantic-motion-ease-standard) infinite;
+}
+.ui-voice-wave > span:nth-child(even) { block-size: 100%; }
+.ui-voice-wave > span:nth-child(2) { animation-delay: calc(-3 * var(--nd-semantic-motion-stagger)); }
+.ui-voice-wave > span:nth-child(3) { animation-delay: calc(-6 * var(--nd-semantic-motion-stagger)); }
+.ui-voice-wave > span:nth-child(4) { animation-delay: calc(-9 * var(--nd-semantic-motion-stagger)); }
+.ui-voice-wave[data-state="playing"] > span { animation-name: ui-voice-playback; }
+@keyframes ui-voice-synthesis {
+  0%, 100% { transform: scaleY(.4); }
+  50% { transform: scaleY(.85); }
+}
+@keyframes ui-voice-playback {
+  0%, 100% { transform: scaleY(.45); }
+  35% { transform: scaleY(1); }
+  65% { transform: scaleY(.6); }
+  82% { transform: scaleY(.82); }
+}
+[data-motion="reduced"] .ui-voice-wave > span { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion="full"]) .ui-voice-wave > span { animation: none; }
+}
+@media (forced-colors: active) {
+  .ui-voice-wave > span { background: ButtonText; forced-color-adjust: none; }
+}

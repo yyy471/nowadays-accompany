@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Icon, useMotionPolicy } from '../ui';
+import { Icon, readMotionTime, useMotionPolicy } from '../ui';
 import { buildDays, calendarDays, dateLabel, dayKey, daySnippets, dotTier, findHits, keyToDate, rangesFor, snippet, termsFor, textFor } from './history';
 import type { DaySummary, PerfRow } from './history';
 import type { PerfScene } from './performance';
@@ -57,6 +57,7 @@ export function HistoryPanel({
   messages,
   scenes,
   loading,
+  locating,
   complete,
   error,
   onRetry,
@@ -69,6 +70,7 @@ export function HistoryPanel({
   messages: PerfRow[];
   scenes: PerfScene[];
   loading: boolean;
+  locating: boolean;
   complete: boolean;
   error: string;
   onRetry: () => void;
@@ -84,6 +86,7 @@ export function HistoryPanel({
   const [selectedKey, setSelectedKey] = useState('');
   const [cardIndex, setCardIndex] = useState(0);
   const [hitIndex, setHitIndex] = useState(-1);
+  const panel = useRef<HTMLElement>(null);
   const swipe = useRef<{ x: number; y: number; id: number } | null>(null);
   const suppressClick = useRef(false);
   const search = useRef<HTMLInputElement>(null);
@@ -92,10 +95,10 @@ export function HistoryPanel({
   const stack = useRef<HTMLDivElement>(null);
   const dayButtons = useRef(new Map<string, HTMLButtonElement>());
   const opener = useRef<HTMLElement | null>(null);
-  const locating = useRef(false);
   const selectedHit = useRef<number | null>(null);
   const restoreFocus = () => {
-    if (locating.current) { locating.current = false; return; }
+    const focused = document.activeElement;
+    if (focused !== document.body && !panel.current?.contains(focused)) return;
     const target = opener.current;
     if (target?.isConnected) target.focus({ preventScroll: true });
   };
@@ -133,11 +136,12 @@ export function HistoryPanel({
       if (!selectedKey || !dayMap.has(selectedKey)) setSelectedKey(key);
       setCardIndex(terms.length ? 0 : Math.max(0, list.length - 1));
     }
-    const timer = window.setTimeout(() => search.current?.focus({ preventScroll: true }), 60);
-    return () => window.clearTimeout(timer);
     // 只在打开时初始化一次；之后的实时增补不重排阅读位置。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+  useLayoutEffect(() => {
+    if (open && present) search.current?.focus({ preventScroll: true });
+  }, [open, present]);
   useEffect(() => {
     if (open && !selectedKey && latestKey) setSelectedKey(latestKey);
   }, [open, selectedKey, latestKey]);
@@ -176,7 +180,8 @@ export function HistoryPanel({
     if (open || !present) return;
     if (policy.reduced) { setPresent(false); setLeaving(false); restoreFocus(); return; }
     setLeaving(true);
-    const timer = window.setTimeout(() => { setPresent(false); setLeaving(false); restoreFocus(); }, 180);
+    const duration = readMotionTime(panel.current, '--nd-semantic-motion-component-exit', 160);
+    const timer = window.setTimeout(() => { setPresent(false); setLeaving(false); restoreFocus(); }, duration);
     return () => window.clearTimeout(timer);
     // restoreFocus 只读取 ref，不进入依赖。
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -250,11 +255,6 @@ export function HistoryPanel({
     if (hadFocus) window.setTimeout(() => stack.current?.querySelector<HTMLElement>('.front')?.focus({ preventScroll: true }), 0);
   };
 
-  const locateCard = (targetId: number) => {
-    locating.current = true;
-    onLocate(targetId);
-  };
-
   const stepDay = (delta: number, edge?: 'home' | 'end') => {
     const keys = [...dayButtons.current.keys()].filter(key => !terms.length || hitCounts.has(key));
     if (!keys.length) return;
@@ -325,10 +325,12 @@ export function HistoryPanel({
   if (!present) return null;
   const target = cards[cardIndex]?.lines.find(line => line.main);
   const scene = target ? sceneForEachReply(scenes).get(target.messageId) : undefined;
-  return <section className="dialogue-history" data-leaving={leaving ? '' : undefined} role="dialog" aria-modal="false" aria-labelledby="dialogue-history-title" data-open={open ? '' : undefined}>
+  return <section ref={panel} className="dialogue-history" data-leaving={leaving ? '' : undefined}
+    role="dialog" aria-modal="false" aria-labelledby="dialogue-history-title" data-open={open ? '' : undefined}
+    inert={!open} aria-hidden={!open || undefined}>
     <header className="dialogue-history-head">
       <h2 id="dialogue-history-title"><Icon name="history" size={18} />历史消息</h2>
-      <span className="dialogue-history-hint" role="status">{loading ? '正在读取完整窗口历史…' : error ? '历史读取未完成' : complete ? '当前窗口的已保存消息' : '历史读取已暂停'}</span>
+      <span className="dialogue-history-hint" role="status">{locating ? '正在定位消息…' : loading ? '正在读取完整窗口历史…' : error ? '历史读取未完成' : complete ? '当前窗口的已保存消息' : '历史读取已暂停'}</span>
       <button type="button" className="dialogue-history-close" aria-label="关闭历史消息" onClick={onClose}><Icon name="close" size={17} /></button>
     </header>
     {error && <div role="alert">{error} <button type="button" onClick={onRetry}>重试读取</button></div>}
@@ -337,7 +339,10 @@ export function HistoryPanel({
         <Icon name="search" size={17} />
         <label className="sr-only" htmlFor="dialogue-history-search">关键词检索</label>
         <input ref={search} id="dialogue-history-search" type="search" placeholder="找一句话，或一个瞬间" autoComplete="off" spellCheck={false} value={query} onChange={event => onQuery(event.target.value)} />
-        {query ? <button type="button" className="dialogue-search-clear" aria-label="清除关键词" onClick={() => { setQuery(''); onQuery(''); }}><Icon name="close" size={15} /></button> : null}
+        {query ? <button type="button" className="dialogue-search-clear" aria-label="清除关键词" onClick={() => {
+          onQuery('');
+          search.current?.focus({ preventScroll: true });
+        }}><Icon name="close" size={15} /></button> : null}
       </div>
       <div className="dialogue-hit-nav" hidden={!terms.length}>
         <button type="button" className="dialogue-hit" aria-label="上一处" disabled={hitIndex <= 0} onClick={() => gotoHit(hitIndex - 1)}><Icon name="chev-up" size={17} /></button>
@@ -427,7 +432,9 @@ export function HistoryPanel({
               const card = (event.target as HTMLElement).closest('.dialogue-snippet-card') as HTMLElement | null;
               if (!card) return;
               const index = Number(card.dataset.card);
-              if (card.classList.contains('front')) locateCard(Number(card.dataset.targetId));
+              if (card.classList.contains('front')) {
+                if (!locating) onLocate(Number(card.dataset.targetId));
+              }
               else moveCard(index - cardIndex);
             }}>
             {behind.map((index, depth) => {
@@ -438,7 +445,7 @@ export function HistoryPanel({
               </div>;
             })}
             {cards[cardIndex] ? <button type="button" className="dialogue-snippet-card front" data-card={cardIndex} data-target-id={cards[cardIndex].targetId}
-              aria-label={cardLabel(cards[cardIndex], query)}>
+              aria-label={cardLabel(cards[cardIndex], query)} aria-busy={locating || undefined} aria-disabled={locating || undefined}>
               <CardBody card={cards[cardIndex]} query={query} />
             </button> : null}
           </div>}

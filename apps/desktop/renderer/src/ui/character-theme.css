@@ -29,10 +29,40 @@
 [data-ui-theme="xiacheng"], [data-ui-theme="xiacheng"] * { box-sizing: border-box; }
 [data-ui-theme="xiacheng"] :is(button,input,select,textarea) { font-family: inherit; }
 [data-ui-theme="xiacheng"] ::selection { background: var(--nd-semantic-color-selection); color: var(--nd-semantic-color-text); }
-[data-ui-theme="xiacheng"] :is(button,input,select,textarea,a):focus-visible,
+:is([data-ui-theme="xiacheng"], [data-ui-palette="xiacheng"]) :is(button, input, select, textarea, a[href], summary, [role="button"], [role="tab"]):focus-visible,
 [data-ui-theme="xiacheng"] [data-preview-state="focus"] {
   outline: var(--nd-component-focus-width) solid var(--nd-component-focus-color);
   outline-offset: var(--nd-component-focus-offset);
+}
+
+/* 页面可能已有专门的材质与反馈，如 Dock 的跟随书签。这里为普通控件提供微交互。 */
+:where([data-ui-theme="xiacheng"], [data-ui-palette="xiacheng"]) :where(button, a[href], [role="button"], [role="tab"]) {
+  --ui-touch-duration: var(--nd-semantic-motion-micro-exit);
+  --ui-touch-ease: var(--nd-semantic-motion-ease-in);
+  transition: transform var(--ui-touch-duration) var(--ui-touch-ease);
+}
+@media (hover: hover) {
+  :where([data-ui-theme="xiacheng"], [data-ui-palette="xiacheng"]) :where(button, [role="button"], [role="tab"]):hover:where(:not(:disabled, [aria-disabled="true"], [aria-busy="true"], [aria-selected="true"], [aria-pressed="true"])) {
+    background-color: var(--nd-semantic-color-selection);
+    --ui-touch-duration: var(--nd-semantic-motion-micro);
+    --ui-touch-ease: var(--nd-semantic-motion-ease-out);
+  }
+}
+:where([data-ui-theme="xiacheng"], [data-ui-palette="xiacheng"]) :where(button, a[href], [role="button"], [role="tab"]):active:where(:not(:disabled, [aria-disabled="true"], [aria-busy="true"], .ui-page-dock :is(.ui-dock-item, .ui-menu-trigger), .ui-switch, .ui-skip-content)) {
+  transform: translateY(var(--nd-semantic-motion-detail-press-offset));
+  --ui-touch-duration: var(--nd-semantic-motion-micro);
+  --ui-touch-ease: var(--nd-semantic-motion-ease-out);
+}
+@media (hover: hover) {
+  [data-ui-theme="xiacheng"] :is(.ui-icon-button, .ui-disclosure-trigger, .ui-switch, .ui-menu-trigger:not(.ui-page-dock *), .ui-studio-brand, .ui-settings-launcher, .ui-account-choice, .ui-binding-shortcut, .ui-account-tabs button, .ui-segmented-controls button):hover:not(:disabled, [aria-disabled="true"], [aria-busy="true"], [aria-pressed="true"]) {
+    background-color: var(--nd-semantic-color-selection);
+  }
+  [data-ui-theme="xiacheng"] .ui-menu-item:hover:not(:disabled, [aria-disabled="true"], [aria-busy="true"]) {
+    background-color: var(--nd-component-menu-selected-background);
+  }
+  [data-ui-theme="xiacheng"] .error-note .link-btn:hover:not(:disabled, [aria-disabled="true"], [aria-busy="true"]) {
+    background-color: var(--nd-semantic-color-selection);
+  }
 }
 [data-ui-theme="xiacheng"] .btn {
   position: relative;
@@ -44,22 +74,19 @@
   font-size: var(--nd-component-button-font-size); line-height: var(--nd-component-button-line-height);
   font-weight: var(--nd-component-button-font-weight); white-space: nowrap; cursor: pointer;
   box-shadow: none; opacity: 1;
-  transition: background-color var(--nd-semantic-motion-control) var(--nd-semantic-motion-ease), transform var(--nd-semantic-motion-feedback) var(--nd-semantic-motion-ease), box-shadow var(--nd-semantic-motion-feedback) var(--nd-semantic-motion-ease);
+  transition: transform var(--ui-touch-duration) var(--ui-touch-ease);
 }
-[data-ui-theme="xiacheng"] .btn:hover:not([aria-disabled="true"]),
 [data-ui-theme="xiacheng"] .btn[data-preview-state="hover"] { background: var(--nd-semantic-color-selection); border-color: var(--nd-semantic-color-line-control); }
 [data-ui-theme="xiacheng"] .btn-primary {
   background: var(--nd-component-button-background); color: var(--nd-component-button-foreground);
   border-color: var(--nd-component-button-background); box-shadow: 0 var(--nd-component-button-depth) 0 var(--nd-component-button-depth-color);
 }
-[data-ui-theme="xiacheng"] .btn-primary:hover:not([aria-disabled="true"]),
 [data-ui-theme="xiacheng"] .btn-primary[data-preview-state="hover"] { background: var(--nd-component-button-hover-background); border-color: var(--nd-component-button-hover-background); }
 [data-ui-theme="xiacheng"] .btn-entry {
   background: var(--nd-component-entry-button-background); color: var(--nd-component-entry-button-foreground);
   border-color: var(--nd-component-entry-button-background); box-shadow: 0 var(--nd-component-button-depth) 0 var(--nd-component-entry-button-depth-color);
   padding-right: 0; overflow: visible; justify-content: space-between; isolation: isolate;
 }
-[data-ui-theme="xiacheng"] .btn-entry:hover:not([aria-disabled="true"]) { background: var(--nd-component-entry-button-hover-background); border-color: var(--nd-component-entry-button-hover-background); }
 [data-ui-theme="xiacheng"] .ui-button-end {
   position: relative; display: grid; place-items: center; align-self: stretch; margin-block: -10px; min-width: 40px;
   border-radius: 0 var(--nd-component-button-radius) var(--nd-component-button-radius) 0;
@@ -79,39 +106,44 @@
 }
 [data-ui-theme="xiacheng"] .ui-button-end svg { transform: rotate(-90deg); transition: transform var(--nd-component-motion-control) var(--nd-semantic-motion-ease); }
 @media (hover: hover) {
-  [data-ui-theme="xiacheng"] .btn-entry:hover:not([aria-disabled="true"]):not([data-preview-state="pressed"]) .ui-button-end { transform: translateX(var(--nd-component-motion-bookmark-reach)); }
-  [data-ui-theme="xiacheng"] .btn-entry:hover:not([aria-disabled="true"]):not([data-preview-state="pressed"]) .ui-button-end::after { transform: scaleY(1); }
-  [data-ui-theme="xiacheng"] .btn-entry:hover:not([aria-disabled="true"]):not([data-preview-state="pressed"]) .ui-button-end svg { transform: translateX(var(--nd-component-motion-arrow-offset)) rotate(-90deg); }
+  [data-ui-theme="xiacheng"] .btn:hover:not(:disabled, [aria-disabled="true"], [aria-busy="true"]) { background: var(--nd-semantic-color-selection); border-color: var(--nd-semantic-color-line-control); }
+  [data-ui-theme="xiacheng"] .btn-primary:hover:not(:disabled, [aria-disabled="true"], [aria-busy="true"]) { background: var(--nd-component-button-hover-background); border-color: var(--nd-component-button-hover-background); }
+  [data-ui-theme="xiacheng"] .btn-entry:hover:not(:disabled, [aria-disabled="true"], [aria-busy="true"]) { background: var(--nd-component-entry-button-hover-background); border-color: var(--nd-component-entry-button-hover-background); }
+  [data-ui-theme="xiacheng"] .btn-danger:hover:not(:disabled, [aria-disabled="true"], [aria-busy="true"]) { color: var(--nd-semantic-color-on-solid); background: var(--nd-semantic-color-danger); border-color: var(--nd-semantic-color-danger); }
+  [data-ui-theme="xiacheng"] .btn-ghost:hover:not(:disabled, [aria-disabled="true"], [aria-busy="true"]) { color: var(--nd-semantic-color-commit); background: var(--nd-semantic-color-selection); border-color: var(--nd-semantic-color-transparent); }
+  [data-ui-theme="xiacheng"] .btn-entry:hover:not(:disabled, [aria-disabled="true"], [aria-busy="true"], [data-preview-state="pressed"]) .ui-button-end { transform: translateX(var(--nd-component-motion-bookmark-reach)); }
+  [data-ui-theme="xiacheng"] .btn-entry:hover:not(:disabled, [aria-disabled="true"], [aria-busy="true"], [data-preview-state="pressed"]) .ui-button-end::after { transform: scaleY(1); }
+  [data-ui-theme="xiacheng"] .btn-entry:hover:not(:disabled, [aria-disabled="true"], [aria-busy="true"], [data-preview-state="pressed"]) .ui-button-end svg { transform: translateX(var(--nd-component-motion-arrow-offset)) rotate(-90deg); }
 }
-[data-ui-theme="xiacheng"] .btn-entry:focus-visible .ui-button-end,
+[data-ui-theme="xiacheng"] .btn-entry:focus-visible:not(:disabled, [aria-disabled="true"], [aria-busy="true"]) .ui-button-end,
 [data-ui-theme="xiacheng"] .btn-entry[data-preview-state="focus"] .ui-button-end { transform: translateX(var(--nd-component-motion-bookmark-reach)); }
-[data-ui-theme="xiacheng"] .btn-entry:focus-visible .ui-button-end::after,
+[data-ui-theme="xiacheng"] .btn-entry:focus-visible:not(:disabled, [aria-disabled="true"], [aria-busy="true"]) .ui-button-end::after,
 [data-ui-theme="xiacheng"] .btn-entry[data-preview-state="focus"] .ui-button-end::after { transform: scaleY(1); }
-[data-ui-theme="xiacheng"] .btn-entry:focus-visible .ui-button-end svg,
+[data-ui-theme="xiacheng"] .btn-entry:focus-visible:not(:disabled, [aria-disabled="true"], [aria-busy="true"]) .ui-button-end svg,
 [data-ui-theme="xiacheng"] .btn-entry[data-preview-state="focus"] .ui-button-end svg { transform: translateX(var(--nd-component-motion-arrow-offset)) rotate(-90deg); }
-[data-ui-theme="xiacheng"] .btn-entry:is(:active, [data-preview-state="pressed"]):not([aria-disabled="true"]) .ui-button-end { transform: translateX(0); }
-[data-ui-theme="xiacheng"] .btn-entry:is(:active, [data-preview-state="pressed"]):not([aria-disabled="true"]) .ui-button-end::after { transform: scaleY(.45); }
-[data-ui-theme="xiacheng"] .btn-entry:is(:active, [data-preview-state="pressed"]):not([aria-disabled="true"]) .ui-button-end svg { transform: rotate(-90deg); }
+[data-ui-theme="xiacheng"] .btn-entry:is(:active, [data-preview-state="pressed"]):not(:disabled, [aria-disabled="true"], [aria-busy="true"]) .ui-button-end { transform: translateX(0); }
+[data-ui-theme="xiacheng"] .btn-entry:is(:active, [data-preview-state="pressed"]):not(:disabled, [aria-disabled="true"], [aria-busy="true"]) .ui-button-end::after { transform: scaleY(.45); }
+[data-ui-theme="xiacheng"] .btn-entry:is(:active, [data-preview-state="pressed"]):not(:disabled, [aria-disabled="true"], [aria-busy="true"]) .ui-button-end svg { transform: rotate(-90deg); }
 [data-ui-theme="xiacheng"] .ui-button-leading { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: var(--nd-semantic-size-icon-small); height: var(--nd-semantic-size-icon-small); }
 [data-ui-theme="xiacheng"] .btn-danger { color: var(--nd-semantic-color-danger); background: var(--nd-semantic-color-danger-surface); border-color: var(--nd-semantic-color-danger); }
-[data-ui-theme="xiacheng"] .btn-danger:hover:not([aria-disabled="true"]) { color: var(--nd-semantic-color-on-solid); background: var(--nd-semantic-color-danger); border-color: var(--nd-semantic-color-danger); }
 [data-ui-theme="xiacheng"] .btn-ghost { color: var(--nd-semantic-color-commit); background: var(--nd-semantic-color-transparent); border-color: var(--nd-semantic-color-transparent); }
-[data-ui-theme="xiacheng"] .btn-ghost:hover:not([aria-disabled="true"]) { color: var(--nd-semantic-color-commit); background: var(--nd-semantic-color-selection); border-color: var(--nd-semantic-color-transparent); }
 [data-ui-theme="xiacheng"] .btn-sm { min-height: var(--nd-component-button-compact-height); padding-block: 6px; }
-[data-ui-theme="xiacheng"] .btn:is(:active,[data-preview-state="pressed"]):not([aria-disabled="true"]) { transform: translateY(1px); }
-[data-ui-theme="xiacheng"] .btn-primary:is(:active,[data-preview-state="pressed"]):not([aria-disabled="true"]) { box-shadow: 0 1px 0 var(--nd-component-button-depth-color); }
+[data-ui-theme="xiacheng"] .btn:is(:active,[data-preview-state="pressed"]):not(:disabled, [aria-disabled="true"], [aria-busy="true"]) {
+  transform: translateY(var(--nd-semantic-motion-detail-press-offset));
+  --ui-touch-duration: var(--nd-semantic-motion-micro);
+  --ui-touch-ease: var(--nd-semantic-motion-ease-out);
+}
+[data-ui-theme="xiacheng"] .btn-primary:is(:active,[data-preview-state="pressed"]):not(:disabled, [aria-disabled="true"], [aria-busy="true"]) { box-shadow: 0 1px 0 var(--nd-component-button-depth-color); }
 [data-ui-theme="xiacheng"] .btn[data-feedback="error"],
-[data-ui-theme="xiacheng"] .btn[data-feedback="error"]:is(:hover,:active) { color: var(--nd-semantic-color-danger); background: var(--nd-semantic-color-danger-surface); border-color: var(--nd-semantic-color-danger); box-shadow: none; }
+[data-ui-theme="xiacheng"] .btn[data-feedback="error"]:is(:hover,:active):where(:not(:disabled, [aria-disabled="true"], [aria-busy="true"])) { color: var(--nd-semantic-color-danger); background: var(--nd-semantic-color-danger-surface); border-color: var(--nd-semantic-color-danger); box-shadow: none; }
 [data-ui-theme="xiacheng"] .btn[data-feedback="success"],
-[data-ui-theme="xiacheng"] .btn[data-feedback="success"]:is(:hover,:active) { color: var(--nd-semantic-color-success); background: var(--nd-semantic-color-success-surface); border-color: var(--nd-semantic-color-success); box-shadow: none; }
+[data-ui-theme="xiacheng"] .btn[data-feedback="success"]:is(:hover,:active):where(:not(:disabled, [aria-disabled="true"], [aria-busy="true"])) { color: var(--nd-semantic-color-success); background: var(--nd-semantic-color-success-surface); border-color: var(--nd-semantic-color-success); box-shadow: none; }
 [data-ui-theme="xiacheng"] .btn:disabled,
 [data-ui-theme="xiacheng"] .btn[aria-disabled="true"]:not([aria-busy="true"]) { opacity: 1; color: var(--nd-semantic-color-disabled-text); background: var(--nd-semantic-color-disabled-surface); border-color: var(--nd-semantic-color-line-control); box-shadow: none; cursor: not-allowed; transform: none; }
-[data-ui-theme="xiacheng"] [aria-busy="true"] { cursor: progress; }
 [data-ui-theme="xiacheng"] .spinner { width: 16px; height: 16px; flex-shrink: 0; border: 2px solid currentColor; border-right-color: var(--nd-semantic-color-transparent); border-radius: var(--nd-semantic-radius-round); animation: nd-spin var(--nd-semantic-motion-scene) linear infinite; }
 @keyframes nd-spin { to { transform: rotate(360deg); } }
-[data-ui-theme="xiacheng"] .ui-button-check { width: 16px; height: 16px; overflow: visible; }
-[data-ui-theme="xiacheng"] .ui-button-check path { stroke-dasharray: 1; stroke-dashoffset: 0; animation: nd-check-draw var(--nd-component-motion-control) var(--nd-semantic-motion-ease) both; }
-@keyframes nd-check-draw { from { stroke-dashoffset: 1; } }
+[data-ui-theme="xiacheng"] .ui-button-check { width: 16px; height: 16px; overflow: visible; animation: nd-check-in var(--nd-semantic-motion-micro) var(--nd-semantic-motion-ease-out) both; }
+@keyframes nd-check-in { from { opacity: 0; } }
 /* 落款只做装饰副标；标准动作文字和真实结果仍在按钮与反馈区。 */
 .ui-button-stamp { display: none; }
 [data-ui-theme="xiacheng"] .ui-button-stamp {
@@ -150,7 +182,7 @@ html[data-motion="reduced"] [data-ui-theme="xiacheng"] .ui-button-end::after,
   background: var(--nd-component-input-background); color: var(--nd-component-input-foreground);
   font-family: var(--nd-component-input-font); font-size: var(--nd-component-input-font-size);
   font-weight: var(--nd-component-input-font-weight); line-height: var(--nd-component-input-line-height);
-  box-shadow: none; opacity: 1; transition: border-color var(--nd-semantic-motion-control) var(--nd-semantic-motion-ease);
+  box-shadow: none; opacity: 1;
 }
 [data-ui-theme="xiacheng"] .ui-select { appearance: auto; background-image: none; padding-right: 12px; }
 [data-ui-theme="xiacheng"] .ui-textarea { min-height: var(--nd-semantic-size-textarea); resize: vertical; }
@@ -167,7 +199,6 @@ html[data-motion="reduced"] [data-ui-theme="xiacheng"] .ui-button-end::after,
 [data-ui-theme="xiacheng"] .ui-search > .ui-input { width: 0; flex: 1; border: 0; padding-inline: 0; background: var(--nd-semantic-color-transparent); }
 [data-ui-theme="xiacheng"] .ui-search:has(input:disabled) { opacity: 1; background: var(--nd-semantic-color-disabled-surface); }
 [data-ui-theme="xiacheng"] .ui-icon-button { display: inline-flex; align-items: center; justify-content: center; width: var(--nd-semantic-size-hit); height: var(--nd-semantic-size-hit); flex-shrink: 0; border: 1px solid var(--nd-semantic-color-line-control); border-radius: var(--nd-semantic-radius-action); padding: 0; color: var(--nd-semantic-color-commit); background: var(--nd-semantic-color-surface); cursor: pointer; }
-[data-ui-theme="xiacheng"] .ui-icon-button:disabled { background: var(--nd-semantic-color-disabled-surface); color: var(--nd-semantic-color-disabled-text); opacity: 1; }
 
 [data-ui-theme="xiacheng"] .ui-switch { display: flex; align-items: center; gap: var(--nd-semantic-space-icon-label); min-height: var(--nd-semantic-size-control); width: 100%; padding: 6px 0; border: 0; border-radius: var(--nd-semantic-radius-action); background: var(--nd-semantic-color-transparent); color: var(--nd-semantic-color-text); font-size: var(--nd-semantic-type-control-size); line-height: var(--nd-semantic-type-control-line); text-align: left; cursor: pointer; }
 [data-ui-theme="xiacheng"] .ui-switch-track { position: relative; flex-shrink: 0; width: var(--nd-component-switch-width); height: var(--nd-component-switch-height); border: 1px solid var(--nd-component-switch-border); border-radius: var(--nd-semantic-radius-round); background: var(--nd-component-switch-off-background); }
@@ -176,7 +207,6 @@ html[data-motion="reduced"] [data-ui-theme="xiacheng"] .ui-button-end::after,
 [data-ui-theme="xiacheng"] .ui-switch[aria-checked="true"] .ui-switch-thumb { transform: translateX(18px); }
 [data-ui-theme="xiacheng"] .ui-switch-value { margin-left: auto; flex-shrink: 0; font-size: var(--nd-semantic-type-caption-size); color: var(--nd-semantic-color-text-muted); }
 [data-ui-theme="xiacheng"] .ui-switch[aria-invalid="true"] .ui-switch-track { border-color: var(--nd-semantic-color-danger); }
-[data-ui-theme="xiacheng"] .ui-switch:disabled { color: var(--nd-semantic-color-disabled-text); cursor: not-allowed; }
 
 [data-ui-theme="xiacheng"] .ui-menu { position: relative; min-width: 0; }
 [data-ui-theme="xiacheng"] .ui-menu-trigger { display: inline-flex; justify-content: center; align-items: center; gap: var(--nd-semantic-space-icon-label); min-height: var(--nd-semantic-size-control); padding: 8px 12px; border: 1px solid var(--nd-semantic-color-line-control); border-radius: var(--nd-semantic-radius-action); color: var(--nd-semantic-color-text); background: var(--nd-semantic-color-surface); font-size: var(--nd-semantic-type-control-size); cursor: pointer; }
@@ -185,8 +215,7 @@ html[data-motion="reduced"] [data-ui-theme="xiacheng"] .ui-button-end::after,
 [data-ui-theme="xiacheng"] .ui-menu-panel[data-closing] { pointer-events: none; }
 [data-ui-theme="xiacheng"] .ui-menu-panel { position: absolute; right: 0; top: calc(100% + 8px); z-index: var(--nd-semantic-layer-popover); width: min(256px,calc(100vw - 32px)); max-height: min(420px,60dvh); overflow: auto; padding: 8px; border: 1px solid var(--nd-semantic-color-line-control); border-radius: var(--nd-component-menu-radius); box-shadow: var(--nd-component-menu-shadow); background: var(--nd-component-menu-background); }
 [data-ui-theme="xiacheng"] .ui-menu-item { display: flex; align-items: center; gap: var(--nd-semantic-space-icon-label); width: 100%; min-height: var(--nd-semantic-size-hit); padding: 8px 12px; text-align: left; border: 0; border-radius: var(--nd-semantic-radius-action); color: var(--nd-semantic-color-text); background: var(--nd-semantic-color-transparent); font-size: var(--nd-semantic-type-control-size); cursor: pointer; }
-[data-ui-theme="xiacheng"] .ui-menu-item:is(:hover,:focus-visible) { background: var(--nd-component-menu-selected-background); }
-[data-ui-theme="xiacheng"] .ui-menu-item:disabled { color: var(--nd-semantic-color-disabled-text); cursor: not-allowed; }
+[data-ui-theme="xiacheng"] .ui-menu-item:is(:active, :focus-visible, [aria-checked="true"]):not(:disabled, [aria-disabled="true"], [aria-busy="true"]) { background: var(--nd-component-menu-selected-background); }
 [data-ui-theme="xiacheng"] .ui-disclosure { border-block: 1px solid var(--nd-semantic-color-line-decorative); }
 [data-ui-theme="xiacheng"] .ui-disclosure h3 { margin: 0; }
 [data-ui-theme="xiacheng"] .ui-disclosure-trigger { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; min-height: 48px; padding: 12px 16px; text-align: left; border: 0; color: var(--nd-component-disclosure-foreground); background: var(--nd-semantic-color-transparent); font-size: var(--nd-semantic-type-subtitle-size); line-height: var(--nd-semantic-type-subtitle-line); font-weight: var(--nd-semantic-type-emphasis); cursor: pointer; }
@@ -196,7 +225,7 @@ html[data-motion="reduced"] [data-ui-theme="xiacheng"] .ui-button-end::after,
 [data-ui-theme="xiacheng"] .ui-disclosure-trigger small { display: block; color: var(--nd-semantic-color-text-muted); font-size: var(--nd-semantic-type-caption-size); line-height: var(--nd-semantic-type-caption-line); font-weight: var(--nd-semantic-type-regular); }
 [data-ui-theme="xiacheng"] .ui-disclosure-content { padding: var(--nd-semantic-space-panel-inset); }
 
-[data-ui-theme="xiacheng"].ui-modal-backdrop { padding: 16px; background: var(--nd-semantic-color-backdrop); backdrop-filter: none; }
+[data-ui-theme="xiacheng"].ui-modal-backdrop { z-index: var(--nd-semantic-layer-modal); padding: 16px; background: var(--nd-semantic-color-backdrop); backdrop-filter: none; }
 [data-ui-theme="xiacheng"] .ui-modal-panel { width: min(640px,100%); max-height: calc(100dvh - 32px); border-color: var(--nd-semantic-color-line-control); border-radius: var(--nd-component-modal-radius); background: var(--nd-component-modal-background); box-shadow: var(--nd-component-modal-shadow); transform-origin: center; }
 [data-ui-theme="xiacheng"] .ui-confirm-dialog { width: min(480px,100%); }
 [data-ui-theme="xiacheng"] .ui-modal-header { padding: var(--nd-component-modal-padding); align-items: flex-start; }
@@ -204,7 +233,7 @@ html[data-motion="reduced"] [data-ui-theme="xiacheng"] .ui-button-end::after,
 [data-ui-theme="xiacheng"] .ui-modal-header p { color: var(--nd-semantic-color-text-muted); font-size: var(--nd-semantic-type-body-size); line-height: var(--nd-semantic-type-body-line); }
 [data-ui-theme="xiacheng"] .ui-modal-content { padding: 0 var(--nd-component-modal-padding) var(--nd-component-modal-padding); }
 [data-ui-theme="xiacheng"] .ui-dialog-actions { flex-wrap: wrap; gap: var(--nd-semantic-space-icon-label); }
-[data-ui-theme="xiacheng"] :is(.tag,.pill) { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: var(--nd-semantic-radius-round); color: var(--nd-semantic-color-text-muted); background: var(--nd-semantic-color-canvas); font-size: var(--nd-semantic-type-caption-size); line-height: var(--nd-semantic-type-caption-line); }
+[data-ui-theme="xiacheng"] :is(.tag,.pill) { border-color: var(--nd-semantic-color-transparent); display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: var(--nd-semantic-radius-round); color: var(--nd-semantic-color-text-muted); background: var(--nd-semantic-color-canvas); font-size: var(--nd-semantic-type-caption-size); line-height: var(--nd-semantic-type-caption-line); }
 [data-ui-theme="xiacheng"] :is(.tag-ok,.tone-ok) { color: var(--nd-semantic-color-success); background: var(--nd-semantic-color-success-surface); }
 [data-ui-theme="xiacheng"] :is(.tag-warn,.tone-warn) { color: var(--nd-semantic-color-warning); background: var(--nd-semantic-color-warning-surface); }
 [data-ui-theme="xiacheng"] :is(.tag-bad,.tone-bad) { color: var(--nd-semantic-color-danger); background: var(--nd-semantic-color-danger-surface); }
@@ -218,16 +247,40 @@ html[data-motion="reduced"] [data-ui-theme="xiacheng"] .ui-button-end::after,
 [data-ui-theme="xiacheng"] .empty p { color: var(--nd-semantic-color-text-muted); }
 [data-ui-theme="xiacheng"] .empty-action { margin-top: 16px; }
 [data-ui-theme="xiacheng"] .muted { color: var(--nd-semantic-color-text-muted); }
-[data-ui-theme="xiacheng"][data-motion="reduced"] *,
-html[data-motion="reduced"] [data-ui-theme="xiacheng"] * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+:is([data-ui-theme="xiacheng"], [data-ui-palette="xiacheng"])[data-motion="reduced"] *,
+html[data-motion="reduced"] :is([data-ui-theme="xiacheng"], [data-ui-palette="xiacheng"]) * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 /* reduced 是不可解除的下限；仅全局 full 覆盖系统减少动效，局部 full 不解除。 */
 @media (prefers-reduced-motion: reduce) {
-  html:not([data-motion="full"]) [data-ui-theme="xiacheng"] * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  html:not([data-motion="full"]) :is([data-ui-theme="xiacheng"], [data-ui-palette="xiacheng"]) * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
 @media (forced-colors: active) {
   [data-ui-theme="xiacheng"] :is(.btn,.ui-input,.ui-select,.ui-textarea,.ui-icon-button,.ui-menu-trigger,.ui-switch-track,.ui-switch-thumb) { border: 1px solid ButtonText; box-shadow: none; }
   [data-ui-theme="xiacheng"] .ui-button-end::after,
   [data-ui-theme="xiacheng"] .ui-button-stamp { display: none; }
   [data-ui-theme="xiacheng"] .ui-switch[aria-checked="true"] .ui-switch-track { background: Highlight; }
-  [data-ui-theme="xiacheng"] :is(button,input,select,textarea,a):focus-visible { outline-color: Highlight; }
+  :is([data-ui-theme="xiacheng"], [data-ui-palette="xiacheng"]) :is(button, input, select, textarea, a[href], summary, [role="button"], [role="tab"]):focus-visible { outline-color: Highlight; }
 }
+
+[data-ui-theme="xiacheng"] .ui-button-leading:empty { display:none }
+[data-ui-theme="xiacheng"] :is(.ui-icon-button, .ui-disclosure-trigger, .ui-switch, .ui-menu-item, .ui-menu-trigger, .ui-account-choice, .ui-binding-shortcut, .ui-account-tabs button, .ui-segmented-controls button):is(:disabled, [aria-disabled="true"]:not([aria-busy="true"])) {
+  background: var(--nd-semantic-color-disabled-surface);
+  color: var(--nd-semantic-color-disabled-text);
+  cursor: not-allowed;
+  opacity: 1;
+}
+[data-ui-theme="xiacheng"] .ui-switch-track {
+  transition: transform var(--nd-semantic-motion-micro-exit) var(--nd-semantic-motion-ease-in);
+}
+[data-ui-theme="xiacheng"] .ui-switch:active:not(:disabled, [aria-disabled="true"], [aria-busy="true"]) .ui-switch-track {
+  transform: translateY(var(--nd-semantic-motion-detail-press-offset));
+  transition-duration: var(--nd-semantic-motion-micro);
+  transition-timing-function: var(--nd-semantic-motion-ease-out);
+}
+[data-ui-theme="xiacheng"] .ui-switch:is(:disabled, [aria-disabled="true"]:not([aria-busy="true"])) :is(.ui-switch-track, .ui-switch-thumb) {
+  background: var(--nd-semantic-color-disabled-surface);
+  border-color: var(--nd-semantic-color-disabled-text);
+}
+[data-ui-theme="xiacheng"] .ui-switch:is(:disabled, [aria-disabled="true"]:not([aria-busy="true"])) .ui-switch-value { color: var(--nd-semantic-color-disabled-text); }
+[data-ui-theme="xiacheng"] .ui-switch[aria-busy="true"]:not(:disabled) .ui-switch-track { animation: nd-switch-breathe var(--nd-semantic-motion-ambient) linear infinite; }
+@keyframes nd-switch-breathe { 50% { opacity:.5 } }
+[data-ui-theme="xiacheng"] button[aria-busy="true"]:not(:disabled) { cursor: progress; }

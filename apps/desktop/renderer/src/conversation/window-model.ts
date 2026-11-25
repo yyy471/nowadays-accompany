@@ -4,7 +4,7 @@
  */
 import type { MessageView, SceneTaskView, SegmentView } from './api-types';
 import type { PerfRow } from './history';
-import type { PerfScene } from './performance';
+import type { PerfScene, SceneLayerMode } from './performance';
 import { replyFormat } from '../../../../backend/src/domain/reply-format';
 
 export interface RowIdRegistry {
@@ -20,6 +20,17 @@ export function sceneForEachReply(scenes: readonly PerfScene[]): Map<string, Per
     if (!previous || priority[scene.status] >= priority[previous.status]) replies.set(scene.messageId, scene);
   }
   return replies;
+}
+
+export type SceneRequestError = { reason: string; mode: SceneLayerMode };
+
+/** 请求错误与后台任务失败都保留原图层，重试时不需要再次选择。 */
+export function sceneFeedback(scenes: readonly PerfScene[], requests: ReadonlySet<string>, errors: ReadonlyMap<string, SceneRequestError>, messageId: string) {
+  const latest = scenes.filter(scene => scene.messageId === messageId).at(-1);
+  const pending = requests.has(messageId) || latest?.status === 'generating';
+  const error = errors.get(messageId) ?? (latest?.status === 'failed'
+    ? { reason: latest.errorSummary || latest.errorCode || '暂时无法完成，请再试一次。', mode: latest.mode } : null);
+  return { pending, error: pending ? null : error };
 }
 
 export function sceneAssetUrl(roleId: string, assetId: string): string {

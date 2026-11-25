@@ -1,5 +1,6 @@
 import { useId, useMemo, useState, type KeyboardEvent } from 'react';
 import { Button, Field, Input } from '../../ui';
+import { ProbeFeedback } from '../config/ProbeFeedback';
 import { filterModelNames, visibleProbeNotice, type ProbeNotice } from './model-picker';
 
 export interface ModelNamePickerProps {
@@ -78,7 +79,7 @@ export function ModelNamePicker({
       return {
         source: 'list',
         role: 'status',
-        text: '未返回模型列表，可手填模型名。',
+        text: '服务没有提供模型列表，可以手动输入模型名称。',
       };
     }
     return null;
@@ -131,7 +132,7 @@ export function ModelNamePicker({
     }
   };
 
-  return <Field label={label} hint={settings || roleLayout ? undefined : hint ?? '选择或直接输入模型名称；接口未开放列表时，手填模型名即可测试与保存。'}>
+  return <Field label={label} hint={settings || roleLayout ? undefined : hint ?? '没有候选时，也可以手动输入模型名称后测试和保存。'}>
     <div className={roleLayout ? 'config-role-model-picker' : settings ? 'config-service-model-picker' : undefined}>
     <div className="nd-model-picker">
       <Input
@@ -171,9 +172,10 @@ export function ModelNamePicker({
     <div className="config-actions">
       {presets ? <span className="config-muted">预置模型</span> :
         <Button size="sm" disabled={disabled || listBusy || testBusy} onClick={onRefresh}>{listBusy ? '正在读取…' : settings || roleLayout ? '读取列表' : '读取模型列表'}</Button>}
-      {roleLayout !== 'service' && <Button size="sm" disabled={disabled || testBusy || testDisabled || listBusy} onClick={onTest}>{testBusy ? '正在测试…' : roleLayout ? '测试' : '测试连接'}</Button>}
+      {roleLayout !== 'service' && <Button size="sm" busy={testBusy} disabled={disabled || testDisabled || listBusy} onClick={onTest}>{testBusy ? '正在测试…' : roleLayout ? '测试' : '测试连接'}</Button>}
     </div>
     </div>
-    {activeNotice || roleLayout ? <p className={activeNotice?.role === 'alert' ? 'config-sheet-error config-role-model-note' : 'config-muted config-role-model-note'} role={roleLayout && activeNotice?.source === 'test' ? undefined : activeNotice?.role}>{activeNotice?.text}</p> : null}
+    <ProbeFeedback busy={roleLayout !== 'service' && testBusy} notice={activeNotice} className="config-role-model-note"
+      reserveSpace={!!roleLayout} testAnnouncedExternally={!!roleLayout}/>
   </Field>;
 }

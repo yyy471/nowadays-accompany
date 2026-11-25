@@ -18,8 +18,9 @@ function claimLabel(claim: Claim) {
   return claimLabels[claim.kind] ?? '线索';
 }
 
-export function MemoryCorrection({ roleId, target, source, onClose, onSaved }: {
-  roleId: string; target: MemoryTarget | null; source: HTMLElement; onClose: () => void; onSaved: () => void;
+export function MemoryCorrection({ open, roleId, target, source, onClose, onExited, onSaved }: {
+  open: boolean; roleId: string; target: MemoryTarget | null; source: HTMLElement;
+  onClose: () => void; onExited: () => void; onSaved: () => void;
 }) {
   const [selected, select] = useState(target);
   const [query, setQuery] = useState('');
@@ -84,29 +85,34 @@ export function MemoryCorrection({ roleId, target, source, onClose, onSaved }: {
         try {
           const latest = await api<Detail>(route);
           if (mounted.current) setConflict(latest);
-        } catch { if (mounted.current) setError('读取最新版本失败。草稿已保留，可再次保存以读取最新版本。'); }
+        } catch { if (mounted.current) setError('暂时无法读取最新版本，草稿已保留，可再次保存重试。'); }
       } else setError(reason instanceof Error ? reason.message : String(reason));
     } finally { lock.current = false; if (mounted.current) setBusy(false); }
   }
-  return <Modal open title={selected ? (event ? '更正经历' : '更正日常摘要') : '查找要更正的记忆'}
-    source={source} onClose={onClose} closeDisabled={busy}>
-    {!selected && <form className="ui-modal-content memory-correction-fields" onSubmit={e => { e.preventDefault(); void search(); }}>
-      <Field label="记忆关键词"><Input value={query} onChange={e => setQuery(e.target.value)} maxLength={500} /></Field>
-      <Button type="submit" busy={busy} disabled={!query.trim()}>查找</Button>
-      {hits?.length === 0 && <p role="status">没有找到相符的经历或摘要。</p>}
-      {hits?.map(hit => <p key={hit.id}><Button variant="entry" onClick={() => select(hit)}>{hit.title} · {hit.experienceDate}</Button></p>)}
-    </form>}
-    {error && <ErrorNote message={error} {...(selected && !base ? { onRetry: () => setAttempt(n => n + 1) } : {})} />}
-    {selected && !base && !error && <p role="status">正在读取记忆。</p>}
-    {draft && base && <form onSubmit={e => { e.preventDefault(); void save(); }}>
+  return <Modal open={open} title={selected ? (event ? '更正经历' : '更正日常摘要') : '查找要更正的记忆'}
+    className="memory-correction" source={source} onClose={onClose} onExited={onExited} closeDisabled={busy}>
+    <form className="memory-correction-form" onSubmit={e => { e.preventDefault(); void (selected ? save() : search()); }}>
       <div className="ui-modal-content memory-correction-fields">
+      {!selected && <>
+        <div className="memory-correction-search">
+          <Field label="记忆关键词"><Input data-autofocus value={query} onChange={e => setQuery(e.target.value)} maxLength={500} /></Field>
+          <Button type="submit" busy={busy} disabled={!query.trim()}>查找</Button>
+        </div>
+        {hits?.length === 0 && <p role="status">没有找到相关的经历或日常摘要。</p>}
+        {!!hits?.length && <ul className="memory-correction-hits">{hits.map(hit => <li key={`${hit.type}:${hit.id}`}>
+          <Button variant="entry" onClick={() => select(hit)}>{hit.title}{hit.experienceDate && ` · ${hit.experienceDate}`}</Button>
+        </li>)}</ul>}
+      </>}
+      {error && <ErrorNote message={error} onRetry={selected && !base ? () => setAttempt(n => n + 1) : undefined} />}
+      {selected && !base && !error && <p role="status" className="memory-correction-loading"><span className="spinner" aria-hidden="true" />正在读取记忆…</p>}
+      {draft && base && <>
       {event && <Field label="经历标题"><Input required maxLength={500} value={draft.title} onChange={e => setDraft({ ...draft, title: e.target.value })} /></Field>}
       <Field label={event ? '事情经过' : '日常摘要'}><Textarea required maxLength={20000} value={draft.summary} onChange={e => setDraft({ ...draft, summary: e.target.value })} /></Field>
       {event && <Field label="当时的感受"><Textarea maxLength={20000} value={draft.subjectiveExperience ?? ''} onChange={e => setDraft({ ...draft, subjectiveExperience: e.target.value })} /></Field>}
       {event && claims.length > 0 && <details>
         <summary>更正记忆线索（{claims.length}）</summary>
         <fieldset><legend>选择需要更正的线索</legend>
-          <p>填写新内容可以替换线索，留空会将选中线索从当前回忆中撤下。</p>
+          <p>为勾选的线索填写新内容即可替换，留空则撤下。</p>
           {superseded.length >= 100 && <p role="status">每次最多更正 100 条线索。</p>}
           {claims.map(claim => <div className="memory-correction-clue" key={claim.claimId}><label>
             <Checkbox checked={claim.claimId in claimEdits} disabled={busy || (!(claim.claimId in claimEdits) && superseded.length >= 100)} onChange={e => {
@@ -123,23 +129,26 @@ export function MemoryCorrection({ roleId, target, source, onClose, onSaved }: {
           </div>)}
         </fieldset>
       </details>}
-      {conflict && <section aria-label="版本冲突">
-        <p role="alert">这条记忆已有其他修改。你的草稿已保留。</p>
-        <p>最新保存的版本 {conflict.version}</p>
+      {conflict && <section className="memory-correction-conflict" aria-label="版本冲突">
+        <p role="alert">这条记忆已有新的修改，你的草稿已保留。</p>
+        <p>最新记录 · 第 {conflict.version} 版</p>
         {event && <p>{conflict.title}</p>}<p>{conflict.summary}</p>{event && <p>{conflict.subjectiveExperience}</p>}
-        {withdrawn.length > 0 && <><p>最新版本已撤下或替换以下线索。合并时将移除这些勾选项。</p>
+        {withdrawn.length > 0 && <><p>以下线索已在最新版本中撤下或替换，合并后会取消这些勾选。</p>
           <ul>{withdrawn.map(claim => <li key={claim.claimId}>{claim.text}{claimEdits[claim.claimId] && <p>你的草稿：{claimEdits[claim.claimId]}</p>}</li>)}</ul></>}
-        <Button onClick={() => {
-          setBase(conflict); setDraft({ ...conflict, ...changes });
-          setClaimEdits(previous => Object.fromEntries(Object.entries(previous).filter(([id]) => conflict.claims?.some(claim => claim.claimId === id))));
-          setConflict(null);
-        }}>保留我的修改，合并其余字段</Button>
-        <Button onClick={() => { setBase(conflict); setDraft(conflict); setClaimEdits({}); setConflict(null); }}>采用最新记录</Button>
+        <div className="memory-correction-conflict-actions">
+          <Button onClick={() => {
+            setBase(conflict); setDraft({ ...conflict, ...changes });
+            setClaimEdits(previous => Object.fromEntries(Object.entries(previous).filter(([id]) => conflict.claims?.some(claim => claim.claimId === id))));
+            setConflict(null);
+          }}>保留我的修改，合并其余字段</Button>
+          <Button onClick={() => { setBase(conflict); setDraft(conflict); setClaimEdits({}); setConflict(null); }}>采用最新记录</Button>
+        </div>
       </section>}
+      </>}
       </div>
-      <footer className="ui-dialog-actions"><Button onClick={onClose} disabled={busy}>取消</Button>
+      {draft && base && <footer className="ui-dialog-actions"><Button onClick={onClose} disabled={busy}>取消</Button>
         <Button type="submit" variant="primary" busy={busy} disabled={!!conflict || !draft.summary.trim() || (event && !draft.title.trim()) || !hasChanges}>保存更正</Button>
-      </footer>
-    </form>}
+      </footer>}
+    </form>
   </Modal>;
 }

@@ -13,11 +13,11 @@ const out = path.join(testResultsDir, 'settings-workspace');
 fs.mkdirSync(out, { recursive: true });
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'settings-workspace-'));
 const sampleWavPath = path.join(temp, 'sample.wav');
-const wavHeader = Buffer.alloc(48);
-wavHeader.write('RIFF', 0); wavHeader.writeUInt32LE(40, 4); wavHeader.write('WAVEfmt ', 8);
+const wavHeader = Buffer.alloc(44 + 32000 * 4);
+wavHeader.write('RIFF', 0); wavHeader.writeUInt32LE(wavHeader.length - 8, 4); wavHeader.write('WAVEfmt ', 8);
 wavHeader.writeUInt32LE(16, 16); wavHeader.writeUInt16LE(1, 20); wavHeader.writeUInt16LE(1, 22);
 wavHeader.writeUInt32LE(16000, 24); wavHeader.writeUInt32LE(32000, 28); wavHeader.writeUInt16LE(2, 32);
-wavHeader.writeUInt16LE(16, 34); wavHeader.write('data', 36); wavHeader.writeUInt32LE(4, 40);
+wavHeader.writeUInt16LE(16, 34); wavHeader.write('data', 36); wavHeader.writeUInt32LE(wavHeader.length - 44, 40);
 fs.writeFileSync(sampleWavPath, wavHeader);
 const roles = ['甲', '乙'].map((name, i) => ({ roleId: i ? 'b' : 'a', displayName: `${name}角色`, status: 'ready' }));
 const resources = [{ resourceId: 'm1', kind: 'model', name: '测试模型', enabled: true, config: { protocol: 'openai-chat', baseUrl: 'http://127.0.0.1:1234', modelName:'local-model' }, credential: { status: 'missing' }, lastTest: null }, { resourceId: 'x1', kind: 'mcp', name: '文件工具', enabled: true, config: { command: 'node', args: [], env: {} } }];
@@ -44,6 +44,8 @@ const voices = {};
 const voiceReferences = { a: [], b: [], c: [] };
 let voiceUploadCalled = false;
 const voicePreviewRequests = [];
+let holdMediaPreview = '';
+let releaseMediaPreview;
 const voicePutRequests = [];
 const roleDeletes = [];
 let savedModelBody;
@@ -97,7 +99,9 @@ const server = http.createServer((req, res) => {
     return readRaw(req, raw => {
       const text = raw.toString('utf8');
       voicePreviewRequests.push({ contentType: req.headers['content-type'] || '', hasPayload: text.includes('name="payload"'), hasFile: text.includes('filename="sample.wav"'), rawText: text });
-      res.writeHead(200, { 'content-type': 'audio/wav' }); res.end(wavHeader);
+      const respond = () => { res.writeHead(200, { 'content-type': 'audio/wav' }); res.end(wavHeader); };
+      if (holdMediaPreview === 'voice') { holdMediaPreview = ''; releaseMediaPreview = respond; }
+      else respond();
     });
   }
   if (p === '/v1/voice-services/probe' && req.method === 'POST') {
@@ -225,6 +229,11 @@ const server = http.createServer((req, res) => {
     return req.on('end', () => {
       const data = JSON.parse(body); imagePreviews.push(data);
       const pngBytes = fs.readFileSync(xiachengPortraitFixture);
+      if (holdMediaPreview === 'image') {
+        holdMediaPreview = '';
+        releaseMediaPreview = () => json(res, { width: 1, height: 1, prompt: data.prompt, mediaType: 'image/png', dataBase64: 'YQ==' });
+        return;
+      }
       json(res, { width: 512, height: 512, prompt: data.prompt || data.settings.basePrompt, mediaType: 'image/png', dataBase64: pngBytes.toString('base64') });
     });
   }
@@ -303,7 +312,47 @@ async function until(fn) { let last; for (const start = Date.now(); Date.now() -
 let proc, ws, id = 0, logs = '';
 const waiting = new Map(), errors = [];
 function cmd(method, params = {}) { return new Promise((resolve, reject) => { const n = ++id; waiting.set(n, { resolve, reject }); ws.send(JSON.stringify({ id: n, method, params })); }); }
-async function ev(expression) { const result = await cmd('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }); if (result.exceptionDetails) throw Error(JSON.stringify(result.exceptionDetails)); return result.result.value; }
+async function ev(expression, userGesture = false) { const result = await cmd('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true, userGesture }); if (result.exceptionDetails) throw Error(JSON.stringify(result.exceptionDetails)); return result.result.value; }
+function mouse(type, { x, y }) {
+  return cmd('Input.dispatchMouseEvent', { type, x, y, ...(type === 'mouseMoved' ? {} : { button: 'left', clickCount: 1 }) });
+}
+async function pointClick(point) {
+  await mouse('mouseMoved', point);
+  await mouse('mousePressed', point);
+  await mouse('mouseReleased', point);
+}
+async function tabGeometry(label) {
+  return ev(`(() => {
+    const tab = ${element(`.config-tabs button[aria-label="${label}"]`)};
+    const { left, top, width, height } = tab.getBoundingClientRect();
+    const style = getComputedStyle(tab);
+    return { left, top, width, layoutWidth: tab.offsetWidth, margin: style.marginLeft, transform: style.transform,
+      current: tab.getAttribute('aria-current'), hovered: tab.matches(':hover'), x: left + width / 2, y: top + height / 2 };
+  })()`);
+}
+async function noticeGeometry(selectors, label) {
+  const layout = await ev(`(() => {
+    const rect = node => node.getBoundingClientRect().toJSON();
+    const notice = rect(document.querySelector('.config-result-notice'));
+    const controls = ${JSON.stringify(selectors)}.map(selector => {
+      const node = document.querySelector(selector);
+      const bounds = rect(node);
+      const x = bounds.left + bounds.width / 2;
+      const y = bounds.top + bounds.height / 2;
+      return { selector, bounds, x, y, hit: node.contains(document.elementFromPoint(x, y)) };
+    });
+    return { notice, controls, width: innerWidth };
+  })()`);
+  const { notice, controls, width } = layout;
+  assert.ok(Math.abs(notice.left + notice.width / 2 - width / 2) <= 0.5, `${label} 纸签水平居中`);
+  assert.ok(notice.left >= 0 && notice.right <= width && notice.height > 46, `${label} 长纸签换行且不越界`);
+  for (const { selector, bounds, hit } of controls) {
+    const overlaps = bounds.left < notice.right && bounds.right > notice.left && bounds.top < notice.bottom && bounds.bottom > notice.top;
+    const contained = bounds.left >= 0 && bounds.right <= width;
+    assert.ok(contained && !overlaps && hit, `${label} 纸签避开 ${selector} 且控件可命中：${JSON.stringify({ notice, bounds, hit })}`);
+  }
+  return layout;
+}
 async function shot(name) { const data = await cmd('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(path.join(out, name), Buffer.from(data.data, 'base64')); }
 async function pixels() { const data = await cmd('Page.captureScreenshot', { format: 'png' }); return PNG.sync.read(Buffer.from(data.data, 'base64')); }
 function compareRect(a, b, rect) { let changed = 0, checked = 0; for (let y = Math.ceil(rect.top) + 2; y < Math.floor(rect.bottom) - 2; y += 4) for (let x = Math.ceil(rect.left) + 2; x < Math.floor(rect.right) - 2; x += 4) { const i = (y * a.width + x) * 4; checked++; if (a.data[i] !== b.data[i] || a.data[i + 1] !== b.data[i + 1] || a.data[i + 2] !== b.data[i + 2]) changed++; } return { changed, checked }; }
@@ -337,7 +386,31 @@ async function run() {
   const midDiff = compareRect(beforeTheme, duringTheme, portraitRect), endDiff = compareRect(beforeTheme, afterTheme, portraitRect);
   await ev("[...document.querySelectorAll('.ui-theme-switcher button')].find(x=>x.textContent.includes('白昼来信')).click()");
   await until(() => ev("document.querySelector('.studio-shell').dataset.uiPreset==='daylight'")); await delay(1000);
+  const idleTab = await tabGeometry('外观');
+  const neighbor = await tabGeometry('模型');
+  await mouse('mouseMoved', idleTab);
+  await until(async () => (await tabGeometry('外观')).left < idleTab.left - 3);
+  const hoveredTab = await tabGeometry('外观');
+  assert.equal(hoveredTab.layoutWidth, idleTab.layoutWidth, '悬停页签保留布局宽度');
+  assert.equal(hoveredTab.margin, idleTab.margin, '悬停页签不改变边距');
+  assert.deepEqual(await tabGeometry('模型'), neighbor, '悬停不移动相邻页签');
+  await mouse('mousePressed', hoveredTab);
+  await until(async () => (await tabGeometry('外观')).top > idleTab.top + 0.5);
+  await mouse('mouseReleased', hoveredTab);
+  await until(async () => {
+    const selected = await tabGeometry('外观');
+    return selected.current === 'page' && selected.hovered && selected.transform === 'none';
+  });
   await cmd('Emulation.setEmulatedMedia', { features: [{ name:'prefers-reduced-motion', value:'reduce' }] });
+  await mouse('mouseMoved', await tabGeometry('设定'));
+  const reducedBefore = await tabGeometry('模型');
+  await mouse('mouseMoved', reducedBefore);
+  await until(async () => (await tabGeometry('模型')).hovered);
+  const reducedAfter = await tabGeometry('模型');
+  assert.equal(reducedAfter.left, reducedBefore.left, '减少动效时悬停页签原位显示');
+  assert.equal(reducedAfter.layoutWidth, reducedBefore.layoutWidth, '减少动效时保留页签宽度');
+  await mouse('mouseMoved', { x: 5, y: 5 });
+  await tab('设定');
   await pickRole("b");
   await until(() => ev("document.querySelector('.config-role-editor:not([hidden]) textarea')?.value==='乙角色设定'"));
   assert.ok(await ev("document.querySelector('.config-footer-ident strong')?.textContent==='乙角色'"), '切换角色后编辑对象应为乙角色（DL-147：编辑对象独立于当前角色）');
@@ -584,18 +657,53 @@ async function run() {
   await tab('模型');
   await tab('MCP');
   const group = (label, selector) => `[...document.querySelectorAll('${sheet} .config-grp')].find(group=>group.querySelector('.config-grp-label b')?.textContent===${JSON.stringify(label)})?.querySelector(${JSON.stringify(selector)})`;
+  const temporaryTool = '临时工具用于检查长回执换行时各个按钮的可达性'.repeat(6);
   await add('添加 MCP');
-  await ev(setValue(group('名称', 'input'), '临时工具'));
+  await ev(setValue(group('名称', 'input'), temporaryTool));
   await ev(setValue(group('启动', 'input'), 'node'));
   await click(sheetButton('添加'));
-  await heading('临时工具');
+  await heading(temporaryTool);
   await edit();
   await ev(setValue(group('启动', 'input'), 'node2'));
   await save();
   await until(() => resources.find(item => item.resourceId === 'x2')?.config.command === 'node2');
   await closed();
-  await click(element('[role=switch][aria-label="全局启用临时工具"]'));
-  await until(() => resources.find(item => item.resourceId === 'x2')?.enabled === false);
+  const toolSwitch = element(`[role=switch][aria-label="全局启用${temporaryTool}"]`);
+  const themeControl = preset => `.studio-shell:not(.config-theme-veil) .studio-header .ui-theme-switcher [data-theme-choice="${preset}"]`;
+  const themeControls = ['daylight', 'nightwave'].map(themeControl);
+  const noticeSelector = '.config-result-notice';
+  const activeSheet = '.studio-shell:not(.config-theme-veil) .config-sheet:not([hidden],[data-exiting],[aria-hidden="true"])';
+  for (const preset of ['nightwave', 'daylight']) {
+    await click(element(themeControl(preset)));
+    await until(() => ev(`document.documentElement.dataset.uiPreset === '${preset}'`));
+    for (const [width, height] of [[1440,840], [720,540]]) {
+      await cmd('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+      const enabled = !resources.find(item => item.resourceId === 'x2').enabled;
+      await click(toolSwitch);
+      await until(() => ev(`${element(noticeSelector)}?.textContent.includes(${JSON.stringify(`${temporaryTool} ${enabled ? '已全局启用' : '已全局停用'}`)})`));
+      const label = `${preset} ${width}×${height}`;
+      await noticeGeometry([...themeControls, '.config-return-link'], `${label} 设置列表`);
+      await edit();
+      await until(() => ev(`(() => {
+        const panel = ${element(activeSheet)};
+        return !!panel?.getClientRects().length && !panel.getAnimations().some(animation => animation.pending || animation.playState === 'running');
+      })()`));
+      const { controls: [closeControl] } = await noticeGeometry([`${activeSheet} .config-sheet-x`, ...themeControls], `${label} 编辑纸笺`);
+      await pointClick(closeControl);
+      await closed();
+      const { notice } = await noticeGeometry([...themeControls, '.config-return-link'], `${label} 关闭后`);
+      const noticePoint = { x: notice.left + notice.width / 2, y: notice.top + notice.height / 2 };
+      if (preset === 'nightwave' && width === 720) {
+        await mouse('mouseMoved', noticePoint);
+        await until(() => ev(`${element(noticeSelector)}?.matches(':hover')`));
+        await delay(2750);
+        assert.ok(await ev(`!!${element(noticeSelector)}`), '悬停暂停回执的自动关闭');
+      }
+      await pointClick(noticePoint);
+      await until(() => ev(`!${element(noticeSelector)}`));
+    }
+  }
+  await cmd('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
   await click(button('删除 MCP…'));
   await click(sheetButton('删除'));
   await until(() => !resources.some(item => item.resourceId === 'x2'));
@@ -782,9 +890,15 @@ async function run() {
   await ev(`delete ${field('.nd-image input[type=file]')}.click`);
   assert.equal(anchorPromptCalls.at(-1).hasUpload, true);
   assert.equal(await ev(`${field(modelName)}.value`), 'moss-v2.safetensors');
+  holdMediaPreview = 'image';
   await click(button('测试生图', image));
-  await until(() => imagePreviews.length === 1 && ev(`${field('.nd-image-figure img')}?.naturalWidth>0`));
-  assert.equal(imagePreviews[0].settings.modelPath, 'moss-v2.safetensors');
+  await until(() => releaseMediaPreview && ev(`!!${field('.nd-image-figure .photo-development[data-state=pending]')}`));
+  releaseMediaPreview(); releaseMediaPreview = undefined;
+  await until(() => ev(`${field('.nd-image-figure [role=alert]')}?.textContent.includes('样图无法解码')`));
+  assert.equal(await ev(`!!${field('.nd-image-figure img')}`), false, '无法解码的结果不会被展示');
+  await click(button('重试', `${image} .nd-image-figure`));
+  await until(() => imagePreviews.length === 2 && ev(`${field('.nd-image-figure img')}?.naturalWidth>0 && !!${field('.nd-image-figure .photo-development-reveal')}`));
+  assert.equal(imagePreviews.at(-1).settings.modelPath, 'moss-v2.safetensors');
   assert.equal(sceneImages.b, undefined, '草稿试生图不落库');
   for (const [width,height] of [[1280,800],[1440,840],[720,540]]) {
     await cmd('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
@@ -809,8 +923,19 @@ async function run() {
   await cmd('DOM.setFileInputFiles', { nodeId: voiceFileInput.nodeId, files: [sampleWavPath] });
   await sheetText('待上传：sample.wav');
   assert.equal(voiceUploadCalled, false);
-  await click(button('生成试听', voice));
+  await ev(`${button('播放参考录音', voice)}.click()`, true);
+  await until(() => ev(`!!${button('停止参考录音', voice)} && !!${field('.nd-voice-reference-playback .ui-voice-wave[data-state=playing]')}`));
+  await click(button('停止参考录音', voice));
+  await until(() => ev(`!!${button('播放参考录音', voice)}`));
+  assert.equal(voicePreviewRequests.length, 0, '本地参考录音播放不发起合成');
+  holdMediaPreview = 'voice';
+  await ev(`${button('生成试听', voice)}.click()`, true);
+  await until(() => releaseMediaPreview && ev(`!!${field('.nd-voice-preview-actions [aria-busy=true] .ui-voice-wave[data-state=synthesizing]')}`));
+  releaseMediaPreview(); releaseMediaPreview = undefined;
   await until(() => voicePreviewRequests.length === 1);
+  await until(() => ev(`!!${field('.nd-voice-preview-actions .ui-voice-wave[data-state=playing]')}`));
+  await click(button('停止播放', voice));
+  await until(() => ev(`!${field('.nd-voice-preview-actions .ui-voice-wave[data-state=playing]')}`));
   assert.ok(voicePreviewRequests[0].contentType.includes('multipart/form-data') && voicePreviewRequests[0].hasPayload && voicePreviewRequests[0].hasFile);
   assert.equal(voiceUploadCalled, false);
   await save();

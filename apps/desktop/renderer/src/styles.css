@@ -194,6 +194,7 @@ code {
 }
 
 .spinner {
+  display: inline-block; flex-shrink: 0;
   width: 13px;
   height: 13px;
   border: 2px solid currentColor;
@@ -2827,3 +2828,5 @@ code { color: #735a38; }
   .extension-row-state { justify-content: flex-start; }
   .extension-switch { width: 100%; }
 }
+
+[data-ui-preset="nightwave"]:is(.studio-shell,.ui-modal-backdrop,.role-entry) { --neutral-rgb: 205, 205, 205; }

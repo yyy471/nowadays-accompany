@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { ControlButton, Icon, createMotionScope, readMotionPx, readMotionTime, readMotionValue, useMotionPolicy, type IconName } from '../../ui';
 import { MoreMenu } from './MoreMenu';
 import { ALL_PAGES, PAGES } from '../../lib/navigation';
@@ -11,7 +11,7 @@ export const dockDestinations: Array<{ id: string; label: string; icon: IconName
 ];
 
 const ITEM_SELECTOR = '.ui-dock-item, .ui-menu-trigger';
-const FOLLOW_VARIABLES = ['--dock-follow-x', '--dock-follow-y', '--dock-local-x', '--dock-local-y', '--dock-shadow-x'];
+const FOLLOW_VARIABLES = ['--dock-follow-x', '--dock-follow-y'];
 
 function clearItem(item: HTMLElement): void {
   item.removeAttribute('data-hover');
@@ -72,7 +72,7 @@ export function PageDock({ page, onNavigate }: { page: string; onNavigate: (page
       scope.cancelAll();
       marker.style.transform = `translateX(${nextX}px)`;
     };
-    if (!animate || !ready || reduced.current || drawnWidth <= 0) { settle(); return; }
+    if (!animate || !ready || reduced.current || document.hidden || drawnWidth <= 0) { settle(); return; }
     const distance = nextX - drawnX;
     if (Math.abs(distance) < 0.5 && Math.abs(drawnWidth - nextWidth) < 0.5) { settle(); return; }
     const overshootMax = readMotionPx(nav, '--nd-component-motion-bookmark-overshoot', 1.5);
@@ -84,8 +84,8 @@ export function PageDock({ page, onNavigate }: { page: string; onNavigate: (page
       { transform: `translateX(${nextX + overshoot}px) scaleX(1)`, offset: 0.76 },
       { transform: `translateX(${nextX}px) scaleX(1)` }
     ], {
-      duration: readMotionTime(nav, '--nd-component-motion-surface-enter', 220),
-      easing: readMotionValue(nav, '--nd-component-motion-surface-ease', 'cubic-bezier(0.2, 0.8, 0.2, 1)'),
+      duration: readMotionTime(nav, '--nd-semantic-motion-component', 220),
+      easing: readMotionValue(nav, '--nd-semantic-motion-ease-out', 'ease-out'),
       slot: 'dock',
       fill: 'backwards'
     });
@@ -126,17 +126,11 @@ export function PageDock({ page, onNavigate }: { page: string; onNavigate: (page
       if (!current.item || !current.rect || !current.point || reduced.current) return;
       const host = navRef.current;
       const range = readMotionPx(host, '--nd-component-dock-notebook-follow-range', 1);
-      const centerX = Number.parseFloat(readMotionValue(host, '--nd-component-dock-notebook-pointer-center-x', '50%')) || 50;
-      const centerY = Number.parseFloat(readMotionValue(host, '--nd-component-dock-notebook-pointer-center-y', '45%')) || 45;
-      const rangeX = Number.parseFloat(readMotionValue(host, '--nd-component-dock-notebook-pointer-range-x', '35%')) || 35;
-      const rangeY = Number.parseFloat(readMotionValue(host, '--nd-component-dock-notebook-pointer-range-y', '30%')) || 30;
+      if (!current.rect.width || !current.rect.height) return;
       const x = Math.max(-1, Math.min(1, (current.point.x - current.rect.left) / current.rect.width * 2 - 1));
       const y = Math.max(-1, Math.min(1, (current.point.y - current.rect.top) / current.rect.height * 2 - 1));
       current.item.style.setProperty('--dock-follow-x', `${(x * range).toFixed(2)}px`);
       current.item.style.setProperty('--dock-follow-y', `${(y * range).toFixed(2)}px`);
-      current.item.style.setProperty('--dock-local-x', `${(centerX + x * rangeX).toFixed(2)}%`);
-      current.item.style.setProperty('--dock-local-y', `${(centerY + y * rangeY).toFixed(2)}%`);
-      current.item.style.setProperty('--dock-shadow-x', `${x.toFixed(2)}px`);
     });
   };
 
@@ -157,7 +151,7 @@ export function PageDock({ page, onNavigate }: { page: string; onNavigate: (page
     item.dataset.pressed = '';
   };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const key = direct ? page : 'more';
     const changed = previousKey.current !== undefined && previousKey.current !== key && previousPage.current !== page;
     previousKey.current = key;
@@ -188,7 +182,7 @@ export function PageDock({ page, onNavigate }: { page: string; onNavigate: (page
     const keyup = (event: globalThis.KeyboardEvent): void => { if (event.key === 'Enter' || event.key === ' ') releasePress(); };
     const cancel = (): void => { releasePress(); resetPointer(); };
     const blur = (): void => { releasePress(); resetPointer(); };
-    const visibility = (): void => { if (document.hidden) { releasePress(); resetPointer(); } };
+    const visibility = (): void => { if (document.hidden) { releasePress(); resetPointer(); alignRef.current(false); } };
     const resize = (): void => { releasePress(); resetPointer(); };
     window.addEventListener('pointerup', up);
     window.addEventListener('keyup', keyup);

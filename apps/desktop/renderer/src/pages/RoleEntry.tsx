@@ -13,16 +13,20 @@ export function RoleEntry({
   roles,
   loading,
   error,
+  errorSource,
   onEnter,
   onCreate,
   onRetry,
+  retrying,
 }: {
   roles: RoleListItem[];
   loading: boolean;
   error: string;
+  errorSource: 'list' | 'details';
   onEnter: (roleId: string) => void;
   onCreate: () => void;
   onRetry: () => void;
+  retrying?: boolean;
 }) {
   const { preset } = useThemePreset();
   const night = preset === 'nightwave';
@@ -31,6 +35,11 @@ export function RoleEntry({
   const firstCard = useRef<HTMLButtonElement | null>(null);
   const cards = entryRoles(roles);
   const choice = resolveEntryChoice(roles, selected);
+  const errorTitle = errorSource === 'details' ? '角色资料暂时无法更新。'
+    : cards.length ? '暂时无法更新角色列表。' : '暂时无法读取角色列表。';
+  const reason = error.trim().split(/\r?\n/, 1)[0];
+  const errorReason = reason === 'Failed to fetch' ? '无法连接本机服务。'
+    : reason.length > 100 ? `${reason.slice(0, 100)}…` : reason;
 
   useEffect(() => {
     const next = resolveEntryChoice(roles, selected);
@@ -44,18 +53,22 @@ export function RoleEntry({
   }, [loading, cards.length === 0]);
 
   return <UiThemeScope theme="xiacheng" preset={preset} motion={motion.reduced ? 'reduced' : 'full'} className="role-entry-host">
-    <div className="role-entry" data-theme={night ? 'night' : 'day'} data-motion={motion.reduced ? 'reduced' : 'full'}>
+    <div className="role-entry" data-ui-preset={preset} data-theme={night ? 'night' : 'day'} data-motion={motion.reduced ? 'reduced' : 'full'}>
       <header className="role-entry-header">
         <span className="role-entry-brand"><BrandMark/><span>Nowadays<small>A NOTE FOR YOUR EVERYDAY.</small></span></span>
       </header>
       <main className="role-entry-stage" aria-label="选择角色">
         <div className="role-entry-copy">
           <h1>选择角色</h1>
-          <p>进入书房后，也可以切换角色。</p>
+          <p>进书房后也可以换角色。</p>
         </div>
-        {loading && cards.length === 0 ? <p className="role-entry-note" role="status">正在读取角色…</p>
-          : error && cards.length === 0 ? <div className="role-entry-note" role="alert"><p>{error}</p><Button onClick={onRetry}>重试</Button></div>
-            : <div className="role-entry-grid" role="group" aria-label="角色列表">
+        <div className="role-entry-choices">
+          {loading && cards.length === 0 && <p className="role-entry-note" role="status">正在读取角色…</p>}
+          {error && <div className="role-entry-note" role="alert">
+            <p>{errorTitle}{errorReason && <span className="role-entry-error-reason">{errorReason}</span>}</p>
+            <Button busy={retrying} onClick={onRetry}>重试</Button>
+          </div>}
+          {cards.length > 0 && <div className="role-entry-grid" role="group" aria-label="角色列表">
               {cards.map((role, index) => <button
                 type="button"
                 key={role.roleId}
@@ -73,10 +86,10 @@ export function RoleEntry({
                 </span>
               </button>)}
             </div>}
-        {error && cards.length > 0 && <p className="role-entry-note" role="alert">{error}</p>}
+        </div>
       </main>
       <footer className="role-entry-actions">
-        <span className="role-entry-hint">{cards.length > 0 ? `共 ${cards.length} 位角色` : '还没有角色'}</span>
+        <span className="role-entry-hint">{cards.length > 0 ? `${cards.length} 位角色` : null}</span>
         <div className="role-entry-buttons">
           <Button variant="ghost" onClick={onCreate}>创建角色</Button>
           <Button variant="entry" disabled={!choice} onClick={() => choice && onEnter(choice)}>进入书房</Button>

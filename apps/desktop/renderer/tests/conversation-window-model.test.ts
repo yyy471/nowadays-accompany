@@ -19,6 +19,21 @@ test("同轮跨图层、重画中和失败时只选一张图，不影响另一�
   assert.equal(targetModule.sceneForEachReply([first, done, other]).get("m2"), other);
 });
 
+test("过场图请求失败保留重试图层与旧图，重试期间隐藏旧错误", () => {
+  const old = { id: 'old', messageId: 'm1', mode: 'background', status: 'succeeded' };
+  const failedPost = new Map([['m1', { reason: '连接失败', mode: 'full_scene' }]]);
+  const result = targetModule.sceneFeedback([old], new Set(), failedPost, 'm1');
+  assert.deepEqual(result, { pending: false, error: { reason: '连接失败', mode: 'full_scene' } });
+  assert.equal(targetModule.sceneForEachReply([old]).get('m1'), old);
+  assert.deepEqual(targetModule.sceneFeedback([old], new Set(['m1']), failedPost, 'm1'), { pending: true, error: null });
+  assert.deepEqual(targetModule.sceneFeedback([old], new Set(), failedPost, 'm2'), { pending: false, error: null });
+  const failedTask = { ...old, id: 'new', mode: 'full_scene', status: 'failed', errorSummary: '服务不可用' };
+  assert.equal(targetModule.sceneForEachReply([old, failedTask]).get('m1'), old);
+  assert.deepEqual(targetModule.sceneFeedback([old, failedTask], new Set(), new Map(), 'm1'), {
+    pending: false, error: { reason: '服务不可用', mode: 'full_scene' }
+  });
+});
+
 test("历史结构化消息按保存的原文重建，历史与实时的行标识相同", () => {
   const text = "### 权限\n\n- **查看**状态";
   const registry = targetModule.createRowIdRegistry();

@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react';
-import { Button, Icon, StatusDot } from '../../ui';
+import { Button, ControlButton, Icon, StatusDot } from '../../ui';
 import { Sheet } from './sheet/Sheet';
 import { useSheet } from './sheet/sheet-context';
 import { useWrite } from './write-runner';
@@ -71,9 +71,9 @@ export function RoleSaveActions({ count, pause, busy, invalid = false, error, on
   return <div className="config-sheet-actions config-role-save-actions">
     <div className="config-sheet-spacer" role={error ? 'alert' : undefined}>{error || (pausing ? write.pauseNotice || status : busy ? status : count > 0 ? T8.dirty(count) : '')}</div>
     <button className="config-sheet-cancel" type="button" disabled={busy || write.busy} onClick={() => requestClose()}>取消</button>
-    <button className="config-save-btn" type="button" data-on={enabled || undefined} disabled={!enabled || busy || write.busy} onClick={onSave}
+    <ControlButton className="config-save-btn" type="button" data-on={enabled || undefined} busy={busy} disabled={!enabled || write.busy || write.resuming} onClick={onSave}
       aria-label={busy || error ? undefined : count === 0 ? ARIA.saveIdle : invalid ? ARIA.saveInvalid : pause ? T29.pauseAndSave(count) : ARIA.saveCount(count)}>
-      {status}<span className="config-save-n" aria-hidden="true">{!busy && !error && enabled ? count : ''}</span>
-    </button>
+      {busy && <span className="spinner" aria-hidden="true"/>}{status}<span className="config-save-n" data-count-hidden={busy || undefined} aria-hidden="true">{!busy && !error && enabled ? count : ''}</span>
+    </ControlButton>
   </div>;
 }

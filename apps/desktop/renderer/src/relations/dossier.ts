@@ -131,7 +131,7 @@ export function reduceRelation(state: RelationUi, action: RelationAction): Relat
   }
   if (action.type === "failed") {
     if (action.roleId !== state.roleId) return state;
-    return { ...state, packet: null, error: action.error };
+    return { ...state, error: action.error };
   }
   if (action.type === "view") {
     return { ...state, view: action.view, openEventId: null, evidenceId: null };

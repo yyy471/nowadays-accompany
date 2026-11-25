@@ -33,7 +33,7 @@ iframe 使用 `sandbox="allow-scripts"`。宿主按当前元素的 `contentWindo
 | 手写 | `--nd-semantic-font-hand` | 手账/藏书票里的署名、批注、手写感短句 | WJ Hand → KaiTi → STKaiti → … |
 | 书名 | `--nd-semantic-font-title` | 藏书票、手账的书名式标题 | WJ Title → SimSun → Songti SC → serif |
 
-- 项目字体 WJ Hand / WJ Title 的 `@font-face` 目前在 `ui/relationship-journal.css`（字体文件在 `assets/relationship-journal/`），页面只引用令牌，**不得再写 `"WJ Hand"` 之类的字体名**，也不得在页面里另起 `--hand`、`--title`、`--f-mono`、`--mono`、`--sans` 这类别名（旧别名已全部移除，检查会拦截字体栈写在自定义属性里）。
+- 项目字体 WJ Hand / WJ Title 的 `@font-face` 目前在 `ui/fonts.css`（字体文件在 `assets/relationship-journal/`），页面只引用令牌，**不得再写 `"WJ Hand"` 之类的字体名**，也不得在页面里另起 `--hand`、`--title`、`--f-mono`、`--mono`、`--sans` 这类别名（旧别名已全部移除，检查会拦截字体栈写在自定义属性里）。
 - 手写/书名只用于装饰性短文本，不用于长段正文、表单和按钮。
 - 按钮与输入框的字体已由 `--nd-component-button-font` / `--nd-component-input-font` 指向正文；其余表单控件写 `font-family: inherit`。
 
@@ -157,7 +157,7 @@ iframe 使用 `sandbox="allow-scripts"`。宿主按当前元素的 `contentWindo
 - 唯一用到 `scale` 的是按钮按下（只压不弹，≈0.98）和弹窗进入（`modal-scale`）。
 - 首屏错峰：每项 35ms、最多 6 项、单项 120ms，总计不超过 300ms。
 - **同屏同时只有一处在动**：首屏错峰、「新」标记淡出、刷新高亮这类非用户触发的动效排队一个接一个；用户直接触发的交互（悬停、按下、展开、跳转）永远立即响应、不排队。常驻环境动效周期 ≥10s（`ambient`），通道忙时暂停。
-- 动画尽量只改 `opacity` 和 `transform`（及项目已有的 `translate` 属性），不动画 `width`/`height`/`top`/`left`。折叠区使用已有的 `grid-template-rows: 0fr → 1fr` 方式（`Disclosure`）。
+- 动画尽量只改 `opacity` 和 `transform`（及项目已有的 `translate` 属性），不动画 `width`/`height`/`top`/`left`。折叠区布局在开合时直接落定，`Disclosure` 仅对展开内容做短暂的位移和淡入。
 - 共享元素过渡用 View Transition（`document.startViewTransition()`），同名组使用 `page` 档 + `ease-out`；不支持或减少动效时直接切换。
 - 不要用动效传达唯一信息（关闭动效后信息必须仍然完整）；不要给图片加滤镜或随明暗切换变色。
 
@@ -179,6 +179,18 @@ iframe 使用 `sandbox="allow-scripts"`。宿主按当前元素的 `contentWindo
 - 页面位移量仍是仓库现有的 4px（`motion-detail-page-offset`），演示稿建议的 8px 尚未采纳。
 - 演示稿主张「没有 y>1 的曲线」；仓库里书签、印章等有意回弹的元件保留，收敛为唯一的 `ease-overshoot`，并限定用途。
 - 演示稿的 `--md-hairline`、`--md-skeleton-*`、`--md-flash` 未入令牌。
+
+### 6.7 阅读、媒体与配置反馈
+
+| 场景 | 使用约定 |
+| --- | --- |
+| 图片等待与解码 | 调用方持有真实请求和解码状态，用 `PhotoDevelopment` 呈现等待、显影或失败原因。可重试的失败保留原入口；重画期间可以查看已有成功图片。 |
+| 连接测试 | `ProbeFeedback` 原位显示进行状态、该次响应给出的指标或错误；重复测试重新触发成功反馈。 |
+| 声音合成与播放 | `VoiceWave` 随真实合成和播放器状态切换。文字与可操作的停止按钮使状态在减少动效时仍然明确。 |
+| 写入和刷新 | 忙碌控件拦截重复触发。配置回执纸签在顶栏下方水平居中，为主题切换、返回和关闭按钮留出空间。关闭编辑纸笺后才显示的回执由收起结束触发。常规轮询保持安静。 |
+| 控件触感 | 指针悬停、按下与键盘聚焦各有反馈。忙碌中保留焦点，减少动效时可依靠文字、焦点环与选中状态操作。 |
+| 复合搜索框 | 输入区获得键盘焦点时，焦点环沿整条搜索框的圆角绘制；清除按钮获得焦点时使用自己的焦点环。 |
+| 返回与定位 | 历史命中、动态返回卡和关系证据落位后同步恢复焦点；正常动效短暂突出目标，减少动效使用静态标记。 |
 
 ## 7. 交互状态
 
@@ -271,7 +283,7 @@ iframe 使用 `sandbox="allow-scripts"`。宿主按当前元素的 `contentWindo
 
 ### 10.3 遗留令牌
 
-`relationshipJournal.*` 里有按值命名的颜色令牌（`c000`、`cfff`、`c6b5fb5`…）和 5 个被 `relationship-journal-transition.ts` 读取的时长令牌（`duration1`、`duration180`、`duration380`、`duration900`、`duration1500`）。它们是手账页面的历史产物：不要新增同类令牌，新颜色走语义色，新时长走第 6 节的档位；这 5 个时长在 TS 与 CSS 同时迁移之前保留。
+`relationshipJournal.*` 里有按值命名的颜色令牌（`c000`、`cfff`、`c6b5fb5`…）和 5 个历史时长令牌（`duration1`、`duration180`、`duration380`、`duration900`、`duration1500`）。它们是手账页面的历史产物：不要新增同类令牌，新颜色走语义色，新时长走第 6 节的档位；这些遗留令牌暂时保留。
 
 ## 11. 样式检查
 
@@ -328,14 +340,12 @@ node apps/desktop/scripts/check-design-tokens.mjs --list-allow
 
 - **旧版琥珀调板与基础色阶**（`styles.css`、`ui/theme.css`）：与 `xiacheng` 语义色不同值，待设计确认后整体迁移。
 - **独立页面艺术色与光效**（`styles/settings-workspace.css`、`styles/relations-exlibris.css`、`styles/conversation.css`、`styles/appearance.css`、`styles/voice.css`、`ui/theme-transition.css`）：如配置书封面/丝带（`--cfg-*`）、藏书票页内独立 `data-theme`、对话页昼夜光束渐变与遮罩透明度。
-- **TS 耦合场景编排时长**（`styles/relations-exlibris.css`、`styles/conversation.css`）：与 `exlibris-theme.ts`、`Relations.tsx`、`dialogue-theme.ts` 中的 JS 定时器常量联动，需连同 TS 改造后一起迁入令牌。
-- **逐件调校的纸感投影**（`ui/relationship-journal.css`、`styles/settings-workspace.css`、`styles/relations-exlibris.css`、`ui/dock-notebook.css`、`styles.css`、`styles/conversation.css`）：负扩散与偏移逐件调校，暂未并入层级阴影令牌。
+- **逐件调校的纸感投影**（`styles/settings-workspace.css`、`styles/relations-exlibris.css`、`ui/dock-notebook.css`、`styles.css`、`styles/conversation.css`）：负扩散与偏移逐件调校，暂未并入层级阴影令牌。
 
 ## 12. 未覆盖与后续
 
 - **颜色未收敛**：旧版琥珀调板与配置书/藏书票/对话页的昼夜艺术色，建议后续逐页建「页面级语义令牌」（如 `--nd-component-config-book-cover`）再替换。
 - **纸感阴影未收敛**：手账、配置书、藏书票等逐件调校的阴影，待设计确认是否并入 `rest/hover/raised/overlay`。
-- **场景编排时长**：藏书票与对话光束时长与 TS 定时器耦合，需把 TS 常量改为读令牌后再收敛。
 - **间距、字号、`z-index`、`font-size` 字面量**暂无检查规则；历史样式里仍有大量 px 字面量，后续可按本文第 1、2、4 节增加规则。
 - **TSX 内联样式**不在检查范围内。
 - 焦点光晕 `shadow-focus-halo` 已作为令牌提供，尚未在全部控件上启用。

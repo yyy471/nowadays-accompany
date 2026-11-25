@@ -299,6 +299,7 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
           role: result.ok === true ? 'status' : 'alert',
           text: note,
           model,
+          attempt: logSeq,
         });
       }
       if (target.kind === 'saved') savedHooks.current.onSavedTest?.();
@@ -313,6 +314,7 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
           role: 'alert',
           text: note,
           model,
+          attempt: logSeq,
         });
       }
     } finally {

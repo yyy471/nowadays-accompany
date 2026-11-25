@@ -1,8 +1,9 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { ApiError } from '../../api';
-import { Button, Icon, StatusDot, type DotStatus } from '../../ui';
+import { Button, ControlButton, Icon, StatusDot, type DotStatus } from '../../ui';
 import type { ProbeNotice } from '../model/model-picker';
 import { SheetHost } from './MediaSheet';
+import { ProbeFeedback, type ProbeFeedbackNotice } from './ProbeFeedback';
 import { Sheet } from './sheet/Sheet';
 import { useSheet } from './sheet/sheet-context';
 import { useWrite } from './write-runner';
@@ -84,6 +85,7 @@ export function ServiceManagementRow({ name, enabled, busy, disabled, onChange }
   const checked = busy ? pending ?? enabled : enabled;
   return <ServiceRow label="管理" value={enabled ? '全局启用' : '全局停用'} status={enabled ? 'ok' : 'off'} statusText={enabled ? '已启用' : '已全局停用'}>
     <input type="checkbox" className="config-service-switch" role="switch" aria-label={ARIA.enableService(name)} aria-busy={busy || undefined} aria-checked={checked} checked={checked} disabled={busy || disabled} onChange={event => { setPending(event.target.checked); onChange(event.target.checked); }}/>
+    {busy && <span className="spinner config-service-switch-busy" aria-hidden="true"/>}
   </ServiceRow>;
 }
 
@@ -111,15 +113,15 @@ export function serviceProbeNotice(notice: ProbeNotice | null, count: number): P
     if (reason === notice.text) return notice;
     return { ...notice, text: notice.source === 'list' ? T16.readFail(reason) : T16.testFail(reason) };
   }
-  if (notice.source === 'list') return { ...notice, text: count ? T16.readOk(count) : '未返回模型列表，可手填模型名。' };
+  if (notice.source === 'list') return { ...notice, text: count ? T16.readOk(count) : '服务没有提供模型列表，可以手动输入模型名称。' };
   return { ...notice, text: `✓ ${notice.text}` };
 }
 
 export function ServiceProbeAction({ busy = false, disabled, notice, onClick }: {
-  busy?: boolean; disabled?: boolean; notice?: { role: string; text: string } | null; onClick: () => void;
+  busy?: boolean; disabled?: boolean; notice?: ProbeFeedbackNotice | null; onClick: () => void;
 }) {
-  return <div className="config-service-probe-action"><Button size="sm" disabled={busy || disabled} onClick={onClick}>{busy ? T16.testing : '测试连接'}</Button>
-    {notice && <p className={notice.role === 'alert' ? 'config-sheet-error' : 'config-muted'} role={notice.role === 'alert' ? 'alert' : 'status'}>{notice.text}</p>}
+  return <div className="config-service-probe-action"><Button size="sm" busy={busy} disabled={disabled} onClick={onClick}>{busy ? T16.testing : '测试连接'}</Button>
+    <ProbeFeedback busy={busy} notice={notice}/>
   </div>;
 }
 
@@ -131,7 +133,7 @@ export function ServiceDeleteSheet({ id, active = true, name, occupied, voiceCop
   useEffect(() => { if (owned) sheet.setBusy(busy); }, [owned, busy, sheet.setBusy]);
   return <Sheet idPrefix={id} enabled={active} footer={<div className="config-sheet-actions config-service-delete-actions"><span className="config-sheet-spacer"/>
     <button type="button" data-sheet-focus disabled={busy} onClick={() => sheet.requestClose()}>{T31.cancel}</button>
-    <Button variant="danger" disabled={busy || disabled} onClick={onRemove}>{busy ? T29.deleting : error ? T29.retry(T31.delete) : T31.delete}</Button>
+    <Button variant="danger" busy={busy} disabled={disabled} onClick={onRemove}>{busy ? T29.deleting : error ? T29.retry(T31.delete) : T31.delete}</Button>
   </div>}>
     <p className="config-service-delete-ask">{T31.service.ask(name)}</p>
     <p className="config-muted">{occupied.length ? T31.service.inUse(occupied.join('；')) : T31.service.unused}</p>
@@ -164,7 +166,7 @@ export function ServiceSheetActions({ count, creating, busy, invalid, blockedRea
   const reasonId = useId();
   const waiting = pauseNames.length > 0;
   const pausing = busy && waiting && write.phase === 'pause';
-  const blocked = busy || write.busy || write.resuming || !!invalid || !!blockedReason || count === 0;
+  const blocked = write.busy || write.resuming || !!invalid || !!blockedReason || count === 0;
   const showCount = !creating && count > 0 && !invalid && !busy && !error;
   const showBlockedReason = !busy && !error && !invalid && count > 0 && !!blockedReason;
   const label = busy ? pausing ? T29.pausing : T29.saving : error ? T29.retry(creating ? '添加' : '保存') : creating ? T29.add : waiting ? '暂停并保存' : '保存';
@@ -174,8 +176,8 @@ export function ServiceSheetActions({ count, creating, busy, invalid, blockedRea
     </div>
     {!busy && !error && waiting && <span className="config-service-action-dep" title={pauseNames.join('、')}>{T13(pauseNames)}</span>}
     <button className="config-sheet-cancel" type="button" disabled={busy} onClick={() => requestClose()}>取消</button>
-    <button className="config-save-btn" type="button" data-on={count > 0 && !invalid && !blockedReason || undefined} disabled={blocked} onClick={onSubmit} aria-describedby={showBlockedReason ? reasonId : undefined}
-      aria-label={!busy && !error ? creating ? invalid ? ARIA.addNeedRequired : undefined : count === 0 ? ARIA.saveIdle : invalid ? ARIA.saveInvalid : waiting ? T29.pauseAndSave(count) : ARIA.saveCount(count) : undefined}>{label}{!creating && <span className="config-save-n" data-count-hidden={!showCount || undefined} aria-hidden="true">{showCount ? ` ${count}` : ''}</span>}</button>
+    <ControlButton className="config-save-btn" type="button" data-on={count > 0 && !invalid && !blockedReason || undefined} busy={busy} disabled={blocked} onClick={onSubmit} aria-describedby={showBlockedReason ? reasonId : undefined}
+      aria-label={!busy && !error ? creating ? invalid ? ARIA.addNeedRequired : undefined : count === 0 ? ARIA.saveIdle : invalid ? ARIA.saveInvalid : waiting ? T29.pauseAndSave(count) : ARIA.saveCount(count) : undefined}>{busy && <span className="spinner" aria-hidden="true"/>}{label}{!creating && <span className="config-save-n" data-count-hidden={!showCount || undefined} aria-hidden="true">{showCount ? ` ${count}` : ''}</span>}</ControlButton>
   </div>;
 }
 

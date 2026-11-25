@@ -16,7 +16,7 @@ import {
   type TokenUsageTotalsView,
 } from '../../token-usage';
 import { AsyncBoundary, Button, Field, Select } from '../../ui';
-import { announceLive } from '../../ui/live-announcer';
+import { useWrite } from './write-runner';
 
 function maxTotalOf(rows: ReadonlyArray<{ totalTokens: string }>): string {
   let best = 0n;
@@ -52,6 +52,7 @@ function formatBreakdownMeta(totals: TokenUsageTotalsView): string {
 
 /** 全局设置「用量」分区：展示本机持久累计的 7 类 Token 消耗（只读，DL-183）。 */
 export function TokenUsageSection({ active }: { active: boolean }) {
+  const { reportResult } = useWrite();
   const [range, setRange] = useState<TokenUsageRange>('7d');
   const [roleKey, setRoleKey] = useState('');
   const [category, setCategory] = useState('');
@@ -63,12 +64,14 @@ export function TokenUsageSection({ active }: { active: boolean }) {
   const [refreshTick, setRefreshTick] = useState(0);
   const seqRef = useRef(0);
   const summaryRef = useRef<TokenUsageSummaryView | null>(null);
-  const announceNextRef = useRef(false);
+  const manualRefresh = useRef(0);
   summaryRef.current = summary;
 
   useEffect(() => {
     if (!active) return;
     const seq = ++seqRef.current;
+    const manual = manualRefresh.current === refreshTick && refreshTick > 0;
+    manualRefresh.current = 0;
     const controller = new AbortController();
     if (summaryRef.current === null) {
       setLoading(true);
@@ -88,27 +91,25 @@ export function TokenUsageSection({ active }: { active: boolean }) {
         setSummary(data);
         setLoading(false);
         setRefreshing(false);
-        if (announceNextRef.current) {
-          announceNextRef.current = false;
-          announceLive('用量统计已刷新');
-        }
+        if (manual) reportResult('用量统计已刷新');
       })
       .catch((reason) => {
         if (controller.signal.aborted || seq !== seqRef.current) return;
         setLoading(false);
         setRefreshing(false);
-        announceNextRef.current = false;
         setError(reason instanceof Error ? reason.message : String(reason));
       });
     return () => {
       controller.abort();
     };
-  }, [active, range, roleKey, category, modelKey, refreshTick]);
+  }, [active, range, roleKey, category, modelKey, refreshTick, reportResult]);
 
   const triggerRefresh = useCallback(() => {
-    announceNextRef.current = true;
-    setRefreshTick((v) => v + 1);
-  }, []);
+    if (manualRefresh.current) return;
+    manualRefresh.current = refreshTick + 1;
+    setRefreshing(true);
+    setRefreshTick(refreshTick + 1);
+  }, [refreshTick]);
 
   const hasFilters = Boolean(roleKey || category || modelKey);
   const clearFilters = () => {
@@ -248,12 +249,12 @@ export function TokenUsageSection({ active }: { active: boolean }) {
         error={error}
         hasData={summary !== null}
         onRetry={triggerRefresh}
-        loadingText="正在汇总 Token 消耗…"
+        loadingText="正在读取用量…"
       >
         {summary && (
           <>
             <p className="nd-usage-caption">
-              {rangeDescription} · 按本机自然日统计 · 删除角色或模型服务后仍保留历史消耗
+              {rangeDescription} · 按本机日期统计，角色和模型服务删除后仍保留用量记录。
             </p>
 
             <section className="nd-usage-kpis" aria-label="Token 消耗总览">
@@ -316,13 +317,13 @@ export function TokenUsageSection({ active }: { active: boolean }) {
             </section>
 
             {summary.totals.callCount === '0' ? (
-              <p className="nd-usage-empty">当前时间范围或筛选条件下暂无模型调用记录。</p>
+              <p className="nd-usage-empty">这段时间内没有符合条件的模型调用记录。</p>
             ) : (
               <>
                 <section className="nd-usage-section" aria-label="每日趋势">
                   <h3>每日趋势</h3>
                   {summary.daily.length === 0 ? (
-                    <p className="nd-usage-empty">暂无按日数据。</p>
+                    <p className="nd-usage-empty">还没有每日用量记录。</p>
                   ) : (
                     <ul className="nd-usage-daily-list">
                       {summary.daily.map((day) => {

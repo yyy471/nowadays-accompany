@@ -1,0 +1,21 @@
+/* 通用相纸反馈：颜色继承语义令牌，供其他生图预览复用。 */
+.photo-development { position: relative; isolation: isolate; overflow: hidden; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; min-height: 62px; padding: 12px; border: 1px solid var(--nd-semantic-color-line-decorative); border-radius: var(--nd-semantic-radius-field); background: var(--nd-semantic-color-surface); color: var(--nd-semantic-color-text); font-size: 13px; line-height: 1.5; }
+.photo-development button { color: var(--nd-semantic-color-entry); text-decoration: underline; text-underline-offset: 3px; }
+.photo-development-light { position: absolute; inset: -60%; z-index: -1; pointer-events: none; background: linear-gradient(115deg, transparent 42%, color-mix(in srgb, var(--nd-semantic-color-entry) 12%, transparent) 50%, transparent 58%); animation: photo-development-sweep calc(var(--nd-semantic-motion-linger) * 4) linear infinite; }
+.photo-development-reveal { position: absolute; inset: 0; z-index: 4; pointer-events: none; background: color-mix(in srgb, var(--nd-semantic-color-surface) 24%, transparent); backdrop-filter: blur(1px) saturate(.8); animation: photo-development-reveal var(--nd-semantic-motion-page) var(--nd-semantic-motion-ease-out) both; }
+.dialogue-scene-feedback { position: absolute; z-index: 5; left: 12px; right: 12px; top: 50%; transform: translateY(-50%); }
+.photo-preview-frame { position: relative; isolation: isolate; overflow: hidden; border-radius: var(--nd-semantic-radius-action); }
+.photo-preview-frame[data-photo-state]:not([data-photo-state="developed"]) > img { position: absolute; visibility: hidden; }
+.photo-preview-frame > img { display: block; }
+.photo-preview-frame[data-photo-state] > .photo-development { align-self: stretch; width: 100%; min-height: 0; padding: 6px; font-size: 11px; text-align: center; overflow-wrap: anywhere; }
+.config-outfit-upload { margin-block-start: var(--nd-semantic-space-field-group); }
+.config-outfit-hero-thumb[data-photo-state="failed"] { aspect-ratio: auto; min-height: 114px; }
+.nd-import-thumb[data-photo-state="failed"] { width: 96px; height: auto; min-height: 72px; }
+@keyframes photo-development-sweep { from { transform: translateX(-35%); } to { transform: translateX(35%); } }
+@keyframes photo-development-reveal { from { opacity: 1; } to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion="full"]) .photo-development-light { animation: none; }
+  html:not([data-motion="full"]) .photo-development-reveal { display: none; }
+}
+[data-motion="reduced"] .photo-development-light, [data-motion="reduced"] .photo-development-reveal { animation: none; }
+[data-motion="reduced"] .photo-development-reveal { display: none; }

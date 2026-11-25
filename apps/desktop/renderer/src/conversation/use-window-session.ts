@@ -17,6 +17,7 @@ import type { PerformanceSnapshot, SceneLayerMode } from './performance';
 import { backendBaseUrl } from './backend-base';
 import { applySegmentAnnotations, createRowIdRegistry, groupSegments, isSubmissionConfirmed, lastRowOf, mergeSegments, messageStatusOf, newerSceneTask, nextMessageSequence, reconcileFinalSegments, rowsForMessage, sceneView } from './window-model';
 import { createTypingState } from './typing-state';
+import type { SceneRequestError } from './window-model';
 
 export type ConnectionState = 'connecting' | 'open' | 'retrying' | 'closed';
 export type SessionEventReason = 'load' | 'send' | 'retryReply' | 'segment' | 'ready' | 'annotation' | 'terminal' | 'scene' | 'error' | 'connection' | 'history';
@@ -34,6 +35,7 @@ export interface ConversationSnapshot extends PerformanceSnapshot {
   roleId: string;
   sceneImagesAvailable: boolean;
   sceneRequests: ReadonlySet<string>;
+  sceneRequestErrors: ReadonlyMap<string, SceneRequestError>;
   connection: ConnectionState;
   loading: boolean;
   loadError: string;
@@ -47,6 +49,8 @@ export interface ConversationSnapshot extends PerformanceSnapshot {
   historyError: string;
   /** 已收下但未安排回复的原因；null 表示正常排队或正在生成。 */
   waitReason: string | null;
+  /** 本窗口主动提交的发信或重试，确认前不显示已送达。 */
+  submission: { kind: SubmissionKind; awaitingReceipt: boolean } | null;
   failedReply: FailedReplyView | null;
   /** 最近一次发送因角色停止被拒绝：消息未入库，恢复后由用户再提交。 */
   roleRejected: boolean;
@@ -54,7 +58,10 @@ export interface ConversationSnapshot extends PerformanceSnapshot {
   confirmedDraft: { content: string; sequence: number } | null;
 }
 
+type SubmissionKind = 'send' | 'retry';
+
 interface PendingReply {
+  submissionKind: SubmissionKind | null;
   executionId: string | null;
   replyMessageId: string | null;
   replySequence: number | null;
@@ -82,6 +89,7 @@ interface SessionState {
   pending: PendingReply | null;
   scenes: Map<string, SceneTaskView>;
   sceneRequests: Set<string>;
+  sceneRequestErrors: Map<string, SceneRequestError>;
   sceneImagesAvailable: boolean;
   current: PerfRow | null;
   error: string;
@@ -124,6 +132,7 @@ function emptyState(): SessionState {
     pending: null,
     scenes: new Map(),
     sceneRequests: new Set(),
+    sceneRequestErrors: new Map(),
     sceneImagesAvailable: false,
     current: null,
     error: '',
@@ -148,8 +157,9 @@ function describeError(error: unknown): string {
   return String(error);
 }
 
-function pendingSubmission(): PendingReply {
+function pendingSubmission(submissionKind: SubmissionKind | null = null): PendingReply {
   return {
+    submissionKind,
     executionId: null, replyMessageId: null, replySequence: null, replyCreatedAt: null,
     submittedMessageId: null, messageRecord: null, segments: [], shown: 0, terminal: null,
     error: '', awaitingExecution: true, startedAt: Date.now(), awaitingSubmission: true, bufferedEvents: []
@@ -283,6 +293,7 @@ export function useWindowSession({
       scenes,
       sceneImagesAvailable: current.sceneImagesAvailable,
       sceneRequests: new Set(current.sceneRequests),
+      sceneRequestErrors: new Map(current.sceneRequestErrors),
       availableRounds,
       upcoming,
       awaiting: current.pending !== null && current.pending.segments.length === 0,
@@ -299,6 +310,10 @@ export function useWindowSession({
       historyComplete: current.historyBefore === null,
       historyError: current.historyError,
       waitReason: current.wait?.reason ?? null,
+      submission: current.pending?.submissionKind ? {
+        kind: current.pending.submissionKind,
+        awaitingReceipt: current.pending.awaitingSubmission,
+      } : null,
       failedReply: current.failedReply,
       roleRejected: current.roleRejected,
       confirmedDraft: current.confirmedDraft
@@ -420,6 +435,7 @@ export function useWindowSession({
       const segments = grouped.get(message.messageId) ?? [];
       if (activeReply !== null && activeReply.messageId === message.messageId) {
         current.pending = {
+          submissionKind: null,
           executionId: activeReply.executionId,
           replyMessageId: message.messageId,
           replySequence: message.sequence,
@@ -780,7 +796,7 @@ export function useWindowSession({
     if (!targetRole || !targetWindow || (!content && !failed) || state.current.pending !== null) return false;
     state.current.error = '';
     state.current.wait = null;
-    const pending = pendingSubmission();
+    const pending = pendingSubmission(failed ? 'retry' : 'send');
     state.current.pending = pending;
     emit({ reason: failed ? 'retryReply' : 'send' });
     const submissionKey = JSON.stringify([targetRole, targetWindow]);
@@ -925,6 +941,7 @@ export function useWindowSession({
     if (requests.has(messageId) || [...state.current.scenes.values()].some(task => task.messageId === messageId
       && ['queued', 'planning', 'generating'].includes(task.status))) return;
     requests.add(messageId);
+    state.current.sceneRequestErrors.delete(messageId);
     emit({ reason: 'ready' });
     const generation = state.current.generation;
     void api<{ task: SceneTaskView; duplicate: boolean }>(`/v1/roles/${encodeURIComponent(targetRole)}/windows/${encodeURIComponent(targetWindow)}/messages/${encodeURIComponent(messageId)}/scene-images`, {
@@ -936,6 +953,7 @@ export function useWindowSession({
       emit({ reason: 'scene' });
     }).catch(error => {
       if (state.current.generation !== generation || roleRef.current !== targetRole || state.current.windowId !== targetWindow) return;
+      state.current.sceneRequestErrors.set(messageId, { reason: describeError(error), mode });
       emit({ reason: 'error', message: describeError(error) });
     }).finally(() => {
       requests.delete(messageId);

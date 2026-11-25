@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../../api';
-import { Field, Input, Select, announceLive } from '../../ui';
+import { Field, Input, Select } from '../../ui';
 import type { RoleListItem } from '../../types';
 import { MediaGroup } from '../config/MediaSheet';
+import type { ProbeFeedbackNotice } from '../config/ProbeFeedback';
 import {
   ServiceDeleteEntry, ServiceDeleteSheet, ServiceHeading, ServiceManagementRow, ServiceProbeAction,
   ServiceRow, ServiceSheet, ServiceSheetActions, ServiceUseRow, serviceMaintenanceOf, serviceWriteFailure, useServiceSheetExit,
@@ -148,11 +149,10 @@ function VoiceServiceEditor({ service, trigger, occupancy, roleName = id => id, 
         onUpdated?.(service.serviceId, result.service);
         if (nextStatus !== undefined) onTested?.(nextStatus);
         setDraft(toDraft(result.service));
-        sheet.closeNow();
+        sheet.closeNow(undefined, `${result.service.name} 已保存`);
       } else {
-        sheet.closeNow(() => onCreated?.(result.service, nextStatus));
+        sheet.closeNow(() => onCreated?.(result.service, nextStatus), `${result.service.name} 已添加`);
       }
-      announceLive(`${result.service.name} ${service ? '已保存' : '已添加'}`);
     } catch (reason) {
       write.recordPaused(serviceMaintenanceOf(reason).paused);
       setError(serviceWriteFailure(reason, service ? '保存' : '添加', voiceErrorText(reason), roleName));
@@ -175,7 +175,7 @@ function VoiceServiceEditor({ service, trigger, occupancy, roleName = id => id, 
         onTested?.(null);
       }
       onUpdated?.(service.serviceId, result.service);
-      announceLive(`${service.name} ${enabled ? '已全局启用' : '已全局停用'}`);
+      write.reportResult(`${service.name} ${enabled ? '已全局启用' : '已全局停用'}`);
       feedback();
     } catch (reason) {
       write.recordPaused(serviceMaintenanceOf(reason).paused);
@@ -193,7 +193,6 @@ function VoiceServiceEditor({ service, trigger, occupancy, roleName = id => id, 
       await api(`/v1/voice-services/${encodeURIComponent(service.serviceId)}`, { method: 'DELETE' });
       clearVoiceProbeCache(savedKey);
       sheet.closeNow(() => onRemoved?.(service.serviceId));
-      announceLive(`已删除语音服务「${service.name}」`);
     } catch (reason) { setError(T32.saveFail('删除', voiceErrorText(reason))); }
     finally { setOperation(null); finish(); }
   };
@@ -207,8 +206,9 @@ function VoiceServiceEditor({ service, trigger, occupancy, roleName = id => id, 
   const names = (occupancy?.names ?? []).map(name => `${name} · 语音`);
   const engines = Object.keys(probe.result?.engines ?? {});
   const engineSummary = engines.length ? `${engines.length} 个引擎` : '服务未提供引擎列表';
-  const probeNotice = probeNeedsUrl ? { role: 'alert', text: T16.needUrl } : probe.notice && probeRequested ? {
+  const probeNotice: ProbeFeedbackNotice | null = probeNeedsUrl ? { role: 'alert', text: T16.needUrl } : probe.notice && probeRequested ? {
     role: probe.notice.kind,
+    attempt: probe.notice.attempt,
     text: probe.notice.kind === 'alert' ? T16.testFail(probe.notice.text)
       : `${probe.notice.elapsedMs === undefined ? '连接正常' : T16.testOk(probe.notice.elapsedMs)} · ${engineSummary}`,
   } : null;
@@ -222,7 +222,7 @@ function VoiceServiceEditor({ service, trigger, occupancy, roleName = id => id, 
       <ServiceRow label="引擎" value={service.config.defaultEngine || '由服务决定'} keys={savedEngines ? [`${Object.keys(savedEngines).length} 个引擎`] : []}
         status={tested === false ? 'error' : savedEngines || tested ? 'ok' : 'off'}
         statusText={tested === false ? '连接失败' : savedEngines ? '已探测' : tested ? '连接正常' : '尚未探测'} onOpen={anchor => open('引擎', anchor)}/>
-      <ServiceManagementRow name={service.name} enabled={service.enabled} busy={busy} onChange={enabled => void toggle(enabled)}/>
+      <ServiceManagementRow name={service.name} enabled={service.enabled} busy={operation === 'toggle'} disabled={busy || write.resuming} onChange={enabled => void toggle(enabled)}/>
       <ServiceUseRow entries={names} loading={occupancy?.loading} error={occupancy?.error}/>
       <ServiceDeleteEntry id={deleteId} kind="voice" disabled={busy || !!occupancy?.loading || !!occupancy?.error} activeNames={affected.map(roleName)}/>
       <ServiceDeleteSheet id={deleteId} name={service.name} occupied={names} busy={operation === 'delete'} disabled={affected.length > 0}

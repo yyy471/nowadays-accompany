@@ -1,5 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { Button, ControlButton, Icon, Modal, StatusDot, UiThemeScope, readMotionTime, readMotionValue, useMotionPolicy, type DotStatus } from '../ui';
+import { flushSync } from 'react-dom';
+import { Button, ControlButton, Icon, IconButton, Modal, StatusDot, UiThemeScope, readMotionPx, readMotionTime, readMotionValue, useMotionPolicy, type DotStatus } from '../ui';
+import { ConfigNotice } from '../components/config/ConfigNotice';
 import { ConfigThemeTransition } from '../ui/config-theme-transition';
 import { useThemePreset } from '../ui/presets';
 import type { RoleListItem } from '../types';
@@ -21,7 +23,10 @@ type FeedEvent = {
   roleActivity?: RoleActivity;
 };
 type Range = 'today' | 'week' | 'all';
-type LoadState<T> = { data: T | null; error: string; loading: boolean; readStarted: number };
+type LoadState<T> = { data: T | null; error: string; initialFailure?: boolean; loading: boolean; readStarted: number };
+type RefreshResult = { id: number; ok: boolean };
+type RefreshRequest = { feed?: number; upcoming?: number };
+type RefreshNotice = { message: string; tone: 'success' | 'warning' | 'error' };
 type Status = { status: DotStatus; label: string; bare?: boolean; faint?: boolean; pulse?: boolean };
 type ChatTarget = { roleId: string; windowId: string; messageId?: string; eventId: string };
 
@@ -43,29 +48,41 @@ const errorDescriptions: Record<string, string> = {
 function useFeedRead<T>(roles: RoleListItem[], loader: (roles: RoleListItem[], signal: AbortSignal) => Promise<T>, activePage: boolean) {
   const [state, setState] = useState<LoadState<T>>({ data: null, error: '', loading: true, readStarted: 0 });
   const [retry, setRetry] = useState(0);
+  const [refreshResult, setRefreshResult] = useState<RefreshResult | null>(null);
+  const retrySeq = useRef(0);
+  const pendingRetry = useRef(0);
   useEffect(() => {
-    if (!activePage) return;
+    if (!activePage) { pendingRetry.current = 0; return; }
     let active = true;
     let running = false;
     const controller = new AbortController();
-    const read = async () => {
-      if (running) return;
+    const retryToken = pendingRetry.current === retry ? retry : 0;
+    const isCurrent = () => active && retrySeq.current === retry;
+    const read = async (entry = false) => {
+      if (running || !isCurrent()) return;
       running = true;
       const readStarted = performance.now();
+      let ok = false;
       try {
         const data = await loader(roles, controller.signal);
-        if (active) setState({ data, error: '', loading: false, readStarted });
+        ok = true;
+        if (isCurrent()) setState({ data, error: '', loading: false, readStarted });
       } catch (error) {
-        if (active && !controller.signal.aborted) {
+        if (isCurrent()) {
           setState(previous => ({
-            ...previous, loading: false, error: error instanceof Error ? error.message : String(error),
+            ...previous, loading: false, initialFailure: entry && previous.loading && !retryToken,
+            error: error instanceof Error ? error.message : String(error),
           }));
         }
       } finally {
         running = false;
+        if (isCurrent() && retryToken && pendingRetry.current === retryToken) {
+          pendingRetry.current = 0;
+          setRefreshResult({ id: retryToken, ok });
+        }
       }
     };
-    void read();
+    void read(true);
     const timer = window.setInterval(() => { if (!document.hidden) void read(); }, 15000);
     const onVisible = () => { if (!document.hidden) void read(); };
     document.addEventListener('visibilitychange', onVisible);
@@ -78,9 +95,12 @@ function useFeedRead<T>(roles: RoleListItem[], loader: (roles: RoleListItem[], s
   }, [roles, loader, retry, activePage]);
   return {
     ...state,
+    refreshResult,
     retry: () => {
-      setState(previous => ({ ...previous, loading: !previous.data, error: '' }));
-      setRetry(value => value + 1);
+      const token = ++retrySeq.current;
+      pendingRetry.current = token;
+      setRetry(token);
+      return token;
     },
   };
 }
@@ -171,29 +191,20 @@ function Intent({ children }: { children: ReactNode }) {
   const text = useRef<HTMLParagraphElement>(null);
   const [expanded, setExpanded] = useState(false);
   const [overflow, setOverflow] = useState(false);
-  const previousHeight = useRef<number | null>(null);
-  const animation = useRef<Animation | null>(null);
+  const requestedChange = useRef(false);
   const { reduced } = useMotionPolicy();
   useLayoutEffect(() => {
     const element = text.current;
-    const from = previousHeight.current;
-    previousHeight.current = null;
-    if (!element || from === null) return;
-    const to = element.getBoundingClientRect().height;
-    const duration = reduced ? 0 : readMotionTime(element, expanded ? '--nd-semantic-motion-component' : '--nd-semantic-motion-component-exit', expanded ? 220 : 160);
-    if (!duration || Math.abs(from - to) < 1) return;
-    // 收起时动画期间保留全文，结束后再恢复截断。
-    if (!expanded) element.style.webkitLineClamp = 'unset';
-    const current = element.animate([{ height: `${from}px` }, { height: `${to}px` }], {
+    const changed = requestedChange.current;
+    requestedChange.current = false;
+    if (!element || !changed || reduced) return;
+    const duration = readMotionTime(element, expanded ? '--nd-semantic-motion-component' : '--nd-semantic-motion-component-exit', expanded ? 220 : 160);
+    const offset = readMotionPx(element, '--nd-semantic-motion-detail-page-offset', 4);
+    const current = element.animate([{ opacity: .55, transform: `translateY(${expanded ? -offset : offset}px)` }, { opacity: 1, transform: 'none' }], {
       duration, easing: readMotionValue(element, expanded ? '--nd-semantic-motion-ease-out' : '--nd-semantic-motion-ease-in', 'ease'),
     });
-    animation.current = current;
-    const finish = () => { if (animation.current === current) { element.style.webkitLineClamp = ''; animation.current = null; } };
-    current.onfinish = finish;
-    current.oncancel = finish;
+    return () => current.cancel();
   }, [expanded, reduced]);
-  useEffect(() => () => { animation.current?.cancel(); }, []);
-  useEffect(() => { if (reduced) animation.current?.cancel(); }, [reduced]);
   useLayoutEffect(() => {
     const element = text.current;
     if (!element || expanded) return;
@@ -207,8 +218,7 @@ function Intent({ children }: { children: ReactNode }) {
   }, [children, expanded]);
   return <div className="feed-intent"><p id={id} ref={text} data-collapsed={!expanded || undefined}>{children}</p>
     {(overflow || expanded) && <ControlButton className="feed-expand" aria-controls={id} aria-expanded={expanded} onClick={() => {
-      previousHeight.current = text.current?.getBoundingClientRect().height ?? null;
-      animation.current?.cancel();
+      requestedChange.current = true;
       setExpanded(value => !value);
     }}>{expanded ? '收起' : '展开'}<Icon name="chevron" size={12}/></ControlButton>}
   </div>;
@@ -293,8 +303,8 @@ function Upcoming({ wakes, roles, states, portraits, onOpen }: { wakes: Wake[]; 
   })}</ul>;
 }
 
-export function FeedPage({ active, roles, rolesLoading, roleError, onRetryRoles, onOpenChat }: {
-  active: boolean; roles: RoleListItem[]; rolesLoading: boolean; roleError: string; onRetryRoles: () => void; onOpenChat: (target: ChatTarget) => void;
+export function FeedPage({ active, roles, rolesLoading, roleError, retryingRoles, onRetryRoles, onOpenChat }: {
+  active: boolean; roles: RoleListItem[]; rolesLoading: boolean; roleError: string; retryingRoles?: boolean; onRetryRoles: () => void; onOpenChat: (target: ChatTarget) => void;
 }) {
   const { preset } = useThemePreset();
   const { reduced } = useMotionPolicy();
@@ -308,6 +318,9 @@ export function FeedPage({ active, roles, rolesLoading, roleError, onRetryRoles,
   const [sheetOpen, setSheetOpen] = useState(false);
   const [source, setSource] = useState<HTMLElement | null>(null);
   const [announcement, setAnnouncement] = useState('');
+  const [refreshRequest, setRefreshRequest] = useState<RefreshRequest | null>(null);
+  const [refreshNotice, setRefreshNotice] = useState<RefreshNotice | null>(null);
+  const [locatedEvent, setLocatedEvent] = useState<string | null>(null);
   const [seen, setSeen] = useState<Set<string>>(() => new Set());
   const [fading, setFading] = useState<Set<string>>(() => new Set());
   const [now, setNow] = useState(Date.now());
@@ -319,37 +332,37 @@ export function FeedPage({ active, roles, rolesLoading, roleError, onRetryRoles,
   const listRef = useRef<HTMLDivElement>(null);
   const nextRef = useRef<HTMLDivElement>(null);
   const [displayedFilter, setDisplayedFilter] = useState({ roleId, type, range });
-  const firstFilter = useRef(true);
+  const filterRef = useRef(displayedFilter);
+  filterRef.current = displayedFilter;
   useEffect(() => {
-    if (firstFilter.current) { firstFilter.current = false; return; }
-    const targets = [listRef.current?.querySelector<HTMLElement>('.feed-filter-results'), nextRef.current].filter((item): item is HTMLElement => !!item);
+    const visible = filterRef.current;
+    if (roleId === visible.roleId && type === visible.type && range === visible.range) return;
+    const next = { roleId, type, range };
+    const targets = () => [listRef.current?.querySelector<HTMLElement>('.feed-filter-results'), nextRef.current]
+      .filter((item): item is HTMLElement => !!item);
+    const previous = targets();
+    if (reduced || !previous.length) { setDisplayedFilter(next); return; }
     let cancelled = false;
-    let frame = 0;
-    const animations: Animation[] = [];
-    const commit = () => {
+    const departures = previous.map(element => element.animate([{ opacity: 1 }, { opacity: 0 }], {
+      duration: readMotionTime(element, '--nd-semantic-motion-micro-exit', 90),
+      easing: readMotionValue(element, '--nd-semantic-motion-ease-in', 'ease-in'), fill: 'forwards',
+    }));
+    let arrivals: Animation[] = [];
+    void Promise.allSettled(departures.map(item => item.finished)).then(() => {
       if (cancelled) return;
-      setDisplayedFilter({ roleId, type, range });
-      frame = requestAnimationFrame(() => {
-        if (cancelled || reduced) return;
-        targets.forEach(element => animations.push(element.animate(
-          [{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }],
-          { duration: readMotionTime(element, '--nd-semantic-motion-component', 220), easing: readMotionValue(element, '--nd-semantic-motion-ease-out', 'ease-out') },
-        )));
+      // 新列表与淡入起点同一帧提交，旧列表不会在离场后闪回。
+      flushSync(() => setDisplayedFilter(next));
+      if (cancelled) return;
+      arrivals = targets().map(element => {
+        const offset = readMotionPx(element, '--nd-semantic-motion-detail-page-offset', 4);
+        return element.animate([{ opacity: 0, transform: `translateY(${offset}px)` }, { opacity: 1, transform: 'none' }], {
+          duration: readMotionTime(element, '--nd-semantic-motion-component', 220),
+          easing: readMotionValue(element, '--nd-semantic-motion-ease-out', 'ease-out'), fill: 'backwards',
+        });
       });
-    };
-    if (reduced || !targets.length) commit();
-    else {
-      targets.forEach(element => animations.push(element.animate([{ opacity: 1 }, { opacity: 0 }], {
-        duration: readMotionTime(element, '--nd-semantic-motion-micro-exit', 90),
-        easing: readMotionValue(element, '--nd-semantic-motion-ease-in', 'ease-in'), fill: 'forwards',
-      })));
-      void Promise.allSettled(animations.map(item => item.finished)).then(() => {
-        if (cancelled) return;
-        animations.forEach(item => item.cancel());
-        commit();
-      });
-    }
-    return () => { cancelled = true; cancelAnimationFrame(frame); animations.forEach(item => item.cancel()); };
+      departures.forEach(item => item.cancel());
+    });
+    return () => { cancelled = true; [...departures, ...arrivals].forEach(item => item.cancel()); };
   }, [roleId, type, range, reduced]);
   useEffect(() => {
     if (since.current !== null) return;
@@ -370,17 +383,59 @@ export function FeedPage({ active, roles, rolesLoading, roleError, onRetryRoles,
     return () => window.clearInterval(timer);
   }, []);
   useEffect(() => { if (roleId !== 'all' && !roles.some(role => role.roleId === roleId)) setRoleId('all'); }, [roles, roleId]);
-  useEffect(() => {
-    if (!active || !returnToEvent.current) return;
+  useLayoutEffect(() => {
+    if (!active) { setLocatedEvent(null); return; }
+    if (!returnToEvent.current) return;
     const id = returnToEvent.current;
     returnToEvent.current = null;
-    const frame = requestAnimationFrame(() => {
-      const trigger = [...(listRef.current?.querySelectorAll<HTMLButtonElement>('[data-feed-chat]') ?? [])]
-        .find(button => button.dataset.feedChat === id);
-      (trigger ?? document.getElementById('feed-title'))?.focus({ preventScroll: true });
-    });
-    return () => cancelAnimationFrame(frame);
+    const root = listRef.current;
+    const card = [...(root?.querySelectorAll<HTMLElement>('[data-feed-event]') ?? [])]
+      .find(element => element.dataset.feedEvent === id);
+    if (!root || !card) {
+      document.getElementById('feed-title')?.focus({ preventScroll: true });
+      return;
+    }
+    const chatTrigger = card.querySelector<HTMLButtonElement>('button[data-feed-chat]:enabled');
+    const focusTarget = chatTrigger ?? card.querySelector<HTMLButtonElement>('.feed-detail');
+    const scrollTarget = card.offsetHeight < root.clientHeight ? card : focusTarget ?? card;
+    scrollTarget.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
+    focusTarget?.focus({ preventScroll: true });
+    setLocatedEvent(id);
   }, [active]);
+  useEffect(() => {
+    if (!canRead) {
+      setRefreshRequest(null);
+      setRefreshNotice(null);
+      return;
+    }
+    if (!refreshRequest) return;
+    const feedResult = feed.refreshResult;
+    const upcomingResult = upcoming.refreshResult;
+    if (refreshRequest.feed && feedResult?.id !== refreshRequest.feed) return;
+    if (refreshRequest.upcoming && upcomingResult?.id !== refreshRequest.upcoming) return;
+    const feedOk = refreshRequest.feed ? feedResult?.ok : null;
+    const upcomingOk = refreshRequest.upcoming ? upcomingResult?.ok : null;
+    let notice: RefreshNotice = { message: '动态与安排已刷新', tone: 'success' };
+    if (feedOk === false && upcomingOk === false) notice = { message: '动态与安排暂时无法刷新', tone: 'error' };
+    else if (feedOk === false) notice = upcomingOk
+      ? { message: '安排已刷新，动态暂时无法刷新', tone: 'warning' }
+      : { message: '动态暂时无法刷新', tone: 'error' };
+    else if (upcomingOk === false) notice = feedOk
+      ? { message: '动态已刷新，安排暂时无法刷新', tone: 'warning' }
+      : { message: '安排暂时无法刷新', tone: 'error' };
+    else if (upcomingOk === null) notice = { message: '动态已刷新', tone: 'success' };
+    else if (feedOk === null) notice = { message: '安排已刷新', tone: 'success' };
+    setRefreshNotice(notice);
+    setRefreshRequest(null);
+  }, [canRead, feed.refreshResult, upcoming.refreshResult, refreshRequest]);
+  const refresh = (scope?: keyof RefreshRequest) => {
+    if (!canRead || refreshRequest) return;
+    setRefreshNotice(null);
+    setRefreshRequest({
+      feed: scope !== 'upcoming' ? feed.retry() : undefined,
+      upcoming: scope !== 'feed' ? upcoming.retry() : undefined,
+    });
+  };
   const events = useMemo(() => feed.data ? eventList(feed.data) : [], [feed.data]);
   const selected = useMemo(() => {
     if (!selectedSnapshot || (!selectedSnapshot.exchange && !roles.some(role => role.roleId === selectedSnapshot.roleId))) return null;
@@ -479,9 +534,11 @@ export function FeedPage({ active, roles, rolesLoading, roleError, onRetryRoles,
     } else onOpenChat(target);
   };
   const nextContent = <>
-    {(roleError || upcoming.error) && <div className="feed-error" role="alert">
+    {(roleError || upcoming.error) && <div className="feed-error" role={roleError || upcoming.initialFailure ? 'alert' : undefined}>
       读取失败：{roleError || upcoming.error}
-      <Button size="sm" onClick={roleError ? onRetryRoles : upcoming.retry}>重试</Button>
+      <Button size="sm" busy={roleError ? retryingRoles : refreshRequest?.upcoming !== undefined}
+        aria-disabled={!roleError && refreshRequest !== null && refreshRequest.upcoming === undefined ? true : undefined}
+        onClick={roleError ? onRetryRoles : () => refresh('upcoming')}>重试</Button>
     </div>}
     {!roleError && upcoming.loading && !upcoming.data
       ? <div className="feed-skeleton" aria-busy="true">正在读取安排…</div>
@@ -532,7 +589,7 @@ export function FeedPage({ active, roles, rolesLoading, roleError, onRetryRoles,
     }
   }
 
-  return <UiThemeScope theme="xiacheng" className="feed-scope">
+  return <UiThemeScope theme="xiacheng" motion={reduced ? 'reduced' : 'full'} className="feed-scope">
     {active && <ConfigThemeTransition/>}
     <div className="feed-book">
       <div className="feed-surface" aria-hidden="true"><div/><div/><div/></div>
@@ -548,6 +605,7 @@ export function FeedPage({ active, roles, rolesLoading, roleError, onRetryRoles,
               <div className="feed-segment" role="group" aria-label="时间范围">
                 {ranges.map(([value, label]) => <ControlButton key={value} aria-pressed={range === value} onClick={() => setRange(value)}>{label}</ControlButton>)}
               </div>
+              <IconButton className="feed-refresh" icon="refresh" label="刷新动态" disabled={!canRead} busy={refreshRequest !== null} onClick={() => refresh()}/>
             </div>
             <div className="feed-filters">
               <div className="feed-roles" role="group" aria-label="角色筛选">
@@ -571,9 +629,11 @@ export function FeedPage({ active, roles, rolesLoading, roleError, onRetryRoles,
         <div className="feed-scroll" ref={listRef} tabIndex={-1}
           aria-busy={rolesLoading || (!roleError && feed.loading && !currentData) || undefined} onKeyDown={moveTimelineFocus}>
           <div className="feed-filter-results"><section className="feed-next-strip" aria-label="接下来"><h2>接下来</h2>{nextContent}</section>
-          {(roleError || feed.error) && <div className="feed-error" role="alert">
+          {(roleError || feed.error) && <div className="feed-error" role={roleError || feed.initialFailure ? 'alert' : undefined}>
             读取失败：{roleError || feed.error}
-            <Button size="sm" onClick={roleError ? onRetryRoles : feed.retry}>重试</Button>
+            <Button size="sm" busy={roleError ? retryingRoles : refreshRequest?.feed !== undefined}
+              aria-disabled={!roleError && refreshRequest !== null && refreshRequest.feed === undefined ? true : undefined}
+              onClick={roleError ? onRetryRoles : () => refresh('feed')}>重试</Button>
           </div>}
           {(rolesLoading || (!roleError && feed.loading && !currentData)) && <div className="feed-skeleton" role="status">
             正在读取动态…<i/><i/><i/>
@@ -598,7 +658,7 @@ export function FeedPage({ active, roles, rolesLoading, roleError, onRetryRoles,
               <time dateTime={event.at}>{timeLabel(event.at)}</time>
               <Face role={role} image={portraits[event.roleId]}/>
               <div className={`feed-slip${event.type === 'share' ? ' feed-letter' : ''}${event.type === 'system' ? ' feed-system' : ''}`}
-                data-feed-new={isNew ? event.id : undefined} onClick={click => {
+                data-feed-event={event.id} data-feed-new={isNew ? event.id : undefined} onClick={click => {
                   if ((click.target as Element).closest('button')) return;
                   const button = click.currentTarget.querySelector<HTMLButtonElement>('.feed-detail');
                   if (button) open(event, button);
@@ -619,6 +679,7 @@ export function FeedPage({ active, roles, rolesLoading, roleError, onRetryRoles,
                   <Button size="sm" icon="messages" data-feed-chat={event.id} disabled={event.type === 'share' && !chatTarget(event)} onClick={() => goChat(event)}>打开对话</Button>
                   {event.type === 'share' && <span className="feed-stamp" aria-hidden="true"><Icon name="messages" size={14}/></span>}
                 </div>}
+                {locatedEvent === event.id && <span className="feed-return-ink" aria-hidden="true"/>}
               </div>
             </li>;
           })}</ol>
@@ -648,6 +709,8 @@ export function FeedPage({ active, roles, rolesLoading, roleError, onRetryRoles,
         <Button variant="primary" size="sm" disabled={selected.type === 'share' && !chatTarget(selected)} onClick={() => goChat(selected, true)}>打开对话</Button>
       </div>}
     </Modal>
+    <ConfigNotice message={refreshNotice?.message ?? ''} tone={refreshNotice?.tone} onDismiss={() => setRefreshNotice(null)}/>
+    <div className="ui-live" role="status" aria-atomic="true">{refreshNotice?.message}</div>
     <div className="ui-live" aria-live="polite" aria-atomic="true">{announcement}</div>
   </UiThemeScope>;
 }

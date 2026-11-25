@@ -4,6 +4,8 @@
 
 ## 1. 当前结论概览
 
+桌面书房界面已按设计方案分批实施。首轮视觉复核发现的回执遮挡、搜索框双重焦点、空扩展目录布局、过场图按钮、文案及页签悬停问题已补修，原交付与补修复验记录在同一份报告。[桌面界面实施与复验](./archive/02-desktop-ui-and-relations/407-frontend-polish.md)
+
 桌面对话已接入结构化回复阅读和整轮过场图查看、重画。每轮回复末尾共用一个图片入口，背景图、人物场景图和重画记录按最近成功的一张展示。Electron 的本机后端联调覆盖 Markdown、JSON 和舞台换图。[对话演出规范](./specs/conversation-performance-and-scene-images.md) · [桌面对话联调](../apps/desktop/tests/e2e/workflow-real-backend-chain.e2e.cjs)
 
 设置页已合并模型、生图和语音表单内的重复测试入口。语音测试同时读取引擎列表，服务目录统一从左栏添加，保存涉及的角色暂停提示集中在操作区。模型、MCP 与 Skill 的占用详情按角色展示解绑操作，多名角色在用时提供批量关闭。

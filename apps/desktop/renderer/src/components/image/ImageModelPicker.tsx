@@ -1,5 +1,6 @@
 import { useId, useMemo, useState, type KeyboardEvent } from 'react';
 import { Button, Field, Input } from '../../ui';
+import { ProbeFeedback } from '../config/ProbeFeedback';
 import { filterModelNames, visibleProbeNotice, type ProbeNotice } from '../model/model-picker';
 
 export interface ImageModelPickerProps {
@@ -38,7 +39,7 @@ export function ImageModelPicker({
   disabled = false,
   probeDisabled = false,
   label = '默认生图模型',
-  hint = '选择探测到的模型，或手动输入模型名；也可留空在角色配置时分别指定。',
+  hint = '可以从列表选择或手动输入，也可以留到角色配置时再选。',
   placeholder = 'moss_image_sft_int8_convrot.safetensors',
 }: ImageModelPickerProps) {
   const listId = `image-model-options-${useId()}`;
@@ -157,15 +158,11 @@ export function ImageModelPicker({
         <Button size="sm" disabled={disabled || probeDisabled || listBusy || (settings && testBusy)} onClick={onRefresh}>
           {listBusy ? '正在读取…' : '读取模型列表'}
         </Button>
-        <Button size="sm" disabled={disabled || probeDisabled || testBusy || (settings && listBusy)} onClick={onTest}>
+        <Button size="sm" busy={testBusy} disabled={disabled || probeDisabled || (settings && listBusy)} onClick={onTest}>
           {testBusy ? '正在测试…' : '测试连接'}
         </Button>
       </div>
-      {activeNotice ? (
-        <p className={activeNotice.role === 'alert' ? 'config-sheet-error' : 'config-muted'} role={testAnnouncedExternally && activeNotice.source === 'test' ? undefined : activeNotice.role}>
-          {activeNotice.text}
-        </p>
-      ) : null}
+      <ProbeFeedback busy={testBusy} notice={activeNotice} testAnnouncedExternally={testAnnouncedExternally}/>
     </Field>
   );
 }

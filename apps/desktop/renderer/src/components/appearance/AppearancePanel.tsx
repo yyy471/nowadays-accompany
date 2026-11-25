@@ -4,6 +4,7 @@ import { api, apiUpload, ApiError } from '../../api';
 import type { Outfit, OutfitAsset, RoleStateResponse } from '../../types';
 import { appearanceAssetUrl } from '../../types';
 import { Button, createMotionScope, Field, Select, useMotionPolicy } from '../../ui';
+import { PhotoDevelopment, PhotoImage } from '../../ui/photo-development';
 import { Sheet } from '../config/sheet/Sheet';
 import { animateSheetExit } from '../config/sheet/sheet-motion';
 import { useSheet } from '../config/sheet/sheet-context';
@@ -54,6 +55,7 @@ const SKIP_REASON_LABELS: Record<string, string> = {
 
 /** 纸笺内的编辑草稿：服饰名称、说明与素材显示名走草稿，其余素材操作即时写入。 */
 type OutfitDraft = { name: string; description: string; assetNames: Record<string, string> };
+type OutfitUpload = { file: File; kind: 'home' | 'sprite'; replaceAssetId?: string | null };
 
 function draftOf(outfit: Outfit): OutfitDraft {
   return { name: outfit.name, description: outfit.description ?? '', assetNames: {} };
@@ -88,12 +90,15 @@ export function AppearancePanel({
   const [readError, setReadError] = useState('');
   const [readAttempt, setReadAttempt] = useState(0);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
   const [deleteNotice, setDeleteNotice] = useState('');
+  const [deleteNoticeKey, setDeleteNoticeKey] = useState(0);
   const [draft, setDraft] = useState<OutfitDraft | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [assetDelete, setAssetDelete] = useState<OutfitAsset | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState('');
+  const [previewAssetId, setPreviewAssetId] = useState<string | null>(null);
+  const [assetUpload, setAssetUpload] = useState<{ input: OutfitUpload; pending: boolean; error: string } | null>(null);
+  const [importing, setImporting] = useState(false);
   const replacingSprite = useRef<string | null>(null);
   const [confirmationMotion] = useState(createMotionScope);
   const closingConfirmation = useRef<Animation | null>(null);
@@ -160,7 +165,7 @@ export function AppearancePanel({
 
   useEffect(() => {
     let active = true;
-    setItems([]); setError(''); setReadError(''); setNotice(''); setLoading(true);
+    setItems([]); setError(''); setReadError(''); setLoading(true);
     setScan(null); setMerges({}); setRenames({}); setHomePicks({}); setImportFailures({}); setImportedIds({});
     void api<{ items: Outfit[] }>(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits`).then(result => {
       if (!active) return;
@@ -211,10 +216,10 @@ export function AppearancePanel({
     const result = scanAppearanceFolder(entries);
     setScan(result); setMerges(result.suggestedMerges); setRenames({}); setHomePicks({});
     setImportFailures({}); setImportedIds({});
-    setNotice(''); setError('');
+    setError('');
     if (folderInput.current) folderInput.current.value = '';
     if (result.entries.length === 0) {
-      setError('所选文件夹里没有 standees 或 expressions 素材。请选择角色自己的素材文件夹。');
+      setError('请选择包含 standees 或 expressions 的角色素材文件夹。');
     }
   };
 
@@ -248,12 +253,13 @@ export function AppearancePanel({
     const ready = plans.filter(plan => plan.status === 'ready');
     if (ready.length === 0 || write.busy || !canWrite) return;
     const token = roleToken.current;
-    setNotice(''); setError('');
+    setError('');
     const imported: string[] = [];
     const failed: string[] = [];
     const importedIds: string[] = [];
     const failureDetails: Record<string, string> = {};
     setBusy(true);
+    setImporting(true);
     try {
       for (const plan of ready) {
         const form = new FormData();
@@ -264,6 +270,7 @@ export function AppearancePanel({
         const result = await write.runWrite({
           roleIds: [roleId],
           verb: '导入服饰',
+          announceSuccess: false,
           commit: async () => {
             await apiUpload<Outfit>(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits`, form);
           },
@@ -297,7 +304,7 @@ export function AppearancePanel({
       if (duplicates.length > 0) parts.push(`跳过重名 ${duplicates.length} 套：${duplicates.join('、')}`);
       if (missing.length > 0) parts.push(`缺项待补：${missing.join('、')}`);
       if (failed.length > 0) parts.push(`失败 ${failed.length} 套`);
-      setNotice(parts.join('。'));
+      write.reportResult(parts.join('。'), failed.length ? 'warning' : 'success');
       // 部分失败时保留预览：已成功的服饰重读后会显示为重名，
       // 原处再次导入只提交仍未成功的套（283 R09）。
       if (failed.length === 0) cancelScan();
@@ -305,11 +312,11 @@ export function AppearancePanel({
       if (isStale(token)) return;
       if (failed.length > 0) {
         // load 会清掉通用错误；逐套原因保存在 importFailures 里，这里再给摘要。
-        setError(`部分服饰导入失败（${failed.length} 套），原因见列表；再次确认导入只会重试未成功的套。`);
+        setError(`列表中可查看 ${failed.length} 套服饰的失败原因，再次导入时会重试这些服饰。`);
       }
       onChanged?.();
     } finally {
-      if (!isStale(token)) setBusy(false);
+      if (!isStale(token)) { setBusy(false); setImporting(false); }
     }
   };
 
@@ -318,6 +325,7 @@ export function AppearancePanel({
     ? items.find(item => item.outfitId === sheet.id.slice('outfit:'.length)) ?? null
     : null;
   const assets = activeOutfit ? [activeOutfit.home, ...activeOutfit.sprites].filter((asset): asset is OutfitAsset => asset !== null) : [];
+  const previewAsset = assets.find(asset => asset.assetId === previewAssetId) ?? activeOutfit?.home;
   const selectedAsset = assets.find(asset => asset.assetId === selectedAssetId) ?? assets[0];
   const assetNames = activeOutfit && draft ? changedAssetNames(activeOutfit, draft) : {};
   const invalidAssetName = Object.values(assetNames).includes('');
@@ -333,16 +341,22 @@ export function AppearancePanel({
   const openOutfit = (outfit: Outfit, trigger: HTMLElement) => {
     setDraft(draftOf(outfit));
     setSelectedAssetId('');
+    setPreviewAssetId(null); setAssetUpload(null);
     setConfirmDelete(false); setAssetDelete(null);
-    setError(''); setNotice('');
+    setError('');
     open({ id: `outfit:${outfit.outfitId}`, title: '编辑服饰', shape: 'full', anchor: trigger, focusReturn: trigger });
     onPreview?.(outfit);
+  };
+
+  const locateAsset = (assetId: string) => {
+    setPreviewAssetId(assetId);
+    onPreviewAsset?.(assetId);
   };
 
   const errorMessage = (reason: unknown) => reason instanceof ApiError && reason.code === 'LAST_OUTFIT_REQUIRED'
     ? T27
     : reason instanceof ApiError && reason.code === 'ROLE_NOT_STOPPED'
-      ? '角色尚未停止，请先到角色状态中停止。'
+      ? '请先在「角色状态」停止角色活动，再试一次。'
       : reason instanceof Error ? reason.message : String(reason);
 
   const saveOutfit = async () => {
@@ -351,29 +365,27 @@ export function AppearancePanel({
     if (!name || invalidAssetName) return;
     const description = draft.description.trim();
     if (dirtyCount === 0) return;
+    const token = roleToken.current;
     setBusy(true);
     const result = await write.runWrite({
       roleIds: [roleId],
       verb: '保存服饰',
+      announceSuccess: false,
       commit: async () => {
-        await api(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits/${encodeURIComponent(activeOutfit.outfitId)}`, {
+        const saved = await api<Outfit>(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits/${encodeURIComponent(activeOutfit.outfitId)}`, {
           method: 'PATCH',
           body: { name, description: description.length === 0 ? null : description, ...(Object.keys(assetNames).length ? { assetNames } : {}) },
         });
+        if (isStale(token)) return;
+        setItems(previous => previous.map(outfit => outfit.outfitId === saved.outfitId ? saved : outfit));
+        setDraft(draftOf(saved));
       },
     });
-    setBusy(false);
-    if (!result.ok) { setError(result.failure.message); return; }
-    setDirty(false);
-    // 以服务端返回的列表为准更新卡片与草稿，避免用旧的 items 把草稿又算成脏。
-    const list = await api<{ items: Outfit[] }>(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits`).catch(() => null);
-    if (isStale(roleToken.current)) return;
-    if (list !== null) setItems(list.items);
-    const refreshed = list?.items.find(item => item.outfitId === activeOutfit.outfitId);
-    setDraft(refreshed ? draftOf(refreshed) : { name, description, assetNames: {} });
+    if (!result.ok) { setBusy(false); setError(result.failure.message); return; }
+    if (isStale(token)) return;
     // 先让外层清掉旧预览，再把纸笺当前服饰设为左页预览：左页在纸笺打开期间始终显示正在编辑的那套。
     onChanged?.();
-    closeNow();
+    closeNow(undefined, '已保存服饰');
   };
 
   const deleteOutfit = async () => {
@@ -400,60 +412,55 @@ export function AppearancePanel({
         const next = wardrobe?.find(item => item.outfitId === state?.state.outfitId);
         if (next) setCurrentOutfitId(next.outfitId);
         const text = next ? `已删除「${removedName}」，现在穿着「${next.name}」` : `已删除服饰「${removedName}」`;
-        setDeleteNotice(text); announceLive(text); onChanged?.();
+        setDeleteNoticeKey(v => v + 1); setDeleteNotice(text); announceLive(text); onChanged?.();
       });
       requestAnimationFrame(() => document.querySelector<HTMLElement>('.config-leaf-body .config-prose:not([hidden]) h2')?.focus({ preventScroll: true }));
     });
   };
 
-  const uploadSprite = async (files: FileList | null) => {
-    const file = files?.[0];
-    if (!file || write.busy || !canWrite || !activeOutfit) return;
-    const replaceAssetId = replacingSprite.current;
-    replacingSprite.current = null;
-    setBusy(true); setError(''); setNotice('');
+  const uploadAsset = async (input: OutfitUpload) => {
+    if (!activeOutfit || write.busy || !canWrite || assetUpload?.pending) return;
+    const { file, kind, replaceAssetId } = input;
+    const outfitId = activeOutfit.outfitId;
+    const token = roleToken.current;
+    const home = kind === 'home';
+    setAssetUpload({ input, pending: true, error: '' });
+    setBusy(true); setError('');
+    const uploadResult: { asset?: OutfitAsset } = {};
     const result = await write.runWrite({
       roleIds: [roleId],
-      verb: replaceAssetId ? '替换差分' : '上传差分',
-      commit: async () => {
-        const form = new FormData();
-        form.append('sprite', file, file.name);
-        if (replaceAssetId) form.append('replaceAssetId', replaceAssetId);
-        await apiUpload(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits/${encodeURIComponent(activeOutfit.outfitId)}/sprites`, form);
-      },
-    });
-    setBusy(false);
-    if (spriteInput.current) spriteInput.current.value = '';
-    if (!result.ok) { setError(result.failure.message); return; }
-    setNotice(`已${replaceAssetId ? '替换' : '添加'}差分「${file.name.replace(/\.[^.]+$/, '')}」`);
-    await load();
-    if (!isStale(roleToken.current)) onChanged?.();
-  };
-
-  const replaceHome = async (file: File) => {
-    if (!activeOutfit || write.busy || !canWrite) return;
-    setBusy(true); setError(''); setNotice('');
-    const result = await write.runWrite({
-      roleIds: [roleId],
-      verb: '更新主页立绘',
+      verb: home ? '更新主页立绘' : replaceAssetId ? '替换差分' : '上传差分',
+      announceSuccess: false,
       commit: async () => {
         const body = new FormData();
-        body.append('home', file, file.name);
-        await apiUpload(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits/${encodeURIComponent(activeOutfit.outfitId)}/home`, body);
+        body.append(kind, file, file.name);
+        if (replaceAssetId) body.append('replaceAssetId', replaceAssetId);
+        uploadResult.asset = await apiUpload<OutfitAsset>(`/v1/roles/${encodeURIComponent(roleId)}/appearance/outfits/${encodeURIComponent(outfitId)}/${home ? 'home' : 'sprites'}`, body);
       },
     });
+    if (isStale(token)) return;
     setBusy(false);
-    if (homeInput.current) homeInput.current.value = '';
-    if (!result.ok) { setError(result.failure.message); return; }
-    setNotice('主页立绘已更新，历史句段保留原图。');
-    await load();
-    if (!isStale(roleToken.current)) onChanged?.();
+    if (!result.ok) {
+      setAssetUpload({ input, pending: false, error: result.failure.message || '上传暂未完成，请再试一次。' });
+      return;
+    }
+    const asset = uploadResult.asset;
+    if (asset?.assetId) {
+      setItems(previous => previous.map(outfit => outfit.outfitId !== outfitId ? outfit : home
+        ? { ...outfit, home: asset }
+        : { ...outfit, sprites: [...outfit.sprites.filter(sprite => sprite.assetId !== replaceAssetId), asset] }));
+      setPreviewAssetId(asset.assetId);
+    }
+    setAssetUpload(null);
+    write.reportResult(home ? '主页立绘已更新，历史句段保留原图。' : `已${replaceAssetId ? '替换' : '添加'}差分「${file.name.replace(/\.[^.]+$/, '')}」`);
+    await load(token);
+    if (!isStale(token)) onChanged?.();
   };
 
   const removeAsset = async ({ assetId, displayName, usage }: OutfitAsset) => {
     const label = usage === 'home' ? '主页立绘' : '差分';
     if (!activeOutfit || write.busy || closingConfirmation.current || !canWrite) return;
-    setBusy(true); setError(''); setNotice('');
+    setBusy(true); setError('');
     const result = await write.runWrite({
       roleIds: [roleId],
       verb: `删除${label}`,
@@ -466,7 +473,7 @@ export function AppearancePanel({
     if (!result.ok) { setError(result.failure.message); return; }
     setAssetDelete(null);
     const text = `已删除${label}「${displayName}」，历史引用的素材已保留。`;
-    setDeleteNotice(text); announceLive(text);
+    setDeleteNoticeKey(v => v + 1); setDeleteNotice(text); announceLive(text);
     await load();
     if (!isStale(roleToken.current)) onChanged?.();
   };
@@ -493,7 +500,7 @@ export function AppearancePanel({
     : <RoleSaveActions count={dirtyCount} pause={pausedWrite} busy={write.busy} invalid={!canWrite || invalidAssetName || !draft?.name.trim()} error={error} onSave={() => void saveOutfit()}/>) : null;
 
   return <div className="nd-appearance">
-    <ConfigNotice message={deleteNotice} onDismiss={() => setDeleteNotice('')}/>
+    <ConfigNotice message={deleteNotice} noticeKey={deleteNoticeKey} tone="success" onDismiss={() => setDeleteNotice('')}/>
     <input ref={folderInput} type="file" multiple {...folderAttributes} className="nd-visually-hidden" onChange={event => scanFolder(event.target.files)} />
 
     {loading ? <div className="config-outfit-grid" aria-busy="true" aria-label="正在读取衣柜">{[0, 1, 2].map(item => <div className="config-outfit-card config-skel" key={item} aria-hidden="true"><div className="config-outfit-thumb"/><i/><i className="short"/></div>)}</div>
@@ -534,7 +541,7 @@ export function AppearancePanel({
         <b>识别到 {summary.total} 套服饰{scan.root ? `（${scan.root}）` : ''}</b>
         <small>可导入 {summary.ready} · 重名 {summary.duplicate} · 缺主页图 {summary.missingHome} · 缺差分 {summary.missingSprites} · 差分共 {summary.spriteCount} 张</small>
         {skippedSummary.length > 0 ? <small>已跳过：{skippedSummary.join('、')}</small> : null}
-        {scan.issues.some(issue => issue.code === 'MULTIPLE_ROOTS') ? <small className="nd-import-warn">所选目录包含多个角色，只按第一个角色识别。</small> : null}
+        {scan.issues.some(issue => issue.code === 'MULTIPLE_ROOTS') ? <small className="nd-import-warn">文件夹中有多个角色，本次只预览第一个角色的服饰。</small> : null}
       </div>
       <ul className="nd-import-list">
         {plans.map(plan => {
@@ -544,7 +551,7 @@ export function AppearancePanel({
             (plan.home === null && other.home !== null) || (plan.sprites.length === 0 && other.sprites.length > 0)
           ));
           return <li key={plan.id} className={'nd-import-item' + (plan.status === 'duplicate' ? ' duplicate' : '') + (plan.status === 'ready' ? '' : ' blocked')}>
-            <span className="nd-import-thumb">{thumb ? <img src={thumb} alt="" /> : <span>无主页图</span>}</span>
+            {thumb ? <PhotoImage key={thumb} className="nd-import-thumb" src={thumb} alt={`${plan.name}的立绘预览`} /> : <span className="nd-import-thumb">无主页图</span>}
             <div className="nd-import-meta">
               <input
                 className="nd-import-name"
@@ -572,6 +579,7 @@ export function AppearancePanel({
           </li>;
         })}
       </ul>
+      {importing && <PhotoDevelopment state="pending" pendingLabel="正在导入服饰，相纸显影中…" />}
       <div className="nd-appearance-actions">
         <Button variant="primary" disabled={write.busy || !canWrite || summary.ready === 0} onClick={() => void confirmImport()}>
           {write.busy ? '正在导入…' : `${pausedWrite ? '暂停并导入' : '确认导入'} ${summary.ready} 套`}
@@ -581,7 +589,6 @@ export function AppearancePanel({
       </div>
     </section> : null}
 
-    {notice && scan === null ? <p className="config-sheet-note" role="status">{notice}</p> : null}
     {error && scan === null ? <p className="config-sheet-error" role="alert">{error}</p> : null}
 
     <Sheet idPrefix="outfit:" enabled={active} footer={sheetFooter} confirmationTitle={confirmationTitle} onCancelConfirmation={confirmationTitle ? cancelConfirmation : undefined}>
@@ -599,9 +606,9 @@ export function AppearancePanel({
           <div className="config-grp" data-sheet-group>
             <div className="config-grp-label"><b>服饰</b></div>
             <div className="config-outfit-hero">
-              <span className="config-outfit-hero-thumb">
-                {activeOutfit.home ? <img src={appearanceAssetUrl(roleId, activeOutfit.home.assetId)} alt="" /> : <i>{T22}</i>}
-              </span>
+              {previewAsset ? <PhotoImage key={previewAsset.assetId} className="config-outfit-hero-thumb"
+                src={appearanceAssetUrl(roleId, previewAsset.assetId)} alt={previewAsset.displayName || activeOutfit.name} />
+                : <span className="config-outfit-hero-thumb"><i>{T22}</i></span>}
               <div className="config-grp-fields">
                 <Field label="名称">
                   <input ref={renameInput} className="ui-input" data-sheet-focus value={draft.name} maxLength={200} disabled={write.busy} onChange={event => setDraft({ ...draft, name: event.target.value })} />
@@ -617,17 +624,28 @@ export function AppearancePanel({
             <div className="config-grp-label"><b>差分</b><small>{activeOutfit.sprites.length} 张</small></div>
             <div>
               <div className="config-faces">
-                {activeOutfit.sprites.slice(0, 6).map(sprite => <button key={sprite.assetId} type="button" className="config-face" title={sprite.displayName} aria-label={`查看差分：${sprite.displayName}`} onClick={() => onPreviewAsset?.(sprite.assetId)}>
+                {activeOutfit.sprites.slice(0, 6).map(sprite => <button key={sprite.assetId} type="button" className="config-face" title={sprite.displayName} aria-label={`查看差分：${sprite.displayName}`} onClick={() => locateAsset(sprite.assetId)}>
                   <img src={appearanceAssetUrl(roleId, sprite.assetId)} alt="" />
                 </button>)}
                 {activeOutfit.sprites.length > 6 ? <span className="config-face config-face-more">+{activeOutfit.sprites.length - 6}</span> : null}
               </div>
               <div className="config-sheet-row">
-                <input ref={spriteInput} type="file" accept="image/png,image/jpeg,image/webp" className="nd-visually-hidden" onChange={event => void uploadSprite(event.target.files)} />
-                <input ref={homeInput} type="file" accept="image/png,image/jpeg,image/webp" className="nd-visually-hidden" onChange={event => { const file = event.target.files?.[0]; if (file) void replaceHome(file); }} />
-                <Button disabled={write.busy || !canWrite} onClick={() => { replacingSprite.current = null; spriteInput.current?.click(); }}>上传差分</Button>
-                <Button disabled={write.busy || !canWrite} onClick={() => homeInput.current?.click()}>{activeOutfit.home ? '替换主页立绘' : '补传主页立绘'}</Button>
+                <input ref={spriteInput} type="file" accept="image/png,image/jpeg,image/webp" className="nd-visually-hidden" onChange={event => {
+                  const file = event.currentTarget.files?.[0]; event.currentTarget.value = '';
+                  const replaceAssetId = replacingSprite.current; replacingSprite.current = null;
+                  if (file) void uploadAsset({ file, kind: 'sprite', replaceAssetId });
+                }} />
+                <input ref={homeInput} type="file" accept="image/png,image/jpeg,image/webp" className="nd-visually-hidden" onChange={event => {
+                  const file = event.currentTarget.files?.[0]; event.currentTarget.value = '';
+                  if (file) void uploadAsset({ file, kind: 'home' });
+                }} />
+                <Button disabled={write.busy || !canWrite || assetUpload?.pending} onClick={() => { replacingSprite.current = null; spriteInput.current?.click(); }}>上传差分</Button>
+                <Button disabled={write.busy || !canWrite || assetUpload?.pending} onClick={() => homeInput.current?.click()}>{activeOutfit.home ? '替换主页立绘' : '补传主页立绘'}</Button>
               </div>
+              {assetUpload && <div className="config-outfit-upload">
+                {assetUpload.pending ? <PhotoDevelopment state="pending" pendingLabel={`正在上传 ${assetUpload.input.file.name}…`} />
+                  : <PhotoDevelopment state="failed" failureLabel="图片上传失败" reason={assetUpload.error} onRetry={canWrite && !write.busy ? () => void uploadAsset(assetUpload.input) : undefined} />}
+              </div>}
               {selectedAsset && <div className="config-grp-fields">
                 <Field label="编辑素材">
                   <Select aria-label="编辑素材" value={selectedAsset.assetId} onChange={event => setSelectedAssetId(event.target.value)}>
@@ -644,7 +662,7 @@ export function AppearancePanel({
               </div>}
               {activeOutfit.sprites.length > 0 && <ul className="config-sprite-list">
                 {activeOutfit.sprites.map(sprite => <li key={sprite.assetId}>
-                  <button type="button" className="config-sprite-open" onClick={() => onPreviewAsset?.(sprite.assetId)}>{sprite.displayName}</button>
+                  <button type="button" className="config-sprite-open" onClick={() => locateAsset(sprite.assetId)}>{sprite.displayName}</button>
                   <button type="button" data-delete-trigger={sprite.assetId} disabled={write.busy || !canWrite} onClick={() => { deleteTrigger.current = sprite.assetId; setAssetDelete(sprite); setError(''); }}>删除</button>
                 </li>)}
               </ul>}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CONFIG_WELL_SELECTORS, applySubtractMask, collectWellRects } from '../../../ui/dom-mask';
 import { createMotionScope, readMotionTime, readMotionValue, useMotionPolicy } from '../../../ui';
@@ -21,12 +21,12 @@ export function SheetScrims({ idPrefix, enabled = true }: { idPrefix?: string; e
   const [book, setBook] = useState<HTMLElement | null>(null);
   const leafScrim = useRef<HTMLDivElement>(null);
   const bookScrim = useRef<HTMLDivElement>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     setLeaf(owned ? probe.current?.closest<HTMLElement>('.config-leaf') ?? null : null);
     setBook(owned ? probe.current?.closest<HTMLElement>('.config-book') ?? null : null);
   }, [owned]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!owned || !leaf || reduced) return;
     for (const node of [leafScrim.current, bookScrim.current]) {
       if (!node) continue;
@@ -51,7 +51,7 @@ export function SheetScrims({ idPrefix, enabled = true }: { idPrefix?: string; e
     return () => book.removeEventListener('pointerdown', dismissAt);
   }, [owned, book, closing, requestClose]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!owned || !leaf || !book) return;
     const paint = () => {
       const wells = collectWellRects(leaf, CONFIG_WELL_SELECTORS);
@@ -64,13 +64,16 @@ export function SheetScrims({ idPrefix, enabled = true }: { idPrefix?: string; e
     };
     paint();
     // 页面进场的 transform 会移动图框但不触发 ResizeObserver；入场期间随帧追踪位置。
-    const started = performance.now();
     let frame = 0;
-    const followEntrance = () => {
-      paint();
-      if (performance.now() - started < 650) frame = requestAnimationFrame(followEntrance);
-    };
-    frame = requestAnimationFrame(followEntrance);
+    if (!reduced) {
+      const end = performance.now() + readMotionTime(book, '--nd-semantic-motion-page', 360)
+        + readMotionTime(book, '--nd-semantic-motion-page-exit', 260);
+      const followEntrance = () => {
+        paint();
+        if (performance.now() < end) frame = requestAnimationFrame(followEntrance);
+      };
+      frame = requestAnimationFrame(followEntrance);
+    }
     window.addEventListener('resize', paint);
     const observer = new ResizeObserver(paint);
     observer.observe(leaf);
@@ -88,7 +91,7 @@ export function SheetScrims({ idPrefix, enabled = true }: { idPrefix?: string; e
       observer.disconnect();
       mutations.disconnect();
     };
-  }, [owned, leaf, book]);
+  }, [owned, leaf, book, reduced]);
 
   return <>
     <span ref={probe} hidden />

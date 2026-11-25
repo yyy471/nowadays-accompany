@@ -1,0 +1,18 @@
+.ui-floating-surface {
+  transition:
+    opacity var(--nd-semantic-motion-component) var(--nd-semantic-motion-ease-out),
+    transform var(--nd-semantic-motion-component) var(--nd-semantic-motion-ease-out);
+}
+.ui-floating-surface[data-closing] {
+  opacity: 0;
+  transform: translateY(var(--nd-semantic-motion-detail-page-offset));
+  pointer-events: none;
+  transition-duration: var(--nd-semantic-motion-micro-exit);
+  transition-timing-function: var(--nd-semantic-motion-ease-in);
+}
+@starting-style {
+  .ui-floating-surface:not([data-closing]) {
+    opacity: 0;
+    transform: translateY(var(--nd-semantic-motion-detail-page-offset));
+  }
+}

@@ -24,6 +24,10 @@ export function Modal({ open, title, description, children, onClose, closeDisabl
   const [fallbackManager] = useState(createModalLayerManager);
   const manager = providerManager ?? fallbackManager;
   const policy = useMotionPolicy();
+  const reduced = useRef(policy.reduced);
+  reduced.current = policy.reduced;
+  const openRef = useRef(open);
+  openRef.current = open;
   const [present, setPresent] = useState(open);
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(closing);
@@ -74,8 +78,9 @@ export function Modal({ open, title, description, children, onClose, closeDisabl
     const drawn = getComputedStyle(panelElement);
     const startTransform = continuing && drawn.transform !== 'none' ? drawn.transform : null;
     const startOpacity = continuing ? Number.parseFloat(drawn.opacity) : 0;
+    generation.current += 1;
     scope.cancelAll();
-    if (policy.reduced) return;
+    if (reduced.current || document.hidden) return;
     const bounds = panelElement.getBoundingClientRect();
     const anchor = sourceRef.current ?? (typeof HTMLElement !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null);
     let dx = 0;
@@ -89,8 +94,8 @@ export function Modal({ open, title, description, children, onClose, closeDisabl
     }
     origin.current = { x: dx, y: dy };
     const scale = readMotionValue(panelElement, '--nd-component-motion-modal-scale', '0.97');
-    const duration = readMotionTime(panelElement, '--nd-component-motion-surface-enter', 220);
-    const ease = readMotionValue(panelElement, '--nd-component-motion-surface-ease', 'cubic-bezier(0.2, 0.8, 0.2, 1)');
+    const duration = readMotionTime(panelElement, '--nd-semantic-motion-component', 220);
+    const ease = readMotionValue(panelElement, '--nd-semantic-motion-ease-out', 'ease-out');
     scope.run(panelElement, [
       { opacity: startTransform ? (Number.isFinite(startOpacity) ? startOpacity : 1) : 0, transform: startTransform ?? `translate(${dx}px, ${dy}px) scale(${scale})` },
       { opacity: 1, transform: 'translate(0px, 0px) scale(1)' }
@@ -100,6 +105,10 @@ export function Modal({ open, title, description, children, onClose, closeDisabl
       { opacity: continuing && Number.isFinite(backdropStart) ? backdropStart : 0 },
       { opacity: 1 }
     ], { duration, easing: ease, slot: 'backdrop', fill: 'backwards' });
+  }, [present, open, scope]);
+
+  useLayoutEffect(() => {
+    if (present && open && policy.reduced) scope.cancelAll();
   }, [present, open, policy.reduced, scope]);
 
   useLayoutEffect(() => {
@@ -108,21 +117,21 @@ export function Modal({ open, title, description, children, onClose, closeDisabl
     const backdropElement = backdrop.current;
     const current = ++generation.current;
     const finish = (): void => {
-      if (generation.current !== current) return;
+      if (generation.current !== current || openRef.current) return;
       scope.cancelAll();
       setPresent(false);
       setClosing(false);
       notifyExited();
     };
     if (!panelElement || !backdropElement) { finish(); return; }
-    if (policy.reduced) { finish(); return; }
+    if (policy.reduced || document.hidden) { finish(); return; }
     const drawn = getComputedStyle(panelElement);
     const fromTransform = drawn.transform === 'none' ? 'translate(0px, 0px) scale(1)' : drawn.transform;
     const fromOpacity = Number.parseFloat(drawn.opacity);
     const backdropOpacity = Number.parseFloat(getComputedStyle(backdropElement).opacity);
     scope.cancelAll();
-    const duration = readMotionTime(panelElement, '--nd-component-motion-surface-exit', 160);
-    const ease = readMotionValue(panelElement, '--nd-component-motion-surface-ease', 'cubic-bezier(0.2, 0.8, 0.2, 1)');
+    const duration = readMotionTime(panelElement, '--nd-semantic-motion-component-exit', 160);
+    const ease = readMotionValue(panelElement, '--nd-semantic-motion-ease-in', 'ease-in');
     const closeScale = readMotionValue(panelElement, '--nd-component-motion-modal-close-scale', '0.985');
     const { x, y } = origin.current;
     const animation = scope.run(panelElement, [
@@ -134,6 +143,9 @@ export function Modal({ open, title, description, children, onClose, closeDisabl
       { opacity: 0 }
     ], { duration, easing: ease, slot: 'backdrop', fill: 'both' });
     void animation.finished.then(finish).catch(() => undefined);
+    const visibility = () => { if (document.hidden) finish(); };
+    document.addEventListener('visibilitychange', visibility);
+    return () => document.removeEventListener('visibilitychange', visibility);
   }, [present, open, closing, policy.reduced, scope]);
 
   useEffect(() => {

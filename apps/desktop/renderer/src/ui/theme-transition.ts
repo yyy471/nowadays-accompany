@@ -1,4 +1,5 @@
 import type { ThemePreset } from './presets';
+import { readMotionTime, readMotionValue } from './motion';
 
 export interface ThemeTransitionInvocation {
   readonly from: ThemePreset;
@@ -69,7 +70,7 @@ export function createThemeTransition(
   const start = (next: ThemePreset) => {
     const id = ++generation;
     stop();
-    if (reduced() || document.hidden) {
+    if (reduced() || document.hidden || root.hasAttribute('data-feed-transition')) {
       commitPreset(next);
       strategy?.onSettled?.(next);
       return;
@@ -140,21 +141,15 @@ export function createThemeTransition(
         if (reduced()) { settle(); return; }
         const scope = document.querySelector<HTMLElement>('.ui-theme-weather');
         if (!scope) { settle(); return; }
-        const tokens = getComputedStyle(scope);
-        const duration = (name: string) => {
-          // 生产CSS压缩会将400ms改写为.4s，WAAPI始终接收毫秒。
-          const value = tokens.getPropertyValue(name).trim();
-          return Number.parseFloat(value) * (value.endsWith('ms') ? 1 : 1000);
-        };
-        const reveal = duration('--nd-component-theme-transition-reveal');
-        const total = duration('--nd-component-theme-transition-total');
-        const ease = tokens.getPropertyValue('--nd-semantic-motion-ease').trim();
+        const reveal = readMotionTime(scope, '--nd-semantic-motion-theme-reveal', 400);
+        const total = readMotionTime(scope, '--nd-semantic-motion-theme-total', 550);
+        const ease = readMotionValue(scope, '--nd-semantic-motion-ease-out', 'ease-out');
         const animate = (name: string, frames: Keyframe[], ms: number, easing = ease, side = 'new') => {
           const animation = root.animate(frames, { duration: ms, easing, fill: 'both', pseudoElement: `::view-transition-${side}(${name})` });
           animations.push(animation);
           return animation;
         };
-        animate('root', [{ '--theme-weather-reveal': '0%' }, { '--theme-weather-reveal': '110%' }], reveal, ease, 'old');
+        animate('root', [{ opacity: 1 }, { opacity: 0 }], reveal, ease, 'old');
         if (next === 'nightwave') {
           for (let index = 1; index <= 3; index++) {
             animate(`theme-leaf-${index}`, [

@@ -14,6 +14,7 @@ export interface ProbeNotice {
   role: "alert" | "status";
   text: string;
   model?: string;
+  attempt?: number;
 }
 
 export interface SecretDraft {
@@ -140,6 +141,7 @@ export function visibleProbeNotice(
     role,
     text: notice.text,
     ...(typeof notice.model === "string" ? { model: notice.model } : {}),
+    ...(notice.attempt !== undefined ? { attempt: notice.attempt } : {}),
   };
 }
 

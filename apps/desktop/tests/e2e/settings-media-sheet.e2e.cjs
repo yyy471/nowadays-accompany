@@ -63,7 +63,14 @@ const server = http.createServer((req, res) => {
   ] });
   if (p === '/v1/image-services') return json({ items: [{ serviceId:'i1', name:'画室', enabled:true, config:{baseUrl:'http://image',modelName:'art.safetensors'}, credential:{status:'unset'} }] });
   if (p.endsWith('/scene-image')) return json({ settings: {serviceId:'i1',modelType:'text2img',modelPath:'art.safetensors',basePrompt:'portrait',negativePrompt:'',outfitPrompts:{},width:832,height:1216,steps:28,cfg:6.5,sampler:'dpmpp_2m',scheduler:'karras',seed:null,workflow:null,outputNodeId:null}, service:{serviceId:'i1',name:'画室',enabled:true,baseUrl:'http://image'}, configured:true });
-  if (p === '/v1/voice-services/v1/probe') { voiceProbeCount++; const response = { probe:{protocol:'nowadays-tts-v1',service:'语音甲',model:'',ready:true,capabilities:{referenceModes:[],presetVoices:true,languages:['zh'],speed:{min:0.5,max:2}},voices:[],engines:{},defaultEngine:null} }; if (voiceProbeCount === 1) return json(response); setTimeout(() => json(response), 900); return; }
+  if (p === '/v1/voice-services/v1/probe') {
+    voiceProbeCount++;
+    const response = { probe:{protocol:'nowadays-tts-v1',service:'语音甲',model:'',ready:true,capabilities:{referenceModes:[],presetVoices:true,languages:['zh'],speed:{min:0.5,max:2}},voices:[],engines:{},defaultEngine:null}, elapsedMs: 23 };
+    if (voiceProbeCount === 1) return json(response);
+    if (voiceProbeCount === 4) return json({error:{code:'MODEL_REQUEST_TIMEOUT',message:'timeout'}}, 504);
+    setTimeout(() => json(response), 900);
+    return;
+  }
   const detail = /^\/v1\/roles\/([^/]+)$/.exec(p);
   if (detail) { const role = roles.find(item => item.roleId === detail[1]); return json({ ...role, definition: { text: '正文', payload: {} }, definitionRevision: 1, bio: '' }); }
   const bind = /^\/v1\/roles\/([^/]+)\/bindings$/.exec(p);
@@ -129,8 +136,41 @@ async function run(verify) {
   await until(() => ev("document.querySelector('.config-stage .config-portrait img')?.naturalWidth > 0"), 'fixture portrait loaded');
   await delay(700);
   const portrait = await ev(`(()=>{const r=document.querySelector('.config-stage .config-portrait').getBoundingClientRect();return {x:Math.ceil(r.x)+3,y:Math.ceil(r.y)+3,width:Math.floor(r.width)-6,height:Math.floor(r.height)-6,scale:1};})()`);
+  const changeTheme = async preset => {
+    await ev(`document.querySelector('.ui-theme-switcher [data-theme-choice="${preset}"]').click()`);
+    await until(() => ev(`document.documentElement.dataset.uiPreset === '${preset}' && !document.querySelector('.config-theme-veil') && !document.documentElement.hasAttribute('data-switching')`), `${preset} settled`);
+  };
+  assert.equal(await ev('document.documentElement.dataset.uiPreset'), 'daylight');
   const before = await cmd('Page.captureScreenshot', {format:'png',clip:portrait});
   fs.writeFileSync(path.join(out,'portrait-before.png'), Buffer.from(before.data,'base64'));
+  await changeTheme('nightwave');
+  const night = await cmd('Page.captureScreenshot', { format: 'png', clip: portrait });
+  fs.writeFileSync(path.join(out, 'portrait-nightwave.png'), Buffer.from(night.data, 'base64'));
+  const originalPixels = PNG.sync.read(Buffer.from(before.data, 'base64'));
+  const nightPixels = PNG.sync.read(Buffer.from(night.data, 'base64'));
+  assert.equal(nightPixels.width, originalPixels.width);
+  assert.equal(nightPixels.height, originalPixels.height);
+  let changedPixels = 0;
+  for (let i = 0; i < originalPixels.data.length; i += 4) {
+    if (!originalPixels.data.subarray(i, i + 4).equals(nightPixels.data.subarray(i, i + 4))) changedPixels++;
+  }
+  const totalPixels = originalPixels.width * originalPixels.height;
+  const portraitThemeChangedPercent = 100 * changedPixels / totalPixels;
+  assert.ok(portraitThemeChangedPercent < 1, `昼夜实际切换后的立绘差异 ${changedPixels}/${totalPixels} (${portraitThemeChangedPercent.toFixed(3)}%)`);
+  await cmd('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+  await ev(`(() => {
+    const controls = document.querySelector('.studio-shell:not(.config-theme-veil) .ui-theme-switcher');
+    controls.querySelector('[data-theme-choice="daylight"]').click();
+    const nightButton = controls.querySelector('[data-theme-choice="nightwave"]');
+    nightButton.focus();
+    nightButton.click();
+  })()`);
+  await until(() => ev("!!document.querySelector('.config-theme-veil')"), 'rapid theme change has one in-flight snapshot');
+  await cmd('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+  await until(() => ev("document.documentElement.dataset.uiPreset === 'nightwave' && !document.querySelector('.config-theme-veil') && !document.documentElement.hasAttribute('data-config-switching') && !document.documentElement.hasAttribute('data-switching')"), 'reduced motion commits the final requested preset and removes its veil');
+  assert.equal(await ev("document.activeElement?.matches('.ui-theme-switcher [data-theme-choice=nightwave]')"), true, '快速切换后焦点保留在真实主题按钮');
+  await changeTheme('daylight');
+  await cmd('Emulation.setEmulatedMedia', { features: [] });
   await ev(`document.querySelector('${imageRow} .config-chip-k').click()`);
   await until(() => ev("document.querySelector('.config-sheet h3')?.textContent==='生图 · 参数'"), 'image compact');
   assert.equal(await ev("[...document.querySelectorAll('.config-sheet .config-grp')].filter(e=>!e.hidden).length"), 1);
@@ -138,7 +178,6 @@ async function run(verify) {
   await delay(300);
   const after = await cmd('Page.captureScreenshot', {format:'png',clip:portrait});
   fs.writeFileSync(path.join(out,'portrait-after.png'), Buffer.from(after.data,'base64'));
-  const originalPixels = PNG.sync.read(Buffer.from(before.data, 'base64'));
   const visiblePixels = PNG.sync.read(Buffer.from(after.data, 'base64'));
   assert.ok(originalPixels.width === visiblePixels.width && originalPixels.height === visiblePixels.height && originalPixels.data.equals(visiblePixels.data), '打开纸笺前后的立绘区域逐像素一致');
   assert.equal(await ev("getComputedStyle(document.querySelector('.config-book-scrim')).maskImage.split('linear-gradient').length-1"), 3, '书本压暗层应挖去右页及立绘');
@@ -156,8 +195,28 @@ async function run(verify) {
   assert.equal(await ev(`document.activeElement === document.querySelector('${imageRow} .config-sum-edit')`), true, '从参数片段打开纸笺后，关闭时焦点回该行编辑按钮');
   await ev(`document.querySelector('${voiceRow} .config-sum-edit').click()`);
   await until(() => ev("document.querySelector('.config-sheet h3')?.textContent==='编辑语音'"), 'voice full');
+  await cmd('Emulation.setEmulatedMedia', {features:[{name:'prefers-reduced-motion',value:'no-preference'}]});
+  const probeFeedback = "document.querySelector('.config-sheet .config-probe-feedback')";
+  const probeSweep = `${probeFeedback}?.querySelector('.config-probe-sweep')`;
   await clickSheetButton('测试连接');
   await until(() => ev("document.querySelector('#live')?.textContent.includes('连接成功')"), 'voice announce');
+  assert.match(await ev(`${probeFeedback}.textContent`), /连接成功.*23 ms/);
+  assert.ok(await ev(`(${probeSweep}).getAnimations().some(animation=>animation.animationName==='config-probe-sweep')`));
+  await ev(`void (window.firstProbeSweep = ${probeSweep})`);
+  await ev("[...document.querySelectorAll('.config-sheet button')].find(b=>b.textContent.trim()==='测试连接').focus()");
+  await clickSheetButton('测试连接');
+  await until(() => ev(`${probeFeedback}?.dataset.state==='busy'`), 'voice pulse while probe is in flight');
+  assert.equal(await ev(`${probeFeedback}.textContent`), '正在测试连接…');
+  assert.equal(await ev("document.activeElement.matches('.config-sheet button[aria-busy=true]')"), true, '测试中保留按钮焦点');
+  await until(() => ev(`(() => {
+    const sweep = ${probeSweep};
+    return !!sweep && sweep !== window.firstProbeSweep
+      && sweep.getAnimations().some(animation => animation.animationName === 'config-probe-sweep');
+  })()`), 'repeated voice probe restarts the sweep');
+  await cmd('Emulation.setEmulatedMedia', {features:[{name:'prefers-reduced-motion',value:'reduce'}]});
+  await until(() => ev(`(${probeSweep})?.getAnimations().length===0`), 'reduced motion shows result without the sweep');
+  assert.match(await ev(`${probeFeedback}.textContent`), /连接成功.*23 ms/);
+  await cmd('Emulation.setEmulatedMedia', {features:[]});
   await clickSheetButton('测试连接');
   await until(() => ev("[...document.querySelectorAll('.config-sheet button')].some(b=>b.textContent.includes('正在测试'))"), 'voice probe pending');
   await ev("document.querySelector('.config-sheet-x').click()");
@@ -165,7 +224,9 @@ async function run(verify) {
   await delay(1200);
   await ev(`document.querySelector('${voiceRow} .config-sum-edit').click()`);
   await until(() => ev("document.querySelector('.config-sheet h3')?.textContent==='编辑语音'"), 'voice reopen after late probe');
-  assert.equal(await ev("[...document.querySelectorAll('.config-sheet [role=status]')].some(e=>e.textContent.includes('连接成功'))"), false, '关闭后的迟到探测不得回显');
+  assert.equal(await ev(`!!${probeFeedback}`), false, '关闭后的迟到探测不得回显');
+  await clickSheetButton('测试连接');
+  await until(() => ev(`${probeFeedback}?.dataset.state==='error' && ${probeFeedback}.textContent.includes('语音服务响应超时')`), 'saved voice probe keeps the real failure after cache invalidation');
   const setInput = async (label, value) => ev(`(()=>{const i=document.querySelector('.config-sheet input[aria-label="${label}"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(i,'${value}');i.dispatchEvent(new Event('input',{bubbles:true}));})()`);
   const select = async value => ev(`(()=>{const i=document.querySelector('.config-sheet select[aria-label="语音服务"]');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(i,'${value}');i.dispatchEvent(new Event('change',{bubbles:true}));})()`);
   await setInput('语速','1.3'); await select('v2');
@@ -183,7 +244,7 @@ async function run(verify) {
   assert.equal(await ev("document.querySelector('.config-sheet select[aria-label=语音服务]')?.value"), 'v1');
   assert.equal(await ev("document.querySelector('.config-sheet input[aria-label=语速]')?.value"), '1');
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ imageGroup:true, imageDiscard:true, voiceSessionDraft:true, voiceDiscard:true, voiceAnnounce:true, lateProbeIgnored:true }));
+  console.log(JSON.stringify({ imageGroup:true, imageDiscard:true, voiceSessionDraft:true, voiceDiscard:true, voiceAnnounce:true, lateProbeIgnored:true, portraitThemeChangedPixels: changedPixels, portraitThemeTotalPixels: totalPixels, portraitThemeChangedPercent }));
 
 }
 function check(verify, route) {
