@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { McpToolClient, managedPiCommand } from "../../src/mcp/client.js";
 import { listen } from "../../src/bootstrap/app.js";
-import { createFixtureWithModel, ScriptedChatModel } from "../fixtures/conversation-fixture.js";
+import { addBinding, createFixtureWithModel, deferred, ScriptedChatModel, withStorage } from "../fixtures/conversation-fixture.js";
 
 test("Responses 转发固定模型与鉴权，每次出站尝试单独计费，租约撤销与过期拒绝派发", async () => {
   let calls = 0;
@@ -80,52 +82,149 @@ test("Responses 转发固定模型与鉴权，每次出站尝试单独计费，�
   } finally { await f.close(); upstream.closeAllConnections(); await new Promise<void>(r => upstream.close(() => r())); }
 });
 
-for (const mode of ["pi_task_cancel", "role_stop", "task_cancel"] as const) {
+for (const mode of ["pi_task_cancel", "role_stop", "task_cancel", "task_finish"] as const) {
   test("工程任务撤销后拒绝新请求：" + mode, async t => {
     const model = new ScriptedChatModel([
+      [{ type: "text_delta", text: "先等待用户。" }, { type: "completed", stopReason: "stop" }],
       [{ type: "tool_call", callId: "start", name: "pi_task_start", arguments: { extId: "cancel", prompt: "等待离线端点" } }, { type: "completed", stopReason: "stop" }],
-      ...(mode === "task_cancel" ? [[{ type: "tool_call" as const, callId: "pause", name: "task_pause", arguments: { reason: "工程尚在进行" } }, { type: "completed" as const, stopReason: "stop" }]] : []),
+      ...(mode === "task_finish" ? [[{ type: "tool_call" as const, callId: "finish", name: "task_finish", arguments: { status: "completed", endReason: "委派后结束父任务" } }, { type: "completed" as const, stopReason: "stop" }]] : []),
       [{ type: "text_delta", text: "后台已开始。" }, { type: "completed", stopReason: "stop" }],
-      r => [{ type: "tool_call", callId: "cancel", name: "pi_task_cancel", arguments: { jobId } }, { type: "completed", stopReason: "stop" }],
+      ...(mode === "pi_task_cancel" ? [() => [{ type: "tool_call" as const, callId: "cancel", name: "pi_task_cancel", arguments: { jobId } }, { type: "completed" as const, stopReason: "stop" }]] : []),
       [{ type: "text_delta", text: "已取消。" }, { type: "completed", stopReason: "stop" }],
+      [{ type: "text_delta", text: "原工程收到取消回执。" }, { type: "completed", stopReason: "stop" }],
     ]);
+    const connected = deferred<void>(), release = deferred<void>();
     let jobId = "";
     let count = 0;
     const upstream = http.createServer((_req, _res) => { count++; });
     const target = await listen(upstream, 0, "127.0.0.1");
-    const f = createFixtureWithModel(model);
+    const f = createFixtureWithModel(model, { disablePresetAssistant: false, presetAssetsDir: "tests/fixtures" });
     try {
-      const { app, roleId, windowId } = f;
+      const { app } = f;
+      const roleId = app.appStore.getRoleIndexByBuiltinKey("xiacheng")!.roleId;
+      const windowId = app.services.roles.getRole(roleId).defaultWindowId;
       const port = await listen(app.server, 0, "127.0.0.1");
       const issued = t.mock.method(app.services.modelProxy, "issue");
       app.services.activity.requestStop(roleId);
       const resource = app.services.resources.create({ name: "模型", kind: "model", config: { protocol: "openai-chat", baseUrl: "http://127.0.0.1:" + target } });
-      const mcp = app.services.resources.create({ name: "工程", kind: "mcp", config: { command: "nowadays-pi", args: [], env: {} } });
+      const [mcp] = app.services.resources.listBindings(roleId);
       app.services.resources.replaceBindings(roleId, [{ resourceId: resource.resourceId, capability: "chat_model", enabled: true, modelName: "test" },
-        { resourceId: mcp.resourceId, capability: "mcp", enabled: true }]);
+        { resourceId: mcp!.resourceId, capability: "mcp", enabled: true }]);
+      const dispatches = path.join(f.root, "dispatches");
+      const external = app.services.resources.create({ kind: "mcp", name: "offline", config: { command: process.execPath,
+        args: [path.resolve("tests/fixtures/pi-shared-mcp.mjs"), "offline", dispatches], env: { API_KEY: "SECRET_PROBE_VALUE" } } });
+      addBinding({ ...f, roleId }, "mcp", external.resourceId);
       app.services.activity.resume(roleId);
+      await app.conversation.waitForIdle(roleId, 30000);
+      assert.equal(app.services.autonomy.listWakes(roleId)[0]?.status, "completed");
       const send = async (content: string) => {
         app.conversation.submitMessage(roleId, windowId, { content, submissionId: randomUUID(), sourcePlatform: "nowadays" });
         await app.conversation.waitForIdle(roleId, 30000);
       };
       await send("启动后台工程");
-      const message = model.requests[1]?.messages.find(m => m.role === "tool");
+      const message = model.requests[2]?.messages.find(m => m.role === "tool");
       assert.ok(message);
       jobId = JSON.parse(message.content).result.jobId;
       for (let i = 0; i < 500 && !count; i++) await delay(20);
       assert.equal(count, 1);
-      if (mode === "role_stop") app.services.activity.requestStop(roleId);
+      const parent = app.conversation.listTasks(roleId).find(t=>t.goal==="启动后台工程")!;
+      const before = model.requests.length;
+      const url = `http://127.0.0.1:${port}/v1/internal/tool-proxy/`;
+      const post = (route: string, body: object) => fetch(url + route, { method:"POST",
+        headers:{authorization:"Bearer " + issued.mock.calls[0]!.result, "content-type":"application/json"}, body:JSON.stringify(body) });
+      let pending: Promise<Response> | undefined;
+      if (mode !== "task_finish") {
+        const { tools } = await (await post("list", {})).json() as { tools: { name: string }[] };
+        assert.equal(tools.length, 1);
+        const connect = McpToolClient.connect.bind(McpToolClient);
+        t.mock.method(McpToolClient, "connect", async (...args: Parameters<typeof connect>) => {
+          const client = await connect(...args);
+          if (args[1]?.isolatedEnv) { connected.resolve(); await release.promise; }
+          return client;
+        });
+        pending = post("call", { name: tools[0]!.name, arguments: {} });
+        await Promise.race([connected.promise, delay(10000, undefined, { ref:false }).then(() => { throw Error("MCP_CONNECT_TIMEOUT"); })]);
+      }
+      if (mode === "task_finish") {
+        assert.equal(parent.status,"completed");
+        await app.services.pi.cancel(jobId);
+      } else if (mode === "role_stop") app.services.activity.requestStop(roleId);
       else if (mode === "pi_task_cancel") await send("取消工程");
       else {
         const task = app.conversation.listTasks(roleId).find(item => item.status === "paused");
         assert.ok(task);
         app.conversation.cancelTask({ roleId, taskId: task.taskId });
       }
+      if (pending) {
+        const rejected = await Promise.race([pending, delay(3000, undefined, {ref:false}).then(() => {
+          throw Error("PI_REVOCATION_WAITED_FOR_CONNECTION");
+        })]);
+        assert.equal(rejected.status, 403);
+        assert.match(await rejected.text(), /PI_LEASE_REVOKED/);
+        assert.equal(fs.existsSync(dispatches), false);
+      }
+      release.resolve();
       const denied = await fetch("http://127.0.0.1:" + port + "/v1/internal/model-proxy/chat/completions", {
         method: "POST", headers: { authorization: "Bearer " + issued.mock.calls[0]!.result } });
       assert.equal(denied.status, 403);
       assert.match(await denied.text(), /PI_LEASE_REVOKED/);
       assert.equal(count, 1);
-    } finally { await f.close(); upstream.closeAllConnections(); await new Promise<void>(r => upstream.close(() => r())); }
+      for (let i=0;i<300 && app.services.pi.running().length;i++) await delay(20);
+      const read = () => withStorage({...f,roleId}, ({business}) => business.db.prepare(
+        "SELECT status,execution_id FROM engineering_jobs JOIN engineering_wakes USING(job_id) WHERE job_id=?").get(jobId)) as
+        {status:string;execution_id:string|null};
+      assert.equal(read().status,"cancelled");
+      if (mode === "role_stop") {
+        assert.equal(app.services.activity.view(roleId).state,"stopped");
+        assert.equal(read().execution_id,null);
+        assert.equal(model.requests.length,before);
+        app.services.activity.resume(roleId);
+      }
+      await app.conversation.waitForIdle(roleId,30000);
+      if (mode==="task_cancel" || mode==="task_finish") {
+        assert.equal(read().execution_id,null);
+        assert.equal(model.requests.length,before);
+      } else {
+        assert.ok(read().execution_id);
+        assert.equal(app.conversation.listTasks(roleId).find(t=>t.taskId===parent.taskId)?.status,"completed");
+        assert.ok(model.requests.at(-1)?.system.includes(jobId));
+      }
+    } finally { release.resolve(); await f.close(); upstream.closeAllConnections(); await new Promise<void>(r => upstream.close(() => r())); }
   });
 }
+
+test("宿主令牌统一保护 API，预检只放行桌面和本地来源", async () => {
+  const token = randomUUID();
+  const previous = process.env.NOWADAYS_HOST_TOKEN;
+  process.env.NOWADAYS_HOST_TOKEN = token;
+  const f = createFixtureWithModel(new ScriptedChatModel([]));
+  if (previous === undefined) delete process.env.NOWADAYS_HOST_TOKEN;
+  else process.env.NOWADAYS_HOST_TOKEN = previous;
+  try {
+    const base = "http://127.0.0.1:" + await listen(f.app.server, 0, "127.0.0.1");
+    const routes = [["GET", "/v1/roles"], ["POST", "/v1/engineering/jobs/sample/cancel"],
+      ["POST", "/v1/engineering-jobs/sample/cancel"], ["POST", "/v1/extensions/sample/ui-action"]];
+    for (const [method, route] of routes) {
+      for (const value of ["", randomUUID()]) assert.equal((await fetch(base + route, {
+        method: method!, headers: value ? { "X-Nowadays-Host-Token": value } : {},
+      })).status, 401);
+    }
+    const headers = { "X-Nowadays-Host-Token": token, origin: "http://localhost:1234" };
+    const roles = await fetch(base + "/v1/roles", { headers });
+    assert.equal(roles.status, 200);
+    assert.equal(roles.headers.get("access-control-allow-origin"), headers.origin);
+    const cancel = await fetch(base + "/v1/engineering/jobs/sample/cancel", { method: "POST", headers });
+    assert.equal(cancel.status, 409);
+    assert.match(await cancel.text(), /PI_JOB_NOT_RUNNING/);
+    const preflight = await fetch(base + "/v1/roles", { method: "OPTIONS", headers: { origin: "app://bundle" } });
+    assert.equal(preflight.status, 204);
+    assert.match(preflight.headers.get("access-control-allow-headers")!, /x-nowadays-host-token/i);
+    for (const method of ["OPTIONS", "POST"]) {
+      const denied = await fetch(base + "/v1/roles", { method, headers: { ...headers, origin: "https://evil.example" } });
+      assert.equal(denied.status, 403);
+      assert.equal(denied.headers.get("access-control-allow-origin"), null);
+    }
+    const leaseOnly = await fetch(base + "/v1/internal/tool-proxy/list", { method: "POST", headers });
+    assert.match(await leaseOnly.text(), /PI_LEASE/);
+  } finally { await f.close(); }
+});

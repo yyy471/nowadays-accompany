@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   HttpError,
@@ -36,6 +37,8 @@ interface Route {
 export class Router {
   private readonly routes: Route[] = [];
   private guard: RouteGuard | null = null;
+
+  constructor(private readonly hostToken?: string) {}
 
   setGuard(guard: RouteGuard): this {
     this.guard = guard;
@@ -83,6 +86,16 @@ export class Router {
       );
       return;
     }
+    const origin = request.headers.origin;
+    response.setHeader("vary", "Origin");
+    if (origin !== undefined) {
+      const local = /^(?:http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?|desk:\/\/bundle|file:\/\/|app:\/\/[a-z0-9.-]*)$/i.test(origin);
+      if (!local) {
+        writeError(response, new HttpError(403, "ORIGIN_DENIED", "请求来源不受支持"));
+        return;
+      }
+      response.setHeader("access-control-allow-origin", origin);
+    }
     // 资产请求必须按清单中的原路径匹配，避免 URL 规范化先将其改写为其他路由。
     const rawPath = request.url?.split("?", 1)[0];
     if (rawPath && /^\/v1\/extensions\/[^/]+\/ui\//.test(rawPath) && rawPath !== url.pathname) {
@@ -91,12 +104,19 @@ export class Router {
     }
     if (request.method === "OPTIONS") {
       response.writeHead(204, {
-        "access-control-allow-origin": "*",
         "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-        "access-control-allow-headers": "content-type, last-event-id",
+        "access-control-allow-headers": "content-type, last-event-id, x-nowadays-host-token",
       });
       response.end();
       return;
+    }
+    if (this.hostToken && url.pathname.startsWith("/v1/") && !url.pathname.startsWith("/v1/internal/")) {
+      const actual = Buffer.from(String(request.headers["x-nowadays-host-token"] ?? ""));
+      const expected = Buffer.from(this.hostToken);
+      if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
+        writeError(response, new HttpError(401, "HOST_TOKEN_INVALID", "宿主会话凭证无效"));
+        return;
+      }
     }
     for (const route of this.routes) {
       if (route.method !== request.method) {

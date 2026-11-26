@@ -83,11 +83,11 @@ export interface Fixture {
 
 export function createFixtureWithModel(
   model: ModelPort,
-  options: BackendAppOptions = {},
+  { presetAssetsDir, ...options }: BackendAppOptions & { presetAssetsDir?: string } = {},
 ): Fixture {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nowadays-p2-05-"));
   const app = createBackendApp(
-    parseBackendConfig(["--app-root", root, "--port", "0"]),
+    parseBackendConfig(["--app-root", root, "--port", "0", ...(presetAssetsDir ? ["--preset-assets-dir", presetAssetsDir] : [])]),
     {
       typingMs: 1000,
       timeZone: "Asia/Shanghai",

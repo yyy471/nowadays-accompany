@@ -47,6 +47,7 @@ import {
 } from "../domain/token-usage.js";
 import { registerRoleActivityRoutes } from "./role-activity-routes.js";
 import { registerExtensionImportRoutes } from "./extension-import-routes.js";
+import { uiActionPayloadBytes, uiActionSchema } from "../application/extensions/extension-files.js";
 import { globalWrite, roleWrite } from "./write-guard.js";
 import {
   GLOBAL_CONFIG_WRITES,
@@ -89,6 +90,8 @@ import { putWorldbooksSchema } from "../domain/worldbook.js";
 import type { MediaMaintenance } from '../application/media/media-maintenance.js';
 
 export interface ApiServices {
+  pi: import("../mcp/managed-pi.js").ManagedPi;
+  toolProxy: import("../mcp/tool-proxy.js").PiToolProxy;
   modelProxy: import("../mcp/model-proxy.js").PiModelProxy;
   extensions: import("../application/extensions/extension-host.js").ExtensionHost;
   roles: RoleService;
@@ -115,6 +118,11 @@ export function registerApiRoutes(
   services: ApiServices,
   version: string,
 ): Router {
+  for (const route of ["list", "call", "skill/read", "skill/run"]) {
+    router.add("POST", "/v1/internal/tool-proxy/" + route, async ({ request }) => ({
+      status: 200, body: await services.toolProxy.forward(request, route),
+    }));
+  }
   for (const route of ["chat/completions", "responses"]) {
     router.add("POST", "/v1/internal/model-proxy/" + route, async ({ request, response }) => {
       await services.modelProxy.forward(request, response, route);
@@ -124,6 +132,19 @@ export function registerApiRoutes(
   router.add("POST", "/v1/internal/model-proxy/release", ({ request, response }) => {
     services.modelProxy.release(request);
     response.writeHead(204).end();
+    return undefined;
+  });
+  router.add("GET", "/v1/engineering/jobs", () => ({ status: 200, body: { items: services.pi.running() } }));
+  for (const route of ["/v1/engineering/jobs/:jobId/cancel", "/v1/engineering-jobs/:jobId/cancel"]) router.add("POST", route, async ({ params }) => {
+    const result = await services.pi.cancel(params.jobId ?? "");
+    if (result.isError) throw new AppError(409, "PI_CANCEL_FAILED", "工程取消失败");
+    return { status: 200, body: result.structuredContent };
+  });
+  router.add("GET", "/v1/engineering/events", ({ response }) => {
+    response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
+    const send = () => response.write("event: snapshot\ndata: " + JSON.stringify(services.pi.running()) + "\n\n");
+    response.once("close", services.pi.subscribe(send));
+    send();
     return undefined;
   });
   const { activity } = services;
@@ -142,8 +163,7 @@ export function registerApiRoutes(
   registerRoleActivityRoutes(router, activity);
   registerExtensionImportRoutes(router, services.resources);
   router.add("GET", "/v1/extension-events", ({ response }) => {
-    response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store",
-      "access-control-allow-origin": "desk://bundle" });
+    response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
     const unsubscribe = services.extensions.subscribeUi((event, data) => {
       response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     });
@@ -164,6 +184,13 @@ export function registerApiRoutes(
   });
   router.add("GET", "/v1/extensions", () => ({ status: 200, body: { items: services.extensions.list() } }));
   router.add("GET", "/v1/extensions/:extId", ({ params }) => ({ status: 200, body: services.extensions.get(params.extId ?? "") }));
+  router.add("POST", "/v1/extensions/:extId/ui-action", async ({ request, params }) => {
+    const { version, action, payload } = parseBody(uiActionSchema, await readJsonBody(request, uiActionPayloadBytes + 256));
+    if (Buffer.byteLength(JSON.stringify(payload)) > uiActionPayloadBytes)
+      throw new HttpError(413, "PAYLOAD_TOO_LARGE", "界面动作的 JSON 载荷超过 16 KiB");
+    const data = await services.extensions.uiAction(params.extId ?? "", version, action, payload);
+    return { status: 200, body: { data } };
+  });
   for (const action of ["enable", "disable", "reload"] as const) {
     router.add("POST", `/v1/extensions/:extId/${action}`, async ({ params }) =>
       ({ status: 200, body: await services.extensions.toggle(params.extId ?? "", action) }));

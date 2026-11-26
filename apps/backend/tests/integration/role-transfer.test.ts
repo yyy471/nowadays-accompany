@@ -7,9 +7,12 @@ import { fileURLToPath } from "node:url";
 import test, { type TestContext } from "node:test";
 import Database from "better-sqlite3";
 import { applyRoleTransfer, exportRoleTransfer, preflightRoleTransfer } from "../../src/application/transfer/role-transfer.js";
-import { readRoleTransferPackage, roleTransferWithAncestors, writeRoleTransferPackage } from "../../src/application/transfer/role-transfer-package.js";
+import { readRoleTransferPackage, roleTransferTimelineFingerprint, roleTransferWithAncestors, writeRoleTransferPackage } from "../../src/application/transfer/role-transfer-package.js";
 import { createBackendApp } from "../../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths, type BackendConfig } from "../../src/bootstrap/config.js";
+
+import { EngineeringJobs } from "../../src/storage/conversation/engineering-jobs.js";
+import { RoleStorage } from "../../src/storage/core/role-storage.js";
 
 const options = { disableMemoryRuntime: true, disablePresetAssistant: true };
 const backend = fileURLToPath(new URL("../../", import.meta.url));
@@ -300,4 +303,47 @@ test("进程在换名各阶段退出时，下一次正常启动恢复到完整�
       await app.close();
     }
   }
+});
+
+test("工程迁移保留回执，收敛在途作业和旧包悬空等待", async t => {
+  const source = installation(t), target = installation(t), legacy = installation(t);
+  const { roleId, defaultWindowId: windowId } = await createRole(source);
+  const store = RoleStorage.openExisting(rolePaths(source.dataRoot, roleId));
+  const tasks: string[] = [], ids = [randomUUID(), randomUUID()];
+  try {
+    const jobs = new EngineeringJobs(store.business.db);
+    for (const id of ids) {
+      const { taskId } = store.business.createTask({ roleId, goal: "迁移样例" });
+      tasks.push(taskId);
+      jobs.register({ roleId, jobId: id, windowId, taskId, workDir: source.appRoot, title: "样例", extId: "sample",
+        startedAt: new Date().toISOString(), origin: "user" });
+      store.business.pauseTask({ roleId, taskId, waitReason: "AWAITING_ENGINEERING_JOB", endReason: "等工程" });
+    }
+    jobs.settle(ids[0]!, "completed", "结果已存档", new Date().toISOString());
+  } finally { store.close(); }
+  const file = path.join(source.appRoot, "engineering.json");
+  exportRoleTransfer(source, roleId, file);
+  transfer(target, file);
+  const imported = RoleStorage.openExisting(rolePaths(target.dataRoot, roleId));
+  try {
+    const jobs = new EngineeringJobs(imported.business.db);
+    assert.deepEqual(jobs.nextDelivery(), { windowId, taskId: tasks[0] });
+    assert.equal(jobs.find(ids[1]!)?.status, "interrupted_unknown");
+    assert.equal(jobs.find(ids[0]!)?.workDir, "");
+    assert.equal(imported.business.getTask(roleId, tasks[1]!).waitReason, "ROLE_TRANSFER_INTERRUPTED");
+    const { executionId } = imported.business.createExecution({ roleId, windowId, triggerType: "user_message" });
+    assert.equal(jobs.claim(tasks[0]!, executionId), 1);
+    assert.match(JSON.stringify(jobs.receipts(tasks[0]!, executionId)), /结果已存档/);
+  } finally { imported.close(); }
+  const pkg = readRoleTransferPackage(file);
+  Reflect.deleteProperty(pkg.tables, "engineering_jobs");
+  Reflect.deleteProperty(pkg.tables, "engineering_wakes");
+  const oldFile = path.join(source.appRoot, "legacy.json");
+  pkg.timelineFingerprint = roleTransferTimelineFingerprint(pkg);
+  writeRoleTransferPackage(oldFile, roleTransferWithAncestors(pkg, []));
+  transfer(legacy, oldFile);
+  assert.equal(preflightRoleTransfer(legacy, oldFile).relation, "same");
+  const old = RoleStorage.openExisting(rolePaths(legacy.dataRoot, roleId));
+  try { assert.equal(old.business.getTask(roleId, tasks[0]!).waitReason, "ROLE_TRANSFER_INTERRUPTED"); }
+  finally { old.close(); }
 });

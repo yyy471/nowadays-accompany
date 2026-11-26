@@ -15,7 +15,7 @@ const distDir = path.join(desktop, "renderer", "dist");
 const timeoutMs = Number(process.env.E2E_TIMEOUT_MS ?? "180000");
 const poolSize = Math.max(1, Number(process.env.E2E_CONCURRENCY ?? "3"));
 const keepRuns = Math.max(0, Number(process.env.E2E_KEEP_RUNS ?? "5"));
-const expectedSuiteSize = 18;
+const relationModes = ["base", "slow", "switch", "batch", "inner", "many", "focus"];
 
 const SUITE = [
   "startup-flow-fixes.e2e.cjs",
@@ -23,11 +23,13 @@ const SUITE = [
   "settings-real-backend.e2e.cjs",
   "settings-review-fixes.e2e.cjs",
   "relations-desktop.e2e.cjs",
+  ...relationModes.map(mode => "relations-review-234.e2e.cjs#" + mode),
   "settings-auto-reload.e2e.cjs",
   "settings-binding-recovery.e2e.cjs",
   "token-usage.e2e.cjs",
   "dialogue-layout.e2e.cjs",
   "cross-page-share.e2e.cjs",
+  "engineering-capsule.e2e.cjs",
   "role-exchanges.e2e.cjs",
   "extension-ui-slots.e2e.cjs",
   "pack3-entry.e2e.cjs",
@@ -114,6 +116,7 @@ function killTree(child) {
 }
 
 function runOne(name, runDir) {
+  const [file, mode] = name.split("#");
   const caseDir = path.join(runDir, name.replace(/\.cjs$/, ""));
   fs.mkdirSync(caseDir, { recursive: true });
   const log = path.join(runDir, `${name.replace(/\.cjs$/, "")}.log`);
@@ -135,7 +138,7 @@ function runOne(name, runDir) {
     let timedOut = false;
     let child;
     try {
-      child = spawn(process.execPath, [path.join(e2eDir, name)], {
+      child = spawn(process.execPath, [path.join(e2eDir, file), ...(mode ? [mode] : [])], {
         cwd: desktop,
         env,
         stdio: ["ignore", fd, fd],
@@ -195,15 +198,15 @@ async function runPool(names, runDir, limit) {
 async function main() {
   if (Number(process.versions.node.split(".")[0]) < 24) throw new Error("NODE_24_REQUIRED");
   const options = parseArgs(process.argv.slice(2));
+  const files = new Set(SUITE.map(name => name.split("#")[0]));
+  const disk = fs.readdirSync(e2eDir).filter(file => file.endsWith(".e2e.cjs"));
+  const missing = [...disk.filter(file => !files.has(file)), ...[...files].filter(file => !disk.includes(file))];
+  if (missing.length || new Set(SUITE).size !== SUITE.length) throw new Error("E2E_SUITE_MISMATCH:" + missing.join(","));
+  const expectedSuiteSize = SUITE.length;
   if (options.list) {
     for (const name of SUITE) console.log(`${name}${serialNames.has(name) ? " (serial)" : ""}`);
     return;
   }
-  for (const name of SUITE) {
-    if (!fs.existsSync(path.join(e2eDir, name))) throw new Error(`E2E_SUITE_FILE_MISSING:${name}`);
-  }
-  if (SUITE.length !== expectedSuiteSize) throw new Error(`E2E_SUITE_SIZE_MISMATCH:${SUITE.length}`);
-
   const selected = options.filter ? SUITE.filter((name) => name.includes(options.filter)) : [...SUITE];
   if (selected.length === 0) throw new Error("E2E_FILTER_EMPTY");
   fs.mkdirSync(outputRoot, { recursive: true });

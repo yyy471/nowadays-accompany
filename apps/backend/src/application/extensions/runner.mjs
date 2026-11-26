@@ -3,6 +3,7 @@ import { pathToFileURL } from "node:url";
 
 const ctx = new Context();
 const handlers = new Map();
+const uiActions = new Map();
 const subscriptions = new Map();
 const requests = new Map();
 let serial = 0;
@@ -43,6 +44,16 @@ const platform = {
       return ctx.effect(() => () => { handlers.delete(spec.name); changed(); });
     },
   },
+  ui: {
+    onAction(name, handler) {
+      if (typeof name !== "string" || !/^[a-zA-Z][a-zA-Z0-9_.-]{0,63}$/.test(name) ||
+          typeof handler !== "function" || uiActions.has(name)) throw Error("EXTENSION_UI_ACTION_INVALID");
+      return ctx.effect(() => {
+        uiActions.set(name, handler);
+        return () => { uiActions.delete(name); };
+      });
+    },
+  },
   events: {
     on(name, handler) {
       if (!["dialogue_batch", "role_exchange"].includes(name) || typeof handler !== "function") throw Error("EXTENSION_EVENT_INVALID");
@@ -78,18 +89,28 @@ process.on("message", async msg => {
     await ctx.stop();
     // 异步 disposer 的计时器与在途 IPC 继续保活，直至自然排空。
     if (!requests.size) process.channel.unref();
-  } else if (msg.type === "call" || msg.type === "event") {
+  } else if (msg.type === "call" || msg.type === "event" || msg.type === "ui-action") {
     try {
       let value;
       if (msg.type === "call") {
         const tool = handlers.get(msg.name);
         if (!tool) throw Error("EXTENSION_UNAVAILABLE");
         value = await tool.handler(msg.args, msg.context);
+      } else if (msg.type === "ui-action") {
+        const handler = uiActions.get(msg.name);
+        if (!handler) {
+          send({ type: "result", id: msg.id, code: "EXTENSION_UI_ACTION_NOT_FOUND", error: "扩展未登记此界面动作" });
+          return;
+        }
+        value = await handler(msg.args);
       } else {
         for (const fn of subscriptions.get(msg.name) ?? []) await fn(msg.args);
       }
       send({ type: "result", id: msg.id, value });
-    } catch (error) { send({ type: "result", id: msg.id, error: String(error) }); }
+    } catch (error) {
+      send({ type: "result", id: msg.id, error: String(error),
+        code: msg.type === "ui-action" ? "EXTENSION_UI_ACTION_FAILED" : undefined });
+    }
   }
 });
 try {

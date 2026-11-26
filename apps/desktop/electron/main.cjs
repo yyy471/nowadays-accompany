@@ -32,6 +32,8 @@ let tray;
 let quitting = false;
 let backendChild = null;
 let backendBaseUrl = process.env.NOWADAYS_BACKEND_URL || "";
+const hostToken = backendBaseUrl ? process.env.NOWADAYS_HOST_TOKEN : require("node:crypto").randomBytes(32).toString("hex");
+const hostHeaders = hostToken ? { "X-Nowadays-Host-Token": hostToken } : {};
 let backendReadyPromise = null;
 
 // 开发仓库与打包产物的后端、预置素材与 Node 运行时位置统一由布局解析给出（310 §3.2）。
@@ -54,7 +56,7 @@ async function ensureBackendRunning() {
   }
   backendReadyPromise = (async () => {
     if (backendBaseUrl) {
-      const response = await fetch(`${backendBaseUrl}/v1/health`);
+      const response = await fetch(`${backendBaseUrl}/v1/health`, { headers: hostHeaders, redirect: "error" });
       if (!response.ok || (await response.json()).status !== "ok") {
         throw new Error("配置的后端不可用");
       }
@@ -86,7 +88,7 @@ async function ensureBackendRunning() {
         ],
         {
           cwd: backendRoot,
-          env: { ...process.env, NO_COLOR: "1" },
+          env: { ...process.env, NOWADAYS_HOST_TOKEN: hostToken, NOWADAYS_PI_MCP_ROOT: layout.piMcpRoot, NO_COLOR: "1" },
           stdio: ["ignore", "pipe", "pipe"],
           windowsHide: true
         }
@@ -203,8 +205,11 @@ async function startDesk() {
       const targetUrl = `${backendBaseUrl}${pathname}${search}`;
       const init = {
         method: request.method,
-        headers: request.headers
+        headers: new Headers(request.headers),
+        redirect: "manual"
       };
+      // 同源资产（图片、音频）没有自定义头；仅桌面协议代理向固定后端补签。
+      if (hostToken && request.method === "GET" && !pathname.startsWith("/v1/internal/")) init.headers.set("X-Nowadays-Host-Token", hostToken);
       if (request.method !== "GET" && request.method !== "HEAD" && request.body) {
         init.body = await request.arrayBuffer();
       }
@@ -232,6 +237,18 @@ async function startDesk() {
     titleBarStyle: "default",
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, preload: join(__dirname, "settings-preload.cjs") }
   });
+  ipcMain.on("desk:host-headers", event => {
+    event.returnValue = event.sender === window.webContents && event.senderFrame === window.webContents.mainFrame &&
+      event.senderFrame.url === home ? hostHeaders : {};
+  });
+  // EventSource 无自定义头 API。限定后端地址与主框架，不向扩展子帧签发。
+  if (hostToken && backendBaseUrl) window.webContents.session.webRequest.onBeforeSendHeaders(
+    { urls: [new URL(backendBaseUrl).protocol + "//" + new URL(backendBaseUrl).hostname + "/*"] },
+    (details, callback) => {
+      if (details.method === "GET" && details.url.startsWith(backendBaseUrl + "/v1/") && details.frame === window.webContents.mainFrame &&
+          details.frame.url === home) Object.assign(details.requestHeaders, hostHeaders);
+      callback({ requestHeaders: details.requestHeaders });
+    });
   ipcMain.handle("settings:choose-skill-directory", async (event) => {
     if (!window || window.isDestroyed() || event.sender !== window.webContents ||
         event.senderFrame !== window.webContents.mainFrame || event.senderFrame.url !== home) {
@@ -240,7 +257,7 @@ async function startDesk() {
     const result = await dialog.showOpenDialog(window, { properties: ["openDirectory"] });
     return result.canceled ? null : result.filePaths[0] ?? null;
   });
-  window.webContents.session.protocol.handle("nd-ext", extensionHandler(backendBaseUrl, net.fetch.bind(net)));
+  window.webContents.session.protocol.handle("nd-ext", extensionHandler(backendBaseUrl, (url, init) => net.fetch(url, { ...init, headers: hostHeaders })));
   window.webContents.on("will-frame-navigate", event => {
     if (!event.isMainFrame && !allowSlotNavigation(event, window.webContents.mainFrame)) event.preventDefault();
   });

@@ -3,6 +3,8 @@ import { parseBackendConfig } from "./bootstrap/config.js";
 
 async function main(): Promise<void> {
   const config = parseBackendConfig(process.argv.slice(2));
+  // 会话令牌只交给 HTTP 入口，子进程无需继承。
+  delete process.env.NOWADAYS_HOST_TOKEN;
   const app = createBackendApp(config);
   try {
     const port = await listen(app.server, config.port, config.host);

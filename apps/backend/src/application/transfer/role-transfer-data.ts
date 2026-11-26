@@ -15,6 +15,8 @@ const PROJECTION = {
   tasks: "task_id role_id goal status end_reason created_at updated_at origin initiator_execution_id continuable wait_reason consecutive_failures consecutive_no_progress",
   executions: "execution_id role_id window_id trigger_type trigger_message_id status state_version_loaded state_version_committed created_at updated_at decision_round superseded_by_execution_id task_decision_json",
   execution_tasks: "execution_id task_id relation created_at",
+  engineering_jobs: "job_id role_id task_id window_id origin ext_id title started_at finished_at status summary",
+  engineering_wakes: "wake_id job_id execution_id",
   tool_calls: "tool_call_id task_id execution_id step_key tool_name args_json status created_at started_at finished_at",
   tool_call_mode_events: "event_id tool_call_id mode changed_at",
   tool_results: "tool_call_id status raw_response_json adapted_result_json diagnostic_code error_json saved_at previous_status previous_diagnostic_code previous_raw_response_json previous_adapted_result_json previous_error_json reconciled_at reconciled_by_call_id",
@@ -86,8 +88,18 @@ const INTERRUPTED = "ROLE_TRANSFER_INTERRUPTED";
 export const TRANSFER_INTERRUPTED_MESSAGE = "transfer_interrupted";
 
 export function normalizeExecutionFacts(tables: TransferTables): void {
+  for (const job of tables.engineering_jobs ?? []) {
+    if (job.status === "running") {
+      job.status = "interrupted_unknown";
+      job.summary = INTERRUPTED;
+      // 迁移快照没有观察到实际完成时间。
+    }
+  }
+  const queued = new Set((tables.engineering_wakes ?? []).filter(w => w.execution_id === null).map(w => w.job_id));
+  const deliverable = new Set((tables.engineering_jobs ?? []).filter(j => queued.has(j.job_id)).map(j => j.task_id));
   for (const row of tables.tasks) {
-    if (row.status === "active" || (row.status === "paused" && row.end_reason === "ROLE_STOPPED")) {
+    if (row.status === "active" || (row.status === "paused" && (row.end_reason === "ROLE_STOPPED" ||
+        (tables.engineering_jobs && row.wait_reason === "AWAITING_ENGINEERING_JOB" && !deliverable.has(row.task_id))))) {
       row.status = "paused";
       row.end_reason = INTERRUPTED;
       row.wait_reason = INTERRUPTED;
@@ -142,6 +154,14 @@ export function normalizeExecutionFacts(tables: TransferTables): void {
   for (const row of tables.evidence_processing) {
     if (row.status === "processing") row.status = "pending";
   }
+}
+
+// v1 旧包仍按原文验摘要；安装与时间线比较使用相同的兼容投影。
+export function portableTransferTables(tables: TransferTables): TransferTables {
+  if (tables.engineering_jobs || !tables.tasks.some(t => t.status === "paused" && t.wait_reason === "AWAITING_ENGINEERING_JOB")) return tables;
+  const upgraded = { ...tables, engineering_jobs: [], engineering_wakes: [], tasks: tables.tasks.map(row => ({ ...row })) };
+  normalizeExecutionFacts(upgraded);
+  return upgraded;
 }
 
 export function rebuildTransferMemorySearch(db: Database.Database): void {

@@ -16,7 +16,9 @@ import {
   type MemoryModelFactory,
 } from "../application/memory/memory-runtime.js";
 import { MessageService } from "../application/conversation/message-service.js";
+import { PiToolProxy } from "../mcp/tool-proxy.js";
 import { ManagedPi } from "../mcp/managed-pi.js";
+import { isAdminSeat } from "../domain/admin-seat.js";
 import { PiModelProxy } from "../mcp/model-proxy.js";
 import { ModelBindingResolver } from "../application/resources/model-binding-resolver.js";
 import { ModelService } from "../application/resources/model-service.js";
@@ -271,11 +273,16 @@ function assembleBackendApp(
   // 管理工具需要反向引用对话服务（任务查询与记忆触发），构造完成后再补上。
   const extensions = new ExtensionHost(config.appRoot, options.extensionTimeouts);
   const modelProxy = new PiModelProxy(credentials, tokenUsage, resourceService);
-  const pi: ManagedPi = new ManagedPi(modelProxy, bindings, extensions.work, () => {
+  const toolProxy = new PiToolProxy(modelProxy, appStore, roleAccess, autonomy, config.appRoot,
+    (roleId, taskId) => conversation.releaseTaskResources(roleId, taskId));
+  const pi: ManagedPi = new ManagedPi(modelProxy, toolProxy, bindings, extensions.work, () => {
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("PI_HTTP_SERVER_UNAVAILABLE");
     return address.port;
-  }, roleId => activity.view(roleId).state === "active", options.piLeaseMs);
+  }, roleId => activity.view(roleId).state === "active",
+  roleId => isAdminSeat(roleAccess.requireReady(roleId).builtinKey), roleAccess,
+  () => appStore.listRoleIndexes().filter(r => r.initStatus === "ready" && isAdminSeat(r.builtinKey)).map(r => r.roleId),
+  roleId => wakePendingWork(roleId), options.piLeaseMs);
   const adminServices: AdminToolServices = {
     pi, extensions,
     roles: roleService,
@@ -374,7 +381,7 @@ function assembleBackendApp(
       conversation.isRunning(roleId) ||
       (memoryRuntime?.isBusy(roleId) ?? false),
     // 恢复后把停止时暂停的原任务链与到期待办接回调度（RA-R02）。
-    stopExchanges: (roleId) => { void pi.stop(roleId); conversation.exchanges.stop(roleId); },
+    stopExchanges: (roleId) => { void pi.stop(roleId).catch(error => console.warn("PI_STOP_FAILED", roleId, error)); conversation.exchanges.stop(roleId); },
     resumeWork: (roleId) => conversation.rescheduleAfterStop(roleId),
   });
   memoryRuntime?.recoverOnStartup();
@@ -515,19 +522,20 @@ function assembleBackendApp(
     roleDeletion,
     mediaMaintenance,
     tokenUsage,
-    modelProxy,
+    pi, modelProxy, toolProxy,
     extensions,
   };
   if (options.disablePresetAssistant !== true) {
-    ensurePresetAssistant({
+    const seat = ensurePresetAssistant({
       appStore,
       roleService,
       presetAssetsDir: config.presetAssetsDir,
       now,
     });
+    resourceService.ensureManagedPi(seat.roleId);
   }
   conversation.batchDelivery.recover();
-  const server = createHttpServer({ version: "0.1.0", services });
+  const server = createHttpServer({ version: "0.1.0", services, hostToken: config.hostToken });
 
   extensions.restore();
   let closing: Promise<void> | undefined;
@@ -540,16 +548,16 @@ function assembleBackendApp(
     close() {
       return closing ??= (async () => {
         try {
-          await pi.close();
+          // 同一事件循环内停止工程与前台生成，避免排空代理时又接收一段旧回复。
+          const stopped = await Promise.allSettled([pi.close(), conversation.close()]);
+          await toolProxy.drain();
           if (server.listening) await closeServer(server);
+          for (const result of stopped) if (result.status === "rejected") throw result.reason;
         } finally {
-          try { await conversation.close(); }
+          try { await sceneImages.close(); }
           finally {
-            try { await sceneImages.close(); }
-            finally {
-              try { await extensions.close(); }
-              finally { appStore.close(); }
-            }
+            try { await extensions.close(); }
+            finally { appStore.close(); }
           }
         }
       })();

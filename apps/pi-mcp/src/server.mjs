@@ -58,9 +58,18 @@ async function start(prompt, job) {
     kill();
     try {
       await fetch(job.baseUrl + "/release", { method: "POST", headers: { Authorization: "Bearer " + job.lease }, signal: AbortSignal.timeout(3000) });
-    } catch { /* 宿主关闭时租约由宿主统一撤销。 */ }
+    } catch (error) { console.error("PI_LEASE_RELEASE_UNAVAILABLE", error.message); }
     try { await rm(agentDir, { recursive: true, force: true, maxRetries: 3 }); }
-    finally { Object.assign(view, result); active.delete(job.jobId); resolve(); }
+    catch (error) { console.error("PI_AGENT_DIR_CLEANUP_FAILED", error.message); }
+    finally {
+      Object.assign(view, result);
+      try {
+        await server.notification({ method: "notifications/nowadays/pi-terminal", params: {
+          jobId: job.jobId, state: result.state, summary: String(result.result ?? result.error ?? result.state).slice(0, 1200),
+        } });
+      } catch (error) { console.error("PI_TERMINAL_TRANSPORT_CLOSED", error.message); }
+      finally { active.delete(job.jobId); resolve(); }
+    }
   });
   try { kill = attach(child); child.send({ ...job, prompt, agentDir }); }
   catch (error) { await stop("failed"); throw error; }

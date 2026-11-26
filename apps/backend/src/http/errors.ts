@@ -34,9 +34,6 @@ export function writeJson(response: ServerResponse, result: JsonResponse): void 
     "content-type": "application/json; charset=utf-8",
     "content-length": Buffer.byteLength(payload),
     "cache-control": "no-store",
-    "access-control-allow-origin": "*",
-    "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-    "access-control-allow-headers": "content-type, last-event-id",
   });
   response.end(payload);
 }
@@ -49,9 +46,6 @@ export function writeBinary(
     "content-type": result.contentType,
     "content-length": result.body.length,
     "cache-control": result.cacheControl ?? "no-store",
-    "access-control-allow-origin": "*",
-    "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-    "access-control-allow-headers": "content-type, last-event-id",
   });
   response.end(result.body);
 }

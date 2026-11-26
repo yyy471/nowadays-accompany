@@ -4,10 +4,10 @@ import Database from "better-sqlite3";
 import { rolePaths, type BackendConfig } from "../../bootstrap/config.js";
 import { AppStore } from "../../storage/core/app-store.js";
 import { checkAppDatabaseFiles, checkedInstallEntry, lockInstallation } from "../../storage/core/installation-lock.js";
-import { canonicalJson, sha256 } from "./role-transfer-data.js";
+import { canonicalJson, portableTransferTables, sha256 } from "./role-transfer-data.js";
 import {
   captureRoleTransfer, readRoleTransferPackage, resolveRoleTransferBindings, roleTransferTimelineFacts,
-  roleTransferWithAncestors, writeRoleTransferPackage, type RoleTransferPackage,
+  roleTransferTimelineFingerprint, roleTransferWithAncestors, writeRoleTransferPackage, type RoleTransferPackage,
 } from "./role-transfer-package.js";
 import { checkTransferRoleDirectory, publishRoleTransfer, recoverRoleTransfer, type PublicationHook } from "./role-transfer-publication.js";
 
@@ -182,7 +182,10 @@ function compareTimelines(
 function inspectTransfer(config: BackendConfig, file: string, mapping: TransferMapping) {
   const incoming = readRoleTransferPackage(file);
   const bindings = resolveRoleTransferBindings(config, incoming, mapping);
-  const incomingEvidence = timelineEvidence(incoming);
+  const tables = portableTransferTables(incoming.tables);
+  const portable = tables === incoming.tables ? incoming : { ...incoming, tables,
+    timelineFingerprint: roleTransferTimelineFingerprint({ ...incoming, tables }) };
+  const incomingEvidence = timelineEvidence(portable);
   const { roleId, builtinKey } = incoming;
   const hasDirectory = checkTransferRoleDirectory(config, roleId);
   return withAppRead(config, (db) => {
@@ -197,7 +200,7 @@ function inspectTransfer(config: BackendConfig, file: string, mapping: TransferM
       throw new Error("ROLE_TRANSFER_PRESET_KEY_IN_USE");
     }
     const snapshots = localSnapshots(db, roleId);
-    const relation = compareTimelines(local, incoming, incomingEvidence, snapshots);
+    const relation = compareTimelines(local, portable, incomingEvidence, snapshots);
     const activity = tableExists(db, "role_activity") ?
       db!.prepare("SELECT * FROM role_activity WHERE role_id = ?").get(roleId) : null;
     const selection = tableExists(db, "role_transfer_selections") ?
@@ -212,7 +215,7 @@ function inspectTransfer(config: BackendConfig, file: string, mapping: TransferM
       incoming, incomingEvidence, bindings, index, selection,
       preview: {
         roleId, token, relation, requiresChoice, packageDigest: incoming.digest,
-        localFingerprint: local?.timelineFingerprint ?? null, packageFingerprint: incoming.timelineFingerprint,
+        localFingerprint: local?.timelineFingerprint ?? null, packageFingerprint: portable.timelineFingerprint,
         registered: Boolean(index), bindings: incoming.bindings, unresolved: bindings.unresolved,
       },
     };
@@ -257,7 +260,7 @@ export function applyRoleTransfer(
           state = 'stopped', requested_at = NULL, confirmed_at = excluded.confirmed_at,
           boundary_execution_id = NULL, updated_at = excluded.updated_at
       `).run(incoming.roleId, stoppedAt, stoppedAt);
-      saveSnapshot(store.db, incoming, incomingEvidence);
+      saveSnapshot(store.db, { ...incoming, timelineFingerprint: preview.packageFingerprint }, incomingEvidence);
       store.db.prepare(`
         INSERT INTO role_transfer_selections (role_id, package_digest, target_fingerprint) VALUES (?, ?, ?)
         ON CONFLICT(role_id) DO UPDATE SET

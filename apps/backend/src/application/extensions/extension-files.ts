@@ -25,6 +25,12 @@ export const upsertSchema = z.object({
   extId: extIdSchema, manifest: definition,
   files: z.record(sourceFile, z.string()),
 });
+export const uiActionPayloadBytes = 16 * 1024;
+export const uiActionSchema = z.object({
+  version: definition.shape.version,
+  action: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_.-]{0,63}$/),
+  payload: z.json(),
+});
 export const toolSpec = z.object({
   name: z.string().regex(/^[a-z][a-z0-9_]{0,31}$/),
   description: z.string().min(1), inputSchema: z.record(z.string(), z.unknown()).refine(s => s.type === "object"),
@@ -59,21 +65,30 @@ export class ExtensionFiles {
     }
     return current;
   }
-  workspace(id: string) {
+  private draftParts(id: string, jobId?: string) {
     extIdSchema.parse(id);
-    const target = this.checked(id);
-    fs.mkdirSync(target, { recursive: true });
-    return this.checked(id);
+    return jobId === undefined ? [id] : ["0-pi-jobs", z.uuid().parse(jobId), id];
   }
-  draft(id: string) {
-    extIdSchema.parse(id);
-    const manifest = definition.parse(JSON.parse(fs.readFileSync(this.checked(id, "manifest.json"), "utf8")));
+  workspacePath(id: string, jobId?: string) {
+    return this.checked(...this.draftParts(id, jobId));
+  }
+  workspace(id: string, jobId?: string) {
+    const target = this.workspacePath(id, jobId);
+    fs.mkdirSync(target, { recursive: true });
+    return this.workspacePath(id, jobId);
+  }
+  discardJob(jobId: string) {
+    fs.rmSync(this.checked("0-pi-jobs", z.uuid().parse(jobId)), { recursive: true, force: true });
+  }
+  draft(id: string, jobId?: string) {
+    const parts = this.draftParts(id, jobId);
+    const manifest = definition.parse(JSON.parse(fs.readFileSync(this.checked(...parts, "manifest.json"), "utf8")));
     const files: Record<string, Buffer> = Object.create(null);
     const collect = (prefix: string) => {
-      for (const entry of fs.readdirSync(this.checked(id, ...prefix.split("/").filter(Boolean)), { withFileTypes: true })) {
+      for (const entry of fs.readdirSync(this.checked(...parts, ...prefix.split("/").filter(Boolean)), { withFileTypes: true })) {
         const name = prefix + entry.name;
         if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
-        const file = this.checked(id, name);
+        const file = this.checked(...parts, name);
         if (entry.isDirectory()) collect(name + "/");
         else if (sourceFile.safeParse(name).success) {
           if (!fs.statSync(file).isFile()) throw new AppError(400, "EXTENSION_PATH_INVALID", "草稿包含非普通文件");

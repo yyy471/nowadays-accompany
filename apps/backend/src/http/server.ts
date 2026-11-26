@@ -3,12 +3,13 @@ import { Router } from "./router.js";
 import { registerApiRoutes, type ApiServices } from "./routes.js";
 
 export interface HttpServerOptions {
+  hostToken?: string | undefined;
   version: string;
   services: ApiServices;
 }
 
 export function createHttpServer(options: HttpServerOptions): http.Server {
-  const router = new Router();
+  const router = new Router(options.hostToken);
   registerApiRoutes(router, options.services, options.version);
   return http.createServer((request, response) => {
     void router.handle(request, response);

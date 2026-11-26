@@ -228,6 +228,7 @@
 | --- | --- |
 | `api.tools.register({name, description, inputSchema, scope}, handler)` | 返回注销函数。`inputSchema.type` 为 `object`。处理器接收参数和角色、窗口、执行、任务、自主执行标记，返回 JSON。模型看到的工具名为 `ext_<extId>__<name>`，每次模型请求刷新目录。范围可选 `admin_only` 或 `all_roles`。 |
 | `api.events.on(name, handler)` | 返回退订函数。`dialogue_batch` 投递已向席位交付的批次事实，`role_exchange` 投递双边已落库的会话状态。向当时已订阅的扩展发送，业务提交无需等待处理器。 |
+| `api.ui.onAction(name, handler)` | 在当前 Cordis Context 登记精确动作名并返回注销函数。handler 接收 JSON payload，可以读写本扩展 KV，返回 JSON。动作表独立于角色工具与平台事件，退出时由 Context 清理。 |
 | `await api.kv.get(key)`、`await api.kv.set(key, value)` | 键为非空字符串，值为 JSON，缺失返回 `null`。候选初始化的写入在版本切换时提交。 |
 | `await api.notify({message, data?})` | 后端订阅者通过 `extensions.onNotice(listener)` 接收含真实 `extId` 的结构化提示。候选初始化期间暂存，激活后发出。 |
 | `ctx.effect(() => dispose)` | 在子进程中登记清理函数。停用、删除、升级和应用关闭均先排空在途调用，再停止 Context 并等待 PID 退出。 |
@@ -243,17 +244,39 @@
 
 桌面订阅独立的 `GET /v1/extension-events`（SSE）。连接及重连首先收到 `snapshot`，内容为各扩展的标识、版本、状态、UI 声明和最近错误。激活、停用、删除及失败时更新快照。当前活动版本的 `api.notify` 产生 `notice`（`extId`、`version`、`message`），候选版本的初始化通知在版本切换成功后投递。该流独立于角色、对话窗口和输入客户端。
 
+桌面父页通过 `POST /v1/extensions/:extId/ui-action` 提交 `{version,action,payload}`，成功返回 `{data}`。请求体上限为 16 KiB 加 256 字节，payload 自身上限为 16 KiB。后端同步核对启用状态与活动版本，并将请求登记在当时捕获的子进程中。动作沿用 15 秒默认调用超时，停用或升级时已派发动作随原进程排空。已停用返回 409 `EXTENSION_UNAVAILABLE`，旧版本返回 409 `EXTENSION_VERSION_MISMATCH`，未知动作返回 404 `EXTENSION_UI_ACTION_NOT_FOUND`，处理器抛错返回 422 `EXTENSION_UI_ACTION_FAILED`。
+
+Pi 的 `nowadays-mod.mjs` 提供互动计数器的清单、入口和 HTML 示例。主角色的 `app_extension_upsert`、`app_extension_publish_work` 描述与 Pi 提示使用同一动作、回包和主题契约。
+
 `GET /v1/extensions/:extId/ui/<相对文件>` 逐级核实活动版本目录及文件真实路径，只读取当前启用版本在 `manifest.ui` 明确列出的普通文件。可附 `?v=<版本>` 精确匹配。未声明、越界、链接、后端模块、私有清单及过期版本的资产请求均不可用。直接打开 HTTP 资源时响应带无脚本 CSP 沙箱。桌面协议和布局契约见[扩展槽位](./frontend-design-system.md#扩展槽位dl-188)。
 
 ### 3.6 受托管工程 MCP（DL-195）
 
-在全局 MCP 资源添加 `{"command":"nowadays-pi","args":[],"env":{}}`，然后在角色设置启用。宿主将这个命令解析为独立安装的 Pi stdio 服务。角色获得 `pi_task_start({extId,prompt})` 和以 `jobId` 查询的 `pi_task_status`、`pi_task_result`、`pi_task_cancel`。启动立即返回，角色可继续回复用户。Pi 的工具轨迹保存在工程会话内存中，角色通过结果工具取得最终摘要。
+后端在启动时以 MCP 命令 `nowadays-pi` 识别内置 Pi，包括老库中改过显示名的同命令资源。首次引入时自动创建全局资源并为唯一主角色席位启用绑定。升级时沿用已有资源 ID、全局开关及席位的关闭或解绑选择。历史同命令项按创建顺序合并，绑定冲突保留停用，原任务续用关系随资源迁移。用户删除该资源后，重启会补回停用的目录项。全局目录标明「仅主角色可用」，角色绑定、工具发现和实际调用均按持久化主角色席位校验。普通角色可使用主角色已发布的公开扩展。启停与原任务续用沿用 DL-59、DL-71。
 
-每个任务使用独立的 Pi SDK 会话和临时配置目录。子包 [src/extensions](../../apps/pi-mcp/src/extensions/) 中的 `.mjs` 文件默认导出 Pi 扩展工厂，由新会话按文件名顺序加载。内置 `nowadays-mod.mjs` 在 `before_agent_start` 注入工作区、Cordis 工具登记和 UI 槽位契约。Windows 工作者在执行 SDK 前加入由 MCP 服务独占句柄的 Job Object，回收覆盖派生的本地测试进程。
+开发态从 `apps/pi-mcp` 启动独立 stdio 服务。Windows 桌面包从 `resources/pi-mcp` 加载入口、工程扩展和子包自己的运行依赖，使用 `resources/node-runtime/node.exe`。开发和打包布局均可用 `NOWADAYS_PI_MCP_ROOT` 显式覆盖子包根目录。主角色获得 `pi_task_start({extId,prompt})` 和以 `jobId` 操作的 `pi_task_status`、`pi_task_result`、`pi_task_cancel`。启动立即返回，角色可继续回复用户。宿主在角色业务库登记 job、父任务、原窗口、发起源、扩展、草稿目录、起止时间和终态摘要。主角色可按 jobId 读取已归档的结果。人工暂停或熔断优先于工程等待，期间回执持久化排队，原任务明确恢复后领取。角色迁移携带工程事实和回执，省略源机草稿路径。在途工程归为中断、结果未知，缺少待交付回执的工程等待归为迁移中断。
 
-模型服务使用角色绑定的 OpenAI Chat 或 Responses 协议。宿主通过 stdio 请求元数据发放任务专用的 15 分钟租约，Pi 在回环 HTTP 请求的 Bearer 头携带租约。宿主固定上游地址、路由及模型，经 `CredentialResolver` 解析凭据。每次上游尝试（含 Pi 重试）在 DL-183 账本按独立 `sourceCallId` 领取，同一编号更新终态和实际用量。对话委派计入 dialogue，自主委派计入 autonomy。任务取消、角色停机和超时撤销租约，后续请求返回 HTTP 403 和 `PI_LEASE_REVOKED`。
+每个任务使用独立的 Pi SDK 会话和临时配置目录。子包 [src/extensions](../../apps/pi-mcp/src/extensions/) 中的 `.mjs` 文件默认导出 Pi 扩展工厂，由新会话按文件名顺序加载。内置 `nowadays-mod.mjs` 在 `before_agent_start` 注入工作区、Cordis 工具登记和 UI 槽位契约。原生 `write` 与 `edit` 在文件操作处解析目标和父目录的真实路径，限制到当前工程工作区。shell 和子进程仍沿用本机用户权限。Windows 工作者在执行 SDK 前加入由 MCP 服务独占句柄的 Job Object，回收覆盖派生的本地测试进程。
 
-Mod 草稿由 `config.appRoot` 派生在 `<app-root>/extensions-work/<extId>/`。主角色核对工程测试结果后调用 `app_extension_publish_work({extId})`，宿主逐级核对真实路径并拒绝 junction，读取 `manifest.json`、`.mjs` 源码与 `ui/` 资产。发布复用 §3.5 的版本暂存与候选进程握手，成功后同一任务的下一轮即可发现新工具。普通角色按 `all_roles` 声明调用公开工具。离线验收范围见[当前状态](../STATUS.md)。
+模型服务使用角色绑定的 OpenAI Chat Completions 或 Responses 协议。使用 Anthropic Messages 或 Google Gemini 原生协议委派工程时，宿主返回 `PI_PROTOCOL_UNSUPPORTED`。宿主通过 stdio 请求元数据发放任务专用的 15 分钟租约，Pi 在回环 HTTP 请求的 Bearer 头携带租约。宿主固定上游地址、路由及模型，经 `CredentialResolver` 解析凭据。每次上游尝试（含 Pi 重试）在 DL-183 账本按独立 `sourceCallId` 领取，同一编号更新终态和实际用量。对话委派计入 dialogue，自主委派计入 autonomy。任务取消、角色停机和超时撤销租约，后续请求返回 HTTP 403 和 `PI_LEASE_REVOKED`。
+
+工程工具和模型共用同一份回环 Bearer 租约。主角色绑定与全局资源表决定新任务的目录，父任务持久化的资源续用关系决定停用后的原链可见性。启动元数据中的 Skill 只有稳定 ID、名称和摘要。Pi 的 `skill_read` 经宿主读取当前磁盘上的 `SKILL.md` 或包内相对路径文件；`skill_run` 仅接受包内 `.js`、`.mjs`，由宿主用 Node 权限模式执行，允许读取包和工程工作区，写入范围为工程工作区。脚本进程使用单独的环境变量白名单。单次参考文件读取上限为 1 MiB，脚本的标准输出和标准错误各保留最多 1,000,000 字节。
+
+共享工具端点均为 `POST /v1/internal/tool-proxy/` 下的子路由。 `skill/read` 接受 `{id,path?}`，`skill/run` 接受 `{id,path,args?}`，`list` 返回本工程可用的外部 MCP 工具，`call` 接受 `{name,arguments}`。工具名由资源 ID 和原始工具名共同生成，宿主按工程目录反查，并使用当前资源配置建立 stdio 连接。宿主按对端声明的服务名和工具名排除已知的托管 Pi、平台管理与发布、内置命令和桌面接管项。DL-71 采用单用户自管边界，外部 MCP 的实际行为由安装并启用它的用户负责。工具描述、schema 和回执均检查环境值以及启动参数中的凭据，上游错误返回稳定错误码。
+
+宿主读完请求体、取得上游连接后都会复核租约。派发前撤销返回 HTTP 403 与 `PI_LEASE_REVOKED`。自主工程的外部 MCP 调用与 Skill 脚本先预留工具额度，派发时提交，未派发时退回。已派发调用的晚到结果仍记入原任务，失联记为 `unknown`。[共享工具集成测试](../../apps/backend/tests/integration/pi-shared-tools.test.ts)
+
+Pi 在 `<app-root>/extensions-work/0-pi-jobs/<jobId>/<extId>/` 下独立开发。主角色核对结果后调用 `app_extension_publish_work({jobId})`。宿主从当前角色库解析工程的目标扩展；调用时可同时传入 `extId` 核对归属。手工草稿继续通过 `app_extension_publish_work({extId})` 从 `<app-root>/extensions-work/<extId>/` 发布。宿主逐级核对真实路径并拒绝 junction，读取 `manifest.json`、`.mjs` 源码与 `ui/` 资产。发布复用 §3.5 的版本暂存与候选进程握手，成功后同一任务的下一轮即可发现新工具。普通角色按 `all_roles` 声明调用公开工具。离线验收范围见[当前状态](../STATUS.md)。
+
+桌面壳为自启后端生成 32 字节随机会话令牌，主框架通过 preload 取得请求头，宿主代理签发流与资产请求。常规 `/v1/*` 统一校验 `X-Nowadays-Host-Token`，裸跑可通过 `NOWADAYS_HOST_TOKEN` 启用。内部代理沿用独立 Bearer 租约。CORS 接受回环 HTTP、桌面本地协议和无 Origin 请求。扩展动作在原进程结算，活动进程已替换或卸载时返回版本失配。
+
+后台工程接口：
+
+| 接口 | 行为 |
+| --- | --- |
+| `GET /v1/engineering/jobs` | 返回当前运行中的工程摘要，含 jobId、roleId、extId、短标题、状态和 startedAt。 |
+| `GET /v1/engineering/events` | 独立 SSE 连接。连接和重连立即收到 `snapshot`，每次登记或终态提交后推送最新运行列表，无需输入通道的 clientId。 |
+| `POST /v1/engineering/jobs/:jobId/cancel` | 撤销该工程租约并请求 Pi 终止对应工作进程。原任务仍可领取取消回执及其他工程结果。 |
 
 ## 4. 验收场景与可运行命令
 

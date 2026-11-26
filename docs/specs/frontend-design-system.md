@@ -16,9 +16,13 @@
 
 Dock 的「全部菜单 → 扩展」提供启停开关、微页选择和挂件区。跨页浮层与通知位于左下角，宿主提供关闭按钮，主角色的分享纸笺位于右下角。停用或删除扩展立即卸载其槽位。
 
+后台工程胶囊位于顶栏下方左侧，跨页保留。每项显示短标题、运行状态、由桌面本地时钟计算的耗时和单项取消按钮。列表为空时收起。胶囊使用纸面、边线和 sheet 层级令牌；出现或更新时保持当前输入焦点。
+
 每个 `manifest.ui` 项用 `slot` 与 `file` 声明。独立微页用 `page`、挂件用 `widget`、浮层用 `overlay`。这些入口指向 `ui/` 下的 HTML，需要引用的 CSS、JS 等逐个用 `asset` 声明。桌面通过 `nd-ext://<extId>/ui/<文件>?v=<版本>` 载入，升级时重新挂载。Electron 只代理该扩展的受控资产出口。子页响应 CSP 限制脚本、样式和图片来源，禁止连接网络、加载嵌套框架、对象及提交表单。
 
 iframe 使用 `sandbox="allow-scripts"`。宿主按当前元素的 `contentWindow` 识别消息。子页可发送 `{type:'ext:ready'}` 请求当前主题、`{type:'ext:resize',height:数值}` 请求有界高度，或发送 `{type:'ext:dismiss'}` 关闭自身浮层。宿主在加载、收到 ready 和昼夜切换时向该窗口发送 `{type:'host:theme',preset,tokens}`。子页先检查 `event.source === parent`，再将 `tokens` 中的 `--nd-semantic-*` 计算值应用到自己的样式。
+
+交互按钮向父页发送 `{type:'ext:action',id,action,payload}`。每个在途请求使用独立的字符串 id，长度 1～64，允许 ASCII 字母、数字、点、横线、下划线。动作名使用同一字符集并以字母开头。payload 为 UTF-8 序列化后至多 16 KiB 的 JSON，无参数传 `null`。父页按发送窗口匹配槽位，从挂载记录取得扩展标识与版本，只派发一次。子页检查消息来自 parent，按 id 读取 `{type:'host:action-result',id,ok:true,data}` 或 `{type:'host:action-result',id,ok:false,error}`，其中 error 为英文错误码。卸载、换版和 iframe 重新加载使旧回包失效。有副作用的动作由用户再次操作后发起。
 
 ## 1. 字体
 

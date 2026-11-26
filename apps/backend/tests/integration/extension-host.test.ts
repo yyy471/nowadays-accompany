@@ -63,6 +63,88 @@ const event = (name: string, args: object): ModelEvent[] => [
 ];
 const reply: ModelEvent[] = [{type:"text_delta",text:"离线回执已收到。"}, {type:"completed",stopReason:"stop"}];
 
+test("沙箱动作只调用精确登记的处理器，校验版本、JSON 字节数并按原进程排空", async () => {
+  const f = createFixtureWithModel(new ScriptedChatModel([]));
+  const host = f.app.services.extensions;
+  const notices: string[] = [];
+  host.onNotice(n => notices.push(n.message));
+  const body = `
+    import version from './helper.mjs';
+    export default (ctx, api) => {
+      api.tools.register({name:'private',scope:'admin_only',description:'private',inputSchema:{type:'object'}}, () => 99);
+      api.events.on('dialogue_batch', () => api.notify({message:'unexpected'}));
+      const off = api.ui.onAction('removed', () => true);
+      off();
+      api.ui.onAction('write', async p => { await api.kv.set('value', p); return version; });
+      api.ui.onAction('read', () => api.kv.get('value'));
+      api.ui.onAction('fail', () => { throw Error('action failed'); });
+      api.ui.onAction('drain', async () => {
+        await api.notify({message:'started-' + version});
+        if (version === 'v1') {
+          while (await api.kv.get('value') !== 'release') await new Promise(r => setTimeout(r, 10));
+        } else await new Promise(r => setTimeout(r, 250));
+        await api.notify({message:'finished-' + version});
+        return version;
+      });
+      ctx.effect(() => () => api.notify({message:'disposed-' + version}));
+    }`;
+  try {
+    const port = await listen(f.app.server, 0, "127.0.0.1");
+    const post = async (version: string, action: string, payload: unknown = null) => {
+      const res = await fetch(`http://127.0.0.1:${port}/v1/extensions/counter/ui-action`, {
+        method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify({version, action, payload})
+      });
+      const value = await res.json() as {data?: unknown; error?: {code: string}};
+      return [res.status, value.error?.code ?? value.data];
+    };
+    const first = await host.upsert(source("counter", "v1", body));
+    for (const name of ["private", "dialogue_batch", "removed", "Write", "constructor"])
+      assert.deepEqual(await post("v1", name), [404, "EXTENSION_UI_ACTION_NOT_FOUND"]);
+    assert.deepEqual(await post("v1", "fail"), [422, "EXTENSION_UI_ACTION_FAILED"]);
+    assert.deepEqual(await post("v1", "/v1/roles"), [400, "INVALID_REQUEST"]);
+    assert.deepEqual(await post("", "write"), [400, "INVALID_REQUEST"]);
+    assert.deepEqual(await post("v1", "write", "界".repeat(5461)), [413, "PAYLOAD_TOO_LARGE"]);
+    const value = {label:"界", count:1};
+    assert.deepEqual(await post("v1", "write", value), [200, "v1"]);
+    assert.deepEqual(await post("v1", "read"), [200, value]);
+    const oldCall = post("v1", "drain");
+    await until(() => notices.includes("started-v1"), "旧版动作已派发");
+    const upgrade = host.upsert(source("counter", "v2", body));
+    await until(() => host.get("counter").version === "v2", "新版已接手");
+    assert.deepEqual(await post("v1", "write", "stale"), [409, "EXTENSION_VERSION_MISMATCH"]);
+    assert.deepEqual(await post("v2", "read"), [200, value]);
+    assert.deepEqual(await post("v2", "write", "release"), [200, "v2"]);
+    assert.deepEqual(await oldCall, [409, "EXTENSION_VERSION_MISMATCH"]);
+    const second = await upgrade;
+    gone(first.pid);
+    const inflight = post("v2", "drain");
+    await until(() => notices.includes("started-v2"), "停用前动作已派发");
+    const disable = host.toggle("counter", "disable");
+    await until(() => host.get("counter").status === "disabled", "槽位已撤销");
+    assert.deepEqual(await post("v2", "write"), [409, "EXTENSION_UNAVAILABLE"]);
+    assert.deepEqual(await inflight, [409, "EXTENSION_VERSION_MISMATCH"]);
+    await disable;
+    gone(second.pid);
+    assert.deepEqual(notices, ["started-v1","finished-v1","disposed-v1","started-v2","finished-v2","disposed-v2"]);
+  } finally { await f.close(); }
+});
+
+test("Pi 的双向槽位契约与两项主角色发布工具逐字一致", async () => {
+  const {default: install, uiActionContract} = await import(new URL("../../../pi-mcp/src/extensions/nowadays-mod.mjs", import.meta.url).href);
+  let prompt = "";
+  install({on: (name: string, hook: (e: {systemPrompt: string}) => {systemPrompt: string}) => {
+    assert.equal(name, "before_agent_start");
+    prompt = hook({systemPrompt: "base"}).systemPrompt;
+  }});
+  assert.ok(prompt.includes(uiActionContract));
+  const f = createFixtureWithModel(new ScriptedChatModel([]));
+  try {
+    const tools = createAdminTools({...f.app.services, now: () => new Date()});
+    for (const name of ["app_extension_upsert", "app_extension_publish_work"])
+      assert.ok(tools.find(t => t.name === name)?.description.includes(uiActionContract), name);
+  } finally { await f.close(); }
+});
+
 test("主角色在真实对话图中创建扩展，同一任务调用新工具，普通角色仅有公开工具并触发真实批次与往来事件", async () => {
   const model = new ScriptedChatModel([
     event("app_extension_upsert", source("demo","v1")), event("ext_demo__hello",{}), reply,

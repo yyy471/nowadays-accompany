@@ -96,10 +96,12 @@ async function worker(directory: string): Promise<void> {
   const fixture = createFixtureWithModel(model);
   const workspace = withStorage(fixture, (s) => s.paths.workspaceDir);
   fs.mkdirSync(workspace, { recursive: true });
+  const script = path.join(directory, "write-server.mjs");
+  fs.writeFileSync(script, buildWriteServer(directory, workspace));
   const resource = fixture.app.services.resources.create({
     kind: "mcp",
     name: "P5 写入样例",
-    config: { command: process.execPath, args: ["--input-type=module", "-e", buildWriteServer(directory, workspace)], env: {} },
+    config: { command: process.execPath, args: [script], env: {} },
   });
   addBinding(fixture, "mcp", resource.resourceId);
   submit(fixture, "把结论写进 evidence.txt");

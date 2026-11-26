@@ -91,6 +91,18 @@ export class ExtensionHost {
       throw new AppError(404, "EXTENSION_ASSET_NOT_FOUND", "此扩展资源不可用");
     return this.files.uiAsset(id, record, file);
   }
+  async uiAction(id: string, expectedVersion: string, action: string, payload: unknown) {
+    const record = this.record(id);
+    const worker = this.active.get(id);
+    if (this.closing || record.status !== "enabled" || !worker) throw unavailable();
+    if (record.version !== expectedVersion)
+      throw new AppError(409, "EXTENSION_VERSION_MISMATCH", "此界面的扩展版本已切换");
+    // 校验和派发之间没有异步间隔，在途调用随该进程排空。
+    const result = await worker.request("ui-action", action, payload);
+    if (this.active.get(id) !== worker)
+      throw new AppError(409, "EXTENSION_VERSION_MISMATCH", "此界面的扩展版本已切换");
+    return result;
+  }
   private uiSnapshot() {
     return this.list().map(({ extId, version, status, ui, lastError }) => ({ extId, version, status, ui, lastError }));
   }
@@ -137,8 +149,8 @@ export class ExtensionHost {
     const {extId, manifest, files} = validated(upsertSchema, input);
     return this.publishVersion(extId, manifest, files);
   }
-  publishWork(extId: string) {
-    const { manifest, files } = this.work.draft(validated(extIdSchema, extId));
+  publishWork(extId: string, jobId?: string) {
+    const { manifest, files } = this.work.draft(validated(extIdSchema, extId), jobId);
     return this.publishVersion(extId, manifest, files);
   }
   private publishVersion(extId: string, manifest: Definition, files: Record<string, string | Buffer>) {

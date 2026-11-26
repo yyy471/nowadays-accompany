@@ -13,23 +13,25 @@ import { AppError } from "../domain/errors.js";
 import { normalizeUsage } from "../model/protocols.js";
 import { readJsonBody } from "../http/body.js";
 
-type Lease = { roleId: string; binding: ResolvedModelBinding; autonomous: boolean; expiresAt: number; controller: AbortController };
-const denied = () => new AppError(403, "PI_LEASE_REVOKED", "工程模型租约已失效");
+import type { PiJobTools } from "./tool-proxy.js";
+
+type Lease = { tools?: PiJobTools; roleId: string; binding: ResolvedModelBinding; autonomous: boolean; expiresAt: number; controller: AbortController };
+const denied = () => new AppError(403, "PI_LEASE_REVOKED", "工程租约已失效");
 export class PiModelProxy {
   private readonly leases = new Map<string, Lease>();
   constructor(private credentials: CredentialResolver, private usage: TokenUsageService, private resources: ResourceService) {}
-  issue(roleId: string, binding: ResolvedModelBinding, autonomous: boolean, expiresAt: number) {
+  issue(roleId: string, binding: ResolvedModelBinding, autonomous: boolean, expiresAt: number, tools?: PiJobTools) {
     if (!["openai-chat", "openai-responses"].includes(binding.config.protocol))
       throw new AppError(400, "PI_PROTOCOL_UNSUPPORTED", "工程任务需要 OpenAI Chat 或 Responses 模型绑定");
     const token = randomUUID();
-    this.leases.set(token, { roleId, binding, autonomous, expiresAt, controller: new AbortController() });
+    this.leases.set(token, { ...(tools && { tools }), roleId, binding, autonomous, expiresAt, controller: new AbortController() });
     return token;
   }
   revoke(token: string) {
     this.leases.get(token)?.controller.abort();
     this.leases.delete(token);
   }
-  private resolve(request: IncomingMessage) {
+  resolve(request: IncomingMessage) {
     const token = request.headers.authorization?.match(/^Bearer ([\w-]+)$/)?.[1];
     const lease = token && this.leases.get(token);
     if (token && lease && Date.now() >= lease.expiresAt) { this.revoke(token); throw denied(); }

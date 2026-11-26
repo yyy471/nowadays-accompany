@@ -1,5 +1,5 @@
 import { ExtensionCreate, ExtensionFields, SavedMcpProbe, parseExtensionEnv } from '../components/config/ExtensionImport';
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { api, ApiError } from '../api';
 import type { Outfit, RoleDetail, RoleListItem } from '../types';
@@ -54,7 +54,7 @@ import { useThemePreset } from '../ui/presets';
 import { ConfigThemeTransition } from '../ui/config-theme-transition';
 import { TokenUsageSection } from '../components/config/TokenUsageSection';
 
-type Resource = { resourceId: string; kind: 'model' | 'mcp' | 'skill'; name: string; enabled: boolean; config: Record<string, unknown>; credential?: { status: string; reference?: string | null; resolvable: boolean }; lastTest?: { ok: boolean; stale: boolean; modelName: string } | null };
+type Resource = { resourceId: string; adminSeatOnly?: boolean; kind: 'model' | 'mcp' | 'skill'; name: string; enabled: boolean; config: Record<string, unknown>; credential?: { status: string; reference?: string | null; resolvable: boolean }; lastTest?: { ok: boolean; stale: boolean; modelName: string } | null };
 
 function savedModelNameOf(resource: Resource): string {
   if (typeof resource.config.modelName === 'string' && resource.config.modelName.trim()) {
@@ -509,7 +509,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
   })) : filtered.map(item => ({
     id: item.resourceId, name: item.name,
     subtitle: item.kind === 'model' ? `${savedModelNameOf(item) || '未选模型'} · ${serviceHost(String(item.config.baseUrl ?? ''))}`
-      : item.kind === 'mcp' ? `stdio · ${String(item.config.command ?? '')}`
+      : item.adminSeatOnly ? '内置工程工具 · 仅主角色可用' : item.kind === 'mcp' ? `stdio · ${String(item.config.command ?? '')}`
       : String(item.config.sourcePath ?? '').split(/[\\/]/).filter(Boolean).slice(-2).join('\\'),
     status: serviceStatus(item.enabled, item.kind === 'model' ? item.resourceId in catalogTests ? catalogTests[item.resourceId] : item.lastTest && !item.lastTest.stale ? item.lastTest.ok : null : undefined),
   }));
@@ -689,7 +689,8 @@ function RoleFooterIdentity({ role, activity, error, englishName }: { role?: Rol
   </div>;
 }
 
-function RoleEditor({ roleId, roleCount, active, activity, activityLoading = false, voiceServiceVersion = 0, voiceServiceEpochs = {}, imageServiceVersion = 0, imageServiceEpochs = {}, section, draft, setDraft, resources, removedResources, resourceError, onEditorState, onOpenSettings, onStartConversation, onPreviewOutfit, onPreviewAsset, onClearPreview, onDeleted, onRefresh, onChangeSection }: { roleId: string; roleCount: number; active: boolean; activity?: Activity; activityLoading?: boolean; voiceServiceVersion?: number; voiceServiceEpochs?: Record<string, number>; imageServiceVersion?: number; imageServiceEpochs?: Record<string, number>; section: RoleSection; draft?: Draft; setDraft: (draft: Draft) => void; resources: Resource[]; removedResources: string[]; resourceError: string; onEditorState: (roleId: string, state: RoleEditorState | null) => void; onOpenSettings: (section: SettingsSection, options?: OpenSettingsOptions) => void; onStartConversation?: (roleId: string) => void; onPreviewOutfit: (outfit: Outfit) => void; onPreviewAsset: (assetId: string) => void; onClearPreview: () => void; onDeleted: (roleId: string, keepHistory: boolean, filesRemoved: boolean) => Promise<void>; onRefresh: () => Promise<void>; onChangeSection: (section: RoleSection) => void }) {
+function RoleEditor({ roleId, roleCount, active, activity, activityLoading = false, voiceServiceVersion = 0, voiceServiceEpochs = {}, imageServiceVersion = 0, imageServiceEpochs = {}, section, draft, setDraft, resources: catalog, removedResources, resourceError, onEditorState, onOpenSettings, onStartConversation, onPreviewOutfit, onPreviewAsset, onClearPreview, onDeleted, onRefresh, onChangeSection }: { roleId: string; roleCount: number; active: boolean; activity?: Activity; activityLoading?: boolean; voiceServiceVersion?: number; voiceServiceEpochs?: Record<string, number>; imageServiceVersion?: number; imageServiceEpochs?: Record<string, number>; section: RoleSection; draft?: Draft; setDraft: (draft: Draft) => void; resources: Resource[]; removedResources: string[]; resourceError: string; onEditorState: (roleId: string, state: RoleEditorState | null) => void; onOpenSettings: (section: SettingsSection, options?: OpenSettingsOptions) => void; onStartConversation?: (roleId: string) => void; onPreviewOutfit: (outfit: Outfit) => void; onPreviewAsset: (assetId: string) => void; onClearPreview: () => void; onDeleted: (roleId: string, keepHistory: boolean, filesRemoved: boolean) => Promise<void>; onRefresh: () => Promise<void>; onChangeSection: (section: RoleSection) => void }) {
+  const resources = useMemo(() => draft?.isBuiltin ? catalog : catalog.filter(item => !item.adminSeatOnly), [catalog, draft?.isBuiltin]);
   const write = useWrite();
   const sheetApi = useSheet();
   // 扩展与自主额度都按「一行 = 一张紧凑纸笺」打开（规范 §二.3 点击映射）。
@@ -2035,7 +2036,7 @@ function ExtensionManagement({ resource, roles, activities, active, onRemoved, o
     setName(saved.name); setCommand(String(saved.config.command || '')); setArgs(Array.isArray(saved.config.args) ? saved.config.args.join('\n') : '');
     setEnv(JSON.stringify(saved.config.env || {}, null, 2)); setSourcePath(String(saved.config.sourcePath || '')); setWriteError('');
   };
-  const address = isMcp ? `stdio · ${String(resource.config.command || '')}` : String(resource.config.sourcePath || '');
+  const address = resource.adminSeatOnly ? '内置工程工具 · 仅主角色可用' : isMcp ? `stdio · ${String(resource.config.command || '')}` : String(resource.config.sourcePath || '');
   const envKeys = Object.keys((resource.config.env || {}) as Record<string, unknown>);
   return <div hidden={!active} className="config-prose">
     <ServiceHeading title={resource.name} address={address} enabled={resource.enabled} onEdit={trigger => open(undefined, trigger)}/>

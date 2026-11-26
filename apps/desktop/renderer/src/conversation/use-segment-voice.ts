@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api } from '../api';
+import { api, desktopFetch } from '../api';
 import type { VoiceResponse } from './api-types';
 import type { PerfRow } from './history';
 
@@ -49,7 +49,7 @@ async function fetchSpeech(
   segmentId: string,
   emotion?: string | null,
 ): Promise<Blob> {
-  const response = await fetch(
+  const response = await desktopFetch(
     `/v1/roles/${encodeURIComponent(roleId)}/windows/${encodeURIComponent(windowId)}/segments/${encodeURIComponent(segmentId)}/speech`,
     {
       method: 'POST',

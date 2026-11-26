@@ -16,25 +16,28 @@ export interface SkillDocument extends SkillMetadata {
 export class SkillLibrary {
   constructor(private readonly root: string) {}
 
-  list(): SkillMetadata[] {
+  list(onInvalid?: (directory: string) => void): SkillMetadata[] {
     const root = path.resolve(this.root);
     if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
       return [];
     }
     const direct = path.join(root, "SKILL.md");
     if (fs.statSync(direct, { throwIfNoEntry: false })?.isFile()) {
-      return [readMetadata(direct, path.basename(root))];
+      return [readMetadata(safeChild(root, "SKILL.md"), path.basename(root))];
     }
     const items: SkillMetadata[] = [];
     for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
       if (!entry.isDirectory()) {
         continue;
       }
-      const skillFile = path.join(root, entry.name, "SKILL.md");
-      if (!fs.existsSync(skillFile) || !fs.statSync(skillFile).isFile()) {
-        continue;
+      try {
+        const file = path.join(root, entry.name, "SKILL.md");
+        if (fs.statSync(file, { throwIfNoEntry: false })?.isFile())
+          items.push(readMetadata(safeChild(safeChild(root, entry.name), "SKILL.md"), entry.name));
+      } catch (error) {
+        if (!onInvalid) throw error;
+        onInvalid(entry.name);
       }
-      items.push(readMetadata(skillFile, entry.name));
     }
     return items.sort((left, right) => left.name.localeCompare(right.name));
   }
@@ -76,11 +79,19 @@ export class SkillLibrary {
     }
     let content: string;
     try {
-      const stat = fs.statSync(target);
-      if (!stat.isFile()) {
-        throw new SkillFileInvalidError(name, relativePath);
-      }
-      content = fs.readFileSync(target, "utf8");
+      const fd = fs.openSync(target, "r");
+      try {
+        const stat = fs.fstatSync(fd);
+        if (!stat.isFile() || stat.size > 1024 * 1024) throw new SkillFileInvalidError(name, relativePath);
+        const buffer = Buffer.alloc(stat.size);
+        let used = 0;
+        while (used < buffer.length) {
+          const count = fs.readSync(fd, buffer, used, buffer.length - used, null);
+          if (!count) break;
+          used += count;
+        }
+        content = buffer.toString("utf8", 0, used);
+      } finally { fs.closeSync(fd); }
     } catch (error) {
       if (error instanceof SkillFileInvalidError) {
         throw error;
@@ -101,12 +112,13 @@ export class SkillLibrary {
     const root = path.resolve(this.root);
     const direct = path.join(root, "SKILL.md");
     if (fs.statSync(direct, { throwIfNoEntry: false })?.isFile()) {
-      if (name === path.basename(root) || name === readMetadata(direct, path.basename(root)).name) return root;
+      if (name === path.basename(root) || name === readMetadata(safeChild(root, "SKILL.md"), path.basename(root)).name) return root;
       throw new SkillNotFoundError(name);
     }
-    const match = this.list().find(item => item.directory === name || item.name === name);
+    const items = this.list(() => {});
+    const match = items.find(item => item.directory === name) ?? items.find(item => item.name === name);
     if (!match) throw new SkillNotFoundError(name);
-    const directory = path.join(root, match.directory);
+    const directory = safeChild(root, match.directory);
     const skillFile = path.join(directory, "SKILL.md");
     if (!fs.existsSync(skillFile) || !fs.statSync(skillFile).isFile()) {
       throw new SkillNotFoundError(name);
@@ -152,7 +164,7 @@ export class SkillLibrary {
   }
 
   private skillFile(name: string): string {
-    return path.join(this.skillDirectory(name), "SKILL.md");
+    return safeChild(this.skillDirectory(name), "SKILL.md");
   }
 }
 
@@ -216,20 +228,11 @@ function safeChild(root: string, relativePath: string): string {
   ) {
     throw new Error("SKILL_PATH_INVALID");
   }
-  try {
-    const realRoot = fs.realpathSync(resolvedRoot);
-    const realTarget = fs.realpathSync(target);
-    if (
-      realTarget !== realRoot &&
-      !realTarget.startsWith(`${realRoot}${path.sep}`)
-    ) {
-      throw new Error("SKILL_PATH_INVALID");
-    }
-    return target;
-  } catch (error) {
-    if (error instanceof Error && error.message === "SKILL_PATH_INVALID") {
-      throw error;
-    }
-    return target;
+  const realRoot = fs.realpathSync(resolvedRoot);
+  const realTarget = fs.realpathSync(target);
+  const relative = path.relative(realRoot, realTarget);
+  if (relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) {
+    throw new Error("SKILL_PATH_INVALID");
   }
+  return realTarget;
 }

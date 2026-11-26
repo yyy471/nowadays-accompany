@@ -53,6 +53,7 @@ export interface AdminToolServices {
 export const SELF_MODIFICATION_CODE = "SELF_MODIFICATION_VIA_SETTINGS_ONLY";
 
 const STOP_TIMEOUT_MS = 15_000;
+const uiActionContract = "api.ui.onAction(name, handler) 登记本扩展的精确动作，handler(payload) 返回 JSON；注销函数与 ctx.effect 生命周期绑定。沙箱 HTML 向 parent.postMessage({type:'ext:action',id,action,payload},'*') 发一次请求。id 为 1–64 位字母、数字、点、横线或下划线，action 同字符集且以字母开头，payload 为至多 16 KiB 的 UTF-8 JSON，无参数传 null。子页只接收 event.source === parent 的消息。按 id 匹配 {type:'host:action-result',id,ok:true,data} 或 {type:'host:action-result',id,ok:false,error}（error 为英文错误码），有副作用的动作勿自动重试。发送 ext:ready 请求 host:theme，将 tokens 中的 --nd-semantic-* 写入 document.documentElement.style。";
 
 export function createAdminTools(input: AdminToolServices): ConversationTool[] {
   const builtinRoleId = input.builtinRoleId ?? "";
@@ -991,8 +992,15 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
     defineTool("app_extension_source", "按需读取当前安装版本的源码。省略 file 列出文件，传入相对路径读取正文；使用返回的 version 与 nextOffset 可继续翻页。", {
       ...byId, properties: { extId, file: { type: "string" }, version: { type: "string" }, offset: { type: "integer", minimum: 0 } },
     }, args => host.source(args)),
-    defineTool("app_extension_publish_work", "从工程草稿发布已测试的 Mod，候选版本握手后立即切换。", byId, args => host.publishWork(idOf(args))),
-    defineTool("app_extension_upsert", "写入完整新版本并热加载。维护已有项目时先读所需源码，保留未要求修改的文件和旧工具行为（含返回值），升级后可实际调用新旧工具核对。files 为相对路径到源码的映射。入口 export default async (ctx, api) => {}，可相对导入 .mjs。api.tools.register({name,description,inputSchema,scope}, fn) 返回注销函数，scope 为 admin_only 或 all_roles。api.events.on('dialogue_batch' 或 'role_exchange', fn)，api.kv.get/set，api.notify({message,data?})。工具和事件会在停用时自动注销。额外清理用 api.onDispose(() => clearInterval(timer))。原生 ctx.effect 的初始化函数必须返回清理函数。修复加载失败请用新版本号提交完整文件。ui 数组使用 {slot,file}，page/widget/overlay 指定 ui/ 内 HTML，asset 声明引用的静态文件。页面通过 host:theme 接收 preset 与 tokens，ext:ready 请求同步。", z.toJSONSchema(upsertSchema),
+    defineTool("app_extension_publish_work", "发布已测试的 Mod。Pi 草稿传入 jobId，可附 extId 核对目标。手工草稿只需 extId。" + uiActionContract, {
+      type: "object", properties: { extId, jobId: { type: "string" } },
+    }, (args, context) => {
+      if (args.jobId === undefined) return host.publishWork(idOf(args));
+      if (!input.pi || typeof args.jobId !== "string") return badArguments("请提供有效工程编号");
+      const target = input.pi.publishTarget(context.roleId, args.jobId, args.extId === undefined ? undefined : idOf(args));
+      return host.publishWork(target, args.jobId);
+    }),
+    defineTool("app_extension_upsert", "写入完整新版本并热加载。维护已有项目时先读所需源码，保留未要求修改的文件和旧工具行为（含返回值），升级后可实际调用新旧工具核对。files 为相对路径到源码的映射。入口 export default async (ctx, api) => {}，可相对导入 .mjs。api.tools.register({name,description,inputSchema,scope}, fn) 返回注销函数，scope 为 admin_only 或 all_roles。api.events.on('dialogue_batch' 或 'role_exchange', fn)，api.kv.get/set，api.notify({message,data?})。工具和事件会在停用时自动注销。额外清理用 api.onDispose(() => clearInterval(timer))。原生 ctx.effect 的初始化函数必须返回清理函数。修复加载失败请用新版本号提交完整文件。ui 数组使用 {slot,file}，page/widget/overlay 指定 ui/ 内 HTML，asset 声明引用的静态文件。" + uiActionContract, z.toJSONSchema(upsertSchema),
       args => host.upsert(args)),
     defineTool("app_extension_toggle", "启用、停用或重载扩展。", { ...byId, properties: { extId, action: { enum: ["enable","disable","reload"] } }, required: ["extId","action"] },
       args => {

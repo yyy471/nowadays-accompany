@@ -8,7 +8,7 @@ const { join, resolve } = require("node:path");
 
 /**
  * @param {{ isPackaged?: boolean, resourcesPath?: string, dirname: string, env?: Record<string, string | undefined> }} input
- * @returns {{ mode: "workspace" | "packaged" | "override", isPackaged: boolean, backendRoot: string, entry: string, presetAssetsDir: string, nodeRuntime: string | null }}
+ * @returns {{ mode: "workspace" | "packaged" | "override", isPackaged: boolean, backendRoot: string, entry: string, presetAssetsDir: string, piMcpRoot: string, nodeRuntime: string | null }}
  */
 function resolveBackendLayout(input) {
   const env = input.env || {};
@@ -16,12 +16,14 @@ function resolveBackendLayout(input) {
   const resourcesPath = input.resourcesPath || join(input.dirname, "..");
   const runtimeDir = isPackaged ? join(resourcesPath, "node-runtime") : resolve(input.dirname, "..", "..", "..", ".tools", "node-v24");
   const nodeRuntime = join(runtimeDir, "node.exe");
+  const piMcpRoot = resolve(env.NOWADAYS_PI_MCP_ROOT || (isPackaged ? join(resourcesPath, "pi-mcp") : resolve(input.dirname, "..", "..", "pi-mcp")));
 
   // 显式覆盖优先：联调与隔离构建产物用 NOWADAYS_BACKEND_ROOT 指到指定目录。
   if (env.NOWADAYS_BACKEND_ROOT) {
     const backendRoot = resolve(env.NOWADAYS_BACKEND_ROOT);
     return {
       mode: "override",
+      piMcpRoot,
       isPackaged,
       backendRoot,
       entry: join(backendRoot, "src", "main.ts"),
@@ -35,6 +37,7 @@ function resolveBackendLayout(input) {
   const presetAssetsDir = resolve(env.NOWADAYS_PRESET_ASSETS_DIR || (isPackaged ? join(resourcesPath, "preset-assets") : join(backendRoot, "assets", "presets")));
   return {
     mode: isPackaged ? "packaged" : "workspace",
+    piMcpRoot,
     isPackaged,
     backendRoot,
     entry: join(backendRoot, "src", "main.ts"),

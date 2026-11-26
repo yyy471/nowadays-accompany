@@ -589,7 +589,8 @@ async function run() {
   await returnRole(true);
   await tab('扩展');
   await openRoleRow('ext:mcp');
-  await clickWhen(sheetButton('去设置添加 →'));
+  await until(() => ev("document.querySelector('.config-sheet')?.innerText.includes('内置 Pi 工程助手')"), '主角色预置工程绑定');
+  await clickWhen(sheetButton('在设置中管理 →'));
   await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings'"));
   assert.equal(await ev("!!document.querySelector('.config-sheet')"), false, '进入扩展管理不得滞留未关闭的添加表单');
 

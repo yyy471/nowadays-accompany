@@ -15,7 +15,7 @@ import {
 } from "./role-transfer-bindings.js";
 import { installCredentialValues, RoleTransferCredentialFilter } from "./role-transfer-credentials.js";
 import {
-  canonicalJson, normalizeExecutionFacts, rebuildTransferMemorySearch, sha256, sortedRows, TRANSFER_TABLES,
+  canonicalJson, normalizeExecutionFacts, portableTransferTables, rebuildTransferMemorySearch, sha256, sortedRows, TRANSFER_TABLES,
   transferColumns, type TransferRow, type TransferTables,
 } from "./role-transfer-data.js";
 import { assertRegularPath, captureTransferFiles, stageTransferFiles, validateTransferFiles } from "./role-transfer-files.js";
@@ -221,9 +221,10 @@ function validateRoleTransfer(value: unknown): RoleTransferPackage {
 function validateOwnership(roleId: string, builtinKey: unknown, tables: TransferTables): void {
   // 早期 v1 包尚无世界书；两表成对出现，新表为空时保持既有时间线指纹。
   const hasBooks = Object.hasOwn(tables, "role_worldbooks");
-  const tableCount = TRANSFER_TABLES.length - (hasBooks ? 0 : 2) - (Object.hasOwn(tables, "role_scene_references") ? 0 : 1);
-  if (Object.keys(tables).length !== tableCount || Object.hasOwn(tables, "worldbook_usage") !== hasBooks ||
-      !TRANSFER_TABLES.every(table => Object.hasOwn(tables, table) || isWorldbookTable(table) || table === "role_scene_references")) {
+  const hasJobs = Object.hasOwn(tables, "engineering_jobs");
+  const tableCount = TRANSFER_TABLES.length - (hasJobs ? 0 : 2) - (hasBooks ? 0 : 2) - (Object.hasOwn(tables, "role_scene_references") ? 0 : 1);
+  if (Object.keys(tables).length !== tableCount || Object.hasOwn(tables, "engineering_wakes") !== hasJobs || Object.hasOwn(tables, "worldbook_usage") !== hasBooks ||
+      !TRANSFER_TABLES.every(table => Object.hasOwn(tables, table) || isWorldbookTable(table) || isEngineeringTable(table) || table === "role_scene_references")) {
     throw new Error("ROLE_TRANSFER_TABLE_INVALID");
   }
   if (tables.roles.length !== 1 || tables.roles[0]?.role_id !== roleId ||
@@ -250,6 +251,10 @@ function validateOwnership(roleId: string, builtinKey: unknown, tables: Transfer
   }
 }
 
+function isEngineeringTable(table: string): boolean {
+  return table === "engineering_jobs" || table === "engineering_wakes";
+}
+
 function isWorldbookTable(table: string): boolean {
   return table === "role_worldbooks" || table === "worldbook_usage";
 }
@@ -269,7 +274,7 @@ export function roleTransferWithAncestors(
 
 function timelineProjection(pkg: Pick<RoleTransferPackage, "roleId" | "tables" | "files">) {
   const tables = Object.fromEntries(TRANSFER_TABLES.filter((table) => table !== "execution_stream_events" &&
-    (!(isWorldbookTable(table) || table === "role_scene_references") || pkg.tables[table]?.length)).map((table) => {
+    (!(isEngineeringTable(table) || isWorldbookTable(table) || table === "role_scene_references") || pkg.tables[table]?.length)).map((table) => {
     const rows = pkg.tables[table].map((row) => Object.fromEntries(Object.entries(row).filter(([column]) =>
       column !== "updated_at" && !(table === "model_calls" && column === "resource_id") &&
       !(table === "role_voice_settings" && column === "enabled"))));
@@ -301,10 +306,12 @@ function writeBusinessFacts(
   try {
     db.transaction(() => {
       db.pragma("defer_foreign_keys = ON");
+      const tables = portableTransferTables(pkg.tables);
       const { general, voice, image } = targetTransferSettings(pkg.tables, pkg.bindings, targets);
       for (const table of TRANSFER_TABLES) {
         if (table === "role_voice_settings" || table === "role_scene_image_settings") continue;
-        insertRows(db, table, pkg.tables[table] ?? []);
+        const rows = tables[table] ?? [];
+        insertRows(db, table, table === "engineering_jobs" ? rows.map(row => ({ ...row, work_dir: "" })) : rows);
       }
       insertRows(db, "role_bindings", general);
       insertRows(db, "role_voice_settings", voice);

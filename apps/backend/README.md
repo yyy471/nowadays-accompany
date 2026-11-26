@@ -1,6 +1,6 @@
 # Nowadays 后端服务与原型说明
 
-工程 MCP 使用独立的 Pi SDK 子包。在仓库根目录用 Node 24 执行 `.tools/node-v24/npm.cmd ci --prefix apps/pi-mcp`，随后可在设置中添加 `nowadays-pi` 并按角色启用。工程集成测试使用本地模拟端点，需要先安装该子包。[工程 MCP 接入与扩展点](../../docs/specs/role-config-and-activity.md#36-受托管工程-mcpdl-195)
+内置 Pi 工程助手随桌面分发，首次引入时自动为主角色启用。开发、工程集成测试与桌面构建前，在仓库根目录用 Node 24 执行 `.tools/node-v24/npm.cmd ci --prefix apps/pi-mcp`，独立安装 Pi SDK 子包。宿主默认使用同级 `pi-mcp`，可用 `NOWADAYS_PI_MCP_ROOT` 指定包含 `src/server.mjs` 和其运行依赖的子包根目录。工程模型支持 OpenAI Chat Completions 和 Responses。运行中可通过 `GET /v1/engineering/jobs` 查询，独立 SSE 入口为 `GET /v1/engineering/events`。`POST /v1/engineering/jobs/:jobId/cancel` 取消单项工程。[工程 MCP 接入与扩展点](../../docs/specs/role-config-and-activity.md#36-受托管工程-mcpdl-195)
 
 这是新主线的 TypeScript 后端源码，对话与自主活动共用 Nowadays 节点执行循环，使用独立的 `backend` 依赖、CLI 和本机 HTTP／SSE API。最新功能进展与待办见 [当前状态看板](../../docs/STATUS.md)，首轮后端原型阶段收口记录见 [193 开发文档](../../docs/archive/01-backend-prototype/193-p5-prototype-delivery-guide.md)、[194 交付记录](../../docs/archive/01-backend-prototype/194-p5-prototype-delivery-record.md) 与 [195 整体独立复核](../../docs/archive/01-backend-prototype/195-p5-independent-review.md)。
 

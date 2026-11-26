@@ -1,29 +1,42 @@
 import { randomUUID } from "node:crypto";
+import { EngineeringJobs, type EngineeringTerminal } from "../storage/conversation/engineering-jobs.js";
+import type { RoleAccess } from "../application/role/role-access.js";
+import { AppError, PiAdminSeatRequiredError } from "../domain/errors.js";
 import type { ExtensionFiles } from "../application/extensions/extension-files.js";
 import type { ModelBindingResolver } from "../application/resources/model-binding-resolver.js";
 import type { ConversationTool, ConversationToolContext } from "../domain/conversation.js";
 import { McpToolClient, managedPiCommand } from "./client.js";
 import type { PiModelProxy } from "./model-proxy.js";
 
+import type { PiToolProxy } from "./tool-proxy.js";
+
 export class ManagedPi {
   private readonly clients = new Map<string, Promise<McpToolClient>>();
-  private readonly jobs = new Map<string, { roleId: string; taskId: string | null; token: string; timer: NodeJS.Timeout }>();
+  private readonly jobs = new Map<string, { roleId: string; taskId: string; owner: McpToolClient; connection: Promise<McpToolClient>; token: string; timer: NodeJS.Timeout }>();
   private readonly stopping = new Set<Promise<void>>();
   private closing = false;
-  constructor(private proxy: PiModelProxy, private bindings: ModelBindingResolver, private work: ExtensionFiles,
-    private port: () => number, private active: (roleId: string) => boolean, private ttlMs = 15 * 60_000) {}
+  private listeners = new Set<() => void>();
+  constructor(private proxy: PiModelProxy, private toolsProxy: PiToolProxy, private bindings: ModelBindingResolver, private work: ExtensionFiles,
+    private port: () => number, private active: (roleId: string) => boolean,
+    private adminSeat: (roleId: string) => boolean, private access: RoleAccess,
+    private readySeats: () => string[], private schedule: (roleId: string) => void, private ttlMs = 15 * 60_000) {}
 
   private connection(roleId: string) {
+    if (!this.adminSeat(roleId)) throw new PiAdminSeatRequiredError();
     if (!this.active(roleId)) throw new Error("PI_ROLE_STOPPED");
     if (this.closing) throw new Error("PI_CLOSING");
     let pending = this.clients.get(roleId);
     if (!pending) {
       pending = McpToolClient.connect({ command: managedPiCommand, args: [], env: {} }, {
-        onClose: () => {
-          if (this.clients.get(roleId) === pending) {
-            this.clients.delete(roleId);
-            this.revokeRole(roleId);
+        onPiTerminal: receipt => {
+          const job = this.jobs.get(receipt.jobId);
+          if (job && job.connection === pending && job.roleId === roleId) {
+            this.finish(receipt.jobId, receipt.state, receipt.summary);
           }
+        },
+        onClose: () => {
+          if (this.clients.get(roleId) === pending) this.clients.delete(roleId);
+          if (pending) this.interruptConnection(pending);
         },
       });
       this.clients.set(roleId, pending);
@@ -36,62 +49,117 @@ export class ManagedPi {
     return (await discovery.listTools()).map(tool => ({ name: tool.name, description: tool.description,
       inputSchema: tool.inputSchema as Record<string, unknown>, source: "mcp",
       execute: async (args, context) => {
+        if (context.roleId !== roleId) throw new PiAdminSeatRequiredError();
         const pending = this.connection(roleId);
         const client = await pending;
         context.checkDispatch?.();
         if (context.signal.aborted || this.clients.get(roleId) !== pending) throw new Error("PI_ROLE_STOPPED");
         context.onDispatch?.();
-        const result = tool.name === "pi_task_start" ? await this.start(client, args, context) :
+        const result = tool.name === "pi_task_start" ? await this.start(client, pending, args, context) :
           await this.call(client, roleId, tool.name, args);
         return { status: result.isError ? "failed" : "success", adaptedResult: result.structuredContent ?? result.content };
       } }));
   }
-  private async start(client: McpToolClient, args: Record<string, unknown>, context: ConversationToolContext) {
+  private async start(client: McpToolClient, connection: Promise<McpToolClient>, args: Record<string, unknown>, context: ConversationToolContext) {
     const { roleId, taskId } = context;
     if (typeof args.extId !== "string" || typeof args.prompt !== "string" || !args.prompt.trim()) throw new Error("PI_ARGUMENTS_INVALID");
-    const binding = (taskId && this.bindings.resolveChatForTask(roleId, taskId)) || this.bindings.resolveChat(roleId);
-    const cwd = this.work.workspace(args.extId);
+    if (!taskId) throw new Error("PI_PARENT_TASK_REQUIRED");
+    this.access.withStore(roleId, ({ business }) => business.getTask(roleId, taskId));
+    const binding = this.bindings.resolveChatForTask(roleId, taskId) ?? this.bindings.resolveChat(roleId);
     const jobId = randomUUID();
     const baseUrl = "http://127.0.0.1:" + this.port() + "/v1/internal/model-proxy";
     const expiresAt = Date.now() + this.ttlMs;
-    const token = this.proxy.issue(roleId, binding, !!context.autonomous, expiresAt);
-    const timer = setTimeout(() => this.forget(jobId), this.ttlMs).unref();
-    this.jobs.set(jobId, { roleId, taskId, token, timer });
+    const cwd = this.work.workspacePath(args.extId, jobId);
+    const shared = this.toolsProxy.forJob({ jobId, roleId, taskId, cwd, executionId: context.executionId, autonomous: !!context.autonomous });
+    const token = this.proxy.issue(roleId, binding, !!context.autonomous, expiresAt, shared);
+    try {
+      this.work.workspace(args.extId, jobId);
+      this.store(roleId, jobs => jobs.register({ jobId, roleId, taskId, windowId: context.windowId,
+        origin: context.autonomous ? "autonomous" : "user", extId: String(args.extId), title: String(args.prompt).trim().slice(0, 80),
+        workDir: cwd, startedAt: new Date().toISOString() }));
+    } catch (error) {
+      this.proxy.revoke(token);
+      this.work.discardJob(jobId);
+      throw error;
+    }
+    const timer = setTimeout(() => this.proxy.revoke(token), this.ttlMs).unref();
+    this.jobs.set(jobId, { roleId, taskId, token, timer, owner: client, connection });
+    this.notify();
     try {
       const result = await client.callTool("pi_task_start", { extId: args.extId, prompt: args.prompt }, { meta: { nowadays: {
-        jobId, cwd, baseUrl, lease: token, expiresAt, modelName: binding.modelName, protocol: binding.config.protocol,
+        jobId, cwd, baseUrl, sharedTools: true, skills: shared.briefs(), lease: token, expiresAt, modelName: binding.modelName, protocol: binding.config.protocol,
       } } });
-      if (result.isError) this.forget(jobId);
+      if (result.isError) {
+        this.finish(jobId, "failed", "Pi 拒绝启动工程");
+        this.work.discardJob(jobId);
+      }
       return result;
-    } catch (error) { this.forget(jobId); throw error; }
+    } catch (error) { this.finish(jobId, "interrupted_unknown", "启动回执未确认，结果待核查"); throw error; }
   }
-  private forget(jobId: string) {
-    const job = this.jobs.get(jobId);
+  private store<T>(roleId: string, action: (jobs: EngineeringJobs) => T) {
+    return this.access.withStore(roleId, s => action(new EngineeringJobs(s.business.db)));
+  }
+  publishTarget(roleId: string, jobId: string, extId?: string) {
+    const job = this.store(roleId, jobs => jobs.find(jobId));
+    if (!job || job.roleId !== roleId || (extId !== undefined && job.extId !== extId)) throw new AppError(400, "PI_JOB_TARGET_INVALID", "工程与目标扩展不匹配");
+    return job.extId;
+  }
+  running() {
+    return this.readySeats().flatMap(id => this.store(id, jobs => jobs.listRunning())).map(
+      ({ jobId, roleId, extId, title, startedAt, status }) => ({ jobId, roleId, extId, title, startedAt, status }));
+  }
+  subscribe(listener: () => void) {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+  private notify() { for (const listener of this.listeners) listener(); }
+  private finish(id: string, status: EngineeringTerminal, summary: string) {
+    const job = this.jobs.get(id);
     if (!job) return;
+    this.store(job.roleId, jobs => jobs.settle(id, status, summary, new Date().toISOString()));
     this.proxy.revoke(job.token);
     clearTimeout(job.timer);
-    this.jobs.delete(jobId);
+    this.jobs.delete(id);
+    this.notify();
+    if (!this.closing) this.schedule(job.roleId);
   }
-  private call(client: McpToolClient, roleId: string, name: string, args: Record<string, unknown>) {
+  private async call(client: McpToolClient, roleId: string, name: string, args: Record<string, unknown>) {
     const id = String(args.jobId);
-    if (name === "pi_task_cancel" && this.jobs.get(id)?.roleId === roleId) this.forget(id);
+    const job = this.store(roleId, jobs => jobs.find(id));
+    if (!job) throw new AppError(404, "PI_JOB_NOT_FOUND", "找不到工程");
+    if (job.status !== "running") {
+      const view = { jobId: id, state: job.status, result: job.summary };
+      return { isError: false, structuredContent: view, content: view };
+    }
+    if (name === "pi_task_cancel") return this.cancel(id);
     return client.callTool(name, { jobId: id });
   }
-  cancelTask(roleId: string, taskId: string) {
-    for (const [id, job] of this.jobs) if (job.roleId === roleId && job.taskId === taskId) {
-      this.forget(id);
-      void this.clients.get(roleId)?.then(c => c.callTool("pi_task_cancel", { jobId: id })).catch(() => {});
-    }
+  async cancel(id: string) {
+    const job = this.jobs.get(id);
+    if (!job) throw new AppError(409, "PI_JOB_NOT_RUNNING", "工程已结束");
+    this.proxy.revoke(job.token);
+    return job.owner.callTool("pi_task_cancel", { jobId: id });
   }
-  private revokeRole(roleId: string) {
-    for (const [id, job] of this.jobs) if (job.roleId === roleId) this.forget(id);
+  cancelTask(roleId: string, taskId: string) {
+    for (const [id, job] of this.jobs) if (job.roleId === roleId && job.taskId === taskId)
+      void this.cancel(id).catch(error => console.warn("PI_CANCEL_FAILED", id, error));
+  }
+  private interruptConnection(connection: Promise<McpToolClient>) {
+    for (const [id, job] of this.jobs) if (job.connection === connection)
+      this.finish(id, "interrupted_unknown", "工程连接已断开，结果待核查");
   }
   async stop(roleId: string) {
-    this.revokeRole(roleId);
     const pending = this.clients.get(roleId);
-    this.clients.delete(roleId);
     if (!pending) return;
-    const cleanup = pending.then(client => client.close()).catch(() => {});
+    this.clients.delete(roleId);
+    const ids = [...this.jobs].filter(([, job]) => job.connection === pending).map(([id]) => id);
+    const cancellations = ids.map(id => this.cancel(id));
+    const cleanup = (async () => {
+      const results = await Promise.allSettled(cancellations);
+      for (const r of results) if (r.status === "rejected") console.warn("PI_STOP_CANCEL_FAILED", r.reason);
+      const client = await pending;
+      try { await client.close(); } finally { this.interruptConnection(pending); }
+    })();
     this.stopping.add(cleanup);
     try { await cleanup; } finally { this.stopping.delete(cleanup); }
   }

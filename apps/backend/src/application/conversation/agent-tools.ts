@@ -20,6 +20,7 @@ import { MemoryQueryService } from "../memory/memory-query-service.js";
 import type { RoleExchangeService } from "./role-exchanges.js";
 import type { AutonomyService } from "./autonomy-service.js";
 import { managedPiCommand, McpToolClient, type McpToolInfo } from "../../mcp/client.js";
+import { taskToolResources } from "../resources/task-tool-resources.js";
 import { SkillLibrary } from "../../skills/skill-library.js";
 import { createAdminTools, type AdminToolServices } from "../role/admin-tools.js";
 import { isAdminSeat } from "../../domain/admin-seat.js";
@@ -140,56 +141,10 @@ export async function loadAgentTools(
   }
   const skillBriefs: SkillBrief[] = [];
   const skillResourceIds: string[] = [];
-  const continuation = new Set(input.continuationResourceIds ?? []);
-  const bindings = input.roleAccess.withStore(input.roleId, (storage) =>
-    storage.business.listRoleBindings(input.roleId),
-  );
-  const candidates: Array<{
-    resourceId: string;
-    capability: "mcp" | "skill";
-  }> = [];
-  const seen = new Set<string>();
-  for (const binding of bindings) {
-    if (
-      binding.capability !== "mcp" &&
-      binding.capability !== "skill"
-    ) {
-      continue;
-    }
-    if (!binding.enabled && !continuation.has(binding.resourceId)) {
-      continue;
-    }
-    seen.add(binding.resourceId);
-    candidates.push({
-      resourceId: binding.resourceId,
-      capability: binding.capability,
-    });
-  }
-  for (const resourceId of continuation) {
-    if (seen.has(resourceId)) {
-      continue;
-    }
-    let resource;
-    try {
-      resource = input.appStore.getResource(resourceId);
-    } catch {
-      continue;
-    }
-    if (resource.kind === "mcp" || resource.kind === "skill") {
-      candidates.push({ resourceId, capability: resource.kind });
-    }
-  }
-  for (const binding of candidates) {
-    let resource;
-    try {
-      resource = input.appStore.getResource(binding.resourceId);
-    } catch {
-      continue;
-    }
-    if (!resource.enabled && !continuation.has(binding.resourceId)) {
-      continue;
-    }
-    if (binding.capability === "skill" && resource.kind === "skill") {
+  const resources = input.roleAccess.withStore(input.roleId, ({ business }) =>
+    taskToolResources(input.appStore, business.listRoleBindings(input.roleId), input.continuationResourceIds ?? []));
+  for (const resource of resources) {
+    if (resource.kind === "skill") {
       const library = skillLibraryFor(
         input.appStore,
         input.appRoot,
@@ -199,24 +154,24 @@ export async function loadAgentTools(
         warnings.push(`Skill 资源 ${resource.name} 缺少 sourcePath`);
         continue;
       }
-      skillResourceIds.push(resource.resourceId);
-      for (const metadata of library.list()) {
-        skillBriefs.push({
-          name: metadata.name,
-          description: metadata.description,
-          directory: metadata.directory,
-        });
+      const warn = (directory: string) => warnings.push(`Skill 资源 ${resource.name} 的 ${directory} 无法读取`);
+      try {
+        const metadata = library.list(warn);
+        if (metadata.length) skillResourceIds.push(resource.resourceId);
+        skillBriefs.push(...metadata);
+      } catch {
+        warn("目录");
       }
       continue;
     }
-    if (binding.capability === "mcp" && resource.kind === "mcp") {
+    if (resource.kind === "mcp") {
       const config = readMcpConfig(input.appStore, resource.resourceId);
       if (config === null) {
         warnings.push(`MCP 资源 ${resource.name} 配置不完整`);
         continue;
       }
-      if (config.command === managedPiCommand && input.admin?.pi) {
-        if (!tools.some(tool => tool.name === "pi_task_start")) {
+      if (config.command === managedPiCommand) {
+        if (adminSeat && input.admin?.pi && !tools.some(tool => tool.name === "pi_task_start")) {
           try { tools.push(...await input.admin.pi.tools(input.roleId)); }
           catch (error) { warnings.push("Pi MCP 不可用：" + safeMessage(error)); }
         }
@@ -1189,43 +1144,34 @@ function skillRunTool(
   };
 }
 
-function runSkillScriptProcess(
+export function runSkillScriptProcess(
   scriptPath: string,
   cwd: string,
   workspaceDir: string,
   scriptArgs: readonly string[],
   timeoutMs: number,
+  controlledPackage?: string,
 ): Promise<ConversationToolOutcome> {
   return new Promise<ConversationToolOutcome>((resolve) => {
-    let stdout = "";
-    let stderr = "";
+    const chunks = { out: [] as Buffer[], err: [] as Buffer[] };
+    const bytes = { out: 0, err: 0 };
     let truncated = false;
     const append = (target: "out" | "err", chunk: Buffer): void => {
-      const current = target === "out" ? stdout : stderr;
-      const next = current + chunk.toString("utf8");
-      if (Array.from(next).length > 1_000_000) {
-        truncated = true;
-        if (target === "out") {
-          stdout = truncateText(next, 1_000_000);
-        } else {
-          stderr = truncateText(next, 1_000_000);
-        }
-        return;
-      }
-      if (target === "out") {
-        stdout = next;
-      } else {
-        stderr = next;
-      }
+      const count = Math.min(chunk.length, 1_000_000 - bytes[target]);
+      if (count < chunk.length) truncated = true;
+      if (count) chunks[target].push(chunk.subarray(0, count));
+      bytes[target] += count;
     };
     let timedOut = false;
     let settled = false;
-    const child = spawn(process.execPath, [scriptPath, ...scriptArgs], {
+    const flags = controlledPackage ? ["--permission", "--allow-fs-read=" + controlledPackage,
+      "--allow-fs-read=" + cwd, "--allow-fs-write=" + cwd] : [];
+    const child = spawn(process.execPath, [...flags, scriptPath, ...scriptArgs], {
       cwd,
       env: {
-        ...process.env,
+        ...(controlledPackage ? { SystemRoot: process.env.SystemRoot } : process.env),
         NOWADAYS_WORKSPACE: workspaceDir,
-        NOWADAYS_SKILL_DIR: cwd,
+        NOWADAYS_SKILL_DIR: controlledPackage ?? cwd,
       },
       shell: false,
       windowsHide: true,
@@ -1260,8 +1206,8 @@ function runSkillScriptProcess(
         exitCode: code,
         signal: signalName,
         timedOut,
-        stdout,
-        stderr,
+        stdout: Buffer.concat(chunks.out, bytes.out).toString("utf8"),
+        stderr: Buffer.concat(chunks.err, bytes.err).toString("utf8"),
         truncated,
       };
       if (timedOut) {
@@ -1669,7 +1615,7 @@ class McpConnectionPool {
       throw new AppError(409, "MCP_CHAIN_CLOSED", "MCP 连接已随任务链释放");
     }
     const config = readMcpConfig(this.appStore, this.resourceId);
-    if (config === null) {
+    if (config === null || config.command === managedPiCommand) {
       throw new AppError(502, "MCP_CONFIG_INVALID", "MCP 资源配置已不可用");
     }
     const fingerprint = mcpConfigFingerprint(config);

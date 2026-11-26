@@ -1,0 +1,27 @@
+.engineering-capsule {
+  position: fixed;
+  inset-inline-start: var(--nd-semantic-space-panel-inset);
+  top: var(--nd-semantic-size-header);
+  max-width: calc(50% - var(--nd-semantic-space-section));
+  z-index: var(--nd-semantic-layer-sheet);
+}
+.engineering-capsule aside {
+  display: grid;
+  gap: var(--nd-semantic-space-field-hint);
+  max-height: 40vh;
+  overflow: auto;
+}
+.engineering-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--nd-semantic-space-icon-label);
+  padding: var(--nd-semantic-space-icon-label) var(--nd-semantic-space-field-group);
+  border: 1px solid var(--nd-semantic-color-line-decorative);
+  border-radius: var(--nd-semantic-radius-card);
+  background: var(--nd-semantic-color-surface);
+  color: var(--nd-semantic-color-text);
+}
+.engineering-row strong, .engineering-row small { display: block; }
+.engineering-row strong { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.engineering-row small { font-variant-numeric: tabular-nums; }

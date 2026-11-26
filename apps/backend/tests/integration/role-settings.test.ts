@@ -464,7 +464,7 @@ test("creating a service with a secret is atomic", { timeout: 30_000 }, async ()
     assert.equal(errorCode(tooLong.body), "INVALID_REQUEST");
 
     const resources = app.app.appStore.db
-      .prepare("SELECT COUNT(*) AS total FROM resources")
+      .prepare("SELECT COUNT(*) AS total FROM resources WHERE kind = 'model'")
       .get() as { total: number };
     const secrets = app.app.appStore.db
       .prepare("SELECT COUNT(*) AS total FROM resource_secrets")

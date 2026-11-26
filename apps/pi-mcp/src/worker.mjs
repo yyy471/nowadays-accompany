@@ -1,17 +1,50 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+// SDK 已展开 ~、@ 和相对路径，在真实文件操作处检查最终路径。
+export async function workspaceTools(cwd, { createWriteToolDefinition, createEditToolDefinition }) {
+  const root = await fs.realpath(cwd);
+  function requireInside(target) {
+    const relative = path.relative(root, target);
+    if (relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) throw Error("PI_WORKSPACE_PATH_DENIED");
+  }
+  async function checked(target) {
+    requireInside(target);
+    // 新文件可缺少多级父目录。悬空链接由 realpath 拒绝。
+    const stat = await fs.lstat(target).catch(error => {
+      if (error.code !== "ENOENT") throw error;
+    });
+    if (!stat) {
+      return path.join(await checked(path.dirname(target)), path.basename(target));
+    }
+    const real = await fs.realpath(target);
+    requireInside(real);
+    if (stat.isFile() && stat.nlink > 1) throw Error("PI_WORKSPACE_PATH_DENIED");
+    return real;
+  }
+  const writeFile = async (target, content) => fs.writeFile(await checked(target), content);
+  return [
+    createWriteToolDefinition(root, { operations: { writeFile, mkdir: async dir => fs.mkdir(await checked(dir), { recursive: true }) } }),
+    createEditToolDefinition(root, { operations: { writeFile, readFile: async file => fs.readFile(await checked(file)),
+      access: async file => fs.access(await checked(file), fs.constants.R_OK | fs.constants.W_OK) } }),
+  ];
+}
+
 process.on("disconnect", () => process.exit(1));
-process.once("message", async ({ prompt, cwd, baseUrl, lease, modelName, protocol, agentDir }) => {
+process.once("message", async ({ prompt, cwd, baseUrl, lease, modelName, protocol, agentDir, sharedTools, skills }) => {
   let session;
   try {
-    const { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager, ModelRuntime } =
-      await import("@earendil-works/pi-coding-agent");
+    const sdk = await import("@earendil-works/pi-coding-agent");
+    const { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager, ModelRuntime } = sdk;
     const settingsManager = SettingsManager.inMemory({ cacheWarming: { mode: "off" } });
     const extensionDir = new URL("./extensions/", import.meta.url);
     const extensionFactories = [];
     for (const name of (await fs.readdir(extensionDir)).sort()) {
-      if (name.endsWith(".mjs")) extensionFactories.push((await import(new URL(name, extensionDir))).default);
+      if (!name.endsWith(".mjs")) continue;
+      const extension = (await import(new URL(name, extensionDir))).default;
+      extensionFactories.push(name === "shared-tools.mjs"
+        ? pi => extension(pi, { sharedTools, baseUrl, lease, skills })
+        : extension);
     }
     const loader = new DefaultResourceLoader({ cwd, agentDir, settingsManager, extensionFactories,
       noExtensions: true, noSkills: true, noThemes: true, noPromptTemplates: true, noContextFiles: true });
@@ -23,7 +56,7 @@ process.once("message", async ({ prompt, cwd, baseUrl, lease, modelName, protoco
         contextWindow: 128000, maxTokens: 8192 }] };
     runtime.registerProvider("nowadays", provider);
     ({ session } = await createAgentSession({ cwd, agentDir, modelRuntime: runtime, model: runtime.getModel("nowadays", modelName),
-      settingsManager, resourceLoader: loader, sessionManager: SessionManager.inMemory(cwd), thinkingLevel: "off",
+      customTools: await workspaceTools(cwd, sdk), settingsManager, resourceLoader: loader, sessionManager: SessionManager.inMemory(cwd), thinkingLevel: "off",
       ...(process.platform === "win32" && { tools: ["-bash", "+powershell"] }) }));
     await session.bindExtensions({});
     await session.prompt(prompt);

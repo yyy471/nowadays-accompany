@@ -23,9 +23,27 @@
     "files": ["renderer/dist/**", "electron/main.cjs", "electron/settings-preload.cjs", "electron/backend-paths.cjs", "electron/extension-protocol.cjs", "assets/window.png", "assets/window.ico"],
     "extraResources": [
       {
+        "from": "../../.tools/node-v24",
+        "to": "node-runtime",
+        "filter": ["node.exe", "LICENSE"]
+      },
+      {
         "from": "../backend",
         "to": "backend",
-        "filter": ["src/**/*", "package.json", "package-lock.json", "tsconfig.json", "node_modules/**/*"]
+        "filter": ["src/**/*", "package.json", "package-lock.json", "tsconfig.json"]
+      },
+      {
+        "from": "../backend/node_modules",
+        "to": "backend/node_modules"
+      },
+      {
+        "from": "../pi-mcp",
+        "to": "pi-mcp",
+        "filter": ["src/**/*", "package.json"]
+      },
+      {
+        "from": "../pi-mcp/node_modules",
+        "to": "pi-mcp/node_modules"
       },
       {
         "from": "../backend/assets/presets",

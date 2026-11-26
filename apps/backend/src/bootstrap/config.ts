@@ -16,6 +16,7 @@ export interface BackendConfig {
   presetAssetsDir: string;
   port: number;
   host: typeof LOOPBACK_HOST;
+  hostToken?: string;
 }
 
 export interface RolePaths {
@@ -89,6 +90,7 @@ export function parseBackendConfig(
     presetAssetsDir: resolvedPresetAssetsDir,
     port,
     host: LOOPBACK_HOST,
+    ...(env.NOWADAYS_HOST_TOKEN && { hostToken: env.NOWADAYS_HOST_TOKEN }),
   };
 }
 

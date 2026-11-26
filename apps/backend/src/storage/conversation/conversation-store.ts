@@ -1,3 +1,4 @@
+import { EngineeringJobs } from "./engineering-jobs.js";
 import { isAdminSeat } from "../../domain/admin-seat.js";
 import { randomUUID } from "node:crypto";
 import { observeDialogue } from "./dialogue-batches.js";
@@ -209,6 +210,8 @@ export class ConversationStore {
     private readonly roleId: string,
     private readonly timeZone?: string,
   ) {}
+
+  nextEngineeringDelivery() { return new EngineeringJobs(this.db).nextDelivery(); }
 
   listPendingWindows(): PendingWindow[] {
     const rows = this.db
@@ -1580,7 +1583,12 @@ export class ConversationStore {
           now,
           input.executionId,
         );
-      if (input.keepClaimedMessages !== true) {
+      // 已委派的工程保留原消息领取，交给工程续行结算，避免重启把原交办当成新指令。
+      const recoveringEngineering = (input.reason === "PROCESS_INTERRUPTED" || input.reason === "RECOVERY_RESUME_FAILED") && this.db.prepare(`
+        SELECT 1 FROM execution_tasks et JOIN engineering_jobs j USING(task_id) JOIN tasks t USING(task_id)
+        WHERE et.execution_id=? AND et.relation IN ('initiates','continues') AND t.status='active' LIMIT 1
+      `).get(input.executionId);
+      if (!input.keepClaimedMessages && !recoveringEngineering) {
         this.db
           .prepare(
             `UPDATE messages SET execution_id = CASE WHEN ? = 'failed' THEN claimed_by_execution_id ELSE execution_id END,
@@ -2550,7 +2558,8 @@ function parseTaskDecision(
   }
   const record = action as Record<string, unknown>;
   if (record.kind === "pause" && typeof record.reason === "string") {
-    return { taskId, action: { kind: "pause", reason: record.reason } };
+    return { taskId, action: { kind: "pause", reason: record.reason,
+      ...(typeof record.waitReason === "string" && { waitReason: record.waitReason }) } };
   }
   if (
     record.kind === "finish" &&

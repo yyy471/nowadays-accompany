@@ -1,10 +1,14 @@
+import { z } from "zod";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { managedPiCommand } from "../domain/resource.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
-export const managedPiCommand = "nowadays-pi";
-const piEntry = new URL("../../../pi-mcp/src/server.mjs", import.meta.url);
+export { managedPiCommand };
+
+export function resolvePiEntry(root = process.env.NOWADAYS_PI_MCP_ROOT): string {
+  return path.resolve(root || path.resolve(import.meta.dirname, "../../../pi-mcp"), "src", "server.mjs");
+}
 
 export interface McpServerConfig {
   command: string;
@@ -24,6 +28,12 @@ export interface McpToolCallResult {
   structuredContent?: unknown;
 }
 
+const piTerminal = z.object({
+  method: z.literal("notifications/nowadays/pi-terminal"),
+  params: z.object({ jobId: z.uuid(), state: z.enum(["completed","failed","cancelled","timed_out"]), summary: z.string().max(1200) }),
+});
+export type PiReceipt = z.infer<typeof piTerminal>["params"];
+
 export class McpToolClient {
   private closed = false;
 
@@ -31,16 +41,16 @@ export class McpToolClient {
 
   static async connect(
     config: McpServerConfig,
-    options: { cwd?: string; timeoutMs?: number; onClose?: () => void } = {},
+    options: { isolatedEnv?: boolean; cwd?: string; timeoutMs?: number; onClose?: () => void; onPiTerminal?: (receipt: PiReceipt) => void } = {},
   ): Promise<McpToolClient> {
     const pi = config.command === managedPiCommand;
     const transport = new StdioClientTransport({
       command: pi ? process.execPath : config.command,
-      args: pi ? [fileURLToPath(piEntry)] : config.args,
+      args: pi ? [resolvePiEntry()] : config.args,
       cwd: options.cwd ?? process.cwd(),
       env: pi ? { PATH: [path.dirname(process.execPath), process.env.PATH].filter(Boolean).join(path.delimiter),
         ...(process.platform === "win32" && { PATHEXT: ".COM;.EXE;.BAT;.CMD", SystemRoot: process.env.SystemRoot ?? "C:\\Windows" }),
-      } : { ...process.env, ...config.env } as Record<string, string>,
+      } : options.isolatedEnv ? config.env : { ...process.env, ...config.env } as Record<string, string>,
       stderr: "pipe",
     });
     transport.stderr?.on("data", () => {});
@@ -48,6 +58,10 @@ export class McpToolClient {
       { name: "nowadays-backend", version: "0.1.0" },
       { capabilities: {} },
     );
+    if (pi && options.onPiTerminal) {
+      client.setNotificationHandler(piTerminal, event => options.onPiTerminal!(event.params));
+      client.onerror = error => console.error("PI_STDIO_PROTOCOL_ERROR", error.message);
+    }
     if (options.onClose) client.onclose = options.onClose;
     try {
       await withTimeout(
@@ -61,6 +75,8 @@ export class McpToolClient {
     }
     return new McpToolClient(client);
   }
+
+  get serverName() { return this.client.getServerVersion()?.name; }
 
   async listTools(): Promise<McpToolInfo[]> {
     const tools: McpToolInfo[] = [];

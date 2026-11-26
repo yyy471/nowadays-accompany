@@ -5,6 +5,12 @@ import { isModelProvider, MODEL_PROVIDERS, type ModelProvider } from "./model-pr
 export const resourceKindSchema = z.enum(["model", "mcp", "skill"]);
 export type ResourceKind = z.infer<typeof resourceKindSchema>;
 
+/** 旧库手工添加的同命令资源也属于内置 Pi。 */
+export const managedPiCommand = "nowadays-pi";
+export function isManagedPiResource(resource: { kind: ResourceKind; config: Record<string, unknown> }): boolean {
+  return resource.kind === "mcp" && resource.config.command === managedPiCommand;
+}
+
 export const modelProtocolSchema = z.enum([
   "openai-chat",
   "openai-responses",

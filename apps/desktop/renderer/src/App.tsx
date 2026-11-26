@@ -6,6 +6,7 @@ import { appearanceAssetUrl } from './types';
 import { BrandMark, Button, ControlButton, Icon, UiThemeProvider, UiThemeScope, createMotionScope, readMotionPx, readMotionTime, readMotionValue, useMotionPolicy } from './ui';
 import { useThemePreset } from './ui/presets';
 import { ThemeSwitcher } from './components/shell/ThemeSwitcher';
+import { EngineeringCapsule } from './components/shell/EngineeringCapsule';
 import { PageDock } from './components/shell/PageDock';
 import { ExtensionsPage, ExtensionOverlays } from './extensions/ExtensionViews';
 import { useExtensions } from './extensions/use-extensions';
@@ -397,6 +398,7 @@ export function App() {
         {settingsVisited && <SettingsWorkspace page={page} roles={roles || []} currentId={currentId} roleListError={roleListError} retryingRoles={retryingRoles} onRetryRoles={() => void retryRoles()} onRoleDeleted={removeRoleLocally} onRefresh={refresh} onNavigate={applyPage} navigationGuard={configGuard} footerLeft={configFooterLeft} footerRight={configFooterRight} workspaceRequest={workspaceRequest} onWorkspaceRequestHandled={handleWorkspaceRequestHandled} onStartConversation={roleId => navigate('conversation', () => setCurrentId(roleId))}/>}
       </div>
     </UiThemeProvider></main>
+    {seat && <EngineeringCapsule/>}
     <ExtensionOverlays state={extensions}/>
     {seat && <ShareSlip key={seat.roleId} seat={seat} visibleWindow={page === 'conversation' && currentId === seat.roleId ? visibleWindow : null}
       onOpen={(notice, dismiss) => {

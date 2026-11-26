@@ -4,6 +4,28 @@
 
 ## 1. 当前结论概览
 
+**DL-195 四包的 R1 独立核验未通过。本轮已按报告修复，修后独立复核、真实大模型与打包态长任务联调待办。**
+
+包 C 使用主角色的全局资源、角色绑定与原任务续用记录。真实 Pi SDK 通过宿主读取 Skill 正文及参考文件、执行随包脚本、分别调用两个同名 stdio 工具。离线探针在 Pi 环境、启动元数据、工具目录和错误回显中均为 0。工程取消、父任务取消、角色停机、到期四种派发前撤销均返回 `403 PI_LEASE_REVOKED`，上游派发 0 次。自主工程预留额度后才派发，已派发的断连调用记为 `unknown`，晚到的成功结果归原任务。[共享工具契约](./specs/role-config-and-activity.md#36-受托管工程-mcpdl-195) · [共享工具集成测试](../apps/backend/tests/integration/pi-shared-tools.test.ts) · [撤销竞态测试](../apps/backend/tests/integration/pi-lease.test.ts)
+
+本轮覆盖工程委派后的人工暂停与熔断、同窗恢复领取回执、角色包迁移与旧包收敛、原生写工具的真实路径围栏、宿主 API 鉴权与跨域来源、MCP 启动参数脱敏，以及 Skill、草稿、资源合并和扩展换版边界。独立报告为 `test-results/audit/r1/independent-audit.log`，本轮实施方自验日志在 `test-results/audit/r1-fixes/`。
+
+Windows 本地 Node 24.22.2 全量回归通过。后端类型检查通过，正式用例 **602/602**。离线验收 **21/21** 步、**81/81** 场景，含 77 个文件的正式测试与交付用例 **5/5**，真实服务调用 0。Pi **5/5**，四条进程树用例残留均为 0。渲染器检查 **3/3**、测试 **146/146**、生产构建通过，桌面壳 **16/16**。Electron 39.8.10 串行 **26/26**，覆盖 20 个入口，含关系页 7 种模式。首轮桌面全量 **25/26**，生图设置链路的角色活动断言单跑及最终全量复跑均通过。离线报告为 `test-results/backend-acceptance/p5-2026-11-26T12-02-34-821Z-66de4966/summary.json`，桌面报告为 `test-results/desktop-e2e/e2e-2026-11-26T12-01-22-349Z-18d465e9/gates.json`。
+
+**四包升级 · B（沙箱槽位双向互动）Windows 离线开发自验通过，待 Neon 独立复核。** 扩展通过 `api.ui.onAction` 注册界面动作，宿主按槽位版本派发到对应的活动进程。Pi 工程提示中的计数器已提取实跑，连续回显 1、2。主角色两项发布工具与 Pi 的互动契约通过逐字一致性测试。[后端接口](./specs/role-config-and-activity.md#35-后端热扩展dl-184dl-188) · [桌面消息契约](./specs/frontend-design-system.md#扩展槽位dl-188)
+
+Node 24.22.2 实跑后端类型检查及 **591/591**，渲染器检查、**146/146** 与构建，桌面壳 **16/16** 均通过。Electron 39 最终串行全套 **19/19**，入口哈希稳定。运行期装入微页、挂件与浮层后，真实子帧按钮激活并回显 1，重载扩展进程与挂件后读取 1。未知动作收到明确错误；后台升级后暂缓桌面快照，旧页点击被拒，新版随后递增到 2。昼夜令牌与 `fetch('/v1/roles')` 的 CSP 拦截均已实测。验收结束与启动前 PID 对照，本轮 Node、Electron、esbuild 残留 0。最终报告位于 `test-results/desktop-e2e/e2e-2026-11-26T09-54-35-660Z-1496e19b/gates.json`。[后端集成测试](../apps/backend/tests/integration/extension-host.test.ts) · [桥接单测](../apps/desktop/renderer/tests/extension-bridge.test.ts) · [Electron 槽位用例](../apps/desktop/tests/e2e/extension-ui-slots.e2e.cjs)
+
+**DL-195 四包升级 · A2 已由 Neon 独立核查放行。** 单条用户委托已在本机通过真实 Pi SDK、模拟模型、三文件首测失败与修补、自动回原窗热发布及试用。工程作业和回执已纳入角色业务库 V30。桌面胶囊支持跨页查看、分别取消和完成后撤去。[工程接口与发布契约](./specs/role-config-and-activity.md#36-受托管工程-mcpdl-195) · [存储与续行](./specs/storage-memory-and-autonomy.md)
+
+本轮后端类型检查及 **589/589**、Pi 进程树 **4/4**、渲染器检查及 **144/144**、构建、桌面壳 **16/16** 均通过，样式违规 0。Electron 39 串行全套 **19/19**，入口哈希稳定。胶囊用例覆盖两项真实工程并行、其他窗口保持输入焦点、跨页取消一项和原窗口自动交付。后端覆盖旧连接回执、事务回滚、重复终态、同名草稿隔离、终态抢先、父任务显式结束或取消、自主预算与停机恢复。重启测试从工程已登记、前台回复尚未提交的持久状态恢复。详见[工程集成测试](../apps/backend/tests/integration/managed-pi.test.ts)与[桌面端到端用例](../apps/desktop/tests/e2e/engineering-capsule.e2e.cjs)。
+
+本机 Electron 报告位于 `test-results/desktop-e2e/e2e-2026-11-26T09-27-03-687Z-6f7feeae/gates.json`。跨页配置旧用例已同步 A1 的内置 MCP 入口；并行运行时媒体纸笺曾出现立绘像素断言抖动，最终串行通过。Pi 完成、取消、超时、关闭四条路径采样进程树均无存活进程。验收结束后本轮 Node、Electron、esbuild 残留 0。文档巡检 0 错误、0 警告，仓库卫生 0 错误、3 项既有体积警告。真实付费模型和干净机器发行件验证仍待联调。
+
+**A1 已由 Neon 独立核查放行。** 四项已确认细则已登记。全新安装与首次引入 Pi 的 V12 老库均自动为主角色绑定。已有 Pi 的老库保留原资源 ID、全局及角色开关和解绑选择。普通角色即使残留绑定也无法发现或调用 Pi，仍可使用公开扩展。[决策记录](./161-digital-life-direction-decisions.md#dl-195-受托管工程-mcp-与后台开发子代理) · [资源与路径契约](./specs/role-config-and-activity.md#36-受托管工程-mcpdl-195)
+
+Windows 本机实跑后端类型检查及 **585/585**，桌面壳 **16/16**，渲染器检查、**141/141** 与构建通过。electron-builder 生成的 Windows x64 解包目录中，包内 Node 24.22.2 成功启动后端，Pi SDK 从独立随包依赖加载，主角色首轮工具目录包含全部四个 `pi_task_*`。文档巡检 0 错误、0 警告，仓库卫生巡检 0 错误、3 项既有体积警告。真实付费服务、干净机器上的 portable 发行件验证待办。A1 的 Windows 解包冒烟沿用本次放行基线。
+
 **包 B（DL-195）Pi 开发完成，Windows 本机离线自验通过。** 独立子包锁定 `@earendil-works/pi-coding-agent@1.6.1`。真实 Pi SDK 经宿主租约代理访问本地模拟 Chat 和 Responses 端点。主角色发起三文件工程，Pi 运行 Node 首测失败，读取源码、局部修补并复测通过；后台等待模型时同窗收到前台回复。主角色从草稿热发布，下一轮直接调用新工具，普通角色可用公开工具。主链路的 9 次上游尝试（1 次失败、8 次成功）对应全局账本 9 条。工程取消、宿主任务取消、角色停机与租约到期都拒绝后续转发。探针测试凭据未进入 Pi 子进程环境与任务配置。后端类型检查通过，后端全量 580/580，Pi 进程树测试 4/4；文档巡检 0 错误，仓库卫生巡检 0 错误、3 项既有体积警告。[工程接入规范](./specs/role-config-and-activity.md#36-受托管工程-mcpdl-195)
 
 Windows Node 24.22.2 下，Pi 依赖的磁盘分配量 171,243,752 字节（DSH 旧探针为 1,335,548,920 字节）。最后一组四次冷启动到 MCP initialize 为 173～215 ms，到真实 SDK 首次模型请求为 1,100～1,335 ms。每 25 ms 采样的整棵进程树工作集在该组最高为 382.53 MB，较早一组最高 410.62 MB。正常完成、取消、超时、关闭 MCP 四条路径都覆盖短命父进程派生的长期孙进程，退出后存活数均为 0。原始结果在本机 `test-results/pi-lifecycle.log`、`test-results/pi-disk.json` 和 `test-results/pi-backend-tests.log`。

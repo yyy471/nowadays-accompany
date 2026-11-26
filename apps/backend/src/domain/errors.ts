@@ -14,6 +14,12 @@ export class AppError extends Error {
   }
 }
 
+export class PiAdminSeatRequiredError extends AppError {
+  constructor() {
+    super(403, "PI_ADMIN_SEAT_REQUIRED", "仅主角色席位可使用内置 Pi 工程工具");
+  }
+}
+
 export class InvalidRoleIdError extends AppError {
   constructor() {
     super(400, "INVALID_ROLE_ID", "roleId 格式不正确");

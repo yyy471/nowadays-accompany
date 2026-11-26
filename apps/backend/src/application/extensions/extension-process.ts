@@ -102,7 +102,9 @@ export class ExtensionProcess {
         if (!pending) break;
         this.calls.delete(id);
         clearTimeout(pending.timer);
-        if (msg.error) pending.done.reject(new AppError(422,
+        if (msg.code === "EXTENSION_UI_ACTION_NOT_FOUND" || msg.code === "EXTENSION_UI_ACTION_FAILED")
+          pending.done.reject(new AppError(msg.code === "EXTENSION_UI_ACTION_NOT_FOUND" ? 404 : 422, msg.code, String(msg.error)));
+        else if (msg.error) pending.done.reject(new AppError(422,
           String(msg.error).endsWith("EXTENSION_UNAVAILABLE") ? "EXTENSION_UNAVAILABLE" : "EXTENSION_TOOL_FAILED", String(msg.error)));
         else pending.done.resolve(msg.value ?? null);
         break;
@@ -123,7 +125,7 @@ export class ExtensionProcess {
     this.hooks.failed(error);
   }
   assertAlive() { if (this.error) throw this.error; }
-  request(type: "call" | "event", name: string, args: unknown, context?: object) {
+  request(type: "call" | "event" | "ui-action", name: string, args: unknown, context?: object) {
     this.assertAlive();
     if (this.stopping) throw new AppError(409, "EXTENSION_UNAVAILABLE", "扩展正在退出");
     const id = ++this.serial;

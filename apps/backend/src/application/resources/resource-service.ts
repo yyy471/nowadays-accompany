@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { SkillLibrary } from "../../skills/skill-library.js";
+import { isAdminSeat } from "../../domain/admin-seat.js";
 import {
   AppError,
   BindingConflictError,
@@ -8,6 +9,7 @@ import {
   InvalidBindingError,
   InvalidResourceConfigError,
   ModelCredentialUnavailableError,
+  PiAdminSeatRequiredError,
   ResourceCredentialConflictError,
   ResourceCredentialStaleError,
   ResourceInUseError,
@@ -17,6 +19,8 @@ import {
 } from "../../domain/errors.js";
 import {
   modelConfigSchema,
+  isManagedPiResource,
+  managedPiCommand,
   parseResourceConfig,
   type ResourceKind,
 } from "../../domain/resource.js";
@@ -71,6 +75,7 @@ export interface BindingInput {
 
 /** 资源读视图：只暴露凭据状态和最近测试，不含任何密钥明文。 */
 export interface ResourceView extends ResourceRecord {
+  adminSeatOnly?: true;
   credential: CredentialSummary;
   lastTest: ModelTestSummary | null;
   /** MCP 环境变量值已脱敏；配置里的其他字段保持原样。 */
@@ -173,6 +178,54 @@ export class ResourceService {
     this.externalInflightRoleIds = options.externalInflightRoleIds ?? (() => []);
   }
 
+  ensureManagedPi(adminRoleId: string): void {
+    if (!isAdminSeat(this.access.requireReady(adminRoleId).builtinKey)) throw new PiAdminSeatRequiredError();
+    const db = this.appStore.db;
+    const pending = db.transaction(() => {
+      const seed = db.prepare("SELECT pending_resource_id FROM builtin_resource_seeds WHERE command = ?")
+        .get(managedPiCommand) as { pending_resource_id: string | null } | undefined;
+      const [existing, ...duplicates] = this.appStore.listResources("mcp").filter(isManagedPiResource);
+      if (existing) for (const duplicate of duplicates) {
+        for (const role of this.appStore.listRoleIndexes().filter(r => r.initStatus === "ready")) {
+          this.access.withStore(role.roleId, ({ business }) => business.db.transaction(() => {
+            const ids = [existing.resourceId, duplicate.resourceId];
+            business.db.prepare(`INSERT INTO role_bindings (role_id, capability, resource_id, model_name, enabled, created_at, updated_at)
+              SELECT role_id, capability, ?, model_name, enabled, created_at, updated_at FROM role_bindings WHERE resource_id=?
+              ON CONFLICT(role_id,capability,resource_id) DO UPDATE SET enabled=min(enabled, excluded.enabled)`).run(...ids);
+            business.db.prepare(`INSERT INTO task_resource_continuations (task_id,resource_id,granted_at,ended_at)
+              SELECT task_id,?,granted_at,ended_at FROM task_resource_continuations WHERE resource_id=?
+              ON CONFLICT(task_id,resource_id) DO UPDATE SET ended_at=max(ended_at, excluded.ended_at)`).run(...ids);
+            business.db.prepare("DELETE FROM role_bindings WHERE resource_id=?").run(duplicate.resourceId);
+            business.db.prepare("DELETE FROM task_resource_continuations WHERE resource_id=?").run(duplicate.resourceId);
+          })());
+        }
+        if (!duplicate.enabled) this.appStore.updateResource({ resourceId: existing.resourceId, enabled: false });
+        if (seed?.pending_resource_id === duplicate.resourceId) {
+          seed.pending_resource_id = existing.resourceId;
+          db.prepare("UPDATE builtin_resource_seeds SET pending_resource_id=? WHERE command=?").run(existing.resourceId, managedPiCommand);
+        }
+        this.appStore.deleteResource(duplicate.resourceId);
+      }
+      // 已有资源可能刚被解绑。只有首次引入 Pi 时才为席位写默认绑定。
+      const pi = existing ?? this.appStore.createResource({
+        resourceId: randomUUID(), kind: "mcp", name: "内置 Pi 工程助手", enabled: seed === undefined,
+        config: { command: managedPiCommand, args: [], env: {} },
+      });
+      if (seed) return seed.pending_resource_id;
+      const pendingId = existing ? null : pi.resourceId;
+      db.prepare("INSERT INTO builtin_resource_seeds (command, pending_resource_id) VALUES (?, ?)")
+        .run(managedPiCommand, pendingId);
+      return pendingId;
+    }).immediate();
+    if (pending === null) return;
+    // 两库间中断可重试；角色库只插入缺失行，成功后永久消费默认绑定。
+    const target = this.appStore.listResources("mcp").find(resource => resource.resourceId === pending);
+    if (target?.enabled && isManagedPiResource(target)) {
+      this.access.withStore(adminRoleId, storage => storage.business.ensureMcpBinding(adminRoleId, pending));
+    }
+    db.prepare("UPDATE builtin_resource_seeds SET pending_resource_id = NULL WHERE command = ?").run(managedPiCommand);
+  }
+
   discoverSkills(sourcePath: string) {
     let skills;
     try {
@@ -197,6 +250,10 @@ export class ResourceService {
 
   create(input: CreateResourceInput): ResourceView {
     const config = parseResourceConfig(input.kind, input.config);
+    if (isManagedPiResource({ kind: input.kind, config })) {
+      const existing = this.appStore.listResources("mcp").find(isManagedPiResource);
+      if (existing) return this.view(existing.resourceId);
+    }
     if (input.secret !== undefined) {
       this.assertSecretAllowed(input.kind, config);
     }
@@ -380,6 +437,9 @@ export class ResourceService {
               ? mergeRedactedMcpEnv(current.config, input.config)
               : input.config,
           );
+    if (config && isManagedPiResource({ kind: current.kind, config }) &&
+        this.appStore.listResources("mcp").some(r => r.resourceId !== resourceId && isManagedPiResource(r)))
+      throw new AppError(409, "MANAGED_PI_ALREADY_EXISTS", "内置 Pi 工程助手已存在");
     // MCP／Skill：单独切换启用状态立即生效（新任务不再选择，旧任务继续，278 §3）；
     // 同时修改运行配置或名称时按占用检查整笔处理。
     if (current.kind !== "model") {
@@ -435,11 +495,13 @@ export class ResourceService {
   listBindings(roleId: string): RoleBindingRecord[] {
     // 已删除但尚未清理完的角色绑定按删除状态过滤（RP-R05）。
     const pending = new Set(this.appStore.listResourceDeletions());
-    return this.access
-      .withStore(roleId, (storage) =>
-        storage.business.listRoleBindings(roleId),
-      )
-      .filter((binding) => !pending.has(binding.resourceId));
+    const bindings = this.access.withStore(roleId, storage => storage.business.listRoleBindings(roleId));
+    if (bindings.some(binding => binding.capability === "mcp") && !isAdminSeat(this.access.getIndex(roleId).builtinKey)) {
+      for (const resource of this.appStore.listResources("mcp")) {
+        if (isManagedPiResource(resource)) pending.add(resource.resourceId);
+      }
+    }
+    return bindings.filter(binding => !pending.has(binding.resourceId));
   }
 
   bindingsView(roleId: string): RoleBindingsView {
@@ -595,13 +657,13 @@ export class ResourceService {
     bindings: readonly BindingInput[],
     expectedRevision?: string,
   ): RoleBindingsView {
-    this.access.requireReady(roleId);
+    const index = this.access.requireReady(roleId);
     const current = this.listBindings(roleId);
     const actual = revisionOf(current);
     if (expectedRevision !== undefined && expectedRevision !== actual) {
       throw new BindingRevisionConflictError(roleId, expectedRevision, actual);
     }
-    const normalized = this.validateBindings(bindings);
+    const normalized = this.validateBindings(bindings, isAdminSeat(index.builtinKey));
     // 维护中的服务不接受新增的启用绑定：先保存绑定再恢复角色会抢在
     // 模型写入之前加入新依赖（283 R01）。
     if (this.maintenanceResources.size > 0) {
@@ -638,6 +700,7 @@ export class ResourceService {
     let blockingTasks = 0;
     for (const index of this.appStore.listRoleIndexes()) {
       if (index.initStatus !== "ready") continue;
+      if (isManagedPiResource(resource) && !isAdminSeat(index.builtinKey)) continue;
       const targets = this.bindings.usageTargets(index.roleId);
       const { displayName, taskIds } = this.access.withStore(
         index.roleId,
@@ -756,6 +819,7 @@ export class ResourceService {
     const references: ResourceReferenceDetail[] = [];
     for (const index of this.appStore.listRoleIndexes()) {
       if (index.initStatus !== "ready") continue;
+      if (isManagedPiResource(resource) && !isAdminSeat(index.builtinKey)) continue;
       this.access.withStore(index.roleId, (storage) => {
         for (const binding of storage.business.listRoleBindings(index.roleId)) {
           if (binding.resourceId !== resourceId) continue;
@@ -1010,6 +1074,7 @@ export class ResourceService {
         : { config: record.config, redacted: false };
     return {
       ...record,
+      ...(isManagedPiResource(record) && { adminSeatOnly: true as const }),
       config: redacted.config,
       credential,
       lastTest,
@@ -1033,6 +1098,7 @@ export class ResourceService {
 
   private validateBindings(
     bindings: readonly BindingInput[],
+    adminSeat: boolean,
   ): RoleBindingInput[] {
     const seen = new Set<string>();
     let chatModels = 0;
@@ -1048,6 +1114,7 @@ export class ResourceService {
       seen.add(pairKey);
 
       const resource = this.appStore.getResource(binding.resourceId);
+      if (!adminSeat && isManagedPiResource(resource)) throw new PiAdminSeatRequiredError();
       const expectedKind = capabilityKind[binding.capability];
       if (resource.kind !== expectedKind) {
         throw new ResourceKindMismatchError(

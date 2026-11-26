@@ -11,13 +11,14 @@ import { restoreAutonomyShareLinks } from "../conversation/autonomy-store.js";
 import { MemoryStore } from "../memory/memory-store.js";
 import { retireLegacyWebPrefetchEvidence, WEB_READING_SCHEMA_SQL } from "../conversation/web-reading.js";
 
-export const APP_SCHEMA_VERSION = 12;
-export const BUSINESS_SCHEMA_VERSION = 29;
+export const APP_SCHEMA_VERSION = 13;
+export const BUSINESS_SCHEMA_VERSION = 30;
 export const EXECUTION_SCHEMA_VERSION = 2;
 
 export const APP_TABLES = [
   "roles",
   "resources",
+  "builtin_resource_seeds",
   "resource_deletions",
   "role_deletions",
   "model_test_calls",
@@ -32,6 +33,7 @@ export const APP_TABLES = [
   "token_usage_meta",
 ] as const;
 export const BUSINESS_TABLES = [
+  "engineering_jobs", "engineering_wakes",
   "roles",
   "windows",
   "messages",
@@ -697,6 +699,8 @@ interface RequiredColumns {
 }
 
 const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
+  { table: "engineering_jobs", columns: ["job_id","role_id","task_id","window_id","origin","ext_id","title","work_dir","status","summary","started_at","finished_at"] },
+  { table: "engineering_wakes", columns: ["wake_id","job_id","execution_id"] },
   { table: "role_exchange_sessions", columns: ["sessionId", "initiatorRoleId", "targetRoleId", "initiatorName", "targetName", "topic", "status", "maxTurns", "turnCount", "startedAt", "endedAt", "reason", "mirrorPending"] },
   { table: "role_exchange_turns", columns: ["sessionId", "turnIndex", "exchangeId", "speakerRoleId", "speakerName", "content", "createdAt"] },
   { table: "observed_dialogue_batches", columns: ["batch_id", "role_id", "window_id", "after_seq", "up_to_seq", "message_count", "completed_at", "due_at", "delivered_at"] },
@@ -942,6 +946,7 @@ const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
 ];
 
 const BUSINESS_INDEXES: readonly RequiredIndex[] = [
+  { name: "engineering_jobs_task", table: "engineering_jobs", columns: ["task_id","status"], unique: false, partial: false },
   { name: "idx_worldbook_usage_execution", table: "worldbook_usage",
     columns: ["role_id", "execution_id"], unique: false, partial: false },
   { name: "idx_web_reading_role_page", table: "web_reading_deliveries",
@@ -1962,6 +1967,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_app_roles_builtin_key
 `;
 
 const APP_COLUMNS: readonly RequiredColumns[] = [
+  { table: "builtin_resource_seeds", columns: ["command", "pending_resource_id"] },
   {
     table: "roles",
     columns: ["builtin_key"],
@@ -2071,6 +2077,13 @@ CREATE TABLE IF NOT EXISTS token_usage_meta (
 );
 `;
 
+const APP_V13_SQL = `
+CREATE TABLE IF NOT EXISTS builtin_resource_seeds (
+  command TEXT PRIMARY KEY,
+  pending_resource_id TEXT
+);
+`;
+
 export function openAppDatabase(dbPath: string): OpenedDatabase {
   return openVersionedDatabase(
     dbPath,
@@ -2086,7 +2099,8 @@ export function openAppDatabase(dbPath: string): OpenedDatabase {
       APP_V9_SQL +
       APP_V10_SQL +
       APP_V11_SQL +
-      APP_V12_SQL,
+      APP_V12_SQL +
+      APP_V13_SQL,
     {
       1: (db) => db.exec(APP_V2_SQL),
       2: (db) => db.exec(APP_V3_SQL),
@@ -2099,6 +2113,7 @@ export function openAppDatabase(dbPath: string): OpenedDatabase {
       9: migrateAppV10,
       10: (db) => db.exec(APP_V11_SQL),
       11: (db) => db.exec(APP_V12_SQL),
+      12: (db) => db.exec(APP_V13_SQL),
     },
     APP_TABLES,
     APP_INDEXES,
@@ -2177,6 +2192,21 @@ export const BUSINESS_SCHEMA_V22_SQL = BUSINESS_SCHEMA_SQL +
       BUSINESS_V21_SQL +
       BUSINESS_V22_SQL;
 
+const BUSINESS_V30_SQL = `
+CREATE TABLE IF NOT EXISTS engineering_jobs (
+  job_id TEXT PRIMARY KEY, role_id TEXT NOT NULL REFERENCES roles(role_id),
+  task_id TEXT NOT NULL REFERENCES tasks(task_id), window_id TEXT NOT NULL REFERENCES windows(window_id),
+  origin TEXT NOT NULL CHECK(origin IN ('user','autonomous')), ext_id TEXT NOT NULL,
+  title TEXT NOT NULL, work_dir TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
+  status TEXT NOT NULL CHECK(status IN ('running','completed','failed','cancelled','timed_out','interrupted_unknown')),
+  summary TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS engineering_jobs_task ON engineering_jobs(task_id, status);
+CREATE TABLE IF NOT EXISTS engineering_wakes (
+  wake_id TEXT PRIMARY KEY, job_id TEXT NOT NULL UNIQUE REFERENCES engineering_jobs(job_id),
+  execution_id TEXT REFERENCES executions(execution_id)
+);`;
+
 export function openBusinessDatabase(
   dbPath: string,
   options: DatabaseOpenOptions = {},
@@ -2184,7 +2214,7 @@ export function openBusinessDatabase(
   return openVersionedDatabase(
     dbPath,
     BUSINESS_SCHEMA_VERSION,
-    BUSINESS_SCHEMA_V22_SQL + BUSINESS_V23_SQL + BUSINESS_V24_SQL + BUSINESS_V26_SQL + BUSINESS_V27_SQL + BUSINESS_V28_SQL + BUSINESS_V29_SQL,
+    BUSINESS_SCHEMA_V22_SQL + BUSINESS_V23_SQL + BUSINESS_V24_SQL + BUSINESS_V26_SQL + BUSINESS_V27_SQL + BUSINESS_V28_SQL + BUSINESS_V29_SQL + BUSINESS_V30_SQL,
     {
       1: (db) => {
         db.exec(BUSINESS_V2_SQL);
@@ -2235,6 +2265,7 @@ export function openBusinessDatabase(
       26: (db) => db.exec(BUSINESS_V27_SQL),
       27: (db) => db.exec(BUSINESS_V28_SQL),
       28: (db) => db.exec(BUSINESS_V29_SQL),
+      29: (db) => db.exec(BUSINESS_V30_SQL),
     },
     BUSINESS_TABLES,
     BUSINESS_INDEXES,

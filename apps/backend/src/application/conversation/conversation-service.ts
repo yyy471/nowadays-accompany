@@ -1,4 +1,6 @@
+import { EngineeringJobs, engineeringWait } from "../../storage/conversation/engineering-jobs.js";
 import { isAdminSeat } from "../../domain/admin-seat.js";
+import { isManagedPiResource } from "../../domain/resource.js";
 import { RoleExchangeService, exchangeWake } from "./role-exchanges.js";
 import { DialogueBatchDelivery } from "./dialogue-batch-delivery.js";
 import type http from "node:http";
@@ -144,6 +146,7 @@ interface RunningExecution {
 }
 
 interface PendingTaskContinuation {
+  engineering?: boolean;
   taskId: string;
   windowId: string;
 }
@@ -835,7 +838,6 @@ export class ConversationService {
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache, no-store",
       connection: "keep-alive",
-      "access-control-allow-origin": "*",
     });
     input.response.flushHeaders?.();
     if (input.sharesOnly) input.response.write(`id: ${cursor}\nevent: ready\ndata: {}\n\n`);
@@ -903,6 +905,8 @@ export class ConversationService {
             index.roleId,
             this.timeZone,
           );
+          const jobs = new EngineeringJobs(storage.business.db);
+          for (const job of jobs.listRunning()) jobs.settle(job.jobId, "interrupted_unknown", "宿主重新启动，工程结果待核查", now);
           for (const execution of store.listRunningExecutions()) {
             const resumableTask = this.resumableTask(
               store,
@@ -995,7 +999,7 @@ export class ConversationService {
         recovered += interrupted.length;
         this.registerFirstActivation(index.roleId);
         this.armWakeTimer(index.roleId);
-        if (continuationQueued || pendingUserRecovery || resumeFallback) {
+        if (continuationQueued || pendingUserRecovery || resumeFallback || this.withConversationStore(index.roleId, s => s.nextEngineeringDelivery())) {
           this.schedule(index.roleId);
         }
       } catch {
@@ -1246,16 +1250,19 @@ export class ConversationService {
         return false;
       }
     }
-    if (
-      item.taskId !== null &&
-      item.taskStatus === "active" &&
-      item.taskOrigin === "autonomous" &&
-      item.windowId !== null
-    ) {
-      this.queueTaskContinuation(roleId, {
-        taskId: item.taskId,
-        windowId: item.windowId,
-      });
+    const {taskId, windowId, taskStatus, taskOrigin} = item;
+    if (!taskId || !windowId || taskStatus !== "active") return false;
+    const engineering = this.roleAccess.withStore(roleId, storage => {
+      const jobs = new EngineeringJobs(storage.business.db);
+      if (jobs.awaiting(taskId)) {
+        storage.business.pauseTask({ roleId, taskId, waitReason: engineeringWait, endReason: "等待工程回执" });
+        return "waiting";
+      }
+      return jobs.receipts(taskId, "execution" in item ? item.execution.executionId : item.executionId).length ? "claimed" : null;
+    });
+    if (engineering === "waiting") return true;
+    if (taskOrigin === "autonomous" || engineering === "claimed") {
+      this.queueTaskContinuation(roleId, { taskId, windowId });
       return true;
     }
     return false;
@@ -1452,6 +1459,11 @@ export class ConversationService {
     );
     if (continuation) {
       return this.startTaskContinuation(roleId, continuation);
+    }
+    const engineering = isAdminSeat(this.appStore.getRoleIndex(roleId)?.builtinKey ?? null)
+      && this.withConversationStore(roleId, store => store.nextEngineeringDelivery());
+    if (engineering && !this.chatTargetUnderMaintenance(roleId, engineering.taskId)) {
+      return this.startTaskContinuation(roleId, { ...engineering, engineering: true });
     }
     return this.startDueAutonomy(roleId);
   }
@@ -1714,6 +1726,7 @@ export class ConversationService {
       if (!resource.enabled) {
         continue;
       }
+      if (isManagedPiResource(resource) && !isAdminSeat(storage.business.getRole(roleId).builtinKey)) continue;
       storage.business.grantResourceContinuation({
         roleId,
         taskId,
@@ -1826,11 +1839,19 @@ export class ConversationService {
         roleId,
         this.timeZone,
       );
-      const execution = store.beginTaskContinuation({
-        taskId: continuation.taskId,
-        windowId: continuation.windowId,
-        now: this.now().toISOString(),
+      const begin = () => store.beginTaskContinuation({
+        taskId: continuation.taskId, windowId: continuation.windowId, now: this.now().toISOString(),
       });
+      const business = storage.business;
+      const jobs = new EngineeringJobs(business.db);
+      const execution = continuation.engineering ? business.db.transaction(() => {
+        const task = business.getTask(roleId, continuation.taskId);
+        if (task.status !== "paused" || task.waitReason !== engineeringWait) return null;
+        business.resumeTask({ roleId, taskId: task.taskId });
+        const next = begin();
+        if (!next || !jobs.claim(task.taskId, next.executionId)) throw new Error("PI_WAKE_CLAIM_CONFLICT");
+        return next;
+      })() : begin();
       this.removePendingContinuation(roleId, continuation.taskId);
       if (!execution) {
         storage.close();
@@ -1846,6 +1867,7 @@ export class ConversationService {
         if (activity !== null && activity.status === "paused") {
           this.autonomy?.updateActivity(roleId, {
             activityId: activity.activityId,
+            executionId: execution.executionId,
             status: "running",
           });
         }
@@ -1902,7 +1924,8 @@ export class ConversationService {
           void this.schedule(roleId);
         });
       return true;
-    } catch {
+    } catch (error) {
+      if (continuation.engineering) console.error("PI_DELIVERY_START_FAILED", roleId, continuation.taskId, error);
       this.removePendingContinuation(roleId, continuation.taskId);
       storage?.close();
       void this.closeTaskCatalog(continuation.taskId);
@@ -2297,6 +2320,9 @@ export class ConversationService {
           });
         }
       }
+      const engineering = new EngineeringJobs(storage.business.db);
+      if (taskId && !running.superseded && continuationTask?.status === "active") engineering.claim(taskId, execution.executionId);
+      const receipts = taskId ? engineering.receipts(taskId, execution.executionId) : [];
       let activeRecall = recall;
       const worldbook = matchWorldbooks(readWorldbooks(storage.business.db, roleId), [
         ...pendingMessages.map(message => ({ id: message.messageId, text: message.content })),
@@ -2340,6 +2366,7 @@ export class ConversationService {
           outfitBrief,
           segmentHalt: haltKind,
         });
+        if (receipts.length) prompt.required += "\n原任务的后台工程回执如下。依据实际结果完成原交办，发布对应草稿时同时传入 extId 和 jobId。interrupted_unknown 表示结果待核查，不得自动重跑工程。\n" + JSON.stringify(receipts);
         if (replyToolSource) prompt.required += "\n上次回答中断，本轮只补答原消息。已派发操作以保存的回执为据，结果未确认的如实说明。未提交的角色状态以当前状态为准。";
         if (exchangeContext?.spoken.length) {
           return { ...prompt, worldbook, optional: [
@@ -2528,7 +2555,7 @@ export class ConversationService {
       let taskDecision =
         result.taskId === null
           ? null
-          : toCommittedTaskDecision(result.taskId, result.taskAction);
+          : toCommittedTaskDecision(result.taskId, result.taskAction, !circuitBreak && engineering.awaiting(result.taskId));
       if (
         result.taskId !== null &&
         result.taskAction === null &&
@@ -2555,7 +2582,8 @@ export class ConversationService {
       }
       const automaticScene = !completionOnly && autonomy === null && content.trim()
         ? this.autoScenes?.captureAutomaticConfig(roleId, storage.business.db) ?? null : null;
-      const committed = store.commitConversation({
+      const waiting = taskDecision?.action.kind === "pause" && taskDecision.action.waitReason === engineeringWait;
+      const commitReply = () => store.commitConversation({
         automaticScene,
         executionId: execution.executionId,
         content,
@@ -2569,6 +2597,15 @@ export class ConversationService {
         taskDecision,
         now: this.now().toISOString(),
       });
+      // 与前台回复一起提交工程等待态。崩溃或先到的回执都不能把任务遗留在 active。
+      const committed = waiting && result.taskId ? storage.business.db.transaction((parentId: string) => {
+        const reply = commitReply();
+        storage.business.pauseTask({ roleId, taskId: parentId, waitReason: engineeringWait, endReason: "等待工程回执" });
+        if (autonomy?.activityId) new AutonomyStore(storage.business.db, roleId, this.timeZone).updateActivity({
+          activityId: autonomy.activityId, status: "paused", summary: truncate(content, 2000),
+        });
+        return reply;
+      })(result.taskId) : commitReply();
       if (committed.observedBatch) this.batchDelivery.notify(roleId);
       if (automaticScene) this.autoScenes?.dispatchAutomatic(roleId, windowId);
       if (!completionOnly) this.queueSegmentAnnotation({
@@ -2583,7 +2620,8 @@ export class ConversationService {
       });
       if (result.taskId !== null && taskDecision !== null) {
         taskId = result.taskId;
-        this.applyCommittedTaskDecision(storage, roleId, taskDecision, () => {
+        if (waiting) pausedByDecision = true;
+        else this.applyCommittedTaskDecision(storage, roleId, taskDecision, () => {
           pausedByDecision = true;
         });
       }
@@ -2615,7 +2653,7 @@ export class ConversationService {
           queuedContinuation: continuationQueued,
         });
       }
-      if (autonomy !== null) {
+      if (autonomy !== null && !waiting) {
         try {
           if (autonomy.activityId !== null) {
             this.autonomy?.updateActivity(roleId, {
@@ -3107,7 +3145,7 @@ export class ConversationService {
    * 仍有在途后台工具、未结算的工具调用或尚未关闭的任务目录时保留占用，
    * 由结算回调与目录关闭后的收尾再次调用。任务仍在进行时不做任何处理。
    */
-  private releaseTaskResources(roleId: string, taskId: string): void {
+  releaseTaskResources(roleId: string, taskId: string): void {
     if (this.closed) {
       return;
     }
@@ -3618,7 +3656,11 @@ function windowKey(roleId: string, windowId: string): string {
 function toCommittedTaskDecision(
   taskId: string,
   action: AgentTaskAction | null,
+  awaitingEngineering: boolean,
 ): CommitConversationTaskDecision {
+  if (awaitingEngineering && action === null) {
+    return { taskId, action: { kind: "pause", reason: "等待工程回执", waitReason: engineeringWait } };
+  }
   if (action === null) {
     // 无显式任务决策时保持既有默认：回复完成即结束任务。
     return {
