@@ -16,6 +16,7 @@ function validated<T>(schema: z.ZodType<T>, input: unknown): T {
 }
 
 export class ExtensionHost {
+  readonly work: ExtensionFiles;
   private readonly files: ExtensionFiles;
   private readonly records = new Map<string, Manifest>();
   private readonly active = new Map<string, ExtensionProcess>();
@@ -28,6 +29,7 @@ export class ExtensionHost {
 
   constructor(root: string, private readonly timeouts = { initMs: 10_000, callMs: 15_000 }) {
     this.files = new ExtensionFiles(root);
+    this.work = new ExtensionFiles(root, "extensions-work");
   }
   restore() {
     const jobs: Promise<unknown>[] = [];
@@ -133,6 +135,13 @@ export class ExtensionHost {
 
   upsert(input: unknown) {
     const {extId, manifest, files} = validated(upsertSchema, input);
+    return this.publishVersion(extId, manifest, files);
+  }
+  publishWork(extId: string) {
+    const { manifest, files } = this.work.draft(validated(extIdSchema, extId));
+    return this.publishVersion(extId, manifest, files);
+  }
+  private publishVersion(extId: string, manifest: Definition, files: Record<string, string | Buffer>) {
     return this.run(extId, async () => {
       this.files.stage(extId, manifest, files);
       await this.activate(extId, manifest, true);

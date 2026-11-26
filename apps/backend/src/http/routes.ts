@@ -46,6 +46,7 @@ import {
   type TokenUsageRange,
 } from "../domain/token-usage.js";
 import { registerRoleActivityRoutes } from "./role-activity-routes.js";
+import { registerExtensionImportRoutes } from "./extension-import-routes.js";
 import { globalWrite, roleWrite } from "./write-guard.js";
 import {
   GLOBAL_CONFIG_WRITES,
@@ -88,6 +89,7 @@ import { putWorldbooksSchema } from "../domain/worldbook.js";
 import type { MediaMaintenance } from '../application/media/media-maintenance.js';
 
 export interface ApiServices {
+  modelProxy: import("../mcp/model-proxy.js").PiModelProxy;
   extensions: import("../application/extensions/extension-host.js").ExtensionHost;
   roles: RoleService;
   messages: MessageService;
@@ -113,6 +115,17 @@ export function registerApiRoutes(
   services: ApiServices,
   version: string,
 ): Router {
+  for (const route of ["chat/completions", "responses"]) {
+    router.add("POST", "/v1/internal/model-proxy/" + route, async ({ request, response }) => {
+      await services.modelProxy.forward(request, response, route);
+      return undefined;
+    });
+  }
+  router.add("POST", "/v1/internal/model-proxy/release", ({ request, response }) => {
+    services.modelProxy.release(request);
+    response.writeHead(204).end();
+    return undefined;
+  });
   const { activity } = services;
   // 一处注册策略覆盖主路由与拆分的子路由文件，新增配置写入接口不会漏掉保护。
   router.setGuard((method, pattern, handler) => {
@@ -127,6 +140,7 @@ export function registerApiRoutes(
     return handler;
   });
   registerRoleActivityRoutes(router, activity);
+  registerExtensionImportRoutes(router, services.resources);
   router.add("GET", "/v1/extension-events", ({ response }) => {
     response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store",
       "access-control-allow-origin": "desk://bundle" });

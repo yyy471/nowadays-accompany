@@ -125,6 +125,10 @@
   - `model` / `image-service` 常规创建、列表与详情视图均仅返回凭据状态不回显明文；模型资源详情支持在用户主动点击「显示」时通过 `POST /v1/resources/:resourceId/secret/reveal` 按需取回原文，默认仍以掩码文本形式编辑（未改则保留、清空则删除、改写则替换）；直填 `secret` 与 `config.credentialRef` 不可并存（`409 RESOURCE_CREDENTIAL_CONFLICT`）；更换 `protocol` 或站点（`baseUrl` origin 变更）而试图沿用旧密钥或未变更的 `credentialRef` 会被拒绝（`409 RESOURCE_CREDENTIAL_STALE`）。
   - `mcp` 资源 `config.env` 所有值统一脱敏返回 `***`；更新 `mcp` 时 `mergeRedactedMcpEnv` 将提交值仍为 `***` 的键保留库中原值。
 
+#### 本地 MCP 与 Skill 导入
+
+桌面按 DL-194 导入本地扩展。MCP 新建表单识别 `mcpServers` 或单个 stdio 配置，多服务可选择本次添加项。草稿通过 `POST /v1/resources/mcp/probe` 启动测试，读取工具清单并关闭进程。Skill 的 `POST /v1/resources/skills/discover` 读取单包或一级子目录的名称与用途，`POST /v1/resources/skills/import` 将勾选项原子登记为各自独立的资源。技能文件沿用所选目录，历史绑定的整库路径仍可按需发现和读取技能。
+
 ### 2.5 关键 HTTP 状态码与错误码
 
 | HTTP | 错误码 | 触发场景与处理 |
@@ -240,6 +244,16 @@
 桌面订阅独立的 `GET /v1/extension-events`（SSE）。连接及重连首先收到 `snapshot`，内容为各扩展的标识、版本、状态、UI 声明和最近错误。激活、停用、删除及失败时更新快照。当前活动版本的 `api.notify` 产生 `notice`（`extId`、`version`、`message`），候选版本的初始化通知在版本切换成功后投递。该流独立于角色、对话窗口和输入客户端。
 
 `GET /v1/extensions/:extId/ui/<相对文件>` 逐级核实活动版本目录及文件真实路径，只读取当前启用版本在 `manifest.ui` 明确列出的普通文件。可附 `?v=<版本>` 精确匹配。未声明、越界、链接、后端模块、私有清单及过期版本的资产请求均不可用。直接打开 HTTP 资源时响应带无脚本 CSP 沙箱。桌面协议和布局契约见[扩展槽位](./frontend-design-system.md#扩展槽位dl-188)。
+
+### 3.6 受托管工程 MCP（DL-195）
+
+在全局 MCP 资源添加 `{"command":"nowadays-pi","args":[],"env":{}}`，然后在角色设置启用。宿主将这个命令解析为独立安装的 Pi stdio 服务。角色获得 `pi_task_start({extId,prompt})` 和以 `jobId` 查询的 `pi_task_status`、`pi_task_result`、`pi_task_cancel`。启动立即返回，角色可继续回复用户。Pi 的工具轨迹保存在工程会话内存中，角色通过结果工具取得最终摘要。
+
+每个任务使用独立的 Pi SDK 会话和临时配置目录。子包 [src/extensions](../../apps/pi-mcp/src/extensions/) 中的 `.mjs` 文件默认导出 Pi 扩展工厂，由新会话按文件名顺序加载。内置 `nowadays-mod.mjs` 在 `before_agent_start` 注入工作区、Cordis 工具登记和 UI 槽位契约。Windows 工作者在执行 SDK 前加入由 MCP 服务独占句柄的 Job Object，回收覆盖派生的本地测试进程。
+
+模型服务使用角色绑定的 OpenAI Chat 或 Responses 协议。宿主通过 stdio 请求元数据发放任务专用的 15 分钟租约，Pi 在回环 HTTP 请求的 Bearer 头携带租约。宿主固定上游地址、路由及模型，经 `CredentialResolver` 解析凭据。每次上游尝试（含 Pi 重试）在 DL-183 账本按独立 `sourceCallId` 领取，同一编号更新终态和实际用量。对话委派计入 dialogue，自主委派计入 autonomy。任务取消、角色停机和超时撤销租约，后续请求返回 HTTP 403 和 `PI_LEASE_REVOKED`。
+
+Mod 草稿由 `config.appRoot` 派生在 `<app-root>/extensions-work/<extId>/`。主角色核对工程测试结果后调用 `app_extension_publish_work({extId})`，宿主逐级核对真实路径并拒绝 junction，读取 `manifest.json`、`.mjs` 源码与 `ui/` 资产。发布复用 §3.5 的版本暂存与候选进程握手，成功后同一任务的下一轮即可发现新工具。普通角色按 `all_roles` 声明调用公开工具。离线验收范围见[当前状态](../STATUS.md)。
 
 ## 4. 验收场景与可运行命令
 

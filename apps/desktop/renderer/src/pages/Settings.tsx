@@ -1,3 +1,4 @@
+import { ExtensionCreate, ExtensionFields, SavedMcpProbe, parseExtensionEnv } from '../components/config/ExtensionImport';
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { api, ApiError } from '../api';
@@ -20,7 +21,7 @@ import {
   serviceHost, serviceMaintenanceOf, serviceProbeNotice, serviceStatus, serviceWriteFailure, useServiceSheetExit, type ServiceIndexEntry, type ServiceKind,
 } from '../components/config/ServiceParts';
 import { captureSavedSummary, sweepSavedElement } from '../components/config/sheet/save-feedback';
-import { T1, T2, T6, T7, T8, T19, T10, T11, T12, T16, T20, T21, T23, T25, T26, T28, T29, T30, T31, T32, T33, T34, T36, T37, T38 } from '../components/config/config-texts';
+import { T1, T2, T6, T7, T8, T19, T10, T12, T16, T20, T21, T23, T25, T26, T28, T29, T30, T31, T32, T33, T34, T36, T37, T38 } from '../components/config/config-texts';
 import { VoicePanel } from '../components/voice/VoicePanel';
 import { VoiceServiceCreate, VoiceServiceDetail } from '../components/voice/VoiceServiceEditor';
 import { ImagePanel } from '../components/image/ImagePanel';
@@ -607,7 +608,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
           })}
           {(['mcp', 'skill'] as const).map(kind => <ExtensionCreate key={kind} kind={kind} active={settingsActive && settingsSection === kind && newExtension === kind} trigger={addTrigger.current}
             onCancel={() => setNewExtension(null)}
-            onCreated={resource => { setResources(previous => [...previous, resource]); setRefreshVersion(v => v + 1); if (viewRef.current.settingsActive && viewRef.current.settingsSection === kind && viewRef.current.newExtension === kind) { selectAfterChange(resource.resourceId, true); setNewExtension(null); } }}/>)}
+            onCreated={(added: Resource[]) => { const resource = added[0]!; setResources(previous => [...previous, ...added]); setRefreshVersion(v => v + 1); if (viewRef.current.settingsActive && viewRef.current.settingsSection === kind && viewRef.current.newExtension === kind) { selectAfterChange(resource.resourceId, true); setNewExtension(null); } }}/>)}
           {settingsActive && catalogKind && (catalogLoading || catalogError || !indexEntries.length) && <ServiceIndexState kind={catalogKind} loading={catalogLoading} error={catalogError} onRetry={() => {
             setCatalogReady(previous => ({ ...previous, [catalogSource]: false }));
             setRefreshVersion(v => v + 1);
@@ -1105,7 +1106,7 @@ function ExtSheetHosts({ active, resources, draft, setDraft, bindings, loaded, n
         <div>
           {list.length === 0 ? <p className="config-sheet-note">{T36.settingsKind(kind === 'mcp' ? 'MCP' : 'Skill')}</p> : <div className="config-toggle-list">
             {list.map(item => <div className="config-toggle-row" data-unavailable={!item.enabled || undefined} key={item.resourceId}>
-              <span><strong>{item.name}</strong>{!item.enabled && <small id={`extension-disabled-${item.resourceId}`}>{T33.switchNote}</small>}</span>
+              <span><strong>{item.name}</strong>{typeof item.config.description === 'string' && item.config.description && <small>{item.config.description}</small>}{!item.enabled && <small id={`extension-disabled-${item.resourceId}`}>{T33.switchNote}</small>}</span>
               <Switch checked={!!draft[item.resourceId]} disabled={!item.enabled || !loaded} aria-describedby={!item.enabled ? `extension-disabled-${item.resourceId}` : undefined} label={`为角色开启${item.name}`} onCheckedChange={checked => setDraft({ ...draft, [item.resourceId]: checked })}/>
             </div>)}
           </div>}
@@ -1937,78 +1938,10 @@ function ModelManagement({ resource, roles, activities, impact, active, canWrite
   </>;
 }
 
-function parseExtensionEnv(value: string): Record<string, string> | null {
-  try {
-    const parsed: unknown = JSON.parse(value);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Object.values(parsed).every(item => typeof item === 'string')) {
-      return parsed as Record<string, string>;
-    }
-  } catch { return null; }
-  return null;
-}
-
 function sameExtensionEnv(next: Record<string, string>, saved: unknown): boolean {
   const baseline = saved && typeof saved === 'object' ? saved as Record<string, unknown> : {};
   const keys = Object.keys(next);
   return keys.length === Object.keys(baseline).length && keys.every(key => Object.hasOwn(baseline, key) && baseline[key] === next[key]);
-}
-
-function ExtensionFields({ kind, group, name, onName, command, onCommand, args, onArgs, env, onEnv, source, onSource, busy, creating }: {
-  kind: 'mcp' | 'skill'; group?: string; name: string; onName: (value: string) => void;
-  command: string; onCommand: (value: string) => void; args: string; onArgs: (value: string) => void;
-  env: string; onEnv: (value: string) => void; source: string; onSource: (value: string) => void; busy: boolean; creating?: boolean;
-}) {
-  const [choosing, setChoosing] = useState(false);
-  const [chooseError, setChooseError] = useState('');
-  const chooser = window.nowadaysDesk?.chooseSkillDirectory;
-  return <>
-    <MediaGroup title="名称" group={group}><div className="config-service-field-one"><Field label="名称"><Input value={name} maxLength={200} disabled={busy} placeholder={creating ? '起一个好认的名字' : undefined} onChange={event => onName(event.target.value)}/></Field></div></MediaGroup>
-    {kind === 'mcp' ? <>
-      <MediaGroup title="启动" group={group}><div className="config-service-launch-command"><Field label="启动命令"><Input value={command} disabled={busy} placeholder="例如 npx、uvx、node" spellCheck={false} onChange={event => onCommand(event.target.value)}/></Field></div>
-        <Field label="启动参数"><Textarea className="config-service-code" rows={3} value={args} disabled={busy} placeholder="每行一个参数" spellCheck={false} onChange={event => onArgs(event.target.value)}/></Field>
-      </MediaGroup>
-      <MediaGroup title="环境变量" group={group}><div className="config-service-unlabelled"><Field label="环境变量" error={parseExtensionEnv(env) ? undefined : T11}><Textarea className="config-service-code" rows={4} value={env} disabled={busy} placeholder='{"KEY": "value"}' spellCheck={false} onChange={event => onEnv(event.target.value)}/></Field></div></MediaGroup>
-    </> : <MediaGroup title="来源目录" group={group}><div className="config-service-folder config-service-unlabelled"><Field label="来源目录"><Input value={source} disabled={busy || choosing} placeholder="SKILL.md 所在目录" spellCheck={false} onChange={event => onSource(event.target.value)}/></Field>
-      {chooser && <Button size="sm" disabled={busy || choosing} onClick={async () => {
-        setChoosing(true);
-        setChooseError('');
-        try { const picked = await chooser(); if (picked) onSource(picked); }
-        catch (reason) { setChooseError(errorText(reason)); }
-        finally { setChoosing(false); }
-      }}>选择目录…</Button>}</div>{chooseError && <p className="config-sheet-error" role="alert">{chooseError}</p>}</MediaGroup>}
-  </>;
-}
-
-function ExtensionCreate({ kind, active, trigger, onCancel, onCreated }: { kind: 'mcp' | 'skill'; active: boolean; trigger: HTMLElement | null; onCancel: () => void; onCreated: (resource: Resource) => void }) {
-  const sheetApi = useSheet();
-  const write = useWrite();
-  const sheetId = `new-extension:${kind}`;
-  useEffect(() => { if (active) sheetApi.open({ id: sheetId, title: `添加 ${kind === 'mcp' ? 'MCP' : 'Skill'}`, shape: 'full', focusReturn: trigger }); }, [active]);
-  const [name, setName] = useState('');
-  const [command, setCommand] = useState('');
-  const [args, setArgs] = useState('');
-  const [env, setEnv] = useState('{}');
-  const [sourcePath, setSourcePath] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const variables = parseExtensionEnv(env);
-  const invalid = !name.trim() ? T10.name : kind === 'mcp' ? !command.trim() ? T10.command : variables ? '' : T10.env : !sourcePath.trim() ? T10.source : '';
-  const count = [name.trim(), command.trim(), args.trim(), env !== '{}', sourcePath.trim()].filter(Boolean).length;
-  const create = async () => {
-    if (busy || invalid) return;
-    const finish = write.beginWrite();
-    if (!finish) return;
-    const config = kind === 'mcp' ? { command: command.trim(), args: args.split('\n').filter(Boolean), env: variables } : { sourcePath: sourcePath.trim() };
-    setBusy(true); setError('');
-    try {
-      const result = await api<Resource>('/v1/resources', { method: 'POST', body: { kind, name: name.trim(), config } });
-      sheetApi.closeNow(() => onCreated(result), `${result.name} 已添加`);
-    } catch (reason) { setError(T32.saveFail('添加', errorText(reason))); } finally { setBusy(false); finish(); }
-  };
-  const discard = () => { setName(''); setCommand(''); setArgs(''); setEnv('{}'); setSourcePath(''); setError(''); onCancel(); };
-  return <ServiceSheet id={sheetId} active={active} count={count} busy={busy} onDiscard={discard} footer={<ServiceSheetActions creating count={count} busy={busy} invalid={invalid} error={error} onSubmit={() => void create()}/>}>
-    {group => <ExtensionFields kind={kind} group={group} name={name} onName={setName} command={command} onCommand={setCommand} args={args} onArgs={setArgs} env={env} onEnv={setEnv} source={sourcePath} onSource={setSourcePath} busy={busy} creating/>}
-  </ServiceSheet>;
 }
 
 function ExtensionManagement({ resource, roles, activities, active, onRemoved, onUpdated }: { resource: Resource; roles: RoleListItem[]; activities: Activity[]; active: boolean; onRemoved: (id: string) => void; onUpdated: (resource?: Resource) => void }) {
@@ -2044,7 +1977,7 @@ function ExtensionManagement({ resource, roles, activities, active, onRemoved, o
   const argsText = Array.isArray(resource.config.args) ? resource.config.args.join('\n') : '';
   const envSaved = JSON.stringify(resource.config.env || {}, null, 2);
   const envChanged = variables ? !sameExtensionEnv(variables, resource.config.env) : env !== envSaved;
-  const connectionChanges = isMcp ? [command.trim() !== String(resource.config.command || ''), args.split('\n').filter(Boolean).join('\n') !== argsText, envChanged] : [];
+  const connectionChanges = isMcp ? [command.trim() !== String(resource.config.command || ''), args !== argsText, envChanged] : [];
   const count = [name.trim() !== resource.name, ...connectionChanges, !isMcp && sourcePath.trim() !== String(resource.config.sourcePath || '')].filter(Boolean).length;
   const entries = (report?.references ?? []).filter(item => item.reason !== 'ROLE_BINDING' || item.bindingEnabled);
   const users = referenceUsers(entries, roles, activities, () => '已开启');
@@ -2083,7 +2016,9 @@ function ExtensionManagement({ resource, roles, activities, active, onRemoved, o
         sheetApi.closeNow(() => { onRemoved(resource.resourceId); onUpdated(); });
         return;
       }
-      const config = isMcp ? { command: command.trim(), args: args.split('\n').filter(Boolean), env: variables } : { sourcePath: sourcePath.trim() };
+      const config = isMcp
+        ? { ...resource.config, command: command.trim(), args: args === argsText ? resource.config.args : args ? args.split('\n') : [], env: variables }
+        : { ...resource.config, sourcePath: sourcePath.trim(), description: sourcePath.trim() === resource.config.sourcePath ? resource.config.description : undefined };
       const updated = await api<Resource>(path, { method: 'PATCH', body: { name: name.trim(), config } });
       savedRef.current = updated;
       sheetApi.closeNow(undefined, `${updated.name} 已保存`);
@@ -2104,6 +2039,7 @@ function ExtensionManagement({ resource, roles, activities, active, onRemoved, o
   const envKeys = Object.keys((resource.config.env || {}) as Record<string, unknown>);
   return <div hidden={!active} className="config-prose">
     <ServiceHeading title={resource.name} address={address} enabled={resource.enabled} onEdit={trigger => open(undefined, trigger)}/>
+    {isMcp && active && <SavedMcpProbe key={version} resourceId={resource.resourceId} enabled={resource.enabled}/>}
     {isMcp ? <><ServiceRow label="启动" value={`${String(resource.config.command || '')} ${argsText.replaceAll('\n', ' ')}`.trim()} keys={['stdio']} onOpen={trigger => open('启动', trigger)}/><ServiceRow label="环境变量" value={envKeys.join('、') || '无'} status={envKeys.length ? 'ok' : 'none'} statusText={envKeys.length ? '值已保存' : '未设置'} onOpen={trigger => open('环境变量', trigger)}/></> : <ServiceRow label="来源目录" value={String(resource.config.sourcePath || '')} onOpen={trigger => open('来源目录', trigger)}/>}
     <ServiceManagementRow name={resource.name} enabled={resource.enabled} busy={toggleBusy} disabled={write.busy || write.resuming || !report || (resource.enabled && !report.canDisable)} onChange={enabled => void run(enabled ? 'enable' : 'disable')}/>
     <ServiceUseRow entries={names} loading={!report} error={reportError}/>

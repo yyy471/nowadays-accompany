@@ -1,0 +1,17 @@
+{
+  "name": "nowadays-pi-mcp",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.6.1",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "koffi": "3.3.8"
+  }
+}

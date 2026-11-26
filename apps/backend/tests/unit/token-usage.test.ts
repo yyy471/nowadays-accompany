@@ -7,7 +7,6 @@ import path from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
 import sharp from "sharp";
-import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
 import { createBackendApp, listen } from "../../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths } from "../../src/bootstrap/config.js";
 import { AgentGraphRunner } from "../../src/application/conversation/agent-graph.js";
@@ -682,10 +681,8 @@ test("AgentGraphRunner 与 MemoryService 隔离角色库写失败，且容量超
     disablePresetAssistant: true,
     disableMemoryRuntime: true,
   });
-  let saver: SqliteSaver | null = null;
   let storage: RoleStorage | null = null;
   t.after(async () => {
-    saver?.db.close();
     storage?.close();
     await app.close();
     fs.rmSync(root, { recursive: true, force: true });
@@ -696,7 +693,6 @@ test("AgentGraphRunner 与 MemoryService 隔离角色库写失败，且容量超
     definition: { text: "测试写失败隔离与容量预检边界" },
   });
   storage = RoleStorage.openExisting(rolePaths(config.dataRoot, role.roleId));
-  saver = SqliteSaver.fromConnString(storage.paths.executionDatabasePath);
 
   // 1) AgentGraphRunner.modelNode：finishModelCall 抛异常时仍仅上报 1 次 succeeded 全局用量
   const convStore = new ConversationStore(storage.business.db, role.roleId, "Asia/Shanghai");
@@ -742,7 +738,7 @@ test("AgentGraphRunner 与 MemoryService 隔离角色库写失败，且容量超
       purpose: "user_chat",
       onModelCallFinished: (event) => agentEvents.push(event),
     },
-    saver,
+    storage.checkpoint,
   );
   await assert.rejects(
     runner.modelNode({

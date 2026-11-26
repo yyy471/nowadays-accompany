@@ -130,6 +130,12 @@ test("两套安装走本地凭据，迁移历史和素材且不重放待处理�
       .run(taskId, role.roleId, NOW, NOW);
     db.prepare(`INSERT INTO executions (execution_id,role_id,window_id,trigger_type,status,created_at,updated_at)
       VALUES (?,?,?,'user_message','running',?,?)`).run(executionId, role.roleId, role.defaultWindowId, NOW, NOW);
+    roleStorage.checkpoint.saveCheckpoint(1, "done", {
+      executionId, roleId: role.roleId, windowId: role.defaultWindowId, taskId,
+      round: 1, messages: [], text: "源安装的未提交结果", lastRoundEchoOnly: false,
+      pendingCalls: [], statePatch: {}, rounds: [], taskAction: null, modelCallId: null,
+      wireMapping: {}, stopKind: null, successfulToolCalls: 0, progressNotes: 0,
+    }, NOW);
     db.prepare("INSERT INTO execution_tasks VALUES (?,?,'initiates',?)").run(executionId, taskId, NOW);
     db.prepare(`INSERT INTO tool_calls (tool_call_id,task_id,execution_id,step_key,tool_name,args_json,status,created_at)
       VALUES (?,?,?,'prepare','app_resource_update',?,'running',?)`).run(toolCallId, taskId, executionId,
@@ -185,7 +191,9 @@ test("两套安装走本地凭据，迁移历史和素材且不重放待处理�
     assert.equal(imported.business.getToolCall(role.roleId, toolCallId).status, "unknown");
     assert.equal(imported.business.listResourceContinuations(role.roleId, taskId).length, 0);
     assert.deepEqual(imported.business.listRoleBindings(role.roleId).map((binding) => binding.enabled), [true, false]);
-    assert.equal(imported.checkpoint.db.prepare("SELECT count(*) FROM sqlite_schema WHERE type='table'").pluck().get(), 0);
+    assert.deepEqual(imported.checkpoint.db.prepare("SELECT name FROM sqlite_schema WHERE type='table'").pluck().all(),
+      ["execution_checkpoints"]);
+    assert.equal(imported.checkpoint.db.prepare("SELECT COUNT(*) FROM execution_checkpoints").pluck().get(), 0);
   } finally {
     imported.close();
   }

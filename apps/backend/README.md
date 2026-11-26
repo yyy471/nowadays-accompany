@@ -1,6 +1,8 @@
 # Nowadays 后端服务与原型说明
 
-这是新主线的 TypeScript／LangGraph 后端源码，使用独立的 `backend` 依赖、CLI 和本机 HTTP／SSE API。最新功能进展与待办见 [当前状态看板](../../docs/STATUS.md)，首轮后端原型阶段收口记录见 [193 开发文档](../../docs/archive/01-backend-prototype/193-p5-prototype-delivery-guide.md)、[194 交付记录](../../docs/archive/01-backend-prototype/194-p5-prototype-delivery-record.md) 与 [195 整体独立复核](../../docs/archive/01-backend-prototype/195-p5-independent-review.md)。
+工程 MCP 使用独立的 Pi SDK 子包。在仓库根目录用 Node 24 执行 `.tools/node-v24/npm.cmd ci --prefix apps/pi-mcp`，随后可在设置中添加 `nowadays-pi` 并按角色启用。工程集成测试使用本地模拟端点，需要先安装该子包。[工程 MCP 接入与扩展点](../../docs/specs/role-config-and-activity.md#36-受托管工程-mcpdl-195)
+
+这是新主线的 TypeScript 后端源码，对话与自主活动共用 Nowadays 节点执行循环，使用独立的 `backend` 依赖、CLI 和本机 HTTP／SSE API。最新功能进展与待办见 [当前状态看板](../../docs/STATUS.md)，首轮后端原型阶段收口记录见 [193 开发文档](../../docs/archive/01-backend-prototype/193-p5-prototype-delivery-guide.md)、[194 交付记录](../../docs/archive/01-backend-prototype/194-p5-prototype-delivery-record.md) 与 [195 整体独立复核](../../docs/archive/01-backend-prototype/195-p5-independent-review.md)。
 
 在首轮 P5 原型之后，后端已补充角色活动状态控制（新建默认 `stopped`、同页停用与恢复）、模型／MCP／Skill 影响扫描与维护窗口协调、角色外观衣柜、对话自然句段与表情标注、语音统一协议及启停（`DL-149`）、ComfyUI 生图适配（`DL-150`）、消息接收与等待原因等能力；远程 MCP（`DL-115`）、真实外部模型／语音／生图服务联调与干净安装验证仍按记录单列。
 

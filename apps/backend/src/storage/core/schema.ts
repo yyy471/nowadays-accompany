@@ -13,7 +13,7 @@ import { retireLegacyWebPrefetchEvidence, WEB_READING_SCHEMA_SQL } from "../conv
 
 export const APP_SCHEMA_VERSION = 12;
 export const BUSINESS_SCHEMA_VERSION = 29;
-export const EXECUTION_SCHEMA_VERSION = 1;
+export const EXECUTION_SCHEMA_VERSION = 2;
 
 export const APP_TABLES = [
   "roles",
@@ -2243,19 +2243,26 @@ export function openBusinessDatabase(
   );
 }
 
+const EXECUTION_V2_SQL = `
+CREATE TABLE execution_checkpoints (
+  execution_id TEXT NOT NULL,
+  step INTEGER NOT NULL CHECK (step >= 1),
+  next_node TEXT NOT NULL CHECK (next_node IN ('model', 'tools', 'closing', 'done')),
+  state_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (execution_id, step)
+);
+`;
+
 export function openExecutionDatabase(
   dbPath: string,
   options: DatabaseOpenOptions = {},
 ): OpenedDatabase {
-  const create = options.create !== false;
-  const db = openRawDatabase(dbPath, create);
-  try {
-    ensureVersionOnly(db, EXECUTION_SCHEMA_VERSION, create);
-    return { db, path: dbPath, schemaVersion: EXECUTION_SCHEMA_VERSION };
-  } catch (error) {
-    db.close();
-    throw error;
-  }
+  return openVersionedDatabase(
+    dbPath, EXECUTION_SCHEMA_VERSION, EXECUTION_V2_SQL,
+    { 1: (db) => db.exec(EXECUTION_V2_SQL) },
+    ["execution_checkpoints"], [], [], options,
+  );
 }
 
 function openVersionedDatabase(
@@ -2356,24 +2363,6 @@ function ensureSchema(
       throw new Error(`SCHEMA_MIGRATION_REQUIRED:${version}:${next}`);
     }
     migrate(db);
-  }
-  db.pragma(`user_version = ${version}`);
-}
-
-function ensureVersionOnly(
-  db: Database.Database,
-  version: number,
-  create: boolean,
-): void {
-  const current = readUserVersion(db);
-  if (current === version) {
-    return;
-  }
-  if (current !== 0) {
-    throw new Error(`SCHEMA_VERSION_UNSUPPORTED:${version}:${current}`);
-  }
-  if (!create) {
-    throw new Error(`SCHEMA_INITIALIZATION_REQUIRED:${version}`);
   }
   db.pragma(`user_version = ${version}`);
 }

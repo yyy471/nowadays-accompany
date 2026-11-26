@@ -1,5 +1,4 @@
-import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
-import type { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
+import type { CheckpointStore, ExecutionNode } from "../../storage/conversation/checkpoint-store.js";
 import {
   AutonomyBudgetExhaustedError,
   ExecutionSupersededError,
@@ -8,7 +7,7 @@ import {
   ToolBackgroundedError,
 } from "../../domain/errors.js";
 import type {
-  AgentRound,
+  AgentExecutionState,
   AgentRunResult,
   AgentSegmentStopKind,
   AgentTaskAction,
@@ -17,6 +16,7 @@ import type {
   ConversationTool,
   ConversationToolContext,
   ConversationToolOutcome,
+  PendingToolCall,
 } from "../../domain/conversation.js";
 import {
   isIncompleteCompletion,
@@ -125,7 +125,7 @@ export const CIRCUIT_FAILURE_THRESHOLD = 3;
 /** 角色有意重申的短句直接流出。只比较同一执行紧邻工具轮、已经发布的整段。 */
 const MIN_TOOL_ROUND_ECHO_CHARS = 48;
 
-function previousToolRoundText(state: AgentGraphValue): string {
+function previousToolRoundText(state: AgentExecutionState): string {
   if (state.round === 0 || state.messages.at(-1)?.role !== "tool") return "";
   for (let i = state.messages.length - 1; i >= 0; i--) {
     const message = state.messages[i]!;
@@ -139,93 +139,6 @@ function previousToolRoundText(state: AgentGraphValue): string {
   return "";
 }
 
-interface PendingToolCall {
-  wireCallId: string;
-  name: string;
-  arguments: unknown;
-}
-
-interface AgentGraphValue {
-  executionId: string;
-  roleId: string;
-  windowId: string;
-  round: number;
-  messages: ModelMessage[];
-  text: string;
-  lastRoundEchoOnly: boolean;
-  pendingCalls: PendingToolCall[];
-  statePatch: Record<string, unknown>;
-  rounds: AgentRound[];
-  taskAction: AgentTaskAction | null;
-  taskId: string | null;
-  modelCallId: string | null;
-  wireMapping: Record<string, string>;
-  stopKind: AgentSegmentStopKind | null;
-  successfulToolCalls: number;
-  progressNotes: number;
-}
-
-const AgentState = Annotation.Root({
-  executionId: Annotation<string>(),
-  roleId: Annotation<string>(),
-  windowId: Annotation<string>(),
-  round: Annotation<number>({
-    reducer: (_previous, next) => next,
-    default: () => 0,
-  }),
-  messages: Annotation<ModelMessage[]>({
-    reducer: (_previous, next) => next,
-    default: () => [],
-  }),
-  text: Annotation<string>({
-    reducer: (_previous, next) => next,
-    default: () => "",
-  }),
-  lastRoundEchoOnly: Annotation<boolean>({ reducer: (_previous, next) => next, default: () => false }),
-  pendingCalls: Annotation<PendingToolCall[]>({
-    reducer: (_previous, next) => next,
-    default: () => [],
-  }),
-  statePatch: Annotation<Record<string, unknown>>({
-    reducer: (_previous, next) => next,
-    default: () => ({}),
-  }),
-  rounds: Annotation<AgentRound[]>({
-    reducer: (_previous, next) => next,
-    default: () => [],
-  }),
-  taskAction: Annotation<AgentTaskAction | null>({
-    reducer: (_previous, next) => next,
-    default: () => null,
-  }),
-  taskId: Annotation<string | null>({
-    reducer: (_previous, next) => next,
-    default: () => null,
-  }),
-  modelCallId: Annotation<string | null>({
-    reducer: (_previous, next) => next,
-    default: () => null,
-  }),
-  wireMapping: Annotation<Record<string, string>>({
-    reducer: (_previous, next) => next,
-    default: () => ({}),
-  }),
-  stopKind: Annotation<AgentSegmentStopKind | null>({
-    reducer: (_previous, next) => next,
-    default: () => null,
-  }),
-  successfulToolCalls: Annotation<number>({
-    reducer: (_previous, next) => next,
-    default: () => 0,
-  }),
-  progressNotes: Annotation<number>({
-    reducer: (_previous, next) => next,
-    default: () => 0,
-  }),
-});
-
-type AgentStateValue = typeof AgentState.State;
-
 export class ToolRoundLimitError extends Error {
   readonly code = "TOOL_ROUND_LIMIT";
 
@@ -238,7 +151,6 @@ export class ToolRoundLimitError extends Error {
 export class AgentGraphRunner {
   private readonly toolMap: Map<string, ConversationTool>;
   private readonly maxToolRounds: number;
-  private readonly graph: ReturnType<typeof buildGraph>;
   private resuming = false;
   private firstModelBoundary = true;
   /** 本次执行开始时的任务编号；用于判断轮次上限后能否续行。 */
@@ -246,11 +158,10 @@ export class AgentGraphRunner {
 
   constructor(
     private readonly deps: AgentGraphDeps,
-    checkpointer: SqliteSaver,
+    private readonly checkpoints: CheckpointStore,
   ) {
     this.toolMap = new Map(deps.tools.map((tool) => [tool.name, tool]));
     this.maxToolRounds = deps.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
-    this.graph = buildGraph(this, checkpointer);
   }
 
   async run(input: {
@@ -264,7 +175,9 @@ export class AgentGraphRunner {
     this.resuming = input.resume === true;
     this.firstModelBoundary = true;
     this.initialTaskId = input.taskId ?? null;
-    const initialState: AgentGraphValue = {
+    const saved = this.resuming ? this.checkpoints.loadLatestCheckpoint(input.executionId) : null;
+    if (this.resuming && !saved) throw new Error("EXECUTION_CHECKPOINT_MISSING");
+    let state: AgentExecutionState = saved?.state ?? {
       executionId: input.executionId,
       roleId: input.roleId,
       windowId: input.windowId,
@@ -283,41 +196,57 @@ export class AgentGraphRunner {
       successfulToolCalls: 0,
       progressNotes: 0,
     };
-    const result = (await this.graph.invoke(
-      input.resume === true ? (null as unknown as AgentGraphValue) : initialState,
-      {
-        configurable: { thread_id: input.executionId },
-        recursionLimit: this.maxToolRounds * 2 + 6,
-      },
-    )) as AgentGraphValue;
+    let step = saved?.step ?? 0;
+    let nextNode: ExecutionNode = saved?.nextNode ?? "model";
+    if (saved?.state.stopKind && nextNode !== "done") this.deps.onSegmentHalt?.(saved.state.stopKind);
+    while (nextNode !== "done") {
+      if (nextNode === "model") {
+        state = { ...state, ...await this.modelNode(state) };
+        nextNode = state.pendingCalls.length > 0 ? "tools" : "done";
+      } else if (nextNode === "tools") {
+        state = { ...state, ...await this.toolsNode(state) };
+        // 角色互聊的发言已由工具双边提交，直接交回调度层。
+        if (state.taskAction?.kind === "finish" && state.taskAction.endReason === "ROLE_EXCHANGE_DELIVERED" &&
+            state.rounds.at(-1)?.toolCalls.at(-1)?.name === "role_chat_reply") {
+          nextNode = "done";
+        } else {
+          nextNode = state.stopKind !== null ? "closing" : "model";
+        }
+      } else {
+        state = { ...state, ...await this.closingNode(state) };
+        nextNode = "done";
+      }
+      step += 1;
+      this.checkpoints.saveCheckpoint(step, nextNode, state, this.deps.now().toISOString());
+    }
     return {
-      text: result.text,
-      lastRoundEchoOnly: result.lastRoundEchoOnly === true,
-      statePatch: result.statePatch,
-      rounds: result.rounds,
-      taskId: result.taskId,
-      taskAction: result.taskAction ?? null,
+      text: state.text,
+      lastRoundEchoOnly: state.lastRoundEchoOnly === true,
+      statePatch: state.statePatch,
+      rounds: state.rounds,
+      taskId: state.taskId,
+      taskAction: state.taskAction ?? null,
       segment: {
-        stopKind: result.stopKind ?? null,
-        successfulToolCalls: result.successfulToolCalls ?? 0,
-        progressNotes: result.progressNotes ?? 0,
+        stopKind: state.stopKind ?? null,
+        successfulToolCalls: state.successfulToolCalls ?? 0,
+        progressNotes: state.progressNotes ?? 0,
       },
     };
   }
 
-  async modelNode(state: AgentStateValue): Promise<Partial<AgentGraphValue>> {
+  async modelNode(state: AgentExecutionState): Promise<Partial<AgentExecutionState>> {
     return this.modelRound(state, !this.deps.replyOnly);
   }
 
   /** 收尾轮：工具清单照旧提供以保持上下文稳定，但返回的调用一律不派发。 */
-  async closingNode(state: AgentStateValue): Promise<Partial<AgentGraphValue>> {
+  async closingNode(state: AgentExecutionState): Promise<Partial<AgentExecutionState>> {
     return this.modelRound(state, false);
   }
 
   private async modelRound(
-    state: AgentStateValue,
+    state: AgentExecutionState,
     allowTools: boolean,
-  ): Promise<Partial<AgentGraphValue>> {
+  ): Promise<Partial<AgentExecutionState>> {
     this.deps.checkStopBoundary?.();
     this.deps.checkRunning();
     this.checkTask(state.roleId, state.taskId);
@@ -598,7 +527,7 @@ export class AgentGraphRunner {
     };
   }
 
-  async toolsNode(state: AgentStateValue): Promise<Partial<AgentGraphValue>> {
+  async toolsNode(state: AgentExecutionState): Promise<Partial<AgentExecutionState>> {
     this.deps.checkStopBoundary?.();
     this.deps.checkRunning();
     this.checkTask(state.roleId, state.taskId);
@@ -921,7 +850,7 @@ export class AgentGraphRunner {
   }
 
   private beginExternal(
-    state: AgentStateValue,
+    state: AgentExecutionState,
     taskId: string,
     toolCallId: string,
     toolName: string,
@@ -941,7 +870,7 @@ export class AgentGraphRunner {
   }
 
   private externalContext(
-    state: AgentStateValue,
+    state: AgentExecutionState,
     taskId: string,
     reservation: AgentToolReservation | null,
   ): ConversationToolContext {
@@ -975,7 +904,7 @@ export class AgentGraphRunner {
 
   /** 保存外部工具结果、结算计量并追加流事件；前台路径的统一收尾。 */
   private settleExternal(
-    state: AgentStateValue,
+    state: AgentExecutionState,
     taskId: string,
     toolCallId: string,
     reservation: AgentToolReservation | null,
@@ -1020,7 +949,7 @@ export class AgentGraphRunner {
     tool: ConversationTool,
     call: PendingToolCall,
     args: Record<string, unknown>,
-    state: AgentStateValue,
+    state: AgentExecutionState,
     taskId: string,
     toolCallId: string,
     reservation: AgentToolReservation | null,
@@ -1088,7 +1017,7 @@ export class AgentGraphRunner {
     tool: ConversationTool,
     call: PendingToolCall,
     args: Record<string, unknown>,
-    state: AgentStateValue,
+    state: AgentExecutionState,
     taskId: string,
     toolCallId: string,
     reservation: AgentToolReservation | null,
@@ -1292,7 +1221,7 @@ export class AgentGraphRunner {
   }
 
   private recordExternalToolMetering(
-    state: AgentStateValue,
+    state: AgentExecutionState,
     taskId: string,
     toolCallId: string,
     reservation: AgentToolReservation | null,
@@ -1339,7 +1268,7 @@ export class AgentGraphRunner {
   private async executeInternal(
     tool: ConversationTool,
     call: PendingToolCall,
-    state: AgentStateValue,
+    state: AgentExecutionState,
     taskId: string | null,
     index: number,
     checkDispatch: () => void,
@@ -1395,25 +1324,6 @@ export class AgentGraphRunner {
   }
 }
 
-function buildGraph(deps: AgentGraphRunner, checkpointer: SqliteSaver) {
-  return new StateGraph(AgentState)
-    .addNode("model", (state) => deps.modelNode(state))
-    .addNode("tools", (state) => deps.toolsNode(state))
-    .addNode("closing", (state) => deps.closingNode(state))
-    .addEdge(START, "model")
-    .addConditionalEdges("model", (state) =>
-      state.pendingCalls.length > 0 ? "tools" : END,
-    )
-    // 本段已决定停止派发时，工具节点之后只做一轮无工具的收尾说明就结束。
-    .addConditionalEdges("tools", (state) => {
-      if (state.taskAction?.kind === "finish" && state.taskAction.endReason === "ROLE_EXCHANGE_DELIVERED" &&
-        state.rounds.at(-1)?.toolCalls.at(-1)?.name === "role_chat_reply") return END;
-      return state.stopKind !== null ? "closing" : "model";
-    })
-    .addEdge("closing", END)
-    .compile({ checkpointer });
-}
-
 /** 未派发调用的诊断码：区分暂停、续行、熔断与轮次上限四种收尾原因。 */
 function skippedCode(kind: AgentSegmentStopKind): string {
   switch (kind) {
@@ -1455,7 +1365,7 @@ function checkpointToolOutcome(outcome: ConversationToolOutcome): ConversationTo
   return record;
 }
 
-function internalToolStepKey(state: AgentStateValue, index: number, toolName: string): string {
+function internalToolStepKey(state: AgentExecutionState, index: number, toolName: string): string {
   return `tool:${state.executionId}:${state.round}:${index}:${toolName}`;
 }
 

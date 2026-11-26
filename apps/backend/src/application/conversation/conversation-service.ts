@@ -2,8 +2,7 @@ import { isAdminSeat } from "../../domain/admin-seat.js";
 import { RoleExchangeService, exchangeWake } from "./role-exchanges.js";
 import { DialogueBatchDelivery } from "./dialogue-batch-delivery.js";
 import type http from "node:http";
-import { AsyncLocalStorageProviderSingleton } from "@langchain/core/singletons";
-import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
+import { setTimeout as delay } from "node:timers/promises";
 import { rolePaths } from "../../bootstrap/config.js";
 import type {
   AgentRunResult,
@@ -633,6 +632,7 @@ export class ConversationService {
           return { task, matchedRunning: matched };
         })(),
     );
+    this.adminServices?.pi?.cancelTask(input.roleId, input.taskId);
     // 只有持久化事务成功提交后，才清理内存续行队列并中止在途执行，避免写入失败导致状态分裂。
     this.removePendingContinuation(input.roleId, input.taskId);
     let abortedRunning = false;
@@ -874,7 +874,7 @@ export class ConversationService {
           lastHeartbeat = Date.now();
           input.response.write(": heartbeat\n\n");
         }
-        await delay(100);
+        await delay(100, undefined, { ref: false });
       }
     } finally {
       cleanup();
@@ -968,18 +968,8 @@ export class ConversationService {
             .filter((taskId): taskId is string => taskId !== null),
         );
         for (const item of interrupted) {
-          if (
-            item.windowId !== null &&
-            item.taskId !== null &&
-            item.taskStatus === "active" &&
-            item.taskOrigin === "autonomous" &&
-            !resumableTaskIds.has(item.taskId)
-          ) {
-            this.queueTaskContinuation(index.roleId, {
-              taskId: item.taskId,
-              windowId: item.windowId,
-            });
-            continuationQueued = true;
+          if (item.taskId !== null && !resumableTaskIds.has(item.taskId)) {
+            continuationQueued = this.fallbackFromResume(index.roleId, item) || continuationQueued;
           }
         }
         for (const item of superseded) {
@@ -1043,37 +1033,10 @@ export class ConversationService {
     if (pending.some((window) => window.windowId === execution.windowId)) {
       return null;
     }
-    if (!this.executionHasCompletedCheckpoint(storage, execution.executionId)) {
+    if (!storage.checkpoint.hasCompletedCheckpoint(execution.executionId)) {
       return null;
     }
     return { task };
-  }
-
-  private executionHasCompletedCheckpoint(
-    storage: RoleStorage,
-    executionId: string,
-  ): boolean {
-    try {
-      const row = storage.checkpoint.db
-        .prepare(
-          `SELECT metadata FROM checkpoints
-            WHERE thread_id = ?
-            ORDER BY rowid DESC LIMIT 1`,
-        )
-        .get(executionId) as
-        | { metadata: string | Buffer | null }
-        | undefined;
-      if (row === undefined || row.metadata === null) {
-        return false;
-      }
-      const metadata = JSON.parse(row.metadata.toString()) as {
-        step?: unknown;
-      };
-      // step -1 是仅含输入的初始检查点，step 0 尚未完成首轮模型。
-      return typeof metadata.step === "number" && metadata.step >= 1;
-    } catch {
-      return false;
-    }
   }
 
   private reconcileCommittedGaps(
@@ -1255,35 +1218,39 @@ export class ConversationService {
 
   private fallbackFromResume(
     roleId: string,
-    item: ResumableExecution,
+    item: ResumableExecution | RecoveredExecution,
   ): boolean {
-    try {
-      this.withConversationStore(roleId, (store) => {
-        if (store.getExecution(item.execution.executionId).status !== "running") {
-          return;
-        }
-        const now = this.now().toISOString();
-        store.failRunningModelCalls(
-          item.execution.executionId,
-          now,
-          "RECOVERY_RESUME_FAILED",
-        );
-        store.interruptExecution({
-          executionId: item.execution.executionId,
-          partialText: store.partialText(item.execution.executionId),
-          status: "failed",
-          reason: "RECOVERY_RESUME_FAILED",
-          errorCode: "RECOVERY_RESUME_FAILED",
-          now,
+    // 缺少节点检查点的执行已在批量中断恢复时结算，只有续跑启动失败才需在此结算。
+    if ("execution" in item) {
+      try {
+        this.withConversationStore(roleId, (store) => {
+          if (store.getExecution(item.execution.executionId).status !== "running") {
+            return;
+          }
+          const now = this.now().toISOString();
+          store.failRunningModelCalls(
+            item.execution.executionId,
+            now,
+            "RECOVERY_RESUME_FAILED",
+          );
+          store.interruptExecution({
+            executionId: item.execution.executionId,
+            partialText: store.partialText(item.execution.executionId),
+            status: "failed",
+            reason: "RECOVERY_RESUME_FAILED",
+            errorCode: "RECOVERY_RESUME_FAILED",
+            now,
+          });
         });
-      });
-    } catch {
-      return false;
+      } catch {
+        return false;
+      }
     }
     if (
       item.taskId !== null &&
       item.taskStatus === "active" &&
-      item.taskOrigin === "autonomous"
+      item.taskOrigin === "autonomous" &&
+      item.windowId !== null
     ) {
       this.queueTaskContinuation(roleId, {
         taskId: item.taskId,
@@ -2153,7 +2120,6 @@ export class ConversationService {
             },
           };
     let catalog: AgentToolCatalog | null = null;
-    let saver: SqliteSaver | null = null;
     let pausedForBudget = false;
     let pausedByDecision = false;
     let pausedByStop = false;
@@ -2417,7 +2383,6 @@ export class ConversationService {
       };
       ensureTaskForStop = ensureTask;
       const messages = this.buildMessages(recent, pendingMessages);
-      saver = SqliteSaver.fromConnString(storage.paths.executionDatabasePath);
       const runner = new AgentGraphRunner(
         {
           store,
@@ -2524,17 +2489,16 @@ export class ConversationService {
             });
           },
         },
-        saver,
+        storage.checkpoint,
       );
-      // 每个角色的执行都是顶层图。工具触发的跨角色唤醒也必须使用本角色的检查点。
-      const result = await AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () => runner.run({
+      const result = await runner.run({
         executionId: execution.executionId,
         roleId,
         windowId,
         messages,
         taskId,
         resume: input.resume === true,
-      }));
+      });
       checkRunning();
       if (autonomy?.wakeId && this.exchanges.finishUnanswered(roleId, autonomy.wakeId, "ROLE_EXCHANGE_NO_REPLY")) {
         throw new AppError(409, "ROLE_EXCHANGE_NO_REPLY", "本次自主活动结束时未发送会话回复");
@@ -2880,7 +2844,6 @@ export class ConversationService {
           this.releaseTaskResources(roleId, taskId);
         }
       }
-      saver?.db.close();
       this.inflightResources.delete(execution.executionId);
       storage.close();
       // 执行已收尾：正常完成或失败时若停止请求没在节点边界命中，这里兜底确认，
@@ -2978,16 +2941,8 @@ export class ConversationService {
       taskId: settlement.taskId,
       windowId: settlement.windowId,
     });
-    // 结算回调由工具 promise 的延续触发，仍处在原图执行的异步上下文中；
-    // LangChain 的隐式配置会沿异步上下文继承，直接调度会让新执行读到旧执行
-    // 的检查点配置（旧 saver 已关闭）。延迟到独立宏任务并在干净上下文中调度。
-    const deferredRoleId = settlement.roleId;
-    AsyncLocalStorageProviderSingleton.getInstance().run(undefined, () => {
-      const deferred = setTimeout(() => {
-        void this.schedule(deferredRoleId);
-      }, 0);
-      deferred.unref?.();
-    });
+    const deferred = setTimeout(() => { void this.schedule(settlement.roleId); }, 0);
+    deferred.unref?.();
   }
 
   private applyCommittedTaskDecision(
@@ -3767,13 +3722,6 @@ function shiftDate(date: string, days: number): string {
 function truncate(value: string, limit: number): string {
   const chars = Array.from(value);
   return chars.length <= limit ? value : `${chars.slice(0, limit).join("")}…`;
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    timer.unref?.();
-  });
 }
 
 /** 收尾轮的系统指令：只产出面向用户的说明，不再派发工具。 */

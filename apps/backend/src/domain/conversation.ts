@@ -198,6 +198,32 @@ export interface AgentToolCallRecord {
   result: ConversationToolOutcome;
 }
 
+export interface PendingToolCall {
+  wireCallId: string;
+  name: string;
+  arguments: unknown;
+}
+
+export interface AgentExecutionState {
+  executionId: string;
+  roleId: string;
+  windowId: string;
+  round: number;
+  messages: ModelMessage[];
+  text: string;
+  lastRoundEchoOnly: boolean;
+  pendingCalls: PendingToolCall[];
+  statePatch: Record<string, unknown>;
+  rounds: AgentRound[];
+  taskAction: AgentTaskAction | null;
+  taskId: string | null;
+  modelCallId: string | null;
+  wireMapping: Record<string, string>;
+  stopKind: AgentSegmentStopKind | null;
+  successfulToolCalls: number;
+  progressNotes: number;
+}
+
 export interface AgentRound {
   round: number;
   text: string;

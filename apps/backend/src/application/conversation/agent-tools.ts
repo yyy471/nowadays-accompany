@@ -19,7 +19,7 @@ import type {
 import { MemoryQueryService } from "../memory/memory-query-service.js";
 import type { RoleExchangeService } from "./role-exchanges.js";
 import type { AutonomyService } from "./autonomy-service.js";
-import { McpToolClient, type McpToolInfo } from "../../mcp/client.js";
+import { managedPiCommand, McpToolClient, type McpToolInfo } from "../../mcp/client.js";
 import { SkillLibrary } from "../../skills/skill-library.js";
 import { createAdminTools, type AdminToolServices } from "../role/admin-tools.js";
 import { isAdminSeat } from "../../domain/admin-seat.js";
@@ -213,6 +213,13 @@ export async function loadAgentTools(
       const config = readMcpConfig(input.appStore, resource.resourceId);
       if (config === null) {
         warnings.push(`MCP 资源 ${resource.name} 配置不完整`);
+        continue;
+      }
+      if (config.command === managedPiCommand && input.admin?.pi) {
+        if (!tools.some(tool => tool.name === "pi_task_start")) {
+          try { tools.push(...await input.admin.pi.tools(input.roleId)); }
+          catch (error) { warnings.push("Pi MCP 不可用：" + safeMessage(error)); }
+        }
         continue;
       }
       let client: McpToolClient | null = null;

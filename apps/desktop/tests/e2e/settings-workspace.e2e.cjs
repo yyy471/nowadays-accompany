@@ -301,6 +301,12 @@ const server = http.createServer((req, res) => {
   const revealMatch = /^\/v1\/resources\/([^/]+)\/secret\/reveal$/.exec(p);
   if (revealMatch && req.method === 'POST') { const target = resources.find(item => item.resourceId === revealMatch[1]); if (!target) return json(res, { error: { message: '资源不存在' } }, 404); const secret = savedSecrets[target.resourceId]; return json(res, secret ? { status: 'stored', secret } : { status: 'missing' }); }
   if (p === '/v1/resources' && req.method === 'POST') { let body = ''; req.on('data', chunk => body += chunk); return req.on('end', () => { const data = JSON.parse(body); const resourceId = data.kind === 'model' ? `m${nextModelId++}` : `x${nextExtId++}`; if (typeof data.secret === 'string') savedSecrets[resourceId] = data.secret; const created = { resourceId, kind: data.kind, name: data.name, enabled: true, config: data.config, credential: { status: data.secret ? 'stored' : 'missing' }, lastTest: null }; resources.push(created); json(res, created, 201); }); }
+  if (p === '/v1/resources/skills/discover') return json(res, { items: [{ directory: 'skill', name: '临时方法', description: '整理聊天笔记' }] });
+  if (p === '/v1/resources/skills/import') {
+    const item = { resourceId: `x${nextExtId++}`, kind: 'skill', name: '临时方法', enabled: true, config: { sourcePath: 'C:/fixture/skill', description: '整理聊天笔记' } };
+    resources.push(item);
+    return json(res, { items: [item] }, 201);
+  }
   if (p === '/v1/resources') return json(res, { items: resources });
   if (p === '/v1/activities') return json(res, { items: roles.map(role => ({ roleId: role.roleId, state: roleStates[role.roleId], running: false, initStatus: 'ready' })) });
   if (p.endsWith('/models')) return json(res, { models: ['local-model'] });
@@ -659,6 +665,7 @@ async function run() {
   const group = (label, selector) => `[...document.querySelectorAll('${sheet} .config-grp')].find(group=>group.querySelector('.config-grp-label b')?.textContent===${JSON.stringify(label)})?.querySelector(${JSON.stringify(selector)})`;
   const temporaryTool = '临时工具用于检查长回执换行时各个按钮的可达性'.repeat(6);
   await add('添加 MCP');
+  await click(sheetButton('高级配置'));
   await ev(setValue(group('名称', 'input'), temporaryTool));
   await ev(setValue(group('启动', 'input'), 'node'));
   await click(sheetButton('添加'));
@@ -714,8 +721,9 @@ async function run() {
   assert.ok(!bindings.b.some(item => item.resourceId === 'x1') && bindings.b.some(item => item.capability === 'chat_model'), '关闭的扩展删除后保留模型绑定');
   await tab('Skill');
   await add('添加 Skill');
-  await ev(setValue(group('名称', 'input'), '临时方法'));
-  await ev(setValue(group('来源目录', 'input'), 'C:/fixture/skill'));
+  await ev(setValue(element(`${sheet} input[aria-label="技能目录"]`), 'C:/fixture/skill'));
+  await click(sheetButton('识别技能'));
+  await until(() => ev(`!!document.querySelector('${sheet} input[type=checkbox]')?.checked`));
   await click(sheetButton('添加'));
   await heading('临时方法');
   assert.equal(resources.find(item => item.resourceId === 'x3').config.sourcePath, 'C:/fixture/skill');

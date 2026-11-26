@@ -119,6 +119,11 @@ test("skill library loads metadata, body and referenced files on demand", () => 
       directory: "meeting-notes",
     });
     const skill = library.read("meeting-notes");
+    const single = new SkillLibrary(path.join(root, "meeting-notes"));
+    assert.deepEqual(single.discover(), library.discover());
+    assert.deepEqual(single.read("meeting-notes"), skill);
+    assert.match(single.readFile("meeting-notes", "reference.md").content, /参会人/);
+    assert.throws(() => single.read("not-a-skill"), SkillNotFoundError);
     assert.match(skill.body, /先读取 reference\.md/);
     assert.equal(skill.name, "meeting-notes");
     const reference = library.readFile("meeting-notes", "reference.md");

@@ -1,5 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
+import path from "node:path";
+import { SkillLibrary } from "../../skills/skill-library.js";
 import {
+  AppError,
   BindingConflictError,
   BindingRevisionConflictError,
   InvalidBindingError,
@@ -110,6 +113,7 @@ export interface ResourceImpactView {
 }
 
 export interface ResourceServiceOptions {
+  appRoot?: string;
   credentialResolver: CredentialResolver;
   /** 与运行时共用同一份模型解析规则（283 R04）。 */
   bindings: ModelBindingResolver;
@@ -132,6 +136,7 @@ const capabilityKind: Record<BindingCapability, ResourceKind> = {
 };
 
 export class ResourceService {
+  private readonly appRoot: string;
   private readonly credentials: CredentialResolver;
   private readonly bindings: ModelBindingResolver;
   private readonly now: () => Date;
@@ -159,12 +164,35 @@ export class ResourceService {
     options: ResourceServiceOptions,
   ) {
     this.credentials = options.credentialResolver;
+    this.appRoot = options.appRoot ?? process.cwd();
     this.bindings = options.bindings;
     this.now = options.now ?? (() => new Date());
     this.activityOf = options.activityOf ?? (() => ({ state: "stopped", running: false }));
     this.pauseRoles = options.pauseRoles ?? null;
     this.wakePendingWork = options.wakePendingWork ?? (() => undefined);
     this.externalInflightRoleIds = options.externalInflightRoleIds ?? (() => []);
+  }
+
+  discoverSkills(sourcePath: string) {
+    let skills;
+    try {
+      skills = new SkillLibrary(path.resolve(this.appRoot, sourcePath)).discover();
+    } catch {
+      throw new AppError(400, "SKILL_DIRECTORY_UNREADABLE", "无法读取所选目录，请检查路径和读取权限");
+    }
+    if (!skills.length) throw new AppError(400, "SKILL_DIRECTORY_EMPTY", "此目录及其一级子目录中没有找到 SKILL.md");
+    return skills;
+  }
+
+  importSkills(sourcePath: string, directories: string[]) {
+    const available = this.discoverSkills(sourcePath);
+    return this.appStore.db.transaction(() => [...new Set(directories)].map(directory => {
+      const skill = available.find(item => item.directory === directory);
+      if (!skill) throw new AppError(409, "SKILL_DIRECTORY_CHANGED", "技能目录已变更，请重新识别");
+      return this.create({ kind: "skill", name: skill.name, config: {
+        sourcePath: skill.sourcePath, description: skill.description.slice(0, 2000),
+      } });
+    }))();
   }
 
   create(input: CreateResourceInput): ResourceView {

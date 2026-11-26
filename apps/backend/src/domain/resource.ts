@@ -75,6 +75,7 @@ export const modelConfigSchema = modelBaseConfigSchema;
 export const mcpConfigSchema = z
   .object({
     command: z.string().min(1).max(2000),
+    description: z.string().max(2000).optional(),
     args: z.array(z.string().max(2000)).max(200),
     env: z.record(z.string(), z.string()),
   })
@@ -83,6 +84,7 @@ export const mcpConfigSchema = z
 export const skillConfigSchema = z
   .object({
     sourcePath: z.string().min(1).max(2000),
+    description: z.string().max(2000).optional(),
   })
   .strict();
 

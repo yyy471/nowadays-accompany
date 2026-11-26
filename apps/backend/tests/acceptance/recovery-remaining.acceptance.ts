@@ -3,11 +3,11 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
 import { createBackendApp, type BackendApp } from "../../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths } from "../../src/bootstrap/config.js";
 import { AppStore } from "../../src/storage/core/app-store.js";
 import { ConversationStore } from "../../src/storage/conversation/conversation-store.js";
+import { CheckpointStore } from "../../src/storage/conversation/checkpoint-store.js";
 import { RoleStore } from "../../src/storage/role/role-store.js";
 import { MemoryQueryService } from "../../src/application/memory/memory-query-service.js";
 import { RoleAccess } from "../../src/application/role/role-access.js";
@@ -157,7 +157,7 @@ else {
       const directory = path.join(output, mode); fs.mkdirSync(directory, { recursive: true });
       const worker = launch(["--crash", directory, mode], directory);
       let app: BackendApp | undefined;
-      let saver: SqliteSaver | undefined;
+      let checkpoints: CheckpointStore | undefined;
       try {
         await until(() => { if (worker.child.exitCode !== null) throw new Error(`P4_WORKER_EXIT:${worker.child.exitCode}`); return fs.existsSync(path.join(directory, "boundary.json")); });
         await stop(worker.child, worker.exited);
@@ -170,10 +170,10 @@ else {
         if (mode === "result-db-failure") role.db.exec("DROP TRIGGER p4_result_fault");
         if (mode === "internal-receipt-db-failure") role.db.exec("DROP TRIGGER p4_internal_meter_fault");
         role.close();
-        saver = SqliteSaver.fromConnString(rolePaths(path.join(meta.root, "data"), meta.roleId).executionDatabasePath);
-        const checkpoint = await saver.getTuple({ configurable: { thread_id: execution.execution_id } });
-        const originalCheckpoint = checkpoint?.checkpoint.channel_values ?? null;
-        saver.db.close(); saver = undefined;
+        checkpoints = new CheckpointStore(rolePaths(path.join(meta.root, "data"), meta.roleId).executionDatabasePath, { create: false });
+        const originalCheckpoint = checkpoints.loadLatestCheckpoint(execution.execution_id)?.state ?? null;
+        checkpoints.close();
+        checkpoints = undefined;
         const model = new ScriptedChatModel([done("恢复后新执行另写的回复")]);
         const restartAt = mode.endsWith("crossday") ? "2026-11-06T04:00:00.000Z" : "2026-11-05T04:00:00.000Z";
         app = createBackendApp(parseBackendConfig(["--app-root", meta.root, "--port", "0"]), { now: () => new Date(restartAt), timeZone: "Asia/Shanghai", modelPortFactory: () => model, disableMemoryRuntime: true });
@@ -225,7 +225,7 @@ else {
           secondRestart = { state: second, modelCalls: quiet.requests.length };
         }
         return { contractPassed, observed: { pid: worker.child.pid, signal: worker.child.signalCode, before, originalExecutionId: execution.execution_id, originalCheckpoint, after, secondRestart, recoveryRequests: model.requests, effect } };
-      } finally { await stop(worker.child, worker.exited); await app?.close(); saver?.db.close(); fs.closeSync(worker.fd); }
+      } finally { await stop(worker.child, worker.exited); await app?.close(); checkpoints?.close(); fs.closeSync(worker.fd); }
     });
   }
   await probe("commit-write-failure-rollback", async () => {

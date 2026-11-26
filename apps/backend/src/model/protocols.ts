@@ -1172,7 +1172,7 @@ function parseToolArguments(name: string, raw: string): unknown {
   }
 }
 
-function normalizeUsage(input: {
+export function normalizeUsage(input: {
   inputTokens?: unknown;
   cachedTokens?: unknown;
   outputTokens?: unknown;

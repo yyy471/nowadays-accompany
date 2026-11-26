@@ -32,6 +32,7 @@ import type { RoleService } from "./role-service.js";
  *   一律返回 `409 SELF_MODIFICATION_VIA_SETTINGS_ONLY`，引导用户去设置页。
  */
 export interface AdminToolServices {
+  pi?: import("../../mcp/managed-pi.js").ManagedPi;
   extensions?: ExtensionHost;
   /** 当前内置助手角色编号；由 loadAgentTools 按实际角色注入。 */
   builtinRoleId?: string;
@@ -990,6 +991,7 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
     defineTool("app_extension_source", "按需读取当前安装版本的源码。省略 file 列出文件，传入相对路径读取正文；使用返回的 version 与 nextOffset 可继续翻页。", {
       ...byId, properties: { extId, file: { type: "string" }, version: { type: "string" }, offset: { type: "integer", minimum: 0 } },
     }, args => host.source(args)),
+    defineTool("app_extension_publish_work", "从工程草稿发布已测试的 Mod，候选版本握手后立即切换。", byId, args => host.publishWork(idOf(args))),
     defineTool("app_extension_upsert", "写入完整新版本并热加载。维护已有项目时先读所需源码，保留未要求修改的文件和旧工具行为（含返回值），升级后可实际调用新旧工具核对。files 为相对路径到源码的映射。入口 export default async (ctx, api) => {}，可相对导入 .mjs。api.tools.register({name,description,inputSchema,scope}, fn) 返回注销函数，scope 为 admin_only 或 all_roles。api.events.on('dialogue_batch' 或 'role_exchange', fn)，api.kv.get/set，api.notify({message,data?})。工具和事件会在停用时自动注销。额外清理用 api.onDispose(() => clearInterval(timer))。原生 ctx.effect 的初始化函数必须返回清理函数。修复加载失败请用新版本号提交完整文件。ui 数组使用 {slot,file}，page/widget/overlay 指定 ui/ 内 HTML，asset 声明引用的静态文件。页面通过 host:theme 接收 preset 与 tokens，ext:ready 请求同步。", z.toJSONSchema(upsertSchema),
       args => host.upsert(args)),
     defineTool("app_extension_toggle", "启用、停用或重载扩展。", { ...byId, properties: { extId, action: { enum: ["enable","disable","reload"] } }, required: ["extId","action"] },

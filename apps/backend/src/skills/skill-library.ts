@@ -21,6 +21,10 @@ export class SkillLibrary {
     if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
       return [];
     }
+    const direct = path.join(root, "SKILL.md");
+    if (fs.statSync(direct, { throwIfNoEntry: false })?.isFile()) {
+      return [readMetadata(direct, path.basename(root))];
+    }
     const items: SkillMetadata[] = [];
     for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
       if (!entry.isDirectory()) {
@@ -33,6 +37,15 @@ export class SkillLibrary {
       items.push(readMetadata(skillFile, entry.name));
     }
     return items.sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  /** 只允许导入刚从该来源发现的包。兼容单技能和上一级技能库。 */
+  discover() {
+    const root = path.resolve(this.root);
+    const single = fs.statSync(path.join(root, "SKILL.md"), { throwIfNoEntry: false })?.isFile();
+    return this.list().map(item => ({
+      ...item, sourcePath: single ? root : path.join(root, item.directory),
+    }));
   }
 
   read(name: string): SkillDocument {
@@ -82,14 +95,18 @@ export class SkillLibrary {
   }
 
   private skillDirectory(name: string): string {
-    if (name.length === 0 || name.includes("/") || name.includes("\\")) {
+    if (!name || name === "." || name === ".." || name.includes("/") || name.includes("\\")) {
       throw new SkillNotFoundError(name);
     }
-    const directory = path.resolve(this.root, name);
     const root = path.resolve(this.root);
-    if (directory !== root && !directory.startsWith(`${root}${path.sep}`)) {
+    const direct = path.join(root, "SKILL.md");
+    if (fs.statSync(direct, { throwIfNoEntry: false })?.isFile()) {
+      if (name === path.basename(root) || name === readMetadata(direct, path.basename(root)).name) return root;
       throw new SkillNotFoundError(name);
     }
+    const match = this.list().find(item => item.directory === name || item.name === name);
+    if (!match) throw new SkillNotFoundError(name);
+    const directory = path.join(root, match.directory);
     const skillFile = path.join(directory, "SKILL.md");
     if (!fs.existsSync(skillFile) || !fs.statSync(skillFile).isFile()) {
       throw new SkillNotFoundError(name);

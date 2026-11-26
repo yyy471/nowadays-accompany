@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
+import Database from "better-sqlite3";
 import { AgentGraphRunner } from "../../src/application/conversation/agent-graph.js";
 import { createBackendApp, type BackendApp } from "../../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths } from "../../src/bootstrap/config.js";
@@ -126,9 +126,6 @@ async function runGraphToFinalCheckpoint(
       { type: "completed", stopReason: "stop" },
     ],
   ]);
-  const saver = SqliteSaver.fromConnString(
-    storage.paths.executionDatabasePath,
-  );
   try {
     const runner = new AgentGraphRunner(
       {
@@ -161,7 +158,7 @@ async function runGraphToFinalCheckpoint(
         purpose: "autonomous",
         meter: null,
       },
-      saver,
+      storage.checkpoint,
     );
     await runner.run({
       executionId: seeded.executionId,
@@ -171,7 +168,6 @@ async function runGraphToFinalCheckpoint(
       taskId: seeded.taskId,
     });
   } finally {
-    saver.db.close();
     storage.close();
   }
 }
@@ -305,6 +301,36 @@ test(
     }
   },
 );
+
+test("restart re-evaluates a running V1 execution on its original autonomous task", async () => {
+  const fixture = createFixtureWithModel(new ScriptedChatModel([]), { now: () => new Date(startAt) });
+  let restored: BackendApp | null = null;
+  try {
+    const seeded = seedAutonomy(fixture, startAt, wakeAt, "旧版任务继续");
+    await fixture.app.close();
+    const legacy = new Database(rolePaths(fixture.app.config.dataRoot, fixture.roleId).executionDatabasePath);
+    try {
+      legacy.exec(`DROP TABLE execution_checkpoints;
+        CREATE TABLE checkpoints (thread_id TEXT, metadata BLOB);
+        PRAGMA user_version = 1;`);
+      legacy.prepare("INSERT INTO checkpoints VALUES (?, ?)").run(seeded.executionId, '{"step":3}');
+    } finally {
+      legacy.close();
+    }
+
+    const model = new ScriptedChatModel([done("已重新评估旧版任务。")]);
+    restored = reopen(fixture, model, restartAt);
+    await restored.conversation.waitForIdle(fixture.roleId);
+    assert.equal(model.requests.length, 1);
+    assert.equal(restored.conversation.getExecution(fixture.roleId, seeded.executionId).execution.status, "failed");
+    assert.equal(restored.conversation.getTask(fixture.roleId, seeded.taskId).status, "completed");
+    assert.deepEqual(rows(fixture, "SELECT content FROM messages WHERE sender='assistant' AND status='completed'"),
+      [{ content: "已重新评估旧版任务。" }]);
+  } finally {
+    await restored?.close();
+    await fixture.close();
+  }
+});
 
 test(
   "a completed checkpoint with a stale state version is re-evaluated instead of committed",
@@ -651,7 +677,7 @@ async function verifyRecoveredToolRound(suffix: string) {
   try {
     await fixture.app.close();
     const earlier = "河边展馆今天提前闭馆。我把门口告示和你发来的时间表放在一起核对过了，两个落款日期不同。我们先去看街对面的展，再回来问工作人员。";
-    // 直接停在第二轮已输出首个 delta 的进程上，保留真实 SQLite 和 LangGraph 检查点。
+    // 直接停在第二轮已输出首个 delta 的进程上，保留真实 SQLite 节点检查点。
     const script = `
       import { createBackendApp } from "./src/bootstrap/app.ts";
       import { parseBackendConfig } from "./src/bootstrap/config.ts";

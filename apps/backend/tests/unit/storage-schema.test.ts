@@ -7,6 +7,7 @@ import test from "node:test";
 import Database from "better-sqlite3";
 import { createBackendApp, listen } from "../../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths } from "../../src/bootstrap/config.js";
+import { CheckpointStore } from "../../src/storage/conversation/checkpoint-store.js";
 import { AppStore } from "../../src/storage/core/app-store.js";
 import { RoleStore } from "../../src/storage/role/role-store.js";
 import { RoleStorage } from "../../src/storage/core/role-storage.js";
@@ -101,7 +102,7 @@ test("app and role stores initialize, persist and reopen", async () => {
     const paths = rolePaths(config.dataRoot, randomUUID());
     role = new RoleStorage(paths);
     assert.equal(role.business.schemaVersion, BUSINESS_SCHEMA_VERSION);
-    assert.equal(role.checkpoint.schemaVersion, 1);
+    assert.equal(role.checkpoint.schemaVersion, 2);
     assert.ok(fs.existsSync(paths.workspaceDir));
     const businessTables = tableNames(role.business.db);
     assert.ok(businessTables.includes("messages"));
@@ -118,7 +119,7 @@ test("app and role stores initialize, persist and reopen", async () => {
     try {
       assert.equal(reopenedApp.schemaVersion, APP_SCHEMA_VERSION);
       assert.equal(reopenedRole.business.schemaVersion, BUSINESS_SCHEMA_VERSION);
-      assert.equal(reopenedRole.checkpoint.schemaVersion, 1);
+      assert.equal(reopenedRole.checkpoint.schemaVersion, 2);
       assert.ok(fs.existsSync(paths.businessDatabasePath));
       assert.ok(fs.existsSync(paths.executionDatabasePath));
     } finally {
@@ -128,6 +129,33 @@ test("app and role stores initialize, persist and reopen", async () => {
   } finally {
     role?.close();
     await app?.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("V1 execution database keeps legacy rows and only V2 node checkpoints can resume", () => {
+  const root = tempRoot();
+  const dbPath = path.join(root, "execution.sqlite");
+  try {
+    const legacy = new Database(dbPath);
+    legacy.exec(`CREATE TABLE checkpoints (thread_id TEXT, metadata BLOB);
+      INSERT INTO checkpoints VALUES ('running', '{"step":3}');
+      PRAGMA user_version = 1;`);
+    legacy.close();
+
+    const checkpoints = new CheckpointStore(dbPath, { create: false });
+    try {
+      assert.equal(checkpoints.db.pragma("user_version", { simple: true }), 2);
+      assert.deepEqual(checkpoints.db.prepare("SELECT * FROM checkpoints").get(), {
+        thread_id: "running", metadata: '{"step":3}',
+      });
+      assert.equal(checkpoints.hasCompletedCheckpoint("running"), false);
+      assert.equal(checkpoints.loadLatestCheckpoint("running"), null);
+      assert.equal(checkpoints.countCheckpoints("running"), 0);
+    } finally {
+      checkpoints.close();
+    }
+  } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

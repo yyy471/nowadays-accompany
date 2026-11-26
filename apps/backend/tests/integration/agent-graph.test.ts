@@ -60,7 +60,7 @@ test("工具后从头重复已发布的长段只交付一次，原始模型轮�
   } finally { await fixture.close(); }
 });
 
-test("user message runs a LangGraph decision and commits reply, state and stream events", { timeout: 15_000 }, async () => {
+test("user message runs an agent decision and commits reply, state and stream events", { timeout: 15_000 }, async () => {
   const fixture = createFixture([
     [
       { type: "text_delta", text: "我记得" },
@@ -127,9 +127,7 @@ test("user message runs a LangGraph decision and commits reply, state and stream
       const evidence = storage.business.db
         .prepare("SELECT COUNT(*) AS count FROM evidence_records WHERE role_id = ?")
         .get(fixture.roleId) as { count: number };
-      const checkpoints = storage.checkpoint.db
-        .prepare("SELECT COUNT(*) AS count FROM checkpoints WHERE thread_id = ?")
-        .get(execution.execution_id) as { count: number };
+      const checkpoints = storage.checkpoint.countCheckpoints(execution.execution_id);
       return {
         execution,
         role,
@@ -155,7 +153,7 @@ test("user message runs a LangGraph decision and commits reply, state and stream
     });
     assert.equal(detail.metering.count, 1);
     assert.equal(detail.evidence.count, 2);
-    assert.ok(detail.checkpoints.count > 0);
+    assert.equal(detail.checkpoints, 1);
 
     const model = fixture.model as unknown as { requests: Array<{ system: string; messages: Array<{ role: string }> }> };
     assert.equal(model.requests.length, 1);

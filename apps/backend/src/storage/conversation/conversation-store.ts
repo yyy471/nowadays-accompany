@@ -758,7 +758,7 @@ export class ConversationStore {
     const extension = this.db.prepare(`SELECT json_extract(payload_json, '$.outcome.adaptedResult.extId') AS id,
         json_extract(payload_json,'$.outcome.adaptedResult.version') AS version
       FROM execution_stream_events WHERE execution_id=? AND event_type='tool_result_saved'
-        AND json_extract(payload_json,'$.toolName')='app_extension_upsert'
+        AND json_extract(payload_json,'$.toolName') IN ('app_extension_upsert','app_extension_publish_work')
         AND json_extract(payload_json,'$.status')='success'
         AND json_extract(payload_json,'$.outcome.adaptedResult.status')='enabled'
       ORDER BY stream_event_id DESC LIMIT 1`).get(source) as {id: string; version: string} | undefined;

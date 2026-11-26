@@ -16,6 +16,8 @@ import {
   type MemoryModelFactory,
 } from "../application/memory/memory-runtime.js";
 import { MessageService } from "../application/conversation/message-service.js";
+import { ManagedPi } from "../mcp/managed-pi.js";
+import { PiModelProxy } from "../mcp/model-proxy.js";
 import { ModelBindingResolver } from "../application/resources/model-binding-resolver.js";
 import { ModelService } from "../application/resources/model-service.js";
 import { CredentialResolver } from "../application/resources/credential-resolver.js";
@@ -47,6 +49,7 @@ import { checkAppDatabaseFiles, lockInstallation } from "../storage/core/install
 import { recoverRoleTransfer } from "../application/transfer/role-transfer-publication.js";
 
 export interface BackendAppOptions {
+  piLeaseMs?: number;
   extensionTimeouts?: { initMs: number; callMs: number };
   batchDelayMs?: number;
   now?: () => Date;
@@ -128,6 +131,7 @@ function assembleBackendApp(
   // 角色删除收尾期间拒绝该角色的新过场图任务（283 §14 R03）。
   let isRoleDeleting: (roleId: string) => boolean = () => false;
   const resourceService = new ResourceService(appStore, roleAccess, {
+    appRoot: config.appRoot,
     credentialResolver: credentials,
     bindings,
     now,
@@ -266,8 +270,14 @@ function assembleBackendApp(
       );
   // 管理工具需要反向引用对话服务（任务查询与记忆触发），构造完成后再补上。
   const extensions = new ExtensionHost(config.appRoot, options.extensionTimeouts);
+  const modelProxy = new PiModelProxy(credentials, tokenUsage, resourceService);
+  const pi: ManagedPi = new ManagedPi(modelProxy, bindings, extensions.work, () => {
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("PI_HTTP_SERVER_UNAVAILABLE");
+    return address.port;
+  }, roleId => activity.view(roleId).state === "active", options.piLeaseMs);
   const adminServices: AdminToolServices = {
-    extensions,
+    pi, extensions,
     roles: roleService,
     activity,
     messages: messageService,
@@ -364,7 +374,7 @@ function assembleBackendApp(
       conversation.isRunning(roleId) ||
       (memoryRuntime?.isBusy(roleId) ?? false),
     // 恢复后把停止时暂停的原任务链与到期待办接回调度（RA-R02）。
-    stopExchanges: (roleId) => conversation.exchanges.stop(roleId),
+    stopExchanges: (roleId) => { void pi.stop(roleId); conversation.exchanges.stop(roleId); },
     resumeWork: (roleId) => conversation.rescheduleAfterStop(roleId),
   });
   memoryRuntime?.recoverOnStartup();
@@ -445,6 +455,7 @@ function assembleBackendApp(
       dispose: async (roleId) => {
         try {
           // 先中止过场图任务，取消尚未领取的标注等待，再等待已发出的工作收尾。
+          await pi.stop(roleId);
           await sceneImages.cancelRole(roleId);
           conversation.cancelQueuedAnnotations(roleId);
           // 领取表与记忆队列共用一个删除期限；超时保留角色和队列（283 §15/§16）。
@@ -504,6 +515,7 @@ function assembleBackendApp(
     roleDeletion,
     mediaMaintenance,
     tokenUsage,
+    modelProxy,
     extensions,
   };
   if (options.disablePresetAssistant !== true) {
@@ -528,6 +540,7 @@ function assembleBackendApp(
     close() {
       return closing ??= (async () => {
         try {
+          await pi.close();
           if (server.listening) await closeServer(server);
         } finally {
           try { await conversation.close(); }

@@ -42,7 +42,7 @@ npm start
 
 | 路径 | 内容 |
 | --- | --- |
-| `apps/backend/src/` | TypeScript 后端、LangGraph 执行、SQLite 存储、HTTP／SSE 与 CLI |
+| `apps/backend/src/` | TypeScript 后端、自有节点执行循环、SQLite 存储、HTTP／SSE 与 CLI |
 | `apps/backend/examples/` | 角色设定、模型配置、资源绑定、本地 MCP 和 Skill 样例 |
 | `apps/backend/tests/` & `apps/backend/scripts/` | 后端分层测试（`unit/`、`integration/`、`acceptance/`、`fixtures/`）与验证/评测脚本（`verify/`、`eval/`） |
 | `apps/desktop/` | Electron 主进程、桌面测试与 `renderer/` React 前端（`src/pages/`、`styles/` 与 `tests/`） |

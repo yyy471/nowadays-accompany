@@ -43,12 +43,12 @@ export type Definition = z.infer<typeof definition>;
 
 export class ExtensionFiles {
   private readonly root: string;
-  constructor(appRoot: string) { this.root = fs.realpathSync.native(appRoot); }
+  constructor(appRoot: string, private readonly directory: "extensions" | "extensions-work" = "extensions") { this.root = fs.realpathSync.native(appRoot); }
 
   // 对不存在的尾部逐级核实最近父目录。拒绝链接本身，包括悬空 junction。
   private checked(...parts: string[]): string {
     let current = this.root;
-    for (const part of ["extensions", ...parts.flatMap(s => s.split("/"))]) {
+    for (const part of [this.directory, ...parts.flatMap(s => s.split("/"))]) {
       if (!component(part)) throw new AppError(400, "EXTENSION_PATH_INVALID", "扩展路径包含非法分量");
       current = path.join(current, part);
       const stat = fs.lstatSync(current, { throwIfNoEntry: false });
@@ -58,6 +58,31 @@ export class ExtensionFiles {
       }
     }
     return current;
+  }
+  workspace(id: string) {
+    extIdSchema.parse(id);
+    const target = this.checked(id);
+    fs.mkdirSync(target, { recursive: true });
+    return this.checked(id);
+  }
+  draft(id: string) {
+    extIdSchema.parse(id);
+    const manifest = definition.parse(JSON.parse(fs.readFileSync(this.checked(id, "manifest.json"), "utf8")));
+    const files: Record<string, Buffer> = Object.create(null);
+    const collect = (prefix: string) => {
+      for (const entry of fs.readdirSync(this.checked(id, ...prefix.split("/").filter(Boolean)), { withFileTypes: true })) {
+        const name = prefix + entry.name;
+        if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+        const file = this.checked(id, name);
+        if (entry.isDirectory()) collect(name + "/");
+        else if (sourceFile.safeParse(name).success) {
+          if (!fs.statSync(file).isFile()) throw new AppError(400, "EXTENSION_PATH_INVALID", "草稿包含非普通文件");
+          files[name] = fs.readFileSync(file);
+        }
+      }
+    };
+    collect("");
+    return { manifest, files };
   }
   ids() {
     const root = this.checked();
@@ -138,7 +163,7 @@ export class ExtensionFiles {
     }
     return { dir: this.checked(...parts), entry: this.checked(...parts, spec.entry) };
   }
-  stage(id: string, spec: Definition, files: Record<string, string>) {
+  stage(id: string, spec: Definition, files: Record<string, string | Buffer>) {
     const parts = [id, "versions", spec.version];
     const dir = this.checked(...parts);
     fs.mkdirSync(this.checked(id, "versions"), { recursive: true });

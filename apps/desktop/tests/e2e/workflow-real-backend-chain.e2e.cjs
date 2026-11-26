@@ -108,6 +108,9 @@ function startFakeOpenAi(name, modelIds) {
         reply = JSON.stringify({
           description: '午后书房窗边，柔和阳光洒在茶杯与人物肩头',
           layerMode: userJson.requestedLayerMode || 'full_scene',
+          ...(userJson.textAnchors && userJson.requestedLayerMode !== 'background' ? { cast: [{
+            name: userJson.textAnchors.roleName, appearance: userJson.textAnchors.appearance, clothing: userJson.textAnchors.clothing,
+          }] } : {}),
           ...(firstSeg ? { startSegmentId: firstSeg } : {}),
           ...(lastSeg ? { endSegmentId: lastSeg } : {}),
         });
@@ -668,8 +671,7 @@ async function run() {
   // === 链路 4：MCP 创建、角色开启绑定、占用检查、关闭绑定、停用删除 ===
   await tab('MCP');
   await addService('添加 MCP');
-  await setInput(addField(0), '文件工具');
-  await setInput(addField(1), 'node');
+  await setInput(field('textarea[aria-label="粘贴 MCP 配置"]'), JSON.stringify({ mcpServers: { 文件工具: { command: 'node' } } }));
   await clickWhen(sheetButton('添加'));
   await waitService('文件工具');
   const extension = (await request('/v1/resources')).items.find(item => item.name === '文件工具');

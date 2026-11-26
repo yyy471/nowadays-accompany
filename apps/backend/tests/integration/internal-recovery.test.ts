@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
 import { AgentGraphRunner } from "../../src/application/conversation/agent-graph.js";
 import { rolePaths } from "../../src/bootstrap/config.js";
 import type { ConversationTool } from "../../src/domain/conversation.js";
@@ -20,8 +19,7 @@ function setup() {
   const execution = storage.business.createExecution({ roleId: fixture.roleId, windowId: fixture.windowId, triggerType: "autonomous", stateVersionLoaded: 1 });
   const task = storage.business.createTask({ roleId: fixture.roleId, goal: "恢复内部操作", origin: "autonomous", initiatorExecutionId: execution.executionId });
   storage.business.linkExecutionTask({ roleId: fixture.roleId, executionId: execution.executionId, taskId: task.taskId, relation: "initiates" });
-  const saver = SqliteSaver.fromConnString(storage.paths.executionDatabasePath);
-  return { fixture, storage, store, autonomy, execution, task, saver, async close() { saver.db.close(); storage.close(); await fixture.close(); } };
+  return { fixture, storage, store, autonomy, execution, task, async close() { storage.close(); await fixture.close(); } };
 }
 
 for (const mode of ["saved", "unfinished", "threw"] as const) {
@@ -54,7 +52,7 @@ for (const mode of ["saved", "unfinished", "threw"] as const) {
           consume: () => f.autonomy.consumePoint({ now: dispatchedAt }).counted,
           reserveTool: () => { throw new Error("EXTERNAL_TOOL_NOT_EXPECTED"); },
         },
-      }, f.saver);
+      }, f.storage.checkpoint);
       const state = {
         executionId: f.execution.executionId, roleId: f.fixture.roleId, windowId: f.fixture.windowId,
         round: 1, messages: [], text: "", pendingCalls: [{ wireCallId: "diary", name: tool.name, arguments: {} }],
