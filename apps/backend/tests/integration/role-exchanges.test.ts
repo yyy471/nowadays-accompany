@@ -45,6 +45,90 @@ function form(input: MemoryFormationInput) {
     claims: [{kind: "impression", text: "我觉得" + peer + "很细心", evidenceId: e.evidenceId}]}]};
 }
 
+test("主角色发布定向书签扩展后自选往来征求反馈，双方存证且接收方仍可使用工具", async () => {
+  const opening = "给你做了一个书签工具，可以保存页码。你觉得还可以怎么改？";
+  const feedback = "记页码很方便，希望也能记下章节。";
+  const toolName = "ext_bookmark__mark";
+  let targetRoleId = "";
+  const requests: ModelRequest[] = [];
+  const model: ModelPort = {async *stream(req) {
+    requests.push(req);
+    const has = (name: string) => req.tools.some(tool => tool.name === name);
+    const last = req.messages.at(-1);
+    const call = (name: string, args: object): ModelEvent => ({
+      type: "tool_call", callId: randomUUID(), name, arguments: args,
+    });
+    if (has("role_chat_reply") && last?.role !== "tool") {
+      yield call("role_chat_reply", {content: feedback, endConversation: true});
+    } else if (has("app_extension_upsert") && last?.role !== "tool") {
+      yield call("app_extension_upsert", {
+        extId: "bookmark", manifest: {version: "v1", entry: "entry.mjs"},
+        files: {"entry.mjs": `export default (_, api) => {
+          api.tools.register({name:"mark", description:"保存页码", inputSchema:{type:"object",properties:{page:{type:"integer"}},required:["page"]},
+            scope:"selected_roles", roleIds:[${JSON.stringify(targetRoleId)}]},
+            async ({page}, ctx) => { await api.kv.set(ctx.roleId, page); return {roleId:ctx.roleId, page}; });
+          api.events.on('role_exchange', s => api.notify({message:s.status, data:s.sessionId}));
+        }`},
+      });
+    } else if (has("app_role_chat_start") && last?.role === "tool" && last.toolName === "app_extension_upsert") {
+      yield call("app_role_chat_start", {targetRoleId, topic: "书签工具反馈", opening});
+    } else if (!has("app_extension_upsert") && has(toolName) && last?.role !== "tool") {
+      yield call(toolName, {page: 42});
+    } else {
+      yield {type: "text_delta", text: "已处理。"};
+    }
+    yield {type: "completed", stopReason: "stop"};
+  }};
+  const f = createFixtureWithModel(model);
+  const {app, roleId} = f;
+  targetRoleId = roleId;
+  try {
+    const seat = prepareSeat(f);
+    const completed: unknown[] = [];
+    app.services.extensions.onNotice(n => {
+      if (n.extId === "bookmark" && n.message === "completed") completed.push(n.data);
+    });
+    app.conversation.submitMessage(seat.id, seat.windowId, {content: "给阿澄做个书签工具。",
+      submissionId: randomUUID(), sourcePlatform: "nowadays"});
+    await app.conversation.waitForIdle(seat.id);
+    await until(() => app.conversation.exchanges.list(1, 0)[0]?.status === "completed", "阿澄回复并结束往来");
+    await app.conversation.waitForIdle(roleId);
+    for (const name of ["app_extension_upsert", "app_extension_publish_work"]) {
+      assert.match(requests[0]!.tools.find(t => t.name === name)!.description, /是否调用 app_role_chat_start/);
+    }
+
+    const port = await listen(app.server, 0, "127.0.0.1");
+    const url = `http://127.0.0.1:${port}/v1/role-exchanges`;
+    const list = await fetch(url);
+    assert.equal(list.status, 200);
+    const {items} = await list.json() as {items: ReturnType<typeof app.conversation.exchanges.list>};
+    assert.equal(items.length, 1);
+    const session = items[0]!;
+    assert.equal(session.status, "completed");
+    const detail = await fetch(url + "/" + session.sessionId);
+    assert.equal(detail.status, 200);
+    const {turns} = await detail.json() as ReturnType<typeof app.conversation.exchanges.detail>;
+    assert.deepEqual(turns.map(t => [t.speakerRoleId, t.content]), [[seat.id, opening], [roleId, feedback]]);
+    const wake = app.services.autonomy.listWakes(roleId).find(w => w.wakeId === `role-exchange:${session.sessionId}:1`);
+    assert.equal(wake?.status, "completed");
+    await until(() => completed.includes(session.sessionId), "书签扩展收到同一场往来的结束事件");
+    const access = new RoleAccess(app.appStore, app.config.dataRoot);
+    for (const id of [seat.id, roleId]) {
+      const rows = access.withStore(id, s => s.business.db.prepare(`
+        SELECT t.* FROM role_exchange_turns t JOIN evidence_records e ON e.source_id=t.exchangeId
+        WHERE t.sessionId=? AND e.source_kind='role_exchange' AND e.role_id=? ORDER BY t.turnIndex
+      `).all(session.sessionId, id));
+      assert.deepEqual(rows, turns);
+    }
+    app.conversation.submitMessage(roleId, f.windowId, {content: "用书签工具记下第 42 页。",
+      submissionId: randomUUID(), sourcePlatform: "nowadays"});
+    await app.conversation.waitForIdle(roleId);
+    const receipt = requests.flatMap(r => r.messages).find(m => m.role === "tool" && m.toolName === toolName);
+    assert.ok(receipt);
+    assert.deepEqual(JSON.parse(receipt.content), {status: "success", result: {roleId, page: 42}});
+  } finally { await f.close(); }
+});
+
 test("记忆仍未整理时，互聊可以参考本角色近期已说过的相关内容", async () => {
   const requests: ModelRequest[] = [];
   const model: ModelPort = {async *stream(req) {

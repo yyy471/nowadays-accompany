@@ -7,6 +7,7 @@ const uiActions = new Map();
 const subscriptions = new Map();
 const requests = new Map();
 let serial = 0;
+let registration = 0;
 let ready = false;
 let disposing = false;
 const send = message => process.send(message);
@@ -39,7 +40,7 @@ const platform = {
   tools: {
     register(spec, handler) {
       if (typeof handler !== "function" || handlers.has(spec.name)) throw Error("EXTENSION_TOOL_INVALID");
-      handlers.set(spec.name, { spec, handler });
+      handlers.set(spec.name, { spec: { ...spec, regId: ++registration }, handler });
       changed();
       return ctx.effect(() => () => { handlers.delete(spec.name); changed(); });
     },
@@ -94,7 +95,7 @@ process.on("message", async msg => {
       let value;
       if (msg.type === "call") {
         const tool = handlers.get(msg.name);
-        if (!tool) throw Error("EXTENSION_UNAVAILABLE");
+        if (!tool || tool.spec.regId !== msg.regId) throw Error("EXTENSION_UNAVAILABLE");
         value = await tool.handler(msg.args, msg.context);
       } else if (msg.type === "ui-action") {
         const handler = uiActions.get(msg.name);

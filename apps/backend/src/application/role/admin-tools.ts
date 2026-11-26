@@ -53,7 +53,8 @@ export interface AdminToolServices {
 export const SELF_MODIFICATION_CODE = "SELF_MODIFICATION_VIA_SETTINGS_ONLY";
 
 const STOP_TIMEOUT_MS = 15_000;
-const uiActionContract = "api.ui.onAction(name, handler) 登记本扩展的精确动作，handler(payload) 返回 JSON；注销函数与 ctx.effect 生命周期绑定。沙箱 HTML 向 parent.postMessage({type:'ext:action',id,action,payload},'*') 发一次请求。id 为 1–64 位字母、数字、点、横线或下划线，action 同字符集且以字母开头，payload 为至多 16 KiB 的 UTF-8 JSON，无参数传 null。子页只接收 event.source === parent 的消息。按 id 匹配 {type:'host:action-result',id,ok:true,data} 或 {type:'host:action-result',id,ok:false,error}（error 为英文错误码），有副作用的动作勿自动重试。发送 ext:ready 请求 host:theme，将 tokens 中的 --nd-semantic-* 写入 document.documentElement.style。";
+const toolScopeContract = '主角色可先用 app_roles_list 查询普通角色的 roleId，再在工具注册中声明 scope: "selected_roles", roleIds: ["<roleId>"]。名单内普通角色与主角色可用，空名单仅主角色可用，主角色验收使用自己的 roleId。';
+const uiActionContract = "api.ui.onAction(name, handler) 登记本扩展的精确动作，handler(payload) 返回 JSON。ui[].coplay 可声明最多 4 个 {action,label}（label 最长 32 字）；用户点击宿主按钮时 handler(null) 可返回 {data,summary?}，子页接收 {type:'ext:coplay-result',action,ok,data?,error?} 刷新画面。只有宿主点击且有非空 summary 才邀请选中的角色回应。微页内 ext:action 和定时器只更新游戏，绝不唤醒角色；注销函数与 ctx.effect 生命周期绑定。沙箱 HTML 向 parent.postMessage({type:'ext:action',id,action,payload},'*') 发一次请求。id 为 1–64 位字母、数字、点、横线或下划线，action 同字符集且以字母开头，payload 为至多 16 KiB 的 UTF-8 JSON，无参数传 null。子页只接收 event.source === parent 的消息。按 id 匹配 {type:'host:action-result',id,ok:true,data} 或 {type:'host:action-result',id,ok:false,error}（error 为英文错误码），有副作用的动作勿自动重试。发送 ext:ready 请求 host:theme，将 tokens 中的 --nd-semantic-* 写入 document.documentElement.style。";
 
 export function createAdminTools(input: AdminToolServices): ConversationTool[] {
   const builtinRoleId = input.builtinRoleId ?? "";
@@ -986,13 +987,14 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
   const extId = { type: "string" };
   const byId = { type: "object", properties: { extId }, required: ["extId"] };
   const idOf = (args: Record<string, unknown>) => stringArg(args, "extId") ?? badArguments("请提供扩展编号");
+  const feedbackHint = "发布面向其他角色或定向分发的新扩展后，可按自身人设与当下意图决定是否调用 app_role_chat_start，向相关角色介绍扩展并征求使用感受或改进建议。";
   const extensionTools = host ? [
     defineTool("app_extensions_list", "列出热扩展及其版本、工具、UI 声明和最近错误。", { type: "object", properties: {} }, () => host.list()),
     defineTool("app_extension_get", "读取一个扩展的状态和声明。维护已有项目可用 app_extension_source 查阅已安装的源文件。", byId, args => host.get(idOf(args))),
     defineTool("app_extension_source", "按需读取当前安装版本的源码。省略 file 列出文件，传入相对路径读取正文；使用返回的 version 与 nextOffset 可继续翻页。", {
       ...byId, properties: { extId, file: { type: "string" }, version: { type: "string" }, offset: { type: "integer", minimum: 0 } },
     }, args => host.source(args)),
-    defineTool("app_extension_publish_work", "发布已测试的 Mod。Pi 草稿传入 jobId，可附 extId 核对目标。手工草稿只需 extId。" + uiActionContract, {
+    defineTool("app_extension_publish_work", "发布已测试的 Mod。Pi 草稿传入 jobId，可附 extId 核对目标。手工草稿只需 extId。" + toolScopeContract + uiActionContract + feedbackHint, {
       type: "object", properties: { extId, jobId: { type: "string" } },
     }, (args, context) => {
       if (args.jobId === undefined) return host.publishWork(idOf(args));
@@ -1000,7 +1002,7 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
       const target = input.pi.publishTarget(context.roleId, args.jobId, args.extId === undefined ? undefined : idOf(args));
       return host.publishWork(target, args.jobId);
     }),
-    defineTool("app_extension_upsert", "写入完整新版本并热加载。维护已有项目时先读所需源码，保留未要求修改的文件和旧工具行为（含返回值），升级后可实际调用新旧工具核对。files 为相对路径到源码的映射。入口 export default async (ctx, api) => {}，可相对导入 .mjs。api.tools.register({name,description,inputSchema,scope}, fn) 返回注销函数，scope 为 admin_only 或 all_roles。api.events.on('dialogue_batch' 或 'role_exchange', fn)，api.kv.get/set，api.notify({message,data?})。工具和事件会在停用时自动注销。额外清理用 api.onDispose(() => clearInterval(timer))。原生 ctx.effect 的初始化函数必须返回清理函数。修复加载失败请用新版本号提交完整文件。ui 数组使用 {slot,file}，page/widget/overlay 指定 ui/ 内 HTML，asset 声明引用的静态文件。" + uiActionContract, z.toJSONSchema(upsertSchema),
+    defineTool("app_extension_upsert", "写入完整新版本并热加载。维护已有项目时先读所需源码，保留未要求修改的文件和旧工具行为（含返回值），升级后可实际调用新旧工具核对。files 为相对路径到源码的映射。入口 export default async (ctx, api) => {}，可相对导入 .mjs。api.tools.register({name,description,inputSchema,scope}, fn) 返回注销函数，scope 可选 admin_only、all_roles 或 selected_roles。api.events.on('dialogue_batch' 或 'role_exchange', fn)，api.kv.get/set，api.notify({message,data?})。工具和事件会在停用时自动注销。额外清理用 api.onDispose(() => clearInterval(timer))。原生 ctx.effect 的初始化函数必须返回清理函数。修复加载失败请用新版本号提交完整文件。ui 数组使用 {slot,file}，page/widget/overlay 指定 ui/ 内 HTML，asset 声明引用的静态文件。" + toolScopeContract + uiActionContract + feedbackHint, z.toJSONSchema(upsertSchema),
       args => host.upsert(args)),
     defineTool("app_extension_toggle", "启用、停用或重载扩展。", { ...byId, properties: { extId, action: { enum: ["enable","disable","reload"] } }, required: ["extId","action"] },
       args => {

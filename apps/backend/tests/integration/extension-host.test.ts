@@ -8,15 +8,17 @@ import { createRequire } from "node:module";
 import test from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { createBackendApp, listen } from "../../src/bootstrap/app.js";
+import { CoplayBatches } from "../../src/application/extensions/coplay-batches.js";
 import { ExtensionHost, type Notice } from "../../src/application/extensions/extension-host.js";
 import type { ModelEvent } from "../../src/domain/model.js";
-import { createFixtureWithModel, ScriptedChatModel } from "../fixtures/conversation-fixture.js";
+import { createFixtureWithModel, GatedChatModel, ScriptedChatModel } from "../fixtures/conversation-fixture.js";
 import { seedLegacyPresetAssistant } from "../fixtures/legacy-role-fixture.js";
 import { createAdminTools } from "../../src/application/role/admin-tools.js";
 
-const plugin = `
+function demoPlugin(extraTools = "") { return `
 import version from "./helper.mjs";
 export default async (ctx, api) => {
+  ${extraTools}
   const register = (name, scope, fn) => api.tools.register({name, scope, description:name, inputSchema:{type:"object"}}, fn);
   register("hello","all_roles",async (args, context) => {
     const count = (await api.kv.get("count") ?? 0) + 1;
@@ -39,8 +41,8 @@ export default async (ctx, api) => {
     await new Promise(resolve=>setTimeout(resolve,10));
     await api.notify({message:"disposed",data:version});
   });
-};`;
-function source(extId: string, version: string, body = plugin) {
+};`; }
+function source(extId: string, version: string, body = demoPlugin()) {
   return { extId, manifest: {version, entry:"entry.mjs", ui:[{slot:"page",file:"ui/index.html"}]},
     files: {"entry.mjs":body,"helper.mjs":"export default " + JSON.stringify(version),"ui/index.html":"<p>extension</p>"} };
 }
@@ -62,6 +64,86 @@ const event = (name: string, args: object): ModelEvent[] => [
   {type:"tool_call",callId:randomUUID(),name,arguments:args}, {type:"completed",stopReason:"stop"},
 ];
 const reply: ModelEvent[] = [{type:"text_delta",text:"离线回执已收到。"}, {type:"completed",stopReason:"stop"}];
+
+test("定向工具按调用者身份发现和派发，换版立即撤权，动态注销刷新快照", async () => {
+  const f = createFixtureWithModel(new ScriptedChatModel([]));
+  const host = f.app.services.extensions;
+  const b = { roleId:f.roleId, adminSeat:false };
+  const c = { roleId:"role-c", adminSeat:false };
+  const seat = { roleId:"main-seat", adminSeat:true };
+  const names = (caller: typeof b) => host.tools(caller).map(({ spec }) => spec.name);
+  const call = (caller: typeof b, name: string) => host.call("targeted", name, caller, {}, {});
+  const publish = (version: string, roleIds: unknown) => host.upsert(source("targeted", version, `
+    export default (_, api) => {
+      const register = (name, access) => api.tools.register(
+        { name, description:name, inputSchema:{type:"object"}, ...access }, (_, ctx) => ctx.roleId);
+      register("shared", {scope:"all_roles"});
+      register("private", {scope:"admin_only"});
+      const off = register("stamp", {scope:"selected_roles", roleIds:${JSON.stringify(roleIds)}});
+      api.ui.onAction("remove", () => { off(); return null; });
+    }`));
+  let snapshot: unknown;
+  const stop = host.subscribeUi((event, data) => { if (event === "snapshot") snapshot = data; });
+  try {
+    const port = await listen(f.app.server, 0, "127.0.0.1");
+    await publish("v1", [b.roleId, "removed-role", b.roleId]);
+    const expected = [
+      { name:"shared", scope:"all_roles" }, { name:"private", scope:"admin_only" },
+      { name:"stamp", scope:"selected_roles", roleIds:[b.roleId, "removed-role"] },
+    ];
+    const response = await fetch(`http://127.0.0.1:${port}/v1/extensions`);
+    assert.equal(response.status, 200);
+    const listing = await response.json() as { items: { tools: unknown[] }[] };
+    assert.deepEqual(listing.items[0]?.tools, expected);
+    const ui = source("targeted", "v1").manifest.ui;
+    const item = { extId:"targeted", version:"v1", status:"enabled", ui, lastError:null };
+    assert.deepEqual(snapshot, [{ ...item, tools:expected }]);
+    assert.deepEqual(names(b), ["shared", "stamp"]);
+    assert.deepEqual(names(c), ["shared"]);
+    assert.deepEqual(names(seat), ["shared", "private", "stamp"]);
+    assert.equal(await call(b, "stamp"), b.roleId);
+    assert.equal(await call(seat, "stamp"), seat.roleId);
+    assert.throws(() => call(c, "stamp"), { code:"EXTENSION_UNAVAILABLE" });
+    assert.throws(() => call(b, "private"), { code:"EXTENSION_UNAVAILABLE" });
+    assert.equal(await call(c, "shared"), c.roleId);
+    assert.equal(await call(seat, "private"), seat.roleId);
+
+    for (const invalid of [undefined, "role-b", [1], ["  "]])
+      await assert.rejects(publish("invalid", invalid), { code:"EXTENSION_IPC_INVALID" });
+    assert.equal(await call(b, "stamp"), b.roleId);
+    await publish("v2", []);
+    assert.deepEqual(names(b), ["shared"]);
+    assert.throws(() => call(b, "stamp"), { code:"EXTENSION_UNAVAILABLE" });
+    assert.equal(await call(seat, "stamp"), seat.roleId);
+    assert.deepEqual(snapshot, [{ ...item, version:"v2", tools:[...expected.slice(0, 2),
+      { name:"stamp", scope:"selected_roles", roleIds:[] }] }]);
+    await host.uiAction("targeted", "v2", "remove", null);
+    assert.deepEqual(snapshot, [{ ...item, version:"v2", tools:expected.slice(0, 2) }]);
+  } finally { stop(); await f.close(); }
+});
+
+test("同进程收紧同名工具名单时，已通过旧授权的调用不能执行新处理器", async () => {
+  const f = createFixtureWithModel(new ScriptedChatModel([]));
+  const host = f.app.services.extensions;
+  const caller = { roleId: f.roleId, adminSeat: false };
+  try {
+    await host.upsert(source("race", "v1", `export default (_, api) => {
+      const spec = { name: "stamp", scope: "selected_roles", roleIds: [${JSON.stringify(f.roleId)}],
+        description: "印章", inputSchema: { type: "object" } };
+      const off = api.tools.register(spec, () => "旧");
+      let count = 0;
+      api.ui.onAction("restrict", () => { off(); api.tools.register({...spec, roleIds: []}, () => ++count); });
+    }`));
+    let changed: Promise<unknown> | undefined;
+    const stale = host.call("race", "stamp", caller, {}, {}, () => {
+      changed = host.uiAction("race", "v1", "restrict", null);
+    });
+    await assert.rejects(stale, { code: "EXTENSION_UNAVAILABLE" });
+    await changed;
+    assert.throws(() => host.call("race", "stamp", caller, {}, {}), { code: "EXTENSION_UNAVAILABLE" });
+    assert.equal(await host.call("race", "stamp", { ...caller, adminSeat: true }, {}, {}), 1);
+  } finally { await f.close(); }
+});
 
 test("沙箱动作只调用精确登记的处理器，校验版本、JSON 字节数并按原进程排空", async () => {
   const f = createFixtureWithModel(new ScriptedChatModel([]));
@@ -129,30 +211,236 @@ test("沙箱动作只调用精确登记的处理器，校验版本、JSON 字节
   } finally { await f.close(); }
 });
 
-test("Pi 的双向槽位契约与两项主角色发布工具逐字一致", async () => {
-  const {default: install, uiActionContract} = await import(new URL("../../../pi-mcp/src/extensions/nowadays-mod.mjs", import.meta.url).href);
+test("共玩固定窗从首击计满五秒；无摘要、停机和撤版的迟到回执不能重建待发项", t => {
+  t.mock.timers.enable({apis:["setTimeout"]});
+  let active = true;
+  const due: string[] = [];
+  const batches = new CoplayBatches(() => active, roleId => { due.push(roleId); });
+  const begin = () => batches.begin("dice", "b", "掷骰");
+  const first = begin();
+  t.mock.timers.tick(1250);
+  first?.("1");
+  t.mock.timers.tick(3749);
+  begin()?.("6");
+  assert.deepEqual(due, []);
+  t.mock.timers.tick(1);
+  assert.deepEqual(due, ["b"]);
+  const batch = batches.due("b")!;
+  assert.match(batch.intent, /共玩 2 次。最后一次掷骰：6/);
+  batch.claimed();
+  assert.equal(batches.due("b"), undefined);
+  begin()?.();
+  const late = begin();
+  active = false;
+  batches.budgetChanged("b");
+  const stopped = begin();
+  active = true;
+  late?.("旧骰点"); stopped?.("停机时派发");
+  const retired = begin();
+  batches.discard(item => item.extId === "dice");
+  retired?.("旧版");
+  t.mock.timers.tick(5000);
+  assert.deepEqual(due, ["b"]);
+});
+
+function dice(version = "v1") {
+  const ui = [{ slot: "page", file: "ui/index.html", coplay: [
+    { action: "roll", label: "掷骰" }, { action: "silent", label: "静默动作" },
+  ] }];
+  return { extId: "dice", manifest: { version, entry: "entry.mjs", ui },
+    files: { "ui/index.html": "<output></output>", "entry.mjs": `export default (_, api) => {
+      let value = 0;
+      const roll = () => ({data: ++value, summary: '点数 ' + value});
+      api.ui.onAction('roll', roll);
+      api.ui.onAction('ordinary', roll);
+      api.ui.onAction('silent', () => ({data: ++value}));
+    }` } };
+}
+const hostButton = (roleId: string) => ({ coplay: true, roleId, slot: "page", file: "ui/index.html" });
+
+test("静态 asset 仍可发布，asset 与未知槽位均拒绝声明共玩", async () => {
+  const f = createFixtureWithModel(new ScriptedChatModel([]));
+  try {
+    const project = dice();
+    for (const slot of ["asset", "unknown"]) {
+      project.manifest.ui[0]!.slot = slot;
+      assert.throws(() => f.app.services.extensions.upsert(project), { code: "EXTENSION_ARGUMENTS_INVALID" });
+    }
+    const asset = { slot: "asset", file: "ui/index.html" };
+    const installed = await f.app.services.extensions.upsert({ ...project, manifest: { ...project.manifest, ui: [asset] } });
+    assert.deepEqual(installed.ui, [asset]);
+    assert.equal(f.app.services.extensions.uiAsset("dice", asset.file, "v1").toString(), "<output></output>");
+  } finally { await f.close(); }
+});
+
+test("共玩只投单个点名角色，普通动作、错误槽位和无摘要动作零唤醒", async () => {
+  const share = (content: string) => event("autonomy_share", {content});
+  const model = new ScriptedChatModel([share("看到了最后的骰点。"), reply, share("这次轮到我了。"), reply, share("旧骰点")]);
+  const f = createFixtureWithModel(model, { coplayWindowMs: 180 });
+  const { services, appStore } = f.app;
+  try {
+    seedLegacyPresetAssistant(f.app.config);
+    const id = appStore.getRoleIndexByBuiltinKey("xiacheng")!.roleId;
+    const seat = services.roles.initializeRole(id);
+    services.resources.replaceBindings(id, [{resourceId:services.resources.listBindings(f.roleId)[0]!.resourceId,
+      capability:"chat_model",enabled:true,modelName:"offline"}]);
+    services.activity.resume(id);
+    const port = await listen(f.app.server, 0, "127.0.0.1");
+    const url = `http://127.0.0.1:${port}/v1/extensions/dice`;
+    const post = async (action: string, extra = {}) => {
+      const res = await fetch(url + "/ui-action", { method: "POST", headers: {"content-type":"application/json"},
+        body: JSON.stringify({ version: "v1", payload: null, action, ...extra }) });
+      assert.equal(res.status, 200);
+      return (await res.json() as {data:unknown}).data;
+    };
+    await services.extensions.upsert(dice());
+    assert.deepEqual((await (await fetch(url)).json() as {ui:unknown}).ui, dice().manifest.ui);
+    let snapshot;
+    services.extensions.subscribeUi((_, data) => { snapshot = data; })();
+    assert.deepEqual((snapshot as unknown as {ui:unknown}[])[0]?.ui, dice().manifest.ui);
+    const wakes = (roleId: string) => services.autonomy.listWakes(roleId);
+    assert.deepEqual(await post("roll"), {data:1, summary:"点数 1"});
+    await post("ordinary", hostButton(id));
+    await post("roll", {...hostButton(id), slot:"widget"});
+    await post("roll", {...hostButton(id), file:"ui/other.html"});
+    assert.equal(await post("silent", hostButton(id)), 5);
+    await sleep(240);
+    assert.deepEqual([wakes(id).length, wakes(f.roleId).length, model.requests.length], [0,0,0]);
+    let count = 5;
+    const eventUrl = `http://127.0.0.1:${port}/v1/extension-events`;
+    async function readUntil(event: string, lastEventId?: string) {
+      const response = await fetch(eventUrl, { headers: lastEventId ? { "Last-Event-ID": lastEventId } : {},
+        signal: AbortSignal.timeout(5000) });
+      const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
+      let body = "";
+      try {
+        while (!body.split("\n\n").slice(0, -1).some(frame => frame.includes("event: " + event + "\n"))) {
+          const chunk = await reader.read();
+          assert.equal(chunk.done, false);
+          body += chunk.value;
+        }
+      } finally { await reader.cancel(); }
+      return body;
+    }
+    const initial = await readUntil("snapshot");
+    const cursor = /^id: (.+)$/m.exec(initial)![1]!;
+    for (const [target, win, text] of [[id, seat.defaultWindowId, "看到了最后的骰点。"], [f.roleId, f.windowId, "这次轮到我了。"]] as const) {
+      for (let i = 0; i < 3; i++) assert.equal(await post("roll", hostButton(target)), ++count);
+      await until(() => wakes(target)[0]?.status === "completed", "共玩自主执行完成");
+      assert.equal(wakes(target).length, 1);
+      assert.ok(model.requests.at(-2)?.system.includes("共玩 3 次。最后一次掷骰：点数 " + count));
+      assert.equal(services.messages.list(target, win, null, 10).items.at(-1)?.content, text);
+    }
+    assert.deepEqual([wakes(id).length, wakes(f.roleId).length], [1,1]);
+    const resumed = await readUntil("coplay-share", cursor);
+    const shares = [...resumed.matchAll(/id: (.+)\nevent: coplay-share\ndata: (.+)\n/g)];
+    assert.equal(shares.length, 1);
+    const notice = JSON.parse(shares[0]![2]!);
+    assert.equal(notice.roleId, f.roleId);
+    assert.equal(notice.messageId, services.messages.list(f.roleId, f.windowId, null, 10).items[0]!.messageId);
+    assert.ok(JSON.parse(shares[0]![1]!)[f.roleId] > JSON.parse(cursor)[f.roleId]);
+    // 领取时还剩一点，模型判断后已耗尽。共玩任务在此结束，次日不再领取预算续行。
+    const used = services.autonomy.getBudget(f.roleId).usedPoints;
+    services.autonomy.setBudget(f.roleId, { dailyLimit:used + 1, unlimited:false });
+    assert.equal(await post("roll", hostButton(f.roleId)), ++count);
+    await until(() => wakes(f.roleId).some(w => w.lastErrorCode === "AUTONOMY_BUDGET_EXHAUSTED"), "领取后耗尽额度");
+    assert.ok(!wakes(f.roleId).some(w => w.kind === "budget_resume"));
+    assert.equal(services.messages.list(f.roleId, f.windowId, null, 10).items.length, 1);
+  } finally { await f.close(); }
+});
+
+test("忙时跨固定窗仍合并直到领取，停机、额度耗尽、换版与禁用清除待发共玩", async () => {
+  let now = new Date("2026-11-26T05:00:00Z");
+  const model = new GatedChatModel();
+  const f = createFixtureWithModel(model, { coplayWindowMs: 40, now: () => now });
+  const { extensions, activity, autonomy } = f.app.services;
+  const role = f.roleId;
+  const wakes = () => autonomy.listWakes(role).filter(w => w.wakeId.startsWith("coplay/"));
+  try {
+    const port = await listen(f.app.server, 0, "127.0.0.1");
+    const post = async (version = "v1", status = 200) => {
+      const res = await fetch(`http://127.0.0.1:${port}/v1/extensions/dice/ui-action`, {
+        method:"POST", headers:{"content-type":"application/json"},
+        body:JSON.stringify({version, action:"roll", ...hostButton(role)}) });
+      assert.equal(res.status, status);
+      return (await res.json() as {data:number}).data;
+    };
+    await extensions.upsert(dice());
+    f.app.conversation.submitMessage(role, f.windowId, {content:"稍等一下",sourcePlatform:"nowadays",submissionId:randomUUID()});
+    await model.started.promise;
+    await post();
+    await sleep(80);
+    await post();
+    assert.equal(wakes().length, 0);
+    model.release.resolve();
+    await until(() => wakes()[0]?.status === "completed", "忙碌解除后领取");
+    assert.match(wakes()[0]!.intent, /共玩 2 次。最后一次掷骰：点数 2/);
+    await f.app.conversation.waitForIdle(role);
+
+    await post();
+    activity.requestStop(role);
+    assert.equal(await post(), 4);
+    activity.resume(role);
+    await post();
+    const used = autonomy.getBudget(role).usedPoints;
+    assert.ok(used > 0);
+    autonomy.setBudget(role, {unlimited:false, dailyLimit:used});
+    assert.equal(await post(), 6);
+    now = new Date("2026-11-27T05:00:00Z");
+    assert.equal(autonomy.getBudget(role).usedPoints, 0);
+    await sleep(85);
+    assert.equal(wakes().length, 1);
+
+    // 固定窗已到、但角色无模型时仍保留一批；换版或停用后不能在恢复模型时领取。
+    const binding = f.app.services.resources.listBindings(role)[0]!;
+    f.app.appStore.updateResource({resourceId:binding.resourceId, enabled:false});
+    await post();
+    await sleep(80);
+    await extensions.upsert(dice("v2"));
+    await post("v1", 409);
+    f.app.appStore.updateResource({resourceId:binding.resourceId, enabled:true});
+    f.app.conversation.wakePendingWork(role);
+    assert.equal(wakes().length, 1);
+    await post("v2");
+    await extensions.toggle("dice","disable");
+    await post("v2", 409);
+    await extensions.toggle("dice","enable");
+    f.app.conversation.wakePendingWork(role);
+    await sleep(85);
+    assert.equal(wakes().length, 1);
+  } finally { model.release.resolve(); await f.close(); }
+});
+
+test("Pi 的工具分发与双向槽位契约与两项主角色发布工具逐字一致", async () => {
+  const {default: install, uiActionContract, toolScopeContract} = await import(new URL("../../../pi-mcp/src/extensions/nowadays-mod.mjs", import.meta.url).href);
   let prompt = "";
   install({on: (name: string, hook: (e: {systemPrompt: string}) => {systemPrompt: string}) => {
     assert.equal(name, "before_agent_start");
     prompt = hook({systemPrompt: "base"}).systemPrompt;
   }});
-  assert.ok(prompt.includes(uiActionContract));
   const f = createFixtureWithModel(new ScriptedChatModel([]));
   try {
     const tools = createAdminTools({...f.app.services, now: () => new Date()});
-    for (const name of ["app_extension_upsert", "app_extension_publish_work"])
-      assert.ok(tools.find(t => t.name === name)?.description.includes(uiActionContract), name);
+    for (const contract of [uiActionContract, toolScopeContract]) {
+      assert.ok(prompt.includes(contract));
+      for (const name of ["app_extension_upsert", "app_extension_publish_work"])
+        assert.ok(tools.find(t => t.name === name)?.description.includes(contract), name);
+    }
   } finally { await f.close(); }
 });
 
-test("主角色在真实对话图中创建扩展，同一任务调用新工具，普通角色仅有公开工具并触发真实批次与往来事件", async () => {
+test("主角色在对话中创建并验收定向工具，名单内角色调用后触发批次与往来事件", async () => {
+  const project = source("demo", "v1");
   const model = new ScriptedChatModel([
-    event("app_extension_upsert", source("demo","v1")), event("ext_demo__hello",{}), reply,
-    event("ext_demo__hello",{}), reply, event("ext_demo__hello",{}), reply, reply, reply,
+    event("app_extension_upsert", project), event("ext_demo__stamp",{}), reply,
+    event("ext_demo__stamp",{}), reply, event("ext_demo__hello",{}), reply, reply, reply,
   ]);
   const f = createFixtureWithModel(model, {batchDelayMs:60});
   const {app, roleId, windowId} = f;
   try {
+    project.files["entry.mjs"] = demoPlugin(`
+      api.tools.register({name:"stamp", description:"验收", inputSchema:{type:"object"},
+        scope:"selected_roles", roleIds:[${JSON.stringify(roleId)}]}, (_, ctx) => ({version, roleId:ctx.roleId}));`);
     external(f.root);
     seedLegacyPresetAssistant(app.config);
     const id = app.appStore.getRoleIndexByBuiltinKey("xiacheng")!.roleId;
@@ -170,12 +458,15 @@ test("主角色在真实对话图中创建扩展，同一任务调用新工具�
     assert.ok(model.requests[0]!.tools.some(t=>t.name === "app_extension_upsert"));
     assert.ok(model.requests[0]!.tools.some(t=>t.name === "app_extension_source"));
     assert.ok(model.requests[1]!.tools.some(t=>t.name === "ext_demo__private"));
-    assert.match(JSON.stringify(model.requests[2]!.messages), /v1/);
+    assert.ok(model.requests[1]!.tools.some(t=>t.name === "ext_demo__stamp"));
+    const acceptance = model.requests[2]!.messages.filter(m=>m.role === "tool").at(-1);
+    assert.match(JSON.stringify(acceptance), new RegExp(id));
     // 停用席位活动以保留批次唤醒，避免该唤醒消费普通角色的离线脚本。
     app.services.activity.requestStop(id);
     await send(roleId,windowId,"试用工具");
     const names = model.requests[3]!.tools.map(t=>t.name);
     assert.ok(names.includes("ext_demo__hello"));
+    assert.ok(names.includes("ext_demo__stamp"));
     assert.ok(!names.some(name=>name.startsWith("app_extension") || name === "ext_demo__private"));
     const received = model.requests[4]!.messages.filter(m=>m.role === "tool").at(-1);
     assert.ok(received);
@@ -229,7 +520,7 @@ test("仓库外版本目录原子升级、失败回滚、KV 隔离、在途排�
   const host = f.app.services.extensions;
   const notices: Notice[] = [];
   host.onNotice(n=>notices.push(n));
-  const call = (name: string, id = "demo") => host.call(id,name,false,{},{roleId:f.roleId});
+  const call = (name: string, id = "demo") => host.call(id,name,{ adminSeat:false, roleId:f.roleId },{},{});
   try {
     external(f.root);
     const port = await listen(f.app.server,0,"127.0.0.1");
@@ -307,11 +598,12 @@ test("初始化超时、同步阻塞和未处理拒绝隔离，健康检查与�
     gone(stopped.pid);
     await assert.rejects(host.upsert(source("bad-init","v1","export default ()=>{while(true){}}")),{code:"EXTENSION_INIT_TIMEOUT"});
     const port = await listen(app.server,0,"127.0.0.1");
-    const timeout = assert.rejects(host.call("hung","hang",false,{},{}),{code:"EXTENSION_CALL_TIMEOUT"});
+    const caller = { adminSeat:false, roleId:f.roleId };
+    const timeout = assert.rejects(host.call("hung","hang",caller,{},{}),{code:"EXTENSION_CALL_TIMEOUT"});
     assert.equal((await fetch(`http://127.0.0.1:${port}/v1/health`)).status,200);
     await timeout;
     assert.equal(host.get("hung").status,"failed");
-    await host.call("crash","crash",false,{},{});
+    await host.call("crash","crash",caller,{},{});
     await until(()=>host.get("crash").status==="failed","运行中崩溃已收敛");
     assert.match(host.get("crash").lastError!.message,/offline crash/);
     app.conversation.submitMessage(f.roleId,f.windowId,{content:"还能收到信吗",sourcePlatform:"nowadays",submissionId:randomUUID()});
@@ -325,7 +617,7 @@ test("初始化超时、同步阻塞和未处理拒绝隔离，健康检查与�
       [["active","enabled"],["bad-init","failed"],["crash","failed"],["hung","failed"],["off","disabled"]]);
     const restored = app.services.extensions.get("active");
     assert.notEqual(restored.pid,active.pid);
-    assert.equal((await app.services.extensions.call("active","private",true,{},{})),"v1");
+    assert.equal((await app.services.extensions.call("active","private",{ adminSeat:true, roleId:"seat" },{},{})),"v1");
     await app.close();
     gone(restored.pid);
   } finally { await app.close(); await f.close(); }

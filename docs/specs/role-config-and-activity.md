@@ -226,7 +226,7 @@
 
 | 接口 | 契约 |
 | --- | --- |
-| `api.tools.register({name, description, inputSchema, scope}, handler)` | 返回注销函数。`inputSchema.type` 为 `object`。处理器接收参数和角色、窗口、执行、任务、自主执行标记，返回 JSON。模型看到的工具名为 `ext_<extId>__<name>`，每次模型请求刷新目录。范围可选 `admin_only` 或 `all_roles`。 |
+| `api.tools.register({name, description, inputSchema, scope, roleIds?}, handler)` | 返回注销函数。`inputSchema.type` 为 `object`。处理器接收参数和角色、窗口、执行、任务、自主执行标记，返回 JSON。模型看到的工具名为 `ext_<extId>__<name>`，每次模型请求刷新目录。范围可选 `admin_only`、`all_roles` 或 `selected_roles`。 |
 | `api.events.on(name, handler)` | 返回退订函数。`dialogue_batch` 投递已向席位交付的批次事实，`role_exchange` 投递双边已落库的会话状态。向当时已订阅的扩展发送，业务提交无需等待处理器。 |
 | `api.ui.onAction(name, handler)` | 在当前 Cordis Context 登记精确动作名并返回注销函数。handler 接收 JSON payload，可以读写本扩展 KV，返回 JSON。动作表独立于角色工具与平台事件，退出时由 Context 清理。 |
 | `await api.kv.get(key)`、`await api.kv.set(key, value)` | 键为非空字符串，值为 JSON，缺失返回 `null`。候选初始化的写入在版本切换时提交。 |
@@ -234,7 +234,15 @@
 | `ctx.effect(() => dispose)` | 在子进程中登记清理函数。停用、删除、升级和应用关闭均先排空在途调用，再停止 Context 并等待 PID 退出。 |
 | `api.onDispose(cleanup)` | 在扩展停止时执行额外的清理函数，支持异步清理。通过 `api.tools.register` 和 `api.events.on` 登记的资源自动注销。 |
 
-同一扩展的管理操作串行。候选握手成功后切换工具与事件注册，旧进程只排空已派发工作。新版语法或初始化失败保持旧版可用，管理工具回执提供错误码、版本及诊断。新调用遇到停用、删除或已撤销的工具时得到 `EXTENSION_UNAVAILABLE`。初始化默认限时 10 秒，工具与事件单次调用默认限时 15 秒。运行中崩溃或超时置为 `failed`，关闭时清理超过 2 秒的进程由父进程强制回收。启动时仅恢复上次启用的扩展。
+按 DL-196，主角色可先用 `app_roles_list` 查询普通角色编号，再声明 `scope: "selected_roles", roleIds: ["<roleId>"]`。名单必填，元素为去除首尾空白后的非空字符串，按首次出现顺序去重。加载时只读取声明，缺失或已删的角色 ID 可保留。空名单仅主角色可用。工具目录和调用派发均按当前版本名单匹配实际调用者，主角色验收时处理器收到其自身的 `context.roleId`。
+
+每次注册都分配进程内递增的代次。宿主按本次授权的代次派发，处理器执行前核对活动代次。同名工具注销再注册后，旧代次调用返回 `EXTENSION_UNAVAILABLE`。
+
+桌面接收扩展快照时，将缺失或为 `null` 的 `tools`、`ui` 视为空列表。故障求助保留扩展原始诊断首行（最多 240 字符）。同一目标窗口和扩展按版本、状态、完整错误码与完整诊断识别待确认提交。断流保留提交号，同一故障可重试。快照确认故障变化、恢复、换版或移除后，旧提交号失效。
+
+按 DL-199，`app_extension_publish_work` 与 `app_extension_upsert` 提示主角色可按人设和当下意图，自行决定是否通过 `app_role_chat_start` 向相关角色征求新扩展反馈。发布本身不发起往来。
+
+同一扩展的管理操作串行。候选握手成功后切换工具与事件注册，旧进程只排空已派发工作。新版语法或初始化失败保持旧版可用，管理工具回执提供错误码、版本及诊断。新调用遇到停用、删除、已撤销的工具或已被移出名单的调用者时得到 `EXTENSION_UNAVAILABLE`。初始化默认限时 10 秒，工具与事件单次调用默认限时 15 秒。运行中崩溃或超时置为 `failed`，关闭时清理超过 2 秒的进程由父进程强制回收。启动时仅恢复上次启用的扩展。
 
 | HTTP 接口 | 对应主角色管理工具 |
 | --- | --- |
@@ -242,9 +250,15 @@
 | `POST /v1/extensions/:extId/enable`、`disable`、`reload`（同一路径前缀） | `app_extension_toggle({extId, action})` |
 | `DELETE /v1/extensions/:extId` | `app_extension_delete({extId})` |
 
-桌面订阅独立的 `GET /v1/extension-events`（SSE）。连接及重连首先收到 `snapshot`，内容为各扩展的标识、版本、状态、UI 声明和最近错误。激活、停用、删除及失败时更新快照。当前活动版本的 `api.notify` 产生 `notice`（`extId`、`version`、`message`），候选版本的初始化通知在版本切换成功后投递。该流独立于角色、对话窗口和输入客户端。
+桌面订阅独立的 `GET /v1/extension-events`（SSE）。连接及重连首先收到 `snapshot`，内容为各扩展的标识、版本、状态、UI 声明、工具摘要和最近错误。HTTP 查询与 SSE 使用相同的工具摘要 `{name, scope, roleIds?}`。桌面按当前角色名展示范围，缺失的角色显示原始 ID。激活、停用、删除、失败及活动版本注册或注销工具时更新快照。当前活动版本的 `api.notify` 产生 `notice`（`extId`、`version`、`message`），候选版本的初始化通知在版本切换成功后投递。该流独立于角色、对话窗口和输入客户端。
 
 桌面父页通过 `POST /v1/extensions/:extId/ui-action` 提交 `{version,action,payload}`，成功返回 `{data}`。请求体上限为 16 KiB 加 256 字节，payload 自身上限为 16 KiB。后端同步核对启用状态与活动版本，并将请求登记在当时捕获的子进程中。动作沿用 15 秒默认调用超时，停用或升级时已派发动作随原进程排空。已停用返回 409 `EXTENSION_UNAVAILABLE`，旧版本返回 409 `EXTENSION_VERSION_MISMATCH`，未知动作返回 404 `EXTENSION_UI_ACTION_NOT_FOUND`，处理器抛错返回 422 `EXTENSION_UI_ACTION_FAILED`。
+
+**宿主共玩（DL-198）。** 仅 `page`、`widget`、`overlay` 可声明 `coplay: [{action,label}]`，最多 4 项，动作名沿用 `api.ui.onAction` 的规则，按钮文案为 1～32 字。静态资源继续使用 `asset`。HTTP 与 SSE 快照原样提供这些声明。宿主共玩 POST 额外发送 `{coplay:true, roleId, slot, file}`，按当前活动版本、槽位种类、文件和动作名核对。声明的处理器可返回 `{data,summary?}`。宿主将 `data` 送回当前子页，有非空字符串摘要才触发反应。普通 `ext:action` 保留原 JSON 返回值，即使包含摘要也只更新游戏。
+
+同一扩展和角色共享从首击开始的五秒固定窗。等待动作结果或角色空闲期间，宿主继续合并次数及最近返回的动作与结果。统一调度领取时在同一事务创建 `autonomy_wakes` 与自主执行。停机、预算耗尽、进程替换、禁用或卸载会清除待发批次，恢复后不会补发。角色决定发言时由 `autonomy_share` 写入其默认窗口。主角色沿用分享 SSE；普通角色共玩的分享落库后，经扩展 SSE 的 `coplay-share` 送至同一跨页纸签。
+
+扩展 SSE 首次连接从当前窗口游标开始。重连携带 `Last-Event-ID`，按各角色的游标补读断流期间已落库的共玩分享。桌面按 `messageId` 去重，先于角色列表到达的分享保留至角色可展示。
 
 Pi 的 `nowadays-mod.mjs` 提供互动计数器的清单、入口和 HTML 示例。主角色的 `app_extension_upsert`、`app_extension_publish_work` 描述与 Pi 提示使用同一动作、回包和主题契约。
 
@@ -266,7 +280,7 @@ Pi 的 `nowadays-mod.mjs` 提供互动计数器的清单、入口和 HTML 示例
 
 宿主读完请求体、取得上游连接后都会复核租约。派发前撤销返回 HTTP 403 与 `PI_LEASE_REVOKED`。自主工程的外部 MCP 调用与 Skill 脚本先预留工具额度，派发时提交，未派发时退回。已派发调用的晚到结果仍记入原任务，失联记为 `unknown`。[共享工具集成测试](../../apps/backend/tests/integration/pi-shared-tools.test.ts)
 
-Pi 在 `<app-root>/extensions-work/0-pi-jobs/<jobId>/<extId>/` 下独立开发。主角色核对结果后调用 `app_extension_publish_work({jobId})`。宿主从当前角色库解析工程的目标扩展；调用时可同时传入 `extId` 核对归属。手工草稿继续通过 `app_extension_publish_work({extId})` 从 `<app-root>/extensions-work/<extId>/` 发布。宿主逐级核对真实路径并拒绝 junction，读取 `manifest.json`、`.mjs` 源码与 `ui/` 资产。发布复用 §3.5 的版本暂存与候选进程握手，成功后同一任务的下一轮即可发现新工具。普通角色按 `all_roles` 声明调用公开工具。离线验收范围见[当前状态](../STATUS.md)。
+Pi 在 `<app-root>/extensions-work/0-pi-jobs/<jobId>/<extId>/` 下独立开发。主角色核对结果后调用 `app_extension_publish_work({jobId})`。宿主从当前角色库解析工程的目标扩展；调用时可同时传入 `extId` 核对归属。手工草稿继续通过 `app_extension_publish_work({extId})` 从 `<app-root>/extensions-work/<extId>/` 发布。宿主逐级核对真实路径并拒绝 junction，读取 `manifest.json`、`.mjs` 源码与 `ui/` 资产。发布复用 §3.5 的版本暂存与候选进程握手，成功后同一任务的下一轮即可发现新工具。普通角色可调用全员工具，以及按 DL-196 分发给自己的工具。离线验收范围见[当前状态](../STATUS.md)。
 
 桌面壳为自启后端生成 32 字节随机会话令牌，主框架通过 preload 取得请求头，宿主代理签发流与资产请求。常规 `/v1/*` 统一校验 `X-Nowadays-Host-Token`，裸跑可通过 `NOWADAYS_HOST_TOKEN` 启用。内部代理沿用独立 Bearer 租约。CORS 接受回环 HTTP、桌面本地协议和无 Origin 请求。扩展动作在原进程结算，活动进程已替换或卸载时返回版本失配。
 

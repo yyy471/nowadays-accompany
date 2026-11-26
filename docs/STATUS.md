@@ -4,6 +4,24 @@
 
 ## 1. 当前结论概览
 
+**四项扩展玩法（DL-196～DL-199）已完成开发，Windows 离线全量自验通过。真实大模型联调与独立复核待办。** 本轮覆盖定向分发、故障求助、互动微页共玩及新扩展反馈。玩法 4 在两项发布工具中加入可选指引。离线用例中，主角色发布定向书签工具，自行发起往来；阿澄建议增加章节并结束会话。动态页的往来接口返回完整两轮发言，双方各有两条可追溯证据，扩展收到同一会话的结束事件，阿澄随后调用工具成功保存第 42 页。[DL-199 决策](./161-digital-life-direction-decisions.md#dl-199-主角色可通过往来征求新扩展反馈) · [闭环用例](../apps/backend/tests/integration/role-exchanges.test.ts)
+
+**第二轮独立核验（R2）所列定点修复已通过 Windows 离线自验，修后独立复核待办。** 同名工具按注册代次派发。桌面兼容旧快照，按完整诊断识别求助重试。共玩声明限于三种可见槽位。普通角色分享可从角色库按游标补读，先于角色列表到达时保留，桌面按消息号去重。
+
+仓库 Node 24.22.2 下，后端类型检查与正式测试 610/610 通过。离线验收 21/21 步、81/81 场景，其中 77 个文件复跑 610/610，交付测试 5/5，真实服务调用 0。Pi 首轮 4/5（等待子进程超时），完整复跑 5/5。渲染器检查 3/3（33 个 CSS，违规 0）、测试 155/155、生产构建及桌面壳 16/16 通过。Electron 39.8.10 并发 1，最终构建全量 26/26 通过。文档巡检 0 错误、0 警告，仓库卫生 0 错误、3 项既有体积警告，`git diff --check` 通过。与启动前 PID 对照，Node、Electron、esbuild 新增残留各 0。离线报告为 `test-results/backend-acceptance/p5-2026-11-26T14-38-33-943Z-ae14502e/summary.json`，桌面报告为 `test-results/desktop-e2e/e2e-2026-11-26T14-43-14-029Z-830108cb/gates.json`。
+
+**DL-198 互动微页共玩通过 Windows 离线自验，独立复核待办。** Electron 实测宿主默认选中主角色，真实切换到阿澄并点击后，微页显示骰点 1，阿澄发生 1 次共玩唤醒并分享到默认窗口，跨页纸签显示阿澄及分享内容，主角色共玩唤醒为 0。后端覆盖首击固定五秒、忙时继续合并、普通动作零唤醒、停机与额度耗尽丢弃、换版与禁用撤销待发项。[玩法契约](./specs/role-config-and-activity.md#35-后端热扩展dl-184dl-188) · [共玩集成测试](../apps/backend/tests/integration/extension-host.test.ts) · [桌面用例](../apps/desktop/tests/e2e/extension-ui-slots.e2e.cjs)
+
+仓库 Node 24.22.2 下后端类型检查及 607/607、Pi 5/5、渲染器检查 3/3（33 个 CSS，违规 0）、单测 152/152、生产构建及桌面壳 16/16 通过。Electron 扩展槽位 1/1（`test-results/desktop-e2e/e2e-2026-11-26T13-31-52-116Z-207436a9/gates.json`），原有跨页分享纸签单独回归 1/1。文档巡检 0 错误、0 警告，仓库卫生 0 错误、3 项既有体积警告。与启动前 PID 对照，本轮 Node、Electron、esbuild 残留 0。
+
+**DL-197 扩展故障求助入口已通过 Windows 离线自验，独立复核待办。** 故障行可将快照摘要投递至主角色默认窗口。Electron 实测停机时提示「请先恢复主角色活动」，窗口新增消息 0 条。恢复后模拟首个成功回执丢失，手动重试后窗口仅有 1 条求助，扩展页原位显示「已交给主角色排查」。[决策记录](./161-digital-life-direction-decisions.md#dl-197-扩展故障可交给主角色修复) · [渲染器单测](../apps/desktop/renderer/tests/extension-repair-request.test.ts) · [Electron 用例](../apps/desktop/tests/e2e/extension-ui-slots.e2e.cjs)
+
+仓库本地 Node 24.22.2 下，渲染器检查 3/3（33 个 CSS，违规 0）、单测 150/150、生产构建和桌面壳单测 16/16 通过。按扩展槽位过滤的 Electron E2E 通过 1/1，报告位于 `test-results/desktop-e2e/e2e-2026-11-26T12-58-45-565Z-9e5e0db8/gates.json`。
+
+**DL-196 扩展工具定向分发已通过 Windows 离线自验，独立复核待办。** 名单内普通角色和主角色可见、可调，主角色验收回传自身 ID。已验证空名单、缺失 ID、热升级撤权、活动工具注销推送和旧范围兼容。Electron 扩展页实测显示角色名与缺失 ID，换版后同步显示「仅主角色」。[分发契约](./specs/role-config-and-activity.md#35-后端热扩展dl-184dl-188) · [宿主集成测试](../apps/backend/tests/integration/extension-host.test.ts) · [桌面槽位用例](../apps/desktop/tests/e2e/extension-ui-slots.e2e.cjs)
+
+仓库本地 Node 24.22.2 下，后端类型检查及 **604/604**、Pi **5/5**、渲染器检查 **3/3**（样式违规 0）、渲染器测试 **147/147** 与构建、桌面壳 **16/16** 均通过。Electron 本次按扩展槽位过滤，**1/1** 通过。
+
 **DL-195 四包的 R1 独立核验未通过。本轮已按报告修复，修后独立复核、真实大模型与打包态长任务联调待办。**
 
 包 C 使用主角色的全局资源、角色绑定与原任务续用记录。真实 Pi SDK 通过宿主读取 Skill 正文及参考文件、执行随包脚本、分别调用两个同名 stdio 工具。离线探针在 Pi 环境、启动元数据、工具目录和错误回显中均为 0。工程取消、父任务取消、角色停机、到期四种派发前撤销均返回 `403 PI_LEASE_REVOKED`，上游派发 0 次。自主工程预留额度后才派发，已派发的断连调用记为 `unknown`，晚到的成功结果归原任务。[共享工具契约](./specs/role-config-and-activity.md#36-受托管工程-mcpdl-195) · [共享工具集成测试](../apps/backend/tests/integration/pi-shared-tools.test.ts) · [撤销竞态测试](../apps/backend/tests/integration/pi-lease.test.ts)

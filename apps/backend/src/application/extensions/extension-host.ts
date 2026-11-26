@@ -1,9 +1,20 @@
+import type { CoplayBatches } from "./coplay-batches.js";
 import { z } from "zod";
 import { AppError } from "../../domain/errors.js";
-import { ExtensionFiles, extIdSchema, sourceQuery, upsertSchema, type Definition, type Manifest, type ToolSpec } from "./extension-files.js";
+import { ExtensionFiles, extIdSchema, sourceQuery, upsertSchema, visibleSlot, type UiActionTrigger, type Definition, type Manifest, type ToolSpec } from "./extension-files.js";
 import { ExtensionProcess, type PlatformEvent, type ServiceCall } from "./extension-process.js";
 
 export type Notice = { extId: string; message: string; data?: unknown };
+type UiEvent = "snapshot" | "notice" | "coplay-share";
+export type CoplayShare = { roleId: string; windowId: string; messageId: string; summary: string; streamEventId: number };
+type ExtensionCaller = { adminSeat: boolean; roleId: string };
+function canUseTool(spec: ToolSpec, caller: ExtensionCaller) {
+  return caller.adminSeat || spec.scope === "all_roles" ||
+    (spec.scope === "selected_roles" && spec.roleIds.includes(caller.roleId));
+}
+export function extensionSummary(item: ReturnType<ExtensionHost["get"]>) {
+  return { ...item, tools: item.tools.map(({ description, inputSchema, ...summary }) => summary) };
+}
 const unavailable = () => new AppError(409, "EXTENSION_UNAVAILABLE", "扩展工具当前不可用");
 function diagnostic(err: unknown) {
   return { code: err instanceof AppError ? err.code : "EXTENSION_LOAD_FAILED",
@@ -22,12 +33,13 @@ export class ExtensionHost {
   private readonly active = new Map<string, ExtensionProcess>();
   private readonly operations = new Map<string, Promise<unknown>>();
   private readonly listeners = new Set<(notice: Notice) => void>();
-  private readonly uiListeners = new Set<(event: "snapshot" | "notice", payload: unknown) => void>();
+  private readonly uiListeners = new Set<(event: UiEvent, payload: unknown) => void>();
   private readonly children = new Set<ExtensionProcess>();
   private closing = false;
   ready: Promise<void> = Promise.resolve();
 
-  constructor(root: string, private readonly timeouts = { initMs: 10_000, callMs: 15_000 }) {
+  constructor(root: string, private readonly timeouts = { initMs: 10_000, callMs: 15_000 },
+    private readonly coplay?: CoplayBatches) {
     this.files = new ExtensionFiles(root);
     this.work = new ExtensionFiles(root, "extensions-work");
   }
@@ -91,27 +103,42 @@ export class ExtensionHost {
       throw new AppError(404, "EXTENSION_ASSET_NOT_FOUND", "此扩展资源不可用");
     return this.files.uiAsset(id, record, file);
   }
-  async uiAction(id: string, expectedVersion: string, action: string, payload: unknown) {
+  async uiAction(id: string, expectedVersion: string, action: string, payload: unknown,
+    trigger?: UiActionTrigger) {
     const record = this.record(id);
     const worker = this.active.get(id);
     if (this.closing || record.status !== "enabled" || !worker) throw unavailable();
     if (record.version !== expectedVersion)
       throw new AppError(409, "EXTENSION_VERSION_MISMATCH", "此界面的扩展版本已切换");
-    // 校验和派发之间没有异步间隔，在途调用随该进程排空。
-    const result = await worker.request("ui-action", action, payload);
-    if (this.active.get(id) !== worker)
-      throw new AppError(409, "EXTENSION_VERSION_MISMATCH", "此界面的扩展版本已切换");
-    return result;
+    const button = trigger?.coplay && record.ui.find(ui => visibleSlot(ui.slot) && ui.slot === trigger.slot && ui.file === trigger.file)
+      ?.coplay?.find(item => item.action === action);
+    const finish = button && trigger.roleId ? this.coplay?.begin(id, trigger.roleId, button.label) : undefined;
+    let summary: string | undefined;
+    try {
+      const result = await worker.request("ui-action", action, payload);
+      if (this.active.get(id) !== worker)
+        throw new AppError(409, "EXTENSION_VERSION_MISMATCH", "此界面的扩展版本已切换");
+      if (button && result && typeof result === "object" && "data" in result) {
+        if ("summary" in result && typeof result.summary === "string") summary = result.summary.trim();
+        return result.data;
+      }
+      return result;
+    } finally { finish?.(summary); }
   }
+  private clearCoplay(id: string) { this.coplay?.discard(batch => batch.extId === id); }
   private uiSnapshot() {
-    return this.list().map(({ extId, version, status, ui, lastError }) => ({ extId, version, status, ui, lastError }));
+    return this.list().map(extensionSummary).map(({ extId, version, status, ui, tools, lastError }) =>
+      ({ extId, version, status, ui, tools, lastError }));
   }
-  subscribeUi(listener: (event: "snapshot" | "notice", payload: unknown) => void) {
+  subscribeUi(listener: (event: UiEvent, payload: unknown) => void) {
     listener("snapshot", this.uiSnapshot());
     this.uiListeners.add(listener);
     return () => this.uiListeners.delete(listener);
   }
-  private publishUi(event: "snapshot" | "notice" = "snapshot", payload?: unknown) {
+  publishCoplayShare(notice: CoplayShare) {
+    this.publishUi("coplay-share", { source: "autonomy_share", ...notice });
+  }
+  private publishUi(event: UiEvent = "snapshot", payload?: unknown) {
     if (!this.uiListeners.size) return;
     const data = payload ?? this.uiSnapshot();
     for (const listener of this.uiListeners) {
@@ -133,16 +160,16 @@ export class ExtensionHost {
         .catch(error => console.error("EXTENSION_EVENT_FAILED", id, name, error));
     }
   }
-  tools(admin: boolean) {
-    return [...this.active].flatMap(([extId, worker]) => worker.tools
-      .filter(spec => admin || spec.scope === "all_roles").map(spec => ({ extId, spec })));
+  tools(caller: ExtensionCaller) {
+    return [...this.active].flatMap(([extId, worker]) => worker.toolSpecs()
+      .filter(spec => canUseTool(spec, caller)).map(spec => ({ extId, spec })));
   }
-  call(id: string, name: string, admin: boolean, args: unknown, context: object, onDispatch?: () => void) {
+  call(id: string, name: string, caller: ExtensionCaller, args: unknown, context: object, onDispatch?: () => void) {
     const worker = this.active.get(id);
     const spec = worker?.tools.find(t => t.name === name);
-    if (!worker || !spec || (!admin && spec.scope !== "all_roles")) throw unavailable();
+    if (!worker || !spec || !canUseTool(spec, caller)) throw unavailable();
     onDispatch?.();
-    return worker.request("call", name, args, context);
+    return worker.request("call", name, args, { ...context, roleId: caller.roleId }, spec.regId);
   }
 
   upsert(input: unknown) {
@@ -167,6 +194,7 @@ export class ExtensionHost {
       if (action === "disable") {
         this.save(id, { ...current, status: "disabled" });
         this.active.delete(id);
+        this.clearCoplay(id);
         this.publishUi();
         await old?.dispose();
       } else if (action === "reload" || !old) {
@@ -180,6 +208,7 @@ export class ExtensionHost {
       this.save(id, { ...this.record(id), status: "disabled" });
       const old = this.active.get(id);
       this.active.delete(id);
+      this.clearCoplay(id);
       this.publishUi();
       await old?.dispose();
       this.files.remove(id);
@@ -220,11 +249,15 @@ export class ExtensionHost {
       worker = new ExtensionProcess(this.files.entry(id, spec), {
         service,
         inventory: (tools: ToolSpec[]) => {
-          if (committed && this.active.get(id) === worker) this.save(id, { ...this.record(id), tools });
+          if (committed && this.active.get(id) === worker) {
+            this.save(id, { ...this.record(id), tools });
+            this.publishUi();
+          }
         },
         failed: error => {
           if (!committed || this.active.get(id) !== worker) return;
           this.active.delete(id);
+          this.clearCoplay(id);
           const failed = { ...this.record(id), status: "failed" as const, lastError: diagnostic(error) };
           this.records.set(id, failed);
           this.publishUi();
@@ -237,9 +270,10 @@ export class ExtensionHost {
       void child.exited.promise.then(() => this.children.delete(child));
       await worker.ready.promise;
       worker.assertAlive();
-      this.save(id, { ...spec, status: "enabled", tools: worker.tools, lastError: null,
+      this.save(id, { ...spec, status: "enabled", tools: worker.toolSpecs(), lastError: null,
         kv: { ...this.records.get(id)?.kv, ...Object.fromEntries(writes) } });
       this.active.set(id, worker);
+      this.clearCoplay(id);
       committed = true;
       this.publishUi();
     } catch (err) {
@@ -258,6 +292,7 @@ export class ExtensionHost {
   }
   async close() {
     this.closing = true;
+    this.coplay?.discard(() => true);
     await Promise.allSettled([...this.operations.values()]);
     const workers = [...this.children];
     this.active.clear();

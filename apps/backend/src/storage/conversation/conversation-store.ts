@@ -1118,6 +1118,7 @@ export class ConversationStore {
 
   appendProactiveMessage(input: {
     source?: "autonomy_share" | "task_circuit_breaker";
+    coplay?: boolean;
     windowId: string;
     content: string;
     executionId: string;
@@ -1186,6 +1187,7 @@ export class ConversationStore {
           replyCreatedAt: message.createdAt,
           proactive: true,
           source: input.source ?? "system",
+          ...(input.coplay ? { coplay: true } : {}),
           ...(input.source === "autonomy_share" ? {
             summary: Array.from(input.content).slice(0, 140).join(""),
             homeAssetId: segments[0]?.homeAssetId ?? null,
@@ -1673,6 +1675,14 @@ export class ConversationStore {
       )
       .all(this.roleId, windowId, after, limit) as StreamRow[];
     return rows.map(mapStreamEvent);
+  }
+
+  coplaySharesAfter(windowId: string, after: number) {
+    return this.db.prepare(`SELECT stream_event_id AS streamEventId,
+      json_extract(payload_json, '$.replyMessageId') AS messageId, json_extract(payload_json, '$.summary') AS summary
+      FROM execution_stream_events WHERE role_id = ? AND window_id = ? AND stream_event_id > ?
+      AND event_type = 'message_completed' AND json_extract(payload_json, '$.coplay') = 1 ORDER BY stream_event_id`)
+      .all(this.roleId, windowId, after) as { streamEventId: number; messageId: string; summary: string }[];
   }
 
   listLatestEvents(

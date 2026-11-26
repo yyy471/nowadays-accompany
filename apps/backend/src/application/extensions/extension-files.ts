@@ -16,10 +16,14 @@ export const sourceQuery = z.object({
   extId: extIdSchema, file: sourceFile.optional(), version: z.string().max(64).refine(component).optional(),
   offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
 });
+const actionName = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_.-]{0,63}$/);
+export const visibleSlot = (slot: string) => ["page", "widget", "overlay"].includes(slot);
 export const definition = z.object({
   version: z.string().max(64).refine(component),
   entry: relativeFile.refine(s => s.endsWith(".mjs")),
-  ui: z.array(z.object({ slot: z.string().min(1), file: relativeFile.refine(s => s.startsWith("ui/")) })).default([]),
+  ui: z.array(z.object({ slot: z.string().min(1), file: relativeFile.refine(s => s.startsWith("ui/")),
+    coplay: z.array(z.object({ action: actionName, label: z.string().trim().min(1).max(32) })).max(4).optional(),
+  }).refine(ui => ui.coplay === undefined || visibleSlot(ui.slot), "只有可见槽位可声明 coplay")).default([]),
 });
 export const upsertSchema = z.object({
   extId: extIdSchema, manifest: definition,
@@ -28,14 +32,25 @@ export const upsertSchema = z.object({
 export const uiActionPayloadBytes = 16 * 1024;
 export const uiActionSchema = z.object({
   version: definition.shape.version,
-  action: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_.-]{0,63}$/),
-  payload: z.json(),
+  action: actionName,
+  payload: z.json().default(null),
+  coplay: z.boolean().optional(),
+  roleId: z.string().min(1).max(128).optional(),
+  slot: z.string().max(64).optional(),
+  file: relativeFile.optional(),
 });
-export const toolSpec = z.object({
+export type UiActionTrigger = Pick<z.infer<typeof uiActionSchema>, "coplay" | "roleId" | "slot" | "file">;
+const toolFields = z.object({
   name: z.string().regex(/^[a-z][a-z0-9_]{0,31}$/),
   description: z.string().min(1), inputSchema: z.record(z.string(), z.unknown()).refine(s => s.type === "object"),
-  scope: z.enum(["admin_only", "all_roles"]),
 });
+export const toolSpec = z.discriminatedUnion("scope", [
+  toolFields.extend({ scope: z.enum(["admin_only", "all_roles"]) }),
+  toolFields.extend({
+    scope: z.literal("selected_roles"),
+    roleIds: z.array(z.string().trim().min(1)).transform(ids => [...new Set(ids)]),
+  }),
+]);
 export type ToolSpec = z.infer<typeof toolSpec>;
 const manifestSchema = definition.extend({
   status: z.enum(["enabled", "disabled", "failed"]),

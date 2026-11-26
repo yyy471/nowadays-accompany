@@ -48,6 +48,8 @@ import {
 import { registerRoleActivityRoutes } from "./role-activity-routes.js";
 import { registerExtensionImportRoutes } from "./extension-import-routes.js";
 import { uiActionPayloadBytes, uiActionSchema } from "../application/extensions/extension-files.js";
+import { extensionSummary, type CoplayShare } from "../application/extensions/extension-host.js";
+import { z } from "zod";
 import { globalWrite, roleWrite } from "./write-guard.js";
 import {
   GLOBAL_CONFIG_WRITES,
@@ -162,11 +164,34 @@ export function registerApiRoutes(
   });
   registerRoleActivityRoutes(router, activity);
   registerExtensionImportRoutes(router, services.resources);
-  router.add("GET", "/v1/extension-events", ({ response }) => {
+  router.add("GET", "/v1/extension-events", ({ request, response }) => {
+    const header = request.headers["last-event-id"];
+    let after: Record<string, number> | undefined;
+    if (typeof header === "string") {
+      try { after = z.record(z.string(), z.int().nonnegative()).parse(JSON.parse(header)); }
+      catch { throw new SseCursorInvalidError(header); }
+    }
+    // 各角色独立分库，重连时分别续读。首次连接从各默认窗口的当前游标开始。
+    const cursors: Record<string, number> = {};
+    const replay: CoplayShare[] = [];
+    for (const role of services.roles.listRoles()) {
+      if (role.isBuiltin || !role.defaultWindowId) continue;
+      const { roleId, defaultWindowId: windowId } = role;
+      const history = services.autonomy.coplayShareHistory(roleId, windowId, after ? after[roleId] ?? 0 : null);
+      cursors[roleId] = history.cursor;
+      replay.push(...history.shares.map(share => ({ ...share, roleId, windowId })));
+    }
     response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
+    const writeShare = (share: CoplayShare) => {
+      cursors[share.roleId] = share.streamEventId;
+      response.write(`id: ${JSON.stringify(cursors)}\nevent: coplay-share\ndata: ${JSON.stringify({ ...share, source: "autonomy_share" })}\n\n`);
+    };
+    response.write(`id: ${JSON.stringify(cursors)}\n`);
     const unsubscribe = services.extensions.subscribeUi((event, data) => {
-      response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      if (event === "coplay-share") writeShare(data as CoplayShare);
+      else response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     });
+    for (const share of replay) writeShare(share);
     response.once("close", unsubscribe);
     return undefined;
   });
@@ -182,13 +207,13 @@ export function registerApiRoutes(
     response.setHeader("x-content-type-options", "nosniff");
     return { status: 200, contentType: types[file.split(".").pop()!.toLowerCase()] ?? "application/octet-stream", body };
   });
-  router.add("GET", "/v1/extensions", () => ({ status: 200, body: { items: services.extensions.list() } }));
-  router.add("GET", "/v1/extensions/:extId", ({ params }) => ({ status: 200, body: services.extensions.get(params.extId ?? "") }));
+  router.add("GET", "/v1/extensions", () => ({ status: 200, body: { items: services.extensions.list().map(extensionSummary) } }));
+  router.add("GET", "/v1/extensions/:extId", ({ params }) => ({ status: 200, body: extensionSummary(services.extensions.get(params.extId ?? "")) }));
   router.add("POST", "/v1/extensions/:extId/ui-action", async ({ request, params }) => {
-    const { version, action, payload } = parseBody(uiActionSchema, await readJsonBody(request, uiActionPayloadBytes + 256));
+    const { version, action, payload, ...trigger } = parseBody(uiActionSchema, await readJsonBody(request, uiActionPayloadBytes + 256));
     if (Buffer.byteLength(JSON.stringify(payload)) > uiActionPayloadBytes)
       throw new HttpError(413, "PAYLOAD_TOO_LARGE", "界面动作的 JSON 载荷超过 16 KiB");
-    const data = await services.extensions.uiAction(params.extId ?? "", version, action, payload);
+    const data = await services.extensions.uiAction(params.extId ?? "", version, action, payload, trigger);
     return { status: 200, body: { data } };
   });
   for (const action of ["enable", "disable", "reload"] as const) {

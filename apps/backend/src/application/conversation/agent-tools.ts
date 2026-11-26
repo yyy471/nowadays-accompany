@@ -224,12 +224,13 @@ export async function loadAgentTools(
   return {
     get tools() {
       if (!extensions) return tools;
-      const registered = extensions.tools(adminSeat).map(({ extId, spec }): ConversationTool => ({
+      const caller = { adminSeat, roleId: input.roleId };
+      const registered = extensions.tools(caller).map(({ extId, spec }): ConversationTool => ({
         ...spec, name: `ext_${extId}__${spec.name}`, source: "extension", recorded: true,
         execute: (args, context) => runTool(async () => {
           context.checkDispatch?.();
-          const result = extensions.call(extId, spec.name, adminSeat, args, {
-            roleId: context.roleId, executionId: context.executionId, windowId: context.windowId,
+          const result = extensions.call(extId, spec.name, caller, args, {
+            executionId: context.executionId, windowId: context.windowId,
             taskId: context.taskId, autonomous: context.autonomous ?? false,
           }, context.onDispatch);
           return { status: "success", adaptedResult: await result };

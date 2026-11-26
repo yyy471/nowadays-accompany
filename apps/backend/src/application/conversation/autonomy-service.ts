@@ -1,3 +1,4 @@
+import { CoplayBatches } from "../extensions/coplay-batches.js";
 import type Database from "better-sqlite3";
 import { AppError, AutonomyBudgetExhaustedError } from "../../domain/errors.js";
 import {
@@ -14,6 +15,9 @@ import type { RoleAccess } from "../role/role-access.js";
 export interface AutonomyServiceOptions {
   now?: () => Date;
   timeZone?: string;
+  coplayWindowMs?: number | undefined;
+  coplayActive?: (roleId: string) => boolean;
+  onCoplayDue?: (roleId: string) => void;
 }
 
 export interface AutonomyStatus {
@@ -24,6 +28,7 @@ export interface AutonomyStatus {
 }
 
 export interface ProactiveMessageNotice {
+  coplayShare?: { summary: string; streamEventId: number };
   roleId: string;
   windowId: string;
   messageId: string;
@@ -33,6 +38,7 @@ export interface ProactiveMessageNotice {
 const AUTONOMY_WINDOW_SOURCE = "nowadays-autonomy";
 
 export class AutonomyService {
+  readonly coplay: CoplayBatches;
   private readonly now: () => Date;
   private readonly timeZone: string | undefined;
   private wakeListener: ((roleId: string) => void) | null = null;
@@ -46,6 +52,11 @@ export class AutonomyService {
   ) {
     this.now = options.now ?? (() => new Date());
     this.timeZone = options.timeZone;
+    this.coplay = new CoplayBatches(roleId => {
+      if (!options.coplayActive?.(roleId)) return false;
+      const budget = this.getBudget(roleId);
+      return budget.unlimited || budget.usedPoints < budget.dailyLimit;
+    }, roleId => options.onCoplayDue?.(roleId), options.coplayWindowMs);
   }
 
   setWakeListener(listener: ((roleId: string) => void) | null): void {
@@ -83,7 +94,7 @@ export class AutonomyService {
     roleId: string,
     input: { dailyLimit?: number; unlimited: boolean },
   ): AutonomyBudgetRecord {
-    return this.access.withStore(roleId, (storage) => {
+    const budget = this.access.withStore(roleId, (storage) => {
       const now = this.now().toISOString();
       const store = this.store(storage.business.db, roleId);
       return store.setBudget({
@@ -92,6 +103,8 @@ export class AutonomyService {
         now,
       });
     });
+    this.coplay.budgetChanged(roleId);
+    return budget;
   }
 
   scheduleWake(
@@ -203,10 +216,10 @@ export class AutonomyService {
     });
   }
 
-  beginDueWake(roleId: string, windowId: string): BegunAutonomyWake | null {
+  beginDueWake(roleId: string, windowId: string, coplay?: { wakeId: string; intent: string }): BegunAutonomyWake | null {
     return this.access.withStore(roleId, (storage) =>
       this.store(storage.business.db, roleId).beginDueWake({
-        windowId,
+        windowId, coplay,
         now: this.now().toISOString(),
       }),
     );
@@ -263,6 +276,13 @@ export class AutonomyService {
     );
   }
 
+  coplayShareHistory(roleId: string, windowId: string, after: number | null) {
+    return this.access.withStore(roleId, storage => {
+      const store = new ConversationStore(storage.business.db, roleId);
+      return { cursor: after ?? store.latestEventId(windowId), shares: after === null ? [] : store.coplaySharesAfter(windowId, after) };
+    });
+  }
+
   shareMessage(
     roleId: string,
     input: { content: string; executionId: string },
@@ -283,18 +303,22 @@ export class AutonomyService {
         this.timeZone,
       );
       const now = this.now().toISOString();
-      const message = storage.business.db.transaction(() => {
-        const message = store.appendProactiveMessage({
-          source: "autonomy_share", windowId: window.windowId, content, executionId: input.executionId, now,
-        });
+      const { message, coplayShare } = storage.business.db.transaction(() => {
         const autonomy = this.store(storage.business.db, roleId);
         const activity = autonomy.getActivityByExecution(input.executionId);
+        const coplay = activity?.wakeId?.startsWith("coplay/") === true;
+        const message = store.appendProactiveMessage({
+          source: "autonomy_share", coplay, windowId: window.windowId, content, executionId: input.executionId, now,
+        });
         if (activity) autonomy.updateActivity({
           activityId: activity.activityId, status: activity.status, sharedMessageId: message.messageId, now,
         });
-        return message;
+        return { message, coplayShare: coplay ? {
+          summary: Array.from(content).slice(0, 140).join(""), streamEventId: store.latestEventId(window.windowId),
+        } : null };
       })();
       this.proactiveMessageListener?.({
+        ...(coplayShare && { coplayShare }),
         roleId,
         windowId: window.windowId,
         messageId: message.messageId,
@@ -309,11 +333,13 @@ export class AutonomyService {
     exhausted: boolean;
     budget: AutonomyBudgetRecord;
   } {
-    return this.access.withStore(roleId, (storage) =>
+    const result = this.access.withStore(roleId, (storage) =>
       this.store(storage.business.db, roleId).consumePoint({
         now: this.now().toISOString(),
       }),
     );
+    this.coplay.budgetChanged(roleId);
+    return result;
   }
 
   reserveToolPoint(
@@ -328,6 +354,7 @@ export class AutonomyService {
         toolCallId,
         now: this.now().toISOString(),
       });
+      this.coplay.budgetChanged(roleId);
       if (result.exhausted) {
         throw new AutonomyBudgetExhaustedError(
           roleId,
@@ -346,12 +373,14 @@ export class AutonomyService {
     roleId: string,
     toolCallId: string,
   ): { counted: boolean; found: boolean } {
-    return this.access.withStore(roleId, (storage) =>
+    const result = this.access.withStore(roleId, (storage) =>
       this.store(storage.business.db, roleId).commitToolReservation({
         toolCallId,
         now: this.now().toISOString(),
       }),
     );
+    this.coplay.budgetChanged(roleId);
+    return result;
   }
 
   releaseToolReservation(roleId: string, toolCallId: string): void {

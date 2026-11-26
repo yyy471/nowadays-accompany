@@ -239,6 +239,7 @@ export class SegmentAnnotationService {
             });
         })();
       });
+      if (prepared.purpose === "autonomous") this.autonomy?.coplay.budgetChanged(input.roleId);
       if (started === null) {
         return 0;
       }

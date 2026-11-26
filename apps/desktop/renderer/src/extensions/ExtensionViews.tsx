@@ -4,6 +4,9 @@ import { Button, Field, Select, Switch, UiThemeScope } from '../ui';
 import { useSurfaceDismiss } from '../ui/surface-dismiss';
 import { ExtensionSlotFrame, type Extension, type Slot } from './ExtensionSlotFrame';
 import type { ExtensionState } from './use-extensions';
+import type { RoleListItem } from '../types';
+import { toolScopeLabel } from './tool-scope';
+import { faultFingerprint, hasExtensionFault } from './repair-request';
 import '../styles/extensions.css';
 
 function entries(items: Extension[], kind: string) {
@@ -13,7 +16,26 @@ function entries(items: Extension[], kind: string) {
     })));
 }
 
-function ExtensionRow({ item }: { item: Extension }) {
+interface RepairTarget {
+  seat: RoleListItem | undefined;
+  sendRepair: ExtensionState['sendRepair'];
+}
+
+function RepairAction({ item, seat, sendRepair }: RepairTarget & { item: Extension }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<Awaited<ReturnType<typeof sendRepair>>>();
+  async function send() {
+    setBusy(true);
+    setResult(await sendRepair(seat, item));
+    setBusy(false);
+  }
+  return <div className="extension-repair">
+    <Button size="sm" busy={busy} disabled={busy || result?.sent} onClick={() => void send()}>交给主角色修复</Button>
+    <p role="status">{result?.notice}</p>
+  </div>;
+}
+
+function ExtensionRow({ item, roles, seat, sendRepair }: RepairTarget & { item: Extension; roles: RoleListItem[] }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const toggle = async (enabled: boolean) => {
@@ -26,11 +48,13 @@ function ExtensionRow({ item }: { item: Extension }) {
     <Switch label={item.extId} checked={item.status === 'enabled'} busy={busy || item.status === 'starting'}
       onCheckedChange={enabled => void toggle(enabled)}/>
     <small className="extension-version" title={item.version}>{item.version}</small>
+    {item.tools.map(tool => <p key={tool.name} className="extension-tool">{tool.name} → {toolScopeLabel(tool, roles)}</p>)}
     {(error || item.lastError) && <span className="extension-error" role="status">{error || item.lastError?.message}</span>}
+    {hasExtensionFault(item) && <RepairAction key={faultFingerprint(item)} item={item} seat={seat} sendRepair={sendRepair}/>}
   </li>;
 }
 
-export function ExtensionsPage({ state }: { state: ExtensionState }) {
+export function ExtensionsPage({ state, roles, seat }: { state: ExtensionState; roles: RoleListItem[]; seat: RepairTarget['seat'] }) {
   const [selection, setSelection] = useState('');
   const pages = entries(state.items, 'page');
   const id = (extension: Extension, entry: Slot) => extension.extId + '/' + entry.file;
@@ -42,7 +66,8 @@ export function ExtensionsPage({ state }: { state: ExtensionState }) {
     <div className="extension-layout" data-has-slots={hasSlots || undefined}>
       <section className="extension-catalog" aria-labelledby="extension-catalog-heading">
         <h2 id="extension-catalog-heading">已安装扩展</h2>
-        {state.items.length ? <ul>{state.items.map(item => <ExtensionRow key={item.extId} item={item}/>)}</ul> :
+        {state.items.length ? <ul>{state.items.map(item =>
+          <ExtensionRow key={item.extId} item={item} roles={roles} seat={seat} sendRepair={state.sendRepair}/>)}</ul> :
           <p role="status">{state.status || '尚未安装扩展。'}</p>}
       </section>
       {hasSlots && <div className="extension-slots">
@@ -52,12 +77,12 @@ export function ExtensionsPage({ state }: { state: ExtensionState }) {
               {pages.map(({ extension, entry, key }) => <option key={key} value={id(extension, entry)}>{extension.extId} · {entry.file}</option>)}
             </Select>
           </Field>
-          <ExtensionSlotFrame key={selected.key} extension={selected.extension} entry={selected.entry}/>
+          <ExtensionSlotFrame key={selected.key} roles={roles} extension={selected.extension} entry={selected.entry}/>
         </section>}
         {widgets.length > 0 && <section aria-labelledby="extension-widget-heading">
           <h2 id="extension-widget-heading">挂件</h2>
           <div className="extension-widget-grid">
-            {widgets.map(({ key, ...slot }) => <ExtensionSlotFrame key={key} {...slot}/>)}
+            {widgets.map(({ key, ...slot }) => <ExtensionSlotFrame key={key} roles={roles} {...slot}/>)}
           </div>
         </section>}
       </div>}
@@ -65,11 +90,11 @@ export function ExtensionsPage({ state }: { state: ExtensionState }) {
   </UiThemeScope>;
 }
 
-function Overlay({ extension, entry, dismiss }: { extension: Extension; entry: Slot; dismiss: () => void }) {
+function Overlay({ extension, entry, roles, dismiss }: { extension: Extension; entry: Slot; roles: RoleListItem[]; dismiss: () => void }) {
   const { surface, closing, close } = useSurfaceDismiss<HTMLElement>(dismiss);
   return <article ref={surface} className="ui-floating-surface" data-closing={closing || undefined} inert={closing}>
     <header><strong>{extension.extId}</strong><Button aria-label="关闭扩展浮层" onClick={close}>关闭</Button></header>
-    <ExtensionSlotFrame extension={extension} entry={entry} dismiss={close}/>
+    <ExtensionSlotFrame roles={roles} extension={extension} entry={entry} dismiss={close}/>
   </article>;
 }
 
@@ -81,13 +106,13 @@ function ExtensionNotice({ notice, dismiss }: { notice: ExtensionState['notices'
   </article>;
 }
 
-export function ExtensionOverlays({ state }: { state: ExtensionState }) {
+export function ExtensionOverlays({ state, roles }: { state: ExtensionState; roles: RoleListItem[] }) {
   const [closed, setClosed] = useState<string[]>([]);
   const slots = entries(state.items, 'overlay').filter(slot => !closed.includes(slot.key));
   const notices = Object.values(state.notices);
   if (!slots.length && !notices.length) return null;
   return <UiThemeScope theme="xiacheng" className="extension-overlays">
     {notices.map(notice => <ExtensionNotice key={notice.receiptId} notice={notice} dismiss={() => state.dismiss(notice)}/>)}
-    {slots.map(({ key, ...slot }) => <Overlay key={key} {...slot} dismiss={() => setClosed(previous => [...previous, key])}/>)}
+    {slots.map(({ key, ...slot }) => <Overlay key={key} roles={roles} {...slot} dismiss={() => setClosed(previous => [...previous, key])}/>)}
   </UiThemeScope>;
 }

@@ -15,3 +15,8 @@ export function receiveShare(value: Partial<ShareNotice> | null, seatId: string,
   seen.add(value.messageId);
   return visibleWindow === mainWindow ? null : value as ShareNotice;
 }
+
+export function receiveCoplayShare(value: Partial<ShareNotice> | null, visibleWindow: string | null, seen: Set<string>) {
+  if (!value?.roleId || !value.windowId) return null;
+  return receiveShare(value, value.roleId, value.windowId, visibleWindow, seen);
+}

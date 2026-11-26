@@ -5,7 +5,7 @@ import { AppError } from "../../domain/errors.js";
 import { toolSpec, type ToolSpec } from "./extension-files.js";
 
 const inventory = z.object({
-  tools: z.array(toolSpec), events: z.array(z.enum(["dialogue_batch", "role_exchange"])),
+  tools: z.array(toolSpec.and(z.object({ regId: z.int().positive() }))), events: z.array(z.enum(["dialogue_batch", "role_exchange"])),
 });
 export type PlatformEvent = z.infer<typeof inventory>["events"][number];
 const service = z.discriminatedUnion("method", [
@@ -36,7 +36,7 @@ export class ExtensionProcess {
   private stopping = false;
   private error: AppError | undefined;
   private stderr = "";
-  tools: ToolSpec[] = [];
+  tools: z.infer<typeof inventory>["tools"] = [];
   events: PlatformEvent[] = [];
 
   constructor(location: {dir: string; entry: string}, private readonly hooks: Hooks,
@@ -76,7 +76,7 @@ export class ExtensionProcess {
         if (new Set(specs.tools.map(t => t.name)).size !== specs.tools.length) throw Error("EXTENSION_DUPLICATE_TOOL");
         this.tools = specs.tools;
         this.events = specs.events;
-        this.hooks.inventory(this.tools);
+        this.hooks.inventory(this.toolSpecs());
         if (msg.type === "ready" && !this.heartbeat) {
           clearTimeout(this.startup);
           let lastPong = Date.now();
@@ -125,14 +125,15 @@ export class ExtensionProcess {
     this.hooks.failed(error);
   }
   assertAlive() { if (this.error) throw this.error; }
-  request(type: "call" | "event" | "ui-action", name: string, args: unknown, context?: object) {
+  toolSpecs() { return this.tools.map(({ regId, ...spec }) => spec); }
+  request(type: "call" | "event" | "ui-action", name: string, args: unknown, context?: object, regId?: number) {
     this.assertAlive();
     if (this.stopping) throw new AppError(409, "EXTENSION_UNAVAILABLE", "扩展正在退出");
     const id = ++this.serial;
     const done = deferred<unknown>();
     const timer = setTimeout(() => this.fail("EXTENSION_CALL_TIMEOUT", "扩展调用超时：" + name), this.callMs);
     this.calls.set(id, {done, timer});
-    this.send({ type, id, name, args, context });
+    this.send({ type, id, name, args, context, regId });
     return done.promise;
   }
   async dispose() {

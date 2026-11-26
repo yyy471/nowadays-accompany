@@ -991,6 +991,7 @@ export class AutonomyStore {
   }
 
   beginDueWake(input: {
+    coplay?: { wakeId: string; intent: string } | undefined;
     windowId: string;
     now?: string;
   }): BegunAutonomyWake | null {
@@ -1013,7 +1014,7 @@ export class AutonomyStore {
             LIMIT 1`,
         )
         .get(this.roleId, now) as WakeRow | undefined;
-      if (!wakeRow) {
+      if (!wakeRow && !input.coplay) {
         return null;
       }
       const role = this.db
@@ -1033,7 +1034,10 @@ export class AutonomyStore {
         throw new AppError(404, "AUTONOMY_WINDOW_NOT_FOUND", "自主活动窗口不存在");
       }
 
-      const wake = mapWake(wakeRow);
+      // 共玩只在领取事务中落库，忙时后续点击仍可更新该批。
+      const wake = wakeRow ? mapWake(wakeRow) : this.createWake({
+        wakeId: input.coplay!.wakeId, intent: input.coplay!.intent, kind: "scheduled", scheduledAt: now, now,
+      });
       let taskId: string | null = null;
       let relation: "initiates" | "continues" = "initiates";
       if (wake.kind === "budget_resume") {

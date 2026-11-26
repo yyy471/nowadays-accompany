@@ -42,18 +42,23 @@ export function bindSlotBridge(frame: HTMLIFrameElement, extId: string, version:
   const parent = frame.ownerDocument.defaultView!;
   let generation = 0;
   const navigated = () => { generation++; };
-  async function receive(event: MessageEvent) {
+  function receive(event: MessageEvent) {
     const target = frame.contentWindow;
     const command = slotCommand(target, event);
     if (!command || !frame.isConnected || !target) return;
     if (command.type !== 'ext:action') { control(command); return; }
+    // 子页消息只投影普通动作字段；共玩参数只能由宿主按钮构造。
+    void dispatch({ action: command.action, payload: command.payload }, { type: 'host:action-result', id: command.id });
+  }
+  async function dispatch(body: object, envelope: object) {
+    const target = frame.contentWindow;
+    if (!frame.isConnected || !target) return;
     // 跨文档导航会复用 WindowProxy，每次 load 单独标记当前文档。
     const started = generation;
-    const envelope = { type: 'host:action-result', id: command.id };
     let result;
     try {
       const { data } = await request('/v1/extensions/' + extId + '/ui-action', {
-        method: 'POST', body: { version, action: command.action, payload: command.payload }
+        method: 'POST', body: { version, ...body }
       });
       result = { ...envelope, ok: true, data };
     } catch (error) {
@@ -65,10 +70,16 @@ export function bindSlotBridge(frame: HTMLIFrameElement, extId: string, version:
   }
   frame.addEventListener('load', navigated);
   parent.addEventListener('message', receive);
-  return () => {
-    generation++;
-    frame.removeEventListener('load', navigated);
-    parent.removeEventListener('message', receive);
+  return {
+    play(event: MouseEvent, slot: string, file: string, action: string, roleId: string) {
+      if (event.isTrusted) return dispatch({ slot, file, action, roleId, coplay: true, payload: null },
+        { type: 'ext:coplay-result', action });
+    },
+    dispose() {
+      generation++;
+      frame.removeEventListener('load', navigated);
+      parent.removeEventListener('message', receive);
+    }
   };
 }
 

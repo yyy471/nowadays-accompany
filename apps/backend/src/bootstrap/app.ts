@@ -52,6 +52,7 @@ import { recoverRoleTransfer } from "../application/transfer/role-transfer-publi
 
 export interface BackendAppOptions {
   piLeaseMs?: number;
+  coplayWindowMs?: number;
   extensionTimeouts?: { initMs: number; callMs: number };
   batchDelayMs?: number;
   now?: () => Date;
@@ -237,8 +238,10 @@ function assembleBackendApp(
     credentialResolver: credentials,
     onModelCallFinished,
   });
-  const autonomy = new AutonomyService(roleAccess, {
-    now,
+  const autonomy: AutonomyService = new AutonomyService(roleAccess, {
+    now, coplayWindowMs: options.coplayWindowMs,
+    coplayActive: id => appStore.getRoleIndex(id)?.initStatus === "ready" && activity.gate.canStart(id),
+    onCoplayDue: id => conversation.runDueAutonomy(id),
     ...(options.timeZone === undefined ? {} : { timeZone: options.timeZone }),
   });
   const memoryRuntime = options.disableMemoryRuntime
@@ -271,7 +274,7 @@ function assembleBackendApp(
         },
       );
   // 管理工具需要反向引用对话服务（任务查询与记忆触发），构造完成后再补上。
-  const extensions = new ExtensionHost(config.appRoot, options.extensionTimeouts);
+  const extensions = new ExtensionHost(config.appRoot, options.extensionTimeouts, autonomy.coplay);
   const modelProxy = new PiModelProxy(credentials, tokenUsage, resourceService);
   const toolProxy = new PiToolProxy(modelProxy, appStore, roleAccess, autonomy, config.appRoot,
     (roleId, taskId) => conversation.releaseTaskResources(roleId, taskId));
@@ -381,7 +384,11 @@ function assembleBackendApp(
       conversation.isRunning(roleId) ||
       (memoryRuntime?.isBusy(roleId) ?? false),
     // 恢复后把停止时暂停的原任务链与到期待办接回调度（RA-R02）。
-    stopExchanges: (roleId) => { void pi.stop(roleId).catch(error => console.warn("PI_STOP_FAILED", roleId, error)); conversation.exchanges.stop(roleId); },
+    stopExchanges: (roleId) => {
+      autonomy.coplay.discard(batch => batch.roleId === roleId);
+      void pi.stop(roleId).catch(error => console.warn("PI_STOP_FAILED", roleId, error));
+      conversation.exchanges.stop(roleId);
+    },
     resumeWork: (roleId) => conversation.rescheduleAfterStop(roleId),
   });
   memoryRuntime?.recoverOnStartup();
@@ -501,9 +508,12 @@ function assembleBackendApp(
   roleDeletion.reconcilePendingDeletions();
   isRoleDeleting = (roleId) => roleDeletion.isDeleting(roleId);
   autonomy.setWakeListener((roleId) => conversation.refreshWakeTimer(roleId));
-  autonomy.setProactiveMessageListener((notice) =>
-    conversation.queueSegmentAnnotation(notice),
-  );
+  autonomy.setProactiveMessageListener(notice => {
+    const { coplayShare, roleId, windowId, messageId } = notice;
+    if (coplayShare && !isAdminSeat(appStore.getRoleIndex(roleId)?.builtinKey ?? null))
+      extensions.publishCoplayShare({ roleId, windowId, messageId, ...coplayShare });
+    conversation.queueSegmentAnnotation(notice);
+  });
   const services: ApiServices = {
     roles: roleService,
     messages: messageService,

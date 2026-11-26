@@ -15,6 +15,7 @@ const shares = [];
 const reconnects = [];
 const writes = [];
 const date = new Date().toISOString();
+const rolesReady = Promise.withResolvers();
 
 function route(path, req, res) {
   const json = data => {
@@ -27,7 +28,26 @@ function route(path, req, res) {
     res.write('retry: 100\n: connected\n\n');
   };
   if (req.method === 'POST') writes.push(path);
-  if (path === '/v1/roles') return json({items: roles});
+  if (path === '/v1/roles') {
+    void rolesReady.promise.then(() => json({items: roles}));
+    return true;
+  }
+  if (path === '/v1/extension-events') {
+    stream();
+    const share = (id, summary) => res.write(`id: ${JSON.stringify({a: id})}\nevent: coplay-share\ndata: ${JSON.stringify({
+      source: 'autonomy_share', roleId: 'a', windowId: 'a-main', messageId: 'coplay-' + id, summary,
+    })}\n\n`);
+    if (!req.headers['last-event-id']) {
+      share(1, '角色列表之前的共玩');
+      res.end();
+    } else {
+      assert.equal(req.headers['last-event-id'], '{"a":1}');
+      share(2, '断流期间的共玩');
+      share(2, '断流期间的共玩');
+      rolesReady.resolve();
+    }
+    return true;
+  }
   if (path === '/v1/roles/b/appearance/assets/home') {
     res.writeHead(200, {'content-type': 'image/png'});
     res.end(fs.readFileSync(xiachengPortraitFixture));
@@ -73,6 +93,12 @@ check(async ({cmd, ev, until, errors}) => {
   const waitCard = id => until(() => ev(`document.querySelector('.share-slip p')?.textContent===${JSON.stringify(id)}`), '收到 ' + id);
   const locate = id => until(() => has(`[data-located][data-message-id="${id}"]`), '定位 ' + id);
   await until(() => notices.size === 1, '独立 SSE');
+  await waitCard('角色列表之前的共玩');
+  assert.equal(await ev("document.querySelector('.share-slip strong').textContent"), '甲角色');
+  await click(element('[aria-label="关闭分享提示"]'));
+  await waitCard('断流期间的共玩');
+  await click(element('[aria-label="关闭分享提示"]'));
+  await until(async () => !await has(card), '共玩重放按消息号去重');
 
   // 真正编辑配置纸笺，取消离开后可继续原编辑。
   await tab('模型');

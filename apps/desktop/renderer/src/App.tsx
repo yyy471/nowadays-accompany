@@ -10,7 +10,7 @@ import { EngineeringCapsule } from './components/shell/EngineeringCapsule';
 import { PageDock } from './components/shell/PageDock';
 import { ExtensionsPage, ExtensionOverlays } from './extensions/ExtensionViews';
 import { useExtensions } from './extensions/use-extensions';
-import { ShareSlip } from './components/shell/ShareSlip';
+import { ShareSlip, useShareNotices } from './components/shell/ShareSlip';
 import { HomePage } from './pages/Home';
 import { Relations } from './pages/Relations';
 import { SettingsWorkspace, type ConfigNavigationGuard } from './pages/Settings';
@@ -21,7 +21,6 @@ import { needsEntryPick } from './entry/role-entry';
 import { createStateVersionGate } from './state-version';
 
 export function App() {
-  const extensions = useExtensions();
   const { preset } = useThemePreset();
   const motion = useMotionPolicy();
   const [scope] = useState(createMotionScope);
@@ -212,6 +211,8 @@ export function App() {
   });
   const [rolesVisit, setRolesVisit] = useState(0);
   const [roles, setRoles] = useState<RoleListItem[]>();
+  const shares = useShareNotices(roles ?? [], page === 'conversation' ? visibleWindow : null);
+  const extensions = useExtensions(shares.receive);
   const rolesRef = useRef<RoleListItem[]>([]);
   const removedRoles = useRef(new Set<string>());
   const roleListRequest = useRef(0);
@@ -391,7 +392,7 @@ export function App() {
     <main className="studio-content" tabIndex={-1} aria-label="当前页面内容"><UiThemeProvider theme="xiacheng">
       <div ref={pageBody} className={page === 'home' ? 'studio-home-content' : page === 'roles' ? 'studio-relations-content' : page === 'conversation' ? 'studio-conversation-content' : page === 'feed' ? 'studio-feed-content' : 'studio-legacy-page'}>
         {page === 'home' && <UiThemeScope theme="xiacheng"><HomePage accounts={accounts} selectedAccountId={currentId} outfitHomeUrl={outfitHomeUrl} outfitName={currentOutfit?.name ?? null} loading={!roles && !error} error={error} retrying={retryingRoles || retryingDetail} onRetry={retryDetail} onGoWorkbench={() => navigate('roles')} onCreateRole={() => navigate('role-config', () => issueWorkspaceRequest({ kind: 'create' }))}/></UiThemeScope>}
-        {page === 'extensions' && <ExtensionsPage state={extensions}/>}
+        {page === 'extensions' && <ExtensionsPage state={extensions} roles={roles ?? []} seat={seat}/>}
         {page === 'roles' && <Relations roles={roles || []} error={error} currentId={currentId} visit={rolesVisit} onSelect={setCurrentId} onOpenSettings={() => navigate('role-config')}/>}
         {page === 'conversation' && <ConversationPage roles={roles || []} currentId={currentId} currentOutfit={currentOutfit} outfits={outfits} outfitHomeUrl={outfitHomeUrl} appearanceLoading={appearanceLoading} loading={!roles && !error} error={error} hideDock={hideConversationDock} onHideDockChange={setConversationDockHidden} onSelectRole={id => { setCurrentId(id); setConversationTarget(null); }} onOpenRelations={() => navigate('roles')} onConfigureModel={() => navigate('role-config', () => issueWorkspaceRequest({ kind: 'section', roleId: currentId, section: 'models' }))} onCreateRole={() => navigate('role-config', () => issueWorkspaceRequest({ kind: 'create' }))} onRoleStateChanged={() => { void refresh(); }} initialTarget={conversationTarget} onVisibleWindow={setVisibleWindow} onTargetHandled={handleConversationTarget} onReturnFeed={conversationFromFeed ? () => navigateFeedChat('feed') : undefined}/>}
         {(page === 'feed' || feedVisited) && <div className="feed-mounted" hidden={page !== 'feed'}><FeedPage active={page === 'feed'} roles={roles || []} rolesLoading={!roles && !roleListError} roleError={roleListError} retryingRoles={retryingRoles} onRetryRoles={() => void retryRoles()} onOpenChat={target => navigateFeedChat('conversation', target)}/></div>}
@@ -399,8 +400,8 @@ export function App() {
       </div>
     </UiThemeProvider></main>
     {seat && <EngineeringCapsule/>}
-    <ExtensionOverlays state={extensions}/>
-    {seat && <ShareSlip key={seat.roleId} seat={seat} visibleWindow={page === 'conversation' && currentId === seat.roleId ? visibleWindow : null}
+    <ExtensionOverlays state={extensions} roles={roles ?? []}/>
+    {shares.notice && shares.sender && <ShareSlip key={shares.notice.messageId} sender={shares.sender} notice={shares.notice} onDismiss={shares.dismiss}
       onOpen={(notice, dismiss) => {
         const open = () => {
           setCurrentId(notice.roleId);

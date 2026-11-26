@@ -1547,8 +1547,9 @@ export class ConversationService {
    * 后台记忆整理等外部工作收尾后的空闲通知（283 §4 R01）。
    * 停止请求可能只等这些调用；这里在它们真正结束后确认停止。
    */
-  notifyExternalIdle(roleId: string): void {
-    this.confirmStopIfIdle(roleId, null);
+  notifyExternalIdle(roleId: string, executionId: string | null = null): void {
+    this.confirmStopIfIdle(roleId, executionId);
+    if (this.autonomy?.coplay.hasDue(roleId)) this.schedule(roleId);
   }
 
   /**
@@ -1614,7 +1615,7 @@ export class ConversationService {
 
   private canStartAutonomyWake(
     roleId: string,
-    wake: AutonomyWakeRecord,
+    wake: Pick<AutonomyWakeRecord, "wakeId" | "taskId">,
   ): boolean {
     if (isFirstActivationWake(wake.wakeId)) {
       return this.firstActivationModelReady(roleId);
@@ -1742,7 +1743,9 @@ export class ConversationService {
       return false;
     }
     const due = this.autonomy.dueWake(roleId);
-    if (due === null || !this.canStartAutonomyWake(roleId, due)) {
+    const coplay = due === null ? this.autonomy.coplay.due(roleId) : undefined;
+    const next = due ?? coplay;
+    if (!next || (coplay && (!this.isIdle(roleId) || this.hasExternalWork(roleId))) || !this.canStartAutonomyWake(roleId, next)) {
       return false;
     }
     let storage: RoleStorage | null = null;
@@ -1754,7 +1757,7 @@ export class ConversationService {
         kind: "custom",
         source: "nowadays-autonomy",
       });
-      const begun = this.autonomy.beginDueWake(roleId, window.windowId);
+      const begun = this.autonomy.beginDueWake(roleId, window.windowId, coplay);
       if (!begun) {
         storage.close();
         return false;
@@ -1764,6 +1767,7 @@ export class ConversationService {
         roleId,
         this.timeZone,
       );
+      if (begun.wake.wakeId === coplay?.wakeId) coplay.claimed();
       const controller: RunningExecution = {
         roleId,
         windowId: window.windowId,
@@ -2509,7 +2513,7 @@ export class ConversationService {
                 const deferredRoleId = backgroundRoleId;
                 const deferredExecutionId = execution.executionId;
                 const timer = setTimeout(() => {
-                  this.confirmStopIfIdle(deferredRoleId, deferredExecutionId);
+                  this.notifyExternalIdle(deferredRoleId, deferredExecutionId);
                 }, 0);
                 timer.unref?.();
               }
@@ -2735,7 +2739,7 @@ export class ConversationService {
             // 确认失败时保持 stopping，避免误放行配置写入。
           }
           this.memoryRuntime?.notifyEvidence(roleId);
-        } else if (code === "AUTONOMY_BUDGET_EXHAUSTED" && autonomy !== null && !exchangeWake(autonomy.wakeId)) {
+        } else if (code === "AUTONOMY_BUDGET_EXHAUSTED" && autonomy !== null && !exchangeWake(autonomy.wakeId) && !autonomy.wakeId?.startsWith("coplay/")) {
           pausedForBudget = true;
           try {
             store.interruptExecution({
@@ -2781,7 +2785,7 @@ export class ConversationService {
           }
           // 原消息仍有已确认结果时，交给现有窗口调度自动补答。补答再失败会在事务内交付系统回执。
           const pendingReply = store.getFailedReply(windowId);
-          if (!exchangeWake(autonomy?.wakeId) && !pendingReply?.receiptSummary) this.blockedWindows.add(windowKey(roleId, windowId));
+          if (code !== "AUTONOMY_BUDGET_EXHAUSTED" && !exchangeWake(autonomy?.wakeId) && !pendingReply?.receiptSummary) this.blockedWindows.add(windowKey(roleId, windowId));
           if (taskId !== null && code !== "TASK_ENDED") {
             const saved = store.savedTaskFinish(execution.executionId);
             const finish = saved?.taskId === taskId ? saved : undefined;

@@ -48,13 +48,22 @@
   font-size: var(--nd-semantic-type-caption-size);
   color: var(--nd-semantic-color-text-muted);
 }
-.extension-error {
+.extension-tool, .extension-error, .extension-repair {
   grid-column: 1 / -1;
-  color: var(--nd-semantic-color-danger);
   font-size: var(--nd-semantic-type-caption-size);
   line-height: var(--nd-semantic-type-caption-line);
 }
+.extension-error { color: var(--nd-semantic-color-danger); }
+.extension-coplay { min-width: 0; }
+.extension-coplay-bar { margin-block-end: var(--nd-semantic-space-icon-label); }
+.extension-coplay-bar, .extension-repair {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--nd-semantic-space-icon-label);
+}
 .extension-page select { width: min(100%, 24rem); }
+.extension-coplay-bar .ui-select { width: auto; max-width: 100%; }
 .extension-widget-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
