@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { MessageSegmentRecord } from "./conversation.js";
 import type { ImageServiceProtocol } from "./image-service.js";
 import type { SceneImageSettingsRecord } from "./scene-image-settings.js";
@@ -27,9 +28,17 @@ export const SCENE_IMAGE_TERMINAL_STATUSES: readonly SceneImageStatus[] = [
   "failed",
 ];
 
-/** 规划结果：画面描述、图层模式和同轮句段区间。 */
+/** 本镜头实际入画的人物。服饰跟随同一人保存，防止多人画面串衣。 */
+export const sceneCastSchema = z.array(z.object({
+  name: z.string().trim().min(1).max(100),
+  appearance: z.string().trim().max(2000),
+  clothing: z.string().trim().max(1000),
+})).max(16);
+export type SceneCast = z.infer<typeof sceneCastSchema>;
+
 export interface SceneImagePlanRecord {
   description: string;
+  cast?: SceneCast;
   layerMode: SceneImageLayerMode;
   startSegmentId: string;
   endSegmentId: string;
@@ -77,6 +86,7 @@ export interface SceneImageTaskRecord {
 export interface SceneImageContextMessage {
   sender: "user" | "assistant";
   content: string;
+  sequence?: number;
 }
 
 /** 目标回复实际使用的服饰；参考图是否存在由后端判定，不暴露路径。 */
@@ -97,6 +107,12 @@ export interface SceneImagePlannerInput {
   segments: readonly MessageSegmentRecord[];
   outfit: SceneImageOutfitInput;
   context: readonly SceneImageContextMessage[];
+  textAnchors?: {
+    roleName: string;
+    appearance: string;
+    clothing: string;
+    previousScene: { cast: SceneCast; sequence: number; outfitId: string | null } | null;
+  };
   requestedLayerMode: SceneImageLayerMode | null;
 }
 
@@ -131,6 +147,7 @@ export interface SceneImageConfigSnapshot {
 export interface SceneImageGenerationInput {
   roleId: string;
   prompt: string;
+  cast?: SceneCast;
   layerMode: SceneImageLayerMode;
   /** 目标回复实际使用的服饰；生成器据此取该服饰的锚点提示词。 */
   outfit: SceneImageOutfitRef;

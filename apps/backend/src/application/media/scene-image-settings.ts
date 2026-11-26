@@ -39,7 +39,7 @@ import { AppearanceStore } from "../../storage/media/appearance-store.js";
 import { SceneImageSettingsStore } from "../../storage/media/scene-image-settings-store.js";
 import { discardReferenceFile, MAX_SCENE_REFERENCE_BYTES, readSceneReference, removeSceneReference, requireReferenceOutfit, saveSceneReference } from "../../storage/media/scene-reference.js";
 import {
-  buildScenePrompt,
+  composeSceneImagePrompt,
   ComfyUiImageGenerator,
   resolveSceneImageRuntime,
   type SceneImageRuntime,
@@ -101,6 +101,7 @@ export interface SceneImageSettingsServiceOptions {
 
 export interface GenerateAnchorPromptInput {
   target: AnchorPromptTarget;
+  modelType?: SceneImageSettingsRecord["modelType"] | undefined;
   outfitId?: string | undefined;
   previousPrompt?: string | undefined;
   uploadedImage?: UploadedImage | undefined;
@@ -322,8 +323,9 @@ export class SceneImageSettingsService {
     }
     const outfitPrompt =
       outfitId === null || runtime.settings.modelType === "img2img" ? "" : (runtime.settings.outfitPrompts[outfitId] ?? "");
-    const prompt = buildScenePrompt(
+    const prompt = composeSceneImagePrompt(
       runtime.settings,
+      "full_scene",
       outfitPrompt,
       input.prompt ?? DEFAULT_PREVIEW_PROMPT,
     );
@@ -445,6 +447,7 @@ export class SceneImageSettingsService {
       const messages = buildAnchorPromptRequest({
         target: input.target,
         displayName: context.displayName,
+        modelType: input.modelType ?? this.read(roleId)?.modelType ?? "text2img",
         outfit: context.outfit,
         previousPrompt: input.previousPrompt,
         image: anchorImage.attachment,
@@ -741,6 +744,7 @@ function pickBaseAnchorAsset(
 
 function buildAnchorPromptRequest(input: {
   target: AnchorPromptTarget;
+  modelType: SceneImageSettingsRecord["modelType"];
   displayName: string;
   outfit: OutfitRecord | null;
   previousPrompt?: string | undefined;
@@ -751,8 +755,10 @@ function buildAnchorPromptRequest(input: {
   if (input.target === "base") {
     const system = [
       "你是文生图（MOSS-Image）角色一致性提示词助手。",
-      "请认真观察用户提供的角色锚点图，提炼该角色跨场景保持不变的「基础锚点提示词」。",
-      "只包含：画风质感（如二次元插画、日系厚涂或写实摄影质感等）、年龄与性别气质、脸型五官、瞳色神态、发型发长发色刘海、肤色身形等恒定外观特征。",
+      "请认真观察用户提供的角色锚点图，提炼角色默认外貌的「基础锚点提示词」。",
+      input.modelType === "text2img"
+        ? "描述年龄、脸型五官、瞳色、肤色与身形，以及默认发型、发长、发色、刘海和标志性发饰。不写画风、绘制技法或当下表情。"
+        : "只包含：画风质感（如二次元插画、日系厚涂或写实摄影质感等）、年龄与性别气质、脸型五官、瞳色神态、发型发长发色刘海、肤色身形等恒定外观特征。",
       "严格禁止描写当前所穿服装、鞋袜配饰、背景环境、拍摄构图、动作或光线（服饰和场景会在后续分别拼接）。",
       "直接输出一行中文短语，用中文全角逗号“，”分隔，约 40～140 字；不要输出标题、前缀、序号、引号、Markdown 或任何解释。",
     ].join("\n");

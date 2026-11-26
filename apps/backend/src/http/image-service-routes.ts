@@ -220,6 +220,7 @@ export function registerImageServiceRoutes(
           params.roleId ?? "",
           {
             target: body.target,
+            modelType: body.modelType,
             ...(body.outfitId === undefined ? {} : { outfitId: body.outfitId }),
             ...(body.previousPrompt === undefined
               ? {}
@@ -235,6 +236,7 @@ export function registerImageServiceRoutes(
 async function readAnchorPromptRequest(request: Parameters<typeof readJsonBody>[0]): Promise<{
   body: {
     target: "base" | "outfit";
+    modelType?: "text2img" | "img2img" | undefined;
     outfitId?: string | undefined;
     previousPrompt?: string | undefined;
   };
@@ -264,10 +266,12 @@ async function readAnchorPromptRequest(request: Parameters<typeof readJsonBody>[
       }
     } else {
       const target = form.fields.get("target");
+      const modelType = form.fields.get("modelType");
       const outfitId = form.fields.get("outfitId");
       const previousPrompt = form.fields.get("previousPrompt");
       rawPayload = {
         ...(target === undefined ? {} : { target }),
+        ...(modelType === undefined ? {} : { modelType }),
         ...(outfitId === undefined || outfitId === "" ? {} : { outfitId }),
         ...(previousPrompt === undefined ? {} : { previousPrompt }),
       };

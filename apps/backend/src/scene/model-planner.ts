@@ -8,7 +8,7 @@ import {
   SceneImagePlannerUnavailableError,
 } from "../domain/errors.js";
 import { isIncompleteCompletion } from "../domain/model.js";
-import { SceneImageNotSelected } from "../domain/scene-image.js";
+import { SceneImageNotSelected, sceneCastSchema, type SceneCast } from "../domain/scene-image.js";
 import type { ModelPort, ModelRequest, ModelUsage } from "../domain/model.js";
 import { mergeModelUsage, type TokenUsageCallEvent } from "../domain/token-usage.js";
 import type {
@@ -25,9 +25,9 @@ import type { ModelCallClaim } from "../application/resources/model-maintenance.
 
 const MAX_CONTENT_CHARS = 4_000;
 const MAX_CONTEXT_MESSAGE_CHARS = 600;
-const MAX_CONTEXT_MESSAGES = 4;
 const MAX_SEGMENT_TEXT_CHARS = 800;
 const DEFAULT_MAX_OUTPUT_TOKENS = 900;
+const TEXT_SCENE_MAX_OUTPUT_TOKENS = 1800;
 
 export type SceneImagePlannerModelFactory = (
   binding: ResolvedModelBinding,
@@ -65,7 +65,6 @@ export class ModelSceneImagePlanner implements SceneImagePlannerPort {
   private readonly timeZone: string | undefined;
   private readonly modelFactory: SceneImagePlannerModelFactory;
   private readonly fallback: SceneImagePlannerPort | null;
-  private readonly maxOutputTokens: number;
   private readonly maintenance: ModelSceneImagePlannerOptions["maintenance"];
   private readonly claim:
     | { claim(roleId: string, resourceId: string): ModelCallClaim }
@@ -94,7 +93,6 @@ export class ModelSceneImagePlanner implements SceneImagePlannerPort {
         return new HttpModelAdapter(binding.config, credential);
       });
     this.fallback = options.fallback ?? null;
-    this.maxOutputTokens = options.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
     this.maintenance = options.maintenance ?? null;
     this.claim = options.claim ?? null;
   }
@@ -166,7 +164,9 @@ export class ModelSceneImagePlanner implements SceneImagePlannerPort {
       system: prompt.system,
       messages: [{ role: "user", content: prompt.user }],
       tools: [],
-      maxOutputTokens: this.maxOutputTokens,
+      maxOutputTokens: this.options.maxOutputTokens ?? (
+        input.textAnchors && input.requestedLayerMode !== "background" ? TEXT_SCENE_MAX_OUTPUT_TOKENS : DEFAULT_MAX_OUTPUT_TOKENS
+      ),
       ...(signal === undefined ? {} : { signal }),
     };
     let output = "";
@@ -261,8 +261,12 @@ export class ModelSceneImagePlanner implements SceneImagePlannerPort {
     }
     const first = input.segments[0];
     const last = input.segments.at(-1);
+    if (input.textAnchors && layerMode === "full_scene" && parsed.cast === undefined) {
+      throw new SceneImagePlanInvalidError("文生图整幅画面方案缺少出镜人物列表");
+    }
     return {
       description: parsed.description,
+      ...(input.textAnchors && layerMode === "full_scene" && parsed.cast !== undefined ? { cast: parsed.cast } : {}),
       layerMode,
       startSegmentId: parsed.startSegmentId ?? first?.segmentId ?? "",
       endSegmentId: parsed.endSegmentId ?? last?.segmentId ?? "",
@@ -307,10 +311,16 @@ export function buildSceneImagePlanPrompt(
         : '- 本次指定 layerMode="full_scene"：描述角色与场景，人物外观与服饰保持一致，layerMode 必须输出 "full_scene"。';
   const system = [
     "你是对话演出的过场图规划器，为角色的一条已保存回复规划一张插画。",
-    outfitLine,
-    referenceLine,
+    ...(input.textAnchors ? [
+      "画法由系统固定。textAnchors 是主角色的默认外貌与目标回复的默认服饰，旧锚点里的画风词不用。previousScene 是同窗口较早画面的出镜记录，不能据此让人物自动入镜。",
+      "full_scene 须增加 cast 数组，每人一项，按主体优先排序。例如 [{\"name\":\"小宁\",\"appearance\":\"琥珀瞳，黑色短发\",\"clothing\":\"穿蓝衬衫\"}]。无具体人物时可为 []。远景无名人群和动物写在 description。",
+      "按所选句段列出实际出镜者，配角各有自己的外貌和服装。外貌和服饰写完整现状。尽量原样保留已有的五官、瞳色、发色和标志性细节。沿用前文中仍有效的变化，新发生的剪发、扎发、换装等只替换对应细节。留意目标服饰 ID 与上次不同的情况。动作、表情、机位与光线每幅重新判断。",
+      "description 只写本镜头可见内容，交代谁在哪里做什么、表情、景别、前中远景的相对位置与大小、光线和天气。构图给关键动作留足画幅。不要再复述人物锚点或指定画风。",
+    ] : [outfitLine, referenceLine]),
     "只输出 JSON 对象，不要代码块和解释，格式：",
-    '{"description":"...","layerMode":"background|full_scene","startSegmentId":"...","endSegmentId":"..."}',
+    input.textAnchors
+      ? '{"description":"本镜头","cast":[{"name":"出镜者","appearance":"当前外貌","clothing":"当前服饰"}],"layerMode":"background|full_scene","startSegmentId":"...","endSegmentId":"..."}；纯背景省略 cast。'
+      : '{"description":"...","layerMode":"background|full_scene","startSegmentId":"...","endSegmentId":"..."}',
     ...(input.trigger === "auto" ? [
       "这是自动判图。结合前文判断本轮是否确有明显场景变化或值得纪念且能够用画面表达的情节。",
       '普通闲聊、重复场景请返回 {"draw":false,"reason":"本轮具体原因"}。值得画时在上述方案增加 "draw":true。',
@@ -328,7 +338,9 @@ export function buildSceneImagePlanPrompt(
       name: input.outfit.name,
       description: input.outfit.description,
     },
-    context: input.context.slice(-MAX_CONTEXT_MESSAGES).map((message) => ({
+    ...(input.textAnchors ? { textAnchors: input.textAnchors, outfitId: input.outfit.outfitId } : {}),
+    context: input.context.map((message) => ({
+      ...(input.textAnchors ? { sequence: message.sequence } : {}),
       sender: message.sender,
       content: truncate(message.content, MAX_CONTEXT_MESSAGE_CHARS),
     })),
@@ -344,6 +356,7 @@ export function buildSceneImagePlanPrompt(
 
 export interface ParsedSceneImagePlan {
   description: string;
+  cast?: SceneCast;
   layerMode: SceneImageLayerMode | null;
   startSegmentId: string | null;
   endSegmentId: string | null;
@@ -357,8 +370,11 @@ export function parseSceneImagePlanOutput(
   if (!record) return null;
   const description = nonEmptyString(record.description);
   if (!description) return null;
+  const cast = sceneCastSchema.optional().safeParse(record.cast);
+  if (!cast.success) return null;
   return {
     description,
+    ...(cast.data === undefined ? {} : { cast: cast.data }),
     layerMode: record.layerMode === "background" || record.layerMode === "full_scene" ? record.layerMode : null,
     startSegmentId: nonEmptyString(record.startSegmentId),
     endSegmentId: nonEmptyString(record.endSegmentId),

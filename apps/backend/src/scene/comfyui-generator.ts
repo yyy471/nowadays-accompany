@@ -11,6 +11,7 @@ import {
 } from "../domain/image-service.js";
 import type {
   GeneratedSceneImage,
+  SceneCast,
   SceneImageConfigSnapshot,
   SceneImageGenerationInput,
   SceneImageGeneratorPort,
@@ -46,32 +47,30 @@ export interface SceneImageRuntimeSource {
 
 const DEFAULT_GENERATION_TIMEOUT_MS = 180_000;
 
-/**
- * 组装提示词：角色基础锚点 + 目标服饰锚点 + 本次场景描述。
- * 空段直接跳过，避免出现连续逗号或只剩标点的提示词。
- */
-export function buildScenePrompt(
-  settings: Pick<SceneImageSettingsRecord, "basePrompt">,
-  outfitPrompt: string,
-  sceneText: string,
-): string {
-  return [settings.basePrompt, outfitPrompt, sceneText]
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
-    .join("，");
-}
+export const SCENE_PAINTING_STYLE = "精致唯美的日系动画电影插画，具有高完成度数字插画的细腻质感。线稿纤细柔和，边缘清晰，采用轻盈柔润的数字绘色，细致的色彩渐变与层叠的明暗自然交融，材质的细节丰富而干净。环境精致通透并保有自然的空间深度，前景与背景色调协调，绘制质感一致。";
+export const CHARACTER_PAINTING_STYLE = "人物的眼睫和眼角勾勒细致，眼睛有多层透明色泽与细小高光，发丝精细分层，皮肤明暗过渡柔和，衣物材质和褶皱细致。";
 
-/** 纯背景只传环境描述，整幅图才拼接角色与服饰锚点（236 §6.3）。 */
+/** 四段使用同一画法。已解析的出镜人物完整替换默认锚点。 */
 export function composeSceneImagePrompt(
-  settings: Pick<SceneImageSettingsRecord, "basePrompt">,
+  settings: Pick<SceneImageSettingsRecord, "basePrompt" | "modelType">,
   layerMode: SceneImageLayerMode,
   outfitPrompt: string,
   sceneText: string,
+  cast?: SceneCast,
 ): string {
-  if (layerMode === "background") {
-    return sceneText.trim();
+  if (settings.modelType === "img2img") {
+    return layerMode === "background" ? sceneText.trim()
+      : [settings.basePrompt.trim(), sceneText.trim()].filter(Boolean).join("，");
   }
-  return buildScenePrompt(settings, outfitPrompt, sceneText);
+  if (layerMode === "background" || cast?.length === 0) {
+    return [SCENE_PAINTING_STYLE, sceneText.trim()].filter(Boolean).join("\n");
+  }
+  const appearance = cast === undefined ? settings.basePrompt.trim()
+    : cast.map(person => [person.name, person.appearance].filter(Boolean).join("，")).join("；");
+  const clothing = cast === undefined ? outfitPrompt.trim()
+    : cast.filter(person => person.clothing).map(person => `${person.name}，${person.clothing}`).join("；");
+  const portrait = appearance ? appearance.replace(/[。；，]+$/u, "") + "。" + CHARACTER_PAINTING_STYLE : CHARACTER_PAINTING_STYLE;
+  return [SCENE_PAINTING_STYLE, portrait, clothing, sceneText.trim()].filter(Boolean).join("\n");
 }
 
 /**
@@ -229,6 +228,7 @@ export class ConfiguredSceneImageGenerator
       input.layerMode,
       outfitPrompt,
       input.prompt,
+      input.cast,
     );
     return this.comfy.generate(runtime, prompt, input.signal, input.references?.[0], input.layerMode);
   }

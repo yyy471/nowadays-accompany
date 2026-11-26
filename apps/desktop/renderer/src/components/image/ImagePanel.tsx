@@ -427,6 +427,7 @@ export function ImagePanel({
     try {
       const payload = {
         target,
+        modelType: formRef.current.modelType,
         ...(target === 'outfit' ? { outfitId } : {}),
         ...(previousPrompt.trim() ? { previousPrompt } : {}),
       };
@@ -723,7 +724,9 @@ export function ImagePanel({
       <div className="nd-image-section-head">
         <div className="nd-image-section-title">
           <h3>基础锚点提示词</h3>
-          <p className="nd-appearance-hint">记下角色在不同画面里都保留的特征，如脸型、发色、瞳色和画风。</p>
+          <p className="nd-appearance-hint">{form.modelType === 'text2img'
+            ? '文生图统一使用细线、柔和渐层的日系动画插画画风。这里填写角色的默认外貌，如脸型、瞳色和发型。剧情中剪发、扎发等变化会体现在当时的画面里。'
+            : '记下角色在不同画面里都保留的特征，如脸型、发色、瞳色和画风。'}</p>
         </div>
         <div className="nd-image-inline-actions">
           <Button
@@ -755,7 +758,7 @@ export function ImagePanel({
         aria-label="基础锚点提示词"
         value={form.basePrompt}
         maxLength={2000}
-        placeholder="可填写外貌与画风，或用对话模型参考立绘生成"
+        placeholder={form.modelType === 'text2img' ? '填写默认外貌，或从角色立绘提取' : '可填写外貌与画风，或用对话模型参考立绘生成'}
         onChange={event => patch({ basePrompt: event.target.value })}
       />
       {anchorNotes.base && <p className="nd-image-source-note">{anchorNotes.base}</p>}
@@ -765,7 +768,7 @@ export function ImagePanel({
       onChanged={() => invalidatePreview(true)} /> : <section className="nd-image-section" aria-label="服饰锚点提示词">
       <div className="nd-image-section-title">
         <h3>服饰锚点提示词</h3>
-        <p className="nd-appearance-hint">画面里出现角色时，服饰提示词会接在基础提示词之后。</p>
+        <p className="nd-appearance-hint">填写这套衣服的默认款式与配色。聊天中按出镜人物分别取当时的穿着；动作、表情、构图和光照随镜头变化。</p>
       </div>
       {outfits.length === 0 ? (
         <p className="nd-appearance-hint">可以先到「外观」添加服饰，再回来为它写提示词。</p>
@@ -835,7 +838,9 @@ export function ImagePanel({
       )}
     </section>}
 
-      <Field label="负向提示词" hint="可以留空，也可以写下希望画面避开的细节。">
+      <Field label="负向提示词" hint={form.modelType === 'text2img'
+        ? '每次生图都会使用。适合填写水印、模糊等通用问题；发型和穿着留给剧情决定。'
+        : '可以留空，也可以写下希望画面避开的细节。'}>
         <Input
           value={form.negativePrompt}
           maxLength={2000}

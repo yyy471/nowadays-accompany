@@ -142,10 +142,10 @@
   - 任务创建当刻调用 `generator.lock(roleId)` 将当前服务协议、基地址、超时期限、角色生图设置与服饰锚点序列化进 `config_json`；规划期间用户在设置页修改配置或锚点不影响已在途的旧任务（`CG-R03`）。
   - 进入 ComfyUI 生成前核对快照站点标识与当前服务记录站点标识：若跨站点／改地址，直接结算失败 `409 SCENE_IMAGE_SERVICE_CHANGED`（避免将新站点令牌发往旧地址 `CG-R05`）；同站点更新路径或轮换令牌则继续沿用快照地址与新令牌完成生成。
 - **规划输入与图层约束**（[scene-image-service.ts](../../apps/backend/src/application/media/scene-image-service.ts#L335-L450)、[scene-image-store.ts](../../apps/backend/src/storage/media/scene-image-store.ts#L154-L200)）：
-  - 上下文取锚点消息之前最多 4 条已结束消息；`outfitForMessage` 只读取目标轮句段固化的 `outfit_id`，不回退角色当前穿着（`227 R04`）。
+  - 文生图规划读取目标回复、之前最多 16 条窗口消息和该回复之前最近一幅成功人物图的出镜记录。按消息顺序定位，重画旧回复时同样只用当时及以前的剧情。图生图上下文上限为 4 条。`outfitForMessage` 只读取目标轮句段固化的 `outfit_id`。
   - 默认注入 `ModelSceneImagePlanner`（以 `FixedSceneImagePlanner` 为缺绑定兜底）：无对话模型时，手动任务回退固定规划（首段到末段 + 请求图层）；有模型但模型调用失败、登记 `model_calls` 失败或返回非法／与手动冲突的图层模式时直接以 `SCENE_IMAGE_PLAN_FAILED` / `SCENE_IMAGE_PLAN_INVALID` / `SCENE_IMAGE_PLAN_UNAVAILABLE` 失败，不回退掩盖错误（`227 R02/R03`）。
   - `CG-03` **回复后自动过场图**：角色开启 `autoGenerateEnabled` 时，仅正式回复提交触发自动任务捕获与单窗口顺序调度（`dispatchAutomatic`），无可用服务时按 `SCENE_IMAGE_AUTO_NO_SERVICE` 结算为 `skipped`；同一窗口处于 `autoCooldownMinutes` 冷却期时按 `SCENE_IMAGE_AUTO_COOLDOWN` 结算为 `skipped`；`ModelSceneImagePlanner` 对自动任务可输出 `draw: false` 并以 `SCENE_IMAGE_AUTO_NOT_SELECTED`（`skipped`）跳过而不产生图片；自动图生图会固定读取对应服饰的 `role_scene_references` 参考图，且生成纯 `background` 时按工作流分支隔离参考图输入。
-  - `background`：严格禁止拼入角色／服饰锚点且不附带参考图（`CG-R01`；`img2img` 若自定义工作流无无参考图的 `SaveImage` 纯背景分支，非内置 MOSS 工作流返回 `422 SCENE_BACKGROUND_WORKFLOW_REQUIRED`）；`full_scene`：`text2img` 传入历史服饰 `home` 参考图，`img2img` 读取对应 `role_scene_references` 上传至 ComfyUI `/upload/image` 并注入 `LoadImage`/`ImageScale` 分支（校验 `<= 8 MiB`）。
+  - `text2img` 只传文字。背景图保留固定画风与环境镜头，整幅图按实际出镜者加入外貌和穿着。`img2img` 的整幅图读取对应 `role_scene_references` 上传至 ComfyUI `/upload/image` 并注入 `LoadImage`/`ImageScale` 分支（校验 `<= 8 MiB`）。图生图的背景图隔离角色参考，非内置 MOSS 工作流缺少独立背景输出时返回 `422 SCENE_BACKGROUND_WORKFLOW_REQUIRED`。
 - **超时竞争、中断清理与启动恢复**：
   - 使用服务侧外层超时（`generator` 固定超时期限或默认 180 秒）+ `AbortSignal` 与 `raceWithSignal` 双重竞争，范围同时覆盖生图请求**与图片像素校验解码**，落盘前再次复查取消状态；ComfyUI 轮询遇到中止时会请求一次 `/queue` 清理远端排队（`CG-R04`）。
   - 写入受管文件采用排他打开 `fs.openSync(..., "wx")` 并立即登记清理路径；中途 `ENOSPC` 等失败会删去半写入文件，即使清理被 `EPERM` 拒绝仍按原失败原因持久化任务终态与 SSE 通知并打警告日志（`227 R05/R06`）。

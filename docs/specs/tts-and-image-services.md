@@ -136,7 +136,9 @@
    - 内置 11 节点 `MOSS_IMAGE_WORKFLOW` 适配 ComfyUI 0.45+ 原生节点与 Spectrum 加速：`UNETLoader`（`unet_name: "moss_image_sft_int8_convrot.safetensors"`）+ `CLIPLoader`（`clip_name: "qwen3.5_9b_w4a8_gptq.safetensors"`, `type: "moss_image"`）+ `VAELoader`（`vae_name: "flux2-vae_small.safetensors"`）→ `SpectrumMOSSImageManual` → `SkipLayerGuidanceDiTSimple`（`single_layers: "22"`）→ 双 `CLIPTextEncode` → `EmptyFlux2LatentImage`（`1024×1024`）→ `KSampler`（`steps: 25`、`cfg: 2.5`、`er_sde`、`simple`、`denoise: 1`）→ `VAEDecode` → `SaveImage`。
    - `applyWorkflowParams` 深拷贝工作流后按 `class_type`（而非写死节点 id）匹配打补丁，且**只修改节点 `inputs` 中已存在的键**，防止把未知键塞给自定义工作流引起 ComfyUI 400 校验错误：加载器优先级 `MOSSImageHFLoader.model_path` > `MOSSImageUNETLoader.unet_name` > `CheckpointLoaderSimple.ckpt_name` > `UNETLoader.unet_name`；采样器兼容 `KSampler` / `KSamplerAdvanced`（`seed` / `noise_seed`），并沿 `positive` / `negative` 连线追踪写入对应 `CLIPTextEncode.text`；尺寸写入首个含 `width`、`height` 的 `Empty*` 潜空间节点；输出优先使用指定 `outputNodeId` 否则查找 `SaveImage`。
 2. **提示词拼装与快照隔离**（[comfyui-generator.ts](../../apps/backend/src/scene/comfyui-generator.ts#L49-L259)）：
-   - 全景／人物提示词按 `basePrompt → outfitPrompts[outfitId] → 场景描述` 过滤空串并以中文逗号拼接（`buildScenePrompt`）；当过场图 `layerMode === "background"` 时只保留场景描述，不注入人物与服饰锚点（`composeSceneImagePrompt`）。
+   - 文生图按 DL-193 以换行拼接画风、出镜人物、当前服饰和本镜头。**固定**的是柔细线稿、渐层上色、材质和空间深度的画法，以及有人物时眼睛、头发、皮肤和衣褶的画法。
+   - **随剧情变化**的是出镜者及其可见外貌、穿着和镜头。规划器以 `basePrompt` 与目标回复的服饰锚点为默认，结合前文逐人输出 `cast`，每人记录姓名、当前外貌和穿着。结果完整替换默认锚点。镜头段交代动作、表情、景别、物体位置与大小、环境和光照。背景图只拼画风与镜头。
+   - 设置页试画共用上述拼装器，使用草稿锚点和手填镜头。缺少对话模型的手动任务沿用固定规划兜底。负向提示词和采样参数沿用角色配置。
    - `ConfiguredSceneImageGenerator` 在角色**未配置**生图数据时回退占位生成器，以保留离线原型能力；一旦存在 `role_scene_image_settings`（或任务快照中锁定了配置），若服务被删除（`409 SCENE_IMAGE_NOT_CONFIGURED`）、停用（`409 IMAGE_SERVICE_DISABLED`）或执行前站址发生跨站变更（`409 SCENE_IMAGE_SERVICE_CHANGED`），必须明确失败，不得静默退回占位图。
 
 ---

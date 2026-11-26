@@ -6,6 +6,7 @@ import test from "node:test";
 import sharp from "sharp";
 import { listen } from "../../src/bootstrap/app.js";
 import { ImageGenerationFailedError } from "../../src/domain/errors.js";
+import { sceneImageSettingsSchema } from "../../src/domain/scene-image-settings.js";
 import type {
   SceneImageGeneratorPort,
   SceneImagePlanRecord,
@@ -14,6 +15,7 @@ import type {
   SceneImageTaskRecord,
 } from "../../src/domain/scene-image.js";
 import { FixedSceneImagePlanner } from "../../src/scene/fixed-planner.js";
+import { CHARACTER_PAINTING_STYLE, SCENE_PAINTING_STYLE } from "../../src/scene/comfyui-generator.js";
 import { ComfyUiClient } from "../../src/scene/comfyui-client.js";
 import {
   defaultComfyWorkflow,
@@ -657,7 +659,7 @@ test("preview composes the anchor prompts and returns a decodable image", { time
     assert.equal(result.height, 64);
     assert.equal(
       result.prompt,
-      "银灰长发，琥珀色眼睛，米色风衣，雨夜街头，远处有霓虹",
+      [SCENE_PAINTING_STYLE, "银灰长发，琥珀色眼睛。" + CHARACTER_PAINTING_STYLE, "米色风衣", "雨夜街头，远处有霓虹"].join("\n"),
     );
     const data = Buffer.from(result.dataBase64, "base64");
     assert.ok(data.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])));
@@ -821,7 +823,7 @@ async function createReply(context: Context): Promise<string> {
   return reply.messageId;
 }
 
-test("a background task sends only the planned environment prompt", { timeout: 60_000 }, async () => {
+test("a text-to-image background keeps the painting style and omits character details", { timeout: 60_000 }, async () => {
   const context = await setup();
   try {
     const roleBase = `/v1/roles/${context.fixture.roleId}/scene-image`;
@@ -851,12 +853,66 @@ test("a background task sends only the planned environment prompt", { timeout: 6
       { inputs: Record<string, unknown> }
     >;
     const prompt = String(submitted["4"]?.inputs.text ?? "");
-    assert.equal(prompt, "与对话氛围相符的环境背景，不出现人物。");
+    assert.equal(prompt, SCENE_PAINTING_STYLE + "\n与对话氛围相符的环境背景，不出现人物。");
     assert.ok(!prompt.includes("银灰长发"));
     assert.ok(!prompt.includes("米色风衣"));
   } finally {
     await context.close();
   }
+});
+
+test("文生图按出镜人替换外貌和服饰，历史重画与另一窗口各读自己的时间线", async t => {
+  const comfy = await startFakeComfy();
+  t.after(() => comfy.close());
+  const cast = [
+    { name: "阿澄", appearance: "琥珀瞳，高马尾", clothing: "红雨衣" },
+    { name: "同行者", appearance: "黑色短发", clothing: "蓝外套" },
+  ];
+  const previousScenes: unknown[] = [];
+  const fixture = createFixtureWithModel({
+    async *stream(request) {
+      let text = "我把头发扎起来，穿上红雨衣，和短发朋友举手欢呼。";
+      if (request.system.includes("过场图规划器")) {
+        const data = JSON.parse(request.messages[0]!.content);
+        assert.equal(data.textAnchors.appearance, "橘色披发，旧厚涂画风");
+        previousScenes.push(data.textAnchors.previousScene?.cast ?? null);
+        text = JSON.stringify({ description: "两人坐在热气球吊篮里举手，俯瞰麦田与村庄。", cast,
+          layerMode: "full_scene", startSegmentId: data.segments[0].segmentId, endSegmentId: data.segments.at(-1).segmentId });
+      }
+      yield { type: "text_delta", text };
+      yield { type: "completed", stopReason: "stop" };
+    },
+  });
+  t.after(() => fixture.close());
+  const { app, roleId, windowId } = fixture;
+  const service = app.services.imageServices.create({ name: "文生图测试", config: { protocol: "comfyui", baseUrl: comfy.baseUrl } });
+  app.services.sceneImageSettings.save(roleId, sceneImageSettingsSchema.parse({
+    modelType: "text2img", modelPath: "moss", serviceId: service.serviceId, basePrompt: "橘色披发，旧厚涂画风",
+  }));
+  async function addReply(window: string) {
+    app.conversation.submitMessage(roleId, window, { content: "出发吧", sourcePlatform: "nowadays", submissionId: randomUUID() });
+    await app.conversation.waitForIdle(roleId);
+    return app.services.messages.list(roleId, window, null, 100).items.filter(m => m.sender === "assistant").at(-1)!.messageId;
+  }
+  async function draw(window: string, message: string) {
+    const { task } = app.services.sceneImages.requestManual(roleId, window, message, { layerMode: "full_scene", idempotencyKey: randomUUID() });
+    await app.services.sceneImages.waitForIdle(roleId);
+    const saved = app.services.sceneImages.getTask(roleId, window, task.taskId);
+    assert.equal(saved.status, "succeeded", saved.errorSummary ?? undefined);
+    assert.deepEqual(saved.plan?.cast, cast);
+  }
+  const first = await addReply(windowId);
+  await draw(windowId, first);
+  const submitted = comfy.workflows.at(-1) as Record<string, { inputs: { text: string } }>;
+  assert.deepEqual(submitted["4"]!.inputs.text.split("\n"), [
+    SCENE_PAINTING_STYLE, "阿澄，琥珀瞳，高马尾；同行者，黑色短发。" + CHARACTER_PAINTING_STYLE,
+    "阿澄，红雨衣；同行者，蓝外套", "两人坐在热气球吊篮里举手，俯瞰麦田与村庄。",
+  ]);
+  await draw(windowId, await addReply(windowId));
+  await draw(windowId, first);
+  const other = app.services.roles.createWindow(roleId, { kind: "custom", source: "nowadays" });
+  await draw(other.windowId, await addReply(other.windowId));
+  assert.deepEqual(previousScenes, [null, cast, null, null]);
 });
 
 test("scene image settings stay editable while the credential reference is missing", { timeout: 40_000 }, async () => {
@@ -1401,7 +1457,7 @@ test("draft scene image probe and preview use draft settings without overwriting
     assert.equal(draftOnlyPreview.status, 200);
     assert.equal(
       draftOnlyPreview.body.prompt,
-      "银发草稿，学院外套，图书馆夕阳",
+      [SCENE_PAINTING_STYLE, "银发草稿。" + CHARACTER_PAINTING_STYLE, "学院外套", "图书馆夕阳"].join("\n"),
     );
     const draftSubmitted = context.comfy.workflows.at(-1) as Record<
       string,
@@ -1439,7 +1495,7 @@ test("draft scene image probe and preview use draft settings without overwriting
     assert.equal(overridePreview.status, 200);
     assert.equal(
       overridePreview.body.prompt,
-      "临时短发，米色风衣，夜间散步",
+      [SCENE_PAINTING_STYLE, "临时短发。" + CHARACTER_PAINTING_STYLE, "米色风衣", "夜间散步"].join("\n"),
     );
     const overrideSubmitted = context.comfy.workflows.at(-1) as Record<
       string,
@@ -1530,7 +1586,7 @@ test("preview validates outfitId ownership and active status before calling Comf
       outfitId: ownOutfitId,
     });
     assert.equal(ownRes.status, 200);
-    assert.equal(ownRes.body.prompt, "银灰长发，琥珀色眼睛，白色衬衫，午后书房");
+    assert.equal(ownRes.body.prompt, [SCENE_PAINTING_STYLE, "银灰长发，琥珀色眼睛。" + CHARACTER_PAINTING_STYLE, "白色衬衫", "午后书房"].join("\n"));
 
     const omittedRes = await api(context.base, "POST", `${roleBase}/preview`, {
       prompt: "无服饰键",

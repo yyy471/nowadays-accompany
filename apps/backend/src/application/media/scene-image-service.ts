@@ -423,6 +423,13 @@ export class SceneImageService {
       }
       const outfit = store.outfitForMessage(windowId, task.messageId);
       const img2img = config?.settings?.modelType === "img2img";
+      const settings = config?.settings;
+      const textAnchors = settings?.modelType === "text2img" ? {
+        roleName: storage.business.getRole(roleId).displayName,
+        appearance: settings.basePrompt,
+        clothing: outfit ? settings.outfitPrompts[outfit.outfitId] ?? outfit.description ?? outfit.name : "",
+        previousScene: store.previousCharacterScene(windowId, anchor.sequence),
+      } : undefined;
       let pinnedReference: SceneImageReferenceImage | undefined;
       let referenceError: unknown;
       if (outfit && img2img && (task.trigger !== "manual" || task.layerMode === "full_scene")) {
@@ -437,15 +444,16 @@ export class SceneImageService {
           task.messageId,
         ),
         outfit,
+        textAnchors,
         pinnedReference, referenceError,
         reference:
-          outfit === null || img2img
+          outfit === null || img2img || textAnchors
             ? null
             : store.characterReferenceForOutfit(outfit.outfitId),
         context: store.listContextMessages(
           windowId,
           anchor.sequence,
-          MAX_CONTEXT_MESSAGES,
+          textAnchors ? 16 : MAX_CONTEXT_MESSAGES,
         ),
         config,
         appearanceDir: storage.paths.appearanceDir,
@@ -503,6 +511,7 @@ export class SceneImageService {
               content: prepared.content,
               segments,
               outfit: outfitInput,
+              ...(prepared.textAnchors ? { textAnchors: prepared.textAnchors } : {}),
               context,
               requestedLayerMode:
                 task.trigger === "manual" ? task.layerMode : null,
@@ -571,6 +580,7 @@ export class SceneImageService {
       const generatingCall = this.generator.generate({
           roleId,
           prompt: plan.description,
+          ...(plan.cast === undefined ? {} : { cast: plan.cast }),
           layerMode: plan.layerMode,
           outfit: {
             outfitId: outfitInput.outfitId,
@@ -757,6 +767,7 @@ function normalizePlan(
     task.trigger === "manual" ? task.layerMode : plan.layerMode;
   return {
     description,
+    ...(layerMode === "full_scene" && plan.cast !== undefined ? { cast: plan.cast } : {}),
     layerMode,
     startSegmentId: start.segmentId,
     endSegmentId: end.segmentId,

@@ -240,6 +240,7 @@ export const sceneImagePreviewBodySchema = z
 export const sceneImageAnchorPromptBodySchema = z
   .object({
     target: z.enum(["base", "outfit"]),
+    modelType: z.enum(["text2img", "img2img"]).optional(),
     outfitId: z.string().trim().min(1).max(200).optional(),
     previousPrompt: z.string().trim().max(2000).optional(),
   })

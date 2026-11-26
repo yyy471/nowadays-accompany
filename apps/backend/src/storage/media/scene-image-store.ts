@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
+import { sceneCastSchema } from "../../domain/scene-image.js";
 import type {
   SceneImageAssetRecord,
   SceneImageConfigSnapshot,
@@ -201,21 +202,42 @@ export class SceneImageStore {
     windowId: string,
     sequence: number,
     limit: number,
-  ): Array<{ sender: "user" | "assistant"; content: string }> {
+  ): Array<{ sender: "user" | "assistant"; content: string; sequence: number }> {
     if (limit <= 0) {
       return [];
     }
     const rows = this.db
       .prepare(
-        `SELECT sender, content FROM messages
+        `SELECT sender, content, sequence FROM messages
           WHERE window_id = ? AND sequence < ? AND status <> 'generating'
           ORDER BY sequence DESC LIMIT ?`,
       )
       .all(windowId, sequence, limit) as Array<{
       sender: "user" | "assistant";
       content: string;
+      sequence: number;
     }>;
     return rows.reverse();
+  }
+
+  /** 按故事发生顺序找最近的人物镜头；重画旧回复时不会读到之后的换装。 */
+  previousCharacterScene(windowId: string, beforeSequence: number) {
+    const row = this.db.prepare(
+      `SELECT t.message_id, t.plan_json, m.sequence FROM scene_image_tasks t
+       JOIN messages m ON m.message_id = t.message_id AND m.window_id = t.window_id
+       WHERE t.role_id = ? AND t.window_id = ? AND m.sequence < ?
+         AND t.status = 'succeeded' AND t.layer_mode = 'full_scene'
+         AND json_array_length(t.plan_json, '$.cast') > 0
+       ORDER BY m.sequence DESC, t.created_at DESC, t.rowid DESC LIMIT 1`,
+    ).get(this.roleId, windowId, beforeSequence) as
+      { message_id: string; plan_json: string; sequence: number } | undefined;
+    if (!row) return null;
+    const cast = parsePlan(row.plan_json)?.cast;
+    return cast ? {
+      cast,
+      sequence: row.sequence,
+      outfitId: this.outfitForMessage(windowId, row.message_id)?.outfitId ?? null,
+    } : null;
   }
 
   /** 手动幂等请求在领取新服务调用前查询；真正写入仍由唯一索引兜底。 */
@@ -638,8 +660,10 @@ function parsePlan(raw: string | null): SceneImagePlanRecord | null {
       typeof value.startSegmentId === "string" &&
       typeof value.endSegmentId === "string"
     ) {
+      const cast = sceneCastSchema.safeParse(value.cast);
       return {
         description: value.description,
+        ...(cast.success ? { cast: cast.data } : {}),
         layerMode: value.layerMode,
         startSegmentId: value.startSegmentId,
         endSegmentId: value.endSegmentId,
