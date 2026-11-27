@@ -32,10 +32,10 @@ function submit(fixture: Fixture, content = "继续处理"): void {
   fixture.app.conversation.submitMessage(fixture.roleId, fixture.windowId, { content, submissionId: randomUUID(), sourcePlatform: "nowadays" });
 }
 function workspace(fixture: Fixture): string { return rolePaths(fixture.app.config.dataRoot, fixture.roleId).workspaceDir; }
-function bindMcp(fixture: Fixture, env: Record<string, string> = {}) {
-  const resource = fixture.app.services.resources.create({ kind: "mcp", name: "review", config: {
+function bindMcp(fixture: Fixture, mode: "workspace" | "command", env: Record<string, string> = {}) {
+  const resource = fixture.app.services.resources.create({ kind: "mcp", name: mode, config: {
     command: process.execPath,
-    args: ["--import", pathToFileURL(path.resolve("node_modules/tsx/dist/loader.mjs")).href, "--input-type=module", "-e", `import(${JSON.stringify(pathToFileURL(path.resolve("src/mcp/local-server.ts")).href)})`],
+    args: ["--import", pathToFileURL(path.resolve("node_modules/tsx/dist/loader.mjs")).href, path.resolve("src/mcp/local-server.ts"), "--mode", mode],
     env: { NOWADAYS_WORKSPACE: workspace(fixture), ...env },
   } });
   addBinding(fixture, "mcp", resource.resourceId);
@@ -156,7 +156,7 @@ await probe("R01-new-message-during-inflight-tool", async () => {
   } };
   const fixture = createFixtureWithModel(model);
   try {
-    bindMcp(fixture);
+    bindMcp(fixture, "command");
     submit(fixture, "请处理一个慢任务");
     if (!await until(() => fs.existsSync(path.join(workspace(fixture), "started")))) throw new Error("TOOL_NOT_STARTED");
     submit(fixture, "先回答这条消息");
@@ -179,16 +179,18 @@ await probe("R02-mcp-config-refresh", async () => {
   const model: ModelPort = { async *stream(request) {
     requests += 1;
     if (requests <= 2) {
-      if (requests === 2) { const raw = fixture.app.appStore.getResource(resource.resourceId); fixture.app.appStore.updateResource({ resourceId: resource.resourceId, config: { ...raw.config, env: { ...(raw.config.env as object), REVIEW_VALUE: "new" } } }); }
+      if (requests === 2) { const raw = fixture.app.appStore.getResource(resource.resourceId); fixture.app.appStore.updateResource({ resourceId: resource.resourceId, config: { ...raw.config, env: { ...(raw.config.env as object), [process.platform === "win32" ? "TEMP" : "LANG"]: process.platform === "win32" ? path.join(fixture.app.config.dataRoot, "temp-new") : "new" } } }); }
       const tool = request.tools.find((tool) => tool.name.includes("command_run"));
       if (!tool) throw new Error("MCP_TOOL_MISSING");
-      yield { type: "tool_call", callId: `wire-${requests}`, name: tool.name, arguments: { command: process.execPath, args: ["-e", "console.log(process.env.REVIEW_VALUE)"] } };
+      yield { type: "tool_call", callId: `wire-${requests}`, name: tool.name, arguments: { command: process.execPath, args: ["-e", `console.log(process.env[process.platform === "win32" ? "TEMP" : "LANG"])`] } };
       yield { type: "completed", stopReason: "tool_calls" };
     } else { yield { type: "text_delta", text: "配置测试完成" }; yield { type: "completed", stopReason: "stop" }; }
   } };
   fixture = createFixtureWithModel(model);
+  fs.mkdirSync(path.join(fixture.app.config.dataRoot, "temp-old"), { recursive: true });
+  fs.mkdirSync(path.join(fixture.app.config.dataRoot, "temp-new"), { recursive: true });
   try {
-    resource = bindMcp(fixture, { REVIEW_VALUE: "old" });
+    resource = bindMcp(fixture, "command", { [process.platform === "win32" ? "TEMP" : "LANG"]: process.platform === "win32" ? path.join(fixture.app.config.dataRoot, "temp-old") : "old" });
     submit(fixture);
     await fixture.app.conversation.waitForIdle(fixture.roleId);
     const results = withStorage(fixture, (storage) => storage.business.db.prepare("SELECT adapted_result_json FROM tool_results ORDER BY rowid ASC").all()) as Array<{ adapted_result_json: string }>;
@@ -215,7 +217,7 @@ await probe("R08-ended-task-dispatch", async () => {
   } };
   fixture = createFixtureWithModel(model);
   try {
-    bindMcp(fixture);
+    bindMcp(fixture, "workspace");
     submit(fixture);
     await fixture.app.conversation.waitForIdle(fixture.roleId);
     const wroteAfterFinish = fs.existsSync(path.join(workspace(fixture), "round-2.txt"));

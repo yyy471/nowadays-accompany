@@ -36,29 +36,15 @@ async function waitUntil(
 
 function addWorkspaceMcp(
   fixture: Fixture,
+  mode: "workspace" | "command" = "workspace",
   env: Record<string, string> = {},
 ): { workspace: string; resourceId: string } {
-  const workspace = rolePaths(
-    fixture.app.config.dataRoot,
-    fixture.roleId,
-  ).workspaceDir;
-  const mcp = fixture.app.services.resources.create({
-    kind: "mcp",
-    name: "workspace",
-    config: {
-      command: process.execPath,
-      args: [
-        "--import",
-        pathToFileURL(path.resolve("node_modules/tsx/dist/loader.mjs")).href,
-        "--input-type=module",
-        "-e",
-        `import(${JSON.stringify(
-          pathToFileURL(path.resolve("src/mcp/local-server.ts")).href,
-        )})`,
-      ],
-      env: { NOWADAYS_WORKSPACE: workspace, ...env },
-    },
-  });
+  const workspace = rolePaths(fixture.app.config.dataRoot, fixture.roleId).workspaceDir;
+  const mcp = fixture.app.services.resources.create({ kind: "mcp", name: mode, config: {
+    command: process.execPath,
+    args: ["--import", pathToFileURL(path.resolve("node_modules/tsx/dist/loader.mjs")).href, path.resolve("src/mcp/local-server.ts"), "--mode", mode],
+    env: { NOWADAYS_WORKSPACE: workspace, ...env },
+  } });
   addBinding(fixture, "mcp", mcp.resourceId);
   return { workspace, resourceId: mcp.resourceId };
 }
@@ -410,7 +396,7 @@ test("a new message replies while an external tool keeps running and preserves t
   const fixture = createFixtureWithModel(model, { toolForegroundWaitMs: 300 });
   let workspace = "";
   try {
-    ({ workspace } = addWorkspaceMcp(fixture));
+    ({ workspace } = addWorkspaceMcp(fixture, "command"));
     submit(fixture, "请处理一个慢任务");
     await waitUntil(() => fs.existsSync(path.join(workspace, "started")));
     submit(fixture, "先回答这条消息");
@@ -563,6 +549,7 @@ test("the original two-step task continues after the new reply and completes", {
   let workspace = "";
   try {
     ({ workspace } = addWorkspaceMcp(fixture));
+    addWorkspaceMcp(fixture, "command");
     submit(fixture, "读取后保存成果，完成两步任务");
     await waitUntil(() => fs.existsSync(path.join(workspace, "started")));
     submit(fixture, "先回应这一句，然后继续原任务");
@@ -631,7 +618,7 @@ test("each MCP tool dispatch reads the resource's latest config", { timeout: 30_
           name: tool.name,
           arguments: {
             command: process.execPath,
-            args: ["-e", "console.log(process.env.REVIEW_VALUE ?? 'unset')"],
+            args: ["-e", `console.log(process.env[process.platform === "win32" ? "TEMP" : "LANG"] ?? "unset")`],
           },
         },
         { type: "completed", stopReason: "tool_calls" },
@@ -649,7 +636,7 @@ test("each MCP tool dispatch reads the resource's latest config", { timeout: 30_
         ...resource.config,
         env: {
           ...(resource.config.env as Record<string, string>),
-          REVIEW_VALUE: "new",
+          [process.platform === "win32" ? "TEMP" : "LANG"]: process.platform === "win32" ? path.join(fixture.app.config.dataRoot, "temp-new") : "new",
         },
       });
       return [
@@ -659,7 +646,7 @@ test("each MCP tool dispatch reads the resource's latest config", { timeout: 30_
           name: tool.name,
           arguments: {
             command: process.execPath,
-            args: ["-e", "console.log(process.env.REVIEW_VALUE ?? 'unset')"],
+            args: ["-e", `console.log(process.env[process.platform === "win32" ? "TEMP" : "LANG"] ?? "unset")`],
           },
         },
         { type: "completed", stopReason: "tool_calls" },
@@ -678,8 +665,10 @@ test("each MCP tool dispatch reads the resource's latest config", { timeout: 30_
     },
   ]);
   fixture = createFixtureWithModel(model);
+  fs.mkdirSync(path.join(fixture.app.config.dataRoot, "temp-old"), { recursive: true });
+  fs.mkdirSync(path.join(fixture.app.config.dataRoot, "temp-new"), { recursive: true });
   try {
-    resourceId = addWorkspaceMcp(fixture, { REVIEW_VALUE: "old" }).resourceId;
+    resourceId = addWorkspaceMcp(fixture, "command", { [process.platform === "win32" ? "TEMP" : "LANG"]: process.platform === "win32" ? path.join(fixture.app.config.dataRoot, "temp-old") : "old" }).resourceId;
     submit(fixture, "读取两次环境变量");
     await fixture.app.conversation.waitForIdle(fixture.roleId);
     assert.equal(model.requests.length, 3);
@@ -743,12 +732,15 @@ test("an ended task is not allowed to dispatch a new external tool", { timeout: 
   const model = new FinishTaskBetweenRoundsModel(() => fixture);
   fixture = createFixtureWithModel(model);
   try {
-    const { workspace } = addWorkspaceMcp(fixture);
+    const oldWorkspace = path.join(fixture.app.config.dataRoot, "stale-workspace");
+    fs.mkdirSync(oldWorkspace, { recursive: true });
+    const { workspace } = addWorkspaceMcp(fixture, "workspace", { NOWADAYS_WORKSPACE: oldWorkspace });
     submit(fixture, "先写一个文件");
     await fixture.app.conversation.waitForIdle(fixture.roleId);
 
     assert.equal(model.requests.length, 2);
     assert.equal(fs.existsSync(path.join(workspace, "round-1.txt")), true);
+    assert.equal(fs.existsSync(path.join(oldWorkspace, "round-1.txt")), false);
     assert.equal(fs.existsSync(path.join(workspace, "round-2.txt")), false);
     const detail = withStorage(fixture, (storage) => {
       const executions = storage.business.db

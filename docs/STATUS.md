@@ -4,6 +4,8 @@
 
 ## 1. 当前结论概览
 
+**409 SEC-02 / DL-59 已通过 Windows 针对性独立复验。** 默认本地 MCP 仅提供工作空间读写与检索。本机命令使用独立资源，桌面导入默认停用，并在全局与角色开关旁标明风险。两层环境过滤和普通角色／Pi 的 Skill 文件权限已收紧。仓库 Node 24.22.2 后端类型检查、指定单测 36/36、两个对话专项 15/15、渲染器检查及受影响单测 4/4、生产构建通过。文档巡检 0 错误、0 警告，测试进程新增残留 0。[409 实施与复验记录](./archive/07-documentation/409-project-audit-and-remediation-backlog.md#sec-02-本地-mcp-命令执行与普通角色脚本执行击穿隔离并继承完整宿主环境)
+
 **409 SEC-01 / DL-195 已完成修复与针对性独立复验。** 默认关闭 Pi 完整本机 Shell，工具收敛为草稿目录围栏的 `read`/`write`/`edit` 与受控 `draft_test`（Node `--permission` + 干净环境 + 30s 超时 + 64 KiB 上限），并在「设置 → 工程」提供默认关闭的 `allowShell` 高风险开关（直接保存、仅影响新工程、在途保留启动快照）；`app.sqlite` 升至 V16。精准复验通过：Pi 8/8（含真实 SDK `read`/`write`/`edit`/`draft_test` 负向越界与进程回收）、后端 `typecheck` + 工程/迁移/共享工具测试 20/20 + `storage-schema`、渲染器 `check`（37 CSS 0 违规）+ 工程单测 5/5 + 生产构建、文档巡检 0 错误 0 警告。详见 [409 专项记录](./archive/07-documentation/409-project-audit-and-remediation-backlog.md#sec-01-pi-工程子代理路径围栏被内置-powershell-bash-直接击穿)。
 
 **409 Round 1（`BUG-01` / `BUG-02` / `BUG-08`）已通过 Astra 审核与主进程最终复核。** `BUG-01` 托管后端 `--watch-stdin` 优雅退出、重启零异常中断误报与 Windows 5 秒超时 `taskkill /T /F` 杀树兜底，`BUG-02` 托管日志轮转脱敏与 BootGate 失败诊断/日志目录入口，`BUG-08` `command_run` / `skill_run` Windows Job Object 进程树回收均通过实证。仓库 Node 24.22.2 下，后端 635/635、离线验收 21/21 步及 81 个场景、Pi 5/5、渲染器检查（37 CSS 0 违规）与 185/185 单测、生产构建、桌面壳 21/21 通过；串行 Electron E2E 28/29 在受限沙箱通过，第 29 项 `managed-backend-shutdown.e2e.cjs`（含 `taskkill /T /F` 强杀实证）在宿主 Windows 会话复跑通过，29/29 全量闭环且新增 Node / Electron 残留 0。[409 审核与专项实证](./archive/07-documentation/409-project-audit-and-remediation-backlog.md)

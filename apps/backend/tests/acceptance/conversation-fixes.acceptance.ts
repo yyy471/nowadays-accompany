@@ -35,6 +35,12 @@ function bindLocal(fixture: Fixture): void {
     env: { NOWADAYS_WORKSPACE: workspace(fixture) },
   } });
   addBinding(fixture, "mcp", resource.resourceId);
+  const command = fixture.app.services.resources.create({ kind: "mcp", name: "command", config: {
+    command: process.execPath,
+    args: ["--import", pathToFileURL(path.resolve("node_modules/tsx/dist/loader.mjs")).href, path.resolve("src/mcp/local-server.ts"), "--mode", "command"],
+    env: { NOWADAYS_WORKSPACE: workspace(fixture) },
+  } });
+  addBinding(fixture, "mcp", command.resourceId);
 }
 
 await probe("R01-original-task-progress-after-new-reply", async () => {

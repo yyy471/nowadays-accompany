@@ -3,6 +3,11 @@ import { spawn } from "node:child_process";
 process.once("message", ({ command, args, cwd, env }) => {
   let child;
   try {
+    // Windows 可能补入父环境；此启动器仅使用一次，清除目标未授权的环境变量。
+    const allowed = new Set(Object.keys(env).map(key => key.toUpperCase()));
+    for (const key of Object.keys(process.env)) {
+      if (!allowed.has(key.toUpperCase())) delete process.env[key];
+    }
     child = spawn(command, args, {
       cwd, env, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
     });

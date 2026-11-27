@@ -8,6 +8,22 @@ export interface McpDraft {
   description: string;
 }
 
+export const COMMAND_MCP_RISK = '高风险：以当前用户权限执行本机命令，可访问工作空间外的文件';
+
+export function isCommandMcp(config: Record<string, unknown>): boolean {
+  const command = typeof config.command === 'string' ? config.command.replace(/^['"]|['"]$/g, '') : '';
+  const args = Array.isArray(config.args) && config.args.every(arg => typeof arg === 'string') ? config.args as string[] : [];
+  const leaf = command.split(/[\\/]/).at(-1)?.toLowerCase();
+  if (/^npm(?:\.cmd|\.exe)?$/.test(leaf ?? '')) {
+    const run = args.findIndex(arg => arg === 'run' || arg === 'run-script');
+    const script = args[run + 1];
+    if (run >= 0 && script === 'mcp:local:command') return true;
+    if (run >= 0 && script === 'mcp:local' && args[run + 2] === '--' && args[run + 3] === '--mode' && args[run + 4] === 'command') return true;
+  }
+  const script = [command, ...args].some(arg => /(?:^|[\\/])src[\\/]mcp[\\/]local-server\.(?:js|ts)$/i.test(arg.replace(/^['"]|['"]$/g, '')) || /^\.?[\\/]?local-server\.(?:js|ts)$/i.test(arg.replace(/^['"]|['"]$/g, '')));
+  return script && args.some((arg, i) => arg === '--mode' && args[i + 1] === 'command');
+}
+
 function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }

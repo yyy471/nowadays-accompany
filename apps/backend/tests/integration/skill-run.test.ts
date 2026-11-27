@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { runSkillScriptProcess } from "../../src/application/conversation/agent-tools.js";
 import { SkillLibrary } from "../../src/skills/skill-library.js";
 import {
   addBinding,
@@ -122,13 +123,25 @@ test("skill_run executes a bundled script that reads its own resources and write
       (storage) => storage.paths.workspaceDir,
     );
     fs.mkdirSync(workspace, { recursive: true });
+    const secretDir = path.join(fixture.root, "fake-skill-secret");
+    fs.mkdirSync(secretDir);
+    const secret = path.join(secretDir, "master.key");
+    fs.writeFileSync(secret, "harmless fixture");
     createSkillPack(fixture, {
       "demo/SKILL.md": "---\nname: demo\ndescription: 演示随包脚本\n---\n正文",
       "demo/run.mjs": [
         "import fs from 'node:fs';",
         "import path from 'node:path';",
+        "import { spawnSync } from 'node:child_process';",
+        "const deny = fn => { try { fn(); throw Error('unexpected access'); } catch (e) { if (e.code !== 'ERR_ACCESS_DENIED') throw e; } };",
+        "deny(() => fs.writeFileSync('forbidden', 'x'));",
+        "deny(() => spawnSync(process.execPath, ['-e', '0']));",
+        `deny(() => fs.readFileSync(${JSON.stringify(secret)}));`,
+        "if (process.env.PATH || process.env.NOWADAYS_SKILL_DIR !== process.cwd()) throw Error('environment');",
+        "if (Object.keys(process.env).some(k => !['SYSTEMROOT', 'NOWADAYS_SKILL_DIR', 'NOWADAYS_WORKSPACE'].includes(k.toUpperCase()))) throw Error('extra environment keys: ' + Object.keys(process.env).join(','));",
         "const data = fs.readFileSync(path.join('data.txt'), 'utf8');",
         `fs.writeFileSync(path.join(process.env.NOWADAYS_WORKSPACE, 'skill-output.txt'), data, 'utf8');`,
+        "if (fs.readFileSync(path.join(process.env.NOWADAYS_WORKSPACE, 'skill-output.txt'), 'utf8') !== data) throw Error('workspace read');",
         "console.log('bundled:', data.trim());",
       ].join("\n"),
       "demo/data.txt": "随包资源内容\n",
@@ -136,10 +149,6 @@ test("skill_run executes a bundled script that reads its own resources and write
     submit(fixture, "运行 demo 的脚本");
     await fixture.app.conversation.waitForIdle(fixture.roleId);
 
-    assert.equal(
-      fs.readFileSync(path.join(workspace, "skill-output.txt"), "utf8"),
-      "随包资源内容\n",
-    );
     const detail = withStorage(fixture, (storage) => {
       const call = storage.business.db
         .prepare(
@@ -161,7 +170,9 @@ test("skill_run executes a bundled script that reads its own resources and write
       const task = storage.business.getTask(fixture.roleId, call.task_id);
       return { call, result, task };
     });
-    assert.equal(detail.call.status, "success");
+    assert.equal(detail.call.status, "success", JSON.stringify(detail));
+    assert.ok(fs.existsSync(path.join(workspace, "skill-output.txt")));
+
     assert.equal(detail.result.status, "success");
     assert.match(detail.result.adapted_result_json, /bundled: 随包资源内容/);
     assert.equal(detail.task.status, "completed");
@@ -328,9 +339,9 @@ test("a new message does not kill an already dispatched skill script and its rea
     { toolForegroundWaitMs: 5_000 },
   );
   try {
-    const effect = path.join(fixture.root, "skill-effect");
-    const finished = path.join(fixture.root, "skill-finished");
-    const release = path.join(fixture.root, "skill-release");
+    const effect = path.join(withStorage(fixture, storage => storage.paths.workspaceDir), "skill-effect");
+    const finished = path.join(withStorage(fixture, storage => storage.paths.workspaceDir), "skill-finished");
+    const release = path.join(withStorage(fixture, storage => storage.paths.workspaceDir), "skill-release");
     createSkillPack(fixture, {
       "demo/SKILL.md": "---\nname: demo\ndescription: 插话脚本样例\n---\n正文",
       "demo/run.mjs": [
@@ -413,8 +424,8 @@ test("a dispatched skill script reports its real timeout without inventing super
     ],
   ]);
   try {
-    const effect = path.join(fixture.root, "timeout-effect");
-    const finished = path.join(fixture.root, "timeout-finished");
+    const effect = path.join(withStorage(fixture, storage => storage.paths.workspaceDir), "timeout-effect");
+    const finished = path.join(withStorage(fixture, storage => storage.paths.workspaceDir), "timeout-finished");
     createSkillPack(fixture, {
       "demo/SKILL.md": "---\nname: demo\ndescription: 超时脚本样例\n---\n正文",
       "demo/run.mjs": [
@@ -444,4 +455,16 @@ test("a dispatched skill script reports its real timeout without inventing super
   } finally {
     await fixture.close();
   }
+});
+
+test("skill process rejects overlapping directories", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "skill-overlap-"));
+  const skill = path.join(root, "skill");
+  fs.mkdirSync(skill);
+  try {
+    for (const [skillDir, workspace] of [[skill, skill], [root, skill], [skill, root]] as const) {
+      const result = await runSkillScriptProcess(path.join(skill, "unused.mjs"), skill, workspace, [], 1000, skillDir);
+      assert.equal(result.diagnosticCode, "SKILL_WORKSPACE_PATH_CONFLICT");
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

@@ -55,7 +55,7 @@ export function registerExtensionImportRoutes(router: Router, resources: Resourc
     const workspace = await mkdtemp(path.join(os.tmpdir(), "nowadays-mcp-probe-"));
     let client: McpToolClient | undefined;
     try {
-      client = await McpToolClient.connect({ ...draft, env: { NOWADAYS_WORKSPACE: workspace, ...draft.env } }, { cwd: workspace, timeoutMs: 60_000 });
+      client = await McpToolClient.connect({ ...draft, env: { ...draft.env, NOWADAYS_WORKSPACE: workspace } }, { cwd: workspace, timeoutMs: 60_000 });
       const tools = await client.listTools();
       return { status: 200, body: { tools: tools.map(({ name, description }) => ({ name, description })) } };
     } catch (error) {

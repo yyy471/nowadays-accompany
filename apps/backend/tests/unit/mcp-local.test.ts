@@ -3,76 +3,136 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 import { McpToolClient } from "../../src/mcp/client.js";
 
-test("local MCP tools read, write, search and run commands inside the workspace", async () => {
+test("workspace and command modes expose their own tools", async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nowadays-p2-04-mcp-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const client = await McpToolClient.connect({
     command: process.execPath,
     args: ["--import", "tsx", "src/mcp/local-server.ts"],
     env: { NOWADAYS_WORKSPACE: root },
   });
+  t.after(() => client.close());
+  const commandClient = await McpToolClient.connect({ command: process.execPath, args: ["--import", "tsx", "src/mcp/local-server.ts", "--mode", "command"], env: { NOWADAYS_WORKSPACE: root } });
+  t.after(() => commandClient.close());
+  assert.equal(client.serverName, "nowadays-local-tools");
+  assert.equal(commandClient.serverName, "nowadays-local-tools");
+  const tools = await client.listTools();
+  assert.deepEqual(
+    tools.map((tool) => tool.name).sort(),
+    [
+      "workspace_read",
+      "workspace_search",
+      "workspace_write",
+    ],
+  );
+
+  const write = await callJson(client, "workspace_write", {
+    path: "notes/a.md",
+    content: "hello workspace\n第二行",
+  });
+  assert.deepEqual(write, {
+    ok: true,
+    path: "notes/a.md",
+    bytes: Buffer.byteLength("hello workspace\n第二行", "utf8"),
+    append: false,
+  });
+  const read = await callJson(client, "workspace_read", {
+    path: "notes/a.md",
+  });
+  assert.equal(read.content, "hello workspace\n第二行");
+  assert.equal(read.truncated, false);
+
+  const search = await callJson(client, "workspace_search", {
+    query: "workspace",
+  });
+  assert.equal(search.ok, true);
+  assert.equal(
+    (search.matches as Array<{ path: string }>).some(
+      (match) => match.path === "notes/a.md",
+    ),
+    true,
+  );
+
+  assert.deepEqual((await commandClient.listTools()).map(tool => tool.name), ["command_run"]);
+  const command = await callJson(commandClient, "command_run", {
+    command: process.execPath,
+    args: ["-e", "console.log('tool-ok')"],
+  });
+  assert.equal(command.ok, true);
+  assert.match(command.stdout as string, /tool-ok/);
+
+  const missingCommand = await callJson(commandClient, "command_run", {
+    command: path.join(root, "missing-executable"),
+  });
+  assert.equal(missingCommand.ok, false);
+  assert.equal(missingCommand.timedOut, false);
+  assert.match(missingCommand.error as string, /ENOENT/);
+
+  if (process.platform === "win32") {
+    const cmd = await callJson(commandClient, "command_run", { command: "cmd", args: ["/c", "echo", "command-ok"] });
+    assert.equal(cmd.ok, true);
+    assert.match(cmd.stdout as string, /command-ok/);
+  }
+  const escaped = await client.callTool("workspace_read", {
+    path: "../outside.txt",
+  });
+  assert.equal(escaped.isError, true);
+});
+
+test("stdio transport uses SDK defaults and explicitly configured environment", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-first-hop-"));
+  const preload = path.join(root, "check-env.mjs");
+  const previous = process.env.NOWADAYS_FAKE_HOST_SECRET;
+  process.env.NOWADAYS_FAKE_HOST_SECRET = "host-only-marker";
+  fs.writeFileSync(preload, "if (process.env.NOWADAYS_FAKE_HOST_SECRET !== undefined || process.env.NOWADAYS_FAKE_CONFIG !== 'configured-marker') process.exit(91);");
   try {
-    const tools = await client.listTools();
-    assert.deepEqual(
-      tools.map((tool) => tool.name).sort(),
-      [
-        "command_run",
-        "workspace_read",
-        "workspace_search",
-        "workspace_write",
-      ],
-    );
-
-    const write = await callJson(client, "workspace_write", {
-      path: "notes/a.md",
-      content: "hello workspace\n第二行",
-    });
-    assert.deepEqual(write, {
-      ok: true,
-      path: "notes/a.md",
-      bytes: Buffer.byteLength("hello workspace\n第二行", "utf8"),
-      append: false,
-    });
-    const read = await callJson(client, "workspace_read", {
-      path: "notes/a.md",
-    });
-    assert.equal(read.content, "hello workspace\n第二行");
-    assert.equal(read.truncated, false);
-
-    const search = await callJson(client, "workspace_search", {
-      query: "workspace",
-    });
-    assert.equal(search.ok, true);
-    assert.equal(
-      (search.matches as Array<{ path: string }>).some(
-        (match) => match.path === "notes/a.md",
-      ),
-      true,
-    );
-
-    const command = await callJson(client, "command_run", {
-      command: process.execPath,
-      args: ["-e", "console.log('tool-ok')"],
-    });
-    assert.equal(command.ok, true);
-    assert.match(command.stdout as string, /tool-ok/);
-
-    const missingCommand = await callJson(client, "command_run", {
-      command: path.join(root, "missing-executable"),
-    });
-    assert.equal(missingCommand.ok, false);
-    assert.equal(missingCommand.timedOut, false);
-    assert.match(missingCommand.error as string, /ENOENT/);
-
-    const escaped = await client.callTool("workspace_read", {
-      path: "../outside.txt",
-    });
-    assert.equal(escaped.isError, true);
+    const client = await McpToolClient.connect({ command: process.execPath, args: ["--import", pathToFileURL(preload).href, "--import", "tsx", "src/mcp/local-server.ts"], env: { NOWADAYS_WORKSPACE: root, NOWADAYS_FAKE_CONFIG: "configured-marker" } });
+    try {
+      assert.equal(client.serverName, "nowadays-local-tools");
+      assert.deepEqual((await client.listTools()).map(tool => tool.name).sort(), ["workspace_read", "workspace_search", "workspace_write"]);
+    } finally { await client.close(); }
   } finally {
-    await client.close();
+    if (previous === undefined) delete process.env.NOWADAYS_FAKE_HOST_SECRET; else process.env.NOWADAYS_FAKE_HOST_SECRET = previous;
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("command child strips sensitive variables while preserving configured PATH", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-second-hop-"));
+  const names = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "AWS_SECRET_ACCESS_KEY", "GITHUB_TOKEN", "NOWADAYS_HOST_TOKEN", "NODE_OPTIONS"];
+  const env: Record<string, string> = { NOWADAYS_WORKSPACE: root, PATH: root };
+  for (const name of names) env[name] = name === "NODE_OPTIONS" ? "--no-warnings" : "fake-marker";
+  const client = await McpToolClient.connect({ command: process.execPath, args: ["--import", "tsx", "src/mcp/local-server.ts", "--mode", "command"], env });
+  try {
+    assert.equal(client.serverName, "nowadays-local-tools");
+    const result = await callJson(client, "command_run", { command: "node", args: ["-e", `console.log(JSON.stringify({ present: ${JSON.stringify(names)}.filter(name => process.env[name] !== undefined), keys: Object.keys(process.env), PATH: process.env.PATH, workspace: process.env.NOWADAYS_WORKSPACE }))`] });
+    assert.equal(result.ok, true);
+    const child = JSON.parse(result.stdout as string) as { present: string[]; keys: string[]; PATH?: string; workspace?: string };
+    assert.deepEqual(child.present, []);
+    const keys = child.keys.map(key => process.platform === "win32" ? key.toUpperCase() : key);
+    const allowed = process.platform === "win32"
+      ? ["PATH", "SYSTEMROOT", "COMSPEC", "PATHEXT", "TEMP", "TMP", "NOWADAYS_WORKSPACE"]
+      : ["PATH", "HOME", "TMPDIR", "LANG", "NOWADAYS_WORKSPACE"];
+    assert.equal(new Set(keys).size, keys.length);
+    assert.deepEqual(keys.filter(key => !allowed.includes(key)), []);
+    assert.equal(child.workspace, fs.realpathSync(root));
+    assert.ok(child.PATH);
+    assert.equal(child.PATH.split(path.delimiter)[0], path.dirname(process.execPath));
+    assert.ok(child.PATH.split(path.delimiter).includes(root));
+  } finally { await client.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("local MCP validates modes", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-mode-"));
+  const config = { command: process.execPath, args: ["--import", "tsx", "src/mcp/local-server.ts", "--mode", "workspace"], env: { NOWADAYS_WORKSPACE: root } };
+  try {
+    const client = await McpToolClient.connect(config);
+    try { assert.deepEqual((await client.listTools()).map(tool => tool.name).sort(), ["workspace_read", "workspace_search", "workspace_write"]); } finally { await client.close(); }
+    await assert.rejects(McpToolClient.connect({ ...config, args: [...config.args.slice(0, -1), "invalid"] }));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test("workspace writes reject existing and missing-parent directory links", async () => {

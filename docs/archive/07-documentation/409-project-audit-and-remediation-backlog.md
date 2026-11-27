@@ -17,7 +17,7 @@
 | [BUG-01](#bug-01-windows-退出桌面硬杀后端导致优雅关闭失效与孤儿进程风险) | 运行时 Bug | **P0** | Windows 退出桌面调用 `kill("SIGTERM")` 触发强杀，`app.close()` 永不执行 | 否 | 已修复，独立复验通过 |
 | [BUG-02](#bug-02-桌面拉起后端静默吞掉-stderr启动失败无诊断信息) | 运行时 Bug | **P0** | 桌面壳 `child.stderr.resume()` 吞掉全部后端错误输出 | 否 | 已修复，独立复验通过 |
 | [SEC-01](#sec-01-pi-工程子代理路径围栏被内置-powershell-bash-直接击穿) | 安全边界 | **P0** | Pi 锁定了 `write/edit` 路径，却无隔离放开 `powershell/bash` | 边界已确认（`DL-195`） | 已修复，独立复验通过 |
-| [SEC-02](#sec-02-本地-mcp-命令执行与普通角色脚本执行击穿隔离并继承完整宿主环境) | 安全边界 | **P0** | `command_run` 只检 `cwd`、普通角色 `skill_run` 无 `--permission`，均透传完整 `process.env` | 需确认边界（`DL-59`） | `[ ]` 待排查 |
+| [SEC-02](#sec-02-本地-mcp-命令执行与普通角色脚本执行击穿隔离并继承完整宿主环境) | 安全边界 | **P0** | 工作空间与本机命令曾共用开关，普通角色脚本缺少文件权限约束，子进程环境过宽 | 方案 A 已确认（`DL-59`） | 已修复，针对性独立复验通过 |
 | [DELIV-01](#deliv-01-桌面生产包直接打包未编译-ts-源码与-tsx且缺-node-24-构建流水线) | 交付打包 | **P0** | 生产包用 `tsx` 现场转译 TS，缺少干净 Windows 机可验证的发行包 | 否 | `[ ]` 待排查 |
 | [BUG-03](#bug-03-roleaccesswithstore-每次操作现开现关两个-sqlite-库且实例未统一) | 性能/稳定性 | **P1** | 无连接复用；单次查询同步开关双库，且 `RoleService` / `ConversationService` 绕开统一入口 | 否 | `[ ]` 待排查 |
 | [BUG-04](#bug-04-维护窗口暂停多角色采用串行轮询最坏线性卡死) | 性能/稳定性 | **P1** | `pauseRoles` 逐角色串行等待最多 20s，5 个角色最坏阻塞 100s | 否 | `[ ]` 待排查 |
@@ -256,19 +256,25 @@
 
 ### SEC-02 本地 MCP 命令执行与普通角色脚本执行击穿隔离并继承完整宿主环境
 
-- **优先级**：P0 · **状态**：`[ ]` 待排查 · **决策影响**：需先确认本地工具与 Skill 脚本隔离边界（关联 [DL-59](../../161-digital-life-direction-decisions.md#dl-59-资源使用控制仅提供开关不增加额外授权)）
-- **证据位置**：
-  - [apps/backend/src/mcp/local-server.ts](../../../apps/backend/src/mcp/local-server.ts#L174-L200) · [local-server.ts#L292-L297](../../../apps/backend/src/mcp/local-server.ts#L292-L297)（`env: process.env`）
-  - [apps/backend/src/application/conversation/agent-tools.ts](../../../apps/backend/src/application/conversation/agent-tools.ts#L1144-L1186)（普通角色 `skill_run` 未传 `controlledPackage`，导致 `flags = []` 跳过 `--permission` 且直接继承完整 `process.env`）
-- **根因分析**：
-  1. `local-server.ts` 中 `workspace_read/write/search` 严格校验 `safePath`，但同一服务里的 `command_run` 对可执行程序和参数毫无约束且继承完整 `process.env`。用户为了“让角色写 Markdown 笔记”开启本地工具，实际上同时交出了整机任意命令执行权；
-  2. `runSkillScriptProcess` 在 Pi 代理调用时严格开启了 `--permission` 并收敛 `env`（[tool-proxy.ts#L156](../../../apps/backend/src/mcp/tool-proxy.ts#L156)），但普通角色自己调用 `skill_run` 时却完全跳过这两层防护，造成“高权限工程代理被锁、普通角色反而裸奔”的倒挂。
-- **修复建议**：
-  1. **能力拆分**：将「纯工作空间读写检索」与「本机命令执行（`command_run`）」拆分为两个独立的本地 MCP 或显式子开关；
-  2. **环境最小化**：`command_run` 与 `skill_run` 均改为显式环境变量白名单（如 `PATH`、`SystemRoot`、`TEMP`、`NOWADAYS_WORKSPACE`、`NOWADAYS_SKILL_DIR`），禁止整包透传 `process.env`（防止泄露用户系统级云凭据、Git/SSH Token）；
-  3. **拉齐 `skill_run` 权限模型**：评估普通角色 `skill_run` 默认启用与 Pi 一致的 `--permission` 文件边界（只读 Skill 包目录 + 读写角色 `workspace/`），确需越界访问的脚本显式声明。
-- **验收标准**：
-  - 只启用工作空间读写工具的角色无法执行系统命令；启用 `command_run` / `skill_run` 时，宿主非白名单敏感环境变量不会进入子进程。
+**P0 · 方案 A 已实施。** 审计时，开启工作空间读写也会取得本机命令能力。普通 MCP 连接与命令进程继承完整宿主环境。普通角色执行 Skill 时省略可选包目录，跳过 Pi 已使用的 Node 权限标志。用户于 2026-11-27 确认按独立资源开关处理这三处边界。[DL-59](../../161-digital-life-direction-decisions.md#dl-59-资源使用控制仅提供开关不增加额外授权)
+
+#### 2026-11-27 实施与精准复验
+
+- 同一 stdio 入口保留握手名，按启动模式只注册工作空间三个工具或单个 `command_run`。桌面导入命令资源默认停用，全局与角色开关均标明本机用户权限及工作空间外访问风险。导入后由用户绑定角色。[本地服务](../../../apps/backend/src/mcp/local-server.ts) · [后端使用说明](../../../apps/backend/README.md#4-本地-mcp-和通用-skill)
+- 普通 MCP 连接使用 SDK 平台默认环境及显式资源配置，角色调用与连接探测分别写入实际目录。命令按平台白名单运行，以当前 Node 目录开头查找程序。首次子进程观测发现 Windows 会额外补入 `PATH` 和用户目录等键；修订后，一次性启动器在派生命令或 Skill 前清除目标白名单以外的自身环境键，保留原有 Job Object 回收流程。[连接端](../../../apps/backend/src/mcp/client.ts) · [Windows 启动器](../../../apps/backend/src/infra/process-launcher.mjs)
+- 普通角色与 Pi 共用必填包目录的 `skill_run`。真实路径重叠时返回 `SKILL_WORKSPACE_PATH_CONFLICT`，避免工作区写权限连带覆盖包目录。正常布局只读包、读写本次工作空间，禁止派生子进程。[执行入口](../../../apps/backend/src/application/conversation/agent-tools.ts) · [存储与自主执行规范](../../specs/storage-memory-and-autonomy.md)
+
+三名 `gpt-6.1-terra` 按文件分工编码，主代理逐行审核并在 Windows、仓库 Node 24.22.2 上独立复验。
+
+| 复验入口 | 实测结果 |
+| --- | --- |
+| 后端 `typecheck` 与 6 个指定单测文件 | 类型检查通过，`mcp-local`、`extension-import`、`mcp-execution`、`skill-run`、`process-tree`、`pi-shared-tools` 共 36/36。收紧输入 PATH 后，`mcp-local` 单文件复验 5/5。 |
+| MCP 与普通角色负向断言 | 两模式握手和精确目录、非法模式拒绝、两跳环境过滤、按名启动 `node` 与 `cmd`、角色与探测目录覆盖均通过。普通角色可读取包及读写工作区，写包、读取外部假 `master.key`、派生子进程均返回 `ERR_ACCESS_DENIED`。自身超时与 Windows 命令后代回收通过。 |
+| 指定对话专项 | 仓库实际入口为 `conversation-review.acceptance.ts`（10/10）及 `conversation-fixes.acceptance.ts`（5/5）。 |
+| 渲染器 | `npm run check` 通过（37 个 CSS，0 违规），`extension-import.test.ts` 4/4，生产构建成功。Vite 提示主包超过 500 kB。 |
+| 收尾 | 文档巡检 0 错误、0 警告，`git diff --check` 通过。与启动前 PID 和启动时间对照，Node、Electron、esbuild、cmd 无新增残留。 |
+
+后端复验日志与两份逐场景回执保存在本机 `test-results/sec-02-1795778710282/`。本轮范围为上述 Windows 精准验证。
 
 ---
 

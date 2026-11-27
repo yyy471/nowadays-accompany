@@ -1,5 +1,6 @@
 import { errorText } from '../lib/error-text';
 import { ExtensionCreate, ExtensionFields, SavedMcpProbe, parseExtensionEnv } from '../components/config/ExtensionImport';
+import { COMMAND_MCP_RISK, isCommandMcp } from '../components/config/extension-import';
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { api, ApiError } from '../api';
@@ -1130,14 +1131,14 @@ function ExtSheetHosts({ active, resources, draft, setDraft, bindings, loaded, n
         <div className="config-grp-label"><b>{kind === 'mcp' ? 'MCP' : 'Skill'}</b></div>
         <div>
           {list.length === 0 ? <p className="config-sheet-note">{T36.settingsKind(kind === 'mcp' ? 'MCP' : 'Skill')}</p> : <div className="config-toggle-list">
-            {list.map(item => <div className="config-toggle-row" data-unavailable={!item.enabled || undefined} key={item.resourceId}
+            {list.map(item => { const commandRisk = item.kind === 'mcp' && isCommandMcp(item.config); return <div className="config-toggle-row" data-unavailable={!item.enabled || undefined} key={item.resourceId}
               data-located={sheet?.resourceId === item.resourceId || undefined}
               data-sheet-focus={sheet?.resourceId === item.resourceId || undefined}
               tabIndex={sheet?.resourceId === item.resourceId ? 0 : undefined}
               onFocus={event => { if (sheet?.resourceId === item.resourceId) event.currentTarget.scrollIntoView({ block: 'nearest' }); }}>
-              <span><strong>{item.name}</strong>{typeof item.config.description === 'string' && item.config.description && <small>{item.config.description}</small>}{!item.enabled && <small id={`extension-disabled-${item.resourceId}`}>{T33.switchNote}</small>}</span>
-              <Switch checked={!!draft[item.resourceId]} disabled={!item.enabled || !loaded} aria-describedby={!item.enabled ? `extension-disabled-${item.resourceId}` : undefined} label={`为角色开启${item.name}`} onCheckedChange={checked => setDraft({ ...draft, [item.resourceId]: checked })}/>
-            </div>)}
+              <span><strong>{item.name}</strong>{typeof item.config.description === 'string' && item.config.description && <small>{item.config.description}</small>}{commandRisk && <small id={`extension-risk-${item.resourceId}`}>{COMMAND_MCP_RISK}</small>}{!item.enabled && <small id={`extension-disabled-${item.resourceId}`}>{T33.switchNote}</small>}</span>
+              <Switch checked={!!draft[item.resourceId]} disabled={!item.enabled || !loaded} aria-describedby={[commandRisk && `extension-risk-${item.resourceId}`, !item.enabled && `extension-disabled-${item.resourceId}`].filter(Boolean).join(' ') || undefined} label={`为角色开启${item.name}`} onCheckedChange={checked => setDraft({ ...draft, [item.resourceId]: checked })}/>
+            </div>; })}
           </div>}
           {onReload && <Button size="sm" disabled={busy} onClick={() => void onReload()}>重试读取绑定</Button>}
           <p className="config-sheet-note"><button type="button" className="config-sheet-link" onClick={() => requestClose(() => onManage(kind))}>{list.length ? T25.manage : T25.add}</button></p>
@@ -2100,6 +2101,7 @@ function ExtensionManagement({ resource, onConfigure, roles, activities, active,
     {onConfigure && <div className="config-actions"><Button size="sm" onClick={onConfigure}>去角色配置启用</Button></div>}
     {isMcp && active && <SavedMcpProbe key={version} resourceId={resource.resourceId} enabled={resource.enabled}/>}
     {isMcp ? <><ServiceRow label="启动" value={`${String(resource.config.command || '')} ${argsText.replaceAll('\n', ' ')}`.trim()} keys={['stdio']} onOpen={trigger => open('启动', trigger)}/><ServiceRow label="环境变量" value={envKeys.join('、') || '无'} status={envKeys.length ? 'ok' : 'none'} statusText={envKeys.length ? '值已保存' : '未设置'} onOpen={trigger => open('环境变量', trigger)}/></> : <ServiceRow label="来源目录" value={String(resource.config.sourcePath || '')} onOpen={trigger => open('来源目录', trigger)}/>}
+    {isMcp && isCommandMcp(resource.config) && <p className="config-sheet-note">{COMMAND_MCP_RISK}</p>}
     <ServiceManagementRow name={resource.name} enabled={resource.enabled} busy={toggleBusy} disabled={write.busy || write.resuming || !report || (resource.enabled && !report.canDisable)} onChange={enabled => void run(enabled ? 'enable' : 'disable')}/>
     <ServiceUseRow entries={names} loading={!report} error={reportError}/>
     <ResourceUseDetails entries={entries} roles={roles} {...useActions} busy={write.busy || write.resuming}/>

@@ -8,7 +8,7 @@ import { useSheet } from './sheet/sheet-context';
 import { ServiceSheet, ServiceSheetActions } from './ServiceParts';
 import { useWrite } from './write-runner';
 import { T11 } from './config-texts';
-import { mcpSummary, skillIssue, parseMcpImport, personalArgument, type McpDraft } from './extension-import';
+import { mcpSummary, skillIssue, parseMcpImport, personalArgument, isCommandMcp, COMMAND_MCP_RISK, type McpDraft } from './extension-import';
 
 export function parseExtensionEnv(value: string): Record<string, string> | null {
   try {
@@ -164,7 +164,7 @@ export function ExtensionCreate<R extends { resourceId: string; name: string }>(
     try {
       const resources = kind === 'skill'
         ? (await api<{ items: R[] }>('/v1/resources/skills/import', { method: 'POST', body: { sourcePath: source.trim(), directories: selected } })).items
-        : [await api<R>('/v1/resources', { method: 'POST', body: { kind, name: name.trim(), config: {
+        : [await api<R>('/v1/resources', { method: 'POST', body: { kind, name: name.trim(), ...(isCommandMcp(config) ? { enabled: false } : {}), config: {
           ...config, description: (description.trim() || probe.tools?.map(tool => tool.description.split('\n')[0] || tool.name).join('；') || '').slice(0, 2000),
         } } })];
       sheet.closeNow(() => { reset(); onCreated(resources); }, resources.map(item => item.name).join('、') + ' 已添加');
@@ -195,6 +195,7 @@ export function ExtensionCreate<R extends { resourceId: string; name: string }>(
         args={args.join('\n')} onArgs={s => { setArgs(s ? s.split('\n') : []); probe.clear(); }} env={env} onEnv={s => { setEnv(s); probe.clear(); }}
         busy={busy} source="" onSource={() => {}} creating/>}
       {(advanced || imported) && <MediaGroup title="用途"><Field label="用途"><Input value={description} placeholder="例如：查找百科资料" disabled={busy} onChange={e => setDescription(e.target.value)}/></Field></MediaGroup>}
+      {isCommandMcp(config) && <p className="config-sheet-note">{COMMAND_MCP_RISK}。添加后默认停用，需手动启用并绑定角色。</p>}
       <MediaGroup title="工具探测"><ToolProbe probe={probe} disabled={saving || !command.trim() || !variables}
         onTest={() => void probe.run(config)}/></MediaGroup>
     </> : <MediaGroup title="技能目录">

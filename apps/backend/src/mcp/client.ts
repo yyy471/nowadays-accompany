@@ -50,7 +50,7 @@ export class McpToolClient {
       cwd: options.cwd ?? process.cwd(),
       env: pi ? { PATH: [path.dirname(process.execPath), process.env.PATH].filter(Boolean).join(path.delimiter),
         ...(process.platform === "win32" && { PATHEXT: ".COM;.EXE;.BAT;.CMD", SystemRoot: process.env.SystemRoot ?? "C:\\Windows" }),
-      } : options.isolatedEnv ? config.env : { ...process.env, ...config.env } as Record<string, string>,
+      } : config.env,
       stderr: "pipe",
     });
     transport.stderr?.on("data", () => {});

@@ -5,6 +5,16 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { runScopedProcess } from "../infra/process-tree.js";
 
+const args = process.argv.slice(2);
+let mode: "workspace" | "command";
+if (args.length === 0) {
+  mode = "workspace";
+} else if (args.length === 2 && args[0] === "--mode" && (args[1] === "workspace" || args[1] === "command")) {
+  mode = args[1];
+} else {
+  console.error("INVALID_MCP_MODE");
+  process.exit(1);
+}
 const workspace = process.env.NOWADAYS_WORKSPACE;
 if (!workspace) {
   console.error("NOWADAYS_WORKSPACE is required");
@@ -18,186 +28,188 @@ const server = new McpServer({
   version: "0.1.0",
 });
 
-server.registerTool(
-  "workspace_read",
-  {
-    description:
-      "Read a UTF-8 text file inside the role workspace. Paths are relative to the workspace root.",
-    inputSchema: {
-      path: z.string().min(1),
+if (mode === "workspace") {
+  server.registerTool(
+    "workspace_read",
+    {
+      description:
+        "Read a UTF-8 text file inside the role workspace. Paths are relative to the workspace root.",
+      inputSchema: {
+        path: z.string().min(1),
+      },
     },
-  },
-  async ({ path: relativePath }) => {
-    const target = safePath(relativePath, true);
-    const stat = fs.statSync(target);
-    if (!stat.isFile()) {
-      throw new Error("NOT_A_FILE");
-    }
-    const buffer = fs.readFileSync(target);
-    const truncated = buffer.byteLength > MAX_TEXT_BYTES;
-    const content = buffer
-      .subarray(0, MAX_TEXT_BYTES)
-      .toString("utf8");
-    return jsonResult({
-      ok: true,
-      path: relativePath,
-      bytes: buffer.byteLength,
-      truncated,
-      content,
-    });
-  },
-);
-
-server.registerTool(
-  "workspace_write",
-  {
-    description:
-      "Write or append UTF-8 text to a file inside the role workspace. Missing parent directories are created.",
-    inputSchema: {
-      path: z.string().min(1),
-      content: z.string(),
-      append: z.boolean().optional(),
-    },
-  },
-  async ({ path: relativePath, content, append }) => {
-    const target = safePath(relativePath, false);
-    const directory = path.dirname(target);
-    fs.mkdirSync(directory, { recursive: true });
-    assertInsideWorkspace(fs.realpathSync(directory));
-    if (append) {
-      fs.appendFileSync(target, content, "utf8");
-    } else {
-      fs.writeFileSync(target, content, "utf8");
-    }
-    return jsonResult({
-      ok: true,
-      path: relativePath,
-      bytes: Buffer.byteLength(content, "utf8"),
-      append: append === true,
-    });
-  },
-);
-
-server.registerTool(
-  "workspace_search",
-  {
-    description:
-      "Search file names and UTF-8 text contents under a workspace directory. Returns matching paths and lines.",
-    inputSchema: {
-      query: z.string().min(1),
-      path: z.string().optional(),
-      maxResults: z.number().int().min(1).max(200).optional(),
-    },
-  },
-  async ({ query, path: relativePath, maxResults }) => {
-    const searchRoot = safePath(relativePath ?? ".", true);
-    if (!fs.statSync(searchRoot).isDirectory()) {
-      throw new Error("NOT_A_DIRECTORY");
-    }
-    const limit = maxResults ?? 50;
-    const lower = query.toLowerCase();
-    const matches: Array<{ path: string; line?: number; text?: string }> = [];
-    let visited = 0;
-    let truncated = false;
-    const walk = (directory: string, depth: number): void => {
-      if (matches.length >= limit || visited > 2000 || depth > 12) {
-        truncated = true;
-        return;
+    async ({ path: relativePath }) => {
+      const target = safePath(relativePath, true);
+      const stat = fs.statSync(target);
+      if (!stat.isFile()) {
+        throw new Error("NOT_A_FILE");
       }
-      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-        if (matches.length >= limit) {
+      const buffer = fs.readFileSync(target);
+      const truncated = buffer.byteLength > MAX_TEXT_BYTES;
+      const content = buffer
+        .subarray(0, MAX_TEXT_BYTES)
+        .toString("utf8");
+      return jsonResult({
+        ok: true,
+        path: relativePath,
+        bytes: buffer.byteLength,
+        truncated,
+        content,
+      });
+    },
+  );
+
+  server.registerTool(
+    "workspace_write",
+    {
+      description:
+        "Write or append UTF-8 text to a file inside the role workspace. Missing parent directories are created.",
+      inputSchema: {
+        path: z.string().min(1),
+        content: z.string(),
+        append: z.boolean().optional(),
+      },
+    },
+    async ({ path: relativePath, content, append }) => {
+      const target = safePath(relativePath, false);
+      const directory = path.dirname(target);
+      fs.mkdirSync(directory, { recursive: true });
+      assertInsideWorkspace(fs.realpathSync(directory));
+      if (append) {
+        fs.appendFileSync(target, content, "utf8");
+      } else {
+        fs.writeFileSync(target, content, "utf8");
+      }
+      return jsonResult({
+        ok: true,
+        path: relativePath,
+        bytes: Buffer.byteLength(content, "utf8"),
+        append: append === true,
+      });
+    },
+  );
+
+  server.registerTool(
+    "workspace_search",
+    {
+      description:
+        "Search file names and UTF-8 text contents under a workspace directory. Returns matching paths and lines.",
+      inputSchema: {
+        query: z.string().min(1),
+        path: z.string().optional(),
+        maxResults: z.number().int().min(1).max(200).optional(),
+      },
+    },
+    async ({ query, path: relativePath, maxResults }) => {
+      const searchRoot = safePath(relativePath ?? ".", true);
+      if (!fs.statSync(searchRoot).isDirectory()) {
+        throw new Error("NOT_A_DIRECTORY");
+      }
+      const limit = maxResults ?? 50;
+      const lower = query.toLowerCase();
+      const matches: Array<{ path: string; line?: number; text?: string }> = [];
+      let visited = 0;
+      let truncated = false;
+      const walk = (directory: string, depth: number): void => {
+        if (matches.length >= limit || visited > 2000 || depth > 12) {
           truncated = true;
           return;
         }
-        if (entry.name === "node_modules" || entry.name === ".git") {
-          continue;
-        }
-        const absolute = path.join(directory, entry.name);
-        const relative = path
-          .relative(root, absolute)
-          .split(path.sep)
-          .join("/");
-        if (entry.isDirectory()) {
-          walk(absolute, depth + 1);
-          continue;
-        }
-        if (!entry.isFile()) {
-          continue;
-        }
-        visited += 1;
-        if (entry.name.toLowerCase().includes(lower)) {
-          matches.push({ path: relative });
+        for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
           if (matches.length >= limit) {
             truncated = true;
             return;
           }
-        }
-        const stat = fs.statSync(absolute);
-        if (stat.size > MAX_TEXT_BYTES) {
-          continue;
-        }
-        let text: string;
-        try {
-          text = fs.readFileSync(absolute, "utf8");
-        } catch {
-          continue;
-        }
-        if (text.includes("\u0000")) {
-          continue;
-        }
-        const lines = text.split(/\r?\n/);
-        for (let index = 0; index < lines.length; index += 1) {
-          if (lines[index]?.toLowerCase().includes(lower)) {
-            matches.push({
-              path: relative,
-              line: index + 1,
-              text: (lines[index] ?? "").slice(0, 500),
-            });
+          if (entry.name === "node_modules" || entry.name === ".git") {
+            continue;
+          }
+          const absolute = path.join(directory, entry.name);
+          const relative = path
+            .relative(root, absolute)
+            .split(path.sep)
+            .join("/");
+          if (entry.isDirectory()) {
+            walk(absolute, depth + 1);
+            continue;
+          }
+          if (!entry.isFile()) {
+            continue;
+          }
+          visited += 1;
+          if (entry.name.toLowerCase().includes(lower)) {
+            matches.push({ path: relative });
             if (matches.length >= limit) {
               truncated = true;
               return;
             }
           }
+          const stat = fs.statSync(absolute);
+          if (stat.size > MAX_TEXT_BYTES) {
+            continue;
+          }
+          let text: string;
+          try {
+            text = fs.readFileSync(absolute, "utf8");
+          } catch {
+            continue;
+          }
+          if (text.includes("\u0000")) {
+            continue;
+          }
+          const lines = text.split(/\r?\n/);
+          for (let index = 0; index < lines.length; index += 1) {
+            if (lines[index]?.toLowerCase().includes(lower)) {
+              matches.push({
+                path: relative,
+                line: index + 1,
+                text: (lines[index] ?? "").slice(0, 500),
+              });
+              if (matches.length >= limit) {
+                truncated = true;
+                return;
+              }
+            }
+          }
         }
-      }
-    };
-    walk(searchRoot, 0);
-    return jsonResult({
-      ok: true,
-      root: path.relative(root, searchRoot).split(path.sep).join("/") || ".",
-      matches,
-      truncated,
-    });
-  },
-);
-
-server.registerTool(
-  "command_run",
-  {
-    description:
-      "Run a command directly inside the role workspace. The command inherits the user environment; output is captured.",
-    inputSchema: {
-      command: z.string().min(1),
-      args: z.array(z.string()).optional(),
-      cwd: z.string().optional(),
-      timeoutMs: z.number().int().min(1000).max(120_000).optional(),
+      };
+      walk(searchRoot, 0);
+      return jsonResult({
+        ok: true,
+        root: path.relative(root, searchRoot).split(path.sep).join("/") || ".",
+        matches,
+        truncated,
+      });
     },
-  },
-  async ({ command, args, cwd, timeoutMs }) => {
-    const workingDirectory = safePath(cwd ?? ".", true);
-    if (!fs.statSync(workingDirectory).isDirectory()) {
-      throw new Error("NOT_A_DIRECTORY");
-    }
-    return jsonResult(
-      await runCommand(
-        command,
-        args ?? [],
-        workingDirectory,
-        timeoutMs ?? 30_000,
-      ),
-    );
-  },
-);
+  );
+} else {
+  server.registerTool(
+    "command_run",
+    {
+      description:
+        "Run a command directly inside the role workspace. The command runs with the current user permissions and a minimal environment; output is captured.",
+      inputSchema: {
+        command: z.string().min(1),
+        args: z.array(z.string()).optional(),
+        cwd: z.string().optional(),
+        timeoutMs: z.number().int().min(1000).max(120_000).optional(),
+      },
+    },
+    async ({ command, args, cwd, timeoutMs }) => {
+      const workingDirectory = safePath(cwd ?? ".", true);
+      if (!fs.statSync(workingDirectory).isDirectory()) {
+        throw new Error("NOT_A_DIRECTORY");
+      }
+      return jsonResult(
+        await runCommand(
+          command,
+          args ?? [],
+          workingDirectory,
+          timeoutMs ?? 30_000,
+        ),
+      );
+    },
+  );
+}
 
 function safePath(relativePath: string, mustExist: boolean): string {
   if (path.isAbsolute(relativePath)) {
@@ -268,6 +280,20 @@ function jsonResult(payload: unknown): {
   };
 }
 
+function commandEnvironment(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  const allowed = process.platform === "win32"
+    ? ["SystemRoot", "ComSpec", "PATHEXT", "TEMP", "TMP"]
+    : ["HOME", "TMPDIR", "LANG"];
+  for (const name of allowed) {
+    const value = process.env[name];
+    if (value !== undefined) env[name] = value;
+  }
+  env.PATH = [path.dirname(process.execPath), process.env.PATH].filter(Boolean).join(path.delimiter);
+  env.NOWADAYS_WORKSPACE = root;
+  return env;
+}
+
 function runCommand(
   command: string,
   args: string[],
@@ -296,7 +322,7 @@ function runCommand(
       return next;
     };
     runScopedProcess({
-      command, args, cwd, env: process.env, timeoutMs, timeoutSignal: "SIGTERM",
+      command, args, cwd, env: commandEnvironment(), timeoutMs, timeoutSignal: "SIGTERM",
       onOutput: (stream, chunk) => {
         if (stream === "stdout") stdout = append(stdout, chunk);
         else stderr = append(stderr, chunk);

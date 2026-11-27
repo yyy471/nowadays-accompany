@@ -1,4 +1,5 @@
 import path from "node:path";
+import fs from "node:fs";
 import {
   eventCorrectionSchema,
   memorySearchRequestSchema,
@@ -322,7 +323,7 @@ function withWorkspaceEnv(
   return {
     command: config.command,
     args: config.args,
-    env: { NOWADAYS_WORKSPACE: workspaceDir, ...config.env },
+    env: { ...config.env, NOWADAYS_WORKSPACE: workspaceDir },
   };
 }
 
@@ -1147,6 +1148,7 @@ function skillRunTool(
         workspaceDir,
         scriptArgs,
         timeoutMs,
+        resolved.directory,
       );
     },
   };
@@ -1158,8 +1160,23 @@ export function runSkillScriptProcess(
   workspaceDir: string,
   scriptArgs: readonly string[],
   timeoutMs: number,
-  controlledPackage?: string,
+  skillDir: string,
 ): Promise<ConversationToolOutcome> {
+  let skillReal: string;
+  let workspaceReal: string;
+  try {
+    skillReal = fs.realpathSync(skillDir);
+    workspaceReal = fs.realpathSync(workspaceDir);
+  } catch (error) {
+    return Promise.resolve(failedOutcome("SKILL_SCRIPT_SPAWN_FAILED", safeMessage(error, "Skill script startup failed")));
+  }
+  const within = (parent: string, child: string): boolean => {
+    const relative = path.relative(parent, child);
+    return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+  };
+  if (within(skillReal, workspaceReal) || within(workspaceReal, skillReal)) {
+    return Promise.resolve(failedOutcome("SKILL_WORKSPACE_PATH_CONFLICT", "Skill 目录与工作空间不能重叠"));
+  }
   return new Promise<ConversationToolOutcome>((resolve) => {
     const chunks = { out: [] as Buffer[], err: [] as Buffer[] };
     const bytes = { out: 0, err: 0 };
@@ -1170,17 +1187,17 @@ export function runSkillScriptProcess(
       if (count) chunks[target].push(chunk.subarray(0, count));
       bytes[target] += count;
     };
-    const flags = controlledPackage ? ["--permission", "--allow-fs-read=" + controlledPackage,
-      "--allow-fs-read=" + cwd, "--allow-fs-write=" + cwd] : [];
+    const flags = ["--permission", "--allow-fs-read=" + skillDir,
+      "--allow-fs-read=" + workspaceDir, "--allow-fs-write=" + workspaceDir];
     // 已派发脚本按实际退出或自身超时结算，插话不终止脚本，结果归原调用。
     runScopedProcess({
       command: process.execPath,
       args: [...flags, scriptPath, ...scriptArgs],
       cwd,
       env: {
-        ...(controlledPackage ? { SystemRoot: process.env.SystemRoot } : process.env),
+        ...(process.platform === "win32" && process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
         NOWADAYS_WORKSPACE: workspaceDir,
-        NOWADAYS_SKILL_DIR: controlledPackage ?? cwd,
+        NOWADAYS_SKILL_DIR: skillDir,
       },
       timeoutMs,
       timeoutSignal: "SIGKILL",

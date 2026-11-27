@@ -12,6 +12,7 @@
     "test": "node scripts/verify/run-tests.mjs",
     "dev": "node --import tsx src/main.ts",
     "mcp:local": "node --import tsx src/mcp/local-server.ts",
+    "mcp:local:command": "node --import tsx src/mcp/local-server.ts --mode command",
     "cli": "node --import tsx src/cli.ts",
     "role:transfer": "node --import tsx src/cli/role-transfer.ts",
     "accept:offline": "node scripts/verify/accept-offline.mjs"

@@ -1,7 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ApiError } from '../src/api';
-import { mcpSummary, skillIssue, parseMcpImport, personalArgument } from '../src/components/config/extension-import';
+import { isCommandMcp, mcpSummary, skillIssue, parseMcpImport, personalArgument } from '../src/components/config/extension-import';
+
+test('识别本地命令模式及 npm 脚本，工作空间模式不触发', () => {
+  assert.equal(isCommandMcp({ command: 'node', args: ['--import', 'tsx', 'src/mcp/local-server.ts', '--mode', 'command'] }), true);
+  assert.equal(isCommandMcp({ command: 'C:\\node\\npm.cmd', args: ['run', 'mcp:local:command'] }), true);
+  assert.equal(isCommandMcp({ command: 'npm', args: ['--prefix', 'apps/backend', 'run', 'mcp:local', '--', '--mode', 'command'] }), true);
+  assert.equal(isCommandMcp({ command: 'node', args: ['./local-server.js', '--mode', 'command'] }), true);
+  assert.equal(isCommandMcp({ command: 'node', args: ['src/mcp/local-server.ts', '--mode', 'workspace'] }), false);
+  assert.equal(isCommandMcp({ command: 'npm', args: ['run', 'mcp:local', '--', '--mode', 'workspace'] }), false);
+  assert.equal(isCommandMcp({ command: 'node', args: ['third-party/local-server.js', '--mode', 'command'] }), false);
+  assert.equal(isCommandMcp({ command: 'node', args: ['other-server.ts', '--mode', 'command'] }), false);
+});
 
 test('原样保留 MCP 参数中的空格、空串和次序，列出配置里的各个本地服务', () => {
   const servers = parseMcpImport(JSON.stringify({ mcpServers: {

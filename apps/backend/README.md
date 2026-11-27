@@ -95,7 +95,7 @@ node --import tsx src/cli.ts activity resume --role $roleId
 $mcp = Get-Content examples/mcp-local.json -Raw | ConvertFrom-Json
 $mcp.config.command = (Get-Command node).Source
 $mcp.config.args = @('--import', ([Uri](Join-Path $PWD 'node_modules/tsx/dist/loader.mjs')).AbsoluteUri, (Join-Path $PWD 'src/mcp/local-server.ts'))
-$mcp.config.env.NOWADAYS_WORKSPACE = (Resolve-Path ".nowadays/data/roles/$roleId/workspace").Path
+$mcp.config.env = @{}
 $mcp | ConvertTo-Json -Depth 10 | Set-Content .nowadays/mcp.json -Encoding utf8NoBOM
 $mcpResource = node --import tsx src/cli.ts resource create --kind mcp --json '@.nowadays/mcp.json' | ConvertFrom-Json
 $skill = Get-Content examples/skill.json -Raw | ConvertFrom-Json
@@ -109,7 +109,11 @@ $bindings | ConvertTo-Json -Depth 10 | Set-Content .nowadays/bindings.json -Enco
 node --import tsx src/cli.ts binding put --role $roleId --json '@.nowadays/bindings.json'
 ```
 
-本地工具包含文件读写、目录检索、命令／脚本执行。Skill 目录使用通用 `目录名/SKILL.md`，正文按需加载。资源及角色绑定只提供 enabled 开关；关闭阻止新链使用，已执行原链保持资源至链结束。
+上例只启用工作空间工具。已有本地 MCP 资源继续使用原入口，无参数或传入 `--mode workspace` 均只提供 `workspace_read`、`workspace_write`、`workspace_search`。需要本机命令时，单独创建使用同一启动程序与脚本的资源，在参数末尾追加 `--mode`、`command`。该模式只提供 `command_run`，以当前用户权限执行命令，可访问工作空间外的文件。两个模式的握手名均为 `nowadays-local-tools`。角色按资源分别启停，已执行的原任务链保留资源至链结束。
+
+普通 MCP 连接只传资源显式配置的环境与 SDK 平台默认项。角色调用自动写入实际 `NOWADAYS_WORKSPACE`，连接探测使用临时目录。直接在后端目录运行 `npm run mcp:local` 或 `npm run mcp:local:command` 时，需先将 `NOWADAYS_WORKSPACE` 指向已存在的目录。命令子进程只获取解析后的工作空间、前置当前 Node 目录的 `PATH`，以及平台可用项（Windows 的 `SystemRoot`、`ComSpec`、`PATHEXT`、`TEMP`、`TMP`，其他平台的 `HOME`、`TMPDIR`、`LANG`）。
+
+Skill 使用通用 `目录名/SKILL.md`，正文按需加载。请将包与角色工作区或当前工程目录放在互不包含的目录中。普通角色与 Pi 的脚本通过 Node `--permission` 读取包内资源、读写本次工作空间，禁止派生子进程。启动时显式传入的环境项为 `NOWADAYS_SKILL_DIR`、`NOWADAYS_WORKSPACE` 和 Windows 上存在的 `SystemRoot`。
 
 [阅读书架示例](./examples/reading-shelf.mjs)也是本地 stdio MCP。将资源的 `command` 设为 Node 24 可执行文件，`args` 设为该示例文件的绝对路径，并在资源环境变量 `NOWADAYS_READING_SHELF` 中填入书目的 JSON 数组。例如 `[{"title":"信鸽协议","url":"https://www.rfc-editor.org/rfc/rfc1149.txt"}]`。书架从指定的 HTTPS 纯文本或 Markdown 原站读取，角色可选篇、选段和续读。另绑定工作空间工具即可由角色自行写笔记。角色库登记模型实际收到的原文、页面版本及 UTF-16 区间。书目与 MCP 配置无需模型密钥。
 

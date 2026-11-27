@@ -33,13 +33,13 @@ test("草稿和已保存 MCP 能列出工作区工具，缺启动程序返回可
   const probe = (body: unknown) => fetch(`http://127.0.0.1:${port}/v1/resources/mcp/probe`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   });
-  const config = { command: process.execPath, env: {}, args: [
+  const config = { command: process.execPath, env: { NOWADAYS_WORKSPACE: path.join(fixture.root, "untrusted-workspace") }, args: [
     "--import", pathToFileURL(path.resolve("node_modules/tsx/dist/loader.mjs")).href, path.resolve("src/mcp/local-server.ts"),
   ] };
   const drafts = await probe(config);
   assert.equal(drafts.status, 200);
   const { tools } = await drafts.json() as { tools: { name: string }[] };
-  assert.ok(tools.some(tool => tool.name === "workspace_search"));
+  assert.deepEqual(tools.map(tool => tool.name).sort(), ["workspace_read", "workspace_search", "workspace_write"]);
   const saved = fixture.app.services.resources.create({ name: "本地搜索", kind: "mcp", config });
   const persisted = await probe({ resourceId: saved.resourceId });
   assert.deepEqual(await persisted.json(), { tools });
