@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import http from 'node:http';
+import Database from 'better-sqlite3';
 import { createBackendApp, listen, type BackendApp } from '../../src/bootstrap/app.js';
 import { parseBackendConfig } from '../../src/bootstrap/config.js';
+import type { RoleStorage } from '../../src/storage/core/role-storage.js';
 import { createFixture } from '../fixtures/conversation-fixture.js';
 
 const imageSettings = (serviceId: string) => ({ serviceId, modelType: 'text2img' as const, modelPath: 'model', basePrompt: '', negativePrompt: '', outfitPrompts: {}, width: 1024, height: 1024, steps: 25, cfg: 2.5, sampler: 'er_sde', scheduler: 'simple', seed: null, workflow: null, outputNodeId: null });
@@ -177,4 +179,86 @@ test('真实语音试听在途时媒体维护等待调用结算', async () => {
     assert.equal(result.status, 200);
     assert.deepEqual(result.body.maintenance.pausedRoleIds, [roleId]);
   } finally { complete(); await fixture.close(); await new Promise<void>(resolve => upstream.close(() => resolve())); }
+});
+
+function countRoleStoreOpenings(app: BackendApp): { opened: number } {
+  const state = { opened: 0 };
+  const original = app.roleAccess.withStore.bind(app.roleAccess) as unknown as
+    (roleId: string, action: (storage: RoleStorage) => unknown) => unknown;
+  app.roleAccess.withStore = ((roleId: string, action: (storage: RoleStorage) => unknown) => {
+    state.opened += 1;
+    return original(roleId, action);
+  }) as unknown as typeof app.roleAccess.withStore;
+  return state;
+}
+
+test('30 角色媒体依赖投影 O(1) 命中且恢复校验零角色库打开', async () => {
+  const fixture = createFixture([], { disablePresetAssistant: true });
+  try {
+    const { app } = fixture;
+    const voiceService = app.services.voiceServices.create({ name: '语音', config: { protocol: 'nowadays-tts-v1', baseUrl: 'http://localhost:9100' } });
+    const imageService = app.services.imageServices.create({ name: '生图', config: { protocol: 'comfyui', baseUrl: 'http://localhost:9101' } });
+    const roles = Array.from({ length: 30 }, (_, index) => app.services.roles.createRole({ displayName: `角色${index}`, definition: { text: `角色${index}` } }));
+    const voiceRole = roles[0]!.roleId;
+    const imageRole = roles[1]!.roleId;
+    app.services.voice.saveVoice(voiceRole, { serviceId: voiceService.serviceId, voiceSource: { kind: 'preset', voiceId: 'voice' } });
+    app.services.sceneImageSettings.save(imageRole, imageSettings(imageService.serviceId));
+    const maintenance = app.services.mediaMaintenance;
+    const opened = countRoleStoreOpenings(app);
+
+    // 预热存储打开与查询计划，随后计时只观察命中路径。
+    maintenance.dependencies('voice', voiceService.serviceId);
+    maintenance.dependencies('image', imageService.serviceId);
+
+    opened.opened = 0;
+    const voiceStart = performance.now();
+    const voiceDeps = maintenance.dependencies('voice', voiceService.serviceId);
+    const voiceElapsed = performance.now() - voiceStart;
+    assert.deepEqual(voiceDeps.map(role => role.roleId), [voiceRole]);
+    assert.equal(opened.opened, 1, '只打开真正绑定该语音服务的角色库');
+    assert.ok(voiceElapsed < 10, `30 角色语音依赖查询耗时 ${voiceElapsed.toFixed(2)}ms`);
+
+    opened.opened = 0;
+    const imageStart = performance.now();
+    const imageDeps = maintenance.dependencies('image', imageService.serviceId);
+    const imageElapsed = performance.now() - imageStart;
+    assert.deepEqual(imageDeps.map(role => role.roleId), [imageRole]);
+    assert.equal(opened.opened, 1, '只打开真正绑定该生图服务的角色库');
+    assert.ok(imageElapsed < 10, `30 角色生图依赖查询耗时 ${imageElapsed.toFixed(2)}ms`);
+
+    app.appStore.listRoleMediaBindings(voiceRole);
+    opened.opened = 0;
+    let resumeElapsed = 0;
+    await maintenance.update('voice', voiceService.serviceId, true, () => {
+      opened.opened = 0;
+      const start = performance.now();
+      assert.throws(() => maintenance.assertResumeAllowed(voiceRole), { code: 'MEDIA_SERVICE_MAINTENANCE' });
+      resumeElapsed = performance.now() - start;
+      return null;
+    });
+    assert.equal(opened.opened, 0, '恢复校验只查投影，不打开任何角色库');
+    assert.ok(resumeElapsed < 10, `30 角色恢复校验耗时 ${resumeElapsed.toFixed(2)}ms`);
+  } finally { await fixture.close(); }
+});
+
+test('V16 老库启动时自动回填媒体依赖投影', async () => {
+  const fixture = createFixture([], { disablePresetAssistant: true });
+  let restarted: BackendApp | undefined;
+  try {
+    const { app, roleId } = fixture;
+    const service = app.services.voiceServices.create({ name: '老库语音', config: { protocol: 'nowadays-tts-v1', baseUrl: 'http://localhost:9200' } });
+    app.services.voice.saveVoice(roleId, { serviceId: service.serviceId, voiceSource: { kind: 'preset', voiceId: 'voice' } });
+    const appDatabasePath = app.config.appDatabasePath;
+    await app.close();
+
+    // 模拟 V16：投影表尚不存在，且没有回填标记。
+    const legacy = new Database(appDatabasePath);
+    try {
+      legacy.exec("DROP TABLE role_media_bindings; DROP TABLE app_meta; PRAGMA user_version = 16;");
+    } finally { legacy.close(); }
+
+    restarted = createBackendApp(parseBackendConfig(['--app-root', fixture.root, '--port', '0']), { disablePresetAssistant: true, disableMemoryRuntime: true });
+    assert.equal(restarted.appStore.getMeta('media_bindings_v1'), '1');
+    assert.deepEqual(restarted.services.mediaMaintenance.dependencies('voice', service.serviceId).map(role => role.roleId), [roleId]);
+  } finally { await restarted?.close(); await fixture.close(); }
 });

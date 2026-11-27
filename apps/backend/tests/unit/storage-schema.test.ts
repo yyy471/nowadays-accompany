@@ -83,6 +83,7 @@ test("app and role stores initialize, persist and reopen", async () => {
     assert.equal(app.appStore.db.pragma("foreign_keys", { simple: true }), 1);
     assert.equal(app.appStore.db.pragma("journal_mode", { simple: true }), "wal");
     assert.deepEqual(tableNames(app.appStore.db), [
+      "app_meta",
       "builtin_resource_seeds",
       "engineering_settings",
       "image_services",
@@ -92,6 +93,7 @@ test("app and role stores initialize, persist and reopen", async () => {
       "resources",
       "role_activity",
       "role_deletions",
+      "role_media_bindings",
       "role_transfer_publication",
       "role_transfer_selections",
       "role_transfer_snapshots",

@@ -16,6 +16,30 @@ export class MediaMaintenance {
   constructor(private readonly appStore: AppStore, private readonly access: RoleAccess,
     private readonly activity: RoleActivityService, private readonly pause: PauseRoles | null) {}
   private key(kind: MediaKind, id: string): string { return `${kind}:${id}`; }
+  /** 角色媒体配置落库后同步依赖投影；serviceId 为空表示解除该类绑定。 */
+  syncBinding(roleId: string, kind: MediaKind, serviceId: string | null, now?: string): void {
+    this.appStore.setRoleMediaBinding(roleId, kind, serviceId, now);
+  }
+  /**
+   * V16→V17 老库启动期一次性回填依赖投影。回填完成写入版本标记，
+   * 之后启动直接跳过，避免每次启动打开全部角色库。
+   */
+  backfillBindings(): void {
+    if (this.appStore.getMeta('media_bindings_v1') === '1') return;
+    for (const index of this.appStore.listRoleIndexes().filter(role => role.initStatus === 'ready')) {
+      try {
+        this.access.withStore(index.roleId, storage => {
+          this.appStore.setRoleMediaBinding(index.roleId, 'voice',
+            new VoiceStore(storage.business.db, index.roleId).getSettings()?.serviceId ?? null);
+          this.appStore.setRoleMediaBinding(index.roleId, 'image',
+            new SceneImageSettingsStore(storage.business.db, index.roleId).get()?.serviceId ?? null);
+        });
+      } catch {
+        // 个别角色库异常不影响其他角色与启动；该角色下次保存配置时会重新同步。
+      }
+    }
+    this.appStore.setMeta('media_bindings_v1', '1');
+  }
   assertAvailable(kind: MediaKind, id: string | null | undefined): void {
     if (id && this.maintaining.has(this.key(kind, id))) {
       throw new AppError(409, 'MEDIA_SERVICE_MAINTENANCE', '服务正在维护，请稍后重试', { kind, serviceId: id });
@@ -44,23 +68,19 @@ export class MediaMaintenance {
     return [...new Set([...this.claims.values()].filter(item => item.key === key).map(item => item.roleId))];
   }
   dependencies(kind: MediaKind, id: string) {
-    return this.appStore.listRoleIndexes().filter(index => index.initStatus === 'ready').flatMap(index =>
-      this.access.withStore(index.roleId, storage => {
-        const selected = kind === 'voice'
-          ? new VoiceStore(storage.business.db, index.roleId).getSettings()?.serviceId
-          : new SceneImageSettingsStore(storage.business.db, index.roleId).get()?.serviceId;
-        if (selected !== id) return [];
-        const activity = this.activity.view(index.roleId);
-        return [{ roleId: index.roleId, displayName: storage.business.getRole(index.roleId).displayName, state: activity.state, running: activity.running }];
+    // 依赖关系由 app 库投影索引直接命中，只打开真正使用该服务的角色库。
+    return this.appStore.listRoleIdsByMediaService(kind, id).flatMap(roleId =>
+      this.access.withStore(roleId, storage => {
+        const activity = this.activity.view(roleId);
+        return [{ roleId, displayName: storage.business.getRole(roleId).displayName, state: activity.state, running: activity.running }];
       }),
     );
   }
   assertResumeAllowed(roleId: string): void {
-    for (const key of this.maintaining) {
-      const separator = key.indexOf(':');
-      const kind = key.slice(0, separator) as MediaKind;
-      const id = key.slice(separator + 1);
-      if (this.dependencies(kind, id).some(role => role.roleId === roleId)) this.assertAvailable(kind, id);
+    if (!this.maintaining.size) return;
+    // O(1) 查表：不逐个扫描角色库，只按该角色投影出的服务校验维护状态。
+    for (const binding of this.appStore.listRoleMediaBindings(roleId)) {
+      this.assertAvailable(binding.kind, binding.serviceId);
     }
   }
   async update<T>(kind: MediaKind, id: string, connectionChanged: boolean, action: () => T): Promise<{ value: T; maintenance: { connectionChanged: boolean; pausedRoleIds: string[] } }> {

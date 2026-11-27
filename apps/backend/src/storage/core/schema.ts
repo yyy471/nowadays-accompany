@@ -11,7 +11,7 @@ import { restoreAutonomyShareLinks } from "../conversation/autonomy-store.js";
 import { MemoryStore } from "../memory/memory-store.js";
 import { retireLegacyWebPrefetchEvidence, WEB_READING_SCHEMA_SQL } from "../conversation/web-reading.js";
 
-export const APP_SCHEMA_VERSION = 16;
+export const APP_SCHEMA_VERSION = 17;
 export const BUSINESS_SCHEMA_VERSION = 31;
 export const EXECUTION_SCHEMA_VERSION = 2;
 
@@ -33,6 +33,8 @@ export const APP_TABLES = [
   "role_transfer_publication",
   "token_usage_records",
   "token_usage_meta",
+  "app_meta",
+  "role_media_bindings",
 ] as const;
 export const BUSINESS_TABLES = [
   "engineering_jobs", "engineering_wakes",
@@ -2022,6 +2024,13 @@ const APP_INDEXES: readonly RequiredIndex[] = [
     unique: false,
     partial: false,
   },
+  {
+    name: "idx_role_media_bindings_service",
+    table: "role_media_bindings",
+    columns: ["kind", "service_id"],
+    unique: false,
+    partial: false,
+  },
 ];
 
 const APP_V11_SQL = `
@@ -2095,6 +2104,25 @@ CREATE TABLE IF NOT EXISTS vertex_test_routes (
 );
 `;
 
+const APP_V17_SQL = `
+-- v17：媒体服务依赖投影。维护/删除服务时按 (kind, service_id) 索引直接命中
+-- 依赖角色，避免逐个打开角色业务库扫描；老库由启动期一次性回填。
+CREATE TABLE IF NOT EXISTS app_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS role_media_bindings (
+  role_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('voice', 'image')),
+  service_id TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (role_id, kind),
+  FOREIGN KEY (role_id) REFERENCES roles(role_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_role_media_bindings_service
+  ON role_media_bindings(kind, service_id);
+`;
+
 const APP_V15_SQL = `
 CREATE TABLE IF NOT EXISTS engineering_settings (
   id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -2123,7 +2151,7 @@ export function openAppDatabase(dbPath: string): OpenedDatabase {
       APP_V10_SQL +
       APP_V11_SQL +
       APP_V12_SQL +
-      APP_V13_SQL + APP_V14_SQL + APP_V15_SQL,
+      APP_V13_SQL + APP_V14_SQL + APP_V15_SQL + APP_V17_SQL,
     {
       1: (db) => db.exec(APP_V2_SQL),
       2: (db) => db.exec(APP_V3_SQL),
@@ -2140,6 +2168,7 @@ export function openAppDatabase(dbPath: string): OpenedDatabase {
       13: (db) => db.exec(APP_V14_SQL),
       14: (db) => db.exec(APP_V15_SQL),
       15: (db) => addColumnIfMissing(db, "engineering_settings", "allow_shell", "INTEGER NOT NULL DEFAULT 0 CHECK (allow_shell IN (0,1))"),
+      16: (db) => db.exec(APP_V17_SQL),
     },
     APP_TABLES,
     APP_INDEXES,

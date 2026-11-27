@@ -35,7 +35,7 @@
 | [ARCH-01](#arch-01-后端与前端存在多个两千至三千行级上帝文件) | 架构债务 | **P1** | `conversation-service.ts` 3803 行、`Settings.tsx` 2116 行等触发仓库体积告警 | 否 | `[ ]` 待排查 |
 | [ARCH-02](#arch-02-桌面端四条通信通道混用且动态页退化为-15-秒全量轮询) | 架构债务 | **P2** | `desk://`、直连 `127.0.0.1`、`nd-ext://`、`ipcMain` 混用；动态页无推送 | 否 | `[ ]` 待排查 |
 | [ARCH-03](#arch-03-记忆检索纯依赖字面-fts5-trigram缺乏语义召回能力) | 核心能力 | **P2** | 换个同义说法即召回失效，制约精细记忆模型的实际效果 | 需确认（`DL-51`） | `[ ]` 待排查 |
-| [ARCH-04](#arch-04-启动期同步-ipc-阻塞令牌暴露给渲染层与维护期隐性-on-存储扫描) | 性能/架构 | **P2** | `preload` 同步 `sendSync` 并暴露 `hostHeaders`；`MediaMaintenance` 逐角色开关双库 | 否 | `[ ]` 待排查 |
+| [ARCH-04](#arch-04-启动期同步-ipc-阻塞令牌暴露给渲染层与维护期隐性-on-存储扫描) | 性能/架构 | **P2** | `preload` 同步 `sendSync` 并暴露 `hostHeaders`；`MediaMaintenance` 逐角色开关双库 | 否 | 已修复，R8a 精准复验通过 |
 | [UX-05](#ux-05-单角色迁移与角色工作空间笔记缺少桌面图形入口) | 功能短板 | **P2** | 角色导出/导入停留在 CLI；用户需手工翻数据目录看角色 Markdown 笔记 | 否 | `[ ]` 待排查 |
 | [UX-06](#ux-06-多窗口跳转丢失上下文与主角色自改权限割裂) | 操作体验 | **P2** | 对话页跳设置返回后丢子窗口；主角色能管别人却改不了自己任何配置 | 部分需确认（`DL-159`） | `[ ]` 待排查 |
 
@@ -412,7 +412,11 @@ Windows、仓库 Node 24.22.2、离线夹具下，主审核人独立执行以下
 
 ### ARCH-04 启动期同步 IPC 阻塞、令牌暴露给渲染层与维护期隐性 O(N) 存储扫描
 
-- **优先级**：P2 · **状态**：`[ ]` 待排查
+- **优先级**：P2 · **状态**：已修复，R8a 精准复验通过
+- **R8a 实施与复验（2026-11-27）**：
+  - **媒体依赖投影索引（`app.sqlite` V16→V17）**：新增 `app_meta` 与 `role_media_bindings` 表及 `(kind, service_id)` 索引；`VoiceService`、`SceneImageSettingsService`、`GlobalVoiceService.backfillFromRoles` 与 `role-transfer` 导入事务全链路同步维护投影，老库启动期一次性自动回填；`MediaMaintenance.dependencies` 改为索引直命后只打开真正绑定的角色库，`assertResumeAllowed` 改为 O(1) 单库查表、零角色库打开；
+  - **移除 `sendSync` 与渲染层 `hostHeaders` 暴露**：`main.cjs` 的 `desk://bundle/v1/*` 代理对所有 HTTP 方法统一补签宿主令牌，删除 `ipcMain.on("desk:config")` 与 preload `sendSync("desk:config")`，停止向 `window.nowadaysDesk` 暴露 `hostHeaders`，`isPackaged` 改通过 `webPreferences.additionalArguments` 无阻塞传入（`desk:boot` 亦返回）；
+  - **精准复验（Node 24.22.2）**：后端 `typecheck` + 55/55 专项单测/集成测试（含 30 角色 O(1)/`<10ms`/零库恢复校验及 V16→V17 自动回填）、渲染器 `check`（37 CSS 0 违规）+ 生产构建、桌面壳 25/25 单测（含新增 `preload-boundary` 与脱仓包冒烟）、Electron 39 实窗 E2E `extension-ui-slots`（验证 `hostHeaders === undefined`、同源 200、无令牌直连 401）、`boot-window-intent`、`managed-backend-shutdown` 均通过。
 - **证据位置**：
   - [apps/desktop/electron/settings-preload.cjs](../../../apps/desktop/electron/settings-preload.cjs#L11)（`ipcRenderer.sendSync("desk:config")`）
   - [apps/backend/src/application/media/media-maintenance.ts](../../../apps/backend/src/application/media/media-maintenance.ts#L39-L58)（每次 `assertResumeAllowed` / `update` / `remove` 全量遍历全部角色并开关双库）

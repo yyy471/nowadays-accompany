@@ -174,6 +174,7 @@ export class GlobalVoiceService {
             });
           }
           voiceStore.linkService(service.serviceId);
+          this.appStore.setRoleMediaBinding(role.roleId, "voice", service.serviceId, now);
         });
       } catch {
         // 个别角色库异常不影响服务启动与其他角色迁移；仍可通过角色页重新选择服务。

@@ -38,12 +38,9 @@ function toRequestBody(body: unknown): { headers?: HeadersInit; body?: BodyInit 
 }
 
 export async function desktopFetch(path: string, init: RequestInit) {
-  const headers = new Headers(init.headers);
-  if (path.startsWith('/v1/') && typeof window !== 'undefined') {
-    for (const [name, value] of Object.entries(window.nowadaysDesk?.hostHeaders ?? {})) headers.set(name, value);
-  }
   try {
-    return await fetch(path, { ...init, headers });
+    // 同源 /v1/* 请求由主进程 desk:// 协议代理补签宿主令牌，渲染层不再持有。
+    return await fetch(path, init);
   } catch (error) {
     if (error instanceof TypeError) throw new ApiError('本地服务暂时连不上', 0, 'BACKEND_UNREACHABLE');
     throw error;

@@ -263,8 +263,8 @@ function startDesk() {
         headers: new Headers(request.headers),
         redirect: "manual"
       };
-      // 同源资产（图片、音频）没有自定义头；仅桌面协议代理向固定后端补签。
-      if (hostToken && request.method === "GET" && !pathname.startsWith("/v1/internal/")) init.headers.set("X-Nowadays-Host-Token", hostToken);
+      // 主进程代理向固定后端补签：所有方法统一签发，渲染层不再持有宿主令牌。
+      if (hostToken && !pathname.startsWith("/v1/internal/")) init.headers.set("X-Nowadays-Host-Token", hostToken);
       if (request.method !== "GET" && request.method !== "HEAD" && request.body) {
         init.body = await request.arrayBuffer();
       }
@@ -295,10 +295,8 @@ function startDesk() {
     show: false,
     backgroundColor: "#1b1e2b",
     titleBarStyle: "default",
-    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, preload: join(__dirname, "settings-preload.cjs") }
-  });
-  ipcMain.on("desk:config", event => {
-    event.returnValue = trusted(event) ? { hostHeaders, isPackaged: app.isPackaged } : {};
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, preload: join(__dirname, "settings-preload.cjs"),
+      additionalArguments: [app.isPackaged ? "--nowadays-packaged=1" : "--nowadays-packaged=0"] }
   });
   async function prepareBackend() {
     const { base, managed } = configuredBackend ? { base: configuredBackend } : await startManagedBackend();
@@ -334,7 +332,7 @@ function startDesk() {
       });
     window.webContents.session.protocol.handle("nd-ext", extensionHandler(base, (url, init) => net.fetch(url, { ...init, headers: hostHeaders })));
     backendBaseUrl = base;
-    return { ok: true, skipRolePicker: process.env.NOWADAYS_SKIP_ROLE_PICKER === "1" };
+    return { ok: true, skipRolePicker: process.env.NOWADAYS_SKIP_ROLE_PICKER === "1", isPackaged: app.isPackaged };
   }
   ipcMain.handle("desk:boot", event => {
     if (!trusted(event)) throw new Error("DESK_BOOT_DENIED");

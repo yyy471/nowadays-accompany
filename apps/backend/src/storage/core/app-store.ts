@@ -462,6 +462,79 @@ export class AppStore {
       .run(roleId);
   }
 
+  /** 全局库的通用键值元数据（如投影回填版本标记）。 */
+  getMeta(key: string): string | null {
+    const row = this.db
+      .prepare("SELECT value FROM app_meta WHERE key = ?")
+      .get(key) as { value: string } | undefined;
+    return row?.value ?? null;
+  }
+
+  setMeta(key: string, value: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO app_meta (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      )
+      .run(key, value);
+  }
+
+  /**
+   * 维护角色媒体依赖投影。服务为空时删除该角色的这一类绑定，
+   * 保证投影与角色库中的 service_id 同步。
+   */
+  setRoleMediaBinding(
+    roleId: string,
+    kind: "voice" | "image",
+    serviceId: string | null,
+    now = new Date().toISOString(),
+  ): void {
+    if (!serviceId) {
+      this.db
+        .prepare("DELETE FROM role_media_bindings WHERE role_id = ? AND kind = ?")
+        .run(roleId, kind);
+      return;
+    }
+    this.db
+      .prepare(
+        `INSERT INTO role_media_bindings (role_id, kind, service_id, updated_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(role_id, kind) DO UPDATE SET
+           service_id = excluded.service_id,
+           updated_at = excluded.updated_at`,
+      )
+      .run(roleId, kind, serviceId, now);
+  }
+
+  /** 依赖指定媒体服务的已就绪角色：单条索引查询，不打开角色业务库。 */
+  listRoleIdsByMediaService(
+    kind: "voice" | "image",
+    serviceId: string,
+  ): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT b.role_id
+           FROM role_media_bindings b
+           JOIN roles r ON r.role_id = b.role_id
+          WHERE b.kind = ? AND b.service_id = ? AND r.init_status = 'ready'
+          ORDER BY b.role_id`,
+      )
+      .all(kind, serviceId) as Array<{ role_id: string }>;
+    return rows.map((row) => row.role_id);
+  }
+
+  /** 单个角色当前绑定的媒体服务：直接查投影，零角色库打开。 */
+  listRoleMediaBindings(
+    roleId: string,
+  ): Array<{ kind: "voice" | "image"; serviceId: string }> {
+    const rows = this.db
+      .prepare(
+        "SELECT kind, service_id FROM role_media_bindings WHERE role_id = ? ORDER BY kind",
+      )
+      .all(roleId) as Array<{ kind: "voice" | "image"; service_id: string }>;
+    return rows.map((row) => ({ kind: row.kind, serviceId: row.service_id }));
+  }
+
   close(): void {
     this.db.close();
   }

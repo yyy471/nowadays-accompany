@@ -172,6 +172,7 @@ function assembleBackendApp(
   const appearanceService = new AppearanceService(roleAccess);
   const voiceServices = new GlobalVoiceService(appStore, { now });
   voiceServices.backfillFromRoles(roleAccess);
+  mediaMaintenance.backfillBindings();
   const voiceService = new VoiceService(roleAccess, {
     now,
     voiceServices,

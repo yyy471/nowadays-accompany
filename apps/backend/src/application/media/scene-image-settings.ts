@@ -253,6 +253,7 @@ export class SceneImageSettingsService {
         this.now().toISOString(),
       ),
     );
+    this.mediaMaintenance?.syncBinding(roleId, "image", input.serviceId);
     return this.get(roleId);
   }
 

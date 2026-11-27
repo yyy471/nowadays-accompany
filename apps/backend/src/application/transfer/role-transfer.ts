@@ -260,6 +260,14 @@ export function applyRoleTransfer(
           state = 'stopped', requested_at = NULL, confirmed_at = excluded.confirmed_at,
           boundary_execution_id = NULL, updated_at = excluded.updated_at
       `).run(incoming.roleId, stoppedAt, stoppedAt);
+      // 媒体依赖投影跟随导入后的最终 service_id（目标机映射结果），
+      // 与写入角色库的值保持一致；未解析的目标不登记依赖。
+      const importedService = (capability: "voice" | "image"): string | null => {
+        const binding = incoming.bindings.find(item => item.capability === capability);
+        return binding ? (bindings.targets.get(binding.key)?.resourceId ?? null) : null;
+      };
+      store.setRoleMediaBinding(incoming.roleId, "voice", importedService("voice"), stoppedAt);
+      store.setRoleMediaBinding(incoming.roleId, "image", importedService("image"), stoppedAt);
       saveSnapshot(store.db, { ...incoming, timelineFingerprint: preview.packageFingerprint }, incomingEvidence);
       store.db.prepare(`
         INSERT INTO role_transfer_selections (role_id, package_digest, target_fingerprint) VALUES (?, ?, ?)

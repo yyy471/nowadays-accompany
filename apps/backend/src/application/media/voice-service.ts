@@ -367,6 +367,7 @@ export class VoiceService {
 
       if (audioMeta === null || pendingAssetId === null || input.referenceFile === undefined) {
         const settings = store.saveSettings(settingsPayload);
+        this.mediaMaintenance?.syncBinding(roleId, "voice", settings.serviceId, settingsPayload.now);
         return { voice: toView(settings, existingReference, linkedService) };
       }
 
@@ -375,7 +376,7 @@ export class VoiceService {
       fs.mkdirSync(storage.paths.voiceDir, { recursive: true });
       fs.writeFileSync(absolutePath, input.referenceFile.data, { flag: "wx" });
       try {
-        return storage.business.db.transaction(() => {
+        const result = storage.business.db.transaction(() => {
           const reference = store.addReference({
             assetId: pendingAssetId,
             fileName: audioMeta.fileName,
@@ -384,8 +385,10 @@ export class VoiceService {
             createdAt: settingsPayload.now,
           });
           const settings = store.saveSettings(settingsPayload);
-          return { voice: toView(settings, reference, linkedService) };
+          return { settings, reference };
         })();
+        this.mediaMaintenance?.syncBinding(roleId, "voice", result.settings.serviceId, settingsPayload.now);
+        return { voice: toView(result.settings, result.reference, linkedService) };
       } catch (error) {
         fs.rmSync(absolutePath, { force: true });
         throw error;

@@ -114,7 +114,9 @@ async function run() {
     });
     await withDesktop(base, async ({cmd, ev, wait, ws}) => {
       await wait("!!document.querySelector('.ui-menu-trigger')",'桌面');
-      assert.equal(await ev("window.nowadaysDesk?.hostHeaders?.['X-Nowadays-Host-Token']?.length"), 64);
+      assert.equal(await ev("window.nowadaysDesk?.hostHeaders"), undefined);
+      assert.equal(await ev("fetch('/v1/extensions').then(r => r.status)"), 200);
+      assert.equal((await fetch(base + '/v1/extensions')).status, 401);
       await cmd('Emulation.setDeviceMetricsOverride', { width: 1440, height: 840, deviceScaleFactor: 1, mobile: false });
       await wait('innerWidth === 1440', '扩展页面宽屏尺寸');
       await ev(`window.slotReports = []; window.actionResults = []; window.addEventListener('message', e => {

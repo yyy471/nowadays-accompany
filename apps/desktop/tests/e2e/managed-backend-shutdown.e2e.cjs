@@ -49,19 +49,20 @@ async function electronSession() {
   if (mode === 'timeout') {
     await until(() => pidFrom(readLog(profile), 'SHUTDOWN_TEST_HUNG_CHILD'), 'noncooperating backend descendant');
   } else {
-    const { backendBaseUrl } = await until(async () => {
+    await until(async () => {
       try {
         const result = await ev("fetch('/api-config.json').then(r=>r.json())");
         return result.connected && result;
       } catch { return false; }
     }, 'managed health');
-    const headers = await ev('window.nowadaysDesk.hostHeaders');
+    // 渲染层不再持有宿主令牌：同源 /v1/* 经 desk:// 代理补签，真实请求走渲染层。
     const request = async (url, body) => {
-      const response = await fetch(backendBaseUrl + url, body === undefined ? { headers } :
-        { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify(body) });
-      const data = await response.json();
-      assert.ok(response.ok, JSON.stringify(data));
-      return data;
+      const init = body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) };
+      const result = await ev(`fetch(${JSON.stringify(url)}, ${JSON.stringify(init)}).then(async response => ({
+        ok: response.ok, status: response.status, data: await response.json()
+      }))`);
+      assert.ok(result.ok, JSON.stringify(result.data));
+      return result.data;
     };
     const ext = await until(async () => {
       const item = await request('/v1/extensions/shutdown-probe');
