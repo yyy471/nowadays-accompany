@@ -511,7 +511,9 @@ test("扩展已写入并调用后回复失败，原消息补答显示回执且�
     assert.deepEqual(page.items.map(m=>[m.sender,m.content]),[["user","创建扩展并验证一次"],["assistant","扩展已启用，工具已验证。"]]);
     assert.equal(model.requests.length,5);
     assert.ok(app.conversation.listTasks(id).some(task=>task.status==="completed" && task.endReason==="验证完成"));
-    assert.equal(JSON.parse(fs.readFileSync(path.join(f.root,"extensions","receipt","manifest.json"),"utf8")).kv.count,1);
+    await app.services.extensions.flushKv("receipt");
+    assert.equal(JSON.parse(fs.readFileSync(path.join(f.root,"extensions","receipt","kv.json"),"utf8")).count,1);
+    assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(path.join(f.root,"extensions","receipt","manifest.json"),"utf8")),"kv"),false);
   } finally { await f.close(); }
 });
 
@@ -720,4 +722,132 @@ test("按需读取当前扩展的目录与源码，续页保留 Unicode，换版
     assert.equal(tail.nextOffset,null);
     assert.deepEqual([...(page.files ?? []), ...(tail.files ?? [])],Object.keys({...next.files,...extras}).sort());
   } finally { await f.close(); }
+});
+
+test("SEC-03 KV 独立落盘并在重启后恢复，manifest.json 不再携带 KV", async () => {
+  const f = createFixtureWithModel(new ScriptedChatModel([]));
+  const host = f.app.services.extensions;
+  const body = `export default (_, api) => {
+    api.tools.register({name:"bump",scope:"all_roles",description:"bump",inputSchema:{type:"object"}}, async () => {
+      const count = (await api.kv.get("count") ?? 0) + 1;
+      await api.kv.set("count", count);
+      return count;
+    });
+    api.tools.register({name:"peek",scope:"all_roles",description:"peek",inputSchema:{type:"object"}}, () => api.kv.get("count"));
+  }`;
+  const caller = { adminSeat:false, roleId:f.roleId };
+  const dir = path.join(f.root, "extensions", "kv");
+  try {
+    await host.upsert(source("kv", "v1", body));
+    assert.equal(await host.call("kv","bump",caller,{},{}), 1);
+    assert.equal(await host.call("kv","bump",caller,{},{}), 2);
+    await host.flushKv("kv");
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir,"kv.json"),"utf8")), { count:2 });
+    assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(path.join(dir,"manifest.json"),"utf8")),"kv"),false);
+    await f.app.close();
+    const app = createBackendApp(f.app.config, { disablePresetAssistant:true, disableMemoryRuntime:true });
+    await app.services.extensions.ready;
+    try {
+      assert.equal(await app.services.extensions.call("kv","peek",caller,{},{}), 2);
+      assert.equal(await app.services.extensions.call("kv","bump",caller,{},{}), 3);
+      await app.services.extensions.flushKv("kv");
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir,"kv.json"),"utf8")), { count:3 });
+    } finally { await app.close(); }
+  } finally { await f.close(); }
+});
+
+test("SEC-03 旧 manifest.json 的 KV 自动迁移到 kv.json 并清理清单", async () => {
+  const root = fs.mkdtempDisposableSync(path.join(os.tmpdir(), "nd-kv-migrate-"));
+  const dir = path.join(root.path, "extensions", "legacy");
+  fs.mkdirSync(path.join(dir, "versions", "v1"), { recursive:true });
+  fs.writeFileSync(path.join(dir, "versions", "v1", "entry.mjs"), "export default () => {};\n");
+  fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify({
+    version:"v1", entry:"entry.mjs", ui:[], status:"disabled", tools:[], lastError:null, kv:{ count:7 },
+  }));
+  const host = new ExtensionHost(root.path);
+  try {
+    host.restore();
+    await host.ready;
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir,"kv.json"),"utf8")), { count:7 });
+    const manifest = JSON.parse(fs.readFileSync(path.join(dir,"manifest.json"),"utf8"));
+    assert.equal(Object.hasOwn(manifest,"kv"),false);
+    assert.equal(manifest.status,"disabled");
+  } finally { await host.close(); root.remove(); }
+});
+
+test("SEC-03 原型键、空键、超长键与超限单值被拒绝且不污染原型", async () => {
+  const f = createFixtureWithModel(new ScriptedChatModel([]));
+  const host = f.app.services.extensions;
+  const body = `export default (_, api) => {
+    api.tools.register({name:"try",scope:"all_roles",description:"try",inputSchema:{type:"object"}}, async args => {
+      try { await api.kv.set(args.key, args.value); return "ok"; }
+      catch (error) { return String(error?.message ?? error); }
+    });
+    api.tools.register({name:"read",scope:"all_roles",description:"read",inputSchema:{type:"object"}}, args => api.kv.get(args.key));
+  }`;
+  const caller = { adminSeat:false, roleId:f.roleId };
+  const attempt = (key: string, value: unknown) => host.call("guard","try",caller,{key,value},{}) as Promise<string>;
+  try {
+    await host.upsert(source("guard", "v1", body));
+    for (const key of ["__proto__","constructor","prototype","","   ","x".repeat(129)])
+      assert.match(await attempt(key, "p"), /EXTENSION_KV_KEY_INVALID/);
+    assert.match(await attempt("big", "x".repeat(65_537)), /EXTENSION_KV_VALUE_TOO_LARGE/);
+    assert.equal(await attempt("ok", { sec03Polluted:true }), "ok");
+    assert.equal(({} as Record<string, unknown>).sec03Polluted, undefined);
+    assert.equal((Object.prototype as Record<string, unknown>).sec03Polluted, undefined);
+    assert.equal(await host.call("guard","read",caller,{key:"big"},{}), null);
+    await host.flushKv("guard");
+    const kv = JSON.parse(fs.readFileSync(path.join(f.root,"extensions","guard","kv.json"),"utf8"));
+    assert.deepEqual(Object.keys(kv), ["ok"]);
+    assert.deepEqual(kv.ok, { sec03Polluted:true });
+  } finally { await f.close(); }
+});
+
+test("SEC-03 小配额下键数、总容量与写频限制生效且子进程不崩溃", async () => {
+  const caller = { adminSeat:false, roleId:"r" };
+  const body = `export default (_, api) => {
+    api.tools.register({name:"burst",scope:"all_roles",description:"burst",inputSchema:{type:"object"}}, async args => {
+      const results = [];
+      for (const [key, value] of args.items) {
+        try { await api.kv.set(key, value); results.push("ok"); }
+        catch (error) { results.push(String(error?.message ?? error)); }
+      }
+      return results;
+    });
+    api.tools.register({name:"ping",scope:"all_roles",description:"ping",inputSchema:{type:"object"}}, () => "pong");
+  }`;
+  const run = async (limits: ConstructorParameters<typeof ExtensionHost>[3],
+    verify: (host: ExtensionHost) => Promise<void>) => {
+    const root = fs.mkdtempDisposableSync(path.join(os.tmpdir(), "nd-kv-small-"));
+    const host = new ExtensionHost(root.path, undefined, undefined, limits);
+    try {
+      await host.upsert(source("small", "v1", body));
+      await verify(host);
+      // 被拒绝的写入只回到扩展错误，不打断子进程。
+      assert.equal(await host.call("small","ping",caller,{},{}), "pong");
+      assert.equal(host.get("small").status, "enabled");
+    } finally { await host.close(); root.remove(); }
+  };
+  await run({ maxKeys:3, maxKeyLength:8, maxValueBytes:24, maxTotalBytes:40, flushDebounceMs:5, maxWritesPerSecond:100 },
+    async host => {
+      const results = await host.call("small","burst",caller,{items:[
+        ["k0","x".repeat(20)], ["k1","x".repeat(20)], ["k2","v"], ["k3","v"], ["k4","v"], ["k5","v"],
+      ]},{}) as string[];
+      assert.deepEqual(results, [
+        "ok",
+        "EXTENSION_KV_QUOTA_EXCEEDED: 扩展 KV 总容量已达上限",
+        "ok", "ok",
+        "EXTENSION_KV_QUOTA_EXCEEDED: 扩展 KV 键数已达上限",
+        "EXTENSION_KV_QUOTA_EXCEEDED: 扩展 KV 键数已达上限",
+      ]);
+    });
+  await run({ maxKeys:100, maxKeyLength:8, maxValueBytes:16, maxTotalBytes:100_000, flushDebounceMs:5, maxWritesPerSecond:2 },
+    async host => {
+      const results = await host.call("small","burst",caller,{items:[["w0","v"],["w1","v"],["w2","v"],["w3","v"]]},{}) as string[];
+      assert.deepEqual(results, [
+        "ok", "ok",
+        "EXTENSION_KV_RATE_LIMITED: 扩展 KV 写入过于频繁",
+        "EXTENSION_KV_RATE_LIMITED: 扩展 KV 写入过于频繁",
+      ]);
+    });
 });

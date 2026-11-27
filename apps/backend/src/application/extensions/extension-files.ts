@@ -29,6 +29,37 @@ export const upsertSchema = z.object({
   extId: extIdSchema, manifest: definition,
   files: z.record(sourceFile, z.string()),
 });
+export interface KvLimits {
+  maxKeys: number;
+  maxKeyLength: number;
+  maxValueBytes: number;
+  maxTotalBytes: number;
+  flushDebounceMs: number;
+  maxWritesPerSecond: number;
+}
+export const DEFAULT_KV_LIMITS: KvLimits = {
+  maxKeys: 256,
+  maxKeyLength: 128,
+  maxValueBytes: 65_536,
+  maxTotalBytes: 1_048_576,
+  flushDebounceMs: 150,
+  maxWritesPerSecond: 60,
+};
+export const KV_FORBIDDEN_KEYS: readonly string[] = ["__proto__", "constructor", "prototype"];
+const forbiddenKvKey = new Set(KV_FORBIDDEN_KEYS);
+export function createKvStore(initial?: Record<string, unknown>): Record<string, unknown> {
+  const store: Record<string, unknown> = Object.create(null);
+  for (const [key, value] of Object.entries(initial ?? {})) {
+    if (forbiddenKvKey.has(key) || !key.trim()) continue;
+    store[key] = value;
+  }
+  return store;
+}
+export function assertValidKvKey(key: string, maxKeyLength = DEFAULT_KV_LIMITS.maxKeyLength): string {
+  if (!key || !key.trim() || key.length > maxKeyLength || forbiddenKvKey.has(key))
+    throw new AppError(400, "EXTENSION_KV_KEY_INVALID", "扩展 KV 键名不合法");
+  return key;
+}
 export const uiActionPayloadBytes = 16 * 1024;
 export const uiActionSchema = z.object({
   version: definition.shape.version,
@@ -56,9 +87,8 @@ const manifestSchema = definition.extend({
   status: z.enum(["enabled", "disabled", "failed"]),
   tools: z.array(toolSpec),
   lastError: z.object({ code: z.string(), message: z.string() }).nullable(),
-  // KV 与版本指针在同一扩展内原子落盘，状态查询只投影公开字段。
-  kv: z.record(z.string(), z.unknown()).default({}),
 });
+const kvFileSchema = z.record(z.string(), z.unknown());
 export type Manifest = z.infer<typeof manifestSchema>;
 export type Definition = z.infer<typeof definition>;
 
@@ -143,6 +173,36 @@ export class ExtensionFiles {
     fs.writeFileSync(temp, JSON.stringify(record), { flag: "wx" });
     try { fs.renameSync(temp, target); }
     finally { fs.rmSync(this.checked(id, path.basename(temp)), { force: true }); }
+  }
+  // KV 独立落盘；缺少 kv.json 时回退读取旧 manifest.json，迁移后由调用方清理清单。
+  readKv(id: string): { kv: Record<string, unknown>; migrated: boolean } {
+    const file = this.checked(id, "kv.json");
+    if (fs.existsSync(file)) {
+      const parsed = kvFileSchema.parse(JSON.parse(fs.readFileSync(file, "utf8")));
+      return { kv: createKvStore(parsed), migrated: false };
+    }
+    const manifestFile = this.checked(id, "manifest.json");
+    if (!fs.existsSync(manifestFile)) return { kv: createKvStore(), migrated: false };
+    const raw: unknown = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
+    const legacy = raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>).kv : undefined;
+    const source = legacy && typeof legacy === "object" && !Array.isArray(legacy)
+      ? legacy as Record<string, unknown> : undefined;
+    return { kv: createKvStore(source), migrated: legacy !== undefined };
+  }
+  saveKvSync(id: string, kv: Record<string, unknown>) {
+    const target = this.checked(id, "kv.json");
+    const temp = this.checked(id, randomUUID() + ".tmp");
+    fs.writeFileSync(temp, JSON.stringify(kv), { flag: "wx" });
+    try { fs.renameSync(temp, target); }
+    finally { fs.rmSync(this.checked(id, path.basename(temp)), { force: true }); }
+  }
+  async saveKvTextAsync(id: string, text: string) {
+    const target = this.checked(id, "kv.json");
+    const temp = this.checked(id, randomUUID() + ".tmp");
+    await fs.promises.writeFile(temp, text, { flag: "wx" });
+    try { await fs.promises.rename(temp, target); }
+    finally { await fs.promises.rm(this.checked(id, path.basename(temp)), { force: true }).catch(() => {}); }
   }
   private verifyTree(parts: string[], visit?: (parts: string[]) => void): void {
     const base = this.checked(...parts);

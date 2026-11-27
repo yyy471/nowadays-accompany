@@ -225,16 +225,18 @@ Vertex 的「连接 → 安全阈值」对四类可配置内容统一生效。�
 
 主角色可用 `app_extension_source({extId, file?, version?, offset?})` 在新窗口查阅已安装的项目（DL-192）。省略 `file` 时按相对路径排序，每页列出最多 50 个文件；指定路径时，每页返回最多 6000 个 UTF-8 字节的完整字符。用返回的 `nextOffset` 续页，传回 `version` 可在版本切换时得到明确冲突。停用期间仍可维护源码。普通角色和桌面资源接口沿用各自的权限。
 
-后端从 `config.appRoot` 派生 `extensions/<extId>/`，在每级路径核实真实位置并拒绝 junction。源码放在 `versions/<version>/`。每个扩展的 `manifest.json` 原子保存现行版本、工具声明、启停状态、最近错误与该扩展的 KV。管理查询仅投影公开字段。删除扩展会同时删除所有版本和 KV。
+后端从 `config.appRoot` 派生 `extensions/<extId>/`，在每级路径核实真实位置并拒绝 junction。源码放在 `versions/<version>/`。每个扩展的 `manifest.json` 原子保存现行版本、工具声明、启停状态与最近错误。扩展 KV 独立保存在同目录的 `kv.json`，与清单分别原子替换。管理查询仅投影公开字段。删除扩展会同时删除所有版本和 KV。
 
-固定 runner 在独立 Node 24 子进程中创建 Cordis Context，通过文件 URL 导入入口。入口导出 `default(ctx, api)` 或具名 `apply(ctx, api)`。依赖文件使用相对导入；Cordis Context 由 runner 传入。平台服务如下。
+扩展 KV 的键名须为非空白字符串、最长 128 字符，且不得为 `__proto__`、`constructor` 或 `prototype`，否则返回 400 `EXTENSION_KV_KEY_INVALID`；查找与写入都会拒绝。单值序列化后默认上限为 64 KiB，超出返回 413 `EXTENSION_KV_VALUE_TOO_LARGE`。每个扩展默认最多 256 个键、合计 1 MiB，超出返回 413 `EXTENSION_KV_QUOTA_EXCEEDED`；每秒最多 60 次写入，超出返回 429 `EXTENSION_KV_RATE_LIMITED`。拒绝仅回传到发起写入的扩展调用，不终止子进程。运行期写入先更新内存，再由 150 ms 防抖合并为最新快照并串行原子落盘；停用、升级时旧进程退出、应用关闭及宿主显式 `flushKv` 均会排空待写快照。旧布局保存在 `manifest.json` 的 `kv` 字段在启动恢复时自动迁移到 `kv.json`，并从清单中清除。
+
+固定 runner 在独立 Node 24 子进程中创建 Cordis Context，通过文件 URL 导入入口。入口导出 `default(ctx, api)` 或具名 `apply(ctx, api)`。依赖文件使用相对导入；Cordis Context 由 runner 传入。runner 以 Node 24 `--permission` 限制文件系统读取范围，但该模式不会阻断网络出站，扩展后端仍可发起网络连接；隔离边界依赖独立子进程与文件权限，而不是网络沙箱。桌面端扩展前端始终运行在 `connect-src 'none'` 的 iframe CSP 中，不能直接访问网络。平台服务如下。
 
 | 接口 | 契约 |
 | --- | --- |
 | `api.tools.register({name, description, inputSchema, scope, roleIds?}, handler)` | 返回注销函数。`inputSchema.type` 为 `object`。处理器接收参数和角色、窗口、执行、任务、自主执行标记，返回 JSON。模型看到的工具名为 `ext_<extId>__<name>`，每次模型请求刷新目录。范围可选 `admin_only`、`all_roles` 或 `selected_roles`。 |
 | `api.events.on(name, handler)` | 返回退订函数。`dialogue_batch` 投递已向席位交付的批次事实，`role_exchange` 投递双边已落库的会话状态。向当时已订阅的扩展发送，业务提交无需等待处理器。 |
 | `api.ui.onAction(name, handler)` | 在当前 Cordis Context 登记精确动作名并返回注销函数。handler 接收 JSON payload，可以读写本扩展 KV，返回 JSON。动作表独立于角色工具与平台事件，退出时由 Context 清理。 |
-| `await api.kv.get(key)`、`await api.kv.set(key, value)` | 键为非空字符串，值为 JSON，缺失返回 `null`。候选初始化的写入在版本切换时提交。 |
+| `await api.kv.get(key)`、`await api.kv.set(key, value)` | 键须为非空白字符串且通过键名、单值、容量与写频校验，值为 JSON，缺失返回 `null`。候选初始化的写入在版本切换时提交并落盘。 |
 | `await api.notify({message, data?})` | 后端订阅者通过 `extensions.onNotice(listener)` 接收含真实 `extId` 的结构化提示。候选初始化期间暂存，激活后发出。 |
 | `ctx.effect(() => dispose)` | 在子进程中登记清理函数。停用、删除、升级和应用关闭均先排空在途调用，再停止 Context 并等待 PID 退出。 |
 | `api.onDispose(cleanup)` | 在扩展停止时执行额外的清理函数，支持异步清理。通过 `api.tools.register` 和 `api.events.on` 登记的资源自动注销。 |

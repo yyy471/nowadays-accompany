@@ -19,13 +19,13 @@
 | [SEC-01](#sec-01-pi-工程子代理路径围栏被内置-powershell-bash-直接击穿) | 安全边界 | **P0** | Pi 锁定了 `write/edit` 路径，却无隔离放开 `powershell/bash` | 边界已确认（`DL-195`） | 已修复，独立复验通过 |
 | [SEC-02](#sec-02-本地-mcp-命令执行与普通角色脚本执行击穿隔离并继承完整宿主环境) | 安全边界 | **P0** | 工作空间与本机命令曾共用开关，普通角色脚本缺少文件权限约束，子进程环境过宽 | 方案 A 已确认（`DL-59`） | 已修复，针对性独立复验通过 |
 | [DELIV-01](#deliv-01-桌面生产包直接打包未编译-ts-源码与-tsx且缺-node-24-构建流水线) | 交付打包 | **P0** | 生产包用 `tsx` 现场转译 TS，缺少干净 Windows 机可验证的发行包 | 否 | 已修复并离线验证，干净机验收待办 |
-| [BUG-03](#bug-03-roleaccesswithstore-每次操作现开现关两个-sqlite-库且实例未统一) | 性能/稳定性 | **P1** | 无连接复用；单次查询同步开关双库，且 `RoleService` / `ConversationService` 绕开统一入口 | 否 | `[ ]` 待排查 |
+| [BUG-03](#bug-03-roleaccesswithstore-每次操作现开现关两个-sqlite-库且实例未统一) | 性能/稳定性 | **P1** | 无连接复用；单次查询同步开关双库，且 `RoleService` / `ConversationService` 绕开统一入口 | 否 | 已修复，R4 精准独立复验通过 |
 | [BUG-04](#bug-04-维护窗口暂停多角色采用串行轮询最坏线性卡死) | 性能/稳定性 | **P1** | 模型与媒体维护曾逐角色串行等待停机 | 否 | 已修复，R4 精准独立复验通过 |
 | [BUG-05](#bug-05-pi-工程模型参数硬编码阉割reasoning-固定关闭且输出上限-8k) | 功能缺陷 | **P1** | Pi 注册模型固定 `reasoning: false` / `maxTokens: 8192` | 否 | 已修复，R6 精准复验通过 |
 | [BUG-06](#bug-06-对话页默认背景硬编码绑定夏澄资产) | 功能缺陷 | **P1** | 普通角色对话背景直接写死引用 `assets/themes/xiacheng/` | 否 | 已修复，R5 精准复验通过 |
 | [BUG-07](#bug-07-扩展-sse-瞬断直接清空列表销毁全部微页且-backendbaseurl-永久缓存) | 运行时 Bug | **P1** | `use-extensions.ts` `onerror` 清空 `items` 销毁全部 iframe；后端换端口后 `backendBaseUrl` 永不刷新 | 否 | 已修复，R5 精准复验通过 |
 | [BUG-08](#bug-08-windows-下命令与-skill-脚本超时只杀父进程不回收进程树) | 运行时 Bug | **P1** | `command_run` 与 `skill_run` 超时仅 `child.kill()`，未复用进程树回收，孙进程泄漏为孤儿 | 否 | 已修复，独立复验通过 |
-| [SEC-03](#sec-03-热扩展子进程未限制网络访问且-kv-存盘无容量与限频保护) | 安全边界 | **P1** | Node `--permission` 不拦网络；KV 同步全量覆写 `manifest.json` 无上限 | 否 | `[ ]` 待排查 |
+| [SEC-03](#sec-03-热扩展子进程未限制网络访问且-kv-存盘无容量与限频保护) | 安全边界 | **P1** | Node `--permission` 不拦网络；KV 同步全量覆写 `manifest.json` 无上限 | 否 | 已修复，R7a 精准复验通过 |
 | [SEC-04](#sec-04-windows-静态密钥文件权限失效与独立模式-http-鉴权cors-过宽) | 安全边界 | **P1** | `0o600` 在 NTFS 失效且未接系统密钥链；CORS 放行全部 `localhost:*` / `file://` | 需确认（`DL-121`） | `[ ]` 待排查 |
 | [UX-01](#ux-01-几乎全部角色配置写入都强制先停机把并发锁转嫁给用户) | 操作体验 | **P1** | 改世界书、传表情图、调额度、给服饰改名均要求角色先 `stopped` | **是**（`DL-148`） | `[ ]` 待排查 |
 | [UX-02](#ux-02-首次上手与后台工程能力存在冷启动悬崖) | 操作体验 | **P1** | 无开箱引导；Pi 工程池默认空且隐藏工具，用户根本发现不了核心功能 | 需确认（`DL-201`） | `[ ]` 待排查 |
@@ -308,7 +308,12 @@ Windows、仓库 Node 24.22.2、离线夹具下，主审核人独立执行以下
 
 ### SEC-03 热扩展子进程未限制网络访问，且 KV 存盘无容量与限频保护
 
-- **优先级**：P1 · **状态**：`[ ]` 待排查
+- **优先级**：P1 · **状态**：已修复，R7a 精准复验通过
+- **R7a 实施与复验（2026-11-27）**：
+  - **KV 解耦与防抖异步落盘**：将扩展 KV 从 `manifest.json` 迁至独立的 `<extId>/kv.json`（临时文件原子替换），启动恢复自动迁移旧 `manifest.json` 中的 `kv` 并清理清单；运行期写入先入 `Object.create(null)` 内存仓再按 150ms 防抖合并串行异步落盘，在候选提交、停用、升级旧进程排空、宿主关闭时通过 `flushKv` 排空落盘，删除扩展前 `await cancelKv` 等待在途落盘结束避免并发竞争；
+  - **原型防护、配额与写频保护**：键名拒绝 `__proto__`/`constructor`/`prototype`、空串/纯空白及 >128 字符（400 `EXTENSION_KV_KEY_INVALID`），单值上限 64 KiB（413 `EXTENSION_KV_VALUE_TOO_LARGE`），单扩展默认最多 256 键与 1 MiB 总容量（413 `EXTENSION_KV_QUOTA_EXCEEDED`），每秒默认最多 60 次写入（429 `EXTENSION_KV_RATE_LIMITED`，覆盖初始化与运行期）；错误经 IPC 回传调用方而不杀扩展子进程；
+  - **网络边界显式记录**：在 [role-config-and-activity.md](../../specs/role-config-and-activity.md#35-后端热扩展dl-184dl-188) 明确记录 Node 24 `--permission` 仅限制文件系统范围、不阻断扩展后端外连网络（桌面前端 iframe 保持 `connect-src 'none'` CSP）；
+  - **精准复验（Node 24.22.2）**：后端 `npm run typecheck` 通过，`extension-host.test.ts` + `extension-import.test.ts` **21/21 通过**（含 KV 解耦与重启恢复、旧清单迁移、原型/空/超长键与超大值拒绝、小配额键数/总容量/写频限制且子进程存活）。
 - **证据位置**：
   - [apps/backend/src/application/extensions/extension-process.ts](../../../apps/backend/src/application/extensions/extension-process.ts#L46-L51)
   - [apps/backend/src/application/extensions/extension-host.ts](../../../apps/backend/src/application/extensions/extension-host.ts#L238-L246)

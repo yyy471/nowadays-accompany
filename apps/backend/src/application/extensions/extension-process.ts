@@ -9,8 +9,8 @@ const inventory = z.object({
 });
 export type PlatformEvent = z.infer<typeof inventory>["events"][number];
 const service = z.discriminatedUnion("method", [
-  z.object({ method: z.literal("get"), args: z.object({ key: z.string().min(1) }) }),
-  z.object({ method: z.literal("set"), args: z.object({ key: z.string().min(1), value: z.json() }) }),
+  z.object({ method: z.literal("get"), args: z.object({ key: z.string() }) }),
+  z.object({ method: z.literal("set"), args: z.object({ key: z.string(), value: z.json() }) }),
   z.object({ method: z.literal("notify"), args: z.object({ message: z.string().min(1), data: z.json().optional() }) }),
 ]);
 export type ServiceCall = z.infer<typeof service>;
@@ -93,7 +93,10 @@ export class ExtensionProcess {
       case "service": {
         const id = z.number().int().parse(msg.id);
         try { this.send({ type: "reply", id, value: this.hooks.service(service.parse(msg)) }); }
-        catch (err) { this.send({ type: "reply", id, error: String(err) }); }
+        catch (err) {
+          this.send({ type: "reply", id,
+            error: err instanceof AppError ? `${err.code}: ${err.message}` : String(err) });
+        }
         break;
       }
       case "result": {
