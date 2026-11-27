@@ -32,7 +32,7 @@
 | [UX-03](#ux-03-后台工程pi缺乏历史记录与失败过程日志) | 功能短板 | **P1** | 任务结束胶囊即消失，失败/超时后无法查看改了什么、死在哪步 | 否（增只读视图） | 已修复，R6 精准复验通过 |
 | [UX-04](#ux-04-设置页两处操作仍使用阻塞式原生-windowconfirm) | 视觉/交互 | **P1** | `Settings.tsx` 离开草稿拦截与结束任务确认弹出原生 `window.confirm` | 否 | 已修复，R5 精准复验通过 |
 | [DELIV-02](#deliv-02-真实云端模型多模态与媒体服务全链路联调长期缺位) | 质量/验证 | **P1** | 624+ 离线测试掩盖真实模型、长上下文、TTS、ComfyUI 实机并发缺陷 | 否 | `[ ]` 待排查 |
-| [ARCH-01](#arch-01-后端与前端存在多个两千至三千行级上帝文件) | 架构债务 | **P1** | `conversation-service.ts` 3803 行、`Settings.tsx` 2116 行等触发仓库体积告警 | 否 | `[ ]` 待排查 |
+| [ARCH-01](#arch-01-后端与前端存在多个两千至三千行级上帝文件) | 架构债务 | **P1** | `conversation-service.ts` 3803 行、`Settings.tsx` 2116 行等触发仓库体积告警 | 否 | 首轮拆解已闭环，R12 精准复验通过 |
 | [ARCH-02](#arch-02-桌面端四条通信通道混用且动态页退化为-15-秒全量轮询) | 架构债务 | **P2** | `desk://`、直连 `127.0.0.1`、`nd-ext://`、`ipcMain` 混用；动态页无推送 | 否 | 已修复，R8b 精准复验通过 |
 | [ARCH-03](#arch-03-记忆检索纯依赖字面-fts5-trigram缺乏语义召回能力) | 核心能力 | **P2** | 换个同义说法即召回失效，制约精细记忆模型的实际效果 | 需确认（`DL-51`） | `[ ]` 待排查 |
 | [ARCH-04](#arch-04-启动期同步-ipc-阻塞令牌暴露给渲染层与维护期隐性-on-存储扫描) | 性能/架构 | **P2** | `preload` 同步 `sendSync` 并暴露 `hostHeaders`；`MediaMaintenance` 逐角色开关双库 | 否 | 已修复，R8a 精准复验通过 |
@@ -357,7 +357,11 @@ Windows、仓库 Node 24.22.2、离线夹具下，主审核人独立执行以下
 
 ### ARCH-01 后端与前端存在多个两千至三千行级“上帝文件”
 
-- **优先级**：P1 · **状态**：`[ ]` 待排查
+- **优先级**：P1 · **状态**：首轮拆解已闭环，R12 精准复验通过（`schema.ts` 与大 Store 拆解可作为后续增量优化）
+- **R12 实施与复验（2026-11-28）**：
+  - **后端 `ConversationService` 拆解**：[conversation-service.ts](../../../apps/backend/src/application/conversation/conversation-service.ts) 由 3805 行（144.3 KB）降至 **646 行（24.3 KB）**，按职责无行为变化拆出 [conversation-internal-types.ts](../../../apps/backend/src/application/conversation/conversation-internal-types.ts)、[conversation-prompt-builder.ts](../../../apps/backend/src/application/conversation/conversation-prompt-builder.ts)、[conversation-stream-hub.ts](../../../apps/backend/src/application/conversation/conversation-stream-hub.ts)、[conversation-recovery.ts](../../../apps/backend/src/application/conversation/conversation-recovery.ts)、[conversation-execution-runner.ts](../../../apps/backend/src/application/conversation/conversation-execution-runner.ts) 与 [conversation-scheduler.ts](../../../apps/backend/src/application/conversation/conversation-scheduler.ts)（均 `<55 KB`），保持全部公开导出及白盒恢复测试契约零变化；
+  - **前端 `Settings.tsx` 拆解**：[Settings.tsx](../../../apps/desktop/renderer/src/pages/Settings.tsx) 由 2232 行（172.1 KB）降至 **721 行（53.7 KB）**，拆出 [settings-shared.tsx](../../../apps/desktop/renderer/src/components/config/settings-shared.tsx)、[RoleEditor.tsx](../../../apps/desktop/renderer/src/components/config/role/RoleEditor.tsx)、[RoleStatusSection.tsx](../../../apps/desktop/renderer/src/components/config/RoleStatusSection.tsx) 与 [ResourceDetailSection.tsx](../../../apps/desktop/renderer/src/components/config/ResourceDetailSection.tsx)（均 `<60 KB`），DOM/样式/对外导出 100% 保持不变；
+  - **精准复验（Node 24.22.2）**：`node scripts/check-repo-hygiene.mjs` 0 错误、手写源码 `>100 KB` 告警归零（仅余自动生成的 `character-tokens.css`）；后端 `typecheck` + 核心对话/自主/恢复/互聊/Pi/工作流验收与集成测试 **152/152** 全通过；渲染器 `check`（38 CSS 0 违规）+ 生产构建及 Electron 39 `settings-workspace`（`errors: []`）全通过。
 - **证据位置（实测总行数与体积，其中前两项已触发 `check-repo-hygiene.mjs` 的 `hygiene/file-size-budget` >100 KB 告警）**：
   - [apps/backend/src/application/conversation/conversation-service.ts](../../../apps/backend/src/application/conversation/conversation-service.ts)（3803 行，144.3 KB）
   - [apps/backend/src/storage/memory/memory-store.ts](../../../apps/backend/src/storage/memory/memory-store.ts)（2886 行）
