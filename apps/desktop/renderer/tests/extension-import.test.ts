@@ -8,6 +8,12 @@ test('识别本地命令模式及 npm 脚本，工作空间模式不触发', () 
   assert.equal(isCommandMcp({ command: 'C:\\node\\npm.cmd', args: ['run', 'mcp:local:command'] }), true);
   assert.equal(isCommandMcp({ command: 'npm', args: ['--prefix', 'apps/backend', 'run', 'mcp:local', '--', '--mode', 'command'] }), true);
   assert.equal(isCommandMcp({ command: 'node', args: ['./local-server.js', '--mode', 'command'] }), true);
+  for (const script of ['dist/mcp/local-server.js', 'C:\\app\\dist\\mcp\\local-server.js']) {
+    assert.equal(isCommandMcp({ command: 'node', args: [script, '--mode', 'command'] }), true);
+    assert.equal(isCommandMcp({ command: 'node', args: [script, '--mode', 'workspace'] }), false);
+    assert.equal(isCommandMcp({ command: 'node', args: [script] }), false);
+  }
+  assert.equal(isCommandMcp({ command: 'node', args: ['dist/mcp/local-server.ts', '--mode', 'command'] }), false);
   assert.equal(isCommandMcp({ command: 'node', args: ['src/mcp/local-server.ts', '--mode', 'workspace'] }), false);
   assert.equal(isCommandMcp({ command: 'npm', args: ['run', 'mcp:local', '--', '--mode', 'workspace'] }), false);
   assert.equal(isCommandMcp({ command: 'node', args: ['third-party/local-server.js', '--mode', 'command'] }), false);

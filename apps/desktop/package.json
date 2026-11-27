@@ -10,7 +10,8 @@
     "start": "npm --prefix renderer run build && electron .",
     "test": "node --test tests/unit/*.test.cjs && npm --prefix renderer test",
     "check": "npm --prefix renderer run check",
-    "package:win": "npm --prefix renderer run build && electron-builder --win portable --x64 --publish never"
+    "package:win": "npm run prepare:win && npm --prefix renderer run build && electron-builder --win portable --x64 --publish never",
+    "prepare:win": "node scripts/prepare-package-resources.mjs"
   },
   "devDependencies": {
     "electron": "39.8.10",
@@ -23,30 +24,37 @@
     "files": ["renderer/dist/**", "electron/main.cjs", "electron/window-intent.cjs", "electron/settings-preload.cjs", "electron/backend-paths.cjs", "electron/backend-log.cjs", "electron/extension-protocol.cjs", "assets/window.png", "assets/window.ico"],
     "extraResources": [
       {
-        "from": "../../.tools/node-v24",
-        "to": "node-runtime",
-        "filter": ["node.exe", "LICENSE"]
+        "from": "build-staging/node-runtime",
+        "to": "node-runtime"
       },
       {
-        "from": "../backend",
+        "from": "build-staging/backend",
         "to": "backend",
-        "filter": ["src/**/*", "package.json", "package-lock.json", "tsconfig.json"]
+        "filter": [
+          "dist/**/*",
+          "package.json",
+          "package-lock.json"
+        ]
       },
       {
-        "from": "../backend/node_modules",
+        "from": "build-staging/backend/node_modules",
         "to": "backend/node_modules"
       },
       {
-        "from": "../pi-mcp",
+        "from": "build-staging/pi-mcp",
         "to": "pi-mcp",
-        "filter": ["src/**/*", "package.json"]
+        "filter": [
+          "src/**/*",
+          "package.json",
+          "package-lock.json"
+        ]
       },
       {
-        "from": "../pi-mcp/node_modules",
+        "from": "build-staging/pi-mcp/node_modules",
         "to": "pi-mcp/node_modules"
       },
       {
-        "from": "../backend/assets/presets",
+        "from": "build-staging/preset-assets",
         "to": "preset-assets"
       }
     ],

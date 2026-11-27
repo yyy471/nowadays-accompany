@@ -95,8 +95,7 @@ async function startManagedBackend() {
     child = spawn(
       nodeBin,
       [
-        "--import",
-        "tsx",
+        ...layout.nodeArgs,
         mainScript,
         "--app-root",
         appRoot,

@@ -20,7 +20,7 @@ export function isCommandMcp(config: Record<string, unknown>): boolean {
     if (run >= 0 && script === 'mcp:local:command') return true;
     if (run >= 0 && script === 'mcp:local' && args[run + 2] === '--' && args[run + 3] === '--mode' && args[run + 4] === 'command') return true;
   }
-  const script = [command, ...args].some(arg => /(?:^|[\\/])src[\\/]mcp[\\/]local-server\.(?:js|ts)$/i.test(arg.replace(/^['"]|['"]$/g, '')) || /^\.?[\\/]?local-server\.(?:js|ts)$/i.test(arg.replace(/^['"]|['"]$/g, '')));
+  const script = [command, ...args].some(arg => /(?:^|[\\/])(?:src[\\/]mcp[\\/]local-server\.(?:js|ts)|dist[\\/]mcp[\\/]local-server\.js)$/i.test(arg.replace(/^['"]|['"]$/g, '')) || /^\.?[\\/]?local-server\.(?:js|ts)$/i.test(arg.replace(/^['"]|['"]$/g, '')));
   return script && args.some((arg, i) => arg === '--mode' && args[i + 1] === 'command');
 }
 

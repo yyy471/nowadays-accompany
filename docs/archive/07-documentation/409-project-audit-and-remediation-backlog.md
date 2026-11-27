@@ -18,7 +18,7 @@
 | [BUG-02](#bug-02-桌面拉起后端静默吞掉-stderr启动失败无诊断信息) | 运行时 Bug | **P0** | 桌面壳 `child.stderr.resume()` 吞掉全部后端错误输出 | 否 | 已修复，独立复验通过 |
 | [SEC-01](#sec-01-pi-工程子代理路径围栏被内置-powershell-bash-直接击穿) | 安全边界 | **P0** | Pi 锁定了 `write/edit` 路径，却无隔离放开 `powershell/bash` | 边界已确认（`DL-195`） | 已修复，独立复验通过 |
 | [SEC-02](#sec-02-本地-mcp-命令执行与普通角色脚本执行击穿隔离并继承完整宿主环境) | 安全边界 | **P0** | 工作空间与本机命令曾共用开关，普通角色脚本缺少文件权限约束，子进程环境过宽 | 方案 A 已确认（`DL-59`） | 已修复，针对性独立复验通过 |
-| [DELIV-01](#deliv-01-桌面生产包直接打包未编译-ts-源码与-tsx且缺-node-24-构建流水线) | 交付打包 | **P0** | 生产包用 `tsx` 现场转译 TS，缺少干净 Windows 机可验证的发行包 | 否 | `[ ]` 待排查 |
+| [DELIV-01](#deliv-01-桌面生产包直接打包未编译-ts-源码与-tsx且缺-node-24-构建流水线) | 交付打包 | **P0** | 生产包用 `tsx` 现场转译 TS，缺少干净 Windows 机可验证的发行包 | 否 | 已修复并离线验证，干净机验收待办 |
 | [BUG-03](#bug-03-roleaccesswithstore-每次操作现开现关两个-sqlite-库且实例未统一) | 性能/稳定性 | **P1** | 无连接复用；单次查询同步开关双库，且 `RoleService` / `ConversationService` 绕开统一入口 | 否 | `[ ]` 待排查 |
 | [BUG-04](#bug-04-维护窗口暂停多角色采用串行轮询最坏线性卡死) | 性能/稳定性 | **P1** | `pauseRoles` 逐角色串行等待最多 20s，5 个角色最坏阻塞 100s | 否 | `[ ]` 待排查 |
 | [BUG-05](#bug-05-pi-工程模型参数硬编码阉割reasoning-固定关闭且输出上限-8k) | 功能缺陷 | **P1** | Pi 注册模型固定 `reasoning: false` / `maxTokens: 8192` | 否 | `[ ]` 待排查 |
@@ -502,11 +502,11 @@
 
 ### DELIV-01 桌面生产包直接打包未编译 TS 源码与 `tsx`，且缺 Node 24 构建流水线
 
-- **优先级**：P0 · **状态**：`[ ]` 待排查
-- **证据位置**：
+- **优先级**：P0 · **状态**：修复及独立离线复验通过，干净机便携包验收待办
+- **审计时证据位置**（下述根因与建议保留原始审计背景；现状以实施记录为准）：
   - [apps/desktop/package.json](../../../apps/desktop/package.json#L24-L52)
   - [apps/desktop/electron/backend-paths.cjs](../../../apps/desktop/electron/backend-paths.cjs#L17-L47)
-  - [docs/STATUS.md](../../STATUS.md#L120)（明确记录 `node-runtime` 被忽略、干净机器 `package:win` 启动未验证）
+  - [docs/STATUS.md](../../STATUS.md)（当时记录运行时目录被忽略、干净机器 `package:win` 启动未验证）
 - **根因分析**：
   生产打包直接拷贝了未编译的 `apps/backend/src/**/*` 与整套含开发依赖的 `node_modules`（因为运行时靠 `node --import tsx src/main.ts`），导致冷启动编译开销大、体积膨胀、对未入库的 `.tools/node-v24` 隐式依赖，至今无法向外部用户交付可直接运行的安装包。
 - **修复建议**：
@@ -515,6 +515,22 @@
   3. 制定“干净 Windows 虚拟机 / 无 Node 环境”实机冒烟清单，覆盖首次启动、数据目录迁移（`userData/data`）、托盘退出、重启恢复与 Pi 扩展发布。
 - **验收标准**：
   - 在未安装 Node.js 的干净 Windows x64 环境中，双击便携版 EXE 冷启动时间显著缩短（目标 <2 秒至健康检查就绪），核心对话与热扩展功能可运行且退出后残留进程为 0。
+
+#### DELIV-01 实施与离线验证（2026-11-27）
+
+桌面生产入口改为编译后 `backend/dist/main.js`，本地 MCP 使用编译产物，扩展 runner 与进程启动器的两个 `.mjs` 则原样复制进 `dist`。`prepare:win` 在独立 staging 准备生产依赖、Pi 子包、素材和固定版本、校验 SHA 的 Windows x64 Node 运行时，并检查原生模块；不对开发目录运行 prune。桌面壳开发态继续使用源码入口。具体打包及校验以 [准备脚本](../../../apps/desktop/scripts/prepare-package-resources.mjs) 和 [桌面配置](../../../apps/desktop/package.json) 为准。
+
+冻结 staging 准备使用 Node v24.22.2 win32 x64，SHA-256 为 `1c331340fa6cac5e4294725959070a143fa0507195a78ad77eed7943f719aac9`；SQLite、sharp 和后端及 Pi 两份 koffi 原生模块实际运行通过。桌面打包布局单测 8/8、渲染器指定单测 4/4、渲染器 check/build、后端 typecheck/build 通过。此轮使用已有运行时和依赖，联网下载与干净 CI 安装路径未触发。
+
+指定 [脱仓冒烟](../../../apps/desktop/tests/unit/packaged-backend-smoke.test.cjs) 在仓外含空格临时路径实体复制整个 staging，仅继承系统必需环境，排除宿主 Node、npm 与 Node 覆盖；从包内 Node 启动编译后端，读取实际预置介绍与图像、建角，并经本地离线模型完成一轮对话、热发布扩展与调用其工具。另以复制内 Pi SDK 的真实 worker 请求检查工具集，并调用编译版本地 MCP 读写。关闭 stdin 后检查 `shutdown_complete` 的来源、退出码，以及活体阶段确认可枚举的复制版 Node 进程在退出后归零。冻结 staging 自验 1/1，spawn 至首次 health 200 为 **4630 ms**；最终版本独立复验 1/1、无跳过，首个 health **4267 ms**、整测 32.757 秒。这些本机单次测量均未达到原定 <2 秒目标。
+
+干净 Windows x64、未安装 Node 的便携 EXE 仍需人工检查：
+
+1. 在构建宿主生成便携 EXE，仅复制 EXE 到干净机器；双击冷启动并记录 health 时间。
+2. 确认内置角色、图片和一轮对话，验证 Pi 工程与热扩展发布调用。
+3. 从托盘退出并确认子进程归零；重启后确认角色数据恢复，并确认旧安装数据迁移策略。
+
+真实远程服务、实际便携 EXE 及数据迁移均不由上述 staging 离线测试证明。
 
 ---
 

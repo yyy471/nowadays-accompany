@@ -15,6 +15,7 @@ test("开发仓库：后端在仓库内，预置素材指向 backend/assets/pres
   assert.equal(layout.piMcpRoot, path.resolve(dirname, "..", "..", "pi-mcp"));
   assert.equal(layout.backendRoot, path.resolve(dirname, "..", "..", "backend"));
   assert.equal(layout.entry, path.join(layout.backendRoot, "src", "main.ts"));
+  assert.deepEqual(layout.nodeArgs, ["--import", "tsx"]);
   assert.equal(layout.presetAssetsDir, path.join(layout.backendRoot, "assets", "presets"));
   assert.equal(layout.nodeRuntime, path.resolve(dirname, "..", "..", "..", ".tools", "node-v24", "node.exe"));
 });
@@ -23,6 +24,8 @@ test("打包产物：后端与预置素材都从 resources 读取", () => {
   const resourcesPath = path.join("C:", "Apps", "Nowadays", "resources");
   const layout = resolveBackendLayout({ isPackaged: true, resourcesPath, dirname, env: {} });
   assert.equal(layout.mode, "packaged");
+  assert.equal(layout.entry, path.join(layout.backendRoot, "dist", "main.js"));
+  assert.deepEqual(layout.nodeArgs, []);
   assert.equal(layout.piMcpRoot, path.join(resourcesPath, "pi-mcp"));
   assert.equal(layout.backendRoot, path.join(resourcesPath, "backend"));
   assert.equal(layout.presetAssetsDir, path.join(resourcesPath, "preset-assets"));
@@ -31,13 +34,11 @@ test("打包产物：后端与预置素材都从 resources 读取", () => {
 
 test("Pi 子包自带源码与独立运行依赖，显式根目录覆盖两种布局", () => {
   const resources = require("../../package.json").build.extraResources;
-  assert.ok(resources.some(item => item.to === "node-runtime" && item.filter.includes("node.exe")));
-  const pi = resources.find(item => item.to === "pi-mcp");
-  assert.equal(pi.from, "../pi-mcp");
-  for (const included of ["src/**/*", "package.json"]) assert.ok(pi.filter.includes(included));
-  // electron-builder 会跳过 FileSet 根目录下名为 node_modules 的子目录。
-  for (const app of ["backend", "pi-mcp"]) {
-    assert.ok(resources.some(item => item.from === `../${app}/node_modules` && item.to === `${app}/node_modules`));
+  for (const name of ["node-runtime", "backend", "pi-mcp", "preset-assets"]) assert.ok(resources.some(item => item.from === `build-staging/${name}` && item.to === name));
+  for (const name of ["backend", "pi-mcp"]) assert.ok(resources.some(item => item.from === `build-staging/${name}/node_modules` && item.to === `${name}/node_modules`));
+  for (const [name, content] of [["backend", "dist/**/*"], ["pi-mcp", "src/**/*"]]) {
+    const filter = resources.find(item => item.to === name).filter;
+    for (const file of [content, "package.json", "package-lock.json"]) assert.ok(filter.includes(file));
   }
   const root = path.resolve(dirname, "custom pi");
   for (const isPackaged of [false, true]) {
@@ -57,6 +58,7 @@ test("显式覆盖优先于开发与打包布局，预置素材可单独指定",
   assert.equal(layout.mode, "override");
   assert.equal(layout.backendRoot, root);
   assert.equal(layout.entry, path.join(root, "src", "main.ts"));
+  assert.deepEqual(layout.nodeArgs, ["--import", "tsx"]);
   assert.equal(layout.presetAssetsDir, path.join("D:", "tmp", "presets"));
 });
 
@@ -93,4 +95,10 @@ test("显式覆盖布局保留开发与打包各自的 Node 优先级", () => {
     const expected = isPackaged ? layout.nodeRuntime : envNode;
     assert.equal(resolveNodeExecutable({ layout, env: { NOWADAYS_NODE_PATH: envNode }, exists: bothExist }), expected);
   }
+});
+
+test("显式覆盖可选择编译后的入口", () => {
+  const layout = resolveBackendLayout({ dirname, env: { NOWADAYS_BACKEND_ROOT: "custom", NOWADAYS_BACKEND_RUNTIME: "compiled" } });
+  assert.equal(layout.entry, path.join(layout.backendRoot, "dist", "main.js"));
+  assert.deepEqual(layout.nodeArgs, []);
 });

@@ -8,6 +8,7 @@
     "node": ">=24"
   },
   "scripts": {
+    "build": "node scripts/build.mjs",
     "typecheck": "node ../../scripts/ensure-tools.mjs && tsc --noEmit",
     "test": "node scripts/verify/run-tests.mjs",
     "dev": "node --import tsx src/main.ts",

@@ -2,6 +2,7 @@
 node_modules/
 dist/
 /apps/desktop/release/
+/apps/desktop/build-staging/
 /.packaging*/
 /release/
 /release-*/

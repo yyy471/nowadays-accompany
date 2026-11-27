@@ -15,9 +15,14 @@ Set-Location D:\app\nowadays\accompany\apps\backend
 node --version
 npm ci
 npm run typecheck
+npm run build
 ```
 
-`better-sqlite3` 为原生依赖，需与当前 Node ABI 匹配；本次使用已安装且实际运行通过的独立依赖，未宣称上述安装已在干净机器验证。源码通过 tsx 运行，无需 dist。不要带 `--omit=dev` 安装：当前运行入口需要 tsx。
+`better-sqlite3` 为原生依赖，需与当前 Node ABI 匹配；本次使用已安装且实际运行通过的独立依赖，未宣称上述安装已在干净机器验证。开发入口通过 `tsx` 运行，需要开发依赖；桌面生产包使用编译后的 `dist` 和隔离的生产依赖，不依赖运行时 `tsx`。
+
+`npm run build` 将 TypeScript 编译到 `dist`，并原样复制运行所需的 `application/extensions/runner.mjs` 和 `infra/process-launcher.mjs`。编译后可用 `node dist/main.js --app-root <目录> --preset-assets-dir <素材目录> --port 0` 启动；本地 MCP 入口是 `node dist/mcp/local-server.js`，需要设置 `NOWADAYS_WORKSPACE`。
+
+桌面 Windows x64 交付准备在 `apps/desktop` 执行 `npm run prepare:win`，将后端编译产物、生产依赖、Pi 子包、预置素材和校验后的 Node 运行时放入 `build-staging`；`npm run package:win` 在准备后构建便携包。准备完成后可在仓库根目录使用 `.tools/node-v24/node.exe --test apps/desktop/tests/unit/packaged-backend-smoke.test.cjs` 运行脱仓离线冒烟。测试将完整 staging 复制到仓外含空格的临时路径，清理 Node 环境覆盖，使用包内 Node 启动后端；它不是便携 EXE 或干净 Windows 的验收替代品。缺少 staging 或非 Windows 时该测试明确跳过。
 
 本工作区可临时使用 P0 下载的独立 Node；这不是交付时必须依赖的目录：
 
