@@ -87,6 +87,36 @@ function definitionWrite(): Record<string, unknown> {
   return { definition: { text: "停止后修订的设定" } };
 }
 
+/** 1×1 PNG，供热生效的服饰新增走真实图片校验。 */
+const PNG_1X1 = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+async function apiForm(
+  base: string,
+  route: string,
+  form: FormData,
+): Promise<ApiResult> {
+  const response = await fetch(`${base}${route}`, { method: "POST", body: form });
+  const raw = await response.text();
+  return {
+    status: response.status,
+    body: raw.length === 0 ? {} : (JSON.parse(raw) as Record<string, unknown>),
+  };
+}
+
+/** 受保护写入在 active／stopping 态都必须严格返回 409。 */
+function assertRoleNotStopped(
+  result: ApiResult,
+  reason: "ACTIVE" | "STOPPING",
+): void {
+  assert.equal(result.status, 409);
+  const error = errorOf(result);
+  assert.equal(error.code, "ROLE_NOT_STOPPED");
+  assert.equal(error.details?.reason, reason);
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -425,16 +455,12 @@ test("恢复原样保留待办与自主额度，并重新允许活动", { timeou
     const base = await start(fixture);
     const role = rolePath(fixture);
 
-    // 自主额度属于角色配置写入：先由后端确认停止再改，改完恢复活动。
-    const budgetStop = await api(base, "POST", `${role}/activity/stop`);
-    assert.equal(activityOf(budgetStop).state, "stopped");
+    // 自主额度属于热生效配置（DL-148 方案 A）：运行中直接改，供后续验证恢复不重置。
     const budget = await api(base, "PUT", `${role}/autonomy/budget`, {
       unlimited: false,
       dailyLimit: 3,
     });
     assert.equal(budget.status, 200);
-    const budgetResume = await api(base, "POST", `${role}/activity/resume`);
-    assert.equal(activityOf(budgetResume).state, "active");
     const wakeAt = new Date(Date.now() + 60_000).toISOString();
     const wake = await api(base, "POST", `${role}/autonomy/wakes`, {
       wakeAt,
@@ -682,61 +708,161 @@ test("后台工具结算后停止能收敛，且保留原调用记录", { timeou
   }
 });
 
-test("自主额度写入纳入角色配置保护", { timeout: 40_000 }, async () => {
+test("DL-148 方案 A：分级热生效与受保护变更", { timeout: 40_000 }, async () => {
   const model = new StopBoundaryModel();
   const fixture = createFixtureWithModel(model);
+  const voiceService = fixture.app.services.voiceServices.create({
+    name: "热生效语音",
+    config: { protocol: "nowadays-tts-v1", baseUrl: "http://localhost:9100" },
+  });
+  const imageService = fixture.app.services.imageServices.create({
+    name: "热生效生图",
+    config: { protocol: "comfyui", baseUrl: "http://127.0.0.1:9101" },
+  });
   try {
     const base = await start(fixture);
     const role = rolePath(fixture);
 
-    // 运行中：拒绝修改，额度保持原值。
-    const active = await api(base, "PUT", `${role}/autonomy/budget`, {
-      unlimited: false,
-      dailyLimit: 7,
-    });
-    assert.equal(active.status, 409);
-    assert.equal(errorOf(active).code, "ROLE_NOT_STOPPED");
-    assert.equal(errorOf(active).details?.reason, "ACTIVE");
-    const untouched = await api(base, "GET", `${role}/autonomy/budget`);
-    assert.equal(
-      (untouched.body as { dailyLimit: number }).dailyLimit,
-      200,
-      "拒绝后额度不得被修改",
-    );
-
-    // 正在停止：仍拒绝。
+    // 先把一次对话推进到运行中，验证热生效写入不会打断在途执行。
     const submitted = await api(
       base,
       "POST",
       `${role}/windows/${fixture.windowId}/messages`,
-      { content: "检查额度保护", submissionId: randomUUID() },
+      { content: "运行中修改配置", submissionId: randomUUID() },
     );
     assert.equal(submitted.status, 201);
     await model.started.promise;
-    assert.equal(
-      activityOf(await api(base, "POST", `${role}/activity/stop`)).state,
-      "stopping",
-    );
-    const stopping = await api(base, "PUT", `${role}/autonomy/budget`, {
+
+    // 自主额度：运行中保存并立即反映到读取。
+    const budget = await api(base, "PUT", `${role}/autonomy/budget`, {
       unlimited: false,
       dailyLimit: 7,
     });
-    assert.equal(stopping.status, 409);
-    assert.equal(errorOf(stopping).details?.reason, "STOPPING");
+    assert.equal(budget.status, 200);
+    assert.equal((budget.body as { dailyLimit: number }).dailyLimit, 7);
+    const budgetRead = (await api(base, "GET", `${role}/autonomy/budget`))
+      .body as { dailyLimit: number };
+    assert.equal(budgetRead.dailyLimit, 7, "热生效额度应立即反映到读取");
 
-    // 后端确认停止后才允许修改。
+    // 世界书：运行中保存新版本并立即可读。
+    const before = (await api(base, "GET", `${role}/worldbooks`)).body as {
+      revision: number;
+    };
+    const worldbooksSaved = await api(base, "PUT", `${role}/worldbooks`, {
+      expectedRevision: before.revision,
+      books: [
+        { id: "hot-worldbook", name: "运行中新增", enabled: true, entries: [] },
+      ],
+    });
+    assert.equal(worldbooksSaved.status, 200);
+    const worldbooksRead = (await api(base, "GET", `${role}/worldbooks`))
+      .body as { books: Array<{ name: string }> };
+    assert.equal(worldbooksRead.books[0]?.name, "运行中新增");
+
+    // 语音配置与开关：运行中保存并在下轮生效。
+    const voiceSaved = await api(base, "PUT", `${role}/voice`, {
+      serviceId: voiceService.serviceId,
+      voiceSource: { kind: "preset", voiceId: "hot-voice" },
+    });
+    assert.equal(voiceSaved.status, 200);
+    const voiceRead = (await api(base, "GET", `${role}/voice`)).body as {
+      voice: { enabled: boolean; voiceSource: { kind: string; voiceId?: string } };
+    };
+    assert.equal(voiceRead.voice.voiceSource.kind, "preset");
+    assert.equal(voiceRead.voice.voiceSource.voiceId, "hot-voice");
+
+    const voiceEnabled = await api(base, "PUT", `${role}/voice/enabled`, {
+      enabled: true,
+    });
+    assert.equal(voiceEnabled.status, 200);
+    const voiceAfterEnable = (await api(base, "GET", `${role}/voice`))
+      .body as { voice: { enabled: boolean } };
+    assert.equal(voiceAfterEnable.voice.enabled, true);
+
+    // 生图配置：运行中保存并立即可读。
+    const sceneImageSaved = await api(base, "PUT", `${role}/scene-image`, {
+      serviceId: imageService.serviceId,
+      modelType: "text2img",
+      modelPath: "hot.safetensors",
+    });
+    assert.equal(sceneImageSaved.status, 200);
+    const sceneImage = (await api(base, "GET", `${role}/scene-image`)).body as {
+      settings: { serviceId: string; modelPath: string } | null;
+    };
+    assert.equal(sceneImage.settings?.serviceId, imageService.serviceId);
+    assert.equal(sceneImage.settings?.modelPath, "hot.safetensors");
+
+    // 服饰：运行中新增与改名都不需要停机。
+    const form = new FormData();
+    form.append("name", "运行中新服饰");
+    form.append("home", new Blob([PNG_1X1], { type: "image/png" }), "home.png");
+    const createdOutfit = await apiForm(base, `${role}/appearance/outfits`, form);
+    assert.equal(createdOutfit.status, 201);
+    const outfitId = (createdOutfit.body as { outfitId: string }).outfitId;
+
+    const renamed = await api(
+      base,
+      "PATCH",
+      `${role}/appearance/outfits/${outfitId}`,
+      { name: "热改服饰" },
+    );
+    assert.equal(renamed.status, 200);
+    const outfits = (await api(base, "GET", `${role}/appearance/outfits`))
+      .body as { items: Array<{ outfitId: string; name: string }> };
+    assert.equal(
+      outfits.items.find((item) => item.outfitId === outfitId)?.name,
+      "热改服饰",
+    );
+
+    const stillActive = activityOf(await api(base, "GET", `${role}/activity`));
+    assert.equal(stillActive.state, "active");
+    assert.equal(stillActive.running, true, "热生效写入不应打断在途执行");
+
+    // active 态：身份、绑定、删除角色与删除素材仍严格受保护。
+    assertRoleNotStopped(
+      await api(base, "PATCH", `${role}/definition`, definitionWrite()),
+      "ACTIVE",
+    );
+    assertRoleNotStopped(
+      await api(base, "PUT", `${role}/bindings`, { bindings: [] }),
+      "ACTIVE",
+    );
+    assertRoleNotStopped(
+      await api(base, "DELETE", `${role}?keepHistory=1`),
+      "ACTIVE",
+    );
+    assertRoleNotStopped(
+      await api(base, "DELETE", `${role}/appearance/outfits/${outfitId}`),
+      "ACTIVE",
+    );
+
+    // stopping 态：受保护写入同样拒绝。
+    const stop = await api(base, "POST", `${role}/activity/stop`);
+    assert.equal(stop.status, 200);
+    assert.equal(activityOf(stop).state, "stopping");
+    assertRoleNotStopped(
+      await api(base, "PATCH", `${role}/definition`, definitionWrite()),
+      "STOPPING",
+    );
+    assertRoleNotStopped(
+      await api(base, "PUT", `${role}/bindings`, { bindings: [] }),
+      "STOPPING",
+    );
+    assertRoleNotStopped(
+      await api(base, "DELETE", `${role}?keepHistory=1`),
+      "STOPPING",
+    );
+    assertRoleNotStopped(
+      await api(base, "DELETE", `${role}/appearance/outfits/${outfitId}`),
+      "STOPPING",
+    );
+
     model.release.resolve();
     await fixture.app.conversation.waitForIdle(fixture.roleId);
     assert.equal(
       activityOf(await api(base, "GET", `${role}/activity`)).state,
       "stopped",
     );
-    const allowed = await api(base, "PUT", `${role}/autonomy/budget`, {
-      unlimited: false,
-      dailyLimit: 7,
-    });
-    assert.equal(allowed.status, 200);
-    assert.equal((allowed.body as { dailyLimit: number }).dailyLimit, 7);
   } finally {
     model.release.resolve();
     await fixture.close();

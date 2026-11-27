@@ -6,17 +6,33 @@
  * 避免新增配置写入接口时守卫与测试规则漂移。
  */
 
-/** 角色级配置写入：目标角色须已由后端确认停止。 */
+/**
+ * 角色级受保护写入（DL-148 方案 A）：目标角色须已由后端确认停止。
+ *
+ * 只保留会改变角色身份、运行绑定或删除既有素材的操作；素材新增、配置保存
+ * 等可在运行中直接生效的写入见 {@link ROLE_HOT_CONFIG_WRITES}。
+ */
 export const ROLE_CONFIG_WRITES: ReadonlySet<string> = new Set([
   "DELETE /v1/roles/:roleId",
   "PATCH /v1/roles/:roleId/definition",
   "PUT /v1/roles/:roleId/bindings",
+  "DELETE /v1/roles/:roleId/voice/references/:assetId",
+  "DELETE /v1/roles/:roleId/appearance/outfits/:outfitId",
+  "DELETE /v1/roles/:roleId/appearance/outfits/:outfitId/sprites/:assetId",
+  "DELETE /v1/roles/:roleId/appearance/outfits/:outfitId/home/:assetId",
+]);
+
+/**
+ * 角色级热生效写入（DL-148 方案 A）：运行中可直接保存，下一次执行读取新配置。
+ *
+ * 这里显式登记，便于与受保护写入对照审查；它们不挂停机租约，
+ * 因此也不会进入 classifyConfigWrite 的受保护范围。
+ */
+export const ROLE_HOT_CONFIG_WRITES: ReadonlySet<string> = new Set([
   "PUT /v1/roles/:roleId/worldbooks",
   "PUT /v1/roles/:roleId/voice",
   "PUT /v1/roles/:roleId/voice/enabled",
   "POST /v1/roles/:roleId/voice/reference",
-  "DELETE /v1/roles/:roleId/voice/references/:assetId",
-  // 自主额度属于角色配置：运行或正在停止时拒绝修改（RA-R04）。
   "PUT /v1/roles/:roleId/autonomy/budget",
   "PUT /v1/roles/:roleId/scene-image",
   "PUT /v1/roles/:roleId/scene-image/outfits/:outfitId/reference",
@@ -24,10 +40,7 @@ export const ROLE_CONFIG_WRITES: ReadonlySet<string> = new Set([
   "POST /v1/roles/:roleId/appearance/outfits",
   "PATCH /v1/roles/:roleId/appearance/outfits/:outfitId",
   "POST /v1/roles/:roleId/appearance/outfits/:outfitId/home",
-  "DELETE /v1/roles/:roleId/appearance/outfits/:outfitId",
   "POST /v1/roles/:roleId/appearance/outfits/:outfitId/sprites",
-  "DELETE /v1/roles/:roleId/appearance/outfits/:outfitId/sprites/:assetId",
-  "DELETE /v1/roles/:roleId/appearance/outfits/:outfitId/home/:assetId",
 ]);
 
 /** 媒体服务写入由服务维护协调器按依赖角色处理，不再要求所有角色停止。 */
@@ -73,6 +86,7 @@ function compile(key: string, kind: ConfigWriteScope["kind"]): WriteRule {
   return { method, regex: new RegExp(`^${source}$`), kind };
 }
 
+// 受保护写入才编译成租约规则；ROLE_HOT_CONFIG_WRITES 运行中直接生效，不在此列。
 const WRITE_RULES: WriteRule[] = [
   ...[...ROLE_CONFIG_WRITES].map((key) => compile(key, "role")),
   ...[...GLOBAL_CONFIG_WRITES].map((key) => compile(key, "global")),

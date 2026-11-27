@@ -27,7 +27,7 @@
 | [BUG-08](#bug-08-windows-下命令与-skill-脚本超时只杀父进程不回收进程树) | 运行时 Bug | **P1** | `command_run` 与 `skill_run` 超时仅 `child.kill()`，未复用进程树回收，孙进程泄漏为孤儿 | 否 | 已修复，独立复验通过 |
 | [SEC-03](#sec-03-热扩展子进程未限制网络访问且-kv-存盘无容量与限频保护) | 安全边界 | **P1** | Node `--permission` 不拦网络；KV 同步全量覆写 `manifest.json` 无上限 | 否 | 已修复，R7a 精准复验通过 |
 | [SEC-04](#sec-04-windows-静态密钥文件权限失效与独立模式-http-鉴权cors-过宽) | 安全边界 | **P1** | `0o600` 在 NTFS 失效且未接系统密钥链；CORS 放行全部 `localhost:*` / `file://` | 方案 A 已确认（`DL-121`） | 已修复，R7b 精准复验通过 |
-| [UX-01](#ux-01-几乎全部角色配置写入都强制先停机把并发锁转嫁给用户) | 操作体验 | **P1** | 改世界书、传表情图、调额度、给服饰改名均要求角色先 `stopped` | **是**（`DL-148`） | `[ ]` 待排查 |
+| [UX-01](#ux-01-几乎全部角色配置写入都强制先停机把并发锁转嫁给用户) | 操作体验 | **P1** | 改世界书、传表情图、调额度、给服饰改名均要求角色先 `stopped` | 方案 A 已确认（`DL-148`） | 已修复，R9b 精准复验通过 |
 | [UX-02](#ux-02-首次上手与后台工程能力存在冷启动悬崖) | 操作体验 | **P1** | 无开箱引导；Pi 工程池默认空且隐藏工具，用户根本发现不了核心功能 | 需确认（`DL-201`） | `[ ]` 待排查 |
 | [UX-03](#ux-03-后台工程pi缺乏历史记录与失败过程日志) | 功能短板 | **P1** | 任务结束胶囊即消失，失败/超时后无法查看改了什么、死在哪步 | 否（增只读视图） | 已修复，R6 精准复验通过 |
 | [UX-04](#ux-04-设置页两处操作仍使用阻塞式原生-windowconfirm) | 视觉/交互 | **P1** | `Settings.tsx` 离开草稿拦截与结束任务确认弹出原生 `window.confirm` | 否 | 已修复，R5 精准复验通过 |
@@ -443,7 +443,11 @@ Windows、仓库 Node 24.22.2、离线夹具下，主审核人独立执行以下
 
 ### UX-01 几乎全部角色配置写入都强制先停机，把并发锁转嫁给用户
 
-- **优先级**：P1 · **状态**：`[ ]` 待排查 · **决策影响**：**需先修订** [DL-148](../../161-digital-life-direction-decisions.md#dl-148-配置修改直接删除与运行限制)
+- **优先级**：P1 · **状态**：已修复，R9b 精准复验通过（方案 A，用户于 2026-11-27 确认） · **决策影响**：已修订登记至 [DL-148](../../161-digital-life-direction-decisions.md#dl-148-配置修改直接删除与运行限制)
+- **R9b 实施与复验（2026-11-27）**：
+  - **后端分级热生效**：[config-writes.ts](../../../apps/backend/src/http/config-writes.ts) 将 `ROLE_CONFIG_WRITES` 收窄为 7 项受保护变更（删除角色、`PATCH /definition`、`PUT /bindings`、4 类删除受引用媒体/服饰），并显式登记 `ROLE_HOT_CONFIG_WRITES` 12 项热生效写入（世界书、自主额度、语音配置/开关/上传参考、生图配置/服饰锚点、外观新增/改名/传立绘与表情），运行中修改零停机生效；
+  - **桌面热生效与顺滑启用**：[Settings.tsx](../../../apps/desktop/renderer/src/pages/Settings.tsx)、[VoicePanel.tsx](../../../apps/desktop/renderer/src/components/voice/VoicePanel.tsx)、[AppearancePanel.tsx](../../../apps/desktop/renderer/src/components/appearance/AppearancePanel.tsx) 取消热生效区停机流程（仅删除类与人设/绑定维持停机协调）；新增 [role-write-tier.ts](../../../apps/desktop/renderer/src/components/config/role-write-tier.ts)，停机角色首次绑定对话模型时默认勾选「保存并立即启用角色」；
+  - **精准复验（Node 24.22.2）**：后端 `typecheck` + **39/39** 专项集成测试（`role-activity`、`appearance-management`、`preset-assistant-core`、`role-deletion`）、渲染器 `check`（37 CSS 0 违规）+ `role-write-tier` 4/4 + 生产构建、Electron 39 实窗 E2E `settings-workspace` 与 `workflow-real-backend-chain`（26.1s，含首绑自动启用与生图热生效）均通过。
 - **证据位置**：
   - [apps/backend/src/http/config-writes.ts](../../../apps/backend/src/http/config-writes.ts#L10-L31)
   - [apps/backend/src/http/write-guard.ts](../../../apps/backend/src/http/write-guard.ts#L7-L23)

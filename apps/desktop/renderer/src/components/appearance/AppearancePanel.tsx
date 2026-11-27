@@ -269,7 +269,6 @@ export function AppearancePanel({
         if (home) form.append('home', home, home.name);
         for (const sprite of plan.sprites) form.append('sprites', sprite, sprite.name);
         const result = await write.runWrite({
-          roleIds: [roleId],
           errorMessage,
           verb: '导入服饰',
           announceSuccess: false,
@@ -370,7 +369,6 @@ export function AppearancePanel({
     const token = roleToken.current;
     setBusy(true);
     const result = await write.runWrite({
-      roleIds: [roleId],
       errorMessage,
       verb: '保存服饰',
       announceSuccess: false,
@@ -432,7 +430,6 @@ export function AppearancePanel({
     setBusy(true); setError('');
     const uploadResult: { asset?: OutfitAsset } = {};
     const result = await write.runWrite({
-      roleIds: [roleId],
       errorMessage,
       verb: home ? '更新主页立绘' : replaceAssetId ? '替换差分' : '上传差分',
       announceSuccess: false,
@@ -503,7 +500,7 @@ export function AppearancePanel({
         {write.busy ? write.phase === 'pause' ? T29.pausing : T29.deleting : error ? T29.retry('删除') : pausedWrite ? T31.pauseAndDelete : T31.delete}
       </Button>
     </div>
-    : <RoleSaveActions count={dirtyCount} pause={pausedWrite} busy={write.busy} invalid={!canWrite || invalidAssetName || !draft?.name.trim()} error={error} onSave={() => void saveOutfit()}/>) : null;
+    : <RoleSaveActions count={dirtyCount} pause={false} busy={write.busy} invalid={!canWrite || invalidAssetName || !draft?.name.trim()} error={error} onSave={() => void saveOutfit()}/>) : null;
 
   return <div className="nd-appearance">
     <ConfigNotice message={deleteNotice} noticeKey={deleteNoticeKey} tone="success" onDismiss={() => setDeleteNotice('')}/>
@@ -588,10 +585,9 @@ export function AppearancePanel({
       {importing && <PhotoDevelopment state="pending" pendingLabel="正在导入服饰，相纸显影中…" />}
       <div className="nd-appearance-actions">
         <Button variant="primary" disabled={write.busy || !canWrite || summary.ready === 0} onClick={() => void confirmImport()}>
-          {write.busy ? '正在导入…' : `${pausedWrite ? '暂停并导入' : '确认导入'} ${summary.ready} 套`}
+          {write.busy ? '正在导入…' : `确认导入 ${summary.ready} 套`}
         </Button>
         <Button disabled={write.busy} onClick={cancelScan}>取消</Button>
-        {pausedWrite ? <small className="nd-appearance-hint">导入时会先暂停角色。</small> : null}
       </div>
     </section> : null}
 

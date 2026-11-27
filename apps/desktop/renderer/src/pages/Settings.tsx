@@ -14,6 +14,7 @@ import { WriteProvider, WriteResultNotice, useWrite } from '../components/config
 import { RoleSheetHost } from '../components/config/role/RoleSheetHost';
 import { ProbeFeedback } from '../components/config/ProbeFeedback';
 import { WorldbooksPanel } from '../components/config/role/WorldbooksPanel';
+import { shouldDefaultEnableOnChatBind } from '../components/config/role-write-tier';
 import { Sheet } from '../components/config/sheet/Sheet';
 import { chatRowStatus, memoryRowStatus, quotaLimitBad, rowDotVisible } from '../components/config/summary';
 import { MediaGroup, MediaStateRow, RoleSaveActions, type MediaSummaryStatus } from '../components/config/MediaSheet';
@@ -905,7 +906,7 @@ function RoleEditor({ roleId, roleCount, active, activity, activityLoading = fal
       if (!result.ok) setDetailError(result.failure.message);
     } finally { setSaveBusy(false); }
   };
-  const saveBindings = async (scope: 'models' | 'ext') => {
+  const saveBindings = async (scope: 'models' | 'ext', options?: { enableAfterSave?: boolean }) => {
     if (bindingLock.current || !bindingRevision) return;
     if (scope === 'models' && ((modelDraft.chatResource && !modelDraft.chatModel.trim()) || (modelDraft.memoryResource && !modelDraft.memoryModel.trim()))) { setBindingError('已选择的模型服务需要填写模型 ID。'); return; }
     bindingLock.current = true; setBindingBusy(true); setBindingError(''); setBindingNotice('');
@@ -951,6 +952,20 @@ function RoleEditor({ roleId, roleCount, active, activity, activityLoading = fal
         }
       }, scope === 'models' ? '保存模型选择' : '保存扩展选择', false);
       setBindings(result.items); setBindingRevision(result.revision);
+      // 首次绑定对话模型：保存后直接恢复活动，省掉手动「恢复活动」。
+      if (scope === 'models' && options?.enableAfterSave === true && activity?.state === 'stopped'
+        && result.items.some(item => item.capability === 'chat_model' && item.enabled)) {
+        try {
+          await api(`/v1/roles/${encodeURIComponent(roleId)}/activity/resume`, { method: 'POST' });
+        } catch (error) {
+          sheetApi.closeNow(undefined, `已保存模型选择，但角色未启用：${errorText(error)}`);
+          return;
+        }
+        write.forgetPaused(roleId);
+        await onRefresh().catch(() => { /* 绑定与启用已完成，列表同步失败由工作区提示。 */ });
+        sheetApi.closeNow(undefined, '已保存模型选择并启用角色');
+        return;
+      }
       sheetApi.closeNow(undefined, scope === 'models' ? '已保存模型选择' : '已保存扩展选择');
     } catch (e) {
       setBindingError(errorText(e));
@@ -974,7 +989,7 @@ function RoleEditor({ roleId, roleCount, active, activity, activityLoading = fal
     setBudgetBusy(true); setBudgetError(''); setBudgetNotice('');
     try {
       const body = { ...budgetDraft, dailyLimit: quotaLimitBad({ ...budgetDraft, unlimited: false }) ? budget.dailyLimit : budgetDraft.dailyLimit };
-      const result = await guardAction(() => api<NonNullable<typeof budget>>(`/v1/roles/${encodeURIComponent(roleId)}/autonomy/budget`, { method: 'PUT', body }), '保存自主额度', false);
+      const result = await api<NonNullable<typeof budget>>(`/v1/roles/${encodeURIComponent(roleId)}/autonomy/budget`, { method: 'PUT', body });
       setBudget(result); setBudgetDraft({ dailyLimit: result.dailyLimit, unlimited: result.unlimited });
       sheetApi.closeNow(undefined, '已保存自主额度');
     }
@@ -1074,12 +1089,12 @@ function RoleEditor({ roleId, roleCount, active, activity, activityLoading = fal
       {bindingAlert}
       {!firstReadError && (bindingLoaded || !bindingProblem) && <><ModelRow kind="chat" bindings={bindings} resources={resources} draft={modelDraft} loaded={bindingLoaded} onOpen={openChat}/>
       <ModelRow kind="memory" bindings={bindings} resources={resources} draft={modelDraft} loaded={bindingLoaded} onOpen={(_group, anchor) => openMemory(anchor)}/></>}
-      <ModelSheetHost active={active && section === 'models'} draft={modelDraft} setDraft={setModelDraft} resources={resources} bindings={bindings} loaded={bindingLoaded} notice={bindingNotice} error={bindingError} chatProbe={chatProbe} memoryProbe={memoryProbe} chatKey={chatKey} memoryKey={memoryKey} onOpenSettings={onOpenSettings} pause={activity?.state !== "stopped"} busy={bindingBusy} onReload={needsBindingRead ? reloadBindings : undefined} onSave={saveBindings}/>
-      {loaded.image && <ImagePanel roleId={roleId} active={active && section === 'models'} serviceRefreshVersion={imageServiceVersion} serviceEpochs={imageServiceEpochs} outfitRefreshVersion={lookVersion} onOpenImageSettings={target => sheetApi.requestClose(() => onOpenSettings('model', { modelKind: 'image', ...(target?.serviceId ? { resourceId: target.serviceId } : {}), ...(target?.createNew ? { newImageService: true } : {}) }))} guardWrite={guardAction} pausedWrite={activity?.state !== 'stopped'} onSummaryStatus={setImageSummary} onDraftStateChange={setImageDraft} onChanged={() => { void onRefresh(); }}/>}
+      <ModelSheetHost active={active && section === 'models'} draft={modelDraft} setDraft={setModelDraft} resources={resources} bindings={bindings} loaded={bindingLoaded} notice={bindingNotice} error={bindingError} chatProbe={chatProbe} memoryProbe={memoryProbe} chatKey={chatKey} memoryKey={memoryKey} onOpenSettings={onOpenSettings} pause={activity?.state !== "stopped"} canEnableAfterSave={activity?.state === 'stopped' && !savedChat} busy={bindingBusy} onReload={needsBindingRead ? reloadBindings : undefined} onSave={saveBindings}/>
+      {loaded.image && <ImagePanel roleId={roleId} active={active && section === 'models'} serviceRefreshVersion={imageServiceVersion} serviceEpochs={imageServiceEpochs} outfitRefreshVersion={lookVersion} onOpenImageSettings={target => sheetApi.requestClose(() => onOpenSettings('model', { modelKind: 'image', ...(target?.serviceId ? { resourceId: target.serviceId } : {}), ...(target?.createNew ? { newImageService: true } : {}) }))} guardWrite={async action => action()} pausedWrite={false} onSummaryStatus={setImageSummary} onDraftStateChange={setImageDraft} onChanged={() => { void onRefresh(); }}/>}
       {loaded.voice && <VoicePanel roleId={roleId} active={active && section === 'models'} serviceRefreshVersion={voiceServiceVersion} serviceEpochs={voiceServiceEpochs} onOpenVoiceSettings={target => sheetApi.requestClose(() => onOpenSettings('model', { modelKind: 'voice', ...(target?.serviceId ? { resourceId: target.serviceId } : {}), ...(target?.createNew ? { newVoiceService: true } : {}) }))} guardWrite={guardAction} pausedWrite={activity?.state !== 'stopped'} onSummaryStatus={setVoiceSummary} onDraftStateChange={setVoiceDraft} onChanged={() => { void onRefresh(); }}/>}
     </div>
     <div hidden={!active || section !== 'ext'} className="config-prose"><header className="config-sec-head"><h2 tabIndex={-1}>扩展</h2></header>
-      <WorldbooksPanel roleId={roleId} active={active && section === 'ext'} pausedWrite={activity?.state !== 'stopped'} guardWrite={guardAction} onDraftChange={setWorldbookDraft}/>
+      <WorldbooksPanel roleId={roleId} active={active && section === 'ext'} pausedWrite={false} guardWrite={async action => action()} onDraftChange={setWorldbookDraft}/>
       {bindingAlert}
       {!firstReadError && (['mcp','skill'] as const).map(kind => <ExtensionRow key={kind} kind={kind} resources={resources.filter(item => item.kind === kind)} draft={extensionDraft} bindings={bindings} loaded={bindingLoaded} busy={bindingBusy || !bindingRevision || !!resourceError} onOpen={trigger => openExtension(kind, trigger)}/>)}
       {bindingNotice && <p role="status">{bindingNotice}</p>}
@@ -1091,7 +1106,7 @@ function RoleEditor({ roleId, roleCount, active, activity, activityLoading = fal
         <span className="config-sum-val"><b>今日已用 {budget.usedPoints} / {budget.unlimited ? '不限' : budget.dailyLimit} 点</b><span className="config-sum-keys"><span>{budget.unlimited ? '不限额' : `每日 ${budget.dailyLimit} 点`}</span><span>{budget.localDate}</span><span>本机 00:00 重置</span></span></span>
         <span className="config-sum-end"><StatusDot status="ok" label="生效中" bare faint/><span className="config-sum-slot"><button type="button" className="config-sum-edit" onClick={event => { event.stopPropagation(); openQuota(event.currentTarget); }} aria-label="编辑今日额度"><Icon name="edit" size={13}/>编辑</button><span className="config-sum-slot-ghost" aria-hidden="true"><Icon name="edit" size={13}/>编辑</span></span></span>
       </div>
-      <QuotaSheetHost active={active && section === 'quota'} budget={budget} draft={budgetDraft} setDraft={setBudgetDraft} notice={budgetNotice} error={budgetError} pause={activity?.state !== "stopped"} busy={budgetBusy} onSave={saveBudget}/></> : <MediaStateRow label="自主额度" loading={!budgetError} error={budgetError} onRetry={() => setBudgetRead(previous => previous + 1)}/>}
+      <QuotaSheetHost active={active && section === 'quota'} budget={budget} draft={budgetDraft} setDraft={setBudgetDraft} notice={budgetNotice} error={budgetError} pause={false} busy={budgetBusy} onSave={saveBudget}/></> : <MediaStateRow label="自主额度" loading={!budgetError} error={budgetError} onRetry={() => setBudgetRead(previous => previous + 1)}/>}
     </div>
     <div hidden={!active || section !== 'done'} className="config-prose"><header className="config-sec-head"><h2 tabIndex={-1}>完成度</h2></header>
       <div className="config-check-list">{completion.map(({ label, status, note, target }) => <div className="config-check-row" key={label}>
@@ -1245,7 +1260,7 @@ function ModelRow({ kind, bindings, resources, draft, loaded, onOpen }: { kind: 
  * 对话 / 记忆纸笺（规范 §二.2／§二.4）：对话分「服务」「连接测试」两组，
  * 值或协议打开紧凑「服务」，编辑打开完整；记忆整行打开紧凑整份。
  */
-function ModelSheetHost({ active, draft, setDraft, resources, bindings, loaded, notice, error, chatProbe, memoryProbe, chatKey, memoryKey, onOpenSettings, pause, busy, onReload, onSave }: {
+function ModelSheetHost({ active, draft, setDraft, resources, bindings, loaded, notice, error, chatProbe, memoryProbe, chatKey, memoryKey, onOpenSettings, pause, canEnableAfterSave = false, busy, onReload, onSave }: {
   active: boolean;
   draft: ModelDraftState;
   setDraft: (updater: (previous: ModelDraftState) => ModelDraftState) => void;
@@ -1260,13 +1275,29 @@ function ModelSheetHost({ active, draft, setDraft, resources, bindings, loaded, 
   memoryKey: string;
   onOpenSettings: (section: SettingsSection, options?: OpenSettingsOptions) => void;
   pause: boolean;
+  /** 停机且从未保存过对话模型：首次绑定默认「保存并立即启用角色」。 */
+  canEnableAfterSave?: boolean;
   busy: boolean;
   onReload?: () => Promise<void>;
-  onSave: (scope: 'models' | 'ext') => Promise<void>;
+  onSave: (scope: 'models' | 'ext', options?: { enableAfterSave?: boolean }) => Promise<void>;
 }) {
   const { sheet, requestClose, setDirty, setBusy, discardToken, closedId } = useSheet();
   const kind = active && sheet !== null && sheet.id.startsWith('model:') ? (sheet.id.startsWith('model:chat') ? 'chat' : 'memory') : null;
   const group = kind === 'chat' ? (sheet?.id === 'model:chat:test' ? 'test' : sheet?.id === 'model:chat:service' ? 'service' : null) : null;
+  const defaultEnableAfterSave = shouldDefaultEnableOnChatBind({
+    activityState: canEnableAfterSave ? 'stopped' : 'active',
+    hasSavedChat: !canEnableAfterSave,
+  });
+  // 未触碰时跟随默认勾选；每次打开对话纸笺重新回到默认。
+  const [enableAfterSave, setEnableAfterSave] = useState<boolean | null>(null);
+  const openedChatId = useRef<string | null>(null);
+  useEffect(() => {
+    const id = sheet?.id ?? null;
+    if (!id || !id.startsWith('model:chat')) { openedChatId.current = null; return; }
+    if (openedChatId.current === id) return;
+    openedChatId.current = id;
+    setEnableAfterSave(null);
+  }, [sheet?.id]);
   const saved = bindings.find(item => item.capability === (kind === 'chat' ? 'chat_model' : 'memory_model'));
   const dirty = kind === 'chat'
     ? draft.chatResource !== (saved?.resourceId || '') || (!!draft.chatResource && draft.chatModel !== (saved?.modelName || ''))
@@ -1299,6 +1330,7 @@ function ModelSheetHost({ active, draft, setDraft, resources, bindings, loaded, 
   const setName = (name: string) => { probe.invalidateTest(); setDraft(previous => kind === 'chat' ? { ...previous, chatModel: name } : { ...previous, memoryModel: name }); };
   const service = options.find(item => item.resourceId === resourceId);
   const missing = !!resourceId && !service;
+  const canBindAndEnable = kind === 'chat' && canEnableAfterSave && !!resourceId && !missing && !!modelName.trim();
   const serviceGroup = kind !== null && <div className="config-grp config-role-model-service" data-sheet-group={group === 'service' ? '' : undefined}>
     <div className="config-grp-label"><b>服务</b></div>
     <div className="config-grp-fields">
@@ -1314,9 +1346,10 @@ function ModelSheetHost({ active, draft, setDraft, resources, bindings, loaded, 
       {missing && <p className="config-sheet-error" role="alert">{T34.value}</p>}
       {service?.enabled === false && <p className="config-sheet-note" data-warning>{T33.selectedNote}</p>}
       {service?.enabled && <ModelNamePicker presets={modelPresets(service.config.protocol, service.config.baseUrl)} roleLayout={kind === 'chat' ? 'service' : 'memory'} value={modelName} onChange={setName} models={probe.models} listBusy={probe.listBusy} listError={probe.listError} listLoaded={probe.listLoaded} testBusy={probe.testBusy} testNote={probe.testModel === modelName ? probe.testNote : ''} notice={kind === 'chat' && probe.notice?.source === 'test' ? null : probe.notice} onRefresh={() => void probe.refresh({ kind: 'saved', resourceId, cacheKey })} onTest={() => void probe.test({ kind: 'saved', resourceId, cacheKey }, modelName.trim())} testDisabled={!modelName.trim()} disabled={!loaded}/>}
+      {canBindAndEnable && <label className="config-sheet-check"><input type="checkbox" disabled={busy} checked={enableAfterSave ?? defaultEnableAfterSave} onChange={event => setEnableAfterSave(event.target.checked)} /> 保存并立即启用角色</label>}
     </div>
   </div>;
-  return <Sheet idPrefix="model:" enabled={active} footer={<RoleSaveActions count={count} pause={pause} busy={busy} invalid={!loaded || !!onReload || Boolean(resourceId && !modelName.trim())} error={error} onSave={() => void onSave('models')}/>}>
+  return <Sheet idPrefix="model:" enabled={active} footer={<RoleSaveActions count={count} pause={pause} busy={busy} invalid={!loaded || !!onReload || Boolean(resourceId && !modelName.trim())} error={error} onSave={() => void onSave('models', canBindAndEnable ? { enableAfterSave: enableAfterSave ?? defaultEnableAfterSave } : undefined)}/>}>
     {kind !== null && <div className="config-sheet-groups">
       {group !== 'test' && serviceGroup}
       {kind === 'chat' && service?.enabled && group !== 'service' && <div className="config-grp" data-sheet-group={group === 'test' ? '' : undefined}>

@@ -79,7 +79,7 @@ const server = http.createServer((req, res) => {
   if (outfitMatch && role) {
     const list = wardrobes[role.roleId], outfit = list.find(item => item.outfitId === outfitMatch[1]);
     if (!outfit) return json(res, { error: { message: '服饰不存在' } }, 404);
-    if (roleStates[role.roleId] !== 'stopped') return json(res, { error: { code: 'ROLE_NOT_STOPPED', message: '角色尚未停止' } }, 409);
+    if (req.method === 'DELETE' && roleStates[role.roleId] !== 'stopped') return json(res, { error: { code: 'ROLE_NOT_STOPPED', message: '角色尚未停止' } }, 409);
     if (!outfitMatch[2] && req.method === 'PATCH') { let body = ''; req.on('data', chunk => body += chunk); return req.on('end', () => { outfit.name = JSON.parse(body).name; json(res, outfit); }); }
     if (!outfitMatch[2] && req.method === 'DELETE') { if (list.length === 1) return json(res, { error: { code: 'LAST_OUTFIT_REQUIRED', message: '至少保留一套服饰' } }, 409); list.splice(list.indexOf(outfit), 1); return json(res, { outfitId: outfit.outfitId, removedAssets: 0, retainedAssets: 1 }); }
     if (outfitMatch[2] === 'home' && req.method === 'POST') { req.resume(); outfit.home = { assetId: 'home-new' }; return json(res, outfit.home, 201); }
@@ -88,7 +88,7 @@ const server = http.createServer((req, res) => {
   if (p.includes('/appearance/assets/')) { res.writeHead(200, { 'content-type': 'image/png' }); return res.end(fs.readFileSync(xiachengPortraitFixture)); }
   if (p.endsWith('/bindings') && req.method === 'PUT') { let body = ''; req.on('data', chunk => body += chunk); return req.on('end', () => { const data = JSON.parse(body), id = role.roleId; if (roleStates[id] !== 'stopped') return json(res, { error: { message: '角色尚未停止' } }, 409); if (data.expectedRevision !== String(revisions[id])) return json(res, { error: { message: '绑定版本已变化' } }, 409); bindings[id] = data.bindings.map(item => ({ ...item, modelName: item.modelName || null })); revisions[id]++; json(res, { items: bindings[id], revision: String(revisions[id]) }); }); }
   if (p.endsWith('/bindings')) return json(res, { items: bindings[role?.roleId] || [], revision: String(revisions[role?.roleId] || 1) });
-  if (p.endsWith('/autonomy/budget') && req.method === 'PUT') { let body = ''; req.on('data', chunk => body += chunk); return req.on('end', () => { if (roleStates[role.roleId] !== 'stopped') return json(res, { error: { message: '角色尚未停止' } }, 409); budgets[role.roleId] = { ...budgets[role.roleId], ...JSON.parse(body) }; json(res, budgets[role.roleId]); }); }
+  if (p.endsWith('/autonomy/budget') && req.method === 'PUT') { let body = ''; req.on('data', chunk => body += chunk); return req.on('end', () => { budgets[role.roleId] = { ...budgets[role.roleId], ...JSON.parse(body) }; json(res, budgets[role.roleId]); }); }
   if (p.endsWith('/autonomy/budget')) return json(res, budgets[role?.roleId] || budgets.a);
   if (p.endsWith('/voice/references') && req.method === 'POST') { req.resume(); voiceUploadCalled = true; return json(res, { assetId: 'unexpected-upload' }, 201); }
   if (p.endsWith('/voice/references')) return json(res, { items: voiceReferences[role?.roleId] || [] });

@@ -650,9 +650,9 @@ async function run() {
 
   await openSettings();
   await tab('角色');
-  await until(() => ev(`${poster('甲角色')}?.innerText.includes('恢复活动') && ${poster('乙角色')}?.innerText.includes('恢复活动')`), 'status-wall-two');
-  await clickWhen(`${poster('甲角色')}.querySelector('button')`);
-  await until(async () => (await request(`/v1/roles/${roleA.roleId}/activity`)).activity.state === 'active', 'resume-a-wall');
+  // 甲首次绑定对话模型时默认勾选「保存并立即启用角色」，保存后已自动进入 active。
+  await until(async () => (await request(`/v1/roles/${roleA.roleId}/activity`)).activity.state === 'active', 'auto-enabled-a-after-bind');
+  await until(() => ev(`${poster('甲角色')}?.dataset.state==='active' && ${poster('乙角色')}?.innerText.includes('恢复活动')`), 'status-wall-auto-enabled-a');
   await clickWhen(`${poster('乙角色')}.querySelector('button')`);
   await until(async () => (await request(`/v1/roles/${roleB.roleId}/activity`)).activity.state === 'active', 'resume-b-wall');
   await clickWhen(element('button[aria-label="乙角色的角色配置"]'));
@@ -755,7 +755,7 @@ async function run() {
   const clickImageSave = () => clickWhen(mediaSave, 'image save');
   const clickVoiceSave = () => clickWhen(mediaSave, 'voice save');
   const imageNotice = text => until(() => ev(`document.querySelector('.config-sheet')?.innerText.includes(${JSON.stringify(text)})`), text);
-  const imageSaved = (roleId, serviceId) => until(async () => (await request(`/v1/roles/${roleId}/scene-image`)).settings?.serviceId === serviceId, 'role image saved');
+  const imageSaved = (roleId, serviceId) => until(async () => (await request(`/v1/roles/${roleId}/scene-image`)).settings?.serviceId === serviceId && await ev("!document.querySelector('.config-sheet')"), 'role image saved');
 
   await returnRole();
   await tab('模型');
@@ -833,8 +833,7 @@ async function run() {
   assert.equal(beforeSceneSave.configured, false, '测试生图不得修改已保存角色生图配置');
   await clickImageSave();
   await imageSaved(roleA.roleId, img1.serviceId);
-  await resumePaused();
-  await until(async () => (await request(`/v1/roles/${roleA.roleId}/activity`)).activity.state === 'active', 'resume-a-after-scene');
+  assert.equal((await request(`/v1/roles/${roleA.roleId}/activity`)).activity.state, 'active', '保存生图配置不暂停角色');
 
   // 给乙角色绑定备用生图后去设置删除备用生图，验证 Bug 3 修复（乙角色生图面板必须显式显示「原服务已删除」，不得视觉错显为主生图、也不得误停用角色乙）。
   await pickRole("乙角色");
@@ -845,8 +844,7 @@ async function run() {
   await setInput("document.querySelector('.config-sheet .nd-image input[placeholder=\"moss_image_sft_int8_convrot.safetensors\"]')", 'backup-image-model.safetensors');
   await clickImageSave();
   await imageSaved(roleB.roleId, img2.serviceId);
-  await resumePaused();
-  await until(async () => (await request(`/v1/roles/${roleB.roleId}/activity`)).activity.state === 'active');
+  assert.equal((await request(`/v1/roles/${roleB.roleId}/activity`)).activity.state, 'active', '保存生图配置不暂停角色乙');
 
   await openImage();
 
@@ -925,8 +923,7 @@ async function run() {
   // 返回后不能沿用旧探测和试生图结果；已保存的停用绑定仍可随其他字段保存。
   await clickImageSave();
   await imageSaved(roleB.roleId, img2.serviceId);
-  await resumePaused();
-  await until(bothActive);
+  assert.equal(await bothActive(), true, '保存生图配置保持甲乙活动');
   await openImage();
   await imageSettings('在设置中管理 →');
   await waitService('备用生图');
@@ -952,8 +949,7 @@ async function run() {
     const { settings } = await request(`/v1/roles/${roleB.roleId}/scene-image`);
     return settings?.serviceId === img2.serviceId && settings.width === 896;
   }, 'retained disabled binding is saved with other fields');
-  await resumePaused();
-  await until(bothActive);
+  assert.equal(await bothActive(), true, '停用服务绑定的其他字段保存同样不暂停角色');
 
   // 3) 恢复服务，再发起在途出图并离开纸笺。关闭后的晚到结果和改连接前的候选都不能显示。
   await openImage();
@@ -1061,7 +1057,7 @@ async function run() {
   await until(() => tts.synthCalls.length === 1 && tts.synthCalls[0].hasCrossLang, 'voice-preview-real');
   assert.equal((await request(`/v1/roles/${roleA.roleId}/voice/references`)).items.length, 0, '试听不得上传参考音频');
 
-  // 需要参考文本的 zero_shot 必须在暂停前拦截。
+  // 需要参考文本的 zero_shot 必须在保存前拦截。
   await setSelect(refMode, 'zero_shot');
   await clickVoiceSave();
   await until(() => ev("!!document.querySelector('.config-sheet [role=alert]')"), 'voice-missing-ref-text');
@@ -1073,8 +1069,7 @@ async function run() {
   const refsAfterSave = (await request(`/v1/roles/${roleA.roleId}/voice/references`)).items;
   assert.equal(refsAfterSave.length, 1);
   assert.equal(refsAfterSave[0].inUse, true);
-  await resumePaused();
-  await until(async () => (await request(`/v1/roles/${roleA.roleId}/activity`)).activity.state === 'active');
+  assert.equal((await request(`/v1/roles/${roleA.roleId}/activity`)).activity.state, 'active', '保存声音配置不暂停角色');
   await openVoice();
   assert.equal(await ev("document.querySelector('.config-sheet .nd-voice-references button')?.disabled"), true, '使用中的参考音频不得删除');
 
@@ -1085,8 +1080,7 @@ async function run() {
   await until(async () => (await request(`/v1/roles/${roleA.roleId}/voice`)).voice.enabled === true, 'role voice re-enabled');
   await clickWhen(element('.config-sheet-x'));
   await until(() => ev("!document.querySelector('.config-sheet')"));
-  await resumePaused();
-  await until(async () => (await request(`/v1/roles/${roleA.roleId}/activity`)).activity.state === 'active');
+  assert.equal((await request(`/v1/roles/${roleA.roleId}/activity`)).activity.state, 'active', '启停角色语音不暂停角色');
   const voiceAfterToggle = await request(`/v1/roles/${roleA.roleId}/voice`);
   assert.equal(voiceAfterToggle.voice.voiceSource.referenceAssetId, refsAfterSave[0].assetId, '启停保留参考音频');
 

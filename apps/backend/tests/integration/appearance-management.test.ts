@@ -726,8 +726,15 @@ test("服饰改名与立绘替换保留旧句段的立绘指向", { timeout: 60_
       state: { outfitId: outfit.outfitId },
     });
 
-    // 活动中的角色不能修改外观配置。
-    const blocked = await fetch(
+    // DL-148 方案 A：运行中可直接改名（热生效），但删除服饰仍须先停止。
+    const activeDelete = await fetch(
+      `${baseUrl}/v1/roles/${fixture.roleId}/appearance/outfits/${outfit.outfitId}`,
+      { method: "DELETE" },
+    );
+    assert.equal(activeDelete.status, 409);
+    assert.equal(await errorCode(activeDelete), "ROLE_NOT_STOPPED");
+
+    const renamedWhileActive = await fetch(
       `${baseUrl}/v1/roles/${fixture.roleId}/appearance/outfits/${outfit.outfitId}`,
       {
         method: "PATCH",
@@ -735,8 +742,10 @@ test("服饰改名与立绘替换保留旧句段的立绘指向", { timeout: 60_
         body: JSON.stringify({ name: "新名" }),
       },
     );
-    assert.equal(blocked.status, 409);
-    assert.equal(await errorCode(blocked), "ROLE_NOT_STOPPED");
+    assert.equal(renamedWhileActive.status, 200);
+    const activeOutfit = (await renamedWhileActive.json()) as OutfitRecord;
+    assert.equal(activeOutfit.outfitId, outfit.outfitId);
+    assert.equal(activeOutfit.name, "新名");
 
     const renamed = await configFetch(
       `${baseUrl}/v1/roles/${fixture.roleId}/appearance/outfits/${outfit.outfitId}`,

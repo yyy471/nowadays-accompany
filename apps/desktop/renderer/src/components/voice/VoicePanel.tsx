@@ -36,6 +36,7 @@ const MAX_REFERENCE_AUDIO_BYTES = 32 * 1024 * 1024;
 
 type Props = {
   guardWrite?: <T>(action: () => Promise<T>, verb?: string, announceSuccess?: boolean) => Promise<T>;
+  /** 由上层按角色状态传入；保存与启停已热生效，仅删除参考音频仍走停机保护。 */
   pausedWrite?: boolean;
   roleId: string;
   active?: boolean;
@@ -60,7 +61,6 @@ export function VoicePanel({
   onDraftStateChange,
   onSummaryStatus,
   guardWrite = action => action(),
-  pausedWrite = false,
 }: Props) {
   const { sheet, closeNow } = useSheet();
   const { reportResult } = useWrite();
@@ -663,13 +663,13 @@ export function VoicePanel({
         formData.append('file', stagedFile, stagedFile.name);
         body = formData;
       }
-      const result = await guardWrite(() => api<{ voice: VoiceConfigView }>(
+      const result = await api<{ voice: VoiceConfigView }>(
         `/v1/roles/${encodeURIComponent(roleId)}/voice`,
         {
           method: 'PUT',
           body,
         },
-      ), '保存声音配置', false);
+      );
       if (isStale(token)) return;
       if (stateSeq.current === configSeq) setConfig(result.voice);
       setPendingFile(null);
@@ -699,10 +699,10 @@ export function VoicePanel({
     setError('');
     setNotice('');
     try {
-      const result = await guardWrite(() => api<{ voice: VoiceConfigView }>(
+      const result = await api<{ voice: VoiceConfigView }>(
         `/v1/roles/${encodeURIComponent(roleId)}/voice/enabled`,
         { method: 'PUT', body: { enabled: next } },
-      ), next ? '启用角色语音' : '停用角色语音', false);
+      );
       if (isStale(token)) return;
       setConfig(result.voice);
       stateSeq.current += 1;
@@ -752,7 +752,7 @@ export function VoicePanel({
       {label:'语速', value:`${Number(form.speed).toFixed(1)}×`, group:'表现'},
       {label:'情感强度', value:`情感 ${Number(form.emoAlpha).toFixed(1)}`, group:'表现'},
     ] : []}/>
-    <MediaSheet id="voice" active={Boolean(active)} state={state} footer={<RoleSaveActions count={count} pause={pausedWrite} busy={busy || toggleBusy} error={error} onSave={() => void save()}/>}>
+    <MediaSheet id="voice" active={Boolean(active)} state={state} footer={<RoleSaveActions count={count} pause={false} busy={busy || toggleBusy} error={error} onSave={() => void save()}/>}>
     {group => <div className="nd-voice"><MediaGroup title="服务" group={group}>
 
       <label className="nd-voice-toggle">
