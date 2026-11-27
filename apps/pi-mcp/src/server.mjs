@@ -32,8 +32,11 @@ async function start(prompt, job) {
   const child = fork(new URL("./worker.mjs", import.meta.url), [], { cwd: job.cwd, windowsHide: true,
     detached: process.platform !== "win32", stdio: ["ignore", "ignore", "ignore", "ipc"], execArgv: [],
     env: {
-      ...Object.fromEntries(["SystemRoot", "ComSpec", "TEMP", "TMP", "PATHEXT", "PATH", "WINDIR", "USERPROFILE",
-        "HOME", "LANG", "LOCALAPPDATA", "APPDATA", "PROGRAMFILES"].flatMap(key => process.env[key] ? [[key, process.env[key]]] : [])),
+      ...Object.fromEntries((job.allowShell === true
+        ? ["SystemRoot", "ComSpec", "TEMP", "TMP", "PATHEXT", "PATH", "WINDIR", "USERPROFILE", "HOME", "LANG", "LOCALAPPDATA", "APPDATA", "PROGRAMFILES"]
+        : ["SystemRoot"]).flatMap(key => process.env[key] ? [[key, process.env[key]]] : [])),
+      ...(job.allowShell === true ? {} : { HOME: agentDir, USERPROFILE: agentDir, HOMEDRIVE: "", HOMEPATH: "", APPDATA: "", LOCALAPPDATA: "", PATH: "", NODE_OPTIONS: "", NODE_V8_COVERAGE: "" }),
+      ...(job.allowShell === true ? {} : { TEMP: agentDir, TMP: agentDir }),
       PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1",
     } });
   let stopping = false;

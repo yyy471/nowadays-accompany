@@ -82,8 +82,6 @@ fs.writeFileSync("output.txt",process.argv[2]);console.log("SCRIPT_OK", import.m
       assert.equal(echoes.length, 2);
       assert.notEqual(echoes[0]!.name, echoes[1]!.name);
       assert.ok(raw.includes(skill!.id));
-      const shell = process.platform === "win32" ? "powershell" : "bash";
-      const shellCommand = `node -e "if(Object.values(process.env).some(v=>v.includes(['SECRET','PROBE','VALUE'].join('_'))))process.exit(1);console.log('PI_ENV_CLEAR')"`;
       const plan: [string, object, string][] = [
         ["skill_read", { id: skill!.id }, "BODY_VERSION_ONE"],
         ["skill_read", { id: skill!.id }, "BODY_VERSION_TWO"],
@@ -95,7 +93,8 @@ fs.writeFileSync("output.txt",process.argv[2]);console.log("SCRIPT_OK", import.m
         [echoes[0]!.name, { mode: "error" }, "MCP_TOOL_ERROR"],
         [echoes[0]!.name, { mode: "argv" }, "PI_MCP_PRIVATE_OUTPUT"],
         ["write", { path: path.join(f.root, "outside-job.txt"), content: "fixture" }, "PI_WORKSPACE_PATH_DENIED"],
-        [shell, { command: shellCommand }, "PI_ENV_CLEAR"],
+        ["write", { path: "env-check.mjs", content: "if(Object.values(process.env).some(v=>v.includes(['SECRET','PROBE','VALUE'].join('_'))))throw Error('secret');console.log('PI_ENV_CLEAR')" }, "env-check.mjs"],
+        ["draft_test", { file: "env-check.mjs" }, "PI_ENV_CLEAR"],
       ];
       if (round) {
         const last = body.messages.at(-1);
@@ -136,7 +135,7 @@ fs.writeFileSync("output.txt",process.argv[2]);console.log("SCRIPT_OK", import.m
     assert.ok(jobId);
     for (let i=0; i<1200 && f.app.services.pi.running().length; i++) await delay(50);
     assert.deepEqual(errors, []);
-    assert.equal(round, 12);
+    assert.equal(round, 13);
     assert.ok(!fs.existsSync(path.join(f.root, "outside-job.txt")));
     assert.equal(f.app.services.pi.running().length, 0);
     assert.equal(fs.readFileSync(path.join(f.app.services.extensions.work.workspace("sample", jobId), "output.txt"), "utf8"), "workspace-result");

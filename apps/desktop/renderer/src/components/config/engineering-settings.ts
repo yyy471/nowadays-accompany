@@ -3,6 +3,7 @@ type MemberState = 'ready' | 'disabled' | 'invalid' | 'maintenance' | 'cooldown'
 export type MemberSummary = EngineeringMember & { resourceName: string | null; state: MemberState; retryAfterSeconds: number | null };
 export type EngineeringSettings = {
   enabled: boolean;
+  allowShell: boolean;
   mode: 'priority' | 'round_robin';
   members: MemberSummary[];
   readiness: 'disabled' | 'unbound' | 'empty' | 'exhausted' | 'ready';

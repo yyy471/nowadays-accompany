@@ -16,7 +16,7 @@ const memberSchema = z.object({
 }).strict();
 const modeSchema = z.enum(["priority", "round_robin"]);
 export const engineeringSettingsUpdate = z.object({
-  enabled: z.boolean().optional(), mode: modeSchema.optional(), members: z.array(memberSchema).optional(),
+  enabled: z.boolean().optional(), mode: modeSchema.optional(), allowShell: z.boolean().optional(), members: z.array(memberSchema).optional(),
 }).strict();
 type Member = z.infer<typeof memberSchema>;
 type Mode = z.infer<typeof modeSchema>;
@@ -48,9 +48,9 @@ export class EngineeringPool {
     private now: () => number = Date.now) {}
 
   private read() {
-    const row = this.app.db.prepare("SELECT mode, members_json FROM engineering_settings WHERE id=1")
-      .get() as { mode: Mode; members_json: string };
-    return { mode: row.mode, members: JSON.parse(row.members_json) as Member[] };
+    const row = this.app.db.prepare("SELECT mode, members_json, allow_shell FROM engineering_settings WHERE id=1")
+      .get() as { mode: Mode; members_json: string; allow_shell: number };
+    return { mode: row.mode, members: JSON.parse(row.members_json) as Member[], allowShell: row.allow_shell === 1 };
   }
 
   private piResource() { return this.app.listResources("mcp").find(isManagedPiResource); }
@@ -82,7 +82,7 @@ export class EngineeringPool {
   }
 
   settings() {
-    const { mode, members } = this.read();
+    const { mode, members, allowShell } = this.read();
     const models = this.models();
     const view = members.map(member => {
       const { config, key, ...summary } = this.candidate(member, models);
@@ -96,7 +96,7 @@ export class EngineeringPool {
     else if (view.some(row => row.state === "ready")) readiness = "ready";
     else if (view.some(row => row.state === "maintenance" || row.state === "cooldown")) readiness = "exhausted";
     else readiness = "empty";
-    return { enabled, mode, members: view, readiness };
+    return { enabled, mode, allowShell, members: view, readiness };
   }
 
   update(input: z.infer<typeof engineeringSettingsUpdate>) {
@@ -115,8 +115,8 @@ export class EngineeringPool {
             throw new AppError(400, "ENGINEERING_MEMBER_INVALID", "请选择有效的模型服务和型号");
         }
       }
-      this.app.db.prepare("UPDATE engineering_settings SET mode=?, members_json=? WHERE id=1")
-        .run(input.mode ?? prior.mode, JSON.stringify(members));
+      this.app.db.prepare("UPDATE engineering_settings SET mode=?, members_json=?, allow_shell=? WHERE id=1")
+        .run(input.mode ?? prior.mode, JSON.stringify(members), Number(input.allowShell ?? prior.allowShell));
       if (input.enabled === undefined) return;
       const pi = this.piResource();
       if (pi) return this.app.updateResource({ resourceId: pi.resourceId, enabled: input.enabled });
@@ -141,10 +141,10 @@ export class EngineeringPool {
   }
 
   private candidates(roleId: string, taskId?: string | null) {
-    const { mode, members } = this.read();
+    const { mode, members, allowShell } = this.read();
     const seat = this.app.getRoleIndexByBuiltinKey(XIA_CHENG_BUILTIN_KEY);
     const rows = new Map<string, Candidate>();
-    if (seat?.roleId !== roleId || seat.initStatus !== "ready") return { mode, rows: [] };
+    if (seat?.roleId !== roleId || seat.initStatus !== "ready") return { mode, allowShell, rows: [] };
     const pi = this.piResource();
     const models = this.models();
     if (pi?.enabled && this.seatBinding(roleId, pi.resourceId)) {
@@ -160,7 +160,7 @@ export class EngineeringPool {
         rows.set(row.key, row);
       }
     }
-    return { mode, rows: [...rows.values()] };
+    return { mode, allowShell, rows: [...rows.values()] };
   }
 
   discover(roleId: string, taskId?: string | null) {
@@ -168,13 +168,13 @@ export class EngineeringPool {
   }
 
   allocate(roleId: string, taskId: string) {
-    const { mode, rows } = this.candidates(roleId, taskId);
+    const { mode, allowShell, rows } = this.candidates(roleId, taskId);
     const start = mode === "round_robin" ? rows.findIndex(row => row.key === this.lastAssigned) + 1 : 0;
     for (let i = 0; i < rows.length; i++) {
       const row = rows[(start + i) % rows.length]!;
       if (row.state !== "ready" || !row.config) continue;
       this.lastAssigned = row.key;
-      return { resourceId: row.resourceId, modelName: row.modelName, config: row.config };
+      return { resourceId: row.resourceId, modelName: row.modelName, config: row.config, allowShell };
     }
     const available = rows.filter(eligible);
     const waits = available.flatMap(row => row.retryAfterSeconds === null ? [] : [row.retryAfterSeconds]);

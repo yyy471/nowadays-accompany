@@ -4,6 +4,8 @@
 
 ## 1. 当前结论概览
 
+**409 SEC-01 / DL-195 已完成修复与针对性独立复验。** 默认关闭 Pi 完整本机 Shell，工具收敛为草稿目录围栏的 `read`/`write`/`edit` 与受控 `draft_test`（Node `--permission` + 干净环境 + 30s 超时 + 64 KiB 上限），并在「设置 → 工程」提供默认关闭的 `allowShell` 高风险开关（直接保存、仅影响新工程、在途保留启动快照）；`app.sqlite` 升至 V16。精准复验通过：Pi 8/8（含真实 SDK `read`/`write`/`edit`/`draft_test` 负向越界与进程回收）、后端 `typecheck` + 工程/迁移/共享工具测试 20/20 + `storage-schema`、渲染器 `check`（37 CSS 0 违规）+ 工程单测 5/5 + 生产构建、文档巡检 0 错误 0 警告。详见 [409 专项记录](./archive/07-documentation/409-project-audit-and-remediation-backlog.md#sec-01-pi-工程子代理路径围栏被内置-powershell-bash-直接击穿)。
+
 **409 Round 1（`BUG-01` / `BUG-02` / `BUG-08`）已通过 Astra 审核与主进程最终复核。** `BUG-01` 托管后端 `--watch-stdin` 优雅退出、重启零异常中断误报与 Windows 5 秒超时 `taskkill /T /F` 杀树兜底，`BUG-02` 托管日志轮转脱敏与 BootGate 失败诊断/日志目录入口，`BUG-08` `command_run` / `skill_run` Windows Job Object 进程树回收均通过实证。仓库 Node 24.22.2 下，后端 635/635、离线验收 21/21 步及 81 个场景、Pi 5/5、渲染器检查（37 CSS 0 违规）与 185/185 单测、生产构建、桌面壳 21/21 通过；串行 Electron E2E 28/29 在受限沙箱通过，第 29 项 `managed-backend-shutdown.e2e.cjs`（含 `taskkill /T /F` 强杀实证）在宿主 Windows 会话复跑通过，29/29 全量闭环且新增 Node / Electron 残留 0。[409 审核与专项实证](./archive/07-documentation/409-project-audit-and-remediation-backlog.md)
 
 **前端精修 Batch 2 已通过主代理合审与 Windows 离线门禁，待用户最终视觉复核。** 启动封面按原始 demo 的灯光与翻页参数去框，七页壳层和普通导航统一。720×540 停止态对话保留 186.67px 消息区，关系首屏可见藏书票人像。仓库 Node 24.22.2 下，渲染器检查、185/185 单测、生产构建、桌面壳 18/18 单测、全量串行 Electron 27/27 通过。两张指定启动截图已更新。[408 Batch 2 验证记录](./archive/02-desktop-ui-and-relations/408-frontend-refinement-v2.md#batch-2-壳层转场与页面细节) · [第一批记录](./archive/02-desktop-ui-and-relations/408-frontend-refinement-v2.md#第一批启动动画首次活动与断线恢复)

@@ -141,6 +141,7 @@ assert.equal(label,"verified-label","FIRST_TEST_FAILED");console.log("MOD_TEST_P
       config: { baseUrl: "http://127.0.0.1:" + upstreamPort + "/v1", protocol: "openai-chat" } });
     const [piBinding] = app.services.resources.listBindings(id);
     seedEngineeringPool(app, resource.resourceId, "offline-pi");
+    app.services.engineeringPool.update({ allowShell: true });
     assert.equal(piBinding?.enabled, true);
     assert.equal(app.services.resources.getView(piBinding.resourceId).adminSeatOnly, true);
     app.services.resources.replaceBindings(id, [
@@ -418,5 +419,38 @@ test("工程登记失败回收本次草稿，保留已有工程目录", async t 
     await assert.rejects(start.execute({ extId: "sample", prompt: "检查" }, { roleId, windowId,
       taskId: task.taskId, executionId: randomUUID(), signal: new AbortController().signal }), /TEST_REGISTER_FAILED/);
     assert.deepEqual(fs.readdirSync(root), [retained]);
+  } finally { await f.close(); }
+});
+
+test("New jobs read the current shell setting for the same parent task", async t => {
+  const f = createFixtureWithModel(new ScriptedChatModel([say("done")]), { disablePresetAssistant: false, presetAssetsDir: "tests/fixtures" });
+  const { app } = f;
+  try {
+    await listen(app.server, 0, "127.0.0.1");
+    const roleId = app.appStore.getRoleIndexByBuiltinKey("xiacheng")!.roleId;
+    const windowId = app.services.roles.initializeRole(roleId).defaultWindowId;
+    const resource = app.services.resources.create({ kind: "model", name: "offline", config: { protocol: "openai-chat", baseUrl: "http://127.0.0.1:1" } });
+    seedEngineeringPool(app, resource.resourceId);
+    app.services.activity.resume(roleId);
+    await app.conversation.waitForIdle(roleId, 30000);
+    const task = withStorage({ ...f, roleId }, ({ business }) => business.createTask({ roleId, goal: "snapshot" }));
+    const start = (await app.services.pi.tools(roleId)).find(tool => tool.name === "pi_task_start")!;
+    app.services.engineeringPool.update({ allowShell: true });
+    const entered = deferred<void>(), release = deferred<void>();
+    const original = McpToolClient.prototype.callTool;
+    let starts = 0;
+    const call = t.mock.method(McpToolClient.prototype, "callTool", async function(this: McpToolClient, ...args: Parameters<typeof original>) {
+      if (args[0] === "pi_task_start" && ++starts === 1) { entered.resolve(); await release.promise; }
+      return original.apply(this, args);
+    });
+    const context = { roleId, windowId, taskId: task.taskId, executionId: randomUUID(), signal: new AbortController().signal };
+    const first = start.execute({ extId: "sample", prompt: "first" }, context);
+    await entered.promise;
+    app.services.engineeringPool.update({ allowShell: false });
+    try { await start.execute({ extId: "sample", prompt: "second" }, context); }
+    finally { release.resolve(); }
+    await first;
+    const snapshots = call.mock.calls.filter(c => c.arguments[0] === "pi_task_start").map(c => c.arguments[2]!.meta!.nowadays as { allowShell: boolean });
+    assert.deepEqual(snapshots.map(m => m.allowShell), [true, false]);
   } finally { await f.close(); }
 });

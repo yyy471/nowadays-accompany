@@ -275,7 +275,7 @@ Pi 的 `nowadays-mod.mjs` 提供互动计数器的清单、入口和 HTML 示例
 
 开发态从 `apps/pi-mcp` 启动独立 stdio 服务。Windows 桌面包从 `resources/pi-mcp` 加载入口、工程扩展和子包自己的运行依赖，使用 `resources/node-runtime/node.exe`。开发和打包布局均可用 `NOWADAYS_PI_MCP_ROOT` 显式覆盖子包根目录。主角色获得 `pi_task_start({extId,prompt})` 和以 `jobId` 操作的 `pi_task_status`、`pi_task_result`、`pi_task_cancel`。启动立即返回，角色可继续回复用户。宿主在角色业务库登记 job、父任务、原窗口、发起源、扩展、草稿目录、起止时间和终态摘要。主角色可按 jobId 读取已归档的结果。人工暂停或熔断优先于工程等待，期间回执持久化排队，原任务明确恢复后领取。角色迁移携带工程事实和回执，省略源机草稿路径。在途工程归为中断、结果未知，缺少待交付回执的工程等待归为迁移中断。
 
-每个任务使用独立的 Pi SDK 会话和临时配置目录。子包 [src/extensions](../../apps/pi-mcp/src/extensions/) 中的 `.mjs` 文件默认导出 Pi 扩展工厂，由新会话按文件名顺序加载。内置 `nowadays-mod.mjs` 在 `before_agent_start` 注入工作区、Cordis 工具登记和 UI 槽位契约。原生 `write` 与 `edit` 在文件操作处解析目标和父目录的真实路径，限制到当前工程工作区。shell 和子进程仍沿用本机用户权限。Windows 工作者在执行 SDK 前加入由 MCP 服务独占句柄的 Job Object，回收覆盖派生的本地测试进程。
+每个任务使用独立的 Pi SDK 会话和临时配置目录。子包 [src/extensions](../../apps/pi-mcp/src/extensions/) 中的 `.mjs` 文件默认导出 Pi 扩展工厂，由新会话按文件名顺序加载。内置 `nowadays-mod.mjs` 在 `before_agent_start` 注入工作区、Cordis 工具登记和 UI 槽位契约。工程设置 `allowShell` 默认为 false，变更仅影响新工程，同一父任务后续新建的工程也立即使用最新值。两态本机工具均包含限制在当前草稿目录的 `read`、`write`、`edit` 及受控 `draft_test`；文件操作解析目标和父目录的真实路径。开启时额外提供平台 Shell（Windows 为 `powershell`，其他平台为 `bash`），拥有当前账户权限，可访问个人文件、修改文件和运行系统命令。`draft_test` 仅接受工程内普通且现存的相对 `.js` / `.mjs` 文件，以 Node `--permission` 限制读写路径和子进程，使用清洁环境，限时 30 秒、标准输出与错误合计 64 KiB。这是工程级限制，不是操作系统强沙箱。租约共享的 Skill 和常规外部 MCP 工具另按下述契约提供，不属于本机工具集合。Windows 工作者在执行 SDK 前加入由 MCP 服务独占句柄的 Job Object，回收覆盖派生的本地测试进程。
 
 工程模型由独立的有序消耗池提供。默认优先级降级，也可按任务轮询。Pi 已启用、主角色已绑定且至少有一项结构有效时才挂载工程工具。维护和冷却仅影响派发，全员暂不可用时启动返回 `PI_ENGINEERING_POOL_EXHAUSTED`。每个 job 固定服务与型号，首次上游故障结束该工程。仅当上游故障无错误状态码（如断连），或状态码为 401、402、403、429 或 ≥500 时，成员才在内存中冷却 180 秒。429 的有效较长 `Retry-After` 可延长等待。400、422 等请求错误只结束当前工程。维护结束立即重新参选。已有工程按未结束父任务的登记取证续用。
 
@@ -299,8 +299,8 @@ Pi 在 `<app-root>/extensions-work/0-pi-jobs/<jobId>/<extId>/` 下独立开发�
 
 | 接口 | 行为 |
 | --- | --- |
-| `GET /v1/engineering/settings` | 读取总开关、模式、成员顺序、各项状态与就绪情况。 |
-| `PUT /v1/engineering/settings` | 部分更新。显式开启时幂等启用主角色绑定，单独保存池或模式保留原有绑定。 |
+| `GET /v1/engineering/settings` | 读取总开关、`allowShell`、模式、成员顺序、各项状态与就绪情况。 |
+| `PUT /v1/engineering/settings` | 部分更新，包括 `allowShell`。显式开启工程时幂等启用主角色绑定，单独保存池、模式或 Shell 权限保留原有绑定。 |
 | `GET /v1/engineering/jobs` | 返回当前运行中的工程摘要，含 jobId、roleId、extId、短标题、状态和 startedAt。 |
 | `GET /v1/engineering/events` | 独立 SSE 连接。连接和重连立即收到 `snapshot`，每次登记或终态提交后推送最新运行列表，无需输入通道的 clientId。 |
 | `POST /v1/engineering/jobs/:jobId/cancel` | 撤销该工程租约并请求 Pi 终止对应工作进程。原任务仍可领取取消回执及其他工程结果。 |

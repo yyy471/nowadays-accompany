@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../../api';
 import { AsyncBoundary, Button, Field, Input, Select, Switch } from '../../ui';
 import { memberInputs, memberStatus, moveMember, type EngineeringMember, type EngineeringSettings } from './engineering-settings';
+import { ShellSetting } from './ShellSetting';
 import { ServiceSheet, ServiceSheetActions } from './ServiceParts';
 import { useSheet } from './sheet/sheet-context';
 import { useWrite } from './write-runner';
@@ -14,7 +15,7 @@ const readinessLabels = {
   ready: '已就绪', disabled: '工程已关闭', unbound: '主角色尚未启用工程席位，重新打开工程可启用席位', empty: '工程池没有可用成员', exhausted: '成员正在维护或冷却',
 };
 type ModelOption = { resourceId: string; name: string; config: Record<string, unknown> };
-type Patch = Partial<Pick<EngineeringSettings, 'enabled' | 'mode'>> & { members?: EngineeringMember[] };
+type Patch = Partial<Pick<EngineeringSettings, 'enabled' | 'mode' | 'allowShell'>> & { members?: EngineeringMember[] };
 
 export function EngineeringSection({ models, catalogError, catalogReady, onAddService }: {
   models: ModelOption[]; catalogError: string; catalogReady: boolean; onAddService: () => void;
@@ -105,6 +106,7 @@ export function EngineeringSection({ models, catalogError, catalogReady, onAddSe
             onCheckedChange={enabled => void save({ enabled }, enabled ? '已启用工程' : '已关闭工程')}/>
           <p className="nd-usage-caption" role="status">{readinessLabels[settings.readiness]}</p>
         </section>
+        <ShellSetting allowShell={settings.allowShell} disabled={blocked} save={patch => void save(patch, '已更新本机 Shell 权限')}/>
         <section className="nd-usage-section" aria-label="工程模型消耗池">
           <div className="engineering-pool-heading"><h3>工程模型消耗池</h3>
             <div className="engineering-pool-actions">

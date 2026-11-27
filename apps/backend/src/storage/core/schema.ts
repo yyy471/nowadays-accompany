@@ -11,7 +11,7 @@ import { restoreAutonomyShareLinks } from "../conversation/autonomy-store.js";
 import { MemoryStore } from "../memory/memory-store.js";
 import { retireLegacyWebPrefetchEvidence, WEB_READING_SCHEMA_SQL } from "../conversation/web-reading.js";
 
-export const APP_SCHEMA_VERSION = 15;
+export const APP_SCHEMA_VERSION = 16;
 export const BUSINESS_SCHEMA_VERSION = 31;
 export const EXECUTION_SCHEMA_VERSION = 2;
 
@@ -1969,7 +1969,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_app_roles_builtin_key
 `;
 
 const APP_COLUMNS: readonly RequiredColumns[] = [
-  { table: "engineering_settings", columns: ["id", "mode", "members_json"] },
+  { table: "engineering_settings", columns: ["id", "mode", "members_json", "allow_shell"] },
   { table: "builtin_resource_seeds", columns: ["command", "pending_resource_id"] },
   {
     table: "roles",
@@ -2099,10 +2099,13 @@ const APP_V15_SQL = `
 CREATE TABLE IF NOT EXISTS engineering_settings (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   mode TEXT NOT NULL DEFAULT 'priority' CHECK (mode IN ('priority','round_robin')),
-  members_json TEXT NOT NULL DEFAULT '[]'
+  members_json TEXT NOT NULL DEFAULT '[]',
+  allow_shell INTEGER NOT NULL DEFAULT 0 CHECK (allow_shell IN (0,1))
 );
 INSERT OR IGNORE INTO engineering_settings (id) VALUES (1);
 `;
+
+
 
 export function openAppDatabase(dbPath: string): OpenedDatabase {
   return openVersionedDatabase(
@@ -2136,6 +2139,7 @@ export function openAppDatabase(dbPath: string): OpenedDatabase {
       12: (db) => db.exec(APP_V13_SQL),
       13: (db) => db.exec(APP_V14_SQL),
       14: (db) => db.exec(APP_V15_SQL),
+      15: (db) => addColumnIfMissing(db, "engineering_settings", "allow_shell", "INTEGER NOT NULL DEFAULT 0 CHECK (allow_shell IN (0,1))"),
     },
     APP_TABLES,
     APP_INDEXES,

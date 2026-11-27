@@ -2,6 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { isOrdinaryResource, memberInputs, memberStatus, moveMember, type MemberSummary } from '../src/components/config/engineering-settings.ts';
 import { mergeBindingDrafts } from '../src/components/model/binding-merge.ts';
+import { createServer } from 'vite';
+import { after } from 'node:test';
+
+const vite = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' });
+after(() => vite.close());
+const { ShellSetting } = await vite.ssrLoadModule('/src/components/config/ShellSetting.tsx');
 
 const first: MemberSummary = { resourceId: 'a', modelName: 'shared', enabled: true, resourceName: '源 A', state: 'cooldown', retryAfterSeconds: 180 };
 const second: MemberSummary = { ...first, resourceId: 'b', enabled: false, state: 'disabled', retryAfterSeconds: null };
@@ -39,4 +45,22 @@ test('普通 MCP 保存发生修订冲突时沿用服务端的隐藏工程绑定
     assert.deepEqual(result.conflicts, []);
     assert.deepEqual(result.items, [...latest, ordinary]);
   }
+});
+
+test('工程 Shell 默认关闭，说明风险并仅提交修改字段', () => {
+  const patches: unknown[] = [];
+  const section = ShellSetting({ disabled: false, save: (patch: unknown) => patches.push(patch) });
+  const [toggle, caption] = section.props.children;
+  assert.equal(toggle.props.checked, false);
+  assert.equal(toggle.props.label, '允许 Pi 使用完整本机 Shell（高风险）');
+  assert.match(caption.props.children, /草稿目录.*draft_test/);
+  assert.match(caption.props.children, /当前账户权限.*访问个人文件、修改文件与运行系统命令/);
+  assert.match(caption.props.children, /仅影响新工程/);
+  toggle.props.onCheckedChange(true);
+  assert.deepEqual(patches, [{ allowShell: true }]);
+  const saved = ShellSetting({ allowShell: true, disabled: false, save: (patch: unknown) => patches.push(patch) });
+  const [savedToggle] = saved.props.children;
+  assert.equal(savedToggle.props.checked, true);
+  savedToggle.props.onCheckedChange(false);
+  assert.deepEqual(patches, [{ allowShell: true }, { allowShell: false }]);
 });

@@ -16,7 +16,7 @@
 | --- | --- | :---: | --- | :---: | :---: |
 | [BUG-01](#bug-01-windows-退出桌面硬杀后端导致优雅关闭失效与孤儿进程风险) | 运行时 Bug | **P0** | Windows 退出桌面调用 `kill("SIGTERM")` 触发强杀，`app.close()` 永不执行 | 否 | 已修复，独立复验通过 |
 | [BUG-02](#bug-02-桌面拉起后端静默吞掉-stderr启动失败无诊断信息) | 运行时 Bug | **P0** | 桌面壳 `child.stderr.resume()` 吞掉全部后端错误输出 | 否 | 已修复，独立复验通过 |
-| [SEC-01](#sec-01-pi-工程子代理路径围栏被内置-powershell-bash-直接击穿) | 安全边界 | **P0** | Pi 锁定了 `write/edit` 路径，却无隔离放开 `powershell/bash` | 需确认边界（`DL-195`） | `[ ]` 待排查 |
+| [SEC-01](#sec-01-pi-工程子代理路径围栏被内置-powershell-bash-直接击穿) | 安全边界 | **P0** | Pi 锁定了 `write/edit` 路径，却无隔离放开 `powershell/bash` | 边界已确认（`DL-195`） | 已修复，独立复验通过 |
 | [SEC-02](#sec-02-本地-mcp-命令执行与普通角色脚本执行击穿隔离并继承完整宿主环境) | 安全边界 | **P0** | `command_run` 只检 `cwd`、普通角色 `skill_run` 无 `--permission`，均透传完整 `process.env` | 需确认边界（`DL-59`） | `[ ]` 待排查 |
 | [DELIV-01](#deliv-01-桌面生产包直接打包未编译-ts-源码与-tsx且缺-node-24-构建流水线) | 交付打包 | **P0** | 生产包用 `tsx` 现场转译 TS，缺少干净 Windows 机可验证的发行包 | 否 | `[ ]` 待排查 |
 | [BUG-03](#bug-03-roleaccesswithstore-每次操作现开现关两个-sqlite-库且实例未统一) | 性能/稳定性 | **P1** | 无连接复用；单次查询同步开关双库，且 `RoleService` / `ConversationService` 绕开统一入口 | 否 | `[ ]` 待排查 |
@@ -228,7 +228,7 @@
 
 ### SEC-01 Pi 工程子代理路径围栏被内置 `powershell` / `bash` 直接击穿
 
-- **优先级**：P0 · **状态**：`[ ]` 待排查 · **决策影响**：需先与用户确认安全模型（关联 [DL-195](../../161-digital-life-direction-decisions.md#dl-195-受托管工程-mcp-与后台开发子代理)）
+- **优先级**：P0 · **状态**：已修复，独立复验通过 · **决策影响**：安全模型已确认（关联 [DL-195](../../161-digital-life-direction-decisions.md#dl-195-受托管工程-mcp-与后台开发子代理)）
 - **证据位置**：
   - [apps/pi-mcp/src/worker.mjs](../../../apps/pi-mcp/src/worker.mjs#L5-L31)（严格限制 `write`/`edit` 工具在 `cwd`）
   - [apps/pi-mcp/src/worker.mjs](../../../apps/pi-mcp/src/worker.mjs#L61-L63)（授予 `+powershell` / `bash` 完整壳执行权）
@@ -242,6 +242,17 @@
   - 确认边界写入 `161` 与 `specs/role-config-and-activity.md`；若采用方案 A，补充负向安全集成测试：Pi 尝试读取 `<appRoot>/secrets/master.key` 或越界写文件被拒绝。
 
 ---
+
+#### SEC-01 实施与针对性复验记录（2026-11-27）
+
+按 DL-195 修订落地：默认关闭完整本机 Shell（`allow_shell = 0`，`app.sqlite` V15→V16），Pi 默认工具白名单收敛为草稿围栏的 `read`/`write`/`edit` 与受控 `draft_test`（Node `--permission` + 干净环境 + 30s 超时 + 64 KiB 上限，拒绝 `!`/`{`/`}`/`*`/`?` 等 glob 元字符），默认 worker 环境不再透传 `USERPROFILE`/`APPDATA`/`PATH`；「设置 → 工程」新增默认关闭的 `allowShell` 高风险开关直接保存且仅影响新工程（在途工程保留启动快照）。共享 Skill 与常规外部 MCP 契约保持不变。
+
+- **精准复验（Node 24.22.2）**：
+  - `node --test apps/pi-mcp/test/workspace.test.mjs apps/pi-mcp/test/lifecycle.test.mjs`：**8/8 通过**（验证 `allowShell=undefined/false/true` 工具集合、真实 SDK `read`/`write`/`edit` 拒绝外部 `secrets/master.key` / junction / 硬链接、`draft_test` 正常执行与 `--permission` 拒绝读外部密钥及派生子进程、超时回收与输出上限、完整进程树回收 `survivors=0`）；
+  - 后端 `npm run typecheck` + `engineering-settings.test.ts` / `managed-pi.test.ts` / `pi-shared-tools.test.ts` + `storage-schema.test.ts`：**全部通过**（含 V15→V16 迁移保旧池、同父任务新工程读取最新 `allowShell`）；
+  - 渲染器 `npm run check`（37 CSS 0 违规）+ `engineering-settings.test.ts`（**5/5 通过**，含默认关闭、风险文案与局部 `PUT { allowShell }`）+ `npm run build` 通过；
+  - `node scripts/check-docs.mjs` **0 错误 0 警告**，`git diff --check` 通过。
+- **范围说明**：本轮按精准测试纪律执行，未跑无关全量后端单测或全量 Electron E2E。
 
 ### SEC-02 本地 MCP 命令执行与普通角色脚本执行击穿隔离并继承完整宿主环境
 

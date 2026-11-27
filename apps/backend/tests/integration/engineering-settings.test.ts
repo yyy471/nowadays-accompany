@@ -24,14 +24,17 @@ test("工程设置校验宿主会话、来源及新成员；只有显式开启�
   assert.equal((await fetch(url)).status, 401);
   assert.equal((await fetch(url, { method: "PUT", body: "{}" })).status, 401);
   assert.equal((await fetch(url, { headers: { ...headers, origin: "https://foreign.invalid" } })).status, 403);
-  assert.deepEqual(await (await fetch(url, { headers })).json(), { enabled: true, mode: "priority", members: [], readiness: "empty" });
+  assert.deepEqual(await (await fetch(url, { headers })).json(), { enabled: true, mode: "priority", allowShell: false, members: [], readiness: "empty" });
   const resources = app.services.resources;
   const seat = app.appStore.getRoleIndexByBuiltinKey("xiacheng")!.roleId;
   const pi = resources.list("mcp")[0]!;
   const service = resources.create({ kind: "model", name: "工程一号", config: { protocol: "openai-chat", baseUrl: "http://localhost" } });
   const member = { resourceId: service.resourceId, modelName: "test", enabled: true };
   resources.replaceBindings(seat, []);
+  assert.equal((await summary(put({ allowShell: true }))).allowShell, true);
   const saved = await summary(put({ members: [member], mode: "round_robin" }));
+  assert.equal(saved.allowShell, true);
+  assert.equal((await put({ allowShell: "true" })).status, 400);
   assert.equal(saved.readiness, "unbound");
   assert.deepEqual(resources.listBindings(seat), []);
   assert.deepEqual(saved.members, [{ ...member, resourceName: service.name, state: "ready", retryAfterSeconds: null }]);
@@ -93,6 +96,10 @@ test("工程源冷却独立于实时维护；清空、停用后只有已签父�
   assert.throws(() => pool.allocate(roleId, taskId), { code: "PI_ENGINEERING_POOL_EXHAUSTED" });
   clock += 999;
   const chosen = pool.allocate(roleId, taskId);
+  assert.equal(chosen.allowShell, false);
+  pool.update({ allowShell: true });
+  assert.equal(pool.allocate(roleId, taskId).allowShell, true);
+  assert.equal(chosen.allowShell, false);
   const windowId = app.services.roles.getRole(roleId).defaultWindowId!;
   access.withStore(roleId, ({ business }) => {
     const jobs = new EngineeringJobs(business.db);
@@ -195,8 +202,8 @@ test("V14 全局与 V30 角色库迁移保留历史工程和空池默认值", as
   finally { roleV30.close(); }
   app = createBackendApp(config, { disableMemoryRuntime: true });
   try {
-    assert.equal(app.appStore.schemaVersion, 15);
-    assert.deepEqual(app.services.engineeringPool.settings(), { enabled: true, mode: "priority", members: [], readiness: "empty" });
+    assert.equal(app.appStore.schemaVersion, 16);
+    assert.deepEqual(app.services.engineeringPool.settings(), { enabled: true, mode: "priority", allowShell: false, members: [], readiness: "empty" });
     const store = RoleStorage.openExisting(paths);
     try {
       assert.equal(store.business.schemaVersion, 31);
@@ -205,5 +212,27 @@ test("V14 全局与 V30 角色库迁移保留历史工程和空池默认值", as
       assert.equal(old?.modelResourceId, null);
       assert.equal(old?.modelName, null);
     } finally { store.close(); }
+  } finally { await app.close(); }
+});
+
+
+test("V15 engineering settings migrate without losing existing values", async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nowadays-engineering-v15-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const config = parseBackendConfig(["--app-root", root]);
+  let app = createBackendApp(config, { disableMemoryRuntime: true });
+  await app.close();
+  const db = new Database(config.appDatabasePath);
+  try { db.exec(`ALTER TABLE engineering_settings DROP COLUMN allow_shell;
+    UPDATE engineering_settings SET mode='round_robin', members_json='[{"resourceId":"old","modelName":"model","enabled":true}]';
+    PRAGMA user_version=15;`); } finally { db.close(); }
+  app = createBackendApp(config, { disableMemoryRuntime: true });
+  try {
+    const settings = app.services.engineeringPool.settings();
+    assert.equal(settings.mode, "round_robin");
+    assert.equal(settings.allowShell, false);
+    assert.deepEqual(app.appStore.db.prepare("SELECT mode, members_json, allow_shell FROM engineering_settings WHERE id=1").get(),
+      { mode: "round_robin", members_json: JSON.stringify([{ resourceId: "old", modelName: "model", enabled: true }]), allow_shell: 0 });
+    assert.throws(() => app.appStore.db.prepare("UPDATE engineering_settings SET allow_shell=2").run());
   } finally { await app.close(); }
 });

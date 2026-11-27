@@ -98,7 +98,7 @@ export class ManagedPi {
     try {
       context.onDispatch?.();
       const result = await client.callTool("pi_task_start", { extId: args.extId, prompt: args.prompt }, { meta: { nowadays: {
-        jobId, cwd, baseUrl, sharedTools: true, skills: shared.briefs(), lease: token, expiresAt, modelName: binding.modelName, apiFlavor: piApiFlavor(binding.config),
+        jobId, cwd, baseUrl, allowShell: binding.allowShell, sharedTools: true, skills: shared.briefs(), lease: token, expiresAt, modelName: binding.modelName, apiFlavor: piApiFlavor(binding.config),
       } } });
       if (result.isError) {
         this.finish(jobId, "failed", "Pi 拒绝启动工程");

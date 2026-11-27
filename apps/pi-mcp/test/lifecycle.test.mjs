@@ -19,6 +19,38 @@ async function until(check, timeout = 15000) {
 function alive(pid) {
   try { process.kill(pid, 0); return true; } catch (error) { if (error.code === "ESRCH") return false; throw error; }
 }
+for (const allowShell of [undefined, false, true]) test("模型工具集合 " + String(allowShell), async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-tools-"));
+  let names;
+  const upstream = http.createServer(async (req, res) => {
+    if (req.url === "/release") { req.resume(); res.writeHead(204).end(); return; }
+    let body = ""; for await (const chunk of req) body += chunk;
+    names = JSON.parse(body).tools.map(tool => tool.function.name);
+    res.writeHead(200, { "Content-Type": "text/event-stream" });
+    res.end('data: {"id":"test","model":"test","choices":[{"index":0,"delta":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+  });
+  await new Promise(r => upstream.listen(0, "127.0.0.1", r));
+  const client = new Client({ name: "test", version: "1" });
+  const transport = new StdioClientTransport({ command: process.execPath, args: [entry], stderr: "pipe",
+    env: { PATH: path.dirname(process.execPath) + path.delimiter + process.env.PATH, PATHEXT: ".EXE;.COM;.CMD;.BAT" } });
+  transport.stderr.on("data", () => {});
+  try {
+    await client.connect(transport);
+    await client.callTool({ name: "pi_task_start", arguments: { extId: "test", prompt: "test" }, _meta: { nowadays: {
+      cwd, baseUrl: "http://127.0.0.1:" + upstream.address().port, lease: "synthetic", jobId: "tool-list",
+      modelName: "test", apiFlavor: "openai-completions", expiresAt: Date.now() + 30000, allowShell } } });
+    await until(async () => {
+      if (names) return true;
+      const state = (await client.callTool({ name: "pi_task_result", arguments: { jobId: "tool-list" } })).structuredContent;
+      if (state.state === "failed") throw Error(JSON.stringify(state));
+      return false;
+    });
+    assert.deepEqual(names.sort(), ["read", "write", "edit", "draft_test", ...(allowShell === true ? [windows ? "powershell" : "bash"] : [])].sort());
+  } finally {
+    await client.close(); upstream.closeAllConnections(); await new Promise(r => upstream.close(r));
+    fs.rmSync(cwd, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
 for (const mode of ["complete", "cancel", "timeout", "close"]) test("真实 Pi 会话回收进程树 " + mode, async t => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-lifecycle-"));
   // 短命父进程派生长期运行的孙进程，覆盖单纯 taskkill /T 已无法枚举的退出父节点。
@@ -58,7 +90,7 @@ for (const mode of ["complete", "cancel", "timeout", "close"]) test("真实 Pi �
     const expiresAt = Date.now() + (mode === "timeout" ? 7000 : 60000);
     const id = "test-" + mode;
     const result = await client.callTool({ name: "pi_task_start", arguments: { extId: "test", prompt: "启动测试程序" },
-      _meta: { nowadays: { cwd, baseUrl, lease: "synthetic", jobId: id, modelName: "test", apiFlavor: "openai-completions", expiresAt } } });
+      _meta: { nowadays: { cwd, baseUrl, lease: "synthetic", jobId: id, modelName: "test", apiFlavor: "openai-completions", expiresAt, allowShell: true } } });
     assert.equal(result.structuredContent?.state, "running");
     const status = async () => (await client.callTool({ name: "pi_task_status", arguments: { jobId: id } })).structuredContent.state;
     await until(() => fs.existsSync(path.join(cwd, "pid")));
