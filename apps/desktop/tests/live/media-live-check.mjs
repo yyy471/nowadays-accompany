@@ -215,10 +215,10 @@ async function main() {
   await click(".dialogue-speaker"); const manual = await waitPlay(2, "ended");
   assert.equal(manual.url, ended.url); signal("manual", manual);
   await click(".dialogue-speaker"); await waitPlay(3, "playing");
-  await click(".dialogue-window-switch > button"); await click(".dialogue-window-switch [role=menuitem]", "页面窗口");
+  await click(".dialogue-window-switch .ui-menu-trigger"); await click(".dialogue-window-switch [role=menuitemradio]", "页面窗口");
   const paused = await waitPlay(3, "pause"); assert.ok(!paused.events.some(e => e.type === "ended"));
   signal("windowChange", paused);
-  await click(".dialogue-window-switch > button"); await click(".dialogue-window-switch [role=menuitem]", "主对话");
+  await click(".dialogue-window-switch .ui-menu-trigger"); await click(".dialogue-window-switch [role=menuitemradio]", "主对话");
   await until("RESTORED_SPEECH", () => ev("!!document.querySelector('.dialogue-speaker')"));
   assert.ok((await media()).speechRequests.every(url => url.includes("/windows/" + role.defaultWindowId + "/")), "切窗口时不能向新窗口预取旧句段");
   const scenes = [];

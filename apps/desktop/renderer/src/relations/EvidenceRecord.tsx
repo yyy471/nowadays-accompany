@@ -1,3 +1,4 @@
+import { errorText } from '../lib/error-text';
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { api } from '../api';
 
@@ -31,7 +32,7 @@ export function EvidenceRecord({ id, roleId, evidenceId, trigger }: {
     ).then(evidence => {
       if (!controller.signal.aborted) setRecord({ status: 'ready', ...evidence });
     }).catch(reason => {
-      if (!controller.signal.aborted) setRecord({ status: 'failed', message: reason instanceof Error ? reason.message : String(reason) });
+      if (!controller.signal.aborted) setRecord({ status: 'failed', message: errorText(reason) });
     });
     return () => controller.abort();
   }, [roleId, evidenceId, attempt]);

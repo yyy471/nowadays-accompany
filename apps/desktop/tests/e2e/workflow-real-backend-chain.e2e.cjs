@@ -541,7 +541,7 @@ async function run() {
   };
   const waitService = name => until(() => ev(`!document.querySelector('.config-sheet') && document.querySelector('.config-leaf-body > .config-prose:not([hidden]) h2')?.textContent===${JSON.stringify(name)}`), 'service ' + name);
   const openSettings = async () => {
-    await clickWhen(element('.ui-menu-trigger'));
+    await clickWhen(element('.ui-page-dock .ui-menu-trigger'));
     await clickWhen("[...document.querySelectorAll('.ui-menu-item')].find(item=>item.textContent.includes('设置'))");
     await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings'"), 'page-settings');
   };
@@ -1118,7 +1118,7 @@ async function run() {
   await clickWhen("[...document.querySelectorAll('.ui-dock-item')].find(button=>button.textContent.includes('对话'))");
   assert.deepEqual(errors, [], '离开配置页进入对话时没有本机确认或渲染异常');
   await clickWhen(element('.dialogue-role-switch button'));
-  await clickWhen("[...document.querySelectorAll('.dialogue-role-menu button')].find(button=>button.textContent.includes('甲角色'))");
+  await clickWhen("[...document.querySelectorAll('.dialogue-role-switch [role=menuitemradio]')].find(button=>button.textContent.includes('甲角色'))");
   await until(() => ev("document.querySelector('.dialogue-role-switch button')?.getAttribute('aria-label')?.includes('甲角色')"), 'dialogue uses A');
 
   await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='conversation' && document.querySelector('.dialogue-connection')?.dataset.state==='open'"), 'dialogue-open');
@@ -1142,7 +1142,7 @@ async function run() {
   await until(async () => {
     const canAdv = await ev("document.querySelector('.dialogue-messages')?.dataset.canAdvance==='true'");
     if (canAdv) await ev("document.querySelector('.dialogue-messages')?.click()");
-    return ev("[...document.querySelectorAll('.dialogue-message.assistant .dialogue-bubble')].some(x=>x.textContent.includes('你好')) && !document.querySelector('.dialogue-waiting') && !document.querySelector('.dialogue-advance-hint') && !!document.querySelector('.dialogue-composer')");
+    return ev("[...document.querySelectorAll('.dialogue-message.assistant .dialogue-bubble')].some(x=>x.textContent.includes('你好')) && !document.querySelector('.dialogue-waiting') && !!document.querySelector('.dialogue-composer')");
   }, 'assistant-reply-visible');
 
   // 触发语音合成按钮 -> 验证真实后端 /speech 调本地假 TTS（兼容预取已触发或点击按需触发）

@@ -1,3 +1,4 @@
+import { errorText } from '../../lib/error-text';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { api, ApiError } from '../../api';
 import {
@@ -49,8 +50,8 @@ export interface ImageProbeOptions {
 }
 
 function imageErrorText(error: unknown): string {
-  if (error instanceof ApiError) return describeImageFailure(error.code, error.message);
-  return error instanceof Error ? error.message : String(error);
+  if (error instanceof ApiError) return describeImageFailure(error.code, errorText(error));
+  return errorText(error);
 }
 
 function cacheKeyOf(target: ImageProbeTarget): string | undefined {

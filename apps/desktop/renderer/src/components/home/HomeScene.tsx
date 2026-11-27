@@ -5,7 +5,7 @@ import nightScene from '../../assets/themes/xiacheng/scene-night.png';
 import { useThemePreset } from '../../ui/presets';
 import { createOutfitDisplay, type DisplayedOutfit } from '../../outfit-display';
 
-export function HomeScene({ outfitHomeUrl, outfitName }: { outfitHomeUrl?: string | null; outfitName?: string | null }) {
+export function HomeScene({ outfitHomeUrl, outfitName, hasOutfits, ready }: { outfitHomeUrl?: string | null; outfitName?: string | null; hasOutfits: boolean; ready: boolean }) {
   const { preset } = useThemePreset();
   const night = preset === 'nightwave';
   const policy = useMotionPolicy();
@@ -71,7 +71,7 @@ export function HomeScene({ outfitHomeUrl, outfitName }: { outfitHomeUrl?: strin
     });
     return () => { active = false; };
   }, [outfitHomeUrl, outfitName]);
-  return <figure ref={figure} className="home-scene" aria-label={displayedOutfit ? (displayedOutfit.name ? `${displayedOutfit.name}主页立绘` : '角色主页立绘') : '角色主页空态'} onPointerLeave={reset} onPointerMove={event => {
+  return <figure ref={figure} className="home-scene" aria-label={ready && displayedOutfit?.name ? `${displayedOutfit.name}主页立绘` : '角色主页'} onPointerLeave={reset} onPointerMove={event => {
     if (event.pointerType !== 'mouse' || reduced.current) { reset(); return; }
     const box = event.currentTarget.getBoundingClientRect();
     if (!box.width || !box.height) return;
@@ -90,17 +90,16 @@ export function HomeScene({ outfitHomeUrl, outfitName }: { outfitHomeUrl?: strin
     <div className="home-scene-art">
       {failed ? <div className="home-art-fallback"><Icon name="user" size={40} /><p>主题插画暂时不可用</p></div> : <>
         <img className="home-scene-background" src={artNight ? nightScene : scene} alt="" onError={() => setFailed(true)} />
-        {displayedOutfit?.url
+        {ready && (displayedOutfit?.url
           ? <img className="home-scene-character" src={displayedOutfit.url} alt={displayedOutfit.name ? `${displayedOutfit.name}主页立绘` : '角色主页立绘'} onError={() => setDisplayedOutfit(display.current.fail(displayedOutfit.url))} />
-          : <div className="home-scene-empty" role="status"><Icon name="user" size={34} /><p>这个角色还没有主页立绘</p><small>在角色配置的外观里添加一套服饰后，这里会显示她的样子。</small></div>}
+          : !hasOutfits && <div className="home-scene-empty" role="status"><Icon name="user" size={34} /><p>这个角色还没有主页立绘</p><small>在角色配置的外观里添加一套服饰后，这里会显示她的样子。</small></div>)}
       </>}
     </div>
-    <figcaption className="home-scene-caption">
+    {ready && <figcaption className="home-scene-caption">
       <div className="home-scene-label">
         <span>{night ? '晚风电台 / NIGHT EDITION' : '白昼来信 / DAY EDITION'}</span>
         {displayedOutfit && <strong title={displayedOutfit.name || undefined}>{displayedOutfit.name ? `当前服饰 · ${displayedOutfit.name}` : '当前服饰'}</strong>}
       </div>
-      <p className="home-scene-note">{night ? <>白天没说完的话，<br />今晚也有人听。</> : <>喜欢傍晚的光，<br />也喜欢听你慢慢说。</>}</p>
-    </figcaption>
+    </figcaption>}
   </figure>;
 }

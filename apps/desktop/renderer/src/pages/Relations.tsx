@@ -1,3 +1,4 @@
+import { errorText } from '../lib/error-text';
 import { PaperSkeleton } from '../components/PaperSkeleton';
 import { Fragment, useEffect, useId, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import type { RoleListItem } from '../types';
@@ -11,6 +12,9 @@ import { exlibrisThemeTransition } from '../relations/exlibris-theme';
 
 type Props = {
   roles: RoleListItem[];
+  loading: boolean;
+  retrying: boolean;
+  onRetry: () => Promise<void>;
   error: string;
   currentId: string;
   visit: number;
@@ -35,7 +39,7 @@ function FoldIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h12l4 4v12H4V4Zm12 0v5h4M7 12h10M7 16h7" /></svg>;
 }
 
-export function Relations({ roles, error, currentId, visit, onSelect, onOpenSettings }: Props) {
+export function Relations({ roles, loading, error, retrying, onRetry, currentId, visit, onSelect, onOpenSettings }: Props) {
   const { preset } = useThemePreset();
   const motion = useMotionPolicy();
   useThemeTransitionStrategy(exlibrisThemeTransition);
@@ -123,7 +127,7 @@ export function Relations({ roles, error, currentId, visit, onSelect, onOpenSett
       dispatch({ type: 'loaded', roleId: currentId, packet: next });
     }).catch(reason => {
       if (controller.signal.aborted || !gate.current.accept(ticket)) return;
-      dispatch({ type: 'failed', roleId: currentId, error: reason instanceof Error ? reason.message : String(reason) });
+      dispatch({ type: 'failed', roleId: currentId, error: errorText(reason) });
     }).finally(() => {
       if (!controller.signal.aborted && gate.current.accept(ticket)) setLoadingPacket(false);
     });
@@ -176,11 +180,17 @@ export function Relations({ roles, error, currentId, visit, onSelect, onOpenSett
   });
 
   const firstPacketRead = loadingPacket && !packet && !displayedUi.error;
+  const coverError = error || displayedUi.error;
+  const missingRoleName = coverError ? '暂时读不到角色' : loading ? '正在读取角色…' : '还没有角色';
+  const retryCover = () => {
+    if (error) void onRetry();
+    if (currentId) setLoadRevision(value => value + 1);
+  };
   const memoriesLoading = !!packet && (packet.pending.events || packet.pending.summaries);
   const previewEvent = packet?.events[0]?.title || (packet ? (memoriesLoading ? '正在读取' : packet.memoryError ? '经历暂时无法读取' : '还没有经历') : '正在读取');
   const previewDiary = packet?.diaries[0]?.title ? `「${packet.diaries[0].title}」` : (packet ? (packet.pending.diaries ? '正在读取' : packet.diaryError ? '日记暂时无法读取' : '还没有日记') : '正在读取');
   const pageCode = ui.view === 'home' ? '001' : String(views.indexOf(ui.view) + 1).padStart(3, '0');
-  const sentence = packet ? (packet.sentence || '暂未写下近况') : (ui.error ? '' : currentId ? '正在读取近况…' : '还没有角色');
+  const sentence = packet ? (packet.sentence || '暂未写下近况') : coverError || (currentId ? '正在读取近况…' : missingRoleName);
   const personSwitch = (rail = false) => roles.length < 2 ? null : <div className={'plate-switch' + (rail ? ' in-rail' : '')}>
     <button type="button" ref={switchButtonRef} className="wj-action" aria-expanded={selector} onClick={() => setSelector(value => !value)}><AccountsIcon />换一位</button>
     {selector && <div className="person-selector" ref={selectorRef}>
@@ -229,24 +239,22 @@ export function Relations({ roles, error, currentId, visit, onSelect, onOpenSett
                 {packet?.portraitUrl && !portraitFailed
                   ? <img key={packet.portraitUrl} src={packet.portraitUrl} alt={`${profile.name}的主页立绘`} onError={() => setPortraitFailed(true)} />
                   : firstPacketRead ? <div className="portrait-empty">正在读取立绘…</div>
-                  : <div className="portrait-empty">{currentId ? '暂无立绘' : '还没有角色'}</div>}
+                  : <div className="portrait-empty">{currentId ? '暂无立绘' : coverError || loading ? '' : '还没有角色'}</div>}
                 <span className="portrait-tint" aria-hidden="true" />
                 <span className="photo-caption"><span className="day-only">本页请来的人</span><span className="night-only">留在这一页的人</span></span>
               </div>
-              <div className="portrait-name"><h2 data-testid="plate-name">{profile.name || '还没有角色'}</h2><span className="edition-seal" aria-hidden="true">藏</span></div>
+              <div className="portrait-name"><h2 data-testid="plate-name">{profile.name || missingRoleName}</h2><span className="edition-seal" aria-hidden="true">藏</span></div>
               <p className="current-state" data-testid="plate-state">{sentence}</p>
               <div className="plate-baseline"><span>{packet ? `设定 · 第 ${packet.definitionRevision} 版` : '此刻'}</span><span>{listRole && listRole.status !== 'ready' ? (listRole.initError || '准备中') : '共同的一页'}</span></div>
               <div className="plate-reverse" aria-hidden="true"><FoldIcon /><span>在每一个普通日子里。</span></div>
             </article>
             {personSwitch()}
-            <div className="plate-under"><span className="hand-note day-only">先把这一页留给你。</span><span className="night-only">不急着说话，听一会儿也好。</span></div>
           </div>
           <div className="home-copy">
             <div className="home-eyebrow"><span className="day-only">A NOTE FOR OUR DAYS</span><span className="night-only">STAY A LITTLE, LISTEN A LITTLE</span></div>
-            <h1>把日常，<br /><span>收进这一页。</span></h1>
+            <h1>关系</h1>
             <p>一张人物藏书票，几页一起走过的日常。</p>
-            {firstPacketRead ? <PaperSkeleton label="正在读取这一页…"/> :
-              <div className="quiet-note"><span className="day-only">还有一些空白，留给以后。</span><span className="night-only">白天没说完的话，今晚也有人听。</span></div>}
+            {firstPacketRead && <PaperSkeleton label="正在读取这一页…"/>}
             <div className="postmark" aria-hidden="true"><div>日常<br /><b>藏本</b></div><svg viewBox="0 0 160 50"><path d="M0 14c25-18 35 18 65 0s40 18 90 0M0 26c25-18 35 18 65 0s40 18 90 0M0 38c25-18 35 18 65 0s40 18 90 0" /></svg></div>
           </div>
         </div> : <section className={'inner-view view' + (enter && enter !== 'home' ? ` enter-${enter}` : '')} aria-labelledby="inner-title">
@@ -262,7 +270,6 @@ export function Relations({ roles, error, currentId, visit, onSelect, onOpenSett
             <nav className="inner-nav" aria-label="藏页目录">
               {(['experiences', 'diary', 'profile'] as const).map((view, index) => <button type="button" key={view} aria-current={ui.view === view ? 'page' : undefined} onClick={() => openView(view)}>{String(index + 1).padStart(2, '0')} <span>{viewTitle[view]}</span></button>)}
             </nav>
-            <div className="rail-bottom"><span className="day-only">这一页，留给你。</span><span className="night-only">让日常，留下回声。</span></div>
           </div>
           <div className="reading-sheet" ref={sheetRef} tabIndex={0} role="region" aria-label="藏页阅读区">
             <header className="reading-heading">
@@ -344,7 +351,13 @@ export function Relations({ roles, error, currentId, visit, onSelect, onOpenSett
           </div>
           <div className="unfold-trace" aria-hidden="true"><i /><i /><i /></div>
         </section>}
-        <footer className="sheet-footer"><span>{roles.length ? `${roles.length} 位角色` : '还没有角色'}</span><button type="button" className="footer-hint" onClick={onOpenSettings}>打开角色配置</button><span className="sheet-code">本地藏页 / {pageCode}</span></footer>
+        <footer className="sheet-footer">
+          {coverError ? <><span role="status">{roles.length ? '暂时无法更新，仍显示上次的内容。' : '角色资料暂时无法更新。'}</span>
+            <Button size="sm" busy={retrying || loadingPacket} onClick={retryCover}>重试</Button></>
+            : <><span>{roles.length ? `${roles.length} 位角色` : missingRoleName}</span>
+              <button type="button" className="footer-hint" onClick={onOpenSettings}>打开角色配置</button></>}
+          <span className="sheet-code">本地藏页 / {pageCode}</span>
+        </footer>
       </div>
     </div>
     <div className="fold-morph" aria-hidden="true" />

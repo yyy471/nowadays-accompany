@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../api';
+import { errorText } from '../lib/error-text';
+import { errorDescriptions } from '../lib/error-descriptions';
 import type {
   FailedReplyView,
   MessageDetailView,
@@ -153,11 +155,6 @@ function emptyState(): SessionState {
     roleRejected: false,
     confirmedDraft: null
   };
-}
-
-function describeError(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return String(error);
 }
 
 function pendingSubmission(submissionKind: SubmissionKind | null = null): PendingReply {
@@ -374,7 +371,7 @@ export function useWindowSession({
     }).catch(error => {
       if (!active) return;
       state.current.loading = false;
-      state.current.loadError = describeError(error);
+      state.current.loadError = errorText(error);
       emit({ reason: 'error', message: state.current.loadError });
     });
     return () => { active = false; };
@@ -411,7 +408,7 @@ export function useWindowSession({
     }).catch(error => {
       if (!active || state.current.generation !== generation) return;
       state.current.loading = false;
-      state.current.loadError = describeError(error);
+      state.current.loadError = errorText(error);
       emit({ reason: 'error', message: state.current.loadError });
     });
     return () => {
@@ -729,8 +726,10 @@ export function useWindowSession({
         } else {
           pending.terminal = 'failed';
           if (payload.deliveredReceipt) pending.shown = pending.segments.length;
-          const code = typeof payload.errorCode === 'string' ? payload.errorCode : 'EXECUTION_FAILED';
-          if (pending.segments.length === 0 && !current.failedReply && !payload.deliveredReceipt) pending.error = `这轮回复暂时没有送达（${code}）。`;
+          if (pending.segments.length === 0 && !current.failedReply && !payload.deliveredReceipt) {
+            const reason = errorDescriptions.get(typeof payload.errorCode === 'string' ? payload.errorCode : 'EXECUTION_FAILED');
+            pending.error = reason ? `这轮回复暂时没有送达（${reason}）。` : '这轮回复暂时没有送达。';
+          }
         }
         settlePending();
         return;
@@ -897,7 +896,7 @@ export function useWindowSession({
           setReloadToken(value => value + 1);
         } else {
           state.current.failedReply ??= failed;
-          state.current.error = describeError(error);
+          state.current.error = errorText(error);
           emit({ reason: 'error', message: state.current.error });
         }
         return;
@@ -905,8 +904,10 @@ export function useWindowSession({
       // 角色已停止会拒绝新消息：消息未入库，保留草稿并给出就地恢复入口（283 R07）。
       if (error instanceof ApiError && error.code === 'ROLE_ACTIVITY_STOPPED') {
         state.current.roleRejected = true;
+        emit({ reason: 'error', draft: content });
+        return;
       }
-      state.current.error = describeError(error);
+      state.current.error = errorText(error);
       emit({ reason: 'error', message: state.current.error, draft: content });
     });
     return true;
@@ -978,8 +979,9 @@ export function useWindowSession({
       emit({ reason: 'scene' });
     }).catch(error => {
       if (state.current.generation !== generation || roleRef.current !== targetRole || state.current.windowId !== targetWindow) return;
-      state.current.sceneRequestErrors.set(messageId, { reason: describeError(error), mode });
-      emit({ reason: 'error', message: describeError(error) });
+      const message = errorText(error);
+      state.current.sceneRequestErrors.set(messageId, { reason: message, mode });
+      emit({ reason: 'error', message });
     }).finally(() => {
       requests.delete(messageId);
       if (state.current.generation === generation) emit({ reason: 'ready' });
@@ -1014,7 +1016,7 @@ export function useWindowSession({
       return true;
     } catch (error) {
       if (state.current.generation === generation && roleRef.current === targetRole) {
-        emit({ reason: 'error', message: describeError(error) });
+        emit({ reason: 'error', message: errorText(error) });
       }
       return false;
     } finally {
@@ -1051,7 +1053,7 @@ export function useWindowSession({
         emit({ reason: 'history' });
       }
     } catch (error) {
-      if (!controller.signal.aborted && state.current.generation === generation) current.historyError = describeError(error);
+      if (!controller.signal.aborted && state.current.generation === generation) current.historyError = errorText(error);
     } finally {
       if (historyRequest.current === controller) {
         historyRequest.current = null;

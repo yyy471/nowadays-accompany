@@ -191,7 +191,7 @@ check(async ({cmd, ev, until, errors}) => {
   assert.equal(await has(card), false);
   publish('主窗口中的分享');
   await ev("document.querySelector('.dialogue-role-switch button').click()");
-  await click("[...document.querySelectorAll('.dialogue-role-switch [role=menuitem]')].find(b=>b.textContent.includes('甲角色'))");
+  await click("[...document.querySelectorAll('.dialogue-role-switch [role=menuitemradio]')].find(b=>b.textContent.includes('甲角色'))");
   await until(() => chats.has('a'), '普通角色窗口');
   assert.equal(await has(card), false);
   const ongoing = chats.get('a');

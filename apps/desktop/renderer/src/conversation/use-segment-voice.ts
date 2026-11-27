@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, desktopFetch } from '../api';
+import { api, apiBinary, ApiError } from '../api';
+import { errorText } from '../lib/error-text';
 import type { VoiceResponse } from './api-types';
 import type { PerfRow } from './history';
 
 export interface SegmentVoiceHandle {
+  available: boolean | null;
   pendingId: number | null;
   playingId: number | null;
   play(row: PerfRow, automatic?: boolean): void;
@@ -19,13 +21,6 @@ const AUTO_DEBOUNCE_MS = 220;
 const DISABLED_MESSAGE = '角色语音已停用，启用后才能播放对话语音。';
 
 type SpeechResult = { url: string } | { error: string } | null;
-
-class SpeechRequestError extends Error {
-  constructor(message: string, readonly code: string | null) {
-    super(message);
-    this.name = 'SpeechRequestError';
-  }
-}
 
 function releasePlayer(element: HTMLAudioElement) {
   element.onplaying = null;
@@ -49,27 +44,13 @@ async function fetchSpeech(
   segmentId: string,
   emotion?: string | null,
 ): Promise<Blob> {
-  const response = await desktopFetch(
+  return apiBinary(
     `/v1/roles/${encodeURIComponent(roleId)}/windows/${encodeURIComponent(windowId)}/segments/${encodeURIComponent(segmentId)}/speech`,
     {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(emotion ? { emotion } : {})
+      body: emotion ? { emotion } : {}
     }
   );
-  if (!response.ok) {
-    let message = `语音请求失败（${response.status}）`;
-    let code: string | null = null;
-    try {
-      const body = await response.json() as { error?: { message?: string; code?: string } };
-      if (body.error?.message) message = body.error.message;
-      if (body.error?.code) code = body.error.code;
-    } catch {
-      // 非 JSON 错误沿用状态码提示。
-    }
-    throw new SpeechRequestError(message, code);
-  }
-  return response.blob();
 }
 
 /**
@@ -88,7 +69,12 @@ export function useSegmentVoice({ roleId, windowId, onToast }: { roleId: string;
   const playToken = useRef(0);
   const cacheGeneration = useRef(0);
   /** 服务端已明确告知停用：预取与自动播放不再发请求，手动点播视为重试。 */
-  const voiceDisabled = useRef(false);
+  const [available, setAvailable] = useState<boolean | null>(null);
+  const voiceAvailable = useRef<boolean | null>(null);
+  const updateAvailability = useCallback((value: boolean | null) => {
+    voiceAvailable.current = value;
+    setAvailable(value);
+  }, []);
   const revision = useRef('unknown');
   const roleRef = useRef(roleId); roleRef.current = roleId;
   const windowRef = useRef(windowId); windowRef.current = windowId;
@@ -109,7 +95,6 @@ export function useSegmentVoice({ roleId, windowId, onToast }: { roleId: string;
     pendingTimer.current = undefined;
     playToken.current += 1;
     cacheGeneration.current += 1;
-    voiceDisabled.current = false;
     discardCandidate();
     const element = audio.current;
     if (element) {
@@ -126,14 +111,16 @@ export function useSegmentVoice({ roleId, windowId, onToast }: { roleId: string;
   useEffect(() => {
     revision.current = 'unknown';
     releaseAll();
+    updateAvailability(null);
     if (!roleId) return;
     let active = true;
     void api<VoiceResponse>(`/v1/roles/${encodeURIComponent(roleId)}/voice`).then(result => {
       if (!active) return;
       revision.current = result.voice?.updatedAt ?? 'none';
-    }).catch(() => { /* 配置读取失败时仍尝试合成，错误在点播时提示 */ });
+      if (voiceAvailable.current === null) updateAvailability(!!result.voice && result.voice.enabled !== false);
+    }).catch(() => { /* 配置读取失败时仍可手动点播。 */ });
     return () => { active = false; };
-  }, [roleId, releaseAll]);
+  }, [roleId, releaseAll, updateAvailability]);
 
   useEffect(() => {
     releaseAll();
@@ -144,12 +131,11 @@ export function useSegmentVoice({ roleId, windowId, onToast }: { roleId: string;
   const keyFor = (row: PerfRow) => JSON.stringify([roleRef.current, windowRef.current, revision.current, row.segmentId, row.text]);
 
   const ensureAudio = useCallback((row: PerfRow, manual = false): Promise<SpeechResult> => {
-    // 手动点播是显式重试：清掉停用标记重新问一次服务端，启用后立刻恢复。
-    if (manual) voiceDisabled.current = false;
-    if (voiceDisabled.current) return Promise.resolve(null);
+    // 配置尚未读出或语音不可用时，仅接受手动重试。
+    if (!manual && !voiceAvailable.current) return Promise.resolve(null);
     const key = keyFor(row);
     const cached = cache.current.get(key);
-    if (cached) return Promise.resolve({ url: cached });
+    if (cached && voiceAvailable.current) return Promise.resolve({ url: cached });
     const running = promises.current.get(key);
     if (running) return running;
     const role = roleRef.current;
@@ -160,8 +146,11 @@ export function useSegmentVoice({ roleId, windowId, onToast }: { roleId: string;
       if (promises.current.get(key) === task) promises.current.delete(key);
       if (cacheGeneration.current !== generation) return null;
       if (blob.size === 0) throw new Error('这段语音暂时是空的。');
+      if (manual) updateAvailability(true);
       const url = URL.createObjectURL(blob);
-      if (cache.current.size >= MAX_CACHE) {
+      if (cached) {
+        URL.revokeObjectURL(cached);
+      } else if (cache.current.size >= MAX_CACHE) {
         const oldest = cache.current.keys().next().value;
         if (oldest !== undefined) {
           const stale = cache.current.get(oldest);
@@ -175,15 +164,15 @@ export function useSegmentVoice({ roleId, windowId, onToast }: { roleId: string;
       if (promises.current.get(key) === task) promises.current.delete(key);
       // 旧角色或旧窗口的响应不能影响当前范围。
       if (cacheGeneration.current !== generation) return null;
-      if (error instanceof SpeechRequestError && error.code === 'VOICE_DISABLED') {
-        voiceDisabled.current = true;
-        return { error: DISABLED_MESSAGE };
+      if (error instanceof ApiError && (error.code === 'VOICE_DISABLED' || error.code === 'VOICE_NOT_CONFIGURED')) {
+        updateAvailability(false);
+        return { error: error.code === 'VOICE_DISABLED' ? DISABLED_MESSAGE : errorText(error) };
       }
-      return { error: error instanceof Error ? error.message : String(error) };
+      return { error: errorText(error) };
     });
     promises.current.set(key, task);
     return task;
-  }, []);
+  }, [updateAvailability]);
 
   const prefetch = useCallback((rows: PerfRow[]) => {
     for (const row of rows) {
@@ -216,7 +205,7 @@ export function useSegmentVoice({ roleId, windowId, onToast }: { roleId: string;
     const token = playToken.current;
     const notifyCurrent = (message: string) => { if (playToken.current === token) notify(message); };
     const start = () => {
-      if (playToken.current !== token || (automatic && voiceDisabled.current)) return;
+      if (playToken.current !== token || (automatic && !voiceAvailable.current)) return;
       setPendingId(row.id);
       void ensureAudio(row, !automatic).then(result => {
         if (playToken.current !== token) return;
@@ -248,7 +237,7 @@ export function useSegmentVoice({ roleId, windowId, onToast }: { roleId: string;
         };
         element.onended = finish;
         element.onerror = () => fail('这句语音暂时播不出来。');
-        void element.play().catch(error => fail(error instanceof Error ? error.message : '这句语音暂时播不出来。'));
+        void element.play().catch(() => fail('这句语音暂时播不出来。'));
       });
     };
     if (automatic) {
@@ -258,5 +247,5 @@ export function useSegmentVoice({ roleId, windowId, onToast }: { roleId: string;
     }
   }, [cancelPending, discardCandidate, ensureAudio, notify]);
 
-  return { pendingId, playingId, play, cancelPending, stop, prefetch };
+  return { available, pendingId, playingId, play, cancelPending, stop, prefetch };
 }

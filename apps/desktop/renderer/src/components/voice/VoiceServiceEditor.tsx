@@ -1,3 +1,4 @@
+import { errorText } from '../../lib/error-text';
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../../api';
 import { Field, Input, Select } from '../../ui';
@@ -20,7 +21,7 @@ import { useWrite } from '../config/write-runner';
 const DEFAULT_PROTOCOL: VoiceProtocol = 'nowadays-tts-v1';
 
 function voiceErrorText(reason: unknown): string {
-  return describeVoiceFailure({ code: reason instanceof ApiError ? reason.code : undefined, message: reason instanceof Error ? reason.message : String(reason) });
+  return reason instanceof ApiError ? describeVoiceFailure({ code: reason.code, message: errorText(reason) }) : errorText(reason);
 }
 
 type VoiceDraft = { name: string; protocol: VoiceProtocol; baseUrl: string; defaultEngine: string };

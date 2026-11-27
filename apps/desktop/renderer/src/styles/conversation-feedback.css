@@ -5,7 +5,7 @@
   border-color: var(--dlg-rule);
   color: var(--dlg-ink);
   background: var(--dlg-selection);
-  font-size: 10px;
+  font-size: var(--nd-semantic-type-caption-size);
   line-height: 12px;
   cursor: pointer;
 }

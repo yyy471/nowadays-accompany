@@ -62,7 +62,7 @@ export function ServiceIndexState({ kind, loading, error, onRetry }: {
   return <div className="config-prose">
     <header className="config-sec-head" aria-busy={loading || undefined}><h2 tabIndex={-1}>{SERVICE_NAMES[kind]}</h2></header>
     {loading ? <div aria-busy="true">{Array.from({ length: SERVICE_ROW_COUNTS[kind] }, (_, index) => <div key={index} className="config-sum config-skel" aria-hidden="true"><i/><span><i/><i className="short"/></span></div>)}</div>
-      : error ? <div className="config-catalog-empty" role="alert"><StatusDot status="error" label={T35(error)}/><Button size="sm" onClick={onRetry}>{T35_RETRY}</Button></div>
+      : error ? <div className="config-catalog-empty" role="alert"><StatusDot status="error" label={T35(SERVICE_NAMES[kind], error)}/><Button size="sm" onClick={onRetry}>{T35_RETRY}</Button></div>
       : <div className="config-catalog-empty"><p>{T36.kind(SERVICE_NAMES[kind])}</p></div>}
   </div>;
 }

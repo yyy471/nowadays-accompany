@@ -1,25 +1,111 @@
 body:has(.boot-gate) { margin: 0; }
 .boot-gate {
-  box-sizing: border-box;
+  position: fixed;
+  inset: 0;
+  z-index: var(--nd-semantic-layer-theme-transition);
   display: grid;
-  min-height: 100vh;
-  padding: var(--nd-primitive-space-8);
-  place-content: center;
+  place-items: center;
+  overflow: hidden;
+  perspective: 1600px;
   color: var(--nd-semantic-color-text);
   background: var(--nd-semantic-color-canvas);
   font-family: var(--nd-semantic-font-body);
 }
-.boot-gate article {
-  width: min(28rem, 75vw);
-  padding: var(--nd-primitive-space-8);
-  border-block: 1px solid var(--nd-semantic-color-line-decorative);
-  border-inline-start: var(--nd-primitive-space-1) solid var(--nd-semantic-color-accent-decorative);
+.boot-lamp {
+  position: absolute;
+  left: 50%;
+  top: 38%;
+  width: min(820px, 120vw);
+  aspect-ratio: 1.4;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--nd-semantic-color-accent-decorative) 34%, transparent), color-mix(in srgb, var(--nd-semantic-color-accent-decorative) 10%, transparent) 55%, transparent);
+  animation: boot-light var(--nd-semantic-motion-page) var(--nd-semantic-motion-ease-out) var(--nd-semantic-motion-micro) both;
+}
+.boot-leaf {
+  position: relative;
+  box-sizing: border-box;
+  width: min(28rem, 84vw);
+  padding: var(--nd-semantic-space-section);
+  text-align: center;
+  transform-origin: left center;
+}
+.boot-details {
+  opacity: 0;
+  transition: opacity var(--nd-semantic-motion-component) var(--nd-semantic-motion-ease-out);
+  transition-delay: var(--nd-semantic-motion-busy-delay, calc(var(--nd-semantic-motion-linger) / 2));
+}
+.boot-gate[data-details="visible"] .boot-details,
+.boot-gate[data-phase="failed"] .boot-details { opacity: 1; transition-delay: initial; }
+.boot-gate[data-phase="failed"] .boot-details { transition: none; }
+.boot-mark { display: block; margin: 0 auto var(--nd-semantic-space-icon-label); }
+.boot-leaf h1 {
+  margin: 0;
+  font: var(--nd-semantic-type-regular) var(--nd-semantic-type-hero-size)/var(--nd-semantic-type-hero-line) var(--nd-semantic-font-title);
+}
+.boot-leaf small {
+  display: block;
+  color: var(--nd-semantic-color-text-muted);
+  font: var(--nd-semantic-type-caption-size)/var(--nd-semantic-type-caption-line) var(--nd-semantic-font-code);
+  letter-spacing: .16em;
+}
+.boot-steps {
+  display: flex;
+  justify-content: center;
+  margin: var(--nd-semantic-space-section) 0 var(--nd-semantic-space-field-group);
+  padding: 0;
+  list-style: none;
+  color: var(--nd-semantic-color-text-muted);
+  font-size: var(--nd-semantic-type-caption-size);
+}
+.boot-steps li { position: relative; width: 4.5rem; }
+.boot-steps li::before {
+  content: '';
+  position: relative;
+  z-index: var(--nd-semantic-layer-scene);
+  box-sizing: border-box;
+  display: block;
+  width: 9px;
+  height: 9px;
+  margin: 0 auto var(--nd-semantic-space-icon-label);
+  border: 1px solid var(--nd-semantic-color-line-control);
+  border-radius: 50%;
   background: var(--nd-semantic-color-surface);
 }
-.boot-gate h1 { margin: 0; font: inherit; font-family: var(--nd-semantic-font-title); font-size: var(--nd-semantic-type-page-size); }
-.boot-gate p { color: var(--nd-semantic-color-text-muted); overflow-wrap: anywhere; }
+.boot-steps li:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  inset: 4px auto auto 50%;
+  width: 100%;
+  height: 1px;
+  background: var(--nd-semantic-color-line-decorative);
+}
+.boot-steps li:is([data-state="now"], [data-state="done"]) { color: var(--nd-semantic-color-commit); }
+.boot-steps li:is([data-state="now"], [data-state="done"])::before,
+.boot-steps li[data-state="done"]::after {
+  border-color: currentColor;
+  background: currentColor;
+}
+.boot-steps li[data-state="now"]::before {
+  animation: boot-ink-breathe var(--nd-semantic-motion-decay) var(--nd-semantic-motion-ease-standard) infinite;
+}
+.boot-leaf p {
+  margin: 0;
+  color: var(--nd-semantic-color-text-muted);
+  font-size: var(--nd-semantic-type-body-size);
+  line-height: var(--nd-semantic-type-body-line);
+  overflow-wrap: anywhere;
+}
+.boot-elapsed {
+  display: block;
+  min-height: var(--nd-semantic-type-caption-line);
+  margin-top: var(--nd-semantic-space-field-hint);
+  color: var(--nd-semantic-color-text-muted);
+  font-size: var(--nd-semantic-type-caption-size);
+  font-variant-numeric: tabular-nums;
+}
 .boot-gate button {
-  padding: var(--nd-primitive-space-2) var(--nd-primitive-space-4);
+  padding: var(--nd-semantic-space-icon-label) var(--nd-semantic-space-field-group);
   border: 1px solid var(--nd-semantic-color-line-control);
   border-radius: var(--nd-semantic-radius-field);
   background: var(--nd-semantic-color-surface);
@@ -28,3 +114,25 @@ body:has(.boot-gate) { margin: 0; }
   cursor: pointer;
 }
 .boot-gate button:focus-visible { outline: var(--nd-component-focus-width) solid var(--nd-component-focus-color); outline-offset: var(--nd-component-focus-offset); }
+.boot-gate[data-phase="failed"] .boot-lamp { animation: none; opacity: .35; }
+.boot-gate[data-phase="failed"] .boot-steps li::before { animation: none; }
+.boot-gate[data-cover="opening"] {
+  animation: boot-fade var(--nd-semantic-motion-page) var(--nd-semantic-motion-ease-in) both;
+}
+.boot-gate[data-cover="opening"] .boot-leaf {
+  animation: boot-turn var(--nd-semantic-motion-page) var(--nd-semantic-motion-ease-in) both;
+}
+@keyframes boot-light { from { opacity: 0; transform: translate(-50%, -50%) scale(.86); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+@keyframes boot-ink-breathe { 50% { opacity: .55; transform: scale(.85); } }
+@keyframes boot-turn { to { transform: rotateY(-78deg) translateX(-8%); opacity: 0; } }
+@keyframes boot-fade { 0%, 35% { opacity: 1; } to { opacity: 0; } }
+html[data-motion="reduced"] .boot-gate,
+html[data-motion="reduced"] .boot-gate :is(.boot-lamp, .boot-leaf),
+html[data-motion="reduced"] .boot-steps li::before { animation: none; transition: none; }
+html[data-motion="reduced"] .boot-details { transition-property: none; }
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion="full"]) .boot-gate,
+  html:not([data-motion="full"]) .boot-gate :is(.boot-lamp, .boot-leaf),
+  html:not([data-motion="full"]) .boot-steps li::before { animation: none; transition: none; }
+  html:not([data-motion="full"]) .boot-details { transition-property: none; }
+}

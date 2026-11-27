@@ -1,6 +1,7 @@
 type DeskIntent = { id: number; action: 'hide' | 'quit' | 'cancel' };
 interface Window {
   nowadaysDesk?: {
+    isPackaged: boolean;
     setWindowTheme(preset: 'daylight' | 'nightwave', color: string): void;
     boot(): Promise<{ ok: true; skipRolePicker: boolean } | { ok: false; reason: string }>;
     onIntent(callback: (request: DeskIntent) => void): () => void;

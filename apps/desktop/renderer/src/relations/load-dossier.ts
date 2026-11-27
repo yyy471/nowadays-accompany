@@ -1,14 +1,13 @@
+import { errorText } from '../lib/error-text';
 import { api } from '../api';
 import { appearanceAssetUrl, type Outfit, type RoleDetail, type RoleStateResponse } from '../types';
-import { diaryParagraphs, diaryTitle, formatExperienceDate, stateLines, stateSentence, type RelationDiary, type RelationEvent, type RelationPacket, type RelationSummary } from './dossier';
+import { diaryParagraphs, diaryTitle, formatExperienceDate, stateLines, stateSentence, type RelationDiary, type RelationPacket } from './dossier';
 
 interface SearchItem { type: string; id: string; title: string; snippet: string }
 interface EventDetail { title: string; summary: string; subjectiveExperience?: string; experienceDate: string; sources?: Array<{ evidenceId: string }> }
 interface DiaryRecord { diaryId: string; experienceDate: string }
 interface DiaryDetail { content: string; experienceDate: string }
 interface SummaryDetail { topic?: string; summary: string; experienceDate: string }
-
-const reasonText = (reason: unknown) => reason instanceof Error ? reason.message : String(reason);
 
 async function search(roleId: string, type: 'event' | 'diary' | 'daily_summary', limit: number, signal: AbortSignal): Promise<SearchItem[]> {
   const result = await api<{ items: SearchItem[] }>(`/v1/roles/${encodeURIComponent(roleId)}/memory/search`, {
@@ -68,7 +67,7 @@ export async function loadRelationPacket(
   };
   const noteMemoryError = (reason: unknown) => {
     if (signal.aborted) return;
-    const message = reasonText(reason);
+    const message = errorText(reason);
     packet.memoryError = packet.memoryError ? `${packet.memoryError}；${message}` : message;
   };
   publish();
@@ -156,7 +155,7 @@ export async function loadRelationPacket(
         await Promise.all(Array.from({ length: Math.min(8, records.length) }, worker));
         publishDiaries();
       } catch (reason) {
-        if (!signal.aborted) packet.diaryError = reasonText(reason);
+        if (!signal.aborted) packet.diaryError = errorText(reason);
       } finally {
         packet.pending.diaries = false;
         publish();

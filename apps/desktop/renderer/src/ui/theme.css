@@ -27,7 +27,7 @@
 .btn:focus-visible,.ui-icon-button:focus-visible,button:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 3px; }
 .field { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
 .field-label { color: var(--muted); font-size: 12px; letter-spacing: .01em; }
-.field-hint { color: var(--muted); font-size: 11.5px; line-height: 1.6; }
+.field-hint { color: var(--muted); font-size: var(--nd-semantic-type-caption-size); line-height: 1.6; }
 .ui-input,.ui-select,.ui-textarea { width: 100%; min-width: 0; min-height: var(--control-height); padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--control-radius); background-color: var(--control-surface); color: var(--text); font: inherit; font-size: 12.5px; outline: none; }
 .ui-input::placeholder,.ui-textarea::placeholder { color: #918575; }
 .ui-input:focus,.ui-select:focus,.ui-textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--control-focus); }

@@ -1,10 +1,11 @@
+import { errorText } from './lib/error-text';
 import { roleFaceImage } from './components/role-face-image';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { api } from './api';
-import type { Outfit, RoleDetail, RoleListItem, RoleStateResponse } from './types';
+import type { Outfit, RoleListItem, RoleStateResponse } from './types';
 import { appearanceAssetUrl } from './types';
-import { BrandMark, Button, ControlButton, Icon, UiThemeProvider, UiThemeScope, createMotionScope, readMotionPx, readMotionTime, readMotionValue, useMotionPolicy } from './ui';
+import { BrandMark, ControlButton, Icon, UiThemeProvider, UiThemeScope, readMotionPx, readMotionTime, readMotionValue, useMotionPolicy } from './ui';
 import { useThemePreset } from './ui/presets';
 import { ThemeSwitcher } from './components/shell/ThemeSwitcher';
 import { EngineeringCapsule } from './components/shell/EngineeringCapsule';
@@ -32,7 +33,6 @@ export function App({ skipEntry }: { skipEntry: boolean }) {
 function DeskWorkspace({ skipEntry }: { skipEntry: boolean }) {
   const { preset } = useThemePreset();
   const motion = useMotionPolicy();
-  const [scope] = useState(createMotionScope);
   const pageBody = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState('home');
   const [conversationTarget, setConversationTarget] = useState<{ roleId: string; windowId: string; messageId?: string } | null>(null);
@@ -51,7 +51,7 @@ function DeskWorkspace({ skipEntry }: { skipEntry: boolean }) {
   const [configFooterLeft, setConfigFooterLeft] = useState<HTMLDivElement | null>(null);
   const [configFooterRight, setConfigFooterRight] = useState<HTMLDivElement | null>(null);
   const configGuard = useRef<ConfigNavigationGuard | null>(null);
-  const configSwap = useRef({ generation: 0, animations: [] as Animation[] });
+  const pageSwap = useRef({ generation: 0, skipEnter: false, animations: [] as Animation[] });
   const feedTransition = useRef<{ transition: ViewTransition; release: () => void } | null>(null);
   const feedNavigationId = useRef(0);
   const feedOrigin = useRef<{ eventId: string; roleId: string; messageId?: string } | null>(null);
@@ -63,8 +63,8 @@ function DeskWorkspace({ skipEntry }: { skipEntry: boolean }) {
     active?.transition.skipTransition();
     delete document.documentElement.dataset.feedTransition;
   };
-  const cancelConfigSwap = () => {
-    const state = configSwap.current;
+  const cancelPageSwap = () => {
+    const state = pageSwap.current;
     state.generation += 1;
     state.animations.forEach(animation => animation.cancel());
     state.animations = [];
@@ -72,7 +72,7 @@ function DeskWorkspace({ skipEntry }: { skipEntry: boolean }) {
   const applyPage = (next: string, after?: () => void, feedRequest?: number) => {
     if (feedRequest === undefined) cancelFeedNavigation();
     else if (feedRequest !== feedNavigationId.current) return;
-    cancelConfigSwap();
+    cancelPageSwap();
     if (next === page) return;
     const apply = () => {
       if (next === 'extensions') deskPosition.current = { view: 'catalog' };
@@ -82,12 +82,18 @@ function DeskWorkspace({ skipEntry }: { skipEntry: boolean }) {
       setPage(next);
     };
     const configPages = ['role-config', 'settings'];
-    const state = configSwap.current;
+    const withinConfig = configPages.includes(page) && configPages.includes(next);
+    const state = pageSwap.current;
     const generation = state.generation;
-    if (motion.reduced || document.hidden || !configPages.includes(page) || !configPages.includes(next)) { apply(); return; }
-    const targets = () => [...document.querySelectorAll<HTMLElement>(
-      '.studio-shell:not(.config-theme-veil) :is(.config-stage,.config-index,.config-tabs,.config-leaf,#config-footer-left,#config-footer-right)',
-    )].filter(element => element.offsetParent !== null);
+    // 动态纸条跳入指定消息时，原有共享元素转场自行提交页面。
+    if (motion.reduced || document.hidden || document.documentElement.hasAttribute('data-feed-transition')) { apply(); return; }
+    state.skipEnter = false;
+    const targets = () => {
+      if (!withinConfig) return pageBody.current ? [pageBody.current] : [];
+      return [...document.querySelectorAll<HTMLElement>(
+        '.studio-shell:not(.config-theme-veil) :is(.config-stage,.config-index,.config-tabs,.config-leaf,#config-footer-left,#config-footer-right)',
+      )].filter(element => element.offsetParent !== null);
+    };
     const previous = targets();
     state.animations = previous.map(element => element.animate([{ opacity: 1 }, { opacity: 0 }], {
       duration: readMotionTime(element, '--nd-semantic-motion-micro-exit', 90),
@@ -97,12 +103,16 @@ function DeskWorkspace({ skipEntry }: { skipEntry: boolean }) {
       if (generation !== state.generation) return;
       flushSync(apply);
       state.animations.forEach(animation => animation.cancel());
-      state.animations = targets().flatMap(element => {
-        const duration = readMotionTime(element, '--nd-semantic-motion-component', 220);
-        const offset = readMotionPx(element, '--nd-semantic-motion-detail-page-offset', 4);
-        return duration <= 0 || document.hidden ? [] : [element.animate([{ opacity: 0, transform: `translateY(${offset}px)` }, { opacity: 1, transform: 'none' }], {
+      if (state.skipEnter || document.hidden) return;
+      state.animations = targets().map(element => {
+        const duration = withinConfig ? readMotionTime(element, '--nd-semantic-motion-component', 220)
+          : readMotionTime(element, '--nd-semantic-motion-page', 360);
+        const frames = withinConfig
+          ? [{ opacity: 0, transform: `translateY(${readMotionPx(element, '--nd-semantic-motion-detail-page-offset', 4)}px)` }, { opacity: 1, transform: 'none' }]
+          : [{ opacity: 0 }, { opacity: 1 }];
+        return element.animate(frames, {
           duration, easing: readMotionValue(element, '--nd-semantic-motion-ease-out', 'ease-out'),
-        })];
+        });
       });
     });
   };
@@ -185,21 +195,23 @@ function DeskWorkspace({ skipEntry }: { skipEntry: boolean }) {
   };
   useEffect(() => {
     if (motion.reduced) {
-      configSwap.current.animations.forEach(animation => animation.cancel());
+      pageSwap.current.skipEnter = true;
+      pageSwap.current.animations.forEach(animation => animation.cancel());
       feedTransition.current?.transition.skipTransition();
     }
   }, [motion.reduced]);
   useEffect(() => {
     const finishHidden = () => {
       if (!document.hidden) return;
-      configSwap.current.animations.forEach(animation => animation.cancel());
+      pageSwap.current.skipEnter = true;
+      pageSwap.current.animations.forEach(animation => animation.cancel());
       feedTransition.current?.transition.skipTransition();
     };
     document.addEventListener('visibilitychange', finishHidden);
     return () => {
       document.removeEventListener('visibilitychange', finishHidden);
       cancelFeedNavigation();
-      cancelConfigSwap();
+      cancelPageSwap();
     };
   }, []);
   // 冷启动先选角（DL-147）；自动化脚本可用 NOWADAYS_SKIP_ROLE_PICKER 直入工作区。
@@ -232,7 +244,6 @@ function DeskWorkspace({ skipEntry }: { skipEntry: boolean }) {
   const [currentId, setCurrentId] = useState('');
   const currentIdRef = useRef(currentId);
   currentIdRef.current = currentId;
-  const [detail, setDetail] = useState<RoleDetail>();
   const [status, setStatus] = useState('');
   const [state, setState] = useState<Record<string, unknown>>({});
   const [outfits, setOutfits] = useState<Outfit[]>([]);
@@ -261,7 +272,7 @@ function DeskWorkspace({ skipEntry }: { skipEntry: boolean }) {
       setRoleListError('');
       setCurrentId(previous => items.some(r => r.roleId === (preferred || previous)) ? (preferred || previous) : (items[0]?.roleId || ''));
       setRevision(value => value + 1);
-    } catch (e) { if (request === roleListRequest.current) setRoleListError(e instanceof Error ? e.message : String(e)); }
+    } catch (e) { if (request === roleListRequest.current) setRoleListError(errorText(e)); }
   }, []);
   const retryRoles = useCallback(async () => {
     const token = ++roleRetryToken.current;
@@ -300,20 +311,21 @@ function DeskWorkspace({ skipEntry }: { skipEntry: boolean }) {
     prevRoleId.current = currentId;
     stateGate.current.activate(currentId);
     if (roleChanged) {
-      setDetail(undefined); setStatus(''); setState({}); setOutfits([]); setDetailError('');
+      setAppearanceRoleId(null);
+      setStatus(''); setState({}); setOutfits([]); setDetailError('');
     }
     if (detailRetry.current && detailRetry.current !== currentId) {
       detailRetry.current = null;
       setRetryingDetail(false);
     }
     if (!currentId) return;
+    // 详情读取失败时也应显示角色资料重试入口。
     Promise.all([
-      api<RoleDetail>(`/v1/roles/${encodeURIComponent(currentId)}`),
+      api(`/v1/roles/${encodeURIComponent(currentId)}`),
       api<RoleStateResponse>(`/v1/roles/${encodeURIComponent(currentId)}/state`),
       api<{items: Outfit[]}>(`/v1/roles/${encodeURIComponent(currentId)}/appearance/outfits`)
-    ]).then(([role, result, wardrobe]) => {
+    ]).then(([, result, wardrobe]) => {
       if (request !== requestId.current) return;
-      setDetail(role);
       applySnapshot(currentId, result, wardrobe.items);
       setAppearanceRoleId(currentId);
       setDetailError('');
@@ -321,7 +333,7 @@ function DeskWorkspace({ skipEntry }: { skipEntry: boolean }) {
     }).catch(e => {
       if (request !== requestId.current) return;
       setAppearanceRoleId(currentId);
-      setDetailError(e instanceof Error ? e.message : String(e));
+      setDetailError(errorText(e));
       if (detailRetry.current === currentId) { detailRetry.current = null; setRetryingDetail(false); }
     });
   }, [currentId, revision, applySnapshot]);
@@ -346,25 +358,24 @@ function DeskWorkspace({ skipEntry }: { skipEntry: boolean }) {
         syncing = false;
       }
     };
-    const onVisible = () => { if (!document.hidden) void sync(); };
-    const timer = window.setInterval(() => { void sync(); }, 5000);
-    window.addEventListener('focus', onVisible);
-    document.addEventListener('visibilitychange', onVisible);
+    let timer: number | undefined;
+    const schedule = () => {
+      window.clearInterval(timer);
+      if (!document.hidden) timer = window.setInterval(sync, document.hasFocus() ? 5000 : 30000);
+    };
+    const onReturn = () => { schedule(); if (!document.hidden) void sync(); };
+    schedule();
+    window.addEventListener('blur', schedule);
+    window.addEventListener('focus', onReturn);
+    document.addEventListener('visibilitychange', onReturn);
     return () => {
       active = false;
       window.clearInterval(timer);
-      window.removeEventListener('focus', onVisible);
-      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('blur', schedule);
+      window.removeEventListener('focus', onReturn);
+      document.removeEventListener('visibilitychange', onReturn);
     };
-  }, [currentId]);
-  useEffect(() => {
-    scope.cancelAll();
-    const element = pageBody.current;
-    if (!element || page === 'home' || page === 'role-config' || page === 'settings' || motion.reduced) return;
-    scope.run(element, [{ opacity: .35, transform: `translateY(${readMotionPx(element, '--nd-component-motion-page-offset', 4)}px)` }, { opacity: 1, transform: 'translateY(0)' }],
-      { duration: readMotionTime(element, '--nd-component-motion-page', 360), easing: readMotionValue(element, '--nd-component-motion-ease', 'cubic-bezier(0.2, 0.8, 0.2, 1)'), slot: 'page', fill: 'backwards' });
-    return () => scope.cancelAll();
-  }, [page, motion.reduced, scope]);
+  }, [currentId, applySnapshot]);
   const accounts = roles ? { accounts: roles.map(r => ({ accountId: r.roleId, nickname: r.displayName, signature: r.roleId === currentId ? status : '' })) } : undefined;
   const currentOutfit = outfits.find(outfit => outfit.outfitId === state.outfitId) ?? null;
   const outfitHomeUrl = currentOutfit?.home ? appearanceAssetUrl(currentId, currentOutfit.home.assetId) : null;
@@ -391,18 +402,22 @@ function DeskWorkspace({ skipEntry }: { skipEntry: boolean }) {
     <UiThemeScope theme="xiacheng" className="studio-header-scope"><header className="studio-header">
       <ControlButton className="ui-studio-brand" aria-label="返回主页" onClick={() => navigate('home')}><BrandMark/><span>Nowadays<small>A NOTE FOR YOUR EVERYDAY.</small></span></ControlButton>
       <ThemeSwitcher/>
-      {page === 'role-config' || page === 'settings' || page === 'feed' ? <div className="studio-header-actions">
-        <ControlButton className="config-motion-toggle" aria-pressed={motion.reduced} aria-label="减少动效" title="减少动效"
-          onClick={() => motion.select(motion.reduced ? 'full' : 'reduced')}><Icon name="tune" size={13}/><span>减少动效</span></ControlButton>
-      </div> : <div className="studio-header-actions" aria-hidden="true"/>}
+      <div className="studio-header-actions">
+        <ControlButton className="config-motion-toggle" aria-pressed={motion.reduced} aria-label="减少动效" title={motion.preference === 'system' ? '减少动效（跟随系统）' : '减少动效'}
+          onClick={() => {
+            const nextReduced = !motion.reduced;
+            const systemReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            motion.select(nextReduced === systemReduced ? 'system' : nextReduced ? 'reduced' : 'full');
+          }}><Icon name="tune" size={13}/><span>减少动效</span></ControlButton>
+      </div>
     </header></UiThemeScope>
     <main className="studio-content" tabIndex={-1} aria-label="当前页面内容"><UiThemeProvider theme="xiacheng">
       <div ref={pageBody} className={page === 'home' ? 'studio-home-content' : page === 'roles' ? 'studio-relations-content' : page === 'conversation' ? 'studio-conversation-content' : page === 'feed' ? 'studio-feed-content' : 'studio-legacy-page'}>
-        {page === 'home' && <UiThemeScope theme="xiacheng"><HomePage accounts={accounts} selectedAccountId={currentId} outfitHomeUrl={outfitHomeUrl} outfitName={currentOutfit?.name ?? null} loading={!roles && !error} error={error} retrying={retryingRoles || retryingDetail} onRetry={retryDetail} onGoWorkbench={() => navigate('roles')} onCreateRole={() => navigate('role-config', () => issueWorkspaceRequest({ kind: 'create' }))}/></UiThemeScope>}
+        {page === 'home' && <UiThemeScope theme="xiacheng"><HomePage faceImage={faceImage} hasOutfits={outfits.length > 0} appearanceLoading={appearanceLoading} accounts={accounts} selectedAccountId={currentId} outfitHomeUrl={outfitHomeUrl} outfitName={currentOutfit?.name ?? null} loading={!roles && !error} error={error} retrying={retryingRoles || retryingDetail} onRetry={retryDetail} onGoWorkbench={() => navigate('roles')} onCreateRole={() => navigate('role-config', () => issueWorkspaceRequest({ kind: 'create' }))}/></UiThemeScope>}
         {page === 'extensions' && <ExtensionsPage state={extensions} roles={roles ?? []} seat={seat} image={faceImage}
           initial={returnPosition} onPosition={rememberDesk} onIdea={() => navigate('conversation')}/>}
-        {page === 'roles' && <Relations roles={roles || []} error={error} currentId={currentId} visit={rolesVisit} onSelect={setCurrentId} onOpenSettings={() => navigate('role-config')}/>}
-        {page === 'conversation' && <ConversationPage roles={roles || []} currentId={currentId} currentOutfit={currentOutfit} outfits={outfits} outfitHomeUrl={outfitHomeUrl} appearanceLoading={appearanceLoading} loading={!roles && !error} error={error} hideDock={hideConversationDock} onHideDockChange={setConversationDockHidden} onSelectRole={id => { setCurrentId(id); setConversationTarget(null); }} onOpenRelations={() => navigate('roles')} onConfigureModel={() => navigate('role-config', () => issueWorkspaceRequest({ kind: 'section', roleId: currentId, section: 'models' }))} onCreateRole={() => navigate('role-config', () => issueWorkspaceRequest({ kind: 'create' }))} onRoleStateChanged={() => { void refresh(); }} initialTarget={conversationTarget} onVisibleWindow={setVisibleWindow} onTargetHandled={handleConversationTarget} onReturnDesk={deskBookmark ? () => navigate('extensions', () => setReturnPosition(deskBookmark)) : undefined} onReturnFeed={conversationFromFeed ? () => navigateFeedChat('feed') : undefined}/>}
+        {page === 'roles' && <Relations roles={roles || []} loading={!roles && !error} retrying={retryingRoles} onRetry={retryRoles} error={error} currentId={currentId} visit={rolesVisit} onSelect={setCurrentId} onOpenSettings={() => navigate('role-config')}/>}
+        {page === 'conversation' && <ConversationPage roles={roles || []} retrying={retryingRoles} onRetry={retryRoles} currentId={currentId} currentOutfit={currentOutfit} outfits={outfits} outfitHomeUrl={outfitHomeUrl} appearanceLoading={appearanceLoading} loading={!roles && !error} error={error} hideDock={hideConversationDock} onHideDockChange={setConversationDockHidden} onSelectRole={id => { setCurrentId(id); setConversationTarget(null); }} onOpenRelations={() => navigate('roles')} onConfigureModel={() => navigate('role-config', () => issueWorkspaceRequest({ kind: 'section', roleId: currentId, section: 'models' }))} onCreateRole={() => navigate('role-config', () => issueWorkspaceRequest({ kind: 'create' }))} onRoleStateChanged={() => { void refresh(); }} initialTarget={conversationTarget} onVisibleWindow={setVisibleWindow} onTargetHandled={handleConversationTarget} onReturnDesk={deskBookmark ? () => navigate('extensions', () => setReturnPosition(deskBookmark)) : undefined} onReturnFeed={conversationFromFeed ? () => navigateFeedChat('feed') : undefined}/>}
         {(page === 'feed' || feedVisited) && <div className="feed-mounted" hidden={page !== 'feed'}><FeedPage active={page === 'feed'} roles={roles || []} rolesLoading={!roles && !roleListError} roleError={roleListError} retryingRoles={retryingRoles} onRetryRoles={() => void retryRoles()} onOpenChat={target => navigateFeedChat('conversation', target)}/></div>}
         {settingsVisited && <SettingsWorkspace page={page} roles={roles || []} currentId={currentId} roleListError={roleListError} retryingRoles={retryingRoles} onRetryRoles={() => void retryRoles()} onRoleDeleted={removeRoleLocally} onRefresh={refresh} onNavigate={applyPage} navigationGuard={configGuard} footerLeft={configFooterLeft} footerRight={configFooterRight} workspaceRequest={workspaceRequest} onConfigureResource={(roleId, resourceId) => navigate('role-config', () => issueWorkspaceRequest({ kind: 'section', section: 'ext', roleId, resourceId }))} onWorkspaceRequestHandled={handleWorkspaceRequestHandled} onStartConversation={roleId => navigate('conversation', () => setCurrentId(roleId))}/>}
       </div>
@@ -427,7 +442,7 @@ function DeskWorkspace({ skipEntry }: { skipEntry: boolean }) {
       <div className="studio-footer-info"><BackendConnection/>
         {page === 'role-config' ? <div ref={setConfigFooterLeft} id="config-footer-left" className="config-footer-left"/> : <span className="studio-runtime">{roles ? `${roles.length} 位角色` : error ? '资料暂时无法更新' : '正在读取角色…'}</span>}
       </div>
-      <PageDock page={page} onNavigate={next => navigate(next, () => { if (next === 'roles') setRolesVisit(value => value + 1); })}/>{page === 'role-config' || page === 'settings' ? <div ref={setConfigFooterRight} id="config-footer-right" className="config-footer-right"/> : page === 'feed' ? <span/> : <span className="studio-edition">开发版</span>}
+      <PageDock page={page} onNavigate={next => navigate(next, () => { if (next === 'roles') setRolesVisit(value => value + 1); })}/>{page === 'role-config' || page === 'settings' ? <div ref={setConfigFooterRight} id="config-footer-right" className="config-footer-right"/> : page === 'feed' || window.nowadaysDesk?.isPackaged ? <span/> : <span className="studio-edition">开发版</span>}
     </footer></UiThemeScope>}
   </div>;
 }

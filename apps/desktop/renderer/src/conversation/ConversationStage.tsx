@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { PerformanceSnapshot, PerfScene } from './performance';
 import type { PerfRow } from './history';
 import { spriteForRow } from './window-model';
-import { Button, Icon, useMotionPolicy } from '../ui';
+import { Button, useMotionPolicy } from '../ui';
 import { PhotoDevelopment } from '../ui/photo-development';
 
 export interface StageSources {

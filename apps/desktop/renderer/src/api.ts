@@ -15,18 +15,20 @@ export class ApiError extends Error {
 }
 
 async function readError(response: Response): Promise<ApiError> {
-  let message = `请求失败（${response.status}）`;
+  let message = '';
   let code: string | null = null;
   let details: unknown;
   try {
     const body = await response.json() as { error?: { message?: string; code?: string; details?: unknown } };
-    if (body.error?.message) message = body.error.message;
+    if (typeof body.error?.message === 'string') message = body.error.message;
     if (body.error?.code) code = body.error.code;
     details = body.error?.details;
-  } catch {
-    // 非 JSON 错误沿用状态码提示。
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') throw error;
+    // 非 JSON 错误沿用下方通用提示。
   }
-  return new ApiError(message, response.status, code, details);
+  if (response.status >= 500 && !/\p{Script=Han}/u.test(message)) message = '本地服务出错了，请稍后重试';
+  return new ApiError(message || `请求失败（${response.status}）`, response.status, code, details);
 }
 
 function toRequestBody(body: unknown): { headers?: HeadersInit; body?: BodyInit } {
@@ -35,12 +37,17 @@ function toRequestBody(body: unknown): { headers?: HeadersInit; body?: BodyInit 
   return { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) };
 }
 
-export function desktopFetch(path: string, init: RequestInit) {
+export async function desktopFetch(path: string, init: RequestInit) {
   const headers = new Headers(init.headers);
   if (path.startsWith('/v1/') && typeof window !== 'undefined') {
     for (const [name, value] of Object.entries(window.nowadaysDesk?.hostHeaders ?? {})) headers.set(name, value);
   }
-  return fetch(path, { ...init, headers });
+  try {
+    return await fetch(path, { ...init, headers });
+  } catch (error) {
+    if (error instanceof TypeError) throw new ApiError('本地服务暂时连不上', 0, 'BACKEND_UNREACHABLE');
+    throw error;
+  }
 }
 
 export async function api<T>(path: string, options: { method?: string; body?: unknown; signal?: AbortSignal } = {}): Promise<T> {

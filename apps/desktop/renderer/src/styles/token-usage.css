@@ -106,7 +106,7 @@
 }
 
 .nd-usage-kpi small {
-  font-size: 11.5px;
+  font-size: var(--nd-semantic-type-caption-size);
   line-height: 17px;
   color: var(--cfg-muted);
   font-variant-numeric: tabular-nums;
@@ -169,7 +169,7 @@
 }
 
 .nd-usage-daily-sub {
-  font-size: 11.5px;
+  font-size: var(--nd-semantic-type-caption-size);
   color: var(--cfg-muted);
   white-space: nowrap;
 }
@@ -256,7 +256,7 @@
 
 .nd-usage-row-sub,
 .nd-usage-row-meta {
-  font-size: 11.5px;
+  font-size: var(--nd-semantic-type-caption-size);
   line-height: 17px;
   color: var(--cfg-muted);
   overflow-wrap: anywhere;
@@ -267,7 +267,7 @@
   padding: 1px 6px;
   border: 1px solid var(--cfg-line);
   border-radius: var(--nd-semantic-radius-round);
-  font-size: 10.5px;
+  font-size: var(--nd-semantic-type-caption-size);
   line-height: 15px;
   font-weight: 500;
   color: var(--cfg-muted);

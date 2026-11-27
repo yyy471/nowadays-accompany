@@ -208,7 +208,7 @@ const json = (body, method = 'POST') => ({
 
 async function openMenuPage(label) {
   await until(() => ev(`(() => {
-    const trigger=document.querySelector('.ui-menu-trigger');
+    const trigger=document.querySelector('.ui-page-dock .ui-menu-trigger');
     if(!trigger)return false;
     if(trigger.getAttribute('aria-expanded')!=='true'){trigger.click();return false;}
     const item=[...document.querySelectorAll('.ui-menu-panel:not([inert]) .ui-menu-item')].find(button=>button.textContent.trim()===${JSON.stringify(label)});
@@ -404,7 +404,7 @@ async function run() {
   await ev("[...document.querySelectorAll('.ui-dock-item')].find(x=>x.textContent.includes('对话')).click()");
   await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='conversation' && !!document.querySelector('.dialogue-role-switch button')"), 'conversation-role-switch');
   await ev("document.querySelector('.dialogue-role-switch button').click()");
-  await ev("[...document.querySelectorAll('.dialogue-role-menu button')].find(x=>x.textContent.includes('林雾')).click()");
+  await ev("[...document.querySelectorAll('.dialogue-role-switch [role=menuitemradio]')].find(x=>x.textContent.includes('林雾')).click()");
   await until(() => ev("document.querySelector('.dialogue-role-switch button')?.getAttribute('aria-label')?.includes('林雾')"), 'conversation-selected-role');
   await until(() => ev("[...document.querySelectorAll('button')].some(button=>button.textContent==='恢复活动')"), 'conversation-resume-visible');
   await ev("[...document.querySelectorAll('button')].find(button=>button.textContent==='恢复活动').click()");

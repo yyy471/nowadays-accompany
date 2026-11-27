@@ -105,7 +105,7 @@ async function run() {
   if (roles.length > 1) await until("ROLE_MENU", () => evaluate("!!document.querySelector('.dialogue-role-switch button')"));
   if (roles.length > 1 && !(await evaluate("document.querySelector('.dialogue-role-switch button').getAttribute('aria-label')")).includes(roleName)) {
     await evaluate("document.querySelector(" + JSON.stringify(roleButton) + ").click()");
-    await evaluate("[...document.querySelectorAll('.dialogue-role-switch [role=menuitem]')].find(x=>x.textContent.includes(" + JSON.stringify(roleName) + ")).click()");
+    await evaluate("[...document.querySelectorAll('.dialogue-role-switch [role=menuitemradio]')].find(x=>x.textContent.includes(" + JSON.stringify(roleName) + ")).click()");
   }
   await until("SSE_CONNECTED", () => evaluate("document.querySelector('.dialogue-connection')?.dataset.state === 'open'"));
   const prompts = [

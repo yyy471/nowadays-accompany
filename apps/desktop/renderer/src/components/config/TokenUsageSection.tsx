@@ -1,3 +1,4 @@
+import { errorText } from '../../lib/error-text';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../api';
 import {
@@ -97,7 +98,7 @@ export function TokenUsageSection({ active }: { active: boolean }) {
         if (controller.signal.aborted || seq !== seqRef.current) return;
         setLoading(false);
         setRefreshing(false);
-        setError(reason instanceof Error ? reason.message : String(reason));
+        setError(errorText(reason));
       });
     return () => {
       controller.abort();

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type Ref } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type Ref, type RefObject } from 'react';
 import { ControlButton } from './controls';
 import { Icon, type IconName } from './icons';
 import { createMotionScope, readMotionPx, readMotionTime, readMotionValue, useMotionPolicy } from './motion';
@@ -6,8 +6,8 @@ import { createMotionScope, readMotionPx, readMotionTime, readMotionValue, useMo
 export type MenuItem = { id: string; label: string; icon?: IconName; disabled?: boolean; onSelect: () => void };
 
 /** 根据触发器的实际位置和完整菜单高度选边；上下各留 16px 视口边距与 8px 间距。 */
-export function menuPlacement(anchor: Pick<DOMRect, 'top' | 'bottom'>, container: Pick<DOMRect, 'top' | 'bottom'>, viewport: number, height: number) {
-  const above = Math.max(0, anchor.top - 24);
+export function menuPlacement(anchor: Pick<DOMRect, 'top' | 'bottom'>, container: Pick<DOMRect, 'top' | 'bottom'>, viewport: number, height: number, top = 0) {
+  const above = Math.max(0, anchor.top - top - 24);
   const below = Math.max(0, viewport - anchor.bottom - 24);
   const upward = below < Math.min(height, 420) && above > below;
   return {
@@ -27,9 +27,9 @@ export function menuKeyIndex(key: string, index: number, count: number) {
 }
 
 /** Action menu; account selection and page navigation have separate semantics. */
-export function DropdownMenu({ label, items, currentLabel, selectedPage, triggerIcon, triggerRef, triggerClassName, triggerLayout = 'inline', triggerDecoration }: {
+export function DropdownMenu({ label, items, currentLabel, selectedPage, triggerAriaLabel, boundaryRef, triggerIcon, triggerRef, triggerClassName, triggerLayout = 'inline', triggerDecoration }: {
   label: string; items: MenuItem[]; currentLabel?: string;
-  selectedPage?: string;
+  selectedPage?: string; triggerAriaLabel?: string; boundaryRef?: RefObject<HTMLElement | null>;
   /** 公共触发器扩展：Dock等场景可提供图标、布局与装饰，不复制菜单。 */
   triggerIcon?: IconName; triggerRef?: Ref<HTMLButtonElement>; triggerClassName?: string;
   triggerLayout?: 'inline' | 'stacked'; triggerDecoration?: ReactNode;
@@ -98,9 +98,10 @@ export function DropdownMenu({ label, items, currentLabel, selectedPage, trigger
     const place = () => {
       if (!trigger.current || !panel.current || !root.current) return;
       const anchor = trigger.current.getBoundingClientRect(), container = root.current.getBoundingClientRect();
-      const left = Math.max(16, Math.min(anchor.right - panel.current.offsetWidth, innerWidth - panel.current.offsetWidth - 16)) - container.left;
+      const bounds = boundaryRef?.current?.getBoundingClientRect();
+      const left = Math.max((bounds?.left ?? 0) + 16, Math.min(anchor.right - panel.current.offsetWidth, (bounds?.right ?? innerWidth) - panel.current.offsetWidth - 16)) - container.left;
       const height = panel.current.scrollHeight + panel.current.offsetHeight - panel.current.clientHeight;
-      const placement = menuPlacement(anchor, container, innerHeight, height);
+      const placement = menuPlacement(anchor, container, bounds?.bottom ?? innerHeight, height, bounds?.top);
       opensUp.current = placement.top === 'auto';
       setPosition({ left, right: 'auto', ...placement });
     };
@@ -108,7 +109,7 @@ export function DropdownMenu({ label, items, currentLabel, selectedPage, trigger
     const scrolled = (event: Event) => { if (!(event.target instanceof Node) || !panel.current?.contains(event.target)) requestClose(); };
     document.addEventListener('scroll', scrolled, true);
     return () => { window.removeEventListener('resize', place); document.removeEventListener('scroll', scrolled, true); };
-  }, [open, requestClose]);
+  }, [open, requestClose, boundaryRef]);
 
   useLayoutEffect(() => {
     if (!present || !open) return;
@@ -199,7 +200,7 @@ export function DropdownMenu({ label, items, currentLabel, selectedPage, trigger
     else if (triggerRef) (triggerRef as { current: HTMLButtonElement | null }).current = node;
   };
   return <div className="ui-menu" ref={root}>
-    <ControlButton className={`ui-menu-trigger${triggerClassName ? ` ${triggerClassName}` : ''}`} ref={setTrigger} data-current={currentLabel ? true : undefined} aria-label={currentLabel ? `${label}，当前页面：${currentLabel}` : undefined} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? id : undefined}
+    <ControlButton className={`ui-menu-trigger${triggerClassName ? ` ${triggerClassName}` : ''}`} ref={setTrigger} data-current={currentLabel ? true : undefined} aria-label={triggerAriaLabel ?? (currentLabel ? `${label}，当前页面：${currentLabel}` : undefined)} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? id : undefined}
       onClick={() => { if (open) requestClose(); else requestOpen('selected'); }}
       onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); requestOpen(event.key === 'ArrowUp' ? 'last' : 'first'); } }}>
       {triggerIcon ? <span className="ui-menu-trigger-icon" aria-hidden="true"><Icon name={triggerIcon} size={20} /></span> : null}

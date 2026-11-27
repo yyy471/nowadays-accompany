@@ -32,6 +32,7 @@ export function RoleEntry({
   const night = preset === 'nightwave';
   const motion = useMotionPolicy();
   const [selected, setSelected] = useState(() => defaultEntryChoice(roles));
+  const [autoFocus, setAutoFocus] = useState(true);
   const firstCard = useRef<HTMLButtonElement | null>(null);
   const cards = entryRoles(roles);
   const choice = resolveEntryChoice(roles, selected);
@@ -53,7 +54,8 @@ export function RoleEntry({
   }, [loading, cards.length === 0]);
 
   return <UiThemeScope theme="xiacheng" preset={preset} motion={motion.reduced ? 'reduced' : 'full'} className="role-entry-host">
-    <div className="role-entry" data-ui-preset={preset} data-theme={night ? 'night' : 'day'} data-motion={motion.reduced ? 'reduced' : 'full'}>
+    <div className="role-entry" data-ui-preset={preset} data-theme={night ? 'night' : 'day'} data-motion={motion.reduced ? 'reduced' : 'full'}
+      onKeyDownCapture={() => setAutoFocus(false)}>
       <header className="role-entry-header">
         <span className="role-entry-brand"><BrandMark/><span>Nowadays<small>A NOTE FOR YOUR EVERYDAY.</small></span></span>
       </header>
@@ -73,6 +75,8 @@ export function RoleEntry({
                 type="button"
                 key={role.roleId}
                 ref={index === 0 ? firstCard : undefined}
+                data-autofocus={autoFocus && index === 0 && !loading || undefined}
+                onBlur={() => setAutoFocus(false)}
                 className="role-entry-card"
                 aria-pressed={role.roleId === choice}
                 data-builtin={role.isBuiltin ? '' : undefined}

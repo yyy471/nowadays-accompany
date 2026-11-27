@@ -90,7 +90,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: var(--nd-semantic-type-caption-size);
   line-height: 16px;
   color: var(--cfg-muted);
   opacity: .85;
@@ -220,7 +220,7 @@
   margin-left: 0;
   min-width: 0;
   max-width: 100%;
-  font-size: 11.5px;
+  font-size: var(--nd-semantic-type-caption-size);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -233,9 +233,9 @@
 .config-service-actions .config-save-btn .config-save-n[data-count-hidden="true"] { max-width: 0; min-width: 0; padding: 0; opacity: 0; }
 
 .config-service-actions { gap: 10px; white-space: nowrap; }
-.config-service-action-status { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--cfg-muted); font-size: 11.5px; }
+.config-service-action-status { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--cfg-muted); font-size: var(--nd-semantic-type-caption-size); }
 .config-service-action-status .config-sheet-error { display: block; white-space: normal; padding: 0; }
-.config-service-action-dep { max-width: 42%; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--nd-semantic-color-warning); font-size: 11.5px; }
+.config-service-action-dep { max-width: 42%; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--nd-semantic-color-warning); font-size: var(--nd-semantic-type-caption-size); }
 
 .config-sheet:has(.config-service-form) .config-connection { grid-template-columns: minmax(0, 1fr); gap: 12px; }
 .config-sheet:has(.config-service-form) .config-connection > .field:first-child,
@@ -262,14 +262,14 @@
 }
 .config-service-probe-action { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
 .config-service-probe-action p { margin: 0; min-width: 0; overflow-wrap: anywhere; }
-.config-service-form-note { margin: 0; color: var(--nd-semantic-color-warning); font-size: 11.5px; animation: config-service-dependency-in var(--nd-semantic-motion-component) var(--nd-semantic-motion-ease-out) both; }
+.config-service-form-note { margin: 0; color: var(--nd-semantic-color-warning); font-size: var(--nd-semantic-type-caption-size); animation: config-service-dependency-in var(--nd-semantic-motion-component) var(--nd-semantic-motion-ease-out) both; }
 @keyframes config-service-dependency-in { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
 .config-workspace .config-service-delete-actions .btn-danger {
   color: var(--nd-semantic-color-on-solid);
   background: var(--nd-semantic-color-danger);
   border-color: var(--nd-semantic-color-danger);
 }
-.config-occupancy-details { margin: 0 0 10px; font-size: 11.5px; color: var(--cfg-muted); }
+.config-occupancy-details { margin: 0 0 10px; font-size: var(--nd-semantic-type-caption-size); color: var(--cfg-muted); }
 .config-occupancy-details > summary { width: fit-content; cursor: pointer; }
 .config-pause-feedback { display: flex; width: 100%; justify-content: space-between; }
 .config-pause-feedback .config-pause-resume { display: flex; gap: 10px; margin-left: auto; align-items: center; }
@@ -330,7 +330,6 @@
   .config-service-line h2 { grid-area: name; font-size: 20px; line-height: 28px; }
   .config-service-line .ui-dot { grid-area: st; }
   .config-service-line .config-service-edit { grid-area: edit; }
-  .config-service-line p { display: block; grid-area: addr; margin: 2px 0 0; font: 11.5px/17px var(--nd-semantic-font-code); }
   .config-status-wall { grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 12px; }
   .config-status-page .config-sec-head h2 { font-size: 20px; line-height: 28px; }
   .config-status-actions { flex-wrap: wrap; }

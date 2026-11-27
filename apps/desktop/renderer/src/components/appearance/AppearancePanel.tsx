@@ -1,3 +1,4 @@
+import { errorText } from '../../lib/error-text';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { api, apiUpload, ApiError } from '../../api';
@@ -157,7 +158,7 @@ export function AppearancePanel({
       return result.items;
     } catch (e) {
       if (isStale(token)) return;
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
     } finally {
       if (!isStale(token)) setLoading(false);
     }
@@ -172,7 +173,7 @@ export function AppearancePanel({
       setItems(result.items);
       setLoading(false);
     }).catch(e => {
-      if (active) { setReadError(e instanceof Error ? e.message : String(e)); setLoading(false); }
+      if (active) { setReadError(errorMessage(e)); setLoading(false); }
     });
     // 当前穿着用于卡片状态点；读不到时不显示状态，不影响衣柜本身。
     void api<{ state: Record<string, unknown> }>(`/v1/roles/${encodeURIComponent(roleId)}/state`).then(result => {
@@ -269,6 +270,7 @@ export function AppearancePanel({
         for (const sprite of plan.sprites) form.append('sprites', sprite, sprite.name);
         const result = await write.runWrite({
           roleIds: [roleId],
+          errorMessage,
           verb: '导入服饰',
           announceSuccess: false,
           commit: async () => {
@@ -357,7 +359,7 @@ export function AppearancePanel({
     ? T27
     : reason instanceof ApiError && reason.code === 'ROLE_NOT_STOPPED'
       ? '请先在「角色状态」停止角色活动，再试一次。'
-      : reason instanceof Error ? reason.message : String(reason);
+      : errorText(reason);
 
   const saveOutfit = async () => {
     if (!activeOutfit || !draft || write.busy || !canWrite) return;
@@ -369,6 +371,7 @@ export function AppearancePanel({
     setBusy(true);
     const result = await write.runWrite({
       roleIds: [roleId],
+      errorMessage,
       verb: '保存服饰',
       announceSuccess: false,
       commit: async () => {
@@ -395,6 +398,7 @@ export function AppearancePanel({
     const currentRemoved = activeOutfit.outfitId === currentOutfitId;
     const result = await write.runWrite({
       roleIds: [roleId],
+      errorMessage,
       verb: '删除服饰',
       announceSuccess: false,
       commit: async () => {
@@ -429,6 +433,7 @@ export function AppearancePanel({
     const uploadResult: { asset?: OutfitAsset } = {};
     const result = await write.runWrite({
       roleIds: [roleId],
+      errorMessage,
       verb: home ? '更新主页立绘' : replaceAssetId ? '替换差分' : '上传差分',
       announceSuccess: false,
       commit: async () => {
@@ -463,6 +468,7 @@ export function AppearancePanel({
     setBusy(true); setError('');
     const result = await write.runWrite({
       roleIds: [roleId],
+      errorMessage,
       verb: `删除${label}`,
       announceSuccess: false,
       commit: async () => {

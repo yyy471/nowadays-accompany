@@ -8,7 +8,7 @@ if (process.isMainFrame && location.href === "desk://bundle/index.html") {
     else ipcRenderer.send("desk:intent-reply", request.id, true); // 封面阶段尚无编辑器。
   });
   contextBridge.exposeInMainWorld("nowadaysDesk", {
-    hostHeaders: ipcRenderer.sendSync("desk:host-headers"),
+    ...ipcRenderer.sendSync("desk:config"),
     setWindowTheme: (preset, color) => ipcRenderer.send("desk:window-theme", preset, color),
     boot: () => ipcRenderer.invoke("desk:boot"),
     onIntent: callback => {

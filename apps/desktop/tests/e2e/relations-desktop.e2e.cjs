@@ -150,8 +150,16 @@ async function verifyRefresh() {
   await ev("document.querySelector('[aria-label=刷新藏页]').focus(); document.querySelector('[aria-label=刷新藏页]').click()");
   await until(() => refreshResponse && ev("document.querySelector('[aria-label=刷新藏页]')?.getAttribute('aria-busy') === 'true'"));
   assert.ok(await ev("document.querySelector('.evidence[data-state=ready]')?.textContent.includes('保存的原始记录')"));
+  json(refreshResponse, { error: { code: 'BACKEND_OFFLINE', message: '本地服务暂时连不上' } }, 503);
+  await until(() => ev("document.querySelector('.sheet-footer')?.textContent.includes('仍显示上次的内容')"));
+  assert.match(await ev("document.querySelector('.rail-identity').textContent"), /乙角色的近况/);
+  refreshResponse = null;
+  holdRefresh = true;
+  await ev("document.querySelector('.sheet-footer button').click()");
+  await until(() => refreshResponse);
   json(refreshResponse, { state: { outfitId: 'o', mood: '已更新的近况', ...profileFields }, stateVersion: 2, updatedAt: now });
   await until(() => ev("document.querySelector('.rail-identity')?.textContent.includes('已更新的近况') && !document.querySelector('[aria-label=刷新藏页]').hasAttribute('aria-busy')"));
+  assert.doesNotMatch(await ev("document.querySelector('.sheet-footer').textContent"), /仍显示上次的内容/);
 }
 async function verifyCorrectionLayout() {
   await cmd('Emulation.setDeviceMetricsOverride', { width: 720, height: 540, deviceScaleFactor: 1, mobile: false });

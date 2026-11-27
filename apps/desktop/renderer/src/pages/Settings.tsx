@@ -1,3 +1,4 @@
+import { errorText } from '../lib/error-text';
 import { ExtensionCreate, ExtensionFields, SavedMcpProbe, parseExtensionEnv } from '../components/config/ExtensionImport';
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import { createPortal, flushSync } from 'react-dom';
@@ -82,8 +83,6 @@ const settingSections: Array<[SettingsSection, string, string]> = [['model', '�
 const wideSection = (id: string) => id === 'roles' || id === 'usage' || id === 'engineering';
 const modelBaseUrlPlaceholder = (adapter: string) => defaultModelBaseUrl(adapter) || 'https://…/v1';
 const modelAdapterLabel = (adapter: string) => MODEL_ADAPTER_OPTIONS.find(option => option.value === adapter)?.label ?? adapter;
-const errorText = (e: unknown) => e instanceof Error ? e.message : String(e);
-
 type RoleDirty = { profile: boolean; models: boolean; voice: boolean; image: boolean; ext: boolean; quota: boolean };
 type RoleEditorState = { dirty: RoleDirty; busy: boolean; profileCount: number; discardProfile: () => void; discard: () => void };
 export type WorkspaceRequest = { kind: 'create' } | { kind: 'section'; section: 'models'; roleId: string }
@@ -132,7 +131,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
   const focusSectionHeading = () => {
     const content = contentRef.current;
     if (!content) return;
-    // 分区用 hidden 切换，只挑当前可见的标题（角色分区 .config-sec-head，设置分区 ConfigHeading）。
+    // 分区用 hidden 切换，只聚焦当前可见的标题。
     const heading = [...content.querySelectorAll<HTMLElement>('h2')].find(item => item.offsetParent !== null);
     heading?.focus({ preventScroll: true });
   };
@@ -587,6 +586,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
   const sectionTitle = (roleActive ? roleSections : settingSections).find(item => item[0] === (roleActive ? roleSection : settingsSection))?.[1];
   const dirtyScopes = roleDirty[editId];
   return <WriteProvider roleName={id => roleDisplayName(roles, id)} onActivityChanged={() => setRefreshVersion(v => v + 1)}><SheetProvider controller={sheetController}><div className="config-workspace" data-ui-theme="xiacheng" data-ui-preset={preset} hidden={!roleActive && !settingsActive}>
+    <h1 className="sr-only">{roleActive ? '角色配置' : '设置'}</h1>
     <LiveAnnouncer/>
     <WriteResultNotice/>
     {(roleActive || settingsActive) && <ConfigThemeTransition/>}
@@ -688,7 +688,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
                   return true;
                 } catch (error) { if (!signal.aborted) setResourceError(errorText(error)); return false; }
                 finally { setCatalogReady(previous => ({ ...previous, resources: true })); }
-              }}/></div><div><span>版本</span><b>{T26.version}</b></div>
+              }}/></div>{!window.nowadaysDesk?.isPackaged && <div><span>版本</span><b>{T26.version}</b></div>}
             </div></div></div>}
 
         </div>
@@ -1182,7 +1182,6 @@ type ModelProbeState = ReturnType<typeof useModelProbe>;
 /** 模型摘要行（规范 §二.2）：值 =「服务 · 模型」，第二行写协议或继承关系；状态点 bare。 */
 function ModelRow({ kind, bindings, resources, draft, loaded, onOpen }: { kind: 'chat' | 'memory'; bindings: Binding[]; resources: Resource[]; draft: ModelDraftState; loaded: boolean; onOpen: (group?: '服务' | '连接测试', anchor?: HTMLElement) => void }) {
   const label = kind === 'chat' ? '对话' : '记忆整理';
-  const capability = kind === 'chat' ? 'chat_model' : 'memory_model';
   const resourceId = kind === 'chat' ? draft.chatResource : draft.memoryResource;
   const modelName = kind === 'chat' ? draft.chatModel : draft.memoryModel;
   const resource = resources.find(item => item.resourceId === resourceId);
@@ -1494,10 +1493,6 @@ function RoleStatusCards({ roles, activities, loading, error, onRefresh, onRoles
       </article>;
     })}</div>
   </div>;
-}
-
-function ConfigHeading({ number, label, english, title, description }: { number: string; label: string; english: string; title: string; description: string }) {
-  return <header className="config-section-heading"><small><i>{number}</i> {label} · {english}</small><h2 tabIndex={-1}>{title}</h2><p>{description}</p></header>;
 }
 
 /** 为保存而暂停的角色提供一键恢复（T30），两页页脚右侧共用。 */

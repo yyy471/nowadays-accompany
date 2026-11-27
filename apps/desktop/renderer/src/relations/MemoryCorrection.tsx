@@ -1,3 +1,4 @@
+import { errorText } from '../lib/error-text';
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../api';
 import { Button, Checkbox, ErrorNote, Field, Input, Modal, Textarea } from '../ui';
@@ -45,7 +46,7 @@ export function MemoryCorrection({ open, roleId, target, source, onClose, onExit
     void api<Detail>(route, { signal: controller.signal }).then(value => {
       if (controller.signal.aborted) return;
       setBase(value); setDraft(value);
-    }).catch(reason => { if (!controller.signal.aborted) setError(String(reason.message ?? reason)); });
+    }).catch(reason => { if (!controller.signal.aborted) setError(errorText(reason)); });
     return () => controller.abort();
   }, [route, attempt]);
   async function search() {
@@ -55,7 +56,7 @@ export function MemoryCorrection({ open, roleId, target, source, onClose, onExit
       const result = await api<{ items: SearchHit[] }>(prefix + 'search', { method: 'POST',
         body: { query: query.trim(), types: ['event', 'daily_summary'], limit: 20 } });
       if (mounted.current) setHits(result.items);
-    } catch (reason) { if (mounted.current) setError(reason instanceof Error ? reason.message : String(reason)); }
+    } catch (reason) { if (mounted.current) setError(errorText(reason)); }
     finally { lock.current = false; if (mounted.current) setBusy(false); }
   }
   const changes: Partial<RecordText> = {};
@@ -86,7 +87,7 @@ export function MemoryCorrection({ open, roleId, target, source, onClose, onExit
           const latest = await api<Detail>(route);
           if (mounted.current) setConflict(latest);
         } catch { if (mounted.current) setError('暂时无法读取最新版本，草稿已保留，可再次保存重试。'); }
-      } else setError(reason instanceof Error ? reason.message : String(reason));
+      } else setError(errorText(reason));
     } finally { lock.current = false; if (mounted.current) setBusy(false); }
   }
   return <Modal open={open} title={selected ? (event ? '更正经历' : '更正日常摘要') : '查找要更正的记忆'}

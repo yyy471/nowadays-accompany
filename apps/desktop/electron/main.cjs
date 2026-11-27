@@ -172,12 +172,10 @@ function startDesk() {
     if (pathname.startsWith("/v1/")) {
       // 扩展文件只通过 nd-ext 加载，避免同一份代码也能从桌面来源取得。
       if (/^\/v1\/extensions\/[^/]+\/ui\//.test(pathname)) return new Response(null, { status: 404 });
-      if (!backendBaseUrl) {
-        return new Response(
-          JSON.stringify({ error: { code: "BACKEND_OFFLINE", message: "本地后端尚未就绪" } }),
-          { status: 503, headers: { "content-type": "application/json; charset=utf-8" } }
-        );
-      }
+      const offline = () => Response.json(
+        { error: { code: "BACKEND_OFFLINE", message: "本地服务暂时连不上" } }, { status: 503 }
+      );
+      if (!backendBaseUrl) return offline();
       const targetUrl = `${backendBaseUrl}${pathname}${search}`;
       const init = {
         method: request.method,
@@ -189,7 +187,11 @@ function startDesk() {
       if (request.method !== "GET" && request.method !== "HEAD" && request.body) {
         init.body = await request.arrayBuffer();
       }
-      return net.fetch(targetUrl, init);
+      try {
+        return await net.fetch(targetUrl, init);
+      } catch {
+        return offline();
+      }
     }
 
     // 3. 静态资源服务
@@ -214,8 +216,8 @@ function startDesk() {
     titleBarStyle: "default",
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, preload: join(__dirname, "settings-preload.cjs") }
   });
-  ipcMain.on("desk:host-headers", event => {
-    event.returnValue = trusted(event) ? hostHeaders : {};
+  ipcMain.on("desk:config", event => {
+    event.returnValue = trusted(event) ? { hostHeaders, isPackaged: app.isPackaged } : {};
   });
   async function prepareBackend() {
     const base = configuredBackend || await startManagedBackend();

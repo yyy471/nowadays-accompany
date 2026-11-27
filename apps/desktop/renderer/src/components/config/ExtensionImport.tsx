@@ -1,3 +1,4 @@
+import { errorText } from '../../lib/error-text';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../api';
 import { Button, Field, Input, Select, Textarea } from '../../ui';
@@ -8,8 +9,6 @@ import { ServiceSheet, ServiceSheetActions } from './ServiceParts';
 import { useWrite } from './write-runner';
 import { T11 } from './config-texts';
 import { mcpSummary, skillIssue, parseMcpImport, personalArgument, type McpDraft } from './extension-import';
-
-const errorText = (reason: unknown) => reason instanceof Error ? reason.message : String(reason);
 
 export function parseExtensionEnv(value: string): Record<string, string> | null {
   try {

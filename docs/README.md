@@ -229,7 +229,7 @@ docs/
 | [239 对话页 Dock 显示设置](./archive/02-desktop-ui-and-relations/239-dialogue-dock-visibility.md) | 对话页可隐藏底部导航、其他页面保留导航及本地偏好（DL-145）；实现方自验，**独立复核待执行** |
 | [240 关系页顶部栏精简](./archive/02-desktop-ui-and-relations/240-relations-header-removal.md) | 移除关系页顶部标题栏并将日夜装饰条移入书页右上方（DL-146）；2026-11-10 经用户确认通过 |
 | [403 动态页 v2 迁移](./archive/02-desktop-ui-and-relations/403-feed-v2-migration.md) | 原型结构、数据适配、三项修复与 Electron 独立离线复验 |
-| [408 桌面前端二期精修实施与复核](./archive/02-desktop-ui-and-relations/408-frontend-refinement-v2.md) | 扩展与工签、壳层与主题切屏、核心页面与骨架、启动封面与关窗／退出确认，以及全页视觉复核后的六项补修 |
+| [408 桌面前端二期精修实施与复核](./archive/02-desktop-ui-and-relations/408-frontend-refinement-v2.md) | 扩展与工签、壳层与主题切屏、核心页面与骨架、启动封面与关窗／退出确认、全页视觉补修，以及第一批启动动画与断线恢复 |
 | [407 桌面书房界面分批实施与复验](./archive/02-desktop-ui-and-relations/407-frontend-polish.md) | 各批范围、布局与动效回归、昼夜截图及最终离线交付证据 |
 
 </details>

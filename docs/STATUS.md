@@ -4,6 +4,8 @@
 
 ## 1. 当前结论概览
 
+**前端精修 Batch 2 已通过主代理合审与 Windows 离线门禁，待用户最终视觉复核。** 启动封面按原始 demo 的灯光与翻页参数去框，七页壳层和普通导航统一。720×540 停止态对话保留 186.67px 消息区，关系首屏可见藏书票人像。仓库 Node 24.22.2 下，渲染器检查、185/185 单测、生产构建、桌面壳 18/18 单测、全量串行 Electron 27/27 通过。两张指定启动截图已更新。[408 Batch 2 验证记录](./archive/02-desktop-ui-and-relations/408-frontend-refinement-v2.md#batch-2-壳层转场与页面细节) · [第一批记录](./archive/02-desktop-ui-and-relations/408-frontend-refinement-v2.md#第一批启动动画首次活动与断线恢复)
+
 **Pi 工程消耗池与独立设置分区（DL-201）**已通过后端、协议和桌面三块交叉复核。空池隐藏工程工具，首轮 429 结束当前工程，下一工程按策略选择成员。两条本地端点的并发回放验证了任务粘性、清池后续行和删除保护。已用实际 Pi SDK 回放五条本地线路，验证回环鉴权、Vertex 入口、分帧用量与撤租。真实远端服务联调另行留证。[工程契约](./specs/role-config-and-activity.md#36-受托管工程-mcpdl-195) · [产品决定](./161-digital-life-direction-decisions.md#dl-201-pi-使用独立工程模型消耗池)
 
 Windows 仓库 Node 24.22.2 下，后端类型检查与 80 个文件的 624/624 项测试通过。离线验收 21/21 步、81/81 个场景通过，其中正式测试复跑 624/624，交付测试 5/5，真实服务调用 0。Pi 子包 5/5，渲染器检查 3/3（37 个 CSS、违规 0）、单测 177/177、生产构建与桌面壳 18/18 通过。首轮串行 Electron 为 25/27，修正设置书签点击同步与 Vertex 预置候选定位后，Electron 39.8.10 最终同轮串行 27/27 通过。进程基线比对新增残留 0。全量报告为 `test-results/backend-acceptance/p5-2026-11-27T04-07-17-437Z-1625babf/summary.json` 和 `test-results/desktop-e2e/e2e-2026-11-27T04-07-50-486Z-3541de27/gates.json`。

@@ -28,7 +28,7 @@ export function MediaRow({ id, label, value, keys, status, statusText }: {
 }
 
 export function MediaStateRow({ label, loading, error, onRetry }: { label: string; loading: boolean; error: string; onRetry: () => void }) {
-  if (!loading) return <div className="config-load-err" role="alert"><StatusDot status="error" label={T35(error)}/><Button size="sm" onClick={onRetry}>{T35_RETRY}</Button></div>;
+  if (!loading) return <div className="config-load-err" role="alert"><StatusDot status="error" label={T35(label, error)}/><Button size="sm" onClick={onRetry}>{T35_RETRY}</Button></div>;
   return <div className="config-sum config-skel" aria-busy="true" aria-label={label}><span className="config-sum-name"><i/></span><span className="config-sum-val"><i/><i className="short"/></span></div>;
 }
 

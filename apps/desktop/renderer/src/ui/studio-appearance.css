@@ -16,9 +16,6 @@
   [data-ui-theme="xiacheng"] .ui-account-choice:hover:not(:disabled, [aria-disabled="true"], [aria-busy="true"]) { border-color:var(--nd-semantic-color-line-control); }
 }
 [data-ui-theme="xiacheng"] .ui-account-choice:disabled { color:var(--nd-semantic-color-disabled-text);cursor:not-allowed; }
-[data-ui-theme="xiacheng"] .home-avatar { display:grid;place-items:center;flex-shrink:0;width:48px;height:48px;overflow:hidden;border:1px solid var(--nd-semantic-color-line-decorative);border-radius:var(--nd-semantic-radius-field);background:var(--nd-semantic-color-selection);color:var(--nd-semantic-color-entry); }
-[data-ui-theme="xiacheng"] .home-avatar>img { width:100%;height:100%;object-fit:cover; }
-[data-ui-theme="xiacheng"] .home-avatar .avatar-fallback { display:grid;place-items:center;width:100%;height:100%;color:var(--nd-semantic-color-entry);background:var(--nd-semantic-color-transparent); }
 [data-ui-theme="xiacheng"] .ui-switch-trailing .ui-switch-label { order:1;font-weight:var(--nd-semantic-type-emphasis); }
 [data-ui-theme="xiacheng"] .ui-switch-trailing .ui-switch-value { order:2;margin-left:0; }
 [data-ui-theme="xiacheng"] .ui-switch-trailing .ui-switch-track { order:3;margin-left:auto; }

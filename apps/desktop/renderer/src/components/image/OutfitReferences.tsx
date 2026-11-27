@@ -1,3 +1,4 @@
+import { errorText } from '../../lib/error-text';
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../../api';
 import { describeImageFailure } from '../../image-config';
@@ -6,8 +7,8 @@ import { Button, ErrorNote, Field, Input } from '../../ui';
 
 type Entry = { outfitId: string; assetId: string };
 function describeRefError(reason: unknown): string {
-  if (reason instanceof ApiError) return describeImageFailure(reason.code, reason.message);
-  return reason instanceof Error ? reason.message : String(reason);
+  if (reason instanceof ApiError) return describeImageFailure(reason.code, errorText(reason));
+  return errorText(reason);
 }
 export function OutfitReferences({ roleId, outfits, guardWrite, onChanged }: {
   roleId: string; outfits: Outfit[]; guardWrite: <T>(action: () => Promise<T>, verb?: string) => Promise<T>;

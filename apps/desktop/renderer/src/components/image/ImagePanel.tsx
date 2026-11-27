@@ -1,3 +1,4 @@
+import { errorText } from '../../lib/error-text';
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type SetStateAction } from 'react';
 import { api, ApiError } from '../../api';
 import { appearanceAssetUrl, type Outfit } from '../../types';
@@ -84,8 +85,8 @@ type NoticeKind = '' | 'anchor' | 'preview' | 'save';
 const DEFAULT_PREVIEW_PROMPT = '半身肖像，柔和自然光，背景简洁，细节清晰';
 
 function failureText(reason: unknown): string {
-  if (reason instanceof ApiError) return describeImageFailure(reason.code, reason.message);
-  return reason instanceof Error ? reason.message : String(reason);
+  if (reason instanceof ApiError) return describeImageFailure(reason.code, errorText(reason));
+  return errorText(reason);
 }
 
 export function ImagePanel({
@@ -698,7 +699,7 @@ export function ImagePanel({
           if (!workflow || typeof workflow !== 'object' || Array.isArray(workflow) || !Object.keys(workflow).length ||
             !Object.values(workflow).every(node => node && typeof node === 'object' && 'class_type' in node && 'inputs' in node)) throw Error('请选择 ComfyUI 导出的 API 格式工作流 JSON。');
           patch({ workflow, outputNodeId: null }); setError('');
-        } catch (reason) { if (!isStale(token)) setError(reason instanceof Error ? reason.message : String(reason)); }
+        } catch (reason) { if (!isStale(token)) setError(errorText(reason)); }
       }}/>
     </Field>
     {form.workflow && <><Field label="输出节点 ID" hint="留空使用首个 SaveImage。">

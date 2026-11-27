@@ -1,3 +1,4 @@
+import { errorText } from '../../lib/error-text';
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../../api';
 import { LIVE, T29, T32 } from './config-texts';
@@ -13,6 +14,7 @@ type WriteInput = {
   verb: string;
   commit: () => Promise<void>;
   toggle?: boolean;
+  errorMessage?: (error: unknown) => string;
   /** 特定结果由纸笺收回后的反馈统一播报。 */
   announceSuccess?: boolean;
 };
@@ -158,7 +160,7 @@ export function WriteProvider({ children, roleName, onActivityChanged }: { child
       if (input.announceSuccess !== false) reportResult(LIVE.saved(input.verb));
       return { ok: true as const };
     } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
+      const reason = (input.errorMessage ?? errorText)(error);
       if (pausingRole) {
         return { ok: false as const, failure: { phase: 'pause' as const, message: input.toggle ? T32.toggleFail(input.verb, reason) : T32.pauseFail([label(pausingRole)]) } };
       }

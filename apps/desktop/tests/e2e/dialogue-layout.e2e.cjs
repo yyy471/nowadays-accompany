@@ -13,6 +13,9 @@ const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'dialogue-layout-'));
 const date = '2026-11-09T10:00:00.000Z';
 const roles = [{ roleId: 'a', displayName: '甲角色', status: 'ready', defaultWindowId: 'w1' }, { roleId: 'b', displayName: '乙角色', status: 'ready', defaultWindowId: 'w1' }];
 const streams = new Set(), requests = [];
+let rolesOffline = true;
+let wardrobeWaiters = [];
+let resumeResponse;
 const voiceLines = ['这句可以播放。', '这句暂时无法播放。'];
 const prefetchedSpeechPath = '/v1/roles/b/windows/w2/segments/s2/speech';
 let speechResponse;
@@ -41,10 +44,18 @@ const server = http.createServer((req, res) => {
   requests.push(p);
   const role = roles.find(item => p.includes(`/roles/${item.roleId}`)) ?? roles[0];
   if (p === '/v1/health') return json(res, { status: 'ok' });
-  if (p === '/v1/roles') return json(res, { items: roles });
+  // 握手成功后断开业务连接，让 Electron 的 desk:// 代理实际遇到网络错误。
+  if (p === '/v1/roles') return rolesOffline ? res.destroy() : json(res, { items: roles });
   if (p === `/v1/roles/${role.roleId}`) return json(res, { ...role, definition: { text: '', payload: {} }, definitionRevision: 1 });
-  if (p.endsWith('/appearance/outfits')) return json(res, { items: [] });
+  if (p.endsWith('/appearance/outfits')) {
+    if (wardrobeWaiters) return wardrobeWaiters.push(res);
+    return json(res, { items: [] });
+  }
   if (p.endsWith('/state')) return json(res, { state: {}, stateVersion: 1, updatedAt: date });
+  if (p === '/v1/roles/a/activity/resume') { resumeResponse = res; return; }
+  if (p.endsWith('/messages') && req.method === 'POST') {
+    return json(res, { error: { code: 'ROLE_ACTIVITY_STOPPED', message: '角色活动已停止，请先恢复活动' } }, 409);
+  }
   if (p.endsWith('/voice')) return json(res, { voice: null });
   if (p.endsWith('/windows')) return json(res, { items: ['w1', 'w2'].map((windowId, i) => ({ windowId, roleId: role.roleId, kind: i ? 'custom' : 'main', source: 'nowadays', createdAt: date, updatedAt: date })) });
   if (p.endsWith('/events')) { res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'access-control-allow-origin': '*' }); res.write(': connected\n\n'); streams.add(res); res.on('close', () => streams.delete(res)); return; }
@@ -71,6 +82,73 @@ async function pressKey(key, windowsVirtualKeyCode) {
   const params = { key, code: key, windowsVirtualKeyCode };
   await cmd('Input.dispatchKeyEvent', { ...params, type: 'keyDown', text: key === 'Enter' ? '\r' : undefined });
   await cmd('Input.dispatchKeyEvent', { ...params, type: 'keyUp' });
+}
+async function verifyOfflineRecovery() {
+  const dock = label => ev(`[...document.querySelectorAll('.ui-dock-item')].find(item => item.textContent.includes(${JSON.stringify(label)})).click()`);
+  const retry = () => ev("[...document.querySelectorAll('.studio-content button')].find(button => button.textContent.trim() === '重试').click()");
+  const proxy = await ev("fetch('/v1/roles').then(async response => [response.status, await response.json()])");
+  assert.deepEqual(proxy, [503, { error: { code: 'BACKEND_OFFLINE', message: '本地服务暂时连不上' } }]);
+  await until(() => ev("!!document.querySelector('.home-copy [role=alert]')"));
+  assert.equal(await ev("!!document.querySelector('.home-scene-empty')"), false);
+
+  await cmd('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+  const fade = await ev(`(async () => {
+    const body = document.querySelector('.studio-home-content');
+    const keyframes = () => body.getAnimations().map(({ effect }) =>
+      [effect.getTiming().duration, ...effect.getKeyframes().map(frame => Number(frame.opacity))]);
+    [...document.querySelectorAll('.ui-dock-item')].find(item => item.textContent.includes('对话')).click();
+    const exit = keyframes();
+    await body.getAnimations()[0].finished;
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    return [exit, keyframes()];
+  })()`);
+  assert.deepEqual(fade, [[[90, 1, 0]], [[360, 0, 1]]], '页面依次淡出、淡入');
+  await until(() => ev("document.querySelector('.dialogue-empty')?.innerText.includes('本地服务暂时连不上')"));
+  assert.deepEqual(await ev("[...document.querySelectorAll('.dialogue-empty button')].map(button => button.textContent.trim())"), ['重试']);
+  const listReads = requests.filter(p => p === '/v1/roles').length;
+  await retry();
+  await until(() => requests.filter(p => p === '/v1/roles').length > listReads);
+  await dock('关系');
+  await until(() => ev("document.querySelector('[data-testid=plate-name]')?.textContent === '暂时读不到角色'"));
+  assert.match(await ev("document.querySelector('.current-state').innerText"), /本地服务暂时连不上|暂时读不到角色/);
+  assert.doesNotMatch(await ev("document.querySelector('.exlibris').innerText"), /还没有角色/);
+  rolesOffline = false;
+  await retry();
+  await until(() => ev("document.querySelector('[data-testid=plate-name]')?.textContent === '甲角色'"));
+  await ev("document.querySelector('[aria-label=返回主页]').click()");
+  await until(() => wardrobeWaiters.length && ev("!!document.querySelector('.home-scene-background')"));
+  assert.equal(await ev("!!document.querySelector('.home-scene-empty')"), false, '服饰请求在途时只显示背景');
+  for (const res of wardrobeWaiters) json(res, { items: [] });
+  wardrobeWaiters = null;
+  await until(() => ev("document.querySelector('.home-scene-empty')?.textContent.includes('这个角色还没有主页立绘')"));
+}
+async function verifyResumeActivity() {
+  await ev(`(() => {
+    const draft = document.querySelector('#dialogue-draft');
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(draft, '等你回来。');
+    draft.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  await ev("document.querySelector('.dialogue-send').click()");
+  await until(() => ev("document.querySelector('.dialogue-wait-notice')?.textContent.includes('消息还没有发送')"));
+  assert.equal(await ev("document.querySelector('.dialogue-reply-error')"), null);
+  assert.equal(await ev("document.querySelector('#dialogue-draft').value"), '等你回来。');
+  const stopped = await layoutAt(720, 540);
+  assert.ok(stopped.messages.height >= 160, `停止态消息区只有 ${stopped.messages.height}px`);
+  const resume = "document.querySelector('.dialogue-wait-notice button')";
+  await ev(`${resume}.click(); ${resume}.click()`);
+  await until(() => resumeResponse && ev(`${resume}.getAttribute('aria-busy') === 'true'`));
+  assert.equal(requests.filter(p => p.endsWith('/activity/resume')).length, 1);
+  json(resumeResponse, { error: { message: 'Service unavailable' } }, 503);
+  resumeResponse = null;
+  await until(() => ev("document.querySelector('.dialogue-toast')?.innerText.includes('本地服务出错了，请稍后重试')"));
+  const previousReads = requests.filter(p => p === '/v1/roles').length;
+  await ev(`${resume}.click()`);
+  await until(() => resumeResponse);
+  json(resumeResponse, { activity: { state: 'active' } });
+  await until(() => requests.filter(p => p === '/v1/roles').length > previousReads);
+  await until(() => ev("!document.querySelector('.dialogue-wait-notice')"));
+  assert.equal(await ev("document.querySelector('#dialogue-draft').value"), '等你回来。');
+  return stopped.messages.height;
 }
 async function layoutAt(width, height) {
   await cmd('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
@@ -138,13 +216,21 @@ async function verifyHistorySearchFocus() {
 async function verifyVoiceFeedback() {
   const speaker = segment => `document.querySelector('[data-segment-id="${segment}"] .dialogue-speaker')`;
   const first = speaker('s1');
-  await until(() => ev(`!!${first}`));
+  await until(() => ev(`${first}?.getAttribute('aria-disabled') === 'true' && ${first}.title === '尚未配置音色'`));
+  assert.equal(requests.some(p => p.endsWith('/speech')), false, '无音色时进入对话不预取');
   assert.equal(await ev("document.querySelectorAll('.dialogue-interrupted').length"), 1);
   await ev(`${first}.focus(); ${first}.click()`, true);
   await until(() => speechResponse && ev(`${first}.dataset.voice === 'synthesizing'`));
   assert.ok(await ev(`${first} === document.activeElement && ${first}.getAttribute('aria-busy') === 'true'`));
   assert.equal(await ev(`${first}.querySelectorAll('.ui-voice-wave > span').length`), 4);
   await cmd('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+  const motionButton = "document.querySelector('.studio-header [aria-label=减少动效]')";
+  await until(() => ev(`${motionButton}.getAttribute('aria-pressed') === 'true'`));
+  assert.equal(await ev("document.documentElement.hasAttribute('data-motion')"), false);
+  await ev(`${motionButton}.click()`);
+  assert.equal(await ev("document.documentElement.dataset.motion"), 'full');
+  await ev(`${motionButton}.click()`);
+  assert.equal(await ev("localStorage.getItem('nowadays.motion-preference.v1')"), 'system');
   await until(() => ev(`getComputedStyle(${first}.querySelector('.ui-voice-wave > span')).animationName === 'none'`));
   await cmd('Emulation.setEmulatedMedia', { features: [] });
   speechResponse.writeHead(200, { 'content-type': 'audio/wav', 'access-control-allow-origin': '*' });
@@ -152,15 +238,22 @@ async function verifyVoiceFeedback() {
   await until(() => ev(`${first}.dataset.voice === 'playing' && ${first}.textContent.includes('停止')`));
   await ev(`${first}.click()`, true);
   await until(() => ev(`${first}.getAttribute('aria-label').startsWith('播放这句')`));
+  assert.equal(requests.includes(prefetchedSpeechPath), false, '手动播放成功后，关闭自动播放仍不预取下一句');
+  await ev("document.querySelector('[aria-label=演出设置]').click()");
+  await until(() => ev("!!document.querySelector('.dialogue-option input')"));
+  await ev("[...document.querySelectorAll('.dialogue-option')].find(x=>x.textContent.includes('自动播放新台词')).querySelector('input').click()");
+  await ev("document.querySelector('[role=dialog] [aria-label=关闭弹窗]').click()");
   await until(() => prefetchedSpeechResponse);
   const second = speaker('s2');
   assert.equal(await ev(`${second}.dataset.voice ?? null`), null, '后台预取不显示合成状态');
   await ev(`${second}.click()`, true);
   await until(() => ev(`${second}.dataset.voice === 'synthesizing'`));
   const failure = '语音测试暂不可用。' + '当前语音服务未能合成所选句段，请稍后重试。'.repeat(5);
-  json(prefetchedSpeechResponse, { error: { code: 'TTS_SYNTHESIS_FAILED', message: failure } }, 502);
+  json(prefetchedSpeechResponse, { error: { code: 'VOICE_NOT_CONFIGURED', message: failure } }, 400);
   await until(() => ev(`document.querySelector('.dialogue-toast')?.textContent.includes('语音测试暂不可用')`));
   assert.equal(await ev(`${second}.dataset.voice ?? null`), null);
+  assert.equal(await ev(`${second}.getAttribute('aria-disabled')`), 'true');
+  assert.equal(await ev(`${first}.title`), '尚未配置音色');
   const stageDir = path.join(testResultsDir, 'frontend-refinement-stage2');
   fs.mkdirSync(stageDir, {recursive:true});
   for (const [width,height] of [[1280,800],[720,540]]) {
@@ -193,6 +286,7 @@ async function run() {
   await cmd('Runtime.enable'); await cmd('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
   await until(() => ev("!!document.querySelector('.ui-page-dock')"));
   assert.equal(await ev("!!document.querySelector('.ui-settings-launcher')"), false);
+  await verifyOfflineRecovery();
   await ev("[...document.querySelectorAll('.ui-dock-item')].find(x=>x.textContent.includes('对话')).click()");
   await until(() => ev("document.querySelector('.dialogue-connection')?.dataset.state==='open'")); await delay(500);
   const layouts = new Map();
@@ -217,6 +311,8 @@ async function run() {
     assert.ok(Math.abs(stage.top - pane.top) < tolerance && stage.top - page.top < 12 && stage.right <= pane.left + tolerance, JSON.stringify(boxes));
     assert.ok(toolbar.right <= pane.right + tolerance && toolbar.top >= pane.top - tolerance &&
       toolbar.bottom <= messages.top + tolerance && messages.bottom <= zone.top + tolerance && zone.bottom <= pane.bottom + tolerance, JSON.stringify(boxes));
+    const shellHeights = await ev("[...document.querySelectorAll('.studio-header,.studio-footer,.ui-page-dock')].map(el => el.getBoundingClientRect().height)");
+    assert.deepEqual(shellHeights, width === 720 ? [44, 54, 48] : [58, 68, 60]);
     if (width === 720) {
       assert.ok(stage.width < page.width * 0.35 && messages.height > 160, '窄窗舞台应为消息留出阅读空间');
     }
@@ -227,10 +323,10 @@ async function run() {
   await until(() => ev("[...document.querySelectorAll('[role=dialog]')].some(x=>x.textContent.includes('演出设置'))"));
   await ev("[...document.querySelectorAll('.dialogue-option')].find(x=>x.textContent.includes('隐藏底部导航栏')).querySelector('input').click()");
   await until(() => ev("!document.querySelector('.ui-page-dock')"));
-  assert.ok(await ev(`document.querySelector('.dialogue-pane').getBoundingClientRect().bottom > ${layouts.get(1280).pane.bottom} + 70`), '隐藏导航后没有释放对话空间');
+  assert.ok(await ev(`document.querySelector('.dialogue-pane').getBoundingClientRect().bottom >= ${layouts.get(1280).pane.bottom} + 68`), '隐藏导航后没有释放对话空间');
   await ev("document.querySelector('[role=dialog] [aria-label=关闭弹窗]').click()"); await delay(300);
   const compactHidden = await layoutAt(720, 540);
-  assert.ok(compactHidden.messages.height > layouts.get(720).messages.height + 70, '窄窗隐藏导航后没有扩展消息区');
+  assert.ok(compactHidden.messages.height >= layouts.get(720).messages.height + 54, '窄窗隐藏导航后没有扩展消息区');
   await shot('desktop-720-dock-hidden.png');
   await layoutAt(1280, 800);
   await ev("document.querySelector('.ui-studio-brand').click()");
@@ -261,12 +357,21 @@ async function run() {
   assert.equal(repeatLocation.visible, true);
   assert.ok(repeatLocation.sequence > firstLocation.sequence, '再次定位同一条消息应重新反馈');
   await cmd('Emulation.setEmulatedMedia', { features: [] });
-  await ev("document.querySelector('.dialogue-role-switch button').click()");
-  await ev("[...document.querySelectorAll('.dialogue-role-switch [role=menuitem]')].find(x=>x.textContent.includes('乙角色')).click()");
+  const stoppedMessageHeight = await verifyResumeActivity();
+  await ev("document.querySelector('.dialogue-role-switch button').focus()");
+  await pressKey('Enter', 13);
+  await until(() => ev("document.activeElement.matches('.dialogue-role-switch [role=menuitemradio][aria-checked=true]')"));
+  await pressKey('ArrowDown', 40);
+  assert.equal(await ev("document.activeElement.textContent"), '乙角色');
+  await pressKey('Enter', 13);
   await until(() => ev("document.querySelector('.dialogue-role-switch button')?.getAttribute('aria-label')?.includes('乙角色')"));
   await until(() => ev("document.querySelector('.dialogue-connection')?.dataset.state==='open'"));
-  await ev("document.querySelector('.dialogue-window-switch button').click()");
-  await ev("[...document.querySelectorAll('.dialogue-window-switch [role=menuitem]')].find(x=>x.textContent.includes('页面窗口')).click()");
+  await ev("document.querySelector('.dialogue-window-switch button').focus()");
+  await pressKey('Enter', 13);
+  await until(() => ev("document.activeElement.matches('.dialogue-window-switch [role=menuitemradio][aria-checked=true]')"));
+  await pressKey('End', 35);
+  assert.match(await ev("document.activeElement.textContent"), /页面窗口/);
+  await pressKey('Enter', 13);
   await until(() => requests.some(p => p.includes('/roles/b/windows/w2/messages')));
   await until(() => ev("document.querySelector('.dialogue-connection')?.dataset.state==='open'"));
   await verifyVoiceFeedback();
@@ -274,11 +379,11 @@ async function run() {
   assert.equal(await ev("document.documentElement.scrollWidth<=innerWidth+1"), true);
   const inside = await ev("(()=>{const p=document.querySelector('.dialogue-pane').getBoundingClientRect();return [...document.querySelectorAll('.dialogue-pane-actions button')].every(b=>{const r=b.getBoundingClientRect();return r.left>=p.left&&r.right<=p.right})})()");
   assert.equal(inside, true, '窄屏工具超出对话框'); await shot('mobile.png');
-  await ev("document.querySelector('.ui-menu-trigger').click()");
+  await ev("document.querySelector('.ui-page-dock .ui-menu-trigger').click()");
   await until(() => ev("[...document.querySelectorAll('.ui-menu-item')].some(x=>x.textContent.includes('设置'))"));
   await ev("[...document.querySelectorAll('.ui-menu-item')].find(x=>x.textContent.includes('设置')).click()");
   await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings'"));
-  assert.deepEqual(errors, []); console.log(JSON.stringify({ windowSizes: [...layouts.keys()], dockPreference: true, otherPagesKeepDock: true, historyFocus: true, historyLocation: true, voiceFeedback: true, roleSwitch: true, windowSwitch: true, mobile: true, settingsMenu: true, errors }, null, 2));
+  assert.deepEqual(errors, []); console.log(JSON.stringify({ stoppedMessageHeight, windowSizes: [...layouts.keys()], dockPreference: true, otherPagesKeepDock: true, historyFocus: true, historyLocation: true, voiceFeedback: true, roleSwitch: true, windowSwitch: true, mobile: true, settingsMenu: true, errors }, null, 2));
 }
 run().catch(error => { console.error(error, logs.slice(-1000)); process.exitCode = 1; }).finally(async () => {
   try { if (ws?.readyState === 1) { ws.send(JSON.stringify({ id: 99999, method: 'Browser.close' })); ws.close(); } } catch {}

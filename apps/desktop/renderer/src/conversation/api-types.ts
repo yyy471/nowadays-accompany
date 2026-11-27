@@ -121,6 +121,7 @@ export interface SubmitMessageView {
 export interface WindowsResponse { items: WindowView[]; }
 
 export interface VoiceConfigView {
+  enabled?: boolean;
   engine: string;
   protocol: string;
   ttsEngine?: string | null;

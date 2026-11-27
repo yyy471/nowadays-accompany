@@ -2,9 +2,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { syncMessageFeather } from '../src/conversation/message-scroll';
+import { errorDescriptions } from '../src/lib/error-descriptions';
 import * as targetModule from "../src/conversation/window-model.ts";
 
 const load = async () => targetModule;
+
+test('回复中断用中文短语说明常见错误，未知码没有附加说明', () => {
+  assert.equal(errorDescriptions.get('MODEL_TIMEOUT'), '模型响应超时');
+  assert.equal(errorDescriptions.get('EXECUTION_FAILED'), '执行没有完成');
+  assert.equal(errorDescriptions.get('UNMAPPED_REPLY_ERROR'), undefined);
+});
 
 test("同轮跨图层、重画中和失败时只选一张图，不影响另一轮", () => {
   const first = { id: "bg", messageId: "m1", mode: "background", status: "succeeded" };

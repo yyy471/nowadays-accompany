@@ -13,10 +13,12 @@ const roles = [
     roleId: 'extra-' + i, displayName: '记录很多的角色 ' + i, status: 'ready', defaultWindowId: 'w' + i,
   })),
 ];
+const firstIntent = '你第一次开始活动。只有确实想主动分享时才用 autonomy_share。';
 const wakes = Array.from({length: 4}, (_, i) => ({
-  wakeId: 'pending-' + i, roleId: i === 0 ? 'a' : 'b', kind: 'scheduled', status: 'pending',
-  scheduledAt: new Date(Date.now() + (i + 1) * 3600000).toISOString(), createdAt: sessions[0].startedAt,
-  intent: '下一项安排 ' + i,
+  wakeId: i === 1 ? 'first-activation:b' : 'pending-' + i, roleId: i === 0 ? 'a' : 'b', kind: 'scheduled', status: 'pending',
+  scheduledAt: new Date(Date.now() + (i === 3 ? 24 : i + 1) * 3600000).toISOString(),
+  createdAt: new Date(Math.floor(Date.parse(sessions[0].startedAt) / 60000) * 60000 + i * 1000).toISOString(),
+  intent: i === 1 ? firstIntent : '下一项安排 ' + i,
 }));
 const sharedMessage = {
   messageId: 'old-share', windowId: 'wa', content: '整理书桌时发现的一张旧纸签',
@@ -32,12 +34,16 @@ function route(path, req, res) {
   else if (path === '/v1/roles/a/autonomy/wakes') body = {items: [...wakes.filter(wake => wake.roleId === 'a'), {
     wakeId: 'ordinary', roleId: 'a', kind: 'scheduled', status: 'completed', scheduledAt: sessions[0].startedAt,
     createdAt: sessions[0].startedAt, intent: '整理笔记',
+  }, {
+    wakeId: 'first-activation:a', roleId: 'a', kind: 'scheduled', status: 'completed',
+    scheduledAt: sharedMessage.createdAt, createdAt: sharedMessage.createdAt, intent: firstIntent,
   }]};
   else if (path === '/v1/roles/b/autonomy/wakes') body = {items: wakes.filter(wake => wake.roleId === 'b')};
   else if (path === '/v1/roles/a/autonomy/activities') body = {items: [{
-    activityId: 'share', roleId: 'a', wakeId: 'ordinary', taskId: 'task', windowId: 'wa', status: 'completed',
+    activityId: 'share', roleId: 'a', wakeId: 'first-activation:a', taskId: 'task', windowId: 'wa', status: 'completed',
     startedAt: sharedMessage.createdAt, finishedAt: sharedMessage.createdAt, sharedMessageId: sharedMessage.messageId, sharedMessage,
   }]};
+  else if (path === '/v1/roles/a/tasks') body = {items: [{ taskId: 'task', roleId: 'a', goal: firstIntent }]};
   else if (path === '/v1/roles/a/windows') body = {items: [{
     windowId: 'wa', roleId: 'a', source: 'nowadays', kind: 'main', createdAt: sharedMessage.createdAt, updatedAt: sharedMessage.createdAt,
   }]};
@@ -76,6 +82,26 @@ check(async ({cmd, ev, until, errors}) => {
   const cards = await ev("[...document.querySelectorAll('.feed-slip.feed-exchange')].map(card => ({names:[...card.querySelectorAll('.feed-event-title strong')].map(el=>el.textContent), topic:card.querySelector('.feed-exchange-topic').textContent, count:card.querySelector('.feed-turn-count').textContent}))");
   assert.deepEqual(cards, [...sessions].reverse().map(s => ({names:[s.initiatorName, s.targetName], topic:s.topic, count:s.turnCount + ' 轮'})));
   assert.ok(await ev(slips + ".some(b=>b.textContent.includes('整理笔记'))"));
+  assert.equal(await ev("document.querySelector('.feed-scope').textContent.includes('autonomy_share')"), false);
+  await ev(slips + ".find(b=>b.classList.contains('feed-letter')).click()");
+  await until(() => ev("document.querySelector('.feed-dialog')?.innerText.includes('首次活动')"), '首次活动来源');
+  assert.equal(await ev("document.querySelector('.feed-dialog').textContent.includes('autonomy_share')"), false, '任务目标与来源均隐藏首次意图');
+  await ev("document.querySelector('.feed-dialog button[aria-label=关闭弹窗]').click()");
+  await until(() => ev("!document.querySelector('.feed-dialog')"), '关闭活动详情');
+  await ev("[...document.querySelectorAll('[aria-label=类型筛选] button')].find(b=>b.textContent==='安排').click()");
+  await until(() => ev(slips + ".length===6 && " + slips + ".filter(b=>b.querySelector('.feed-event-title').textContent.includes('首次活动')).length===2"), '安排筛选保留两位角色的首次活动');
+  const minuteRows = await ev(`[...document.querySelectorAll('.feed-event > time')].map(time => ({
+    at: time.dateTime, text: time.textContent, opacity: getComputedStyle(time).opacity, repeat: time.hasAttribute('data-repeat')
+  }))`);
+  assert.ok(minuteRows.some(row => row.repeat), '同分钟连续安排应收起重复时刻');
+  minuteRows.forEach((row, index) => {
+    const repeat = index > 0 && Math.floor(Date.parse(row.at) / 60000) === Math.floor(Date.parse(minuteRows[index - 1].at) / 60000);
+    assert.equal(row.repeat, repeat);
+    assert.equal(row.opacity, repeat ? '0' : '1');
+    assert.match(row.text, /^\d{2}:\d{2}$/);
+  });
+  assert.match(await ev(slips + ".find(b=>b.textContent.includes('整理笔记')).querySelector('.feed-number').textContent"), /^\d{2}:\d{2}$/, '同日安排只显示时刻');
+  assert.match(await ev(slips + ".find(b=>b.textContent.includes('下一项安排 3')).querySelector('.feed-number').textContent"), /月.*日/, '跨日安排保留日期');
   await ev("[...document.querySelectorAll('[aria-label=类型筛选] button')].find(b=>b.textContent==='往来').click()");
   await until(() => ev(slips + ".length===2 && " + slips + ".every(b=>b.textContent.includes('2 轮'))"), '往来筛选');
   for (const s of sessions) {
@@ -104,7 +130,12 @@ check(async ({cmd, ev, until, errors}) => {
     assert.ok(point, wake.intent + ' 可在书页内滚动触达');
     await cmd('Input.dispatchMouseEvent', {type:'mousePressed',button:'left',clickCount:1,...point});
     await cmd('Input.dispatchMouseEvent', {type:'mouseReleased',button:'left',clickCount:1,...point});
-    await until(() => ev("document.querySelector('.feed-dialog')?.innerText.includes(" + JSON.stringify(wake.intent) + ")"), wake.intent);
+    const expected = wake.wakeId.startsWith('first-activation:') ? '首次活动' : wake.intent;
+    await until(() => ev("document.querySelector('.feed-dialog')?.innerText.includes(" + JSON.stringify(expected) + ")"), expected);
+    if (expected === '首次活动') {
+      assert.equal(await ev("document.querySelector('.feed-dialog').textContent.includes('autonomy_share')"), false);
+      assert.equal(await ev(button + ".closest('li').textContent.includes('首次活动')"), true);
+    }
     await ev("document.querySelector('.feed-dialog button[aria-label=关闭弹窗]').click()");
     await until(() => ev("!document.querySelector('.feed-dialog')"), '返回安排');
   }

@@ -17,6 +17,15 @@ async function session(profile, mode) {
     const p = req.url.split('?')[0];
     const json = (data, code = 200) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(data)); };
     if (p === '/test/streams') return json([...streams]);
+    if (p === '/test/ready' && mode === 'fast') {
+      healthy = true;
+      if (waiting) {
+        waiting.writeHead(200, { 'content-type': 'application/json' });
+        waiting.end(JSON.stringify({ status: 'ok' }));
+        waiting = null;
+      }
+      return json(early);
+    }
     if (p === '/test/fail' && waiting) {
       waiting.writeHead(503); waiting.end(); waiting = null; healthy = true;
       return json(early);
@@ -65,6 +74,7 @@ async function session(profile, mode) {
 async function run() {
   const profile = fs.mkdtempDisposableSync(path.join(os.tmpdir(), 'stage4-profile-'));
   try {
+    await session(path.join(profile.path, 'fast'), 'fast');
     await session(profile.path, 'daylight');
     await session(profile.path, 'nightwave');
     await session(profile.path, 'clean');

@@ -1,3 +1,4 @@
+import { errorText } from '../../lib/error-text';
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../../api';
 import { Field, Input } from '../../ui';
@@ -29,7 +30,7 @@ export type ImageService = {
 };
 
 function imageErrorText(reason: unknown): string {
-  return reason instanceof ApiError ? describeImageFailure(reason.code, reason.message) : reason instanceof Error ? reason.message : String(reason);
+  return reason instanceof ApiError ? describeImageFailure(reason.code, errorText(reason)) : errorText(reason);
 }
 
 export function ImageServiceCreate({ trigger, onCancel, onCreated }: {

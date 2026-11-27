@@ -57,7 +57,7 @@ async function verifyLongTextAndContrast({ cmd, ev, until, nav, out, errors, lon
           const book = document.querySelector('.config-book');
           const leaf = document.querySelector('.config-leaf-body');
           const heading = document.querySelector('.config-service-head h2');
-          const address = document.querySelector(${JSON.stringify(width <= 900 ? '.config-service-head p' : '[data-service-group="连接"] .config-sum-keys span')});
+          const address = document.querySelector('[data-service-group="连接"] .config-sum-keys span');
           if (!book || !leaf || !heading || !address) return null;
           const fields = [heading, address];
           const dots = [...leaf.querySelectorAll('.config-sum .ui-dot')].filter(dot => dot.getClientRects().length);
@@ -65,6 +65,7 @@ async function verifyLongTextAndContrast({ cmd, ev, until, nav, out, errors, lon
           return {
             bookOverflow: book.scrollWidth - book.clientWidth,
             leafOverflow: leaf.scrollWidth - leaf.clientWidth,
+            visibleAddresses: [...leaf.querySelectorAll('[title]')].filter(node => node.title === address.title && node.getClientRects().length).length,
             fields: fields.map(field => ({ title: field.title, overflow: field.scrollWidth - field.clientWidth, ellipsis: getComputedStyle(field).textOverflow })),
             dotXs: dots.map(dot => dot.getBoundingClientRect().x),
             footerHeight: footer.getBoundingClientRect().height,
@@ -84,6 +85,7 @@ async function verifyLongTextAndContrast({ cmd, ev, until, nav, out, errors, lon
       }, `${theme} ${width} layout settled`);
       assert.ok(layout.bookOverflow <= 1 && layout.leafOverflow <= 1, `${theme} ${width} 横向溢出：${JSON.stringify(layout)}`);
       assert.deepEqual(layout.fields.map(field => field.title), [longResourceName, longResourceAddress]);
+      assert.equal(layout.visibleAddresses, 1, `${theme} ${width} 服务地址只显示在连接行`);
       const fields = layout.fields.map(({ overflow, ellipsis }) => ({ overflow, ellipsis }));
       if (fields.some(field => field.overflow <= 0 || field.ellipsis !== 'ellipsis')) problems.push(`${theme} ${width} 长文字未按单行省略：${JSON.stringify(fields)}`);
       if (layout.dotXs.length < 5 || Math.max(...layout.dotXs) - Math.min(...layout.dotXs) > 0.5) problems.push(`${theme} ${width} 状态点未对齐：${JSON.stringify(layout.dotXs)}`);

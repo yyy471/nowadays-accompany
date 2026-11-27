@@ -2,8 +2,15 @@
 .studio-shell { --studio-inset: var(--nd-semantic-space-page-inset); display: grid; grid-template-rows: auto minmax(0,1fr) auto; width: 100%; height: 100dvh; min-width: 0; background: var(--nd-semantic-color-canvas); color: var(--nd-semantic-color-text); font-family: var(--nd-semantic-font-body); font-size: var(--nd-semantic-type-body-size); line-height: var(--nd-semantic-type-body-line); }
 .studio-shell[data-page="conversation"][data-dialogue-dock-hidden] { grid-template-rows: auto minmax(0,1fr); }
 .studio-header-scope { z-index: var(--nd-semantic-layer-shell); min-width: 0; }
-.studio-header { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); align-items: center; gap: 24px; min-height: var(--nd-semantic-size-header); padding: 12px 0; margin-inline: var(--studio-inset); border-bottom: 1px solid var(--nd-semantic-color-line-decorative); }
+.studio-header { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); align-items: center; gap: 24px; height: var(--nd-semantic-size-shell-header); margin-inline: 24px; border-bottom: 1px solid var(--nd-semantic-color-line-decorative); }
+.studio-header .ui-studio-brand { gap:10px; font-size:19px; line-height:20px; letter-spacing:-.01em; }
+.studio-header .ui-studio-brand small { margin-top:2px; font-size:10px; line-height:14px; letter-spacing:.06em; }
+.studio-header .ui-brand-mark { width:28px; height:30px; }
+.studio-header .ui-theme-switcher { gap:0; padding:3px; }
+.studio-header .ui-theme-switcher button { min-height:30px; padding:3px 14px; font-size:12.5px; }
 .studio-header-actions { display: flex; justify-content: flex-end; align-items: center; gap: 12px; }
+.studio-shell .config-motion-toggle{justify-self:end;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border:1px dashed var(--nd-semantic-color-line-control);border-radius:var(--nd-semantic-radius-round);background:transparent;color:var(--nd-semantic-color-text-muted);font:var(--nd-semantic-type-caption-size) var(--nd-semantic-font-body);cursor:pointer}
+.studio-shell .config-motion-toggle[aria-pressed="true"]{border-style:solid;background:var(--nd-semantic-color-surface);color:var(--nd-semantic-color-text)}
 .studio-content { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; outline: none; padding: 0 var(--studio-inset); scrollbar-gutter: stable; }
 .studio-content:focus-visible { outline: 2px solid var(--nd-semantic-color-focus); outline-offset: -2px; }
 .studio-shell[data-page="home"] .studio-content { scrollbar-gutter:auto; display:flex; flex-direction:column; }
@@ -20,8 +27,8 @@
 .studio-page-heading h1 { margin: 0; color: var(--nd-semantic-color-text); font-family: var(--nd-semantic-font-heading); font-size: var(--nd-semantic-type-page-size); line-height: var(--nd-semantic-type-page-line); }
 .studio-page-heading p { margin: 8px 0 0; font-size: var(--nd-semantic-type-body-size); color: var(--nd-semantic-color-text-muted); }
 .studio-footer-scope { z-index: var(--nd-semantic-layer-shell); }
-.studio-footer { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); align-items: center; gap: 16px; min-height: var(--nd-semantic-size-dock-zone); padding: 12px var(--studio-inset) 16px; }
-.studio-footer .ui-page-dock { justify-content: center; flex-wrap: nowrap; }
+.studio-footer { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); align-items: center; gap: 16px; height: var(--nd-semantic-size-shell-footer); padding: 0 24px; }
+.studio-shell .studio-footer .ui-page-dock { --dock-height: var(--nd-semantic-size-shell-dock); --dock-pad: 4px; --dock-item-h: calc(var(--dock-height) - 2 * var(--dock-pad) - 2px); height: var(--dock-height); align-self: center; justify-content: center; flex-wrap: nowrap; }
 .studio-footer .ui-menu-panel { z-index: var(--nd-semantic-layer-popover); }
 .studio-runtime,.studio-edition { font-size: var(--nd-semantic-type-caption-size); color: var(--nd-semantic-color-text-muted); overflow-wrap: anywhere; }
 .studio-footer-info { display: flex; align-items: center; min-width: 0; gap: 6px; }
@@ -37,24 +44,22 @@
   .studio-header-actions { gap: 8px; }
 }
 @media (max-width:959px) {
-  .studio-header { gap: 12px; min-height: 0; padding-block: 8px; }
-  .studio-header .ui-studio-brand small { display: none; }
-  .studio-header .ui-theme-switcher button { min-height: var(--nd-semantic-size-hit); padding: 6px 12px; }
+  .studio-header { gap: 12px; height: var(--nd-semantic-size-shell-header-narrow); margin-inline: 12px; }
+  .studio-header .config-motion-toggle span, .studio-header .ui-studio-brand > span, .studio-header .ui-theme-switcher button > span:last-child { display: none; }
+  .studio-header .ui-brand-mark { width: 24px; height: 26px; }
+  .studio-header .ui-theme-switcher button { min-height: 26px; padding: 2px 12px; }
   .studio-runtime { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .studio-footer { min-height: 88px; padding-block: 8px; gap: 8px; }
-  .studio-footer .ui-page-dock { grid-column: 2; grid-row: 1; max-width: 100%; }
+  .studio-footer { height: var(--nd-semantic-size-shell-footer-narrow); padding-inline: 12px; gap: 8px; }
+  .studio-shell .studio-footer .ui-page-dock { --dock-height: var(--nd-semantic-size-shell-dock-narrow); --dock-pad: 3px; --dock-item-h: 42px; --dock-gap: 2px; grid-column: 2; grid-row: 1; max-width: 100%; }
+}
+@media (min-width:600px) and (max-width:959px) {
+  .studio-shell .studio-footer .ui-page-dock { --dock-item-w: 58px; }
 }
 @media (max-width:599px) {
   .studio-shell { --studio-inset: var(--nd-semantic-space-page-inset-narrow); }
-  .studio-shell:not(:is([data-page="role-config"],[data-page="settings"],[data-page="feed"])) .studio-header { grid-template-columns: minmax(0,1fr) auto; gap: 4px 12px; }
-  .studio-shell:not(:is([data-page="role-config"],[data-page="settings"],[data-page="feed"])) .studio-header > .ui-theme-switcher { grid-column: 2; grid-row: 1; }
-  .studio-shell:not(:is([data-page="role-config"],[data-page="settings"],[data-page="feed"])) .studio-header-actions { display: none; }
-  .studio-footer { padding-inline: 8px; min-height: 80px; }
+  .studio-footer { padding-inline: 8px; }
   .studio-page-heading h1 { font-size: var(--nd-semantic-type-section-size); line-height: var(--nd-semantic-type-section-line); }
 }
-@media (max-height:600px) {
-  .studio-header { min-height: 64px; padding-block: 8px; }
-  .studio-footer { min-height: 80px; padding-block: 8px; }
-}
+
 /* 启动配置读取中的极短占位（DL-147）。 */
 .studio-boot { display:grid; place-items:center; width:100%; height:100dvh; background:var(--nd-semantic-color-canvas); color:var(--nd-semantic-color-text-muted); font-family:var(--nd-semantic-font-body); font-size:var(--nd-semantic-type-body-size); }

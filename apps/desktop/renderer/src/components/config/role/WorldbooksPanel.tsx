@@ -1,3 +1,4 @@
+import { errorText } from '../../../lib/error-text';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError } from '../../../api';
 import { Button, Field, Input, Select, Switch, Textarea } from '../../../ui';
@@ -59,7 +60,7 @@ export function WorldbooksPanel({ roleId, active, pausedWrite, guardWrite, onDra
       setDraft(result.books);
       setConflict(false);
       setWriteError('');
-    }).catch(error => { if (!request.signal.aborted) setReadError(String(error.message || error)); });
+    }).catch(error => { if (!request.signal.aborted) setReadError(errorText(error)); });
     return () => request.abort();
   }, [active, path, readAttempt]);
 
@@ -121,7 +122,7 @@ export function WorldbooksPanel({ roleId, active, pausedWrite, guardWrite, onDra
       setSaved(result);
       setDraft(result.books);
       sheet.closeNow(undefined, '已保存世界书');
-    } catch (error) { setWriteError(error instanceof Error ? error.message : String(error)); }
+    } catch (error) { setWriteError(errorText(error)); }
     finally { saving.current = false; setBusy(false); }
   };
 

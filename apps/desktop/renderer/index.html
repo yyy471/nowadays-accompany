@@ -1,3 +1,31 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; script-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:* http://[::1]:*; frame-src nd-ext:; object-src 'none'; base-uri 'none'"><title>Nowadays</title></head>
-<body><div id="root"><main class="boot-gate" data-ui-theme="xiacheng"><article><h1>光影书房</h1><p role="status">正在打开书房…</p><button type="button" hidden>重新连接</button></article></main></div><script type="module" src="/src/boot-gate.ts"></script></body></html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; script-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; frame-src nd-ext:; object-src 'none'; base-uri 'none'">
+  <title>Nowadays</title>
+</head>
+<body>
+  <main class="boot-gate boot-desk" data-ui-theme="xiacheng" data-phase="window" data-cover="shown" aria-label="书房启动封面">
+    <div class="boot-lamp" aria-hidden="true"></div>
+    <article class="boot-leaf">
+      <div class="boot-details">
+        <img class="boot-mark" alt="" width="44" height="48" draggable="false">
+        <h1>Nowadays</h1>
+        <small>A NOTE FOR YOUR EVERYDAY.</small>
+        <ol class="boot-steps" aria-label="启动进度">
+          <li data-state="now" aria-current="step">点灯</li>
+          <li data-state="waiting">研墨</li>
+          <li data-state="waiting">翻开</li>
+        </ol>
+        <p role="status">正在点亮书房</p>
+        <span class="boot-elapsed"></span>
+        <button type="button" hidden>重新连接</button>
+      </div>
+    </article>
+  </main>
+  <div id="root"></div>
+  <script type="module" src="/src/boot-gate.ts"></script>
+</body>
+</html>

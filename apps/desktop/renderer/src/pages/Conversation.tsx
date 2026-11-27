@@ -1,9 +1,10 @@
 import { PaperSkeleton } from '../components/PaperSkeleton';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
+import { errorText } from '../lib/error-text';
 import type { Outfit, RoleListItem } from '../types';
 import { appearanceAssetUrl } from '../types';
-import { Button, ControlButton, Icon, IconButton, Modal, UiThemeScope, readMotionTime, useMotionPolicy } from '../ui';
+import { Button, ControlButton, DropdownMenu, Icon, IconButton, Modal, UiThemeScope, readMotionTime, useMotionPolicy } from '../ui';
 import { useThemePreset } from '../ui/presets';
 import type { PerfScene, SceneLayerMode } from '../conversation/performance';
 import type { PerfRow } from '../conversation/history';
@@ -40,6 +41,8 @@ export function ConversationPage({
   appearanceLoading = false,
   loading,
   error,
+  retrying,
+  onRetry,
   hideDock,
   onHideDockChange,
   onSelectRole,
@@ -61,6 +64,8 @@ export function ConversationPage({
   appearanceLoading?: boolean;
   loading: boolean;
   error: string;
+  retrying: boolean;
+  onRetry: () => void;
   hideDock: boolean;
   onHideDockChange: (hidden: boolean) => void;
   onSelectRole: (id: string) => void;
@@ -82,23 +87,18 @@ export function ConversationPage({
   const roleName = role?.displayName?.trim() || '角色';
 
   const [roleActivity, setRoleActivity] = useState<{ state: string } | null>(null);
-  useEffect(() => {
-    let live = true;
+  const [resuming, setResuming] = useState(false);
+  const currentRole = useRef<{ id: string; resuming: boolean } | null>(null);
+  useLayoutEffect(() => {
+    const scope = { id: currentId, resuming: false };
+    currentRole.current = scope;
+    setResuming(false);
     setRoleActivity(null);
-    api<{ activity: { state: string } }>(`/v1/roles/${encodeURIComponent(currentId)}/activity`)
-      .then(result => { if (live) setRoleActivity(result.activity); })
-      .catch(() => { if (live) setRoleActivity(null); });
-    return () => { live = false; };
-  }, [currentId]);
-  const resumeRole = useCallback(() => {
-    void api(`/v1/roles/${encodeURIComponent(currentId)}/activity/resume`, { method: 'POST' })
-      .then(() => {
-        setRoleActivity({ state: 'active' });
-        // 发送被拒绝的消息未入库，恢复后由用户自己重新提交（283 R07）。
-        sessionRef.current?.clearRejection();
-        sessionRef.current?.retryWaiting();
-      })
-      .catch(() => { /* 状态由下一次读取或操作反馈 */ });
+    if (currentId) void api<{ activity: { state: string } }>(`/v1/roles/${encodeURIComponent(currentId)}/activity`)
+      .then(result => {
+        if (currentRole.current === scope) setRoleActivity(previous => previous ?? result.activity);
+      }).catch(() => { /* 读取失败时可由发送回执识别停止态。 */ });
+    return () => { currentRole.current = null; };
   }, [currentId]);
 
   const [liveRowId, setLiveRowId] = useState<number | null>(null);
@@ -119,8 +119,6 @@ export function ConversationPage({
   const [task, setTask] = useState<CancelableTask | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelBusy, setCancelBusy] = useState(false);
-  const [roleMenuOpen, setRoleMenuOpen] = useState(false);
-  const [windowMenuOpen, setWindowMenuOpen] = useState(false);
   const [announce, setAnnounce] = useState('');
   const [requestDraftFocus, setRequestDraftFocus] = useState(0);
   const [toast, setToast] = useState<{ message: string; error: boolean } | null>(null);
@@ -141,6 +139,7 @@ export function ConversationPage({
   const reducedRef = useRef(motion.reduced); reducedRef.current = motion.reduced;
   const cueTimer = useRef<number | undefined>(undefined);
   const pageRef = useRef<HTMLDivElement>(null);
+  const paneRef = useRef<HTMLElement>(null);
   const toastTimer = useRef<number | undefined>(undefined);
   const noticeTimer = useRef<number | undefined>(undefined);
   const locationSequence = useRef(0);
@@ -153,6 +152,7 @@ export function ConversationPage({
     toastTimer.current = window.setTimeout(() => setToast(null), 3200);
   }, []);
   const showToast = useCallback((message: string, error = true) => {
+    if (!message) return;
     setToast({ message, error });
     restartToastTimer();
   }, [restartToastTimer]);
@@ -166,7 +166,7 @@ export function ConversationPage({
       setTask(null);
       onRoleStateChanged?.();
     } catch (error) {
-      showToast(error instanceof Error ? error.message : '取消失败，请稍后再试。');
+      showToast(errorText(error));
     } finally {
       setCancelBusy(false);
     }
@@ -250,6 +250,26 @@ export function ConversationPage({
   }, [currentId, snapshot?.activeId]);
   const sessionRef = useRef(session);
   sessionRef.current = session;
+  const resumeRole = async () => {
+    const scope = currentRole.current;
+    if (!scope || scope.id !== currentId || scope.resuming) return;
+    scope.resuming = true;
+    setResuming(true);
+    try {
+      await api(`/v1/roles/${encodeURIComponent(scope.id)}/activity/resume`, { method: 'POST' });
+      if (currentRole.current !== scope) return;
+      setRoleActivity({ state: 'active' });
+      // 未入库的消息保留草稿，已入库等待中的消息沿用原提交标识。
+      sessionRef.current.clearRejection();
+      sessionRef.current.retryWaiting();
+      onRoleStateChanged?.();
+    } catch (error) {
+      if (currentRole.current === scope) showToast(errorText(error));
+    } finally {
+      scope.resuming = false;
+      if (currentRole.current === scope) setResuming(false);
+    }
+  };
   const voice = useSegmentVoice({ roleId: currentId, windowId: session.windowId, onToast: showToast });
   const prefetchRef = useRef(voice.prefetch);
   prefetchRef.current = voice.prefetch;
@@ -257,13 +277,13 @@ export function ConversationPage({
   // 预取当前台词与后续已就绪句段；失败静默，点播时再提示。
   const prefetchIds = [snapshot?.current?.id ?? 0, ...(snapshot?.upcoming ?? []).slice(0, 2).map(row => row.id)].join(',');
   useEffect(() => {
-    if (!snapshot || snapshot.roleId !== currentId || snapshot.windowId !== session.windowId) return;
+    if (!voiceAuto || !voice.available || !snapshot || snapshot.roleId !== currentId || snapshot.windowId !== session.windowId) return;
     const rows: PerfRow[] = [];
     if (snapshot.current) rows.push(snapshot.current);
     rows.push(...(snapshot.upcoming ?? []).slice(0, 2));
     prefetchRef.current(rows.slice(0, 3));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentId, session.windowId, snapshot?.roleId, snapshot?.windowId, prefetchIds]);
+  }, [voiceAuto, voice.available, currentId, session.windowId, snapshot?.roleId, snapshot?.windowId, prefetchIds]);
 
   // 切换角色或窗口后重置页面阅读与演出状态。
   useEffect(() => {
@@ -281,8 +301,6 @@ export function ConversationPage({
     frozenScene.current = null;
     setDismissed(new Set());
     setStageRow(null);
-    setRoleMenuOpen(false);
-    setWindowMenuOpen(false);
     setRequestDraftFocus(0);
   }, [currentId, session.windowId]);
 
@@ -302,26 +320,6 @@ export function ConversationPage({
     window.clearTimeout(cueTimer.current);
     setCue(false);
   }, [motion.reduced]);
-
-  useEffect(() => {
-    if (!roleMenuOpen && !windowMenuOpen) return;
-    const onDown = (event: PointerEvent) => {
-      if (!(event.target instanceof Element)) return;
-      if (roleMenuOpen && !event.target.closest('.dialogue-role-switch')) setRoleMenuOpen(false);
-      if (windowMenuOpen && !event.target.closest('.dialogue-window-switch')) setWindowMenuOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      setRoleMenuOpen(false);
-      setWindowMenuOpen(false);
-    };
-    document.addEventListener('pointerdown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [roleMenuOpen, windowMenuOpen]);
 
   function handleEvent(next: ConversationSnapshot, event: SessionEvent): void {
     const wasAdvancing = prevActive.current !== null;
@@ -501,24 +499,26 @@ export function ConversationPage({
     }
   };
 
+  const heading = <h1 className="sr-only">{role ? `与 ${roleName} 的对话` : '对话'}</h1>;
   if (loading && !roles.length) {
-    return <UiThemeScope theme="xiacheng" className="dialogue-host"><div className="dialogue-empty"><PaperSkeleton label="正在读取角色资料…"/></div></UiThemeScope>;
+    return <UiThemeScope theme="xiacheng" className="dialogue-host">{heading}<div className="dialogue-empty"><PaperSkeleton label="正在读取角色资料…"/></div></UiThemeScope>;
   }
   if (!currentId || !role) {
-    return <UiThemeScope theme="xiacheng" className="dialogue-host"><div className="dialogue-empty">
-      <p>{error ? `暂时无法更新角色资料${roles.length ? '，先显示上次的资料' : ''}。` : '还没有可对话的角色。'}</p>
-      <div className="dialogue-empty-actions">{roles.length === 0 ? <Button variant="entry" onClick={onCreateRole}>创建角色</Button> : null}<Button variant="entry" onClick={onOpenRelations}>查看关系</Button></div>
+    return <UiThemeScope theme="xiacheng" className="dialogue-host">{heading}<div className="dialogue-empty">
+      <p>{error || '还没有可对话的角色。'}</p>
+      <div className="dialogue-empty-actions">{error
+        ? <Button busy={retrying} onClick={onRetry}>重试</Button>
+        : <>{roles.length === 0 && <Button variant="entry" onClick={onCreateRole}>创建角色</Button>}<Button variant="entry" onClick={onOpenRelations}>查看关系</Button></>}</div>
     </div></UiThemeScope>;
   }
   if (!snapshot || snapshot.roleId !== currentId || (session.windowId !== null && snapshot.windowId !== session.windowId)) {
-    return <UiThemeScope theme="xiacheng" className="dialogue-host"><div className="dialogue-empty">{readRoles.current.has(currentId) ? <p role="status">正在打开对话窗口…</p> : <PaperSkeleton label="正在打开对话窗口…"/>}</div></UiThemeScope>;
+    return <UiThemeScope theme="xiacheng" className="dialogue-host">{heading}<div className="dialogue-empty">{readRoles.current.has(currentId) ? <p role="status">正在打开对话窗口…</p> : <PaperSkeleton label="正在打开对话窗口…"/>}</div></UiThemeScope>;
   }
   if (snapshot.loadError) {
-    return <UiThemeScope theme="xiacheng" className="dialogue-host"><div className="dialogue-empty">
+    return <UiThemeScope theme="xiacheng" className="dialogue-host">{heading}<div className="dialogue-empty">
       <p>{snapshot.loadError}</p>
       <div className="dialogue-empty-actions">
         <Button onClick={session.retry}>重试</Button>
-        <Button variant="entry" onClick={onOpenRelations}>查看关系</Button>
       </div>
     </div></UiThemeScope>;
   }
@@ -536,7 +536,8 @@ export function ConversationPage({
     onFocus={() => window.clearTimeout(toastTimer.current)} onBlur={restartToastTimer}>{toast?.message}</div>;
   return <UiThemeScope theme="xiacheng" motion={motion.reduced ? 'reduced' : 'full'} className="dialogue-host">
     <div ref={pageRef} className="dialogue-page" data-theme={night ? 'night' : 'day'} data-motion={motion.reduced ? 'reduced' : 'full'}>
-      <main className="dialogue-layout">
+      {heading}
+      <div className="dialogue-layout">
         <ConversationStage snapshot={snapshot} current={visibleStageRow} sources={sources}
           visibleScene={visibleScene} live={stageLive} cue={cue}
           waitingOutfit={appearanceLoading || awaitingInitialOutfit}
@@ -545,32 +546,22 @@ export function ConversationPage({
             || !!snapshot?.scenes.some(s => s.messageId === visibleScene.messageId && s.status === 'generating'))}
           sceneFailure={sceneState?.error?.reason}
           onRegenerate={image => { setScenePreview(image); session.requestScene(image.messageId, sceneState?.error?.mode ?? image.mode); }} />
-        <section className="dialogue-pane" aria-label={historyOpen ? '历史消息' : `与 ${roleName} 的对话`}>
+        <section ref={paneRef} className="dialogue-pane" aria-label={historyOpen ? '历史消息' : `与 ${roleName} 的对话`}>
         <div className="dialogue-pane-toolbar" inert={historyOpen} aria-hidden={historyOpen || undefined}>
           <div className="dialogue-pane-switches">
           {onReturnDesk && <ControlButton className="dialogue-role-button" onClick={onReturnDesk}><Icon name="chev-left" size={15}/><span>回到刚才的台面</span></ControlButton>}
           {onReturnFeed && <ControlButton className="dialogue-role-button" onClick={onReturnFeed}><Icon name="chev-left" size={15}/><span>返回动态</span></ControlButton>}
           {roles.length > 1 ? <div className="dialogue-role-switch">
-            <ControlButton type="button" className="dialogue-role-button" aria-label={`切换角色，当前${roleName}`} aria-expanded={roleMenuOpen} aria-haspopup="menu" onClick={() => setRoleMenuOpen(value => !value)}>
-              <Icon name="person" size={15} /><span>换一位</span>
-            </ControlButton>
-            {roleMenuOpen ? <div className="dialogue-role-menu" role="menu">
-              {roles.map(item => <button key={item.roleId} type="button" role="menuitem" aria-pressed={item.roleId === currentId}
-                onClick={() => { if (item.roleId !== currentId) onSelectRole(item.roleId); setRoleMenuOpen(false); }}>
-                <span>{item.displayName}</span>{item.roleId === currentId ? <Icon name="check" size={14} /> : null}
-              </button>)}
-            </div> : null}
+            <DropdownMenu label="换一位" triggerAriaLabel={`换一位，当前${roleName}`} selectedPage={currentId}
+              triggerIcon="person" triggerClassName="dialogue-role-button" boundaryRef={paneRef}
+              items={roles.map(item => ({ id: item.roleId, label: item.displayName,
+                onSelect: () => { if (item.roleId !== currentId) onSelectRole(item.roleId); } }))}/>
           </div> : null}
           {snapshot.windows.length > 1 ? <div className="dialogue-window-switch">
-            <ControlButton type="button" className="dialogue-role-button" aria-expanded={windowMenuOpen} aria-haspopup="menu" onClick={() => setWindowMenuOpen(value => !value)}>
-              <Icon name="messages" size={15} /><span>换窗口</span>
-            </ControlButton>
-            {windowMenuOpen ? <div className="dialogue-role-menu" role="menu">
-              {snapshot.windows.map((item, index) => <button key={item.windowId} type="button" role="menuitem" aria-pressed={item.windowId === session.windowId}
-                onClick={() => { if (item.windowId !== session.windowId) session.selectWindow(item.windowId); setWindowMenuOpen(false); }}>
-                <span>{windowLabel(item, index)}</span>{item.windowId === session.windowId ? <Icon name="check" size={14} /> : null}
-              </button>)}
-            </div> : null}
+            <DropdownMenu label="换窗口" selectedPage={session.windowId ?? undefined}
+              triggerIcon="messages" triggerClassName="dialogue-role-button" boundaryRef={paneRef}
+              items={snapshot.windows.map((item, index) => ({ id: item.windowId, label: windowLabel(item, index),
+                onSelect: () => { if (item.windowId !== session.windowId) session.selectWindow(item.windowId); } }))}/>
           </div> : null}
           </div>
           <div className="dialogue-pane-actions">
@@ -606,7 +597,7 @@ export function ConversationPage({
                   notice={!appearanceLoading && !hasOutfits ? '还没有主页立绘，可在角色配置的「外观」中添加服饰。' : currentOutfit && currentOutfit.sprites.length === 0 ? '这套服饰还没有对话表情，可在「外观」中添加差分。' : null}
                   waitReason={snapshot.waitReason}
                   roleStopped={roleActivity?.state === 'stopped'}
-                  onResumeRole={resumeRole}
+                  resuming={resuming} onResumeRole={resumeRole} voiceUnavailable={voice.available === false}
                   onConfigureModel={onConfigureModel}
                   onRetryWaiting={() => { session.retryWaiting(); }}
                   onRetryFailedReply={() => { session.retryFailedReply(); }}
@@ -624,7 +615,7 @@ export function ConversationPage({
             onRetry={() => void session.loadHistory()} onOpenScene={openScene} onLocate={id => void locate(id)}
             onClose={() => { historyLocationRequest.current += 1; setLocatingHistory(false); session.cancelHistory(); setHistoryOpen(false); }} />
         </section>
-      </main>
+      </div>
       <div className="sr-only" aria-live="polite" aria-atomic="true">{announce}</div>
     </div>
 

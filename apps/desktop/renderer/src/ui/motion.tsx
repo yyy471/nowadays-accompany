@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useUiAppearance } from './appearance';
-
-export type MotionPreference = 'system' | 'reduced' | 'full';
+import { applyMotionPreference, readMotionPreference, type MotionPreference } from '../preferences';
+export { applyMotionPreference, readMotionPreference, type MotionPreference } from '../preferences';
 
 export type MotionPolicy = {
   /** 本机保存的偏好；system 跟随系统。 */
@@ -26,31 +26,8 @@ export type MotionRunOptions = {
   slot?: string;
 };
 
-const STORAGE_KEY = 'nowadays.motion-preference.v1';
-const LEGACY_STORAGE_KEY = 'accompany.motion-preference.v1';
 const REDUCED_QUERY = '(prefers-reduced-motion: reduce)';
 const FORCED_COLORS_QUERY = '(forced-colors: active)';
-
-export function readMotionPreference(): MotionPreference {
-  try {
-    const value = window.localStorage.getItem(STORAGE_KEY)
-      ?? window.localStorage.getItem(LEGACY_STORAGE_KEY);
-    return value === 'reduced' || value === 'full' ? value : 'system';
-  } catch {
-    return 'system';
-  }
-}
-
-/** 偏好只作用于本机外观；同时写回根节点以让CSS与JS读取同一结论。 */
-export function applyMotionPreference(preference: MotionPreference): void {
-  if (preference === 'system') document.documentElement.removeAttribute('data-motion');
-  else document.documentElement.setAttribute('data-motion', preference);
-  try {
-    window.localStorage.setItem(STORAGE_KEY, preference);
-  } catch {
-    // 系统偏好仍然生效。
-  }
-}
 
 export function resolveMotionPolicy(
   preference: MotionPreference,

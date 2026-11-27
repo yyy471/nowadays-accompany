@@ -141,7 +141,7 @@ async function run() {
       await wait('!!' + invitation, '重连空快照');
       await ev(invitation + '.click()');
       await wait("document.querySelector('.studio-shell').dataset.page==='conversation'", '邀请笺进入对话');
-      await ev("document.querySelector('.ui-menu-trigger').click()");
+      await ev("document.querySelector('.ui-page-dock .ui-menu-trigger').click()");
       await ev("[...document.querySelectorAll('.ui-menu-item')].find(b=>b.textContent.trim()==='扩展').click()");
       await wait('!!' + invitation, '从对话回到空台');
       const resize = async (width, height) => {

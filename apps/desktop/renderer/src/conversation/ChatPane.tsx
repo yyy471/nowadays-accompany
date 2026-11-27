@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
-import { Icon, useMotionPolicy } from '../ui';
+import { Button, Icon, useMotionPolicy } from '../ui';
+import { errorDescriptions } from '../lib/error-descriptions';
 import { VoiceWave } from '../ui/voice-wave';
 import { dayKey, dateLabel } from './history';
 import type { PerfRow } from './history';
@@ -54,6 +55,8 @@ export function ChatPane({
   notice,
   waitReason,
   roleStopped,
+  resuming,
+  voiceUnavailable,
   onResumeRole,
   onConfigureModel,
   onRetryWaiting,
@@ -94,6 +97,8 @@ export function ChatPane({
   waitReason: string | null;
   /** 页面已知角色处于停止状态；发送被拒绝时也会进入同一恢复入口。 */
   roleStopped: boolean;
+  resuming: boolean;
+  voiceUnavailable: boolean;
   onResumeRole: () => void;
   onConfigureModel: () => void;
   onRetryWaiting: () => void;
@@ -252,6 +257,7 @@ export function ChatPane({
   let lastDay = '';
   // 已停止、等待恢复或发送被拒绝都提供同一处恢复入口（283 §4 R07）。
   const stoppedNotice = roleStopped || waitReason === 'ROLE_STOPPED' || snapshot.roleRejected;
+  const replyError = snapshot.failedReply && errorDescriptions.get(snapshot.failedReply.errorCode);
   return <div className="dialogue-chat">
     <div className="dialogue-messages-wrap">
     <div className="dialogue-messages" ref={scroller} onScroll={onScroll}
@@ -296,7 +302,8 @@ export function ChatPane({
           const voiceAction = voiceState === 'playing' ? '停止播放这句' : voiceState === 'synthesizing' ? '合成中，可取消' : '播放这句';
           parts.push(<div key={`speech-${row.id}`} className="dialogue-speech" data-live={isLive ? '' : undefined}>
             <div className="dialogue-bubble"><ReplyContent row={row} /></div>
-            {row.role === 'assistant' && !row.format && row.segmentId && <button type="button" className="dialogue-speaker" aria-label={`${voiceAction}：${row.text.slice(0, 28)}`} title={voiceAction}
+            {row.role === 'assistant' && !row.format && row.segmentId && <button type="button" className="dialogue-speaker" aria-label={`${voiceAction}：${row.text.slice(0, 28)}`} title={voiceUnavailable ? '尚未配置音色' : voiceAction}
+              aria-disabled={voiceUnavailable || undefined}
               aria-busy={voiceState === 'synthesizing' || undefined} data-playing={voiceState === 'playing' ? '' : undefined} data-voice={voiceState ?? undefined} onClick={() => onSpeaker(row)}>
               {voiceState ? <>
                 <VoiceWave state={voiceState} />
@@ -328,7 +335,6 @@ export function ChatPane({
         <span>{waitingText}</span>
         {!policy.reduced ? <span className="dialogue-waiting-dots" aria-hidden="true"><i /><i /><i /></span> : null}
       </div> : null}
-      {advancing && snapshot.canAdvance && !snapshot.awaiting ? <p className="dialogue-advance-hint" aria-hidden="true">点击对话框或按 Enter 继续</p> : null}
     </div>
     <div className="dialogue-date-notice" hidden={!dateNotice} role="status">{dateNotice}</div>
     <button type="button" className="dialogue-latest" hidden={follow} data-new={hasNew ? '' : undefined} onClick={onLatest}>
@@ -337,9 +343,9 @@ export function ChatPane({
     </div>
     <div className="dialogue-zone">
       {snapshot.failedReply && !advancing && !waitReason && <div className="dialogue-wait-notice" role="status" data-failed-message-id={snapshot.failedReply.messageId}>
-        <span>{snapshot.failedReply.receiptSummary
+        <span title={snapshot.failedReply.errorCode}>{snapshot.failedReply.receiptSummary
           ? `${snapshot.failedReply.receiptSummary}角色的完整回复暂未送达。`
-          : '上一条消息已保存，回复中断了。'}<small>（{snapshot.failedReply.errorCode}）</small></span>
+          : '上一条消息已保存，回复中断了。'}{replyError && <small>（{replyError}）</small>}</span>
         {!snapshot.failedReply.receiptSummary && <button type="button" onClick={onRetryFailedReply} disabled={stoppedNotice}>重新回复</button>}
       </div>}
       {waitReason || roleStopped || snapshot.roleRejected ? <div className="dialogue-wait-notice" role="status">
@@ -354,7 +360,7 @@ export function ChatPane({
                 : snapshot.roleRejected
                   ? '角色已停止，消息还没有发送。恢复活动后请再发送一次。'
                   : '角色已停止，恢复活动后即可继续对话。'}</span>
-        {stoppedNotice ? <button type="button" onClick={onResumeRole}>恢复活动</button> : null}
+        {stoppedNotice ? <Button size="sm" busy={resuming} onClick={onResumeRole}>恢复活动</Button> : null}
         {waitReason === 'MODEL_MISSING' ? <button type="button" onClick={onConfigureModel}>配置对话模型</button> : null}
         {waitReason ? <button type="button" onClick={onRetryWaiting}>重试</button> : null}
       </div> : null}

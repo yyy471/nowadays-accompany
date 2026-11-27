@@ -1,3 +1,4 @@
+import { errorText } from '../../lib/error-text';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../api';
 import { AsyncBoundary, Button, Field, Input, Select, Switch } from '../../ui';
@@ -52,7 +53,7 @@ export function EngineeringSection({ models, catalogError, catalogReady, onAddSe
           if (!request.signal.aborted && current === version.current) update(result);
         }
       } catch (error) {
-        if (!request.signal.aborted && current === version.current) setReadError(error instanceof Error ? error.message : String(error));
+        if (!request.signal.aborted && current === version.current) setReadError(errorText(error));
       } finally {
         if (!request.signal.aborted) timer = window.setTimeout(read, 5000);
       }
@@ -80,7 +81,7 @@ export function EngineeringSection({ models, catalogError, catalogReady, onAddSe
       if (adding) sheet.closeNow(undefined, receipt);
       else write.reportResult(receipt);
     } catch (error) {
-      setWriteError(error instanceof Error ? error.message : String(error));
+      setWriteError(errorText(error));
     } finally {
       writing.current = false;
       setSaving(false);

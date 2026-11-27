@@ -175,8 +175,8 @@ export const T34 = {
   option: "原服务已删除（请重新选择）",
   value: "原服务已删除，请重新选择",
 };
-/** T35 读取失败：{原因} + 重试。 */
-export const T35 = (reason: string) => `读取失败：${reason}`;
+/** T35 读取对象与失败原因，配合重试按钮使用。 */
+export const T35 = (subject: string, reason: string) => `暂时读不到${subject}。${reason}`;
 export const T35_RETRY = "重试";
 /** T36 空列表。 */
 export const T36 = {

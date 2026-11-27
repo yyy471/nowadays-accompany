@@ -6,6 +6,9 @@ import { Button, Disclosure, ControlButton, Icon, IconButton, Modal, StatusDot, 
 import { ConfigNotice } from '../components/config/ConfigNotice';
 import { ConfigThemeTransition } from '../ui/config-theme-transition';
 import { useThemePreset } from '../ui/presets';
+import { errorText } from '../lib/error-text';
+import { errorDescriptions } from '../lib/error-descriptions';
+import { isFirstActivation, wakeText } from '../feed/wake-label';
 import type { RoleListItem } from '../types';
 import {
   loadFeed, loadUpcoming, loadTranscript, upcomingForRole, orderedExchangeTurns, messageKey, type Exchange, type ExchangeTurn,
@@ -37,15 +40,9 @@ const types: Array<[FeedType | 'all', string]> = [
 ];
 const ranges: Array<[Range, string]> = [['today', '今天'], ['week', '7 天'], ['all', '全部']];
 const labels: Record<FeedType, string> = { exchange: '往来', share: '分享', activity: '活动', wake: '安排', system: '系统' };
-const errorDescriptions: Record<string, string> = {
-  ROLE_STOPPED: '角色已停止活动',
-  ROLE_EXCHANGE_NO_REPLY: '角色结束了本次活动，未发送下一轮发言',
-  EXECUTION_FAILED: '执行没有完成',
-  MEMORY_MODEL_FAILED: '整理用的模型没有返回结果',
-  MEMORY_CAPACITY_EXCEEDED: '这一批太长，只整理了一部分',
-  AUTONOMY_BUDGET_EXHAUSTED: '今日额度用完',
-  TASK_CIRCUIT_BREAKER: '连续失败，任务已暂停',
-};
+function eventLabel(event: FeedEvent) {
+  return event.wake && isFirstActivation(event.wake) ? '首次活动' : labels[event.type];
+}
 
 function useFeedRead<T>(roles: RoleListItem[], loader: (roles: RoleListItem[], signal: AbortSignal) => Promise<T>, activePage: boolean) {
   const [state, setState] = useState<LoadState<T>>({ data: null, error: '', loading: true, readStarted: 0 });
@@ -73,7 +70,7 @@ function useFeedRead<T>(roles: RoleListItem[], loader: (roles: RoleListItem[], s
         if (isCurrent()) {
           setState(previous => ({
             ...previous, loading: false, initialFailure: entry && previous.loading && !retryToken,
-            error: error instanceof Error ? error.message : String(error),
+            error: errorText(error),
           }));
         }
       } finally {
@@ -178,6 +175,9 @@ function dateTime(value: string | null | undefined): string {
   if (!value) return '—';
   return `${dateLabel(value)} ${timeLabel(value)}`;
 }
+function scheduleTime(value: string, day: string | Date): string {
+  return dateKey(value) === dateKey(day) ? timeLabel(value) : dateTime(value);
+}
 function duration(start: string, end: string): string {
   const minutes = Math.max(1, Math.round((Date.parse(end) - Date.parse(start)) / 60000));
   return minutes < 60 ? `${minutes} 分钟` : `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分钟`;
@@ -233,7 +233,7 @@ function ExchangeTranscript({ exchange }: { exchange: Exchange }) {
     void loadTranscript(exchange.sessionId, controller.signal).then(detail => {
       if (!controller.signal.aborted) setTurns(orderedExchangeTurns(detail.turns));
     }).catch(reason => {
-      if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : String(reason));
+      if (!controller.signal.aborted) setError(errorText(reason));
     });
     return () => controller.abort();
   }, [exchange.sessionId, exchange.turnCount, retry]);
@@ -250,15 +250,17 @@ function EventContent({ event, message, task }: { event: FeedEvent; message?: Sh
   if (message) return <p className="feed-letter-text">{message.content}</p>;
   if (event.type === 'share') return <p className="feed-muted">分享原文不可用</p>;
   if (event.activity) {
-    return <p className={!event.activity.summary ? 'feed-muted' : ''}>{event.activity.summary || task?.goal || '—'}</p>;
+    const goal = isFirstActivation(event.activity) ? '从这时起开始记录活动。' : task?.goal;
+    return <p className={!event.activity.summary ? 'feed-muted' : ''}>{event.activity.summary || goal || '—'}</p>;
   }
   if (event.batch) {
     return <p>整理了一批记忆 <span className="feed-number">第 {event.batch.inputFromSequence}–{event.batch.inputToSequence} 条消息</span></p>;
   }
   if (event.roleActivity) return <p>不再产生新的活动，已排的安排保留</p>;
-  if (event.wake?.kind === 'budget_resume') return <p>进度已保存，{dateTime(event.wake.scheduledAt)}继续</p>;
   if (event.wake) {
-    return <Intent><span className="feed-number">{dateTime(event.wake.scheduledAt)}</span> {event.wake.intent}</Intent>;
+    const time = scheduleTime(event.wake.scheduledAt, event.at);
+    if (event.wake.kind === 'budget_resume') return <p>进度已保存，{time}继续</p>;
+    return <Intent><span className="feed-number">{time}</span> {wakeText(event.wake)}</Intent>;
   }
   return null;
 }
@@ -295,8 +297,9 @@ function Upcoming({ wakes, roles, states, portraits, onOpen }: { wakes: Wake[]; 
     }}>
       <RoleFace name={role?.displayName || '角色'} image={portraits[wake.roleId]}/>
       <div className="feed-next-heading"><ControlButton className="feed-next-open" onClick={event => onOpen(item, event.currentTarget)}>{role?.displayName || '角色'}</ControlButton>
-        {wake.kind === 'budget_resume' && <span className="feed-kind">额度恢复后</span>}<time dateTime={wake.scheduledAt}>{dateTime(wake.scheduledAt)}</time></div>
-      <Intent>{wake.intent}</Intent>{!status.bare && <StatusView value={status} visible/>}
+        {isFirstActivation(wake) && <span className="feed-kind">首次活动</span>}
+        {wake.kind === 'budget_resume' && <span className="feed-kind">额度恢复后</span>}<time dateTime={wake.scheduledAt}>{scheduleTime(wake.scheduledAt, new Date())}</time></div>
+      <Intent>{wakeText(wake)}</Intent>{!status.bare && <StatusView value={status} visible/>}
     </li>;
   })}</ul>;
 }
@@ -529,7 +532,7 @@ export function FeedPage({ active, roles, rolesLoading, roleError, retryingRoles
   const emptyUpcoming = upcoming.data && pending.length === 0 && !roleError && !upcoming.error;
   const nextContent = <>
     {(roleError || upcoming.error) && <div className="feed-error" role={roleError || upcoming.initialFailure ? 'alert' : undefined}>
-      读取失败：{roleError || upcoming.error}
+      {roleError || upcoming.error}
       <Button size="sm" busy={roleError ? retryingRoles : refreshRequest?.upcoming !== undefined}
         aria-disabled={!roleError && refreshRequest !== null && refreshRequest.upcoming === undefined ? true : undefined}
         onClick={roleError ? onRetryRoles : () => refresh('upcoming')}>重试</Button>
@@ -545,28 +548,30 @@ export function FeedPage({ active, roles, rolesLoading, roleError, retryingRoles
     if (selected.exchange) {
       const exchange = selected.exchange;
       detailRows.push(['话题', exchange.topic], ['状态', {active: '进行中', completed: '已结束', failed: '未完成', cancelled: '已取消'}[exchange.status]]);
-      if (exchange.reason) detailRows.push(['原因', errorDescriptions[exchange.reason] || exchange.reason]);
+      if (exchange.reason) detailRows.push(['原因', errorDescriptions.get(exchange.reason) || exchange.reason]);
     } else if (selected.activity) {
       const activity = selected.activity;
       const task = taskFor(selected.roleId, activity.taskId);
       const wake = wakeFor(selected.roleId, activity.wakeId);
       detailRows.push(
-        ['任务目标', task?.goal || '—'], ['状态', status && <StatusView value={status} visible/>],
+        ['任务目标', isFirstActivation(activity) ? '首次活动' : task?.goal || '—'], ['状态', status && <StatusView value={status} visible/>],
         ['开始', dateTime(activity.startedAt)], ['结束', dateTime(activity.finishedAt)],
       );
       if (activity.finishedAt) detailRows.push(['用时', duration(activity.startedAt, activity.finishedAt)]);
       detailRows.push(['摘要', activity.summary || '没有留下摘要']);
       if (selected.type === 'share' && !chatTarget(selected)) detailRows.push(['分享原文', '不可用']);
       const code = wake?.lastErrorCode || (task?.waitReason === 'CIRCUIT_BREAKER' ? task.endReason || 'TASK_CIRCUIT_BREAKER' : null);
-      if (code) detailRows.push(['错误码', <><code>{code}</code> {errorDescriptions[code] || ''}</>]);
-      if (wake) detailRows.push(['来自安排', `${dateTime(wake.scheduledAt)} · ${wake.intent}`]);
+      if (code) detailRows.push(['错误码', <><code>{code}</code> {errorDescriptions.get(code)}</>]);
+      if (wake) detailRows.push(isFirstActivation(wake)
+        ? ['来自', `首次活动 · ${dateTime(wake.scheduledAt)}`]
+        : ['来自安排', `${dateTime(wake.scheduledAt)} · ${wake.intent}`]);
     } else if (selected.wake) {
       const wake = selected.wake;
       detailRows.push(
-        ['意图', wake.intent], ['预定唤醒', dateTime(wake.scheduledAt)],
+        isFirstActivation(wake) ? ['类型', '首次活动'] : ['意图', wake.intent], ['预定唤醒', dateTime(wake.scheduledAt)],
         ['安排于', dateTime(wake.createdAt)], ['状态', status && <StatusView value={status} visible/>],
       );
-      if (wake.lastErrorCode) detailRows.push(['错误码', <><code>{wake.lastErrorCode}</code> {errorDescriptions[wake.lastErrorCode] || ''}</>]);
+      if (wake.lastErrorCode) detailRows.push(['错误码', <><code>{wake.lastErrorCode}</code> {errorDescriptions.get(wake.lastErrorCode)}</>]);
     } else if (selected.batch) {
       const batch = selected.batch;
       detailRows.push(
@@ -574,7 +579,7 @@ export function FeedPage({ active, roles, rolesLoading, roleError, retryingRoles
         ['状态', status && <StatusView value={status} visible/>], ['尝试', `${batch.attemptCount} 次`],
         ['开始', dateTime(batch.startedAt)], ['结束', dateTime(batch.finishedAt)],
       );
-      if (batch.lastErrorCode) detailRows.push(['错误码', <><code>{batch.lastErrorCode}</code> {errorDescriptions[batch.lastErrorCode] || ''}</>]);
+      if (batch.lastErrorCode) detailRows.push(['错误码', <><code>{batch.lastErrorCode}</code> {errorDescriptions.get(batch.lastErrorCode)}</>]);
     } else if (selected.roleActivity) {
       detailRows.push(
         ['请求停止', dateTime(selected.roleActivity.requestedAt)],
@@ -629,7 +634,7 @@ export function FeedPage({ active, roles, rolesLoading, roleError, retryingRoles
               </Disclosure>
             </div>}
           {(roleError || feed.error) && <div className="feed-error" role={roleError || feed.initialFailure ? 'alert' : undefined}>
-            读取失败：{roleError || feed.error}
+            {roleError || feed.error}
             <Button size="sm" busy={roleError ? retryingRoles : refreshRequest?.feed !== undefined}
               aria-disabled={!roleError && refreshRequest !== null && refreshRequest.feed === undefined ? true : undefined}
               onClick={roleError ? onRetryRoles : () => refresh('feed')}>重试</Button>
@@ -644,15 +649,17 @@ export function FeedPage({ active, roles, rolesLoading, roleError, retryingRoles
           </div>}
           {groups.map(group => <section key={group.day} className="feed-day">
             <h2><b>{dateLabel(group.at)}</b>{group.day === dateKey(new Date(now)) && <em>今天</em>}</h2>
-            <ol className="feed-events">{group.events.map(event => {
+            <ol className="feed-events">{group.events.map((event, index) => {
             const role = roleFor(event.roleId);
             const status = showStatus(event);
             const activity = event.activity;
             const task = taskFor(event.roleId, activity?.taskId);
             const message = currentData?.messages[messageKey(event.roleId, activity?.sharedMessageId ?? '')];
             const isNew = since.current !== null && Date.parse(event.at) > since.current && !seen.has(event.id);
+            const time = timeLabel(event.at);
+            const repeat = index > 0 && time === timeLabel(group.events[index - 1].at);
             return <li className="feed-event" key={event.id}>
-              <time dateTime={event.at}>{timeLabel(event.at)}</time>
+              <time dateTime={event.at} data-repeat={repeat || undefined}>{time}</time>
               <RoleFace name={role?.displayName || '角色'} image={portraits[event.roleId]}/>
               <div className={`feed-slip${event.exchange ? ' feed-exchange' : ''}${event.type === 'share' ? ' feed-letter' : ''}${event.type === 'system' ? ' feed-system' : ''}`}
                 data-feed-event={event.id} data-feed-new={isNew ? event.id : undefined} onClick={click => {
@@ -665,14 +672,14 @@ export function FeedPage({ active, roles, rolesLoading, roleError, retryingRoles
                     {event.exchange ? <>
                       <strong>{event.exchange.initiatorName}</strong><span>与</span><strong>{event.exchange.targetName}</strong>
                       <span className="feed-turn-count">{event.exchange.turnCount} 轮</span>
-                    </> : <><strong>{role?.displayName || '角色'}</strong><span>· {labels[event.type]}</span></>}
+                    </> : <><strong>{role?.displayName || '角色'}</strong><span>· {eventLabel(event)}</span></>}
                     {isNew && <span className="feed-new" data-fading={fading.has(event.id) || undefined}>新</span>}
                   </div>
                   <EventContent event={event} message={message} task={task}/>
                 </div>
                 <div className="feed-event-end">
                   {event.type !== 'share' && status && <StatusView value={status}/>}
-                  <Button className="feed-detail" size="sm" aria-label={event.exchange ? `查看「${event.exchange.topic}」的完整聊天记录` : `${role?.displayName || '角色'}的${labels[event.type]}详情`}
+                  <Button className="feed-detail" size="sm" aria-label={event.exchange ? `查看「${event.exchange.topic}」的完整聊天记录` : `${role?.displayName || '角色'}的${eventLabel(event)}详情`}
                     onClick={click => open(event, click.currentTarget)}>详情</Button>
                 </div>
                 {activity && (event.type === 'share' || status?.label === '等你回复') && <div className="feed-letter-actions">
@@ -687,7 +694,7 @@ export function FeedPage({ active, roles, rolesLoading, roleError, retryingRoles
         </div></div>
       </section>
     </div>
-    <Modal open={sheetOpen} title={selected ? `${labels[selected.type]} · ${selected.exchange ? selected.exchange.initiatorName + ' 与 ' + selected.exchange.targetName : roleFor(selected.roleId)?.displayName || '角色'}` : '详情'}
+    <Modal open={sheetOpen} title={selected ? `${eventLabel(selected)} · ${selected.exchange ? selected.exchange.initiatorName + ' 与 ' + selected.exchange.targetName : roleFor(selected.roleId)?.displayName || '角色'}` : '详情'}
       description={selected ? dateTime(selected.at) : undefined} source={source} className="feed-dialog"
       backdropClassName="feed-dialog-backdrop" onClose={() => setSheetOpen(false)} onExited={() => {
         if (!pendingChat.current) {

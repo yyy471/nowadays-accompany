@@ -81,6 +81,12 @@ async function checkLayout(page) {
       }
       const rect = selector => document.querySelector(selector)?.getBoundingClientRect();
       const theme = rect('.studio-header .ui-theme-switcher'), motion = rect('.studio-header .config-motion-toggle');
+      if (theme && !motion?.width) issues.push('减少动效开关不可见');
+      if (theme) {
+        const heights = ['.studio-header', '.studio-footer', '.ui-page-dock'].map(selector => rect(selector)?.height);
+        const expected = innerWidth <= 959 ? [44, 54, 48] : [58, 68, 60];
+        if (heights.some((height, i) => height !== expected[i])) issues.push('壳层高度 ' + heights.join('/'));
+      }
       if (theme && motion && motion.width && motion.left < theme.right && motion.right > theme.left && motion.top < theme.bottom && motion.bottom > theme.top) issues.push('主题与动效控件重叠');
       const brand = rect('.studio-header .ui-studio-brand');
       if (innerWidth === 720 && brand && theme && (brand.bottom <= theme.top || theme.bottom <= brand.top || brand.right > theme.left + 1)) {
@@ -94,6 +100,11 @@ async function checkLayout(page) {
       if (enter && content && enter.bottom > content.bottom + 1) issues.push('主页按钮被裁切');
       const art = rect('.home-scene-art'), caption = rect('.home-scene-caption');
       if (art && caption && (art.height === 0 || caption.top < art.bottom - 1)) issues.push('主页图注侵入绘图区');
+      const plate = rect('.portrait-mat');
+      if (plate && content && innerWidth === 720 && innerHeight === 540) {
+        const visible = Math.min(plate.bottom, content.bottom) - Math.max(plate.top, content.top);
+        if (visible < plate.height / 2) issues.push('首屏露出的藏书票人像不足一半');
+      }
       return issues;
     })()`);
     if (page === 'entry') assert.ok(await ev("document.querySelector('.role-entry-card').getBoundingClientRect().bottom <= document.querySelector('.role-entry-actions').getBoundingClientRect().top + 1"), '单个角色的完整卡片在页脚上方');
@@ -177,6 +188,10 @@ async function run() {
     await until(() => ev("!!document.querySelector('.role-entry-card[data-builtin]')"), 'night-role-entry');
   }
   await checkLayout('entry');
+  await until(() => ev("document.activeElement?.matches('.role-entry-card[data-autofocus]')"), '首卡获得自动焦点');
+  await cmd('Input.dispatchKeyEvent', {type:'keyDown', key:'ArrowRight', code:'ArrowRight', windowsVirtualKeyCode:39});
+  await cmd('Input.dispatchKeyEvent', {type:'keyUp', key:'ArrowRight', code:'ArrowRight', windowsVirtualKeyCode:39});
+  assert.equal(await ev("document.activeElement?.matches('.role-entry-card:focus-visible:not([data-autofocus])')"), true, '首次按键恢复标准焦点环');
 
   // 3. 进入工作区，主页显示当前角色。
   await ev("[...document.querySelectorAll('.role-entry-actions button')].find(b => b.textContent === '进入书房')?.click()");
@@ -187,7 +202,7 @@ async function run() {
   const { click, tab, openSheet } = configControls(ev, until);
   await checkLayout('home');
   for (const [page, label, menu] of [['roles','关系'], ['conversation','对话'], ['feed','动态',true], ['extensions','扩展',true], ['settings','设置',true], ['role-config','角色配置',true]]) {
-    if (menu) await click(element('.ui-menu-trigger'));
+    if (menu) await click(element('.ui-page-dock .ui-menu-trigger'));
     await click(button(label, menu ? '.ui-menu-panel:not([inert])' : '.ui-page-dock'));
     await until(() => ev(`document.querySelector('.studio-shell').dataset.page === ${JSON.stringify(page)}`), page);
     await delay(350);

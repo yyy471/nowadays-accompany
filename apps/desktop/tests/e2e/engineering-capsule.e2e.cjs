@@ -52,7 +52,7 @@ async function run() {
         const selected = "document.querySelector('.dialogue-role-switch button')?.getAttribute('aria-label')?.includes(" + JSON.stringify(name) + ")";
         if (await ev(selected)) return;
         await ev("document.querySelector('.dialogue-role-switch button').click()");
-        await ev("[...document.querySelectorAll('.dialogue-role-switch [role=menuitem]')].find(b=>b.textContent.includes("+JSON.stringify(name)+")).click()");
+        await ev("[...document.querySelectorAll('.dialogue-role-switch [role=menuitemradio]')].find(b=>b.textContent.includes("+JSON.stringify(name)+")).click()");
         await wait(selected,'已切换到'+name);
       };
       await dock('对话');

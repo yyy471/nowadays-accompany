@@ -32,6 +32,36 @@ app.on('quit', () => console.log('STAGE4_QUIT'));
 app.on('will-quit', () => {
   if (expectingExit && nativeCalls === Number(mode === 'unresponsive') && beforeUnload === 0) console.log('STAGE4_EXIT_VERIFIED');
 });
+
+// 健康响应返回前开始逐帧采样，覆盖首次冷启动及随后翻页。
+function observeFastBoot() {
+  localStorage.setItem('nowadays.motion-preference.v1', 'full');
+  document.documentElement.dataset.motion = 'full';
+  const cover = document.querySelector('.boot-gate');
+  const details = cover.querySelector('.boot-details');
+  const root = document.getElementById('root');
+  const record = {
+    phase: cover.dataset.phase, start: performance.getEntriesByType('navigation')[0].domContentLoadedEventStart,
+    frames: 0, turnFrames: 0, maxOpacity: 0
+  };
+  window.fastBoot = record;
+  const observer = new MutationObserver(() => {
+    if (root.firstElementChild) record.mount ??= performance.now();
+    if (!cover.isConnected) { record.removed = true; observer.disconnect(); }
+  });
+  observer.observe(root, { childList:true });
+  observer.observe(document.body, { childList:true });
+  function sample() {
+    if (!cover.isConnected) return;
+    record.frames++;
+    if (cover.dataset.cover === 'opening') record.turnFrames++;
+    record.maxOpacity = Math.max(record.maxOpacity, Number(getComputedStyle(details).opacity));
+    requestAnimationFrame(sample);
+  }
+  sample();
+}
+// 在既有减少动效会话内覆盖发行渠道，复用真实主进程和 preload。
+if (mode === 'clean') Object.defineProperty(app, 'isPackaged', { value: true });
 require('../../electron/main.cjs');
 
 async function run() {
@@ -51,11 +81,43 @@ async function run() {
   const elapsed = Date.now() - start;
   console.log('STAGE4_COVER_MS', elapsed);
   assert.ok(elapsed < 3000, '窗口应在健康检查仍在途时秒开');
+  if (mode === 'fast') {
+    await ev('(' + observeFastBoot.toString() + ')()');
+    assert.deepEqual(await (await fetch(process.env.NOWADAYS_BACKEND_URL + '/test/ready')).json(), []);
+    await wait('window.fastBoot?.removed', '冷启动翻页结束').catch(async error => {
+      console.error(await ev("({sample:window.fastBoot, phase:document.querySelector('.boot-gate')?.dataset.phase, mounted:!!document.querySelector('#root > *')})"));
+      throw error;
+    });
+    const record = await ev('window.fastBoot');
+    assert.equal(record.phase, 'service');
+    assert.ok(record.mount > record.start && record.mount - record.start < 300, JSON.stringify(record));
+    assert.ok(record.frames > record.turnFrames && record.turnFrames > 0);
+    assert.equal(record.maxOpacity, 0, '快启动正文在等待与翻页的每个可绘制帧都应不可见');
+    console.log('STAGE4_FAST_BOOT', JSON.stringify(record));
+    await until(async () => (await (await fetch(process.env.NOWADAYS_BACKEND_URL+'/test/streams')).json()).length >= 2, '业务订阅');
+    expectingExit = true;
+    trayClick('退出 Nowadays');
+    return;
+  }
   const preset = mode === 'daylight' ? mode : 'nightwave';
   assert.equal(await ev("document.querySelector('.boot-gate')?.dataset.uiPreset"), preset);
   assert.equal(nativeTheme.themeSource, preset === 'daylight' ? 'light' : 'dark');
   assert.equal(win.getBackgroundColor().slice(-6).toUpperCase(), preset === 'daylight' ? 'F5F0E8' : '171D29');
   assert.equal(await ev("!!document.querySelector('.studio-shell,.role-entry')"), false);
+  const loading = await ev(`(async () => {
+    const cover = document.querySelector('.boot-gate'), mark = cover.querySelector('.boot-mark');
+    await mark.decode();
+    return { sibling: cover.parentElement === document.getElementById('root').parentElement,
+      phase: cover.dataset.phase, steps: [...cover.querySelectorAll('.boot-steps li')].map(x => [x.textContent, x.dataset.state]),
+      mark: [mark.alt, mark.width, mark.height], status: cover.querySelector('[role=status]').textContent,
+      activeAnimations: cover.getAnimations({subtree:true}).length };
+  })()`);
+  assert.ok(loading.sibling);
+  assert.equal(loading.phase, 'service');
+  assert.deepEqual(loading.steps, [['点灯','done'], ['研墨','now'], ['翻开','waiting']]);
+  assert.deepEqual(loading.mark, ['',44,48]);
+  assert.equal(loading.status, '正在启动本机服务');
+  if (mode === 'clean') assert.equal(loading.activeAnimations, 0, '保存的减少动效偏好从启动首帧生效');
   assert.equal(await ev("fetch('/api-config.json').then(r=>r.json()).then(x=>x.backendBaseUrl)"), '');
   async function shots(state) {
     if (!['daylight', 'nightwave'].includes(mode)) return;
@@ -70,13 +132,41 @@ async function run() {
   }
   await ev("window.addEventListener('error', e => console.error(e.error?.stack || e.message))");
   await shots('boot');
+  if (mode === 'daylight') await wait("/[1-9]\\d* 秒/.test(document.querySelector('.boot-elapsed').textContent)", '慢启动显示等待秒数');
   await delay(150);
   assert.deepEqual(await (await fetch(process.env.NOWADAYS_BACKEND_URL+'/test/fail')).json(), []);
   await wait("!document.querySelector('.boot-gate button').hidden", '失败纸页');
   assert.match(await ev("document.querySelector('.boot-gate [role=status]').textContent"), /健康检查/);
+  assert.equal(await ev("document.querySelector('.boot-gate').dataset.phase"), 'failed');
+  assert.equal(await ev("getComputedStyle(document.querySelector('.boot-lamp')).opacity"), '0.35');
   await shots('failed');
-  await ev("document.querySelector('.boot-gate button').click()");
+  const opening = await ev(`new Promise(resolve => {
+    const cover = document.querySelector('.boot-gate'), leaf = cover.querySelector('.boot-leaf');
+    const record = { workspace: false };
+    const observer = new MutationObserver(() => {
+      if (cover.dataset.phase === 'workspace') {
+        record.workspace = cover.querySelector('.boot-steps li:last-child').dataset.state === 'now'
+          && cover.querySelector('[role=status]').textContent === '本机服务已就绪，正在翻开资料';
+      }
+      if (cover.dataset.cover === 'opening' && record.mounted === undefined) {
+        record.mounted = !!document.querySelector('#root .studio-shell, #root .role-entry');
+        record.turn = leaf.getAnimations().find(a => a.animationName === 'boot-turn')?.effect.getTiming().duration ?? 0;
+        record.fade = cover.getAnimations().find(a => a.animationName === 'boot-fade')?.effect.getTiming().duration ?? 0;
+        record.instant = !cover.isConnected;
+      }
+      if (!cover.isConnected) { observer.disconnect(); resolve(record); }
+    });
+    observer.observe(cover, {attributes:true, attributeFilter:['data-phase','data-cover']});
+    observer.observe(document.body, {childList:true});
+    cover.querySelector('button').click();
+  })`);
+  assert.ok(opening.workspace && opening.mounted, '翻开从工作区首帧开始');
+  if (mode === 'nightwave') assert.deepEqual([opening.turn, opening.fade, opening.instant], [360, 360, false]);
+  if (mode === 'clean') assert.deepEqual([opening.turn, opening.fade, opening.instant], [0, 0, true]);
+  console.log('STAGE4_BOOT_OPEN', JSON.stringify(opening));
   await wait("!!document.querySelector('.ui-menu-trigger')", '重试入壳');
+  assert.equal(await ev('window.nowadaysDesk.isPackaged'), mode === 'clean');
+  assert.equal(await ev("!!document.querySelector('.studio-edition')"), mode !== 'clean');
   if (mode === 'daylight') {
     for (const [choice, source, color] of [['nightwave', 'dark', '171D29'], ['daylight', 'light', 'F5F0E8']]) {
       await ev(`document.querySelector('[data-theme-choice="${choice}"]').click()`);
@@ -89,7 +179,12 @@ async function run() {
   await until(() => !win.isVisible(), '干净窗口直接隐藏');
   trayClick('打开光影书房');
   if (mode === 'clean') {
-    await wait("!!document.querySelector('.engineering-summary,.studio-footer-info')", '业务壳可见');
+    await ev("document.querySelector('.ui-menu-trigger').click()");
+    await ev("[...document.querySelectorAll('.ui-menu-item')].find(item=>item.textContent.includes('设置')).click()");
+    await wait("!!document.querySelector('.config-tabs button[aria-label=本机]')", '设置分区');
+    await ev("document.querySelector('.config-tabs button[aria-label=本机]').click()");
+    await wait("!!document.querySelector('#config-local-connection')", '本机配置');
+    assert.equal(await ev("document.querySelector('#config-local-connection').innerText.includes('开发版')"), false);
     expectingExit = true;
     trayClick('退出 Nowadays');
     return;
@@ -111,7 +206,7 @@ async function run() {
   await clickText('.ui-menu-item', '角色配置');
   await clickText('.config-tabs button', '模型');
   const row = '.config-role-editor:not([hidden]) [data-edit="model:chat"] .config-sum-edit';
-  await wait('!!document.querySelector('+JSON.stringify(row)+')', '配置行');
+  await wait('document.querySelector('+JSON.stringify(row)+')?.getBoundingClientRect().height > 0', '模型分区切换后配置行可见');
   await ev('document.querySelector('+JSON.stringify(row)+').click()');
   await wait("!!document.querySelector('.config-sheet input')", '配置纸笺');
   await ev(`(() => {const input=document.querySelector('.config-sheet input');
@@ -153,7 +248,8 @@ async function run() {
   await wait("!document.querySelector('.desk-intent')", '取消退出');
   assert.ok(win.isVisible());
   assert.equal(await draft(), '尚未保存的书稿');
-  if (mode === 'daylight') await ev("localStorage.setItem('nowadays.theme-preset.v1','nightwave')");
+  if (mode === 'daylight') await ev("localStorage.setItem('nowadays.theme-preset.v1','nightwave');localStorage.setItem('nowadays.motion-preference.v1','full')");
+  if (mode === 'nightwave') await ev("localStorage.setItem('nowadays.motion-preference.v1','reduced')");
   trayClick('退出 Nowadays');
   expectingExit = true;
   await clickText('.desk-intent button','放弃修改并退出');
