@@ -923,8 +923,7 @@ export class ResourceService {
       .listRoleIndexes()
       .filter((index) => index.initStatus === "ready")
       .map((index) => index.roleId);
-    const stores = this.access.openReadyStores(roleIds);
-    try {
+    this.access.withReadyStores(roleIds, (stores) => {
       const at = this.now().toISOString();
       const { followersCommitted } = runWithDecisionCommit(
         this.appStore.db,
@@ -946,9 +945,7 @@ export class ResourceService {
           // 决策已提交：记录留待启动恢复或下次删除重试，删除仍算成功（RP-R06）。
         }
       }
-    } finally {
-      for (const storage of stores) storage.close();
-    }
+    });
     return { resourceId };
   }
 
@@ -985,35 +982,18 @@ export class ResourceService {
       .listRoleIndexes()
       .filter((index) => index.initStatus === "ready")
       .map((index) => index.roleId);
-    let stores: RoleStorage[];
     try {
-      stores = this.access.openReadyStores(roleIds);
-    } catch {
-      return false;
-    }
-    try {
-      let cleaned = true;
-      for (const storage of stores) {
-        try {
-          storage.business.deleteBindingsForResource(resourceId);
-        } catch {
-          cleaned = false;
+      return this.access.withReadyStores(roleIds, (stores) => {
+        let cleaned = true;
+        for (const storage of stores) {
+          try { storage.business.deleteBindingsForResource(resourceId); }
+          catch { cleaned = false; }
         }
-      }
-      if (!cleaned) {
-        return false;
-      }
-      try {
-        this.appStore.clearResourceDeletion(resourceId);
-        return true;
-      } catch {
-        return false;
-      }
-    } finally {
-      for (const storage of stores) {
-        storage.close();
-      }
-    }
+        if (!cleaned) return false;
+        try { this.appStore.clearResourceDeletion(resourceId); return true; }
+        catch { return false; }
+      });
+    } catch { return false; }
   }
 
   /** 当草稿测试指纹与实际保存的配置及密钥一致时，把测试记录绑定到该资源。 */

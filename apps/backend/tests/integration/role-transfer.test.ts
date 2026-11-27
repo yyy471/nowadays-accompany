@@ -1,3 +1,4 @@
+import { ExtensionHost } from "../../src/application/extensions/extension-host.js";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -54,6 +55,7 @@ test("本地 CLI 与正常后端争用安装锁，异常启动后释放，进程
   const role = await createRole(source);
   const packet = path.join(source.appRoot, "role.json");
   const active = createBackendApp(source, options);
+  active.roleAccess.withStore(role.roleId, storage => { storage.business.db.prepare("SELECT 1").get(); storage.checkpoint.db.prepare("SELECT 1").get(); });
   try {
     const response = cli(source, "export", "--role", role.roleId, "--out", packet);
     assert.equal(response.status, 1);
@@ -406,4 +408,28 @@ test("工程迁移保留回执，收敛在途作业和旧包悬空等待", async
   const old = RoleStorage.openExisting(rolePaths(legacy.dataRoot, roleId));
   try { assert.equal(old.business.getTask(roleId, tasks[0]!).waitReason, "ROLE_TRANSFER_INTERRUPTED"); }
   finally { old.close(); }
+});
+
+test("startup assembly failure drains warmed role storage before releasing installation lock", async (t) => {
+  const source = installation(t);
+  const role = await createRole(source);
+  const originalRestore = ExtensionHost.prototype.restore;
+  const originalOpen = RoleStorage.openExisting;
+  let opens = 0;
+  RoleStorage.openExisting = (...args) => { opens++; return originalOpen(...args); };
+  ExtensionHost.prototype.restore = () => { throw new Error("INJECTED_ASSEMBLY_FAILURE"); };
+  try {
+    assert.throws(() => createBackendApp(source, options), /INJECTED_ASSEMBLY_FAILURE/);
+    assert.ok(opens > 0, "startup must warm role storage before the fault");
+  } finally {
+    RoleStorage.openExisting = originalOpen;
+    ExtensionHost.prototype.restore = originalRestore;
+  }
+  const packet = path.join(source.appRoot, "after-startup-failure.json");
+  assert.throws(() => exportRoleTransfer(source, role.roleId, packet), /INSTALLATION_BUSY/);
+  await new Promise<void>(resolve => setImmediate(resolve));
+  exportRoleTransfer(source, role.roleId, packet);
+  assert.ok(fs.existsSync(packet));
+  const reopened = createBackendApp(source, options);
+  await reopened.close();
 });

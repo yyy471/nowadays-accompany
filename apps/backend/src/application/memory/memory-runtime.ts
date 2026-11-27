@@ -19,10 +19,8 @@ import { isIncompleteCompletion, type ModelPort, type ModelUsage } from "../../d
 import { mergeModelUsage, type TokenUsageCallEvent } from "../../domain/token-usage.js";
 import { resolveCredential } from "../../model/credentials.js";
 import { HttpModelAdapter } from "../../model/protocols.js";
-import { rolePaths } from "../../bootstrap/config.js";
 import type { AppStore } from "../../storage/core/app-store.js";
 import { MemoryStore } from "../../storage/memory/memory-store.js";
-import { RoleStorage } from "../../storage/core/role-storage.js";
 import { MemoryService } from "./memory-service.js";
 import type { CredentialResolver } from "../resources/credential-resolver.js";
 import type { ModelBindingResolver, ResolvedModelBinding } from "../resources/model-binding-resolver.js";
@@ -97,7 +95,6 @@ export class MemoryRuntime {
     private readonly roleAccess: RoleAccess,
     private readonly bindings: ModelBindingResolver,
     appRoot: string,
-    private readonly dataRoot: string,
     options: MemoryRuntimeOptions & { modelFactory?: MemoryModelFactory } = {},
   ) {
     this.timeZone = options.timeZone;
@@ -128,9 +125,8 @@ export class MemoryRuntime {
       }
       let startupRecovered = false;
       try {
-        const storage = RoleStorage.openExisting(
-          rolePaths(this.dataRoot, index.roleId),
-        );
+        const lease = this.roleAccess.borrow(index.roleId);
+        const storage = lease.storage;
         let shouldWake = false;
         try {
           const store = new MemoryStore(storage.business.db);
@@ -145,7 +141,7 @@ export class MemoryRuntime {
             store.listPendingTriggers(index.roleId).length > 0 ||
             store.listFinishedTasksNeedingTrigger(index.roleId).length > 0;
         } finally {
-          storage.close();
+          lease.release();
         }
         this.pendingStartupRecoveryRoles.delete(index.roleId);
         this.armTimer(index.roleId);
@@ -310,6 +306,8 @@ export class MemoryRuntime {
     this.queues.delete(roleId);
   }
 
+  restoreRole(roleId: string): void { this.disposedRoles.delete(roleId); }
+
   private enqueue(
     roleId: string,
     mark: (queue: QueueState) => void,
@@ -434,7 +432,8 @@ export class MemoryRuntime {
         this.timerRetryAttempts.delete(roleId);
         return;
       }
-      const storage = RoleStorage.openExisting(rolePaths(this.dataRoot, roleId));
+      const lease = this.roleAccess.borrow(roleId);
+      const storage = lease.storage;
       try {
         const store = new MemoryStore(storage.business.db);
         const nowMs = this.now().getTime();
@@ -491,7 +490,7 @@ export class MemoryRuntime {
           }
         }
       } finally {
-        storage.close();
+        lease.release();
       }
       if (shouldResetRetry) {
         this.timerRetryAttempts.delete(roleId);
@@ -629,7 +628,8 @@ export class MemoryRuntime {
     this.activeResources.set(roleId, binding.resourceId);
     try {
       this.roleAccess.requireReady(roleId);
-      const storage = RoleStorage.openExisting(rolePaths(this.dataRoot, roleId));
+      const lease = this.roleAccess.borrow(roleId);
+      const storage = lease.storage;
       try {
         const store = new MemoryStore(storage.business.db);
         const model = this.customModelFactory
@@ -786,7 +786,7 @@ export class MemoryRuntime {
           }
         }
       } finally {
-        storage.close();
+        lease.release();
       }
     } finally {
       if (this.activeResources.get(roleId) === binding.resourceId) {

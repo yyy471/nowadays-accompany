@@ -27,7 +27,6 @@ import { CredentialResolver } from "../application/resources/credential-resolver
 import { ResourceService } from "../application/resources/resource-service.js";
 import { RoleAccess } from "../application/role/role-access.js";
 import { RoleService } from "../application/role/role-service.js";
-import { RolesNotStoppedError } from "../domain/errors.js";
 import { RoleActivityService } from "../application/role/role-activity-service.js";
 import { RoleDeletionService } from "../application/role/role-deletion-service.js";
 import { TokenUsageService } from "../application/resources/token-usage-service.js";
@@ -82,6 +81,7 @@ import { MediaMaintenance } from '../application/media/media-maintenance.js';
 export interface BackendApp {
   config: BackendConfig;
   appStore: AppStore;
+  roleAccess: RoleAccess;
   services: ApiServices;
   conversation: ConversationService;
   server: http.Server;
@@ -94,35 +94,52 @@ export function createBackendApp(
 ): BackendApp {
   const release = lockInstallation(config);
   let appStore: AppStore | undefined;
+  let roleAccess: RoleAccess | undefined;
+  let stopStartup: (() => Promise<void>) | undefined;
   try {
     checkAppDatabaseFiles(config);
     appStore = new AppStore(config.appDatabasePath);
     recoverRoleTransfer(config, appStore);
-    const app = assembleBackendApp(config, appStore, options);
+    roleAccess = new RoleAccess(appStore, config.dataRoot);
+    const app = assembleBackendApp(config, appStore, options, roleAccess, stop => { stopStartup = stop; });
+    let closing: Promise<void> | undefined;
     return {
       ...app,
-      async close() {
-        try { await app.close(); }
-        finally { release(); }
+      close() {
+        return closing ??= (async () => {
+          try { await app.close(); }
+          finally {
+            try { await roleAccess!.closeAll(); }
+            finally { try { appStore!.close(); } finally { release(); } }
+          }
+        })();
       },
     };
   } catch (error) {
-    try { appStore?.close(); }
-    finally { release(); }
+    const finalize = () => { try { appStore?.close(); } finally { release(); } };
+    const closePool = () => roleAccess?.closeAll();
+    if (stopStartup) {
+      void stopStartup().then(closePool, closePool).then(finalize, finalize);
+    } else {
+      try {
+        const draining = closePool();
+        if (draining) void draining.then(finalize, finalize);
+        else finalize();
+      } catch { finalize(); }
+    }
     throw error;
   }
 }
 
 function assembleBackendApp(
-  config: BackendConfig, appStore: AppStore, options: BackendAppOptions,
+  config: BackendConfig, appStore: AppStore, options: BackendAppOptions, roleAccess: RoleAccess, registerStartupStop: (stop: () => Promise<void>) => void,
 ): BackendApp {
   const now = options.now ?? (() => new Date());
   const credentials = new CredentialResolver(
     config.appRoot,
     new SecretStore(appStore.db, new SecretCipher(config.appRoot)),
   );
-  const roleService = new RoleService(appStore, config.dataRoot);
-  const roleAccess = new RoleAccess(appStore, config.dataRoot);
+  const roleService = new RoleService(appStore, config.dataRoot, roleAccess);
   const activity = new RoleActivityService(appStore, { now });
   const messageService = new MessageService(roleAccess, now);
   // 模型解析同时服务运行时、影响报告与维护校验（283 R04）。
@@ -144,33 +161,7 @@ function assembleBackendApp(
       const view = activity.view(roleId);
       return { state: view.state, running: view.running };
     },
-    pauseRoles: async (roleIds) => {
-      const pausedRoleIds: string[] = [];
-      const pending: Array<{ roleId: string; state: string; running: boolean }> = [];
-      for (const roleId of roleIds) {
-        let view = activity.view(roleId);
-        // 已停止或用户先前已发起停止的角色不属于本次操作的暂停名单（283 §5 R05）。
-        if (view.state === "stopped") continue;
-        const initiated = view.state === "active";
-        if (initiated) activity.requestStop(roleId);
-        const deadline = Date.now() + (options.maintenancePauseTimeoutMs ?? 20_000);
-        while (Date.now() < deadline && activity.view(roleId).state !== "stopped") {
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
-        view = activity.view(roleId);
-        if (view.state !== "stopped") {
-          pending.push({ roleId, state: view.state, running: view.running });
-        } else if (initiated) {
-          // 只记录由本次操作发起且已经确认停止的角色。
-          pausedRoleIds.push(roleId);
-        }
-      }
-      if (pending.length > 0) {
-        // 超时或失败时仍返回本次已经停止的角色，界面可在原处恢复（283 §4 R05）。
-        throw new RolesNotStoppedError(pending, pausedRoleIds);
-      }
-      return { pausedRoleIds };
-    },
+    pauseRoles: (roleIds) => activity.pauseRoles(roleIds, options.maintenancePauseTimeoutMs),
     wakePendingWork: (roleId) => wakePendingWork(roleId),
     externalInflightRoleIds: (resourceId) =>
       externalInflightRoleIds(resourceId),
@@ -252,7 +243,6 @@ function assembleBackendApp(
         roleAccess,
         bindings,
         config.appRoot,
-        config.dataRoot,
         {
           now,
           credentialResolver: credentials,
@@ -312,7 +302,6 @@ function assembleBackendApp(
     bindings,
     memoryService,
     config.appRoot,
-    config.dataRoot,
     {
       now,
       credentialResolver: credentials,
@@ -398,15 +387,6 @@ function assembleBackendApp(
     },
     resumeWork: (roleId) => conversation.rescheduleAfterStop(roleId),
   });
-  memoryRuntime?.recoverOnStartup();
-  conversation.recoverOnStartup();
-  // 中断调用收敛后再一次性回填历史 Token 账本，避免重复统计或漏计已结算调用（DL-183）。
-  tokenUsage.backfillOnce();
-  // 执行记录恢复后再核对持久化的停止请求：已无在途执行或后台工具的
-  // stopping 记录自动收敛为 stopped，避免重启后卡在正在停止（RA-R05）。
-  activity.reconcileStartup();
-  // 完成上一次删除中断留下的角色绑定清理（RP-R05）。
-  resourceService.reconcilePendingDeletions();
   const configuredSceneGenerator = new ConfiguredSceneImageGenerator({
     source: sceneImageSettings.source, fallback: new FakeSceneImageGenerator(),
   });
@@ -455,7 +435,6 @@ function assembleBackendApp(
     isRoleDeleting: (roleId) => isRoleDeleting(roleId),
   });
   conversation.setSceneImageService(sceneImages);
-  sceneImages.recoverOnStartup();
   const waitForMemoryIdle = async (
     roleId: string,
     timeoutMs: number,
@@ -506,13 +485,13 @@ function assembleBackendApp(
       },
       onDeletionFailed: (roleId) => {
         // 删除保护已释放：补发删除期间被拒绝的维护唤醒与待处理检查（283 §17）。
+        memoryRuntime?.restoreRole(roleId);
         conversation.wakePendingWork(roleId);
       },
     },
     config.dataRoot,
     { now },
   );
-  roleDeletion.reconcilePendingDeletions();
   isRoleDeleting = (roleId) => roleDeletion.isDeleting(roleId);
   autonomy.setWakeListener((roleId) => conversation.refreshWakeTimer(roleId));
   autonomy.setProactiveMessageListener(notice => {
@@ -542,6 +521,32 @@ function assembleBackendApp(
     pi, modelProxy, toolProxy, engineeringPool,
     extensions,
   };
+  const server = createHttpServer({ version: "0.1.0", services, hostToken: config.hostToken });
+
+  let closing: Promise<void> | undefined;
+  const closeRuntime = (): Promise<void> => closing ??= (async () => {
+    try {
+      const stopped = await Promise.allSettled([pi.close(), conversation.close()]);
+      await toolProxy.drain();
+      if (server.listening) await closeServer(server);
+      for (const result of stopped) if (result.status === "rejected") throw result.reason;
+    } finally {
+      try { await sceneImages.close(); }
+      finally { await extensions.close(); }
+    }
+  })();
+  registerStartupStop(closeRuntime);
+  memoryRuntime?.recoverOnStartup();
+  conversation.recoverOnStartup();
+  // 中断调用收敛后再一次性回填历史 Token 账本，避免重复统计或漏计已结算调用（DL-183）。
+  tokenUsage.backfillOnce();
+  // 执行记录恢复后再核对持久化的停止请求：已无在途执行或后台工具的
+  // stopping 记录自动收敛为 stopped，避免重启后卡在正在停止（RA-R05）。
+  activity.reconcileStartup();
+  // 完成上一次删除中断留下的角色绑定清理（RP-R05）。
+  resourceService.reconcilePendingDeletions();
+  sceneImages.recoverOnStartup();
+  roleDeletion.reconcilePendingDeletions();
   if (options.disablePresetAssistant !== true) {
     const seat = ensurePresetAssistant({
       appStore,
@@ -552,34 +557,9 @@ function assembleBackendApp(
     resourceService.ensureManagedPi(seat.roleId);
   }
   conversation.batchDelivery.recover();
-  const server = createHttpServer({ version: "0.1.0", services, hostToken: config.hostToken });
-
   extensions.restore();
-  let closing: Promise<void> | undefined;
-  return {
-    config,
-    appStore,
-    services,
-    conversation,
-    server,
-    close() {
-      return closing ??= (async () => {
-        try {
-          // 同一事件循环内停止工程与前台生成，避免排空代理时又接收一段旧回复。
-          const stopped = await Promise.allSettled([pi.close(), conversation.close()]);
-          await toolProxy.drain();
-          if (server.listening) await closeServer(server);
-          for (const result of stopped) if (result.status === "rejected") throw result.reason;
-        } finally {
-          try { await sceneImages.close(); }
-          finally {
-            try { await extensions.close(); }
-            finally { appStore.close(); }
-          }
-        }
-      })();
-    },
-  };
+  return { config, appStore, roleAccess, services, conversation, server, close: closeRuntime };
+
 }
 
 export function listen(

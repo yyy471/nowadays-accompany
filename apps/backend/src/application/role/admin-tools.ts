@@ -818,6 +818,7 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
         const plan = resources.maintenancePlan(resourceId, patch);
         let maintenance = false;
         let pausedRoleIds: string[] = [];
+        let pauseCompleted = false;
         let updatedView: ReturnType<typeof resources.update> | null = null;
         let failure: unknown = null;
         let resumedRoleIds: string[] = [];
@@ -838,9 +839,14 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
             }
             pausedRoleIds = (await pause(plan.pauseRoleIds)).pausedRoleIds;
           }
+          pauseCompleted = true;
           updatedView = resources.update(resourceId, patch);
         } catch (error) {
           failure = error;
+          if (!pauseCompleted && error instanceof AppError && error.details && typeof error.details === "object" && !Array.isArray(error.details)) {
+            const partial = (error.details as { pausedRoleIds?: unknown }).pausedRoleIds;
+            if (Array.isArray(partial)) pausedRoleIds = partial.filter((id): id is string => typeof id === "string");
+          }
         } finally {
           // 必须在维护窗口结束后再恢复角色：维护中 resume 会被 resumeGuard 拒绝（283 R01）。
           if (maintenance) {

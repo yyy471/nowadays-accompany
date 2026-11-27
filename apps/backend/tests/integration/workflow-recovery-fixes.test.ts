@@ -1,3 +1,4 @@
+import { RoleAccess } from "../../src/application/role/role-access.js";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -1329,30 +1330,30 @@ test("退避到期时模型仍在维护不重复扫库，维护结束后自动�
     }
   };
   const installMemoryScanSpy = () => {
-    const originalOpenExisting = RoleStorage.openExisting;
+    const originalOpenExisting = RoleAccess.prototype.borrow;
     const originalListNeeding =
       MemoryStore.prototype.listFinishedTasksNeedingTrigger;
     const originalNextFailedRetryAt = MemoryStore.prototype.nextFailedRetryAt;
     let enabled = false;
     const counts = {
-      openCount: 0,
-      directMemoryOpenCount: 0,
+      borrowCount: 0,
+      directMemoryBorrowCount: 0,
       scanCount: 0,
       failedRetryScanCount: 0,
     };
-    RoleStorage.openExisting = ((...args: Parameters<typeof RoleStorage.openExisting>) => {
+    RoleAccess.prototype.borrow = (function (this: RoleAccess, ...args: Parameters<RoleAccess["borrow"]>) {
       if (enabled) {
         const frames = (new Error().stack ?? "").split("\n");
         const callerFrame = frames[2] ?? "";
         if (frames.some((frame) => frame.includes("memory-runtime"))) {
-          counts.openCount += 1;
+          counts.borrowCount += 1;
         }
         if (callerFrame.includes("memory-runtime")) {
-          counts.directMemoryOpenCount += 1;
+          counts.directMemoryBorrowCount += 1;
         }
       }
-      return originalOpenExisting(...args);
-    }) as typeof RoleStorage.openExisting;
+      return originalOpenExisting.apply(this, args);
+    }) as RoleAccess["borrow"];
     MemoryStore.prototype.listFinishedTasksNeedingTrigger = function (
       ...args: Parameters<MemoryStore["listFinishedTasksNeedingTrigger"]>
     ) {
@@ -1371,8 +1372,8 @@ test("退避到期时模型仍在维护不重复扫库，维护结束后自动�
     };
     return {
       start() {
-        counts.openCount = 0;
-        counts.directMemoryOpenCount = 0;
+        counts.borrowCount = 0;
+        counts.directMemoryBorrowCount = 0;
         counts.scanCount = 0;
         counts.failedRetryScanCount = 0;
         enabled = true;
@@ -1383,7 +1384,7 @@ test("退避到期时模型仍在维护不重复扫库，维护结束后自动�
       },
       restore() {
         enabled = false;
-        RoleStorage.openExisting = originalOpenExisting;
+        RoleAccess.prototype.borrow = originalOpenExisting;
         MemoryStore.prototype.listFinishedTasksNeedingTrigger = originalListNeeding;
         MemoryStore.prototype.nextFailedRetryAt = originalNextFailedRetryAt;
       },
@@ -1447,7 +1448,7 @@ test("退避到期时模型仍在维护不重复扫库，维护结束后自动�
       await flushMicrotasks();
 
       const onExpiry = scanSpy.stop();
-      assert.equal(onExpiry.directMemoryOpenCount, 0, "退避到期命中维护分支时不打开记忆存储");
+      assert.equal(onExpiry.directMemoryBorrowCount, 0, "退避到期命中维护分支时不打开记忆存储");
       assert.equal(onExpiry.scanCount, 0, "退避到期命中维护分支时不扫描待补写任务");
       assert.equal(onExpiry.failedRetryScanCount, 0);
 
@@ -1459,7 +1460,7 @@ test("退避到期时模型仍在维护不重复扫库，维护结束后自动�
         await flushMicrotasks();
       }
       const afterExpiryWindow = scanSpy.stop();
-      assert.equal(afterExpiryWindow.openCount, 0, "退避到期后维护期内不应重复打开角色库");
+      assert.equal(afterExpiryWindow.borrowCount, 0, "退避到期后维护期内不应重复打开角色库");
       assert.equal(afterExpiryWindow.scanCount, 0, "退避到期后维护期内不应重复扫描待补写任务");
       assert.equal(afterExpiryWindow.failedRetryScanCount, 0);
 
@@ -1468,7 +1469,7 @@ test("退避到期时模型仍在维护不重复扫库，维护结束后自动�
       fixture.app.conversation.wakePendingWork(fixture.roleId);
       await flushMicrotasks();
       const onWake = scanSpy.stop();
-      assert.equal(onWake.directMemoryOpenCount, 0);
+      assert.equal(onWake.directMemoryBorrowCount, 0);
       assert.equal(onWake.scanCount, 0);
 
       scanSpy.start();
@@ -1478,7 +1479,7 @@ test("退避到期时模型仍在维护不重复扫库，维护结束后自动�
         await flushMicrotasks();
       }
       const afterWakeWindow = scanSpy.stop();
-      assert.equal(afterWakeWindow.openCount, 0);
+      assert.equal(afterWakeWindow.borrowCount, 0);
       assert.equal(afterWakeWindow.scanCount, 0);
       assert.equal(afterWakeWindow.failedRetryScanCount, 0);
       assert.equal(memoryCalls, 0);
@@ -1572,7 +1573,7 @@ test("退避到期时模型仍在维护不重复扫库，维护结束后自动�
       fixture.app.conversation.wakePendingWork(fixture.roleId);
       await delay(50);
       const afterWake = scanSpy.stop();
-      assert.equal(afterWake.directMemoryOpenCount, 0);
+      assert.equal(afterWake.directMemoryBorrowCount, 0);
       assert.equal(afterWake.scanCount, 0);
       assert.equal(afterWake.failedRetryScanCount, 0);
 
@@ -1580,7 +1581,7 @@ test("退避到期时模型仍在维护不重复扫库，维护结束后自动�
       await delay(300);
 
       const observed = scanSpy.stop();
-      assert.equal(observed.openCount, 0);
+      assert.equal(observed.borrowCount, 0);
       assert.equal(observed.scanCount, 0);
       assert.equal(observed.failedRetryScanCount, 0);
       assert.equal(memoryCalls, 0);
@@ -1805,7 +1806,7 @@ try {
     };
     process.on("unhandledRejection", onUnhandled);
     const originalResolveMemory = ModelBindingResolver.prototype.resolveMemory;
-    const originalOpenExisting = RoleStorage.openExisting;
+    const originalOpenExisting = RoleAccess.prototype.borrow;
     let busyLocked = false;
     let armFailHits = 0;
 
@@ -1823,7 +1824,7 @@ try {
         return originalResolveMemory.call(this, roleId);
       };
     } else {
-      RoleStorage.openExisting = ((...args: Parameters<typeof RoleStorage.openExisting>) => {
+      RoleAccess.prototype.borrow = (function (this: RoleAccess, ...args: Parameters<RoleAccess["borrow"]>) {
         if (busyLocked) {
           const stack = new Error().stack ?? "";
           const inDirectRunOnce =
@@ -1837,8 +1838,8 @@ try {
             throw new Error("SQLITE_BUSY: simulated busy role storage");
           }
         }
-        return originalOpenExisting(...args);
-      }) as typeof RoleStorage.openExisting;
+        return originalOpenExisting.apply(this, args);
+      }) as RoleAccess["borrow"];
     }
 
     try {
@@ -1883,7 +1884,7 @@ try {
     } finally {
       busyLocked = false;
       ModelBindingResolver.prototype.resolveMemory = originalResolveMemory;
-      RoleStorage.openExisting = originalOpenExisting;
+      RoleAccess.prototype.borrow = originalOpenExisting;
       process.off("unhandledRejection", onUnhandled);
       await fixture.close();
     }
@@ -1926,7 +1927,7 @@ test("启动读库失败后恢复遗漏的中断批次并继续整理且不重�
       disableMemoryRuntime: false,
       memoryModelFactory: () => memoryModel,
     });
-    const originalOpenExisting = RoleStorage.openExisting;
+    const originalOpenExisting = RoleAccess.prototype.borrow;
     let reopened: BackendApp | null = null;
     let startupBusyLocked = false;
 
@@ -1974,12 +1975,12 @@ test("启动读库失败后恢复遗漏的中断批次并继续整理且不重�
       // 重启时仅给该角色的 MemoryRuntime 存储打开注入临时 SQLITE_BUSY。
       let startupBusyHits = 0;
       startupBusyLocked = true;
-      RoleStorage.openExisting = ((
-        ...args: Parameters<typeof RoleStorage.openExisting>
-      ) => {
+      RoleAccess.prototype.borrow = (function (
+        this: RoleAccess, ...args: Parameters<RoleAccess["borrow"]>
+      ) {
         if (
           startupBusyLocked &&
-          args[0].businessDatabasePath === targetDbPath.dbPath
+          args[0] === fixture.roleId
         ) {
           const stack = new Error().stack ?? "";
           if (
@@ -1998,8 +1999,8 @@ test("启动读库失败后恢复遗漏的中断批次并继续整理且不重�
             throw new Error("SQLITE_BUSY: simulated startup lock on role storage");
           }
         }
-        return originalOpenExisting(...args);
-      }) as typeof RoleStorage.openExisting;
+        return originalOpenExisting.apply(this, args);
+      }) as RoleAccess["borrow"];
 
       reopened = createBackendApp(
         parseBackendConfig(["--app-root", fixture.root, "--port", "0"]),
@@ -2156,7 +2157,7 @@ test("启动读库失败后恢复遗漏的中断批次并继续整理且不重�
     } finally {
       startupBusyLocked = false;
       liveGate.resolve();
-      RoleStorage.openExisting = originalOpenExisting;
+      RoleAccess.prototype.borrow = originalOpenExisting;
       await reopened?.close();
       await fixture.close();
     }
@@ -2179,14 +2180,14 @@ test("空手动整理不反复轮询，新增证据后仍可整理", async () =>
       },
     }),
   });
-  const originalOpen = RoleStorage.openExisting;
+  const originalOpen = RoleAccess.prototype.borrow;
   let runs = 0;
   try {
     const base = await start(fixture);
-    RoleStorage.openExisting = ((...args: Parameters<typeof RoleStorage.openExisting>) => {
+    RoleAccess.prototype.borrow = (function (this: RoleAccess, ...args: Parameters<RoleAccess["borrow"]>) {
       if ((new Error().stack ?? "").includes("runOnce")) runs++;
-      return originalOpen(...args);
-    }) as typeof RoleStorage.openExisting;
+      return originalOpen.apply(this, args);
+    }) as RoleAccess["borrow"];
     assert.equal((await api(base, "POST", `/v1/roles/${fixture.roleId}/memory/batches`)).status, 202);
     await waitUntil(() => runs > 0);
     await delay(100);
@@ -2205,7 +2206,7 @@ test("空手动整理不反复轮询，新增证据后仍可整理", async () =>
     await waitUntil(() => calls === 1 && withStorage(fixture, (storage) =>
       new MemoryStore(storage.business.db).pendingTaskEvidenceCount(fixture.roleId, taskId) === 0));
   } finally {
-    RoleStorage.openExisting = originalOpen;
+    RoleAccess.prototype.borrow = originalOpen;
     await fixture.close();
   }
 });

@@ -12,6 +12,7 @@ type PauseRoles = (roleIds: string[]) => Promise<{ pausedRoleIds: string[] }>;
 export class MediaMaintenance {
   private readonly maintaining = new Set<string>();
   private readonly claims = new Map<symbol, { key: string; roleId: string }>();
+  private readonly waiters = new Map<string, Set<() => void>>();
   constructor(private readonly appStore: AppStore, private readonly access: RoleAccess,
     private readonly activity: RoleActivityService, private readonly pause: PauseRoles | null) {}
   private key(kind: MediaKind, id: string): string { return `${kind}:${id}`; }
@@ -25,7 +26,13 @@ export class MediaMaintenance {
     this.assertAvailable(kind, id);
     const token = Symbol();
     this.claims.set(token, { key: this.key(kind, id), roleId });
-    return () => { this.claims.delete(token); };
+    return () => {
+      if (!this.claims.delete(token)) return;
+      const key = this.key(kind, id);
+      if (this.waiters.has(key) && ![...this.claims.values()].some(item => item.key === key)) {
+        for (const wake of this.waiters.get(key) ?? []) wake();
+      }
+    };
   }
   private begin(kind: MediaKind, id: string): void {
     this.assertAvailable(kind, id);
@@ -66,8 +73,19 @@ export class MediaMaintenance {
         if (!this.pause) throw new AppError(409, 'ROLES_NOT_STOPPED', '角色维护协调尚未配置，请稍后重试', { roles: pending });
         pausedRoleIds = (await this.pause(pending.map(role => role.roleId))).pausedRoleIds;
       }
-      const deadline = Date.now() + 20_000;
-      while (this.inflight(kind, id).length && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+      const key = this.key(kind, id);
+      if (this.inflight(kind, id).length) await new Promise<void>(resolve => {
+        const waiters = this.waiters.get(key) ?? new Set<() => void>();
+        this.waiters.set(key, waiters);
+        const finish = () => {
+          clearTimeout(timer);
+          waiters.delete(finish);
+          if (!waiters.size) this.waiters.delete(key);
+          resolve();
+        };
+        const timer = setTimeout(finish, 20_000);
+        waiters.add(finish);
+      });
       const busy = this.inflight(kind, id);
       if (busy.length) throw new AppError(409, 'MEDIA_SERVICE_MAINTENANCE', '仍有调用正在使用这个服务，请等它结算后再保存', { roleIds: busy });
       const unpaused = this.dependencies(kind, id).filter(role => role.state !== 'stopped');

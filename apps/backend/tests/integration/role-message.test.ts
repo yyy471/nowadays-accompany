@@ -1,3 +1,4 @@
+import { RoleAccess } from "../../src/application/role/role-access.js";
 import assert from "node:assert/strict";
 import { configFetch } from "../fixtures/config-write.js";
 import { randomUUID } from "node:crypto";
@@ -309,7 +310,7 @@ test("failed initialization can be retried with the same roleId", async () => {
     app = createBackendApp(config);
     const blockedRoot = path.join(root, "blocked-root");
     fs.writeFileSync(blockedRoot, "not a directory", "utf8");
-    const service = new RoleService(app.appStore, blockedRoot);
+    const service = new RoleService(app.appStore, blockedRoot, new RoleAccess(app.appStore, blockedRoot));
 
     let failed: unknown;
     try {

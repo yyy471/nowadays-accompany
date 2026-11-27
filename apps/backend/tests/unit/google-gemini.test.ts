@@ -178,7 +178,7 @@ test("Vertex 草稿保存两个已验证入口，重启后正式请求按服务�
   await app.close();
   app = createBackendApp(config);
   const credentials = new CredentialResolver(root, new SecretStore(app.appStore.db, new SecretCipher(root)));
-  const resolver = new ModelBindingResolver(app.appStore, new RoleAccess(app.appStore, config.dataRoot), credentials);
+  const resolver = new ModelBindingResolver(app.appStore, app.roleAccess, credentials);
   const chat = resolver.resolveChat(role.roleId);
   assert.equal(chat.config.baseUrl, global);
   assert.equal(resolver.resolveMemory(role.roleId).config.baseUrl, express);

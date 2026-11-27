@@ -1229,7 +1229,7 @@ test("model binding resolver selects chat and memory bindings with fallback", as
     ]);
     const resolver = new ModelBindingResolver(
       app.appStore,
-      new RoleAccess(app.appStore, app.config.dataRoot),
+      app.roleAccess,
     );
     const chatBinding = resolver.resolveChat(role.roleId);
     assert.equal(chatBinding.modelName, "chat-model");

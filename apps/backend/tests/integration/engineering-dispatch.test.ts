@@ -186,7 +186,7 @@ test("复用父任务工具目录时重新检查工程取证，未分派过工�
     const { taskId } = f.context();
     app.services.engineeringPool.update({ members: f.members });
     const catalog = await loadAgentTools({ roleId, taskId, appStore: app.appStore,
-      roleAccess: new RoleAccess(app.appStore, app.config.dataRoot), memory: app.services.memory,
+      roleAccess: app.roleAccess, memory: app.services.memory,
       workspaceDir: f.main.root, appRoot: app.config.appRoot, admin: { ...app.services, now: () => new Date() } });
     try {
       assert.ok(catalog.tools.some(tool => tool.name === "pi_task_start"));

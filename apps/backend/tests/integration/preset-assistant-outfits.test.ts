@@ -8,11 +8,10 @@ import { pathToFileURL } from "node:url";
 import { DEFAULT_MAX_TOOL_ROUNDS } from "../../src/application/conversation/agent-graph.js";
 import { createAdminTools, SELF_MODIFICATION_CODE } from "../../src/application/role/admin-tools.js";
 import { loadAgentTools } from "../../src/application/conversation/agent-tools.js";
-import { RoleAccess } from "../../src/application/role/role-access.js";
 import { createBackendApp, listen } from "../../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths } from "../../src/bootstrap/config.js";
 import { XIA_CHENG_BUILTIN_KEY } from "../../src/application/role/preset-assistant.js";
-import { StorageError } from "../../src/domain/errors.js";
+import { AppError, StorageError } from "../../src/domain/errors.js";
 import type { ConversationTool, ConversationToolContext } from "../../src/domain/conversation.js";
 import type { ModelEvent, ModelPort, ModelRequest } from "../../src/domain/model.js";
 import {
@@ -534,7 +533,7 @@ test("包2：夏澄内部管理工具只挂载到内置助手，读写边界与�
     const ordinaryCatalog = await loadAgentTools({
       roleId: ordinary.roleId,
       appStore: app.appStore,
-      roleAccess: new RoleAccess(app.appStore, config.dataRoot),
+      roleAccess: app.roleAccess,
       memory: app.services.memory,
       autonomy: app.services.autonomy,
       appRoot: config.appRoot,
@@ -765,6 +764,25 @@ test("包2 R04：管理工具写入失败后恢复角色活动态并在错误回
     } finally {
       resourcesService.update = originalResourceUpdate;
     }
+
+    ensureActive();
+    const originalPause = resourcesService.pauseRoles;
+    Object.defineProperty(resourcesService, "pauseRoles", { configurable: true, value: async () => {
+      app.services.activity.requestStop(ordinary.roleId);
+      throw new AppError(409, "ROLES_NOT_STOPPED", "partial", { pausedRoleIds: [ordinary.roleId] });
+    }});
+    try {
+      const failed = await callAdminTool(tools, "app_resource_update", {
+        resourceId: model.resourceId,
+        config: { protocol: "openai-chat", baseUrl: "http://changed.invalid/v1" },
+      });
+      assert.equal(failed.diagnosticCode, "ROLES_NOT_STOPPED");
+      assert.deepEqual(detailsOf(failed).rolledBackRoleIds, [ordinary.roleId]);
+      assert.equal(stateOf(), "active");
+    } finally {
+      Object.defineProperty(resourcesService, "pauseRoles", { configurable: true, value: originalPause });
+    }
+
   } finally {
     await app.close();
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 });

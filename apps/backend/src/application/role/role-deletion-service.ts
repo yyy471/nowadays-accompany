@@ -90,26 +90,10 @@ export class RoleDeletionService {
       throw this.lastRoleError(roleId);
     }
     this.deleting.add(roleId);
-    let failed = false;
+    let failed = true;
     try {
       await this.runtime.dispose(roleId);
-    } catch (error) {
-      failed = true;
-      throw error;
-    } finally {
-      // 收尾失败时角色继续可用；成功时索引随后在同一轮同步移除。
-      this.deleting.delete(roleId);
-      if (failed) {
-        try {
-          // 删除期间被拒绝的维护唤醒在这里补发（283 §17）。
-          this.runtime.onDeletionFailed?.(roleId);
-        } catch {
-          // 补发失败不影响删除结果；下次维护或消息会重新触发。
-        }
-      }
-    }
-    // 运行时收尾期间可能有并发删除；「至少保留一个」在写事务里再复验一次，
-    // 与移除索引同事务，避免两个请求各删一个后剩零个角色（AD-R01）。
+      await this.roleAccess.blockAndEvict(roleId);
     this.appStore.db.transaction(() => {
       const current = this.appStore.getRoleIndex(roleId);
       if (current !== null && isAdminSeat(current.builtinKey)) {
@@ -123,10 +107,16 @@ export class RoleDeletionService {
       }
       this.appStore.deleteRole(roleId);
     })();
-    if (keepHistory) {
-      return { roleId, keepHistory: true, filesRemoved: false };
+      failed = false;
+      if (keepHistory) return { roleId, keepHistory: true, filesRemoved: false };
+      return this.finishCleanup(roleId);
+    } finally {
+      this.roleAccess.unblock(roleId);
+      this.deleting.delete(roleId);
+      if (failed) {
+        try { this.runtime.onDeletionFailed?.(roleId); } catch { /* best effort */ }
+      }
     }
-    return this.finishCleanup(roleId);
   }
 
   private lastRoleError(roleId: string): AppError {

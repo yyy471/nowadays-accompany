@@ -59,14 +59,11 @@ export interface CreateRoleInternalOptions {
 }
 
 export class RoleService {
-  private readonly access: RoleAccess;
-
   constructor(
     private readonly appStore: AppStore,
     private readonly dataRoot: string,
-  ) {
-    this.access = new RoleAccess(appStore, dataRoot);
-  }
+    private readonly access: RoleAccess,
+  ) {}
 
   /** 新建角色默认已停止：先完成配置，再由用户显式开始活动（268 §4）。 */
   private markCreatedStopped(roleId: string): void {

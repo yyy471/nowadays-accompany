@@ -5,7 +5,6 @@ import { RoleExchangeService, exchangeWake } from "./role-exchanges.js";
 import { DialogueBatchDelivery } from "./dialogue-batch-delivery.js";
 import type http from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
-import { rolePaths } from "../../bootstrap/config.js";
 import type {
   AgentRunResult,
   AgentSegmentStopKind,
@@ -60,7 +59,7 @@ import type {
   SubmitMessageResult,
   TaskRecord,
 } from "../../storage/role/role-store.js";
-import { RoleStorage } from "../../storage/core/role-storage.js";
+import type { RoleStorage } from "../../storage/core/role-storage.js";
 import { prepareModelWebReadings, readWebHistoryProjection, recordAcceptedWebReadings } from "../../storage/conversation/web-reading.js";
 import { matchWorldbooks } from "../../domain/worldbook.js";
 import { readWorldbooks, recordWorldbookUsage } from "../../storage/role/worldbook-store.js";
@@ -86,7 +85,7 @@ import type {
   ResolvedModelBinding,
 } from "../resources/model-binding-resolver.js";
 import type { ModelCallClaim } from "../resources/model-maintenance.js";
-import type { RoleAccess } from "../role/role-access.js";
+import type { RoleAccess, RoleStorageLease } from "../role/role-access.js";
 import {
   SegmentAnnotationService,
   type SegmentAnnotationServiceOptions,
@@ -245,7 +244,6 @@ export class ConversationService {
     private readonly bindings: ModelBindingResolver,
     private readonly memory: MemoryQueryService,
     private readonly appRoot: string,
-    private readonly dataRoot: string,
     options: ConversationServiceOptions = {},
   ) {
     this.now = options.now ?? (() => new Date());
@@ -770,10 +768,8 @@ export class ConversationService {
     request: http.IncomingMessage;
     response: http.ServerResponse;
   }): Promise<void> {
-    this.roleAccess.requireReady(input.roleId);
-    const storage = RoleStorage.openExisting(
-      rolePaths(this.dataRoot, input.roleId),
-    );
+    const lease = this.roleAccess.borrow(input.roleId);
+    const storage = lease.storage;
     const store = new ConversationStore(
       storage.business.db,
       input.roleId,
@@ -786,7 +782,7 @@ export class ConversationService {
         store.validateCursor(input.windowId, input.after);
       }
     } catch (error) {
-      storage.close();
+      lease.release();
       throw error;
     }
     let closed = false;
@@ -805,7 +801,7 @@ export class ConversationService {
         );
         this.schedule(input.roleId);
       }
-      storage.close();
+      lease.release();
       if (!input.response.writableEnded && !input.response.destroyed) {
         try {
           input.response.end();
@@ -834,6 +830,7 @@ export class ConversationService {
       closed = true;
       cleanup();
     });
+    try {
     input.response.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache, no-store",
@@ -842,7 +839,6 @@ export class ConversationService {
     input.response.flushHeaders?.();
     if (input.sharesOnly) input.response.write(`id: ${cursor}\nevent: ready\ndata: {}\n\n`);
     let lastHeartbeat = Date.now();
-    try {
       while (
         !closed &&
         !this.closed &&
@@ -892,9 +888,8 @@ export class ConversationService {
       try {
         const now = this.now().toISOString();
         this.exchanges.recover(index.roleId);
-        const storage = RoleStorage.openExisting(
-          rolePaths(this.dataRoot, index.roleId),
-        );
+        const lease = this.roleAccess.borrow(index.roleId);
+    const storage = lease.storage;
         let interrupted: RecoveredExecution[] = [];
         let superseded: RecoverableTaskContinuation[] = [];
         const resumable: ResumableExecution[] = [];
@@ -963,7 +958,7 @@ export class ConversationService {
             if (store.findInterruptedUserTask(windowId) !== null) pendingUserRecovery = true;
           }
         } finally {
-          storage.close();
+          lease.release();
         }
         let continuationQueued = false;
         const resumableTaskIds = new Set(
@@ -1131,9 +1126,10 @@ export class ConversationService {
       return false;
     }
     let storage: RoleStorage | null = null;
+    let lease: RoleStorageLease | null = null;
     try {
-      this.roleAccess.requireReady(roleId);
-      storage = RoleStorage.openExisting(rolePaths(this.dataRoot, roleId));
+      lease = this.roleAccess.borrow(roleId);
+      storage = lease.storage;
       const store = new ConversationStore(
         storage.business.db,
         roleId,
@@ -1141,7 +1137,7 @@ export class ConversationService {
       );
       const execution = store.getExecution(item.execution.executionId);
       if (execution.status !== "running" || execution.windowId === null) {
-        storage.close();
+        lease.release();
         return false;
       }
       const task =
@@ -1149,7 +1145,7 @@ export class ConversationService {
           ? null
           : storage.business.getTask(roleId, item.taskId);
       if (task !== null && task.status !== "active") {
-        storage.close();
+        lease.release();
         return false;
       }
       const pendingMessages = store.listClaimedMessages(execution.executionId);
@@ -1200,6 +1196,7 @@ export class ConversationService {
         autonomy: autonomyContext,
         resume: true,
       })
+        .finally(lease.release)
         .catch(() => {
           // runExecution 内部已保存失败／中断状态，这里只防止未处理的 Promise。
         })
@@ -1215,7 +1212,7 @@ export class ConversationService {
         });
       return true;
     } catch {
-      storage?.close();
+      lease?.release();
       return false;
     }
   }
@@ -1749,9 +1746,10 @@ export class ConversationService {
       return false;
     }
     let storage: RoleStorage | null = null;
+    let lease: ReturnType<RoleAccess["borrow"]> | null = null;
     try {
-      this.roleAccess.requireReady(roleId);
-      storage = RoleStorage.openExisting(rolePaths(this.dataRoot, roleId));
+      lease = this.roleAccess.borrow(roleId);
+      storage = lease.storage;
       const window = storage.business.getOrCreateWindow({
         roleId,
         kind: "custom",
@@ -1759,7 +1757,7 @@ export class ConversationService {
       });
       const begun = this.autonomy.beginDueWake(roleId, window.windowId, coplay);
       if (!begun) {
-        storage.close();
+        lease.release();
         return false;
       }
       const store = new ConversationStore(
@@ -1810,6 +1808,7 @@ export class ConversationService {
             begun.wake.kind === "budget_resume" || begun.wake.taskId !== null,
         },
       })
+        .finally(lease.release)
         .catch(() => {
           // runExecution 内部已保存失败／暂停状态，这里只防止未处理的 Promise。
         })
@@ -1825,7 +1824,7 @@ export class ConversationService {
         });
       return true;
     } catch {
-      storage?.close();
+      lease?.release();
       return false;
     }
   }
@@ -1835,9 +1834,10 @@ export class ConversationService {
     continuation: PendingTaskContinuation,
   ): boolean {
     let storage: RoleStorage | null = null;
+    let lease: ReturnType<RoleAccess["borrow"]> | null = null;
     try {
-      this.roleAccess.requireReady(roleId);
-      storage = RoleStorage.openExisting(rolePaths(this.dataRoot, roleId));
+      lease = this.roleAccess.borrow(roleId);
+      storage = lease.storage;
       const store = new ConversationStore(
         storage.business.db,
         roleId,
@@ -1858,7 +1858,7 @@ export class ConversationService {
       })() : begin();
       this.removePendingContinuation(roleId, continuation.taskId);
       if (!execution) {
-        storage.close();
+        lease.release();
         void this.closeTaskCatalog(continuation.taskId);
         return false;
       }
@@ -1915,6 +1915,7 @@ export class ConversationService {
         taskId: continuation.taskId,
         autonomy: autonomyContext,
       })
+        .finally(lease.release)
         .catch(() => {
           // runExecution 内部已保存失败／中断状态，这里只防止未处理的 Promise。
         })
@@ -1931,7 +1932,7 @@ export class ConversationService {
     } catch (error) {
       if (continuation.engineering) console.error("PI_DELIVERY_START_FAILED", roleId, continuation.taskId, error);
       this.removePendingContinuation(roleId, continuation.taskId);
-      storage?.close();
+      lease?.release();
       void this.closeTaskCatalog(continuation.taskId);
       return false;
     }
@@ -1995,9 +1996,10 @@ export class ConversationService {
 
   private startExecution(roleId: string, windowId: string): boolean {
     let storage: RoleStorage | null = null;
+    let lease: ReturnType<RoleAccess["borrow"]> | null = null;
     try {
-      this.roleAccess.requireReady(roleId);
-      storage = RoleStorage.openExisting(rolePaths(this.dataRoot, roleId));
+      lease = this.roleAccess.borrow(roleId);
+      storage = lease.storage;
       const store = new ConversationStore(
         storage.business.db,
         roleId,
@@ -2011,7 +2013,7 @@ export class ConversationService {
         now: this.now().toISOString(),
       });
       if (!begun) {
-        storage.close();
+        lease.release();
         return false;
       }
       const controller: RunningExecution = {
@@ -2046,6 +2048,7 @@ export class ConversationService {
         pendingMessages: begun.messages,
         taskId: begun.taskId,
       })
+        .finally(lease.release)
         .catch(() => {
           // runExecution 内部已保存失败／中断状态，这里只防止未处理的 Promise。
         })
@@ -2058,7 +2061,7 @@ export class ConversationService {
         });
       return true;
     } catch {
-      storage?.close();
+      lease?.release();
       return false;
     }
   }
@@ -2891,7 +2894,6 @@ export class ConversationService {
         }
       }
       this.inflightResources.delete(execution.executionId);
-      storage.close();
       // 执行已收尾：正常完成或失败时若停止请求没在节点边界命中，这里兜底确认，
       // 避免角色永久卡在 stopping。重复确认由存储的 WHERE state='stopping' 幂等处理。
       // 仍有后台工具在途时不在这里确认：它们还属于本轮活动，由最后一个工具
@@ -3645,14 +3647,14 @@ export class ConversationService {
     roleId: string,
     action: (store: ConversationStore) => T,
   ): T {
-    this.roleAccess.requireReady(roleId);
-    const storage = RoleStorage.openExisting(rolePaths(this.dataRoot, roleId));
+    const lease = this.roleAccess.borrow(roleId);
+    const storage = lease.storage;
     try {
       return action(
         new ConversationStore(storage.business.db, roleId, this.timeZone),
       );
     } finally {
-      storage.close();
+      lease.release();
     }
   }
 }

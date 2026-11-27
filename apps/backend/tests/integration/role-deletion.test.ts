@@ -78,8 +78,17 @@ test("保留记忆与对话数据：移除角色但保留角色目录", { timeou
     assert.equal(blocked.status, 409);
     assert.equal(errorOf(blocked).code, "ROLE_NOT_STOPPED");
 
+    const databases = fixture.app.roleAccess.withStore(roleId, storage => {
+      const business = storage.business.db;
+      const execution = storage.checkpoint.db;
+      assert.equal(business.open, true);
+      assert.equal(execution.open, true);
+      return { business, execution };
+    });
     const removed = await deleteRole(base, roleId, "1");
     assert.equal(removed.status, 200);
+    assert.equal(databases.business.open, false);
+    assert.equal(databases.execution.open, false);
     assert.deepEqual(await removed.json(), {
       roleId,
       keepHistory: true,
@@ -108,8 +117,17 @@ test("一并删除：移除角色并清理角色目录", { timeout: 20_000 }, as
     const roleId = secondRole(fixture, "清理角色");
     const paths = rolePaths(fixture.app.config.dataRoot, roleId);
 
+    const databases = fixture.app.roleAccess.withStore(roleId, storage => {
+      const business = storage.business.db;
+      const execution = storage.checkpoint.db;
+      assert.equal(business.open, true);
+      assert.equal(execution.open, true);
+      return { business, execution };
+    });
     const removed = await deleteRole(base, roleId, "0");
     assert.equal(removed.status, 200);
+    assert.equal(databases.business.open, false);
+    assert.equal(databases.execution.open, false);
     assert.deepEqual(await removed.json(), {
       roleId,
       keepHistory: false,

@@ -70,7 +70,7 @@ test("工程设置校验宿主会话、来源及新成员；只有显式开启�
 test("工程源冷却独立于实时维护；清空、停用后只有已签父链仍可取证续用并保护密钥", async t => {
   const { app, close } = createFixture([], { disablePresetAssistant: false });
   t.after(close);
-  const access = new RoleAccess(app.appStore, app.config.dataRoot);
+  const access = app.roleAccess;
   const roleId = app.appStore.getRoleIndexByBuiltinKey("xiacheng")!.roleId;
   const resources = app.services.resources;
   const { resourceId } = resources.create({ kind: "model", name: "独立工程源", secret: "sample-key",
@@ -131,7 +131,7 @@ test("轮询保留最近获配项的位置，停用该项后从原位置向后�
   t.after(close);
   const { engineeringPool: pool, resources } = app.services;
   const seat = app.appStore.getRoleIndexByBuiltinKey("xiacheng")!.roleId;
-  const access = new RoleAccess(app.appStore, app.config.dataRoot);
+  const access = app.roleAccess;
   const task = () => access.withStore(seat, ({ business }) => business.createTask({ roleId: seat, goal: "轮询" }).taskId);
   const resourceId = resources.list("model")[0]!.resourceId;
   const members = ["A", "B", "C"].map(modelName => ({ resourceId, modelName, enabled: true }));
@@ -148,7 +148,7 @@ test("Google 工程成员的合法别名共用判重、轮询位置和历史冷�
   t.after(close);
   const { engineeringPool: pool, resources } = app.services;
   const roleId = app.appStore.getRoleIndexByBuiltinKey("xiacheng")!.roleId;
-  const access = new RoleAccess(app.appStore, app.config.dataRoot);
+  const access = app.roleAccess;
   const { resourceId } = resources.create({ kind: "model", name: "Google",
     config: { protocol: "google-gemini", baseUrl: "http://localhost" } });
   const flash = { resourceId, modelName: "gemini-2.5-flash", enabled: true };
@@ -184,7 +184,7 @@ test("V14 全局与 V30 角色库迁移保留历史工程和空池默认值", as
   let app = createBackendApp(config, { disableMemoryRuntime: true });
   const roleId = app.appStore.getRoleIndexByBuiltinKey("xiacheng")!.roleId;
   const paths = rolePaths(config.dataRoot, roleId);
-  const access = new RoleAccess(app.appStore, config.dataRoot);
+  const access = app.roleAccess;
   const windowId = app.services.roles.getRole(roleId).defaultWindowId!;
   try {
     access.withStore(roleId, ({ business }) => {

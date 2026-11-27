@@ -8,7 +8,12 @@ export type RoleStorageMode = "initialize" | "open";
 export class RoleStorage {
   readonly paths: RolePaths;
   readonly business: RoleStore;
-  readonly checkpoint: CheckpointStore;
+  private checkpointStore: CheckpointStore | undefined;
+
+  get checkpoint(): CheckpointStore {
+    if (this.closed) throw new Error("ROLE_STORAGE_CLOSED");
+    return this.checkpointStore ??= new CheckpointStore(this.paths.executionDatabasePath, { create: false });
+  }
   private closed = false;
 
   constructor(paths: RolePaths, mode: RoleStorageMode = "initialize") {
@@ -24,9 +29,7 @@ export class RoleStorage {
     const create = mode === "initialize";
     this.business = new RoleStore(paths.businessDatabasePath, { create });
     try {
-      this.checkpoint = new CheckpointStore(paths.executionDatabasePath, {
-        create,
-      });
+      if (create) this.checkpointStore = new CheckpointStore(paths.executionDatabasePath, { create });
     } catch (error) {
       this.business.close();
       throw error;
@@ -42,7 +45,7 @@ export class RoleStorage {
       return;
     }
     this.closed = true;
-    this.checkpoint.close();
+    this.checkpointStore?.close();
     this.business.close();
   }
 }

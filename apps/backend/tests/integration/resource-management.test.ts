@@ -686,6 +686,7 @@ test("角色库不可读时引用检查失败并拒绝写入", { timeout: 20_000
       fixture.roleId,
     ).businessDatabasePath;
     const backup = `${db}.review-backup`;
+    await fixture.app.roleAccess.evict(fixture.roleId);
     fs.renameSync(db, backup);
     try {
       // 引用扫描无法完成时必须明确报错，不能把实际占用当成空（RP-R02）。
@@ -751,6 +752,7 @@ test("删除失败不会移除已处理的角色绑定", { timeout: 20_000 }, as
       second.roleId,
     ).businessDatabasePath;
     const backup = `${secondDb}.review-backup`;
+    await fixture.app.roleAccess.evict(second.roleId);
     fs.renameSync(secondDb, backup);
     try {
       const failed = await api(base, "DELETE", `/v1/resources/${resourceId}`);

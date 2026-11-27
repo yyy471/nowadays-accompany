@@ -39,7 +39,7 @@ test("普通来信合批，跨重启幂等投递；主角色先回复用户，�
   const fixture = createFixtureWithModel(model, options);
   let app = fixture.app;
   const {roleId, windowId} = fixture;
-  const db = () => new RoleAccess(app.appStore, app.config.dataRoot);
+  const db = () => app.roleAccess;
   const send = async (content: string) => {
     app.conversation.submitMessage(roleId, windowId, {content, submissionId: randomUUID(), sourcePlatform: "nowadays"});
     await app.conversation.waitForIdle(roleId);
@@ -116,7 +116,7 @@ test("输入态、流式增量、自主执行与纯工具续行都不产批，�
   try {
     const {app, roleId, windowId} = f;
     const seatId = app.appStore.getRoleIndexByBuiltinKey("xiacheng")!.roleId;
-    const access = new RoleAccess(app.appStore, app.config.dataRoot);
+    const access = app.roleAccess;
     app.conversation.updateInputState({roleId, windowId, typing: true, clientId: "draft"});
     const anchor = access.withStore(roleId, ({business}) => {
       const store = new ConversationStore(business.db, roleId);
@@ -197,7 +197,7 @@ test("收端登记后源端确认前强制退出子进程，重启复用同一�
       pending.exec("DROP TRIGGER fail_ack");
     } finally { pending.close(); }
     recovered = createBackendApp(config, {disableMemoryRuntime: true});
-    const access = new RoleAccess(recovered.appStore, config.dataRoot);
+    const access = recovered.roleAccess;
     await until(() => access.withStore(f.roleId, s => !!s.business.db.prepare(
       "SELECT 1 FROM observed_dialogue_batches WHERE batch_id=? AND delivered_at IS NOT NULL").get(batchId)));
     assert.deepEqual(recovered.services.autonomy.listWakes(seatId).map(w => w.wakeId), [batchId]);
@@ -216,7 +216,7 @@ test("正式分享提交后可独立订阅和重放，只发送分享且保留�
   try {
     const seat = app.services.roles.getRole(app.appStore.getRoleIndexByBuiltinKey("xiacheng")!.roleId);
     const roleId = seat.roleId, windowId = seat.defaultWindowId;
-    const access = new RoleAccess(app.appStore, app.config.dataRoot);
+    const access = app.roleAccess;
     const executionId = access.withStore(roleId, s => s.business.createExecution({roleId, windowId, triggerType: "autonomous"}).executionId);
     const annotation = t.mock.method(app.conversation, "queueSegmentAnnotation");
     access.withStore(roleId, s => new ConversationStore(s.business.db, roleId).appendProactiveMessage({

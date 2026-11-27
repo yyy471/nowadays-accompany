@@ -108,7 +108,7 @@ test("user_quote 只返回同角色、本机直接对话里已处理的用户原
       });
       registerMessageEvidence(business.db, { roleId, messageIds: [message.messageId], executionId: saved.executionId });
     });
-    const access = new RoleAccess(app.appStore, app.config.dataRoot);
+    const access = app.roleAccess;
     const lookup = (target: string, window: string, executionId: string, args: Record<string, unknown>) =>
       historyLookupTool(target, access).execute(args, {
         roleId: target, windowId: window, executionId, taskId: null, signal: new AbortController().signal,

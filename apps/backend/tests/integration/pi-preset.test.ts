@@ -97,7 +97,7 @@ test("普通角色即使残留绑定或续用权也不可发现、借用或派�
     withStorage(f, storage => storage.business.ensureMcpBinding(roleId, id));
     assert.ok(!app.services.resources.listBindings(roleId).some(b => b.resourceId === id));
     assert.deepEqual(app.services.resources.references(id).references.map(ref => ref.roleId), [adminId]);
-    const access = new RoleAccess(app.appStore, app.config.dataRoot);
+    const access = app.roleAccess;
     const catalog = await loadAgentTools({ roleId, appStore: app.appStore, roleAccess: access, memory: app.services.memory,
       continuationResourceIds: [id], appRoot: f.root, workspaceDir: rolePaths(app.config.dataRoot, roleId).workspaceDir });
     try { assert.ok(!catalog.tools.some(t => t.name.includes("pi_task_"))); } finally { await catalog.close(); }
@@ -166,7 +166,7 @@ test("枚举 Skill 时跳过单个故障包，健康包仍可读取", async t =>
     const skill = f.app.services.resources.create({ kind: "skill", name: "样例", config: { sourcePath: root } });
     f.app.services.resources.replaceBindings(f.roleId, [{ capability: "skill", resourceId: skill.resourceId }]);
     const catalog = await loadAgentTools({ roleId: f.roleId, appStore: f.app.appStore, memory: f.app.services.memory,
-      roleAccess: new RoleAccess(f.app.appStore, f.app.config.dataRoot), appRoot: f.root,
+      roleAccess: f.app.roleAccess, appRoot: f.root,
       workspaceDir: rolePaths(f.app.config.dataRoot, f.roleId).workspaceDir });
     try {
       assert.deepEqual(catalog.skillBriefs.map(s => s.name), ["good"]);

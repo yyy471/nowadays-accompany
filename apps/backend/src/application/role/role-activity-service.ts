@@ -1,4 +1,5 @@
 import {
+  AppError,
   RoleActivityConflictError,
   RoleActivityStoppedError,
   RoleNotStoppedError,
@@ -34,6 +35,16 @@ export class RoleActivityService {
   /** 每个角色排队的配置写入尾结点；同一角色的写入与删除互斥执行。 */
   private readonly writeChains = new Map<string, Promise<void>>();
   private globalLeases = 0;
+  private readonly listeners = new Set<(roleId: string) => void>();
+
+  subscribe(listener: (roleId: string) => void): () => void {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  }
+
+  private notify(roleId: string): void {
+    for (const listener of this.listeners) listener(roleId);
+  }
   readonly gate: RoleActivityGate;
 
   constructor(
@@ -46,9 +57,68 @@ export class RoleActivityService {
       isStopRequested: (roleId) => this.store.get(roleId).state === "stopping",
       confirmStop: (roleId, executionId) => {
         this.store.confirmStop(roleId, executionId, this.iso());
+        this.notify(roleId);
       },
       canStart: (roleId) => this.store.get(roleId).state === "active",
     };
+  }
+
+  async pauseRoles(roleIds: readonly string[], timeoutMs = 20_000): Promise<{ pausedRoleIds: string[] }> {
+    const ids = [...new Set(roleIds)];
+    const initiated = new Set<string>();
+    const waiting = new Map<string, RoleActivityView>();
+    const deadline = Date.now() + timeoutMs;
+    let failure: unknown = null;
+    for (const roleId of ids) {
+      try {
+        const view = this.view(roleId);
+        if (view.state === "stopped") continue;
+        if (view.state === "active") {
+          const result = this.requestStop(roleId);
+          initiated.add(roleId);
+          waiting.set(roleId, result.activity);
+        } else {
+          waiting.set(roleId, view);
+        }
+      } catch (error) {
+        failure ??= error;
+      }
+    }
+    const read = (roleId: string) => {
+      try { waiting.set(roleId, this.view(roleId)); }
+      catch (error) { failure ??= error; waiting.delete(roleId); }
+    };
+    const allStopped = () => [...waiting.values()].every((view) => view.state === "stopped");
+    await new Promise<void>((resolve) => {
+      const finish = () => {
+        unsubscribe();
+        clearTimeout(timer);
+        resolve();
+      };
+      const check = (roleId: string) => {
+        if (!waiting.has(roleId)) return;
+        read(roleId);
+        if (allStopped()) finish();
+      };
+      const unsubscribe = this.subscribe(check);
+      const timer = setTimeout(finish, Math.max(0, deadline - Date.now()));
+      for (const roleId of waiting.keys()) read(roleId);
+      if (allStopped()) finish();
+    });
+    for (const roleId of waiting.keys()) read(roleId);
+    const pausedRoleIds = ids.filter((id) => initiated.has(id) && waiting.get(id)?.state === "stopped");
+    if (failure !== null) {
+      if (failure instanceof AppError && pausedRoleIds.length > 0) {
+        const details = failure.details && typeof failure.details === "object" && !Array.isArray(failure.details)
+          ? failure.details as Record<string, unknown> : {};
+        throw new AppError(failure.status, failure.code, failure.message, { ...details, pausedRoleIds });
+      }
+      throw failure;
+    }
+    const pending = [...waiting.values()].filter((view) => view.state !== "stopped")
+      .map(({ roleId, state, running }) => ({ roleId, state, running }));
+    if (pending.length > 0) throw new RolesNotStoppedError(pending, pausedRoleIds);
+    return { pausedRoleIds };
   }
 
   attachRuntime(runtime: ActivityRuntime): void {
@@ -82,6 +152,7 @@ export class RoleActivityService {
       );
       if (this.store.get(record.roleId).state === "stopped") {
         confirmed += 1;
+        this.notify(record.roleId);
       }
     }
     return confirmed;
@@ -138,11 +209,13 @@ export class RoleActivityService {
       return { activity: this.view(roleId), confirmed: true };
     }
     this.store.requestStop(roleId, this.iso());
+    this.notify(roleId);
     if (this.appStore.getRoleIndex(roleId)?.initStatus === "ready") this.runtime?.stopExchanges?.(roleId);
     if (this.runtime?.isRunning(roleId) === true) {
       return { activity: this.view(roleId), confirmed: false };
     }
     this.store.confirmStop(roleId, null, this.iso());
+    this.notify(roleId);
     return { activity: this.view(roleId), confirmed: true };
   }
 
@@ -170,6 +243,7 @@ export class RoleActivityService {
     }
     this.resumeGuard?.(roleId);
     this.store.activate(roleId, this.iso());
+    this.notify(roleId);
     try {
       this.runtime?.resumeWork?.(roleId);
     } catch {

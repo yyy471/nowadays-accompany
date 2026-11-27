@@ -112,7 +112,7 @@ test("主角色发布定向书签扩展后自选往来征求反馈，双方存�
     const wake = app.services.autonomy.listWakes(roleId).find(w => w.wakeId === `role-exchange:${session.sessionId}:1`);
     assert.equal(wake?.status, "completed");
     await until(() => completed.includes(session.sessionId), "书签扩展收到同一场往来的结束事件");
-    const access = new RoleAccess(app.appStore, app.config.dataRoot);
+    const access = app.roleAccess;
     for (const id of [seat.id, roleId]) {
       const rows = access.withStore(id, s => s.business.db.prepare(`
         SELECT t.* FROM role_exchange_turns t JOIN evidence_records e ON e.source_id=t.exchangeId
@@ -172,7 +172,7 @@ test("两场互聊的证据分别交给整理器", async () => {
       const s = exchanges.start(seat.id, f.roleId, topic, "放在哪里？", 2);
       exchanges.reply(f.roleId, s.sessionId, 1, "东窗。", true);
     }
-    const access = new RoleAccess(f.app.appStore, f.app.config.dataRoot);
+    const access = f.app.roleAccess;
     access.withStore(f.roleId, storage => {
       const batch = new MemoryStore(storage.business.db).startBatch({roleId:f.roleId,budgetChars:24000,outputReserveChars:4000});
       assert.deepEqual(batch?.evidence.map(x => JSON.parse(x.content).turn.topic), ["银杏书签","银杏书签"]);
@@ -202,7 +202,7 @@ test("真实工具链按轮次唤醒，提前结束与硬上限均封口，双�
   const f = createFixtureWithModel(model, {disableMemoryRuntime: false, memoryModelFactory: () => ({async form(input) {return form(input);}})});
   const {app, roleId} = f;
   target = roleId;
-  const access = new RoleAccess(app.appStore, app.config.dataRoot);
+  const access = app.roleAccess;
   const service = app.conversation.exchanges;
   try {
     const seat = prepareSeat(f, true);
@@ -261,7 +261,7 @@ test("两侧落盘之间中断后重启补齐，模型未作答时双边失败�
   let app = f.app;
   try {
     const seat = prepareSeat(f);
-    let access = new RoleAccess(app.appStore, app.config.dataRoot);
+    let access = app.roleAccess;
     access.withStore(f.roleId, s => s.business.db.exec(`CREATE TRIGGER simulate_interruption
       BEFORE INSERT ON role_exchange_turns BEGIN SELECT RAISE(ABORT,'TEST_INTERRUPTION'); END`));
     assert.throws(() => app.conversation.exchanges.start(seat.id, f.roleId, "重启前", "你听到了吗？"), /TEST_INTERRUPTION/);
@@ -270,7 +270,7 @@ test("两侧落盘之间中断后重启补齐，模型未作答时双边失败�
     access.withStore(f.roleId, s => s.business.db.exec("DROP TRIGGER simulate_interruption"));
     await app.close();
     app = createBackendApp(app.config, {disablePresetAssistant: true, disableMemoryRuntime: true, modelPortFactory: () => model});
-    access = new RoleAccess(app.appStore, app.config.dataRoot);
+    access = app.roleAccess;
     await until(() => app.conversation.exchanges.detail(session.sessionId).status === "failed", "恢复后接收方完成一次决策");
     for (const id of [seat.id, f.roleId]) {
       const row = access.withStore(id, s => s.business.db.prepare(

@@ -4,6 +4,8 @@
 
 ## 1. 当前结论概览
 
+**409 R4（`BUG-03` / `BUG-04`）已完成修复与精准复验。** 后端统一唯一 `RoleAccess` 注入并引入按角色租借复用、60 秒 `.unref()` 空闲回收、删除前封锁排空、`app.close()` 关池与 `execution.sqlite` 懒打开；实测 5 角色并发聊天 + 60 次动态刷新 SQLite 打开次数从 350 降至 10（降幅 **97.14%**），纯动态读取打开执行库 **0 次**。`RoleActivityService.pauseRoles` 与 `MediaMaintenance` 改为并发停机与事件唤醒，3 角色各 1 秒收尾实测 **1,001.8 ms**（原串行 ≥3s），并补齐管理工具部分停机回滚。Node 24.22.2 下后端 `typecheck` 及受影响单测/集成测试 71/71 通过，文档巡检 0 错误 0 警告。[409 R4 专项记录](./archive/07-documentation/409-project-audit-and-remediation-backlog.md#bug-03-roleaccesswithstore-每次操作现开现关两个-sqlite-库且实例未统一)
+
 **409 DELIV-01 生产打包已修复并通过 Windows 离线脱仓独立复验，干净机便携 EXE 验收待办。** 固定 Node 24 的 staging 包含编译后端、生产依赖、Pi 子包与预置素材；仓外含空格目录覆盖离线对话、热扩展与工具、真实 Pi worker 工具集、本地 MCP 和退出回收。独立复验 1/1、无跳过，首个 health 为 4267 ms，未达到原 <2 秒目标；该测试不代表真实服务或便携 EXE 的干净机验收。[实施与待验清单](./archive/07-documentation/409-project-audit-and-remediation-backlog.md#deliv-01-实施与离线验证2026-11-27)
 
 **409 SEC-02 / DL-59 已通过 Windows 针对性独立复验。** 默认本地 MCP 仅提供工作空间读写与检索。本机命令使用独立资源，桌面导入默认停用，并在全局与角色开关旁标明风险。两层环境过滤和普通角色／Pi 的 Skill 文件权限已收紧。仓库 Node 24.22.2 后端类型检查、指定单测 36/36、两个对话专项 15/15、渲染器检查及受影响单测 4/4、生产构建通过。文档巡检 0 错误、0 警告，测试进程新增残留 0。[409 实施与复验记录](./archive/07-documentation/409-project-audit-and-remediation-backlog.md#sec-02-本地-mcp-命令执行与普通角色脚本执行击穿隔离并继承完整宿主环境)
