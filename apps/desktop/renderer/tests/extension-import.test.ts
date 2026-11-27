@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseMcpImport, personalArgument } from '../src/components/config/extension-import';
+import { ApiError } from '../src/api';
+import { mcpSummary, skillIssue, parseMcpImport, personalArgument } from '../src/components/config/extension-import';
 
 test('原样保留 MCP 参数中的空格、空串和次序，列出配置里的各个本地服务', () => {
   const servers = parseMcpImport(JSON.stringify({ mcpServers: {
@@ -14,4 +15,19 @@ test('原样保留 MCP 参数中的空格、空串和次序，列出配置里的
   assert.equal(personalArgument('@example/search'), false);
   assert.throws(() => parseMcpImport('{"url":"https://example.com"}'), /远程/);
   assert.throws(() => parseMcpImport('{"command":"node","cwd":"tmp"}'), /cwd/);
+});
+
+test('安全摘要仅列命令末级、参数数和待补键，不回显个人目录、参数或环境值', () => {
+  for (const command of ['"C:\\Users\\owner\\my tools\\node.exe"', '/Users/owner/bin/node.exe', '\\\\share\\private\\node.exe']) {
+    assert.equal(mcpSummary('摘录', command, ['--secret=private'], { TOKEN:'private', KEY:'', PATH_KEY:'${VALUE}' }),
+      '摘录 · node.exe · 1 个参数 · 待补 KEY、PATH_KEY');
+  }
+});
+
+test('扫描状态区分空目录、不可读取与导入时目录变更', () => {
+  assert.equal(skillIssue(undefined), undefined);
+  for (const [status, code, role] of [[400,'EMPTY','status'], [400,'UNREADABLE','alert'], [409,'CHANGED','alert']] as const) {
+    assert.equal(skillIssue(new ApiError('', status, 'SKILL_DIRECTORY_' + code))?.role, role);
+  }
+  assert.equal(skillIssue(new ApiError('', 500, 'SKILL_DIRECTORY_EMPTY')), undefined);
 });

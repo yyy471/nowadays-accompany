@@ -39,6 +39,15 @@
   border-top: 1px solid var(--nd-semantic-color-line-decorative);
 }
 .extension-page .ui-switch-label { min-width: 0; overflow-wrap: anywhere; }
+.extension-page li > .ui-switch { grid-column: 1 / -1; }
+.extension-metadata {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--nd-semantic-space-icon-label);
+  padding-block-end: var(--nd-semantic-space-field-hint);
+}
 .extension-version {
   max-width: 9ch;
   overflow: hidden;
@@ -53,6 +62,9 @@
   font-size: var(--nd-semantic-type-caption-size);
   line-height: var(--nd-semantic-type-caption-line);
 }
+.extension-diagnostic { grid-column: 1 / -1; font-size: var(--nd-semantic-type-caption-size); }
+.extension-diagnostic summary { cursor: pointer; }
+.extension-diagnostic pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 10rem; overflow: auto; }
 .extension-error { color: var(--nd-semantic-color-danger); }
 .extension-coplay { min-width: 0; }
 .extension-coplay-bar { margin-block-end: var(--nd-semantic-space-icon-label); }
@@ -63,7 +75,7 @@
   gap: var(--nd-semantic-space-icon-label);
 }
 .extension-page select { width: min(100%, 24rem); }
-.extension-coplay-bar .ui-select { width: auto; max-width: 100%; }
+.extension-page .extension-coplay-bar select.ui-select { flex: 0 1 auto; width: auto; max-width: 100%; }
 .extension-widget-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
@@ -80,13 +92,9 @@ iframe[data-extension-slot] { border: 0; width: 100%; min-width: 0; }
 iframe[data-extension-slot="page"] { height: clamp(14rem, 45dvh, 27rem); }
 iframe[data-extension-slot="widget"], iframe[data-extension-slot="overlay"] { height: 7rem; max-height: 28vh; }
 .extension-overlays {
-  position: fixed;
-  inset-inline-start: var(--nd-semantic-space-panel-inset);
-  bottom: var(--nd-semantic-size-dock-zone);
-  width: min(20rem, 42vw);
-  max-height: 48vh;
+  max-height: 144px;
   overflow: auto;
-  z-index: var(--nd-semantic-layer-sheet);
+  overscroll-behavior: contain;
   display: grid;
   gap: var(--nd-semantic-space-label-field);
   color: var(--nd-semantic-color-text);
@@ -95,11 +103,42 @@ iframe[data-extension-slot="widget"], iframe[data-extension-slot="overlay"] { he
 .extension-overlays p { margin: 0; overflow-wrap: anywhere; }
 
 .extension-overlays article{box-shadow:var(--nd-semantic-shadow-raised)}
-.studio-shell[data-dialogue-dock-hidden] .extension-overlays{bottom:var(--nd-semantic-space-panel-inset)}
-@media(max-width:760px){.extension-overlays{width:min(20rem, calc(50% - 1.5 * var(--nd-semantic-space-panel-inset)))}}
 @media (max-width: 959px) {
   .extension-layout[data-has-slots] { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-height: 600px) {
   .extension-page { padding-block-start: var(--nd-semantic-space-field-group); }
+}
+
+.extension-view-switch { display: none; }
+.extension-filter, .extension-view-switch, .extension-play-action {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--nd-semantic-space-field-hint);
+}
+.extension-filter, .extension-play-action { display: flex; }
+.extension-page :is(.extension-filter, .extension-view-switch) .btn { border-radius: var(--nd-semantic-radius-round); }
+.extension-page :is(.extension-filter, .extension-view-switch) .btn[aria-pressed="true"] {
+  background: var(--nd-semantic-color-selection);
+  border-color: var(--nd-semantic-color-text-muted);
+}
+.extension-invitation {
+  display: grid;
+  justify-items: start;
+  gap: var(--nd-semantic-space-icon-label);
+  padding: var(--nd-semantic-space-panel-inset);
+  border-inline-start: 2px solid var(--nd-semantic-color-accent-decorative);
+  background: color-mix(in srgb, var(--nd-semantic-color-accent-decorative) 6%, var(--nd-semantic-color-surface));
+}
+.extension-invitation h3 { margin: 0; font-family: var(--nd-semantic-font-heading); }
+.extension-coplay-bar {
+  padding: var(--nd-semantic-space-icon-label);
+  border-bottom: 1px solid var(--nd-semantic-color-line-decorative);
+  font-size: var(--nd-semantic-type-caption-size);
+}
+.extension-play-action [role="alert"], .extension-repair [role="alert"] { color: var(--nd-semantic-color-danger); }
+@media (max-width: 959px) {
+  .extension-view-switch { display: flex; margin-bottom: var(--nd-semantic-space-icon-label); }
+  .extension-layout[data-view="desk"] .extension-catalog,
+  .extension-layout[data-view="catalog"] .extension-slots { display: none; }
 }

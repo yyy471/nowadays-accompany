@@ -72,7 +72,9 @@ check(async ({cmd, ev, until, errors}) => {
   await ev("document.querySelector('.ui-menu-trigger').click()");
   await ev("[...document.querySelectorAll('.ui-menu-item')].find(b=>b.textContent.includes('动态')).click()");
   const slips = "[...document.querySelectorAll('.feed-slip')]";
-  await until(() => ev(slips + ".filter(b=>b.textContent.includes('甲角色 与 乙角色 进行了对话')).length===2"), '全部时间线显示两次往来');
+  await until(() => ev("document.querySelectorAll('.feed-exchange').length===2"), '全部时间线显示两张合笺');
+  const cards = await ev("[...document.querySelectorAll('.feed-slip.feed-exchange')].map(card => ({names:[...card.querySelectorAll('.feed-event-title strong')].map(el=>el.textContent), topic:card.querySelector('.feed-exchange-topic').textContent, count:card.querySelector('.feed-turn-count').textContent}))");
+  assert.deepEqual(cards, [...sessions].reverse().map(s => ({names:[s.initiatorName, s.targetName], topic:s.topic, count:s.turnCount + ' 轮'})));
   assert.ok(await ev(slips + ".some(b=>b.textContent.includes('整理笔记'))"));
   await ev("[...document.querySelectorAll('[aria-label=类型筛选] button')].find(b=>b.textContent==='往来').click()");
   await until(() => ev(slips + ".length===2 && " + slips + ".every(b=>b.textContent.includes('2 轮'))"), '往来筛选');
@@ -83,19 +85,40 @@ check(async ({cmd, ev, until, errors}) => {
     assert.deepEqual(transcript, [['甲角色', s.topic + '的开场', s.startedAt], ['乙角色', s.topic + '的回复', s.startedAt]]);
     await ev("document.querySelector('.feed-dialog button[aria-label=关闭弹窗]').click()");
     await until(() => ev("!document.querySelector('.feed-dialog')"), '纸笺关闭');
+    assert.equal(await ev("document.activeElement.closest('.feed-exchange')?.querySelector('.feed-exchange-topic').textContent"), s.topic, '焦点回到本张合笺');
   }
 
   await cmd('Emulation.setDeviceMetricsOverride', {width: 720, height: 540, deviceScaleFactor: 1, mobile: false});
-  await until(() => ev("innerWidth===720 && document.querySelector('.feed-next-strip .feed-next-list')?.clientWidth > 0"), '窄屏安排条带');
+  const bookmark = "document.querySelector('.feed-bookmark .ui-disclosure-trigger')";
+  await until(() => ev("innerWidth===720 && " + bookmark + "?.getAttribute('aria-expanded')==='false'"), '窄屏书签默认收起');
+  assert.equal(await ev("document.querySelectorAll('.feed-bookmark .ui-disclosure-trigger').length"), 1);
+  assert.equal(await ev("document.querySelectorAll('.feed-next-list').length"), 1);
+  const panel = "document.getElementById(" + bookmark + ".getAttribute('aria-controls'))";
+  assert.equal(await ev(panel + ".getBoundingClientRect().height"), 0);
+  await ev(bookmark + ".click()");
+  await until(() => ev(bookmark + ".getAttribute('aria-expanded')==='true' && " + panel + ".offsetHeight>0"), '展开接下来');
+  for (const [i, wake] of wakes.entries()) {
+    const button = panel + ".querySelectorAll('.feed-next-open')[" + i + "]";
+    await ev(button + ".scrollIntoView({block:'center',behavior:'instant'})");
+    const point = await ev("(() => {const b=" + button + ", r=b.getBoundingClientRect(), x=r.left+r.width/2,y=r.top+r.height/2; return b.contains(document.elementFromPoint(x,y)) ? {x,y} : null;})()");
+    assert.ok(point, wake.intent + ' 可在书页内滚动触达');
+    await cmd('Input.dispatchMouseEvent', {type:'mousePressed',button:'left',clickCount:1,...point});
+    await cmd('Input.dispatchMouseEvent', {type:'mouseReleased',button:'left',clickCount:1,...point});
+    await until(() => ev("document.querySelector('.feed-dialog')?.innerText.includes(" + JSON.stringify(wake.intent) + ")"), wake.intent);
+    await ev("document.querySelector('.feed-dialog button[aria-label=关闭弹窗]').click()");
+    await until(() => ev("!document.querySelector('.feed-dialog')"), '返回安排');
+  }
+  await ev(bookmark + ".scrollIntoView({block:'start'}); " + bookmark + ".click()");
+  assert.equal(await ev(bookmark + ".getAttribute('aria-expanded')"), 'false');
+  assert.equal(await ev(panel + ".getBoundingClientRect().height"), 0);
   const layout = await ev(`(() => {
     const roles = document.querySelector('.feed-roles'), types = document.querySelector('[aria-label=类型筛选]');
-    const strip = document.querySelector('.feed-next-strip .feed-next-list'), page = document.querySelector('.feed-leaf');
-    return {rolesScroll: roles.scrollWidth > roles.clientWidth, stripScroll: strip.scrollWidth > strip.clientWidth,
+    const page = document.querySelector('.feed-leaf');
+    return {rolesScroll: roles.scrollWidth > roles.clientWidth,
       spacing: types.getBoundingClientRect().left - roles.getBoundingClientRect().right,
       viewportFits: document.documentElement.scrollWidth === innerWidth && types.getBoundingClientRect().right <= page.getBoundingClientRect().right};
   })()`);
   assert.equal(layout.rolesScroll, true, JSON.stringify(layout));
-  assert.equal(layout.stripScroll, true);
   assert.ok(layout.spacing >= 8);
   assert.equal(layout.viewportFits, true);
 

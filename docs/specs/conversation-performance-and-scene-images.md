@@ -151,6 +151,7 @@
   - 写入受管文件采用排他打开 `fs.openSync(..., "wx")` 并立即登记清理路径；中途 `ENOSPC` 等失败会删去半写入文件，即使清理被 `EPERM` 拒绝仍按原失败原因持久化任务终态与 SSE 通知并打警告日志（`227 R05/R06`）。
   - 进程启动执行 `recoverOnStartup()`：`auto` 且尚处于 `queued` 的待触发任务保留队列并恢复调度；`auto` 且处于 `generating` 的任务结算为 `failed`（`SCENE_IMAGE_GENERATION_OUTCOME_UNKNOWN`）；其余未结束任务统一结算为 `failed`（`SCENE_IMAGE_INTERRUPTED`）。
 - **前端展示与晚到归属**：
+  - 消息区顶部 16px 羽化只在实际滚动偏移大于零时出现，回顶即撤下。最新一条已完成且能发起生成的角色回复常驻「生成过场图」，其他可生成轮在悬停该条消息或焦点进入后显现。
   - 图片操作跟随消息编号显示在整条回复末尾。每个图层显示最近成功的一张。查看后，左侧画面右下角可为同一回复、同一图层重新生成。重画期间保留旧图，成功后更新正在查看的图片。实时舞台仍按规划的起止句段演示。
   - 结构化回复（DL-189）以一条阅读块展示。Markdown 支持标题、列表、引用、代码块和表格，JSON、XML 与可识别的 YAML 保留原文。历史消息从保存的正文重建。阅读块跳过语音预取与播放，普通对白与星号动作沿用逐句演出。
 
@@ -172,7 +173,7 @@
 
 ### 4.2 实现方自验、待独立复核范围
 
-- [237 对话页日落刻度明暗切换](../archive/02-desktop-ui-and-relations/237-dialogue-theme-transition.md)（对应脚本 [theme-transition.e2e.cjs](../../apps/desktop/tests/e2e/theme-transition.e2e.cjs)）：对话舞台光线、纸面 14 档逐行推进、历史层切换与 reduced-motion 收尾。
+- 对话与历史面板共用全站羽化遮罩，保持已打开的历史面板与滚动位置，减少动效时直接提交最终主题。[阶段二记录](../archive/02-desktop-ui-and-relations/408-frontend-refinement-v2.md#阶段二跨页壳层与主题切屏) · [主题门禁](../../apps/desktop/tests/e2e/theme-transition.e2e.cjs)
 - [238 对话页顶部精简与布局调整](../archive/02-desktop-ui-and-relations/238-dialogue-layout-refinement.md) 与 [239 隐藏底部导航栏偏好](../archive/02-desktop-ui-and-relations/239-dialogue-dock-visibility.md)（对应脚本 [dialogue-layout.e2e.cjs](../../apps/desktop/tests/e2e/dialogue-layout.e2e.cjs)）：右上角图标收纳、窄屏适配与 Dock 持久化偏好。
 
 ### 4.3 未实现能力与真实联调缺口
@@ -240,7 +241,7 @@ npx -y node@24 apps/desktop/tests/e2e/theme-transition.e2e.cjs
 - **桌面前端渲染器**：
   - [Conversation.tsx](../../apps/desktop/renderer/src/pages/Conversation.tsx) · [use-window-session.ts](../../apps/desktop/renderer/src/conversation/use-window-session.ts) · [use-segment-voice.ts](../../apps/desktop/renderer/src/conversation/use-segment-voice.ts)
   - [ChatPane.tsx](../../apps/desktop/renderer/src/conversation/ChatPane.tsx) · [ConversationStage.tsx](../../apps/desktop/renderer/src/conversation/ConversationStage.tsx) · [HistoryPanel.tsx](../../apps/desktop/renderer/src/conversation/HistoryPanel.tsx)
-  - [typing-state.ts](../../apps/desktop/renderer/src/conversation/typing-state.ts) · [advance.ts](../../apps/desktop/renderer/src/conversation/advance.ts) · [window-model.ts](../../apps/desktop/renderer/src/conversation/window-model.ts) · [history.ts](../../apps/desktop/renderer/src/conversation/history.ts) · [performance.ts](../../apps/desktop/renderer/src/conversation/performance.ts) · [dialogue-theme.ts](../../apps/desktop/renderer/src/conversation/dialogue-theme.ts)
+  - [typing-state.ts](../../apps/desktop/renderer/src/conversation/typing-state.ts) · [advance.ts](../../apps/desktop/renderer/src/conversation/advance.ts) · [window-model.ts](../../apps/desktop/renderer/src/conversation/window-model.ts) · [history.ts](../../apps/desktop/renderer/src/conversation/history.ts) · [performance.ts](../../apps/desktop/renderer/src/conversation/performance.ts) · [theme-feather.ts](../../apps/desktop/renderer/src/ui/theme-feather.ts)
 
 ### 5.3 归档与复核文档追溯
 

@@ -1,54 +1,41 @@
 import type { ThemePreset } from './presets';
-import { readMotionTime, readMotionValue } from './motion';
+import { featherThemeTransition } from './theme-feather';
 
 export interface ThemeTransitionInvocation {
+  readonly startedAt: number;
   readonly from: ThemePreset;
   readonly to: ThemePreset;
   readonly commit: (preset: ThemePreset) => void;
-  readonly startViewTransition?: (update: () => void) => ViewTransition;
   readonly finish: () => void;
   readonly isCurrent: () => boolean;
 }
 
-/** 页面可以临时接管主题过渡的表现；预置状态仍由 ThemePresetProvider 唯一持有。 */
 export type ThemeTransitionStrategy = ((invocation: ThemeTransitionInvocation) => (() => void) | undefined) & {
   queueChanges?: boolean;
   onSettled?: (preset: ThemePreset) => void;
 };
 
 /** 每个主题宿主持有自己的过渡；快照只负责绘制，真实编辑器保持挂载。 */
-export function createThemeTransition(
-  initial: ThemePreset,
-  commit: (preset: ThemePreset, weather?: ThemePreset) => void,
-  initialStrategy?: ThemeTransitionStrategy
-) {
+export function createThemeTransition(initial: ThemePreset, commit: (preset: ThemePreset) => void, initialStrategy?: ThemeTransitionStrategy) {
   const root = document.documentElement;
   const media = window.matchMedia('(prefers-reduced-motion: reduce)');
   const colors = window.matchMedia('(forced-colors: active)');
   let desired = initial;
+  let selectedAt = 0;
   let current = initial;
   let generation = 0;
-  let active: ViewTransition | undefined;
   let activeStrategyCleanup: (() => void) | undefined;
-  let strategy = initialStrategy;
-  let animations: Animation[] = [];
+  let strategy = initialStrategy ?? featherThemeTransition;
   let disposed = false;
   const reduced = () => root.dataset.motion === 'reduced'
     || (root.dataset.motion !== 'full' && media.matches) || colors.matches;
-  const stop = (skipTransition = true) => {
-    const transition = active;
-    active = undefined;
-    if (transition && skipTransition) transition.skipTransition();
+  const stop = () => {
     activeStrategyCleanup?.();
     activeStrategyCleanup = undefined;
-    for (const animation of animations) animation.cancel();
-    animations = [];
-    delete root.dataset.themeTransition;
-    delete root.dataset.themeTransitionLive;
   };
-  const commitPreset = (preset: ThemePreset, weather?: ThemePreset) => {
+  const commitPreset = (preset: ThemePreset) => {
     current = preset;
-    commit(preset, weather);
+    commit(preset);
   };
   const settle = () => {
     ++generation;
@@ -58,7 +45,7 @@ export function createThemeTransition(
       strategy?.onSettled?.(desired);
     }
   };
-  const hasActiveTransition = () => !!active || !!activeStrategyCleanup;
+  const hasActiveTransition = () => !!activeStrategyCleanup;
   const preferenceChanged = () => { if (hasActiveTransition() && reduced()) settle(); };
   const visibilityChanged = () => { if (document.hidden && hasActiveTransition()) settle(); };
   const observer = new MutationObserver(preferenceChanged);
@@ -83,98 +70,22 @@ export function createThemeTransition(
     const finish = () => {
       if (disposed || id !== generation) return;
       ++generation;
-      stop(false);
+      stop();
       if (strategy?.queueChanges) {
         strategy.onSettled?.(current);
         if (desired !== current) start(desired);
       } else commitPreset(desired);
     };
-    if (strategy) {
-      try {
-        const cleanup = strategy({
-          from: current,
-          to: next,
-          commit: (preset) => { if (!disposed && id === generation) commitPreset(preset); },
-          startViewTransition: typeof document.startViewTransition === 'function' ? (update) => {
-            const transition = document.startViewTransition(update);
-            active = transition;
-            return transition;
-          } : undefined,
-          finish,
-          isCurrent: () => !disposed && id === generation
-        });
-        if (cleanup) {
-          if (id === generation) activeStrategyCleanup = cleanup;
-          else cleanup();
-          return;
-        }
-        // 注册页面的策略不适用时直接切换，不能退回全局天气动画。
-        if (active) { settle(); return; }
-        commitPreset(next);
-        strategy.onSettled?.(next);
-        return;
-      } catch {
-        if (hasActiveTransition()) settle();
-        else { commitPreset(next); strategy.onSettled?.(next); }
-        return;
-      }
-    }
-    if (typeof document.startViewTransition !== 'function') {
-      commitPreset(next);
-      return;
-    }
-    root.dataset.themeTransition = next;
-    const update = () => {
-      if (!disposed && id === generation) {
-        // 只保留旧页快照；新页留在真实DOM，避免整页捕获屏蔽鼠标命中。
-        root.dataset.themeTransitionLive = '';
-        commitPreset(next, next);
-      }
-    };
     try {
-      const transition = document.startViewTransition(update);
-      active = transition;
-      // 即使浏览器因窗口隐藏/快照冲突跳过动画，也完成最后一次外观选择。
-      void transition.updateCallbackDone.catch(() => { if (!disposed && id === generation) settle(); });
-      void transition.ready.then(() => {
-        if (disposed || id !== generation) return;
-        if (reduced()) { settle(); return; }
-        const scope = document.querySelector<HTMLElement>('.ui-theme-weather');
-        if (!scope) { settle(); return; }
-        const reveal = readMotionTime(scope, '--nd-semantic-motion-theme-reveal', 400);
-        const total = readMotionTime(scope, '--nd-semantic-motion-theme-total', 550);
-        const ease = readMotionValue(scope, '--nd-semantic-motion-ease-out', 'ease-out');
-        const animate = (name: string, frames: Keyframe[], ms: number, easing = ease, side = 'new') => {
-          const animation = root.animate(frames, { duration: ms, easing, fill: 'both', pseudoElement: `::view-transition-${side}(${name})` });
-          animations.push(animation);
-          return animation;
-        };
-        animate('root', [{ opacity: 1 }, { opacity: 0 }], reveal, ease, 'old');
-        if (next === 'nightwave') {
-          for (let index = 1; index <= 3; index++) {
-            animate(`theme-leaf-${index}`, [
-              { transform: `translate(8vw, -8vh) rotate(${-25 + index * 12}deg)`, opacity: 0, offset: 0 },
-              { transform: `translate(-12vw, ${index * 3}vh) rotate(${index * 22}deg)`, opacity: .85, offset: .18 },
-              { transform: `translate(-54vw, ${20 + index * 7}vh) rotate(${60 + index * 25}deg)`, opacity: .7, offset: .63 },
-              { transform: `translate(-110vw, ${65 + index * 8}vh) rotate(${125 + index * 35}deg)`, opacity: 0, offset: 1 }
-            ], total, 'linear');
-          }
-        } else {
-          animate('theme-dawn', [
-            { opacity: 0, transform: 'scale(.8)', offset: 0 },
-            { opacity: .55, transform: 'scale(1)', offset: .3 },
-            { opacity: 0, transform: 'scale(1.25)', offset: 1 }
-          ], total);
-        }
-        // finished也在skipTransition时结束，动画失败/取消不会留下装饰层。
-      }).catch(() => { /* 不支持快照或被后续选择打断时，走finished收尾。 */ });
-      void transition.finished.catch(() => {}).then(() => {
-        if (!disposed && id === generation) {
-          ++generation;
-          stop(false);
-          commitPreset(desired);
-        }
+      const cleanup = strategy({
+        startedAt: selectedAt, from: current, to: next,
+        commit: preset => { if (!disposed && id === generation) commitPreset(preset); },
+        finish,
+        isCurrent: () => !disposed && id === generation
       });
+      if (!cleanup) { settle(); return; }
+      if (id === generation) activeStrategyCleanup = cleanup;
+      else cleanup();
     } catch {
       settle();
     }
@@ -182,8 +93,9 @@ export function createThemeTransition(
 
   return {
     setStrategy(next: ThemeTransitionStrategy | undefined) {
-      if (strategy === next) return;
-      strategy = next;
+      const resolved = next ?? featherThemeTransition;
+      if (strategy === resolved) return;
+      strategy = resolved;
       // 页面切换收束旧快照，避免两套过渡并行。
       if (hasActiveTransition()) {
         ++generation;
@@ -194,6 +106,7 @@ export function createThemeTransition(
     },
     select(next: ThemePreset) {
       if (disposed || next === desired) return;
+      selectedAt = performance.now();
       desired = next;
       try { window.localStorage.setItem('nowadays.theme-preset.v1', next); } catch { /* 当次切换仍生效。 */ }
       if (strategy?.queueChanges && hasActiveTransition()) return;

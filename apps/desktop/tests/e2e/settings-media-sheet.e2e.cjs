@@ -143,18 +143,25 @@ async function run(verify) {
   assert.equal(await ev('document.documentElement.dataset.uiPreset'), 'daylight');
   const before = await cmd('Page.captureScreenshot', {format:'png',clip:portrait});
   fs.writeFileSync(path.join(out,'portrait-before.png'), Buffer.from(before.data,'base64'));
-  await changeTheme('nightwave');
+  await cmd('Emulation.setEmulatedMedia', { features: [{ name:'prefers-reduced-motion', value:'no-preference' }] });
+  await ev("document.querySelector('.ui-theme-switcher [data-theme-choice=nightwave]').click()");
+  await until(() => ev("document.querySelector('.theme-snapshot')?.style.maskComposite.includes('subtract') && parseFloat(getComputedStyle(document.querySelector('.theme-feather')).getPropertyValue('--theme-edge')) > 8"), '羽化中间帧保留立绘挖空');
+  const middle = await cmd('Page.captureScreenshot', {format:'png',clip:portrait});
+  const midPixels = PNG.sync.read(Buffer.from(middle.data,'base64'));
+  await until(() => ev("!document.querySelector('.theme-snapshot') && document.documentElement.dataset.uiPreset==='nightwave'"), '夜幕收束');
   const night = await cmd('Page.captureScreenshot', { format: 'png', clip: portrait });
   fs.writeFileSync(path.join(out, 'portrait-nightwave.png'), Buffer.from(night.data, 'base64'));
   const originalPixels = PNG.sync.read(Buffer.from(before.data, 'base64'));
   const nightPixels = PNG.sync.read(Buffer.from(night.data, 'base64'));
   assert.equal(nightPixels.width, originalPixels.width);
   assert.equal(nightPixels.height, originalPixels.height);
-  let changedPixels = 0;
+  let changedPixels = 0, midChangedPixels = 0;
   for (let i = 0; i < originalPixels.data.length; i += 4) {
+    if (!originalPixels.data.subarray(i, i + 4).equals(midPixels.data.subarray(i, i + 4))) midChangedPixels++;
     if (!originalPixels.data.subarray(i, i + 4).equals(nightPixels.data.subarray(i, i + 4))) changedPixels++;
   }
   const totalPixels = originalPixels.width * originalPixels.height;
+  assert.ok(midChangedPixels / totalPixels < .01, '中间帧立绘变化 ' + midChangedPixels + '/' + totalPixels);
   const portraitThemeChangedPercent = 100 * changedPixels / totalPixels;
   assert.ok(portraitThemeChangedPercent < 1, `昼夜实际切换后的立绘差异 ${changedPixels}/${totalPixels} (${portraitThemeChangedPercent.toFixed(3)}%)`);
   await cmd('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
@@ -244,7 +251,7 @@ async function run(verify) {
   assert.equal(await ev("document.querySelector('.config-sheet select[aria-label=语音服务]')?.value"), 'v1');
   assert.equal(await ev("document.querySelector('.config-sheet input[aria-label=语速]')?.value"), '1');
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ imageGroup:true, imageDiscard:true, voiceSessionDraft:true, voiceDiscard:true, voiceAnnounce:true, lateProbeIgnored:true, portraitThemeChangedPixels: changedPixels, portraitThemeTotalPixels: totalPixels, portraitThemeChangedPercent }));
+  console.log(JSON.stringify({ imageGroup:true, imageDiscard:true, voiceSessionDraft:true, voiceDiscard:true, voiceAnnounce:true, lateProbeIgnored:true, midChangedPixels, portraitThemeChangedPixels: changedPixels, portraitThemeTotalPixels: totalPixels, portraitThemeChangedPercent }));
 
 }
 function check(verify, route) {

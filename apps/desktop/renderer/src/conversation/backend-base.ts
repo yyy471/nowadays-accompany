@@ -12,7 +12,11 @@ export function backendBaseUrl(): Promise<string | null> {
         }
         return null;
       })
-      .catch(() => null);
+      .catch(() => null)
+      .then(base => {
+        if (!base) cached = null;
+        return base;
+      });
   }
   return cached;
 }

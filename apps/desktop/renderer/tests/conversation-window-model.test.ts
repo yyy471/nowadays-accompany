@@ -1,6 +1,7 @@
 // 真实窗口数据的视图映射测试。运行：在 apps/desktop 下执行 node --test。
 import test from "node:test";
 import assert from "node:assert/strict";
+import { syncMessageFeather } from '../src/conversation/message-scroll';
 import * as targetModule from "../src/conversation/window-model.ts";
 
 const load = async () => targetModule;
@@ -325,4 +326,29 @@ test("nextMessageSequence 按有限最大序号顺延，避免首轮回放与第
     messages.slice().sort((left, right) => left.sequence - right.sequence).map(item => item.id),
     ["u1", "a1", "u2"]
   );
+});
+
+test("按窗口顺序只选已完成且仍有生成入口的角色轮", () => {
+  const entry = (id, overrides = {}, segments = [segment(0, "speech", id)]) => ({
+    record: message({ messageId: id, ...overrides }), segments,
+  });
+  const entries = [entry('old'), entry('latest'), entry('no-segment', {}, []),
+    entry('interrupted', { status: 'interrupted' }), entry('writing', { status: 'generating' }),
+    entry('user', { sender: 'user' })];
+  assert.equal(targetModule.latestSceneTarget(entries, new Set()), 'latest');
+  assert.equal(targetModule.latestSceneTarget(entries, new Set(['latest'])), 'old');
+  assert.equal(targetModule.latestSceneTarget(entries, new Set(['latest', 'old'])), null);
+});
+
+test("羽化只跟随实际 scrollTop，回顶、负值和小数位移均立即同步", () => {
+  const flags = new Set();
+  const host = { scrollTop: 0, toggleAttribute(name, enabled) {
+    if (enabled) flags.add(name); else flags.delete(name);
+    return enabled;
+  } };
+  for (const top of [0, .25, 180, 0, -1]) {
+    host.scrollTop = top;
+    syncMessageFeather(host);
+    assert.equal(flags.has('data-scrolled'), top > 0);
+  }
 });

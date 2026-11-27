@@ -16,10 +16,12 @@ export function ShareSlip({ sender, notice, onDismiss, onOpen }: {
   const { surface, closing, close } = useSurfaceDismiss<HTMLElement>(onDismiss);
   return <UiThemeScope theme="xiacheng" className="share-slip">
     <aside ref={surface} className="ui-floating-surface" aria-label={sender.isBuiltin ? "主角色分享" : sender.displayName + "的分享"} data-closing={closing || undefined} inert={closing}>
-      {notice.homeAssetId && !brokenImage ? <img alt="" src={appearanceAssetUrl(sender.roleId, notice.homeAssetId)} onError={() => setBrokenImage(true)} /> :
-        <span className="share-monogram" aria-hidden="true">{Array.from(sender.displayName)[0]}</span>}
-      <div aria-live="polite"><strong>{sender.displayName}</strong><p>{notice.summary}</p></div>
-      <IconButton icon="close" label="关闭分享提示" onClick={close}/>
+      <div className="share-slip-summary">
+        {notice.homeAssetId && !brokenImage ? <img alt="" src={appearanceAssetUrl(sender.roleId, notice.homeAssetId)} onError={() => setBrokenImage(true)} /> :
+          <span className="share-monogram" aria-hidden="true">{Array.from(sender.displayName)[0]}</span>}
+        <div aria-live="polite"><strong>{sender.displayName}</strong><p>{notice.summary}</p></div>
+        <IconButton icon="close" label="关闭分享提示" onClick={close}/>
+      </div>
       <Button onClick={() => onOpen(notice, close)}>查看对话</Button>
     </aside>
   </UiThemeScope>;

@@ -1,8 +1,14 @@
-# 项目当前状态与基线（2026-11-26）
+# 项目当前状态与基线（2026-11-27）
 
 本文件集中维护当前开发状态、待办事项与最新验收基线，替代过去堆在 `AGENTS.md` 顶部的历史流水账。历史过程细节请直接查看 `archive/` 下各专项复核与实施记录。
 
 ## 1. 当前结论概览
+
+**主题转场与三项视觉补修已通过 Windows 离线自验，修后独立复核待办。** 仓库 Node 24.22.2 下，`node scripts/verify.mjs e2e` 默认并发 3 全量 **27/27** 通过。125% DPI 的对话历史切夜采到 31 个中间帧，点击后 445.5ms 清理完毕。零消息对话按角色活动状态显示提示，「回到最新」采用居中实心胶囊，动态空安排补齐上下细线。[408 二次补修与截图记录](./archive/02-desktop-ui-and-relations/408-frontend-refinement-v2.md#默认并发转场与二次全页视觉补修)
+
+**全页视觉复核后的六项补修通过 Windows 离线自验，独立复核待办。** 对话按钮、扩展说明、设置底栏、动态空安排与预设头像、历史空态、夏澄预设简介已按复核意见调整。Node 24 最终全量串行 E2E 27/27 通过。昼夜宽窄截图、头像局部图及各轮结果见 [408 补修记录](./archive/02-desktop-ui-and-relations/408-frontend-refinement-v2.md#全页视觉复核后的六项补修)。
+
+**桌面前端二期（[frontend-refinement-v2-plan.md](./design/character-studio/frontend-refinement-v2-plan.md)）全部四个阶段已由 Astra 完成实施，并通过 Gemini 逐阶段独立复核与主机全量离线回归（零返工）。** 本轮落实 IA-1 维持七页与「扩展」窄屏双视图、`DL-194`～`DL-199` 融入、四角浮层防撞与 `DialogueToast` 迁址、「晨落暮升」统一连续羽化切屏（≤ 550ms）与关系页 25/41 刻度（800–900ms）、对话/动态/入口与首屏纸感骨架，以及 Electron `BootGate` 立即建窗启动封面与关窗/托盘退出页内纸笺。仓库 Node 24 下渲染器 `npm run check`（36 CSS、违规 0、豁免 185）、渲染器单测 **172/172**、生产构建、桌面壳单测 **18/18** 与全量 Electron E2E（`node scripts/verify.mjs e2e` **27/27**）均通过；`apps/backend/`、`tokens.json` 与 `character-tokens.css` 零改动，真实远端模型/生图/语音服务联调仍另行留证。[408 专项完整实施与复核记录](./archive/02-desktop-ui-and-relations/408-frontend-refinement-v2.md)
 
 **四项扩展玩法（DL-196～DL-199）已完成开发，Windows 离线全量自验通过。真实大模型联调与独立复核待办。** 本轮覆盖定向分发、故障求助、互动微页共玩及新扩展反馈。玩法 4 在两项发布工具中加入可选指引。离线用例中，主角色发布定向书签工具，自行发起往来；阿澄建议增加章节并结束会话。动态页的往来接口返回完整两轮发言，双方各有两条可追溯证据，扩展收到同一会话的结束事件，阿澄随后调用工具成功保存第 42 页。[DL-199 决策](./161-digital-life-direction-decisions.md#dl-199-主角色可通过往来征求新扩展反馈) · [闭环用例](../apps/backend/tests/integration/role-exchanges.test.ts)
 

@@ -1,10 +1,10 @@
+import { PaperSkeleton } from '../components/PaperSkeleton';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import type { Outfit, RoleListItem } from '../types';
 import { appearanceAssetUrl } from '../types';
 import { Button, ControlButton, Icon, IconButton, Modal, UiThemeScope, readMotionTime, useMotionPolicy } from '../ui';
-import { useThemePreset, useThemeTransitionStrategy } from '../ui/presets';
-import { dialogueThemeTransition } from '../conversation/dialogue-theme';
+import { useThemePreset } from '../ui/presets';
 import type { PerfScene, SceneLayerMode } from '../conversation/performance';
 import type { PerfRow } from '../conversation/history';
 import { dayKey, dateLabel } from '../conversation/history';
@@ -51,6 +51,7 @@ export function ConversationPage({
   onTargetHandled,
   onVisibleWindow,
   onReturnFeed,
+  onReturnDesk,
 }: {
   roles: RoleListItem[];
   currentId: string;
@@ -70,11 +71,11 @@ export function ConversationPage({
   initialTarget?: { roleId: string; windowId: string; messageId?: string } | null;
   onTargetHandled?: () => void;
   onVisibleWindow: (id: string | null) => void;
+  onReturnDesk?: () => void;
   onReturnFeed?: () => void;
 }) {
   const { preset } = useThemePreset();
   // 换光由本页接管：舞台光线 + 纸面逐行推进，不再退回整页天气动画。
-  useThemeTransitionStrategy(dialogueThemeTransition);
   const night = preset === 'nightwave';
   const motion = useMotionPolicy();
   const role = roles.find(item => item.roleId === currentId);
@@ -122,7 +123,7 @@ export function ConversationPage({
   const [windowMenuOpen, setWindowMenuOpen] = useState(false);
   const [announce, setAnnounce] = useState('');
   const [requestDraftFocus, setRequestDraftFocus] = useState(0);
-  const [toastText, setToastText] = useState('');
+  const [toast, setToast] = useState<{ message: string; error: boolean } | null>(null);
   const [cue, setCue] = useState(false);
   const [stageRow, setStageRow] = useState<PerfRow | null>(null);
   const [recoveredDraft, setRecoveredDraft] = useState<{ key: string; value: string; sequence: number } | null>(null);
@@ -147,19 +148,20 @@ export function ConversationPage({
   const historyButton = useRef<HTMLButtonElement>(null);
   const frozenScene = useRef<PerfScene | null>(null);
 
-  const showToast = useCallback((message: string) => {
-    setToastText(message);
-    if (toastTimer.current) window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToastText(''), 3200);
+  const restartToastTimer = useCallback(() => {
+    window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 3200);
   }, []);
-
-
+  const showToast = useCallback((message: string, error = true) => {
+    setToast({ message, error });
+    restartToastTimer();
+  }, [restartToastTimer]);
   const cancelRunningTask = useCallback(async () => {
     if (!task || cancelBusy) return;
     setCancelBusy(true);
     try {
       await api(`/v1/roles/${encodeURIComponent(currentId)}/tasks/${encodeURIComponent(task.taskId)}/cancel`, { method: 'POST', body: { reason: 'USER_CANCELLED' } });
-      showToast(taskCancelNotice(task));
+      showToast(taskCancelNotice(task), false);
       setCancelOpen(false);
       setTask(null);
       onRoleStateChanged?.();
@@ -177,6 +179,14 @@ export function ConversationPage({
     onEvent: (snapshot, event) => handleEventRef.current(snapshot, event)
   });
   const snapshot = session.snapshot;
+  const readWindows = useRef(new Set<string>());
+  const readRoles = useRef(new Set<string>());
+  const readKey = JSON.stringify([currentId, session.windowId]);
+  useEffect(() => {
+    if (snapshot?.roleId !== currentId) return;
+    if (snapshot.windowId || snapshot.loadError) readRoles.current.add(currentId);
+    if (snapshot.windowId && !snapshot.loading) readWindows.current.add(JSON.stringify([currentId, snapshot.windowId]));
+  }, [currentId, snapshot?.roleId, snapshot?.windowId, snapshot?.loading, snapshot?.loadError]);
   const placeLocation = useCallback((rowId: number) => {
     const fromHistory = historyOpenRef.current;
     if (fromHistory) {
@@ -492,7 +502,7 @@ export function ConversationPage({
   };
 
   if (loading && !roles.length) {
-    return <UiThemeScope theme="xiacheng" className="dialogue-host"><div className="dialogue-empty"><p>正在读取角色资料…</p></div></UiThemeScope>;
+    return <UiThemeScope theme="xiacheng" className="dialogue-host"><div className="dialogue-empty"><PaperSkeleton label="正在读取角色资料…"/></div></UiThemeScope>;
   }
   if (!currentId || !role) {
     return <UiThemeScope theme="xiacheng" className="dialogue-host"><div className="dialogue-empty">
@@ -501,7 +511,7 @@ export function ConversationPage({
     </div></UiThemeScope>;
   }
   if (!snapshot || snapshot.roleId !== currentId || (session.windowId !== null && snapshot.windowId !== session.windowId)) {
-    return <UiThemeScope theme="xiacheng" className="dialogue-host"><div className="dialogue-empty"><p>正在打开对话窗口…</p></div></UiThemeScope>;
+    return <UiThemeScope theme="xiacheng" className="dialogue-host"><div className="dialogue-empty">{readRoles.current.has(currentId) ? <p role="status">正在打开对话窗口…</p> : <PaperSkeleton label="正在打开对话窗口…"/>}</div></UiThemeScope>;
   }
   if (snapshot.loadError) {
     return <UiThemeScope theme="xiacheng" className="dialogue-host"><div className="dialogue-empty">
@@ -521,6 +531,9 @@ export function ConversationPage({
         ? '连接已断开'
         : '正在连接';
 
+  const feedback = <div className="dialogue-toast" hidden={!toast} role="status" data-error={toast?.error || undefined}
+    onPointerEnter={() => window.clearTimeout(toastTimer.current)} onPointerLeave={restartToastTimer}
+    onFocus={() => window.clearTimeout(toastTimer.current)} onBlur={restartToastTimer}>{toast?.message}</div>;
   return <UiThemeScope theme="xiacheng" motion={motion.reduced ? 'reduced' : 'full'} className="dialogue-host">
     <div ref={pageRef} className="dialogue-page" data-theme={night ? 'night' : 'day'} data-motion={motion.reduced ? 'reduced' : 'full'}>
       <main className="dialogue-layout">
@@ -535,6 +548,7 @@ export function ConversationPage({
         <section className="dialogue-pane" aria-label={historyOpen ? '历史消息' : `与 ${roleName} 的对话`}>
         <div className="dialogue-pane-toolbar" inert={historyOpen} aria-hidden={historyOpen || undefined}>
           <div className="dialogue-pane-switches">
+          {onReturnDesk && <ControlButton className="dialogue-role-button" onClick={onReturnDesk}><Icon name="chev-left" size={15}/><span>回到刚才的台面</span></ControlButton>}
           {onReturnFeed && <ControlButton className="dialogue-role-button" onClick={onReturnFeed}><Icon name="chev-left" size={15}/><span>返回动态</span></ControlButton>}
           {roles.length > 1 ? <div className="dialogue-role-switch">
             <ControlButton type="button" className="dialogue-role-button" aria-label={`切换角色，当前${roleName}`} aria-expanded={roleMenuOpen} aria-haspopup="menu" onClick={() => setRoleMenuOpen(value => !value)}>
@@ -568,9 +582,11 @@ export function ConversationPage({
             <IconButton ref={historyButton} className="dialogue-pane-icon dialogue-history-button" icon="history" label="历史消息" aria-expanded={historyOpen} onClick={toggleHistory} />
           </div>
         </div>
+          {!historyOpen && feedback}
           <div className="dialogue-chat-wrap" inert={historyOpen} aria-hidden={historyOpen || undefined}>
             {snapshot.loading && snapshot.messages.length === 0
-              ? <div className="dialogue-chat-loading"><span className="spinner" aria-hidden="true" />正在读取消息…</div>
+              ? <div className="dialogue-chat-loading">{readWindows.current.has(readKey)
+                  ? <span role="status">正在读取消息…</span> : <PaperSkeleton label="正在读取消息…"/>}</div>
               : <ChatPane key={`${currentId}:${session.windowId}`} snapshot={snapshot} pendingVoiceId={voice.pendingId} playingId={voice.playingId} follow={follow} hasNew={hasNew}
                   initialDraft={drafts.current.get(`${currentId}:${session.windowId}`) ?? ''}
                   onDraftChange={value => {
@@ -602,14 +618,13 @@ export function ConversationPage({
                   onRetryScene={(messageId, mode) => session.requestScene(messageId, mode)}
                   onOpenScene={openScene} />}
           </div>
-          <HistoryPanel open={historyOpen} messages={snapshot.historyMessages} scenes={snapshot.scenes}
+          <HistoryPanel open={historyOpen} feedback={historyOpen ? feedback : null} messages={snapshot.historyMessages} scenes={snapshot.scenes}
             loading={snapshot.historyLoading} locating={locatingHistory} complete={snapshot.historyComplete} error={snapshot.historyError}
             openerRef={historyButton}
             onRetry={() => void session.loadHistory()} onOpenScene={openScene} onLocate={id => void locate(id)}
             onClose={() => { historyLocationRequest.current += 1; setLocatingHistory(false); session.cancelHistory(); setHistoryOpen(false); }} />
         </section>
       </main>
-      <div className="dialogue-toast" hidden={!toastText} role="status">{toastText}</div>
       <div className="sr-only" aria-live="polite" aria-atomic="true">{announce}</div>
     </div>
 

@@ -14,6 +14,7 @@ export interface SheetState {
   id: string;
   title: string;
   shape: SheetShape;
+  resourceId?: string;
   /** 紧凑纸笺对应的组名；同一项不同组视为不同纸笺。 */
   group?: string;
   /** 紧凑形态对齐的触发元素。 */

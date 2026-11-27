@@ -18,6 +18,7 @@ const keepRuns = Math.max(0, Number(process.env.E2E_KEEP_RUNS ?? "5"));
 const relationModes = ["base", "slow", "switch", "batch", "inner", "many", "focus"];
 
 const SUITE = [
+  "boot-window-intent.e2e.cjs",
   "startup-flow-fixes.e2e.cjs",
   "settings-workspace.e2e.cjs",
   "settings-real-backend.e2e.cjs",

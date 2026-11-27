@@ -51,6 +51,10 @@ const roleDeletes = [];
 let savedModelBody;
 let nextModelId = 2;
 let nextExtId = 2;
+let skillFailure = '';
+let scanLibrary = false;
+const library = [{ directory:'skill', name:'临时方法', description:'整理聊天笔记' },
+  { directory:'other', name:'摘录方法', description:'整理摘录' }];
 const modelPatches = [];
 const savedSecrets = {};
 const requests = [];
@@ -301,11 +305,21 @@ const server = http.createServer((req, res) => {
   const revealMatch = /^\/v1\/resources\/([^/]+)\/secret\/reveal$/.exec(p);
   if (revealMatch && req.method === 'POST') { const target = resources.find(item => item.resourceId === revealMatch[1]); if (!target) return json(res, { error: { message: '资源不存在' } }, 404); const secret = savedSecrets[target.resourceId]; return json(res, secret ? { status: 'stored', secret } : { status: 'missing' }); }
   if (p === '/v1/resources' && req.method === 'POST') { let body = ''; req.on('data', chunk => body += chunk); return req.on('end', () => { const data = JSON.parse(body); const resourceId = data.kind === 'model' ? `m${nextModelId++}` : `x${nextExtId++}`; if (typeof data.secret === 'string') savedSecrets[resourceId] = data.secret; const created = { resourceId, kind: data.kind, name: data.name, enabled: true, config: data.config, credential: { status: data.secret ? 'stored' : 'missing' }, lastTest: null }; resources.push(created); json(res, created, 201); }); }
-  if (p === '/v1/resources/skills/discover') return json(res, { items: [{ directory: 'skill', name: '临时方法', description: '整理聊天笔记' }] });
+  if (p === '/v1/resources/skills/discover' && ['EMPTY', 'UNREADABLE'].includes(skillFailure))
+    return json(res, { error: { code: 'SKILL_DIRECTORY_' + skillFailure } }, 400);
+  if (p === '/v1/resources/mcp/probe') return json(res, { tools: [] });
+  if (p === '/v1/resources/skills/discover') return json(res, { items: scanLibrary ? library : library.slice(0,1) });
   if (p === '/v1/resources/skills/import') {
-    const item = { resourceId: `x${nextExtId++}`, kind: 'skill', name: '临时方法', enabled: true, config: { sourcePath: 'C:/fixture/skill', description: '整理聊天笔记' } };
-    resources.push(item);
-    return json(res, { items: [item] }, 201);
+    if (skillFailure === 'CHANGED') return json(res, {error:{code:'SKILL_DIRECTORY_CHANGED'}}, 409);
+    return readRaw(req, raw => {
+      const { directories } = JSON.parse(raw.toString());
+      const items = library.filter(skill => directories.includes(skill.directory)).map(skill => ({
+        resourceId: 'x' + nextExtId++, kind: 'skill', name: skill.name, enabled: true,
+        config: { sourcePath:'C:/fixture/' + skill.directory, description:skill.description }
+      }));
+      resources.push(...items);
+      json(res, {items}, 201);
+    });
   }
   if (p === '/v1/resources') return json(res, { items: resources });
   if (p === '/v1/activities') return json(res, { items: roles.map(role => ({ roleId: role.roleId, state: roleStates[role.roleId], running: false, initStatus: 'ready' })) });
@@ -350,6 +364,7 @@ async function noticeGeometry(selectors, label) {
     return { notice, controls, width: innerWidth };
   })()`);
   const { notice, controls, width } = layout;
+  assert.ok(notice.height <= 80 && notice.width <= 420, JSON.stringify(notice));
   assert.ok(Math.abs(notice.left + notice.width / 2 - width / 2) <= 0.5, `${label} 纸签水平居中`);
   assert.ok(notice.left >= 0 && notice.right <= width && notice.height > 46, `${label} 长纸签换行且不越界`);
   for (const { selector, bounds, hit } of controls) {
@@ -668,6 +683,9 @@ async function run() {
   await click(sheetButton('高级配置'));
   await ev(setValue(group('名称', 'input'), temporaryTool));
   await ev(setValue(group('启动', 'input'), 'node'));
+  await click(sheetButton('测试连接'));
+  await sheetText('连接成功，发现 0 个工具');
+  assert.equal(await ev("document.querySelectorAll('.config-sheet .config-probe-feedback[role=status]').length"), 1);
   await click(sheetButton('添加'));
   await heading(temporaryTool);
   await edit();
@@ -721,12 +739,33 @@ async function run() {
   assert.ok(!bindings.b.some(item => item.resourceId === 'x1') && bindings.b.some(item => item.capability === 'chat_model'), '关闭的扩展删除后保留模型绑定');
   await tab('Skill');
   await add('添加 Skill');
+  await sheetText('尚未扫描目录');
   await ev(setValue(element(`${sheet} input[aria-label="技能目录"]`), 'C:/fixture/skill'));
+  for (const [failure, message] of [['EMPTY','这个目录里还没有 Skill'], ['UNREADABLE','目录无法读取']]) {
+    skillFailure = failure;
+    await click(sheetButton('识别技能')); await sheetText(message);
+  }
+  skillFailure = 'CHANGED';
   await click(sheetButton('识别技能'));
   await until(() => ev(`!!document.querySelector('${sheet} input[type=checkbox]')?.checked`));
+  await click(sheetButton('添加')); await sheetText('目录内容已变更');
+  assert.equal(await ev(`document.querySelectorAll('${sheet} input[type=checkbox]').length`), 0);
+  skillFailure = ''; scanLibrary = true;
+  await click(sheetButton('识别技能'));
+  await until(() => ev(`document.querySelectorAll('${sheet} input[type=checkbox]').length===2`));
+  await ev(`document.querySelectorAll('${sheet} input[type=checkbox]').forEach(el=>el.click())`);
   await click(sheetButton('添加'));
   await heading('临时方法');
   assert.equal(resources.find(item => item.resourceId === 'x3').config.sourcePath, 'C:/fixture/skill');
+  await select('x4');
+  await heading('摘录方法');
+  const editedRole = await ev("document.querySelector('.config-role-switch')?.value");
+  await click(button('去角色配置启用', body));
+  await until(() => ev("document.activeElement?.closest('.config-toggle-row[data-located]')?.innerText.includes('摘录方法')"));
+  if (editedRole) assert.equal(await ev("document.querySelector('.config-role-switch').value"), editedRole);
+  assert.equal(await ev("document.querySelector('.config-toggle-row[data-located] [role=switch]').getAttribute('aria-checked')"), 'false');
+  await click(sheetButton('在设置中管理 →'));
+  await until(() => ev("document.querySelector('.studio-shell').dataset.page==='settings'"));
 
   // 挂起创建语音服务响应，验证返回按钮在途挡住导航，完成后可返回并带入探测缓存。
   await tab('模型');

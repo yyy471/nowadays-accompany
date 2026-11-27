@@ -6,7 +6,7 @@
 
 | 页面 | 状态 | 代码 |
 | --- | --- | --- |
-| 对话 | 保留：舞台光线 + 纸面 14 档逐行推进 + 一次性收尾，1.2 秒内完成 | [dialogue-theme.ts](../../../apps/desktop/renderer/src/conversation/dialogue-theme.ts) · [conversation.css](../../../apps/desktop/renderer/src/styles/conversation.css) |
+| 对话 | 保留：舞台光线 + 纸面 14 档逐行推进 + 一次性收尾，1.2 秒内完成 | 当时的 `conversation/dialogue-theme.ts`（后续变更见[阶段二记录](./408-frontend-refinement-v2.md#阶段二跨页壳层与主题切屏)） · [conversation.css](../../../apps/desktop/renderer/src/styles/conversation.css) |
 | 关系 | 回滚：恢复 `relationship-journal` 折页刻度（暖光掠过 + 横线收成刻度 + 520ms 提交），与 HEAD 一致 | [exlibris-theme.ts](../../../apps/desktop/renderer/src/relations/exlibris-theme.ts) |
 
 两页都通过 `useThemeTransitionStrategy` 接管，不再退回整页天气动画；减少动效、强制色、窗口隐藏、快速连点仍由 `createThemeTransition` 统一收束。

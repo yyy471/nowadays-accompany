@@ -1,6 +1,6 @@
 import { api } from '../api';
 import type { Outfit, RoleListItem, RoleStateResponse } from '../types';
-import { appearanceAssetUrl } from '../types';
+import { roleFaceImage, type RoleFaceImage } from '../components/role-face-image';
 
 export interface Wake {
   wakeId: string;
@@ -69,8 +69,17 @@ export interface FeedData {
   batches: MemoryBatch[];
   roleActivities: RoleActivity[];
   messages: Record<string, SharedMessage>;
-  portraits: Record<string, string>;
+  portraits: Record<string, RoleFaceImage | undefined>;
 }
+export function upcomingForRole(wakes: readonly Wake[], roleId: string): Wake[] {
+  return wakes.filter(wake => wake.status === 'pending' && (roleId === 'all' || wake.roleId === roleId))
+    .sort((a, b) => Date.parse(a.scheduledAt) - Date.parse(b.scheduledAt));
+}
+
+export function orderedExchangeTurns(turns: readonly ExchangeTurn[]): ExchangeTurn[] {
+  return [...turns].sort((a, b) => a.turnIndex - b.turnIndex);
+}
+
 export interface UpcomingData { wakes: Wake[]; roleActivities: RoleActivity[] }
 
 async function allPages<T>(path: string, limit: number, signal: AbortSignal, idOf: (item: T) => string): Promise<T[]> {
@@ -87,7 +96,7 @@ const readyRoles = (roles: RoleListItem[]) => roles.filter(role => role.status =
 export const messageKey = (roleId: string, messageId: string) => JSON.stringify([roleId, messageId]);
 
 
-async function portrait(role: RoleListItem, signal: AbortSignal): Promise<string> {
+async function portrait(role: RoleListItem, signal: AbortSignal): Promise<RoleFaceImage | undefined> {
   const path = rolePath(role.roleId);
   const [wardrobe, state] = await Promise.all([
     api<{ items: Outfit[] }>(`${path}/appearance/outfits`, { signal }),
@@ -95,7 +104,7 @@ async function portrait(role: RoleListItem, signal: AbortSignal): Promise<string
   ]);
   const available = wardrobe.items.filter(item => item.home);
   const chosen = available.find(item => item.outfitId === state.state.outfitId) ?? available[0];
-  return chosen?.home ? appearanceAssetUrl(role.roleId, chosen.home.assetId) : '';
+  return roleFaceImage(role.roleId, chosen?.home);
 }
 
 export async function loadUpcoming(roles: RoleListItem[], signal: AbortSignal): Promise<UpcomingData> {
@@ -119,7 +128,7 @@ export async function loadFeed(roles: RoleListItem[], signal: AbortSignal): Prom
         allPages<MemoryBatch>(`${path}/memory/batches`, 200, signal, item => item.batchId),
         portrait(role, signal).catch(error => {
           if (signal.aborted) throw error;
-          return '';
+          return undefined;
         }),
       ]);
       const messages = activities.flatMap(activity => activity.sharedMessage ? [activity.sharedMessage] : []);

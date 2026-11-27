@@ -1,3 +1,4 @@
+import { roleFaceImage } from './components/role-face-image';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { api } from './api';
@@ -7,26 +8,38 @@ import { BrandMark, Button, ControlButton, Icon, UiThemeProvider, UiThemeScope, 
 import { useThemePreset } from './ui/presets';
 import { ThemeSwitcher } from './components/shell/ThemeSwitcher';
 import { EngineeringCapsule } from './components/shell/EngineeringCapsule';
+import { BackendConnection } from './components/shell/BackendConnection';
 import { PageDock } from './components/shell/PageDock';
 import { ExtensionsPage, ExtensionOverlays } from './extensions/ExtensionViews';
+import type { DeskPosition } from './extensions/desk';
 import { useExtensions } from './extensions/use-extensions';
 import { ShareSlip, useShareNotices } from './components/shell/ShareSlip';
 import { HomePage } from './pages/Home';
 import { Relations } from './pages/Relations';
-import { SettingsWorkspace, type ConfigNavigationGuard } from './pages/Settings';
+import { SettingsWorkspace, type ConfigNavigationGuard, type WorkspaceRequest } from './pages/Settings';
 import { ConversationPage } from './pages/Conversation';
 import { FeedPage } from './pages/Feed';
 import { RoleEntry } from './pages/RoleEntry';
 import { needsEntryPick } from './entry/role-entry';
 import { createStateVersionGate } from './state-version';
 
-export function App() {
+import { WindowIntent } from './components/shell/WindowIntent';
+
+export function App({ skipEntry }: { skipEntry: boolean }) {
+  return <><WindowIntent/><DeskWorkspace skipEntry={skipEntry}/></>;
+}
+
+function DeskWorkspace({ skipEntry }: { skipEntry: boolean }) {
   const { preset } = useThemePreset();
   const motion = useMotionPolicy();
   const [scope] = useState(createMotionScope);
   const pageBody = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState('home');
   const [conversationTarget, setConversationTarget] = useState<{ roleId: string; windowId: string; messageId?: string } | null>(null);
+  const deskPosition = useRef<DeskPosition>({ view: 'desk' });
+  const rememberDesk = useCallback((position: DeskPosition) => { deskPosition.current = position; }, []);
+  const [deskBookmark, setDeskBookmark] = useState<DeskPosition>();
+  const [returnPosition, setReturnPosition] = useState<DeskPosition>();
   const [conversationFromFeed, setConversationFromFeed] = useState(false);
   const [visibleWindow, setVisibleWindow] = useState<string | null>(null);
   const [feedVisited, setFeedVisited] = useState(false);
@@ -61,7 +74,13 @@ export function App() {
     else if (feedRequest !== feedNavigationId.current) return;
     cancelConfigSwap();
     if (next === page) return;
-    const apply = () => { after?.(); setPage(next); };
+    const apply = () => {
+      if (next === 'extensions') deskPosition.current = { view: 'catalog' };
+      setDeskBookmark(undefined);
+      setReturnPosition(undefined);
+      after?.();
+      setPage(next);
+    };
     const configPages = ['role-config', 'settings'];
     const state = configSwap.current;
     const generation = state.generation;
@@ -185,20 +204,9 @@ export function App() {
   }, []);
   // 冷启动先选角（DL-147）；自动化脚本可用 NOWADAYS_SKIP_ROLE_PICKER 直入工作区。
   const [entered, setEntered] = useState(false);
-  const [skipEntry, setSkipEntry] = useState(false);
-  // 启动配置读完前不渲染任何页面：避免选角页在跳过模式下闪现一下。
-  const [booted, setBooted] = useState(false);
-  useEffect(() => {
-    let live = true;
-    fetch('/api-config.json')
-      .then(response => (response.ok ? response.json() as Promise<{ skipRolePicker?: boolean }> : null))
-      .then(config => { if (live) { setSkipEntry(config?.skipRolePicker === true); setBooted(true); } })
-      .catch(() => { if (live) setBooted(true); /* 非桌面壳环境没有这份配置，按正常冷启动处理。 */ });
-    return () => { live = false; };
-  }, []);
-  const [workspaceRequest, setWorkspaceRequest] = useState<{ kind: 'section'; roleId: string; section: 'models'; key: number } | { kind: 'create'; key: number } | null>(null);
+  const [workspaceRequest, setWorkspaceRequest] = useState<(WorkspaceRequest & { key: number }) | null>(null);
   const workspaceRequestSeq = useRef(0);
-  const issueWorkspaceRequest = useCallback((req: { kind: 'section'; roleId: string; section: 'models' } | { kind: 'create' }) => {
+  const issueWorkspaceRequest = useCallback((req: WorkspaceRequest) => {
     setWorkspaceRequest({ ...req, key: ++workspaceRequestSeq.current });
   }, []);
   const handleWorkspaceRequestHandled = useCallback((key: number) => {
@@ -360,15 +368,14 @@ export function App() {
   const accounts = roles ? { accounts: roles.map(r => ({ accountId: r.roleId, nickname: r.displayName, signature: r.roleId === currentId ? status : '' })) } : undefined;
   const currentOutfit = outfits.find(outfit => outfit.outfitId === state.outfitId) ?? null;
   const outfitHomeUrl = currentOutfit?.home ? appearanceAssetUrl(currentId, currentOutfit.home.assetId) : null;
+  const faceImage = currentId === appearanceRoleId && currentOutfit?.roleId === currentId
+    ? roleFaceImage(currentId, currentOutfit.home) : undefined;
   const seat = roles?.find(role => role.isBuiltin && role.status === 'ready');
   const dockHidden = page === 'conversation' && hideConversationDock;
   const setConversationDockHidden = (hidden: boolean) => {
     setHideConversationDock(hidden);
     try { localStorage.setItem('nowadays-dialogue-hide-dock', hidden ? '1' : '0'); } catch { /* 本地偏好不可写时仅保留本次设置。 */ }
   };
-  if (!booted) {
-    return <UiThemeScope theme="xiacheng" preset={preset}><div className="studio-boot" role="status">正在打开书房…</div></UiThemeScope>;
-  }
   if (!skipEntry && needsEntryPick({ loading: !roles && !error, roles, entered, error })) {
     return <RoleEntry
       roles={roles || []}
@@ -392,18 +399,22 @@ export function App() {
     <main className="studio-content" tabIndex={-1} aria-label="当前页面内容"><UiThemeProvider theme="xiacheng">
       <div ref={pageBody} className={page === 'home' ? 'studio-home-content' : page === 'roles' ? 'studio-relations-content' : page === 'conversation' ? 'studio-conversation-content' : page === 'feed' ? 'studio-feed-content' : 'studio-legacy-page'}>
         {page === 'home' && <UiThemeScope theme="xiacheng"><HomePage accounts={accounts} selectedAccountId={currentId} outfitHomeUrl={outfitHomeUrl} outfitName={currentOutfit?.name ?? null} loading={!roles && !error} error={error} retrying={retryingRoles || retryingDetail} onRetry={retryDetail} onGoWorkbench={() => navigate('roles')} onCreateRole={() => navigate('role-config', () => issueWorkspaceRequest({ kind: 'create' }))}/></UiThemeScope>}
-        {page === 'extensions' && <ExtensionsPage state={extensions} roles={roles ?? []} seat={seat}/>}
+        {page === 'extensions' && <ExtensionsPage state={extensions} roles={roles ?? []} seat={seat} image={faceImage}
+          initial={returnPosition} onPosition={rememberDesk} onIdea={() => navigate('conversation')}/>}
         {page === 'roles' && <Relations roles={roles || []} error={error} currentId={currentId} visit={rolesVisit} onSelect={setCurrentId} onOpenSettings={() => navigate('role-config')}/>}
-        {page === 'conversation' && <ConversationPage roles={roles || []} currentId={currentId} currentOutfit={currentOutfit} outfits={outfits} outfitHomeUrl={outfitHomeUrl} appearanceLoading={appearanceLoading} loading={!roles && !error} error={error} hideDock={hideConversationDock} onHideDockChange={setConversationDockHidden} onSelectRole={id => { setCurrentId(id); setConversationTarget(null); }} onOpenRelations={() => navigate('roles')} onConfigureModel={() => navigate('role-config', () => issueWorkspaceRequest({ kind: 'section', roleId: currentId, section: 'models' }))} onCreateRole={() => navigate('role-config', () => issueWorkspaceRequest({ kind: 'create' }))} onRoleStateChanged={() => { void refresh(); }} initialTarget={conversationTarget} onVisibleWindow={setVisibleWindow} onTargetHandled={handleConversationTarget} onReturnFeed={conversationFromFeed ? () => navigateFeedChat('feed') : undefined}/>}
+        {page === 'conversation' && <ConversationPage roles={roles || []} currentId={currentId} currentOutfit={currentOutfit} outfits={outfits} outfitHomeUrl={outfitHomeUrl} appearanceLoading={appearanceLoading} loading={!roles && !error} error={error} hideDock={hideConversationDock} onHideDockChange={setConversationDockHidden} onSelectRole={id => { setCurrentId(id); setConversationTarget(null); }} onOpenRelations={() => navigate('roles')} onConfigureModel={() => navigate('role-config', () => issueWorkspaceRequest({ kind: 'section', roleId: currentId, section: 'models' }))} onCreateRole={() => navigate('role-config', () => issueWorkspaceRequest({ kind: 'create' }))} onRoleStateChanged={() => { void refresh(); }} initialTarget={conversationTarget} onVisibleWindow={setVisibleWindow} onTargetHandled={handleConversationTarget} onReturnDesk={deskBookmark ? () => navigate('extensions', () => setReturnPosition(deskBookmark)) : undefined} onReturnFeed={conversationFromFeed ? () => navigateFeedChat('feed') : undefined}/>}
         {(page === 'feed' || feedVisited) && <div className="feed-mounted" hidden={page !== 'feed'}><FeedPage active={page === 'feed'} roles={roles || []} rolesLoading={!roles && !roleListError} roleError={roleListError} retryingRoles={retryingRoles} onRetryRoles={() => void retryRoles()} onOpenChat={target => navigateFeedChat('conversation', target)}/></div>}
-        {settingsVisited && <SettingsWorkspace page={page} roles={roles || []} currentId={currentId} roleListError={roleListError} retryingRoles={retryingRoles} onRetryRoles={() => void retryRoles()} onRoleDeleted={removeRoleLocally} onRefresh={refresh} onNavigate={applyPage} navigationGuard={configGuard} footerLeft={configFooterLeft} footerRight={configFooterRight} workspaceRequest={workspaceRequest} onWorkspaceRequestHandled={handleWorkspaceRequestHandled} onStartConversation={roleId => navigate('conversation', () => setCurrentId(roleId))}/>}
+        {settingsVisited && <SettingsWorkspace page={page} roles={roles || []} currentId={currentId} roleListError={roleListError} retryingRoles={retryingRoles} onRetryRoles={() => void retryRoles()} onRoleDeleted={removeRoleLocally} onRefresh={refresh} onNavigate={applyPage} navigationGuard={configGuard} footerLeft={configFooterLeft} footerRight={configFooterRight} workspaceRequest={workspaceRequest} onConfigureResource={(roleId, resourceId) => navigate('role-config', () => issueWorkspaceRequest({ kind: 'section', section: 'ext', roleId, resourceId }))} onWorkspaceRequestHandled={handleWorkspaceRequestHandled} onStartConversation={roleId => navigate('conversation', () => setCurrentId(roleId))}/>}
       </div>
     </UiThemeProvider></main>
-    {seat && <EngineeringCapsule/>}
-    <ExtensionOverlays state={extensions} roles={roles ?? []}/>
+    <div className="studio-floating-column">
+      {seat && <EngineeringCapsule/>}
+      <ExtensionOverlays state={extensions} roles={roles ?? []} image={faceImage}/>
+    </div>
     {shares.notice && shares.sender && <ShareSlip key={shares.notice.messageId} sender={shares.sender} notice={shares.notice} onDismiss={shares.dismiss}
       onOpen={(notice, dismiss) => {
         const open = () => {
+          setDeskBookmark(page === 'extensions' ? deskPosition.current : undefined);
           setCurrentId(notice.roleId);
           setConversationTarget(notice);
           setConversationFromFeed(false);
@@ -413,7 +424,9 @@ export function App() {
         else navigate('conversation', open);
       }}/>}
     {!dockHidden && <UiThemeScope theme="xiacheng" className="studio-footer-scope"><footer className="studio-footer">
-      {page === 'role-config' || page === 'settings' ? <div ref={setConfigFooterLeft} id="config-footer-left" className="config-footer-left"/> : page === 'feed' ? <span/> : <span className="studio-runtime">{error ? '资料暂时无法更新' : roles ? `${roles.length} 位角色` : '正在读取角色…'}</span>}
+      <div className="studio-footer-info"><BackendConnection/>
+        {page === 'role-config' ? <div ref={setConfigFooterLeft} id="config-footer-left" className="config-footer-left"/> : <span className="studio-runtime">{roles ? `${roles.length} 位角色` : error ? '资料暂时无法更新' : '正在读取角色…'}</span>}
+      </div>
       <PageDock page={page} onNavigate={next => navigate(next, () => { if (next === 'roles') setRolesVisit(value => value + 1); })}/>{page === 'role-config' || page === 'settings' ? <div ref={setConfigFooterRight} id="config-footer-right" className="config-footer-right"/> : page === 'feed' ? <span/> : <span className="studio-edition">开发版</span>}
     </footer></UiThemeScope>}
   </div>;

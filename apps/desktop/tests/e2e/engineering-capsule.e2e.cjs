@@ -41,7 +41,7 @@ async function run() {
       {resourceId:resource.resourceId,capability:'chat_model',modelName:'offline',enabled:true}]);
     app.services.activity.resume(roleId);
     await app.conversation.waitForIdle(roleId,30000);
-    await withDesktop(base, async ({ev,wait}) => {
+    await withDesktop(base, async ({cmd,ev,wait}) => {
       await wait("!!document.querySelector('.ui-studio-brand')",'首页');
       const dock = label => ev("[...document.querySelectorAll('.ui-dock-item')].find(b=>b.textContent.includes(" + JSON.stringify(label) + ")).click()");
       const choose = async name => {
@@ -75,7 +75,26 @@ async function run() {
       const list = await (await fetch(base+'/v1/engineering/jobs')).json();
       assert.deepEqual(list.items.map(item=>item.extId).sort(),['alpha','beta']);
       assert.ok(list.items.every(item=>item.status==='running' && item.roleId===roleId));
-      await ev("document.querySelector('[aria-label=\"取消工程 alpha\"]').click()");
+      await cmd('Emulation.setDeviceMetricsOverride', {width:720, height:540, deviceScaleFactor:1, mobile:false});
+      await wait("innerWidth===720 && document.querySelector('.engineering-summary').offsetHeight>0", '窄屏单行摘要');
+      assert.equal(await ev("document.querySelector('.engineering-summary').textContent"), '后台工程 2 项');
+      assert.equal(await ev("document.querySelector('.engineering-jobs').offsetHeight"), 0);
+      const column = await ev("document.querySelector('.studio-floating-column').getBoundingClientRect().toJSON()");
+      assert.deepEqual([column.x, column.bottom, column.height].map(Math.round), [24,436,40]);
+      assert.ok(column.width <= 320);
+      async function hit(selector) {
+        const point = await ev(`(() => {
+          const node = document.querySelector(${JSON.stringify(selector)});
+          node.scrollIntoView({block:'nearest'});
+          const rect = node.getBoundingClientRect(), x = rect.x + rect.width/2, y = rect.y + rect.height/2;
+          return {x,y,reachable:node.contains(document.elementFromPoint(x,y))};
+        })()`);
+        assert.ok(point.reachable, selector);
+        for (const type of ['mousePressed','mouseReleased']) await cmd('Input.dispatchMouseEvent', {type, x:point.x, y:point.y, button:'left', clickCount:1});
+      }
+      await hit('.engineering-summary');
+      assert.ok(await ev("document.querySelector('.studio-floating-column').offsetHeight<=192"));
+      await hit('[aria-label="取消工程 alpha"]');
       await wait(rows+".length===1 && document.querySelector('.engineering-row strong').textContent==='复核索引'",'仅取消选中工程');
       await wait("document.body.innerText.includes('目录已取消')",'角色接到单项取消回执');
       assert.equal(app.services.pi.running()[0].extId,'beta');

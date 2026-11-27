@@ -1,3 +1,5 @@
+import { ApiError } from '../../api';
+
 export interface McpDraft {
   name: string;
   command: string;
@@ -32,4 +34,18 @@ export function parseMcpImport(raw: string): McpDraft[] {
 
 export function personalArgument(value: string) {
   return /(?:[A-Za-z]:[\\/]|^[/~]|<[^>]+>|\$\{[^}]+\}|your[_-]|path[/\\]to[/\\])/i.test(value);
+}
+
+export function mcpSummary(server: string, command: string, args: string[], env: Record<string,string> | null) {
+  const leaf = command.trim().replace(/^["']|["']$/g, '').split(/[\\/]/).at(-1) ?? '';
+  const safeName = /^[\p{L}\p{N}_.+-]+(?: [\p{L}\p{N}_.+-]+)*$/u.test(leaf) ? leaf : '本地命令';
+  const missing = Object.entries(env ?? {}).filter(([, value]) => !value.trim() || /<[^>]+>|\$\{[^}]+\}|your[_-]/i.test(value)).map(([key]) => key);
+  return [server, safeName, `${args.length} 个参数`, ...(missing.length ? ['待补 ' + missing.join('、')] : [])].join(' · ');
+}
+
+export function skillIssue(reason: unknown) {
+  if (!(reason instanceof ApiError)) return;
+  if (reason.status === 400 && reason.code === 'SKILL_DIRECTORY_EMPTY') return { role: 'status' as const, text: '这个目录里还没有 Skill，可以换个目录再识别。' };
+  if (reason.status === 400 && reason.code === 'SKILL_DIRECTORY_UNREADABLE') return { role: 'alert' as const, text: '目录无法读取，请检查路径与读取权限后再识别。' };
+  if (reason.status === 409 && reason.code === 'SKILL_DIRECTORY_CHANGED') return { role: 'alert' as const, text: '目录内容已变更，请重新识别并选择技能。' };
 }

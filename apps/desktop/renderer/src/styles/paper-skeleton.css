@@ -1,0 +1,26 @@
+.paper-skeleton {
+  width: min(100%, 34rem);
+  margin-inline: auto;
+  padding: var(--nd-primitive-space-4);
+  color: var(--nd-semantic-color-text-muted);
+  font-size: var(--nd-semantic-type-caption-size);
+  text-align: start;
+}
+.paper-skeleton-lines {
+  display: grid;
+  gap: var(--nd-primitive-space-3);
+  margin-top: var(--nd-primitive-space-3);
+  padding: var(--nd-primitive-space-4);
+  border: 1px solid color-mix(in srgb, var(--nd-semantic-color-line-decorative) 36%, transparent);
+  border-radius: var(--nd-semantic-radius-field);
+  background: repeating-linear-gradient(4deg, transparent 0 3px, color-mix(in srgb, var(--nd-semantic-color-text-muted) 3%, transparent) 3px 4px),
+    var(--nd-semantic-color-surface);
+}
+.paper-skeleton-lines i {
+  width: 76%;
+  height: var(--nd-primitive-space-2);
+  background: color-mix(in srgb, var(--nd-semantic-color-text-muted) 10%, transparent);
+  border-radius: var(--nd-semantic-radius-chip);
+}
+.paper-skeleton-lines i:first-child { width: 43%; }
+.paper-skeleton-lines i:last-child { width: 62%; }

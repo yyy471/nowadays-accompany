@@ -10,11 +10,12 @@ export function parseExtensionSnapshot(data: string): Extension[] {
 }
 export function useExtensions(onCoplayShare: (event: MessageEvent) => void) {
   const receiveShare = useEffectEvent(onCoplayShare);
-  const [repairs] = useState(createRepairSender);
+  const [, refreshRepairs] = useState(0);
+  const [repairs] = useState(() => createRepairSender(() => refreshRepairs(value => value + 1)));
   const [items, setItems] = useState<Extension[]>([]);
   const [notices, setNotices] = useState<Record<string, Notice>>({});
   const nextReceipt = useRef(0);
-  const [status, setStatus] = useState('正在读取扩展…');
+  const [connection, setConnection] = useState<'loading' | 'ready' | 'reconnecting'>('loading');
   useEffect(() => {
     let active = true;
     let source: EventSource | undefined;
@@ -28,18 +29,18 @@ export function useExtensions(onCoplayShare: (event: MessageEvent) => void) {
         setItems(next);
         setNotices(previous => Object.fromEntries(Object.entries(previous).filter(([id, notice]) =>
           next.some(item => item.extId === id && item.version === notice.version && item.status === 'enabled'))));
-        setStatus('');
+        setConnection('ready');
       });
       source.addEventListener('notice', event => {
         const payload: Omit<Notice, 'receiptId'> = JSON.parse(event.data);
         const notice = { ...payload, receiptId: ++nextReceipt.current };
         setNotices(previous => ({ ...previous, [notice.extId]: notice }));
       });
-      source.onerror = () => { setItems([]); setNotices({}); setStatus('扩展连接中断，正在重连…'); };
+      source.onerror = () => { setItems([]); setNotices({}); setConnection('reconnecting'); };
     });
     return () => { active = false; source?.close(); };
   }, [repairs]);
-  return { items, status, notices, sendRepair: repairs.send, dismiss(notice: Notice) {
+  return { items, connection, notices, repairs, dismiss(notice: Notice) {
     setNotices(previous => {
       if (previous[notice.extId]?.receiptId !== notice.receiptId) return previous;
       const next = { ...previous };

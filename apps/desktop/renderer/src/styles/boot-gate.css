@@ -1,0 +1,30 @@
+body:has(.boot-gate) { margin: 0; }
+.boot-gate {
+  box-sizing: border-box;
+  display: grid;
+  min-height: 100vh;
+  padding: var(--nd-primitive-space-8);
+  place-content: center;
+  color: var(--nd-semantic-color-text);
+  background: var(--nd-semantic-color-canvas);
+  font-family: var(--nd-semantic-font-body);
+}
+.boot-gate article {
+  width: min(28rem, 75vw);
+  padding: var(--nd-primitive-space-8);
+  border-block: 1px solid var(--nd-semantic-color-line-decorative);
+  border-inline-start: var(--nd-primitive-space-1) solid var(--nd-semantic-color-accent-decorative);
+  background: var(--nd-semantic-color-surface);
+}
+.boot-gate h1 { margin: 0; font: inherit; font-family: var(--nd-semantic-font-title); font-size: var(--nd-semantic-type-page-size); }
+.boot-gate p { color: var(--nd-semantic-color-text-muted); overflow-wrap: anywhere; }
+.boot-gate button {
+  padding: var(--nd-primitive-space-2) var(--nd-primitive-space-4);
+  border: 1px solid var(--nd-semantic-color-line-control);
+  border-radius: var(--nd-semantic-radius-field);
+  background: var(--nd-semantic-color-surface);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.boot-gate button:focus-visible { outline: var(--nd-component-focus-width) solid var(--nd-component-focus-color); outline-offset: var(--nd-component-focus-offset); }

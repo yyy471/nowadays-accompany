@@ -5,6 +5,27 @@ import { createMotionScope, readMotionPx, readMotionTime, readMotionValue, useMo
 
 export type MenuItem = { id: string; label: string; icon?: IconName; disabled?: boolean; onSelect: () => void };
 
+/** 根据触发器的实际位置和完整菜单高度选边；上下各留 16px 视口边距与 8px 间距。 */
+export function menuPlacement(anchor: Pick<DOMRect, 'top' | 'bottom'>, container: Pick<DOMRect, 'top' | 'bottom'>, viewport: number, height: number) {
+  const above = Math.max(0, anchor.top - 24);
+  const below = Math.max(0, viewport - anchor.bottom - 24);
+  const upward = below < Math.min(height, 420) && above > below;
+  return {
+    top: upward ? 'auto' : anchor.bottom - container.top + 8,
+    bottom: upward ? container.bottom - anchor.top + 8 : 'auto',
+    maxHeight: Math.min(420, upward ? above : below)
+  };
+}
+
+export function menuKeyIndex(key: string, index: number, count: number) {
+  if (count === 0) return undefined;
+  if (key === 'Home') return 0;
+  if (key === 'End') return count - 1;
+  if (key === 'ArrowDown') return (index + 1) % count;
+  if (key === 'ArrowUp') return index <= 0 ? count - 1 : index - 1;
+  return undefined;
+}
+
 /** Action menu; account selection and page navigation have separate semantics. */
 export function DropdownMenu({ label, items, currentLabel, selectedPage, triggerIcon, triggerRef, triggerClassName, triggerLayout = 'inline', triggerDecoration }: {
   label: string; items: MenuItem[]; currentLabel?: string;
@@ -20,7 +41,7 @@ export function DropdownMenu({ label, items, currentLabel, selectedPage, trigger
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
-  const lastFirst = useRef(false);
+  const initialFocus = useRef<'first' | 'last' | 'selected'>('selected');
   const search = useRef({ text: '', time: 0 });
   const [scope] = useState(createMotionScope);
   const policy = useMotionPolicy();
@@ -30,6 +51,7 @@ export function DropdownMenu({ label, items, currentLabel, selectedPage, trigger
   openRef.current = open;
   const presentRef = useRef(present);
   presentRef.current = present;
+  const opensUp = useRef(false);
   const resume = useRef<{ opacity: number; transform: string } | null>(null);
   const generation = useRef(0);
   const id = useId();
@@ -49,9 +71,9 @@ export function DropdownMenu({ label, items, currentLabel, selectedPage, trigger
     if (selectedPage || reduced.current || document.hidden || !panel.current) { finishClose(); return; }
     setClosing(true);
   }, [finishClose, selectedPage]);
-  const requestOpen = useCallback((last = false) => {
+  const requestOpen = useCallback((focus: 'first' | 'last' | 'selected') => {
     if (openRef.current) return;
-    lastFirst.current = last;
+    initialFocus.current = focus;
     // 退出途中重开时，取消前先拷贝当前绘制值；取消后计算样式已回到基础值。
     const element = presentRef.current ? panel.current : null;
     if (element) {
@@ -76,10 +98,11 @@ export function DropdownMenu({ label, items, currentLabel, selectedPage, trigger
     const place = () => {
       if (!trigger.current || !panel.current || !root.current) return;
       const anchor = trigger.current.getBoundingClientRect(), container = root.current.getBoundingClientRect();
-      const below = innerHeight - anchor.bottom - 16, above = anchor.top - 16;
-      const upward = below < 200 && above > below;
       const left = Math.max(16, Math.min(anchor.right - panel.current.offsetWidth, innerWidth - panel.current.offsetWidth - 16)) - container.left;
-      setPosition({ left, right: 'auto', top: upward ? 'auto' : 'calc(100% + 8px)', bottom: upward ? 'calc(100% + 8px)' : 'auto', maxHeight: Math.max(40, Math.min(420, (upward ? above : below) - 8)) });
+      const height = panel.current.scrollHeight + panel.current.offsetHeight - panel.current.clientHeight;
+      const placement = menuPlacement(anchor, container, innerHeight, height);
+      opensUp.current = placement.top === 'auto';
+      setPosition({ left, right: 'auto', ...placement });
     };
     place(); window.addEventListener('resize', place);
     const scrolled = (event: Event) => { if (!(event.target instanceof Node) || !panel.current?.contains(event.target)) requestClose(); };
@@ -96,7 +119,7 @@ export function DropdownMenu({ label, items, currentLabel, selectedPage, trigger
     scope.cancelAll();
     if (reduced.current || document.hidden) return;
     const offset = readMotionPx(element, '--nd-semantic-motion-detail-page-offset', 4);
-    const start = snapshot ?? { opacity: 0, transform: `translateY(${offset}px)` };
+    const start = snapshot ?? { opacity: 0, transform: `translateY(${opensUp.current ? offset : -offset}px)` };
     const duration = readMotionTime(element, '--nd-semantic-motion-component', 220);
     const ease = readMotionValue(element, '--nd-semantic-motion-ease-out', 'ease-out');
     scope.run(element, [start, { opacity: 1, transform: 'translateY(0)' }], { duration, easing: ease, slot: 'menu', fill: 'backwards' });
@@ -114,7 +137,7 @@ export function DropdownMenu({ label, items, currentLabel, selectedPage, trigger
     const duration = readMotionTime(element, '--nd-semantic-motion-component-exit', 160);
     const ease = readMotionValue(element, '--nd-semantic-motion-ease-in', 'ease-in');
     const offset = readMotionPx(element, '--nd-semantic-motion-detail-page-offset', 4);
-    const animation = scope.run(element, [from, { opacity: 0, transform: `translateY(${-offset}px)` }], { duration, easing: ease, slot: 'menu', fill: 'both' });
+    const animation = scope.run(element, [from, { opacity: 0, transform: `translateY(${opensUp.current ? offset : -offset}px)` }], { duration, easing: ease, slot: 'menu', fill: 'both' });
     void animation.finished.then(() => { if (generation.current === current) finishClose(); }).catch(() => undefined);
   }, [closing, finishClose, scope]);
 
@@ -141,8 +164,13 @@ export function DropdownMenu({ label, items, currentLabel, selectedPage, trigger
     if (!open) return;
     const entries = controls();
     // 底部菜单初次渲染时位置尚待布局更新；焦点不能让视口滚动并触发菜单自行关闭。
-    (entries.find(entry => entry.getAttribute('aria-checked') === 'true') ?? (lastFirst.current ? entries.at(-1) : entries[0]))?.focus({ preventScroll: true });
-    if (panel.current) panel.current.scrollTop = lastFirst.current ? panel.current.scrollHeight : 0;
+    const target = initialFocus.current === 'last' ? entries.at(-1)
+      : initialFocus.current === 'selected' ? entries.find(entry => entry.getAttribute('aria-checked') === 'true') ?? entries[0] : entries[0];
+    (target ?? panel.current)?.focus({ preventScroll: true });
+    if (target && panel.current) {
+      const overflow = target.getBoundingClientRect().bottom - panel.current.getBoundingClientRect().bottom;
+      if (overflow > 0) panel.current.scrollTop += overflow;
+    }
     const outside = (event: PointerEvent) => { if (event.target instanceof Node && !root.current?.contains(event.target)) requestClose(); };
     const escape = (event: globalThis.KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); requestClose(true); } };
     document.addEventListener('pointerdown', outside);
@@ -156,9 +184,7 @@ export function DropdownMenu({ label, items, currentLabel, selectedPage, trigger
     const entries = controls();
     const index = entries.indexOf(document.activeElement as HTMLButtonElement);
     if (event.key === 'Tab') { requestClose(); return; }
-    const target = event.key === 'ArrowDown' ? (index + 1) % entries.length
-      : event.key === 'ArrowUp' ? (index - 1 + entries.length) % entries.length
-      : event.key === 'Home' ? 0 : event.key === 'End' ? entries.length - 1 : undefined;
+    const target = menuKeyIndex(event.key, index, entries.length);
     if (target !== undefined) { event.preventDefault(); entries[target]?.focus(); }
     else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey && event.key !== ' ') {
       const now = Date.now();
@@ -174,14 +200,14 @@ export function DropdownMenu({ label, items, currentLabel, selectedPage, trigger
   };
   return <div className="ui-menu" ref={root}>
     <ControlButton className={`ui-menu-trigger${triggerClassName ? ` ${triggerClassName}` : ''}`} ref={setTrigger} data-current={currentLabel ? true : undefined} aria-label={currentLabel ? `${label}，当前页面：${currentLabel}` : undefined} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? id : undefined}
-      onClick={() => { if (open) requestClose(); else requestOpen(false); }}
-      onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); requestOpen(event.key === 'ArrowUp'); } }}>
+      onClick={() => { if (open) requestClose(); else requestOpen('selected'); }}
+      onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); requestOpen(event.key === 'ArrowUp' ? 'last' : 'first'); } }}>
       {triggerIcon ? <span className="ui-menu-trigger-icon" aria-hidden="true"><Icon name={triggerIcon} size={20} /></span> : null}
       <span className="ui-menu-trigger-label">{selectedPage && currentLabel ? currentLabel : label}</span>
       {triggerIcon || triggerLayout === 'stacked' ? null : <Icon name="chevron" size={16} />}
       {triggerDecoration}
     </ControlButton>
-    {present ? <div className="ui-menu-panel" role="menu" aria-label={label} id={id} ref={panel} style={position} onKeyDown={keyboard}
+    {present ? <div className="ui-menu-panel" role="menu" tabIndex={-1} aria-label={label} id={id} ref={panel} style={position} onKeyDown={keyboard}
       data-closing={closing || undefined} inert={closing || undefined} aria-hidden={closing || undefined}
       onBlur={event => { if (event.relatedTarget instanceof Node && !root.current?.contains(event.relatedTarget)) requestClose(); }}>
       {items.map(item => <ControlButton key={item.id} role={selectedPage ? 'menuitemradio' : 'menuitem'} aria-checked={selectedPage ? selectedPage === item.id : undefined} tabIndex={-1} disabled={item.disabled} className="ui-menu-item"

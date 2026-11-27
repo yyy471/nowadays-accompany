@@ -17,7 +17,7 @@ export { XIA_CHENG_BUILTIN_KEY };
 export const XIA_CHENG_DISPLAY_NAME = "夏澄";
 
 export const XIA_CHENG_BIO_TEXT =
-  "夏澄是 Nowadays 的系统预置默认助手，既能在日常对话中陪伴交流，也能在你启用相应工具后协助调用工具与技能处理多步骤事务或整理其他角色配置。";
+  "夏澄是 Nowadays 的系统预置默认助手，既能在日常对话里随时聊聊，也能在你启用相应工具后协助调用工具与技能处理多步骤事务或整理其他角色配置。";
 
 export const XIA_CHENG_DEFAULT_DEFINITION_TEXT = [
   "你是夏澄，清醒温和、条理分明。",

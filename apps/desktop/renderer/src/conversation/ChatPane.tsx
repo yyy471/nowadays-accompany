@@ -6,6 +6,7 @@ import type { PerfRow } from './history';
 import type { PerfScene } from './performance';
 import { ReplyContent } from './ReplyContent';
 import { sceneFeedback, sceneForEachReply } from './window-model';
+import { syncMessageFeather } from './message-scroll';
 import type { SceneLayerMode } from './performance';
 import type { ConversationSnapshot } from './use-window-session';
 import { shouldAdvanceFromClick, shouldAdvanceFromKey } from './advance';
@@ -172,9 +173,14 @@ export function ChatPane({
     onDraftFocusHandled();
   }, [requestDraftFocus, onDraftFocusHandled]);
 
+  useLayoutEffect(() => {
+    if (scroller.current) syncMessageFeather(scroller.current);
+  }, [snapshot.messages, snapshot.loadingOlder, follow, location]);
+
   const onScroll = () => {
     const element = scroller.current;
     if (!element) return;
+    syncMessageFeather(element);
     const placedTop = locationScroll.current;
     locationScroll.current = null;
     if (placedTop !== null && element.scrollTop === placedTop) return;
@@ -259,6 +265,8 @@ export function ChatPane({
         onScrollFollow(false);
         onLoadOlder();
       }}>{snapshot.loadingOlder ? '正在读取…' : '读取更早的消息'}</button>}
+      {!snapshot.messages.length && !snapshot.loadingOlder && !waitingText &&
+        <p className="dialogue-messages-empty">{stoppedNotice ? '恢复活动后，就能在这里聊聊天。' : '还没有对话，写一句开头慢慢说。'}</p>}
       {snapshot.messages.map((row) => {
         const key = dayKey(row.createdAt);
         const divider = key !== lastDay;
@@ -274,7 +282,7 @@ export function ChatPane({
         if (scene?.status === 'succeeded' || pending || failure || canDraw) sceneControl = <>
           {scene?.status === 'succeeded' && <button type="button" className="dialogue-scene-chip" onClick={() => onOpenScene(scene)}>查看{scene.mode === 'background' ? '背景图' : '人物场景图'}</button>}
           {pending ? <PhotoDevelopment state="pending" /> : failure ? <PhotoDevelopment state="failed" reason={failure.reason} onRetry={canDraw ? () => onRetryScene(row.messageId, failure.mode) : undefined} />
-            : !scene && canDraw ? <button type="button" className="dialogue-scene-chip" onClick={() => onGenerateScene(row.messageId)}><Icon name="image" size={15} />生成过场图</button> : null}
+            : !scene && canDraw ? <button type="button" className="dialogue-scene-chip" data-history-generate={row.messageId !== snapshot.latestSceneTarget || undefined} onClick={() => onGenerateScene(row.messageId)}><Icon name="image" size={15} />生成过场图</button> : null}
         </>;
         const located = location?.rowId === row.id ? location : null;
         const parts: ReactNode[] = [];

@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../api';
-import { Button, Field, Input, Textarea } from '../../ui';
+import { Button, Field, Input, Select, Textarea } from '../../ui';
+import { ProbeFeedback } from './ProbeFeedback';
 import { MediaGroup } from './MediaSheet';
 import { useSheet } from './sheet/sheet-context';
 import { ServiceSheet, ServiceSheetActions } from './ServiceParts';
 import { useWrite } from './write-runner';
 import { T11 } from './config-texts';
-import { parseMcpImport, personalArgument, type McpDraft } from './extension-import';
+import { mcpSummary, skillIssue, parseMcpImport, personalArgument, type McpDraft } from './extension-import';
 
 const errorText = (reason: unknown) => reason instanceof Error ? reason.message : String(reason);
 
@@ -49,24 +50,38 @@ export function ExtensionFields({ kind, group, name, onName, command, onCommand,
 type DiscoveredSkill = { name: string; description: string; directory: string };
 type ToolInfo = { name: string; description: string };
 
-function ToolList({ tools }: { tools: ToolInfo[] }) {
-  return <div role="status">连接成功，发现 {tools.length} 个工具<ul>{tools.map(tool => <li key={tool.name}><strong>{tool.name}</strong> {tool.description}</li>)}</ul></div>;
-}
-
-export function SavedMcpProbe({ resourceId, enabled }: { resourceId: string; enabled: boolean }) {
+function useToolProbe() {
   const [busy, setBusy] = useState(false);
   const [tools, setTools] = useState<ToolInfo[] | null>(null);
   const [error, setError] = useState('');
-  async function probe() {
+  const generation = useRef(0);
+  function clear() { generation.current++; setBusy(false); setError(''); setTools(null); }
+  async function run(body: object) {
+    const attempt = ++generation.current;
     setBusy(true); setError(''); setTools(null);
     try {
-      const result = await api<{ tools: ToolInfo[] }>('/v1/resources/mcp/probe', { method: 'POST', body: { resourceId } });
-      setTools(result.tools);
-    } catch (reason) { setError(errorText(reason)); }
-    finally { setBusy(false); }
+      const response = await api<{ tools: ToolInfo[] }>('/v1/resources/mcp/probe', { method: 'POST', body });
+      if (attempt === generation.current) setTools(response.tools);
+    } catch (reason) { if (attempt === generation.current) setError(errorText(reason)); }
+    finally { if (attempt === generation.current) setBusy(false); }
   }
-  return <div><Button size="sm" disabled={busy || !enabled} onClick={() => void probe()}>{busy ? '正在测试…' : '测试连接'}</Button>
-    {error && <p role="alert">{error}</p>}{tools && <ToolList tools={tools}/>}</div>;
+  useEffect(() => () => { generation.current++; }, []);
+  return { busy, tools, error, clear, run, attempt: generation.current };
+}
+
+function ToolProbe({ probe, disabled, onTest }: { probe: ReturnType<typeof useToolProbe>; disabled: boolean; onTest: () => void }) {
+  const { tools, busy, error, attempt } = probe;
+  return <div>
+    <div className="config-actions"><Button size="sm" busy={busy} disabled={disabled} onClick={onTest}>测试连接</Button></div>
+    <ProbeFeedback busy={busy} notice={error ? { role: 'alert', text: error } : tools
+      ? { role: 'status', text: `连接成功，发现 ${tools.length} 个工具`, attempt } : null}/>
+    {!!tools?.length && <ul>{tools.map(tool => <li key={tool.name}><strong>{tool.name}</strong> {tool.description}</li>)}</ul>}
+  </div>;
+}
+
+export function SavedMcpProbe({ resourceId, enabled }: { resourceId: string; enabled: boolean }) {
+  const probe = useToolProbe();
+  return <ToolProbe probe={probe} disabled={!enabled} onTest={() => void probe.run({ resourceId })}/>;
 }
 
 export function ExtensionCreate<R extends { resourceId: string; name: string }>({ kind, active, trigger, onCancel, onCreated }: {
@@ -88,13 +103,16 @@ export function ExtensionCreate<R extends { resourceId: string; name: string }>(
   const [source, setSource] = useState('');
   const [skills, setSkills] = useState<DiscoveredSkill[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
-  const [tools, setTools] = useState<ToolInfo[] | null>(null);
-  const [busy, setBusy] = useState(false);
+  const probe = useToolProbe();
+  const [discovering, setDiscovering] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [issue, setIssue] = useState<ReturnType<typeof skillIssue>>();
+  const busy = discovering || saving || probe.busy;
   const [error, setError] = useState('');
   const pending = useRef(0);
 
   useEffect(() => {
-    setBusy(false);
+    setDiscovering(false); setSaving(false); probe.clear();
     if (active) sheet.open({ id, title: '添加 ' + (kind === 'mcp' ? 'MCP' : 'Skill'), shape: 'full', focusReturn: trigger });
     return () => { pending.current++; };
   }, [active]);
@@ -108,11 +126,11 @@ export function ExtensionCreate<R extends { resourceId: string; name: string }>(
   function useServer(server?: McpDraft) {
     setChoice(server?.name ?? ''); setName(server?.name ?? ''); setCommand(server?.command ?? '');
     setArgs(server?.args ?? []); setEnv(JSON.stringify(server?.env ?? {}, null, 2));
-    setDescription(server?.description ?? ''); setTools(null); setError('');
+    setDescription(server?.description ?? ''); probe.clear(); setError('');
   }
   function reset() {
     setJson(''); setChoices([]); useServer(); setSource(''); setSkills([]); setSelected([]);
-    setAdvanced(false); setBusy(false); pending.current++;
+    setAdvanced(false); setDiscovering(false); setSaving(false); setIssue(undefined); pending.current++;
   }
   function recognize(text: string) {
     setJson(text);
@@ -124,72 +142,81 @@ export function ExtensionCreate<R extends { resourceId: string; name: string }>(
     }
   }
   async function discover(picked: string) {
-    setSource(picked); setSkills([]); setSelected([]); setError('');
+    setIssue(undefined); setSource(picked); setSkills([]); setSelected([]); setError('');
     if (!picked.trim()) return;
     const seq = ++pending.current;
-    setBusy(true);
+    setDiscovering(true);
     try {
       const result = await api<{ items: DiscoveredSkill[] }>('/v1/resources/skills/discover', { method: 'POST', body: { sourcePath: picked.trim() } });
       if (seq !== pending.current) return;
       setSkills(result.items); setSelected(result.items.length === 1 ? [result.items[0]!.directory] : []);
-    } catch (reason) { if (seq === pending.current) setError(errorText(reason)); }
-    finally { if (seq === pending.current) setBusy(false); }
-  }
-  async function probe() {
-    const seq = ++pending.current;
-    setBusy(true); setError(''); setTools(null);
-    try {
-      const result = await api<{ tools: ToolInfo[] }>('/v1/resources/mcp/probe', { method: 'POST', body: config });
-      if (seq === pending.current) setTools(result.tools);
-    } catch (reason) { if (seq === pending.current) setError(errorText(reason)); }
-    finally { if (seq === pending.current) setBusy(false); }
+    } catch (reason) {
+      if (seq === pending.current) {
+        const issue = skillIssue(reason);
+        if (issue) setIssue(issue); else setError(errorText(reason));
+      }
+    } finally { if (seq === pending.current) setDiscovering(false); }
   }
   async function save() {
     if (!available || busy) return;
     const finish = write.beginWrite();
     if (!finish) return;
-    setBusy(true); setError('');
+    setSaving(true); setError('');
     try {
       const resources = kind === 'skill'
         ? (await api<{ items: R[] }>('/v1/resources/skills/import', { method: 'POST', body: { sourcePath: source.trim(), directories: selected } })).items
         : [await api<R>('/v1/resources', { method: 'POST', body: { kind, name: name.trim(), config: {
-          ...config, description: (description.trim() || tools?.map(tool => tool.description.split('\n')[0] || tool.name).join('；') || '').slice(0, 2000),
+          ...config, description: (description.trim() || probe.tools?.map(tool => tool.description.split('\n')[0] || tool.name).join('；') || '').slice(0, 2000),
         } } })];
       sheet.closeNow(() => { reset(); onCreated(resources); }, resources.map(item => item.name).join('、') + ' 已添加');
-    } catch (reason) { setError(errorText(reason)); }
-    finally { setBusy(false); finish(); }
+    } catch (reason) {
+      const issue = kind === 'skill' && skillIssue(reason);
+      if (issue) { setIssue(issue); setSelected([]); setSkills([]); }
+      else setError(errorText(reason));
+    } finally { setSaving(false); finish(); }
   }
   function changeArg(index: number, value: string) {
-    setArgs(args.map((arg, i) => i === index ? value : arg)); setTools(null);
+    setArgs(args.map((arg, i) => i === index ? value : arg)); probe.clear();
   }
   const imported = choices.find(item => item.name === choice);
   return <ServiceSheet id={id} active={active} count={count} busy={busy} onDiscard={() => { reset(); onCancel(); }}
-    footer={<ServiceSheetActions creating count={count} busy={busy} invalid={!available} error={error} onSubmit={() => void save()}/>}>
+    footer={<ServiceSheetActions creating count={count} busy={saving} invalid={!available || discovering || probe.busy} error={error} onSubmit={() => void save()}/>}>
     {() => kind === 'mcp' ? <>
-      <Field label="粘贴 MCP 配置" hint="从工具作者的说明中复制整段 JSON。"><Textarea aria-label="粘贴 MCP 配置" placeholder={'{"mcpServers": { … }}'} rows={4} value={json} disabled={busy} spellCheck={false} onChange={e => recognize(e.target.value)}/></Field>
-      {choices.length > 1 && <Field label="本次添加的工具"><select aria-label="本次添加的工具" value={choice} disabled={busy} onChange={e => useServer(choices.find(item => item.name === e.target.value))}>{choices.map(item => <option key={item.name}>{item.name}</option>)}</select></Field>}
-      {!advanced && imported && <>
+      <MediaGroup title="配置来源"><Field label="粘贴 MCP 配置" hint="从工具作者的说明中复制整段 JSON。"><Textarea aria-label="粘贴 MCP 配置" placeholder={'{"mcpServers": { … }}'} rows={4} value={json} disabled={busy} spellCheck={false} onChange={e => recognize(e.target.value)}/></Field>
+      {choices.length > 1 && <Field label="本次添加的工具"><Select aria-label="本次添加的工具" value={choice} disabled={busy} onChange={e => useServer(choices.find(item => item.name === e.target.value))}>{choices.map(item => <option key={item.name}>{item.name}</option>)}</Select></Field>}
+      {imported && <p className="config-sheet-note">{mcpSummary(choice, command, args, variables)}</p>}</MediaGroup>
+      {!advanced && imported && <MediaGroup title="工具配置">
         <Field label="工具名称"><Input value={name} disabled={busy} onChange={e => setName(e.target.value)}/></Field>
         {Object.entries(imported.env).filter(([key, initial]) => !initial || /key|secret|token|pass|credential/i.test(key) || personalArgument(initial)).map(([key]) =>
-          <Field key={key} label={key} hint="按工具作者的说明填写。"><Input aria-label={key} type={/key|secret|token|pass|credential/i.test(key) ? 'password' : 'text'} value={variables?.[key] ?? ''} disabled={busy} onChange={e => { setTools(null); setEnv(JSON.stringify({ ...variables, [key]: e.target.value }, null, 2)); }}/></Field>)}
+          <Field key={key} label={key} hint="按工具作者的说明填写。"><Input aria-label={key} type={/key|secret|token|pass|credential/i.test(key) ? 'password' : 'text'} value={variables?.[key] ?? ''} disabled={busy} onChange={e => { probe.clear(); setEnv(JSON.stringify({ ...variables, [key]: e.target.value }, null, 2)); }}/></Field>)}
         {imported.args.map((arg, i) => personalArgument(arg) && <Field key={i} label={'路径或参数 ' + (i + 1)}><Input value={args[i] ?? ''} disabled={busy} onChange={e => changeArg(i, e.target.value)}/></Field>)}
-      </>}
-      <Button size="sm" variant="ghost" aria-expanded={advanced} disabled={busy} onClick={() => setAdvanced(!advanced)}>高级配置</Button>
-      {advanced && <ExtensionFields kind="mcp" name={name} onName={setName} command={command} onCommand={s => { setCommand(s); setTools(null); }}
-        args={args.join('\n')} onArgs={s => { setArgs(s ? s.split('\n') : []); setTools(null); }} env={env} onEnv={s => { setEnv(s); setTools(null); }}
+      </MediaGroup>}
+      <div className="config-actions"><Button size="sm" variant="ghost" aria-expanded={advanced} disabled={busy} onClick={() => setAdvanced(!advanced)}>高级配置</Button></div>
+      {advanced && <ExtensionFields kind="mcp" name={name} onName={setName} command={command} onCommand={s => { setCommand(s); probe.clear(); }}
+        args={args.join('\n')} onArgs={s => { setArgs(s ? s.split('\n') : []); probe.clear(); }} env={env} onEnv={s => { setEnv(s); probe.clear(); }}
         busy={busy} source="" onSource={() => {}} creating/>}
-      {(advanced || imported) && <Field label="用途"><Input value={description} placeholder="例如：查找百科资料" disabled={busy} onChange={e => setDescription(e.target.value)}/></Field>}
-      <Button size="sm" disabled={busy || !command.trim() || !variables} onClick={() => void probe()}>测试连接</Button>
-      {tools && <ToolList tools={tools}/>}
-    </> : <>
-      <Field label="技能目录" hint="选择单个技能，或包含多个技能的文件夹。"><Input aria-label="技能目录" value={source} disabled={busy} onChange={e => { setSource(e.target.value); setSkills([]); setSelected([]); setError(''); }}/></Field>
-      {window.nowadaysDesk?.chooseSkillDirectory && <Button size="sm" disabled={busy} onClick={async () => {
-        try { const picked = await window.nowadaysDesk!.chooseSkillDirectory(); if (picked) await discover(picked); }
-        catch (reason) { setError(errorText(reason)); }
-      }}>选择目录…</Button>}
-      <Button size="sm" disabled={busy || !source.trim()} onClick={() => void discover(source)}>识别技能</Button>
+      {(advanced || imported) && <MediaGroup title="用途"><Field label="用途"><Input value={description} placeholder="例如：查找百科资料" disabled={busy} onChange={e => setDescription(e.target.value)}/></Field></MediaGroup>}
+      <MediaGroup title="工具探测"><ToolProbe probe={probe} disabled={saving || !command.trim() || !variables}
+        onTest={() => void probe.run(config)}/></MediaGroup>
+    </> : <MediaGroup title="技能目录">
+      <Field label="技能目录" hint="选择单个技能，或包含多个技能的文件夹。"><Input aria-label="技能目录" value={source} disabled={busy}
+        onChange={e => { setSource(e.target.value); setSkills([]); setSelected([]); setIssue(undefined); setError(''); }}/></Field>
+      <div className="config-actions">
+        {window.nowadaysDesk?.chooseSkillDirectory && <Button size="sm" disabled={busy} onClick={async () => {
+          const seq = ++pending.current;
+          setDiscovering(true);
+          try {
+            const picked = await window.nowadaysDesk!.chooseSkillDirectory();
+            if (seq === pending.current && picked) await discover(picked);
+          } catch (reason) { if (seq === pending.current) setError(errorText(reason)); }
+          finally { if (seq === pending.current) setDiscovering(false); }
+        }}>选择目录…</Button>}
+        <Button size="sm" busy={discovering} disabled={saving || !source.trim()} onClick={() => void discover(source)}>识别技能</Button>
+      </div>
+      {issue ? <p className="config-sheet-note" role={issue.role}>{issue.text}</p> :
+        !skills.length && !discovering && !error && <p className="config-sheet-note">尚未扫描目录。</p>}
       {skills.map(skill => <label key={skill.directory} className="config-toggle-row"><input type="checkbox" checked={selected.includes(skill.directory)} disabled={busy}
         onChange={e => setSelected(e.target.checked ? [...selected, skill.directory] : selected.filter(item => item !== skill.directory))}/><span><strong>{skill.name}</strong><small>{skill.description}</small></span></label>)}
-    </>}
+    </MediaGroup>}
   </ServiceSheet>;
 }

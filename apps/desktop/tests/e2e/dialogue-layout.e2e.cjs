@@ -157,9 +157,28 @@ async function verifyVoiceFeedback() {
   assert.equal(await ev(`${second}.dataset.voice ?? null`), null, '后台预取不显示合成状态');
   await ev(`${second}.click()`, true);
   await until(() => ev(`${second}.dataset.voice === 'synthesizing'`));
-  json(prefetchedSpeechResponse, { error: { code: 'TTS_SYNTHESIS_FAILED', message: '语音测试暂不可用。' } }, 502);
+  const failure = '语音测试暂不可用。' + '当前语音服务未能合成所选句段，请稍后重试。'.repeat(5);
+  json(prefetchedSpeechResponse, { error: { code: 'TTS_SYNTHESIS_FAILED', message: failure } }, 502);
   await until(() => ev(`document.querySelector('.dialogue-toast')?.textContent.includes('语音测试暂不可用')`));
   assert.equal(await ev(`${second}.dataset.voice ?? null`), null);
+  const stageDir = path.join(testResultsDir, 'frontend-refinement-stage2');
+  fs.mkdirSync(stageDir, {recursive:true});
+  for (const [width,height] of [[1280,800],[720,540]]) {
+    await cmd('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor:1, mobile:false });
+    const info = await ev(`(() => {
+      const toast = document.querySelector('.dialogue-toast'), pane = toast.closest('.dialogue-pane');
+      const box = toast.getBoundingClientRect(), toolbar = pane.querySelector('.dialogue-pane-toolbar').getBoundingClientRect();
+      return {gap:box.top-toolbar.bottom,width:box.width,available:pane.clientWidth-32,height:box.height,
+        pointer:getComputedStyle(toast).pointerEvents,role:toast.getAttribute('role'),message:toast.textContent};
+    })()`);
+    assert.ok(Math.abs(info.gap - 8) < .1 && info.height > 0 && info.height <= 64 && info.width <= Math.min(320,info.available), JSON.stringify(info));
+    assert.equal(info.pointer, 'auto', '长错误可在反馈位内滚动');
+    assert.equal(info.role, 'status');
+    assert.ok(info.message.includes(failure), info.message);
+    console.log('对话反馈位', width, height, JSON.stringify(info));
+    const png = await cmd('Page.captureScreenshot', {format:'png'});
+    fs.writeFileSync(path.join(stageDir, 'toast-' + width + 'x' + height + '.png'), Buffer.from(png.data,'base64'));
+  }
   assert.equal(requests.filter(p => p === prefetchedSpeechPath).length, 1, '手动点播应合并尚未完成的预取');
 }
 async function run() {

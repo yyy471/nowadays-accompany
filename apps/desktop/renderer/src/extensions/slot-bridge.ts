@@ -60,13 +60,14 @@ export function bindSlotBridge(frame: HTMLIFrameElement, extId: string, version:
       const { data } = await request('/v1/extensions/' + extId + '/ui-action', {
         method: 'POST', body: { version, ...body }
       });
-      result = { ...envelope, ok: true, data };
+      result = { ...envelope, ok: true as const, data };
     } catch (error) {
       const code = error instanceof ApiError ? error.code : null;
-      result = { ...envelope, ok: false, error: code ?? 'EXTENSION_UI_ACTION_FAILED' };
+      result = { ...envelope, ok: false as const, error: code ?? 'EXTENSION_UI_ACTION_FAILED' };
     }
-    if (started === generation && frame.isConnected && frame.contentWindow === target)
-      target.postMessage(result, '*');
+    if (started !== generation || !frame.isConnected || frame.contentWindow !== target) return;
+    target.postMessage(result, '*');
+    return result;
   }
   frame.addEventListener('load', navigated);
   parent.addEventListener('message', receive);

@@ -15,7 +15,7 @@ import type {
 import type { PerfRow } from './history';
 import type { PerformanceSnapshot, SceneLayerMode } from './performance';
 import { backendBaseUrl } from './backend-base';
-import { applySegmentAnnotations, createRowIdRegistry, groupSegments, isSubmissionConfirmed, lastRowOf, mergeSegments, messageStatusOf, newerSceneTask, nextMessageSequence, reconcileFinalSegments, rowsForMessage, sceneView } from './window-model';
+import { applySegmentAnnotations, createRowIdRegistry, groupSegments, isSubmissionConfirmed, latestSceneTarget, lastRowOf, mergeSegments, messageStatusOf, newerSceneTask, nextMessageSequence, reconcileFinalSegments, rowsForMessage, sceneView } from './window-model';
 import { createTypingState } from './typing-state';
 import type { SceneRequestError } from './window-model';
 
@@ -35,6 +35,7 @@ export interface ConversationSnapshot extends PerformanceSnapshot {
   pendingReceipt?: string;
   roleId: string;
   sceneImagesAvailable: boolean;
+  latestSceneTarget: string | null;
   sceneRequests: ReadonlySet<string>;
   sceneRequestErrors: ReadonlyMap<string, SceneRequestError>;
   connection: ConnectionState;
@@ -286,7 +287,14 @@ export function useWindowSession({
         .filter(entry => entry.record.sender === 'assistant' && entry.record.status !== 'generating')
         .map(entry => entry.record.messageId)
     );
+    // 自动任务的排队／规划阶段尚无可展示的图，但该轮已不能再发起生成。
+    const excluded = new Set([...current.sceneRequests, ...current.sceneRequestErrors.keys()]);
+    for (const task of current.scenes.values()) {
+      if (task.status !== 'skipped') excluded.add(task.messageId);
+    }
+    if (current.pending?.replyMessageId) excluded.add(current.pending.replyMessageId);
     return {
+      latestSceneTarget: current.sceneImagesAvailable ? latestSceneTarget(entries, excluded) : null,
       messages: rows,
       activeId: current.pending === null ? null : (current.pending.replyMessageId ?? '__reply__'),
       canAdvance: current.pending !== null && current.pending.shown < current.pending.segments.length,

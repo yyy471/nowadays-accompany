@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { InstanceState } from '../types';
 import { Icon, type IconName } from './icons';
 import { ControlButton, type ControlButtonProps } from './controls';
@@ -61,6 +61,12 @@ function SuccessCheck() {
   </svg>;
 }
 
+/** 仅延迟忙碌装饰；ControlButton 在 busy 提交时立即拦截输入。 */
+export function scheduleBusySpinner(show: () => void) {
+  const timer = setTimeout(show, 300);
+  return () => clearTimeout(timer);
+}
+
 export function Button({
   variant = 'default',
   size = 'md',
@@ -82,7 +88,12 @@ export function Button({
   useLayoutEffect(() => {
     if (!busy && element.current) restingWidth.current = element.current.getBoundingClientRect().width;
   }, [appearance.theme, busy, children, size, variant]);
-  const leading = busy ? <span className="spinner" aria-hidden="true" />
+  const [spinner, setSpinner] = useState(false);
+  useLayoutEffect(() => {
+    if (busy) return scheduleBusySpinner(() => setSpinner(true));
+    setSpinner(false);
+  }, [busy]);
+  const leading = busy && spinner ? <span className="spinner" aria-hidden="true" />
     : feedback === 'error' ? <Icon name="warning" size={16} />
     : feedback === 'success' ? <SuccessCheck key={`check-${feedbackKey ?? 'default'}`} />
     : icon ? <Icon name={icon} size={appearance.theme === 'xiacheng' ? 16 : 15} />

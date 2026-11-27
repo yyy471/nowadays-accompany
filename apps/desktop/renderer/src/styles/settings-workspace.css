@@ -176,7 +176,7 @@ html[data-config-switching] .studio-shell *,html[data-config-switching] .studio-
 .config-sum:has(.config-sum-end .ui-dot-label)>.config-sum-val{padding-inline-end:90px}
 .config-save-sweep{position:absolute;inset-block:0;left:0;width:42%;pointer-events:none;background:linear-gradient(105deg,transparent,color-mix(in srgb,var(--nd-semantic-color-selection) 70%,transparent),transparent)}
 /* 固定在顶栏下方的中间区域，两侧留出纸笺关闭与设置返回的空间。 */
-.config-result-notice{position:fixed;z-index:var(--nd-semantic-layer-notice);top:66px;inset-inline:0;margin-inline:auto;box-sizing:border-box;inline-size:max-content;max-inline-size:min(420px,calc(100% - 256px));padding:8px 14px;border-radius:var(--nd-semantic-radius-action);background:var(--nd-semantic-color-text);color:var(--nd-semantic-color-surface);font-size:12.5px;box-shadow:var(--nd-semantic-shadow-overlay);pointer-events:auto;cursor:pointer;overflow-wrap:anywhere}
+.config-result-notice{position:fixed;z-index:var(--nd-semantic-layer-notice);top:66px;inset-inline:0;margin-inline:auto;box-sizing:border-box;inline-size:max-content;max-inline-size:min(420px,calc(100% - 256px));max-block-size:80px;overflow:auto;padding:8px 14px;border-radius:var(--nd-semantic-radius-action);background:var(--nd-semantic-color-text);color:var(--nd-semantic-color-surface);font-size:12.5px;box-shadow:var(--nd-semantic-shadow-overlay);pointer-events:auto;cursor:pointer;overflow-wrap:anywhere}
 .config-old-value{position:absolute;pointer-events:none;overflow:hidden}
 .config-sum-val[data-config-feedback-pending]{visibility:hidden}
 /* 状态点右侧统一槽位：编辑按钮 / 开关 / 空位同格叠放，宽度由隐形「编辑」撑开。 */
@@ -262,6 +262,8 @@ html[data-config-switching] .studio-shell *,html[data-config-switching] .studio-
   .config-sheet-actions>.config-sheet-error{flex-basis:100%;overflow-wrap:anywhere}
   .config-sheet.compact{top:auto!important;bottom:0;left:0;right:0;width:auto;max-height:calc(100% - 52px)}
   .config-sheet.compact .config-sheet-grip{align-self:center}
+  /* 任一底角有浮层时，为底栏和纸笺操作各留一行。 */
+  .studio-shell:has(.studio-floating-column > *, .share-slip) .config-sheet{bottom:54px;max-height:calc(100dvh - 106px)}
 }
 .config-book:has(.config-sheet:not([hidden])){z-index:calc(var(--nd-semantic-layer-shell) + 1)}
 /* 720 紧凑纸笺贴底后的书本抬层与页脚遮挡关系见上；减少动效全部瞬时。 */
@@ -382,6 +384,7 @@ html[data-config-switching] .studio-shell *,html[data-config-switching] .studio-
 .config-toggle-row:first-child{border-top:0;padding-top:2px}
 .config-toggle-row strong{display:block;font-size:13.5px;font-weight:600}
 .config-toggle-row small{color:var(--cfg-muted);font-size:11.5px}
+.config-toggle-row[data-located]{background:var(--nd-semantic-color-selection);outline:1px solid var(--nd-semantic-color-focus);outline-offset:-1px}
 .config-toggle-row[data-unavailable] strong{color:var(--nd-semantic-color-disabled-text)}
 .config-workspace .config-toggle-row .ui-switch:not(.ui-button){display:block;flex:none;width:36px;min-height:20px;padding:0;border:0;border-radius:var(--nd-semantic-radius-round);background:none}
 .config-toggle-row .ui-switch :is(.ui-switch-label,.ui-switch-value){display:none}
@@ -435,7 +438,6 @@ html[data-config-switching] .studio-shell *,html[data-config-switching] .studio-
 .config-status-state{margin-top:2px}
 .config-status-poster[data-state="stopped"]{background:var(--nd-semantic-color-disabled-surface);box-shadow:0 0 0 1px var(--nd-semantic-color-line-control)}
 .config-status-poster[data-state="stopped"] .config-status-name,.config-status-poster[data-state="stopped"] .config-status-state .ui-dot{color:var(--nd-semantic-color-disabled-text)}
-.config-status-poster[data-state="stopped"] .config-portrait img{filter:grayscale(1)}
 .config-status-poster[data-state="stopped"] .config-portrait{box-shadow:inset 0 0 0 1px var(--nd-semantic-color-line-control)}
 .config-status-poster[data-state="stopping"] .ui-dot:before,.config-status-poster[data-state="resuming"] .ui-dot:before{animation:config-status-pulse var(--nd-semantic-motion-decay) var(--nd-semantic-motion-ease-standard) infinite alternate}
 @keyframes config-status-pulse{from{opacity:1}to{opacity:.25}}

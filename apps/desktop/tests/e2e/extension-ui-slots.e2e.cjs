@@ -5,8 +5,9 @@ const { createRequire } = require('node:module');
 const { pathToFileURL } = require('node:url');
 const { once } = require('node:events');
 const { setTimeout: delay } = require('node:timers/promises');
-const { backendDir } = require('../helpers/paths.cjs');
-const { withDesktop } = require('../helpers/live-desktop.cjs');
+const fs = require('node:fs');
+const { backendDir, testResultsDir } = require('../helpers/paths.cjs');
+const { withDesktop, until } = require('../helpers/live-desktop.cjs');
 
 function extension(version, roleIds) {
   const slots = ['page', 'widget', 'overlay'];
@@ -28,7 +29,10 @@ function extension(version, roleIds) {
   }`,
     'ui/label.js':"document.documentElement.dataset.label = 'ready'"};
   for (const {slot, file} of ui) {
-    files[file] = `<!doctype html><meta charset=utf-8><script src="./label.js"></script><p>${slot} ${version}</p>
+    files[file] = `<!doctype html><meta charset=utf-8><style>
+      body {background:var(--nd-semantic-color-surface);color:var(--nd-semantic-color-text);font-family:var(--nd-semantic-font-body)}
+      button {background:var(--nd-semantic-color-surface);color:inherit;border:1px solid var(--nd-semantic-color-line-control);padding:.35em .7em}
+    </style><script src="./label.js"></script><p>${slot} ${version}</p>
       <button>increment</button><button>read</button><button>unknown</button><output></output><script>
       const instance = Math.random().toString();
       let serial = 0, pending, trustedClick;
@@ -99,10 +103,14 @@ async function run() {
     const host = f.app.services.extensions;
     // 只延迟升级快照的交付，确保点击发生在后台已换版、桌面仍显示旧文档的窗口。
     const subscribe = host.subscribeUi.bind(host);
-    let holdSnapshot = false, deliverSnapshot;
+    let holdSnapshot = true, deliverSnapshot, stream;
+    server.prependListener('request', (req, res) => { if (req.url === '/v1/extension-events') stream = res; });
     host.subscribeUi = listener => subscribe((event, data) => {
-      if (holdSnapshot && event === 'snapshot') deliverSnapshot = () => listener(event, data);
-      else listener(event, data);
+      if (event === 'snapshot') {
+        deliverSnapshot = () => listener(event, data);
+        if (holdSnapshot) return;
+      }
+      listener(event, data);
     });
     await withDesktop(base, async ({cmd, ev, wait, ws}) => {
       await wait("!!document.querySelector('.ui-menu-trigger')",'桌面');
@@ -117,7 +125,41 @@ async function run() {
         if (e.data?.type === 'test:result') window.actionResults.push({...e.data, slot:frame.dataset.extensionSlot});
       }); document.querySelector('.ui-menu-trigger').click()`);
       await ev("[...document.querySelectorAll('.ui-menu-item')].find(b=>b.textContent.trim()==='扩展').click()");
-      await wait("document.querySelector('.extension-page p')?.textContent==='尚未安装扩展。'",'订阅初始空快照');
+      const invitation = "document.querySelector('.extension-catalog .extension-invitation button')";
+      await wait("document.querySelector('.extension-catalog [role=status]')?.textContent.includes('正在读取')", '等待初始快照');
+      assert.equal(await ev('!!' + invitation), false);
+      deliverSnapshot();
+      await wait(invitation + "?.textContent==='去对话里提一个想法'", '收到成功空快照');
+      assert.equal(await ev("document.querySelector('.extension-invitation h3')?.textContent"), '台面还空着');
+      const originalStream = stream;
+      originalStream.end();
+      await wait("document.querySelector('.extension-catalog [role=status]')?.textContent.includes('正在重连')", '真实 SSE 断线');
+      assert.equal(await ev('!!' + invitation), false);
+      await until(() => stream !== originalStream, '扩展事件重连');
+      holdSnapshot = false;
+      deliverSnapshot();
+      await wait('!!' + invitation, '重连空快照');
+      await ev(invitation + '.click()');
+      await wait("document.querySelector('.studio-shell').dataset.page==='conversation'", '邀请笺进入对话');
+      await ev("document.querySelector('.ui-menu-trigger').click()");
+      await ev("[...document.querySelectorAll('.ui-menu-item')].find(b=>b.textContent.trim()==='扩展').click()");
+      await wait('!!' + invitation, '从对话回到空台');
+      const resize = async (width, height) => {
+        await cmd('Emulation.setDeviceMetricsOverride', {width, height, deviceScaleFactor:1, mobile:false});
+        await wait('innerWidth===' + width + ' && innerHeight===' + height, '视口尺寸');
+      };
+      const switchView = label => ev(`[...document.querySelectorAll('.extension-view-switch button')].find(b=>b.textContent===${JSON.stringify(label)}).click()`);
+      const capture = async preset => {
+        const dir = path.join(testResultsDir, 'frontend-refinement-stage1');
+        fs.mkdirSync(dir, {recursive:true});
+        for (const [width, height] of [[1280,800], [720,540]]) {
+          await resize(width, height);
+          await ev("document.querySelector('.extension-page h1').scrollIntoView({block:'start'})");
+          await ev('document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))');
+          const shot = await cmd('Page.captureScreenshot', {format:'png', captureBeyondViewport:false});
+          fs.writeFileSync(path.join(dir, `extensions-${width}x${height}-${preset}.png`), Buffer.from(shot.data, 'base64'));
+        }
+      };
       const verifyLayout = async (hasSlots) => {
         const layout = await ev(`(() => {
           const page = document.querySelector('.extension-page');
@@ -156,6 +198,15 @@ async function run() {
       await verify('v1','daylight');
       await wait("document.querySelector('.extension-tool')?.textContent==='stamp → 主角色、阿澄、removed-role'", '名单显示角色名与缺失 ID');
       await verifyLayout(true);
+      await capture('daylight-with-overlays');
+      await wait("document.querySelector('.extension-slots').offsetWidth>0 && !document.querySelector('.extension-catalog').offsetWidth", '窄屏默认台面');
+      await ev("window.beforeSwitch = document.querySelector('[data-extension-slot=page]').contentWindow");
+      await switchView('已安装');
+      deliverSnapshot();
+      await wait("document.querySelector('.extension-catalog').offsetWidth>0", '快照保留已安装视图');
+      await switchView('台面');
+      assert.ok(await ev("beforeSwitch === document.querySelector('[data-extension-slot=page]').contentWindow"));
+      await resize(1440,840);
       async function clickAction(slot, version, action, expected) {
         const index = await ev('actionResults.length');
         const url = `nd-ext://slot-demo/ui/${slot}.html?v=${version}`;
@@ -202,7 +253,11 @@ async function run() {
       assert.equal(coplay(f.roleId).length, 1);
       assert.match(coplay(f.roleId)[0].intent, /共玩 1 次。最后一次掷骰：骰点 1/);
       assert.equal(f.app.services.messages.list(f.roleId, f.windowId, null, 10).items.at(-1).content, '我看见这次的骰点了。');
-      await ev("document.querySelector('[aria-label=关闭分享提示]').click()");
+      await ev("document.querySelector('.share-slip aside > button:last-child').click()");
+      const back = "[...document.querySelectorAll('.dialogue-role-button')].find(b=>b.textContent==='回到刚才的台面')";
+      await wait('!!(' + back + ')','对话页台面书签');
+      await ev(back + '.click()');
+      await wait("document.activeElement?.dataset.deskFile==='ui/page.html'", '回访之前的微页');
       console.log('默认主角色、合成点击零派发、真实点名普通角色、画面同步、单次共玩唤醒与默认窗口分享纸签通过');
       await clickAction('page','v1','increment',{ok:true,data:1});
       await host.toggle('slot-demo','reload');
@@ -220,6 +275,8 @@ async function run() {
       await ev("document.querySelector('[data-theme-choice=nightwave]').click()");
       await verify('v1','nightwave');
       assert.notEqual(light,await ev("slotReports.find(r=>r.preset==='nightwave').color"));
+      await capture('nightwave-with-overlays');
+      await resize(1440,840);
       holdSnapshot = true;
       await host.upsert(extension('v2', []));
       await clickAction('page','v1','increment',{ok:false,error:'EXTENSION_VERSION_MISMATCH'});
@@ -271,11 +328,16 @@ async function run() {
         extId: 'broken-label', manifest: { version: 'v3', entry: 'entry.mjs' },
         files: { 'entry.mjs': "export default () => { throw new Error('展签初始化失败') }" }
       }), { code: 'EXTENSION_LOAD_FAILED' });
+      await host.upsert(extension('v4', []));
+      await resize(720,540);
+      await switchView('已安装');
       const button = "document.querySelector('.extension-repair button')";
       const notice = "document.querySelector('.extension-repair [role=status]')?.textContent";
       await wait(button + "?.textContent === '交给主角色修复'", '故障行出现修复入口');
       await ev(button + '.click()');
-      await wait(notice + " === '请先恢复主角色活动'", '停机时留页提示');
+      const repairError = "document.querySelector('.extension-repair [role=alert]')?.textContent";
+      assert.ok(await ev("!!document.querySelector('.extension-error[role=status]')"));
+      await wait(repairError + " === '请先恢复主角色活动'", '停机时留页提示');
       assert.equal(messages().length, 0);
       f.app.services.activity.resume(seat.roleId);
 
@@ -290,18 +352,28 @@ async function run() {
           return response;
         }`);
       await ev(button + '.click()');
-      await wait(notice + " === '暂未确认送达，请重试'", '已入库但桌面未收到回执');
+      await wait(repairError + " === '暂未确认送达，请重试'", '已入库但桌面未收到回执');
       const [first] = messages();
       assert.ok(first.submissionId);
       await ev(button + '.click()');
       await wait(notice + " === '已交给主角色排查'", '重试送达后显示行内提示');
       assert.equal(await ev("document.querySelector('.studio-shell').dataset.page"), 'extensions');
       assert.equal(await ev(button + '.disabled'), true);
+      await switchView('台面'); await switchView('已安装');
+      assert.equal(await ev(button + '.textContent'), '已交给主角色排查');
+      assert.equal(await ev(button + '.disabled'), true);
       const delivered = messages();
       assert.equal(delivered.length, 1);
       assert.equal(delivered[0].messageId, first.messageId);
       assert.match(first.content, /extId：broken-label\nversion：v3\nstatus：failed\n最近错误（扩展原始诊断文本）：EXTENSION_LOAD_FAILED · .*展签初始化失败/);
       console.log('主角色停机提示、丢失回执后重试、默认窗口唯一消息与送达留页通过');
+      await switchView('台面');
+      await ev("document.querySelectorAll('.extension-overlays header button').forEach(b=>b.click())");
+      await wait("!document.querySelector('.extension-overlays')", '收起浮层查看完整台面');
+      await capture('nightwave');
+      await ev("document.querySelector('[data-theme-choice=daylight]').click()");
+      await wait("slotReports.some(r=>r.text==='page v4' && r.preset==='daylight') && !document.querySelector('.config-theme-veil')", '白昼台面');
+      await capture('daylight');
     });
   } finally { await f.close(); }
 }

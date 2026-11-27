@@ -81,11 +81,13 @@ const errorText = (e: unknown) => e instanceof Error ? e.message : String(e);
 
 type RoleDirty = { profile: boolean; models: boolean; voice: boolean; image: boolean; ext: boolean; quota: boolean };
 type RoleEditorState = { dirty: RoleDirty; busy: boolean; profileCount: number; discardProfile: () => void; discard: () => void };
+export type WorkspaceRequest = { kind: 'create' } | { kind: 'section'; section: 'models'; roleId: string }
+  | { kind: 'section'; section: 'ext'; roleId: string; resourceId: string };
 export type ConfigNavigationGuard = (next: string, proceed: () => void) => void;
-type Props = { page: string; roles: RoleListItem[]; currentId: string; roleListError: string; retryingRoles: boolean; onRetryRoles: () => void; onRoleDeleted: (id: string) => void; onRefresh: () => Promise<void>; onNavigate: (page: string) => void; navigationGuard?: MutableRefObject<ConfigNavigationGuard | null>; footerLeft?: HTMLElement | null; footerRight?: HTMLElement | null; workspaceRequest?: { kind: 'section'; roleId: string; section: RoleSection; key: number } | { kind: 'create'; key: number } | null; onWorkspaceRequestHandled?: (key: number) => void; onStartConversation?: (roleId: string) => void };
+type Props = { page: string; roles: RoleListItem[]; currentId: string; roleListError: string; retryingRoles: boolean; onRetryRoles: () => void; onRoleDeleted: (id: string) => void; onRefresh: () => Promise<void>; onNavigate: (page: string) => void; navigationGuard?: MutableRefObject<ConfigNavigationGuard | null>; footerLeft?: HTMLElement | null; footerRight?: HTMLElement | null; workspaceRequest?: (WorkspaceRequest & { key: number }) | null; onConfigureResource: (roleId: string, resourceId: string) => void; onWorkspaceRequestHandled?: (key: number) => void; onStartConversation?: (roleId: string) => void };
 
 /** 两页常驻以保留跨页草稿；编辑对象绝不隐式改变当前角色（DL-147）。 */
-export function SettingsWorkspace({ page, roles, currentId, roleListError, retryingRoles, onRetryRoles, onRoleDeleted, onRefresh, onNavigate, navigationGuard, footerLeft, footerRight, workspaceRequest, onWorkspaceRequestHandled, onStartConversation }: Props) {
+export function SettingsWorkspace({ page, roles, currentId, roleListError, retryingRoles, onRetryRoles, onRoleDeleted, onRefresh, onNavigate, navigationGuard, footerLeft, footerRight, workspaceRequest, onConfigureResource, onWorkspaceRequestHandled, onStartConversation }: Props) {
   const motion = useMotionPolicy();
   const { preset } = useThemePreset();
   const [editId, setEditId] = useState('');
@@ -192,15 +194,15 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
       event.preventDefault();
       event.returnValue = '';
     };
-    const beforeTrayHide = (event: Event) => {
+    const checkDrafts = (event: Event) => {
       if (hasDrafts() || writeController.current?.busy) event.preventDefault();
     };
     window.addEventListener('beforeunload', beforeUnload);
-    window.addEventListener('nowadays:before-tray-hide', beforeTrayHide);
+    window.addEventListener('nowadays:check-drafts', checkDrafts);
     return () => {
       navigationGuard.current = null;
       window.removeEventListener('beforeunload', beforeUnload);
-      window.removeEventListener('nowadays:before-tray-hide', beforeTrayHide);
+      window.removeEventListener('nowadays:check-drafts', checkDrafts);
     };
   }, [navigationGuard]);
   const newModelProbe = useModelProbe(`${modelAdapter}|${modelUrl}|${modelSecret}`);
@@ -257,8 +259,15 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
     handledWorkspaceKey.current = workspaceRequest.key;
     setEditId(workspaceRequest.roleId);
     setRoleSection(workspaceRequest.section);
+    if (workspaceRequest.section === 'ext') {
+      const resource = resources.find(item => item.resourceId === workspaceRequest.resourceId);
+      if (resource && resource.kind !== 'model') sheetController.current?.open({
+        id: 'ext:' + resource.kind, title: resource.kind === 'mcp' ? 'MCP' : 'Skill',
+        shape: 'full', resourceId: resource.resourceId
+      });
+    }
     onWorkspaceRequestHandled?.(workspaceRequest.key);
-  }, [workspaceRequest, page, roles, onWorkspaceRequestHandled]);
+  }, [workspaceRequest, page, roles, resources, onWorkspaceRequestHandled]);
   const activityRead = useRef(0);
   const requestedStops = useRef(new Set<string>());
   const readActivities = useCallback(async (signal?: AbortSignal) => {
@@ -602,7 +611,8 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
             const resource = resources.find(item => item.resourceId === id);
             if (!resource) return null;
             const visible = settingsActive && !catalogError && id === selectedResource && resource.kind === catalogKind;
-            return <ResourceDetail key={id} resource={resource} roles={roles} activities={activities} active={visible} canWrite={true} testedOverride={catalogTests[id]} onTested={tested => rememberTest(id, tested)}
+            return <ResourceDetail key={id} resource={resource}
+              onConfigure={editId && !resource.adminSeatOnly ? () => onConfigureResource(editId, id) : undefined} roles={roles} activities={activities} active={visible} canWrite={true} testedOverride={catalogTests[id]} onTested={tested => rememberTest(id, tested)}
               onRemoved={resourceId => { removeCatalogItem(resourceId); setResources(previous => previous.filter(item => item.resourceId !== resourceId)); setRemovedResources(previous => previous.includes(resourceId) ? previous : [...previous, resourceId]); }}
               onUpdated={item => { if (item) setResources(previous => previous.map(existing => existing.resourceId === item.resourceId ? item : existing)); setRefreshVersion(v => v + 1); }}/>;
           })}
@@ -1106,7 +1116,11 @@ function ExtSheetHosts({ active, resources, draft, setDraft, bindings, loaded, n
         <div className="config-grp-label"><b>{kind === 'mcp' ? 'MCP' : 'Skill'}</b></div>
         <div>
           {list.length === 0 ? <p className="config-sheet-note">{T36.settingsKind(kind === 'mcp' ? 'MCP' : 'Skill')}</p> : <div className="config-toggle-list">
-            {list.map(item => <div className="config-toggle-row" data-unavailable={!item.enabled || undefined} key={item.resourceId}>
+            {list.map(item => <div className="config-toggle-row" data-unavailable={!item.enabled || undefined} key={item.resourceId}
+              data-located={sheet?.resourceId === item.resourceId || undefined}
+              data-sheet-focus={sheet?.resourceId === item.resourceId || undefined}
+              tabIndex={sheet?.resourceId === item.resourceId ? 0 : undefined}
+              onFocus={event => { if (sheet?.resourceId === item.resourceId) event.currentTarget.scrollIntoView({ block: 'nearest' }); }}>
               <span><strong>{item.name}</strong>{typeof item.config.description === 'string' && item.config.description && <small>{item.config.description}</small>}{!item.enabled && <small id={`extension-disabled-${item.resourceId}`}>{T33.switchNote}</small>}</span>
               <Switch checked={!!draft[item.resourceId]} disabled={!item.enabled || !loaded} aria-describedby={!item.enabled ? `extension-disabled-${item.resourceId}` : undefined} label={`为角色开启${item.name}`} onCheckedChange={checked => setDraft({ ...draft, [item.resourceId]: checked })}/>
             </div>)}
@@ -1473,7 +1487,7 @@ function RoleDeleteEntry({ roleCount, isBuiltin }: { roleCount: number; isBuilti
   </div></div>;
 }
 
-function ResourceDetail({ resource, roles, activities, active, canWrite, testedOverride, onTested, onRemoved, onUpdated }: { resource: Resource; roles: RoleListItem[]; activities: Activity[]; active: boolean; canWrite: boolean; testedOverride?: boolean | null; onTested: (tested: boolean | null) => void; onRemoved: (id: string) => void; onUpdated: (resource?: Resource) => void }) {
+function ResourceDetail({ resource, onConfigure, roles, activities, active, canWrite, testedOverride, onTested, onRemoved, onUpdated }: { resource: Resource; onConfigure?: () => void; roles: RoleListItem[]; activities: Activity[]; active: boolean; canWrite: boolean; testedOverride?: boolean | null; onTested: (tested: boolean | null) => void; onRemoved: (id: string) => void; onUpdated: (resource?: Resource) => void }) {
   const sheetApi = useSheet();
   const write = useWrite();
   const savedRef = useRef(resource);
@@ -1693,7 +1707,7 @@ function ResourceDetail({ resource, roles, activities, active, canWrite, testedO
       setMessage(serviceWriteFailure(e, '保存', errorText(e), id => roleDisplayName(roles, id)));
     } } finally { if (live.current) setBusy(false); finish(); }
   };
-  if (resource.kind !== 'model') return <ExtensionManagement resource={resource} roles={roles} activities={activities} active={active} onRemoved={onRemoved} onUpdated={onUpdated}/>;
+  if (resource.kind !== 'model') return <ExtensionManagement onConfigure={onConfigure} resource={resource} roles={roles} activities={activities} active={active} onRemoved={onRemoved} onUpdated={onUpdated}/>;
   const open = (group?: string, trigger?: HTMLElement) => sheetApi.open({ id: sheetId, title: group ? `${resource.name} · ${group}` : `编辑「${resource.name}」`, shape: group ? 'compact' : 'full', group, anchor: trigger?.closest<HTMLElement>('.config-sum') ?? trigger, focusReturn: trigger?.matches('button') ? trigger : trigger?.querySelector<HTMLElement>('.config-sum-edit') });
   const discard = () => { const saved = savedRef.current; setDraftName(saved.name); setDraftAdapter(modelAdapterOf(saved.config)); setDraftUrl(String(saved.config.baseUrl || '')); setModel(savedModelNameOf(saved)); setSecretDraft(createSecretDraft(saved.credential?.status)); setSecretVisible(false); setSecretError(''); setMessage(''); probe.cancelPending(); };
   const secretStatus = !resource.credential?.status || resource.credential.status === 'missing' ? 'none' : resource.credential?.status === 'unavailable' ? 'error' : 'ok';
@@ -1945,7 +1959,7 @@ function sameExtensionEnv(next: Record<string, string>, saved: unknown): boolean
   return keys.length === Object.keys(baseline).length && keys.every(key => Object.hasOwn(baseline, key) && baseline[key] === next[key]);
 }
 
-function ExtensionManagement({ resource, roles, activities, active, onRemoved, onUpdated }: { resource: Resource; roles: RoleListItem[]; activities: Activity[]; active: boolean; onRemoved: (id: string) => void; onUpdated: (resource?: Resource) => void }) {
+function ExtensionManagement({ resource, onConfigure, roles, activities, active, onRemoved, onUpdated }: { resource: Resource; onConfigure?: () => void; roles: RoleListItem[]; activities: Activity[]; active: boolean; onRemoved: (id: string) => void; onUpdated: (resource?: Resource) => void }) {
   const [report, setReport] = useState<ResourceReferences | null>(null);
   const [reportError, setReportError] = useState('');
   const sheetApi = useSheet();
@@ -2040,6 +2054,7 @@ function ExtensionManagement({ resource, roles, activities, active, onRemoved, o
   const envKeys = Object.keys((resource.config.env || {}) as Record<string, unknown>);
   return <div hidden={!active} className="config-prose">
     <ServiceHeading title={resource.name} address={address} enabled={resource.enabled} onEdit={trigger => open(undefined, trigger)}/>
+    {onConfigure && <div className="config-actions"><Button size="sm" onClick={onConfigure}>去角色配置启用</Button></div>}
     {isMcp && active && <SavedMcpProbe key={version} resourceId={resource.resourceId} enabled={resource.enabled}/>}
     {isMcp ? <><ServiceRow label="启动" value={`${String(resource.config.command || '')} ${argsText.replaceAll('\n', ' ')}`.trim()} keys={['stdio']} onOpen={trigger => open('启动', trigger)}/><ServiceRow label="环境变量" value={envKeys.join('、') || '无'} status={envKeys.length ? 'ok' : 'none'} statusText={envKeys.length ? '值已保存' : '未设置'} onOpen={trigger => open('环境变量', trigger)}/></> : <ServiceRow label="来源目录" value={String(resource.config.sourcePath || '')} onOpen={trigger => open('来源目录', trigger)}/>}
     <ServiceManagementRow name={resource.name} enabled={resource.enabled} busy={toggleBusy} disabled={write.busy || write.resuming || !report || (resource.enabled && !report.canDisable)} onChange={enabled => void run(enabled ? 'enable' : 'disable')}/>

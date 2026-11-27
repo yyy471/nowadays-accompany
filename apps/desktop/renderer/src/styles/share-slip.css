@@ -2,20 +2,29 @@
   position: fixed;
   inset-inline-end: var(--nd-semantic-space-panel-inset);
   bottom: var(--nd-semantic-size-dock-zone);
-  width: min(22rem, calc(100% - 2 * var(--nd-semantic-space-panel-inset)));
+  width: min(320px, calc(50vw - 40px));
   z-index: var(--nd-semantic-layer-sheet);
 }
 .share-slip aside {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: start;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  max-height: 144px;
   gap: var(--nd-semantic-space-icon-label);
-  padding: var(--nd-semantic-space-field-group);
+  padding: 10px 14px;
   border: 1px solid var(--nd-semantic-color-line-decorative);
   border-radius: var(--nd-semantic-radius-card);
   background: var(--nd-semantic-color-surface);
   color: var(--nd-semantic-color-text);
   box-shadow: var(--nd-semantic-shadow-raised);
+}
+.share-slip-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
+  gap: var(--nd-semantic-space-icon-label);
+  align-items: start;
+  min-height: 0;
 }
 .share-slip img, .share-monogram {
   width: 3rem;
@@ -29,16 +38,25 @@
   place-items: center;
   background: var(--nd-semantic-color-selection);
 }
+.share-slip [aria-live] {
+  min-height: 0;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+}
+.share-slip strong { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: none; }
 .share-slip p {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
   overflow-wrap: anywhere;
   margin: var(--nd-semantic-space-field-hint) 0 0;
   font-size: var(--nd-semantic-type-body-size);
   line-height: var(--nd-semantic-type-body-line);
 }
 .share-slip aside > button:last-child {
-  grid-column: 2 / -1;
-  justify-self: end;
+  flex: none;
+  align-self: end;
 }
 
 .studio-shell[data-dialogue-dock-hidden] .share-slip{bottom:var(--nd-semantic-space-panel-inset)}
-@media(max-width:760px){.share-slip{width:min(20rem, calc(50% - 1.5 * var(--nd-semantic-space-panel-inset)))}}

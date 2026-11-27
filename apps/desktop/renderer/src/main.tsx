@@ -25,7 +25,9 @@ import './styles/feed.css';
 import './ui/preset-appearance.css';
 import './ui/status-dot.css';
 
-applyMotionPreference(readMotionPreference());
-createRoot(document.getElementById('root')!).render(
-  <StrictMode><MotionPolicyProvider><ModalLayerProvider><ThemePresetProvider><ConfirmProvider><App /></ConfirmProvider></ThemePresetProvider></ModalLayerProvider></MotionPolicyProvider></StrictMode>
-);
+export function mountDesk(skipRolePicker: boolean) {
+  applyMotionPreference(readMotionPreference());
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode><MotionPolicyProvider><ModalLayerProvider><ThemePresetProvider><ConfirmProvider><App skipEntry={skipRolePicker}/></ConfirmProvider></ThemePresetProvider></ModalLayerProvider></MotionPolicyProvider></StrictMode>
+  );
+}

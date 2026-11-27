@@ -19,31 +19,54 @@ export function repairMessage({ extId, version, status, lastError }: FaultSnapsh
     `status：${status}`, `最近错误（扩展原始诊断文本）：${diagnostic}`].join('\n');
 }
 
-export function createRepairSender() {
-  // 回执未确认时保留提交标识，扩展事件流重连并重建行后也能重试。
-  const pending = new Map<string, { extId: string; fingerprint: string; submissionId: string }>();
+type RepairResult = { sent: boolean; notice: string };
+type RepairRecord = {
+  extId: string; fingerprint: string; submissionId: string;
+  flight?: Promise<RepairResult>; result?: RepairResult;
+};
+
+export function createRepairSender(changed: () => void = () => {}) {
+  const records = new Map<string, RepairRecord>();
+  const keyFor = (seat: RoleListItem | undefined, item: FaultSnapshot) =>
+    JSON.stringify([seat?.roleId, seat?.defaultWindowId, item.extId, faultFingerprint(item)]);
   function reconcile(items: FaultSnapshot[]) {
-    for (const [key, record] of pending) {
+    for (const [key, record] of records) {
       const current = items.find(item => item.extId === record.extId);
-      if (!current || !hasExtensionFault(current) || faultFingerprint(current) !== record.fingerprint) pending.delete(key);
+      if (!current || !hasExtensionFault(current) || faultFingerprint(current) !== record.fingerprint) records.delete(key);
     }
   }
-  async function send(seat: RoleListItem | undefined, item: FaultSnapshot) {
-    if (!seat?.defaultWindowId) return { sent: false, notice: '主角色尚未就绪' };
+  const read = (seat: RoleListItem | undefined, item: FaultSnapshot) => records.get(keyFor(seat, item));
+  function send(seat: RoleListItem | undefined, item: FaultSnapshot): Promise<RepairResult> {
+    const key = keyFor(seat, item);
+    let record = records.get(key);
+    if (!record) {
+      record = { extId: item.extId, fingerprint: faultFingerprint(item), submissionId: crypto.randomUUID() };
+      records.set(key, record);
+    }
+    if (record.flight) return record.flight;
+    if (record.result?.sent) return Promise.resolve(record.result);
+    if (!seat?.defaultWindowId) {
+      record.result = { sent: false, notice: '主角色尚未就绪' };
+      changed();
+      return Promise.resolve(record.result);
+    }
     const path = `/v1/roles/${encodeURIComponent(seat.roleId)}/windows/${encodeURIComponent(seat.defaultWindowId)}/messages`;
-    const key = JSON.stringify([path, item.extId]);
-    const fingerprint = faultFingerprint(item);
-    const previous = pending.get(key);
-    const record = previous?.fingerprint === fingerprint ? previous : { extId: item.extId, fingerprint, submissionId: crypto.randomUUID() };
-    pending.set(key, record);
-    try {
-      await api(path, { method: 'POST', body: { content: repairMessage(item), submissionId: record.submissionId } });
-      if (pending.get(key) === record) pending.delete(key);
-      return { sent: true, notice: '已交给主角色排查' };
-    } catch (error) {
-      const stopped = error instanceof ApiError && error.status === 409 && error.code === 'ROLE_ACTIVITY_STOPPED';
-      return { sent: false, notice: stopped ? '请先恢复主角色活动' : '暂未确认送达，请重试' };
-    }
+    const current = record;
+    current.result = undefined;
+    current.flight = api(path, { method: 'POST', body: { content: repairMessage(item), submissionId: current.submissionId } })
+      .then(() => ({ sent: true, notice: '已交给主角色排查' }), (error: unknown) => ({
+        sent: false, notice: error instanceof ApiError && error.status === 409 && error.code === 'ROLE_ACTIVITY_STOPPED'
+          ? '请先恢复主角色活动' : '暂未确认送达，请重试'
+      })).then(result => {
+        if (records.get(key) === current) {
+          current.result = result;
+          current.flight = undefined;
+          changed();
+        }
+        return result;
+      });
+    changed();
+    return current.flight;
   }
-  return { send, reconcile };
+  return { read, send, reconcile };
 }

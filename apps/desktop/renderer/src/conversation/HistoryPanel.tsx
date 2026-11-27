@@ -1,3 +1,4 @@
+import { PaperSkeleton } from '../components/PaperSkeleton';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Icon, readMotionTime, useMotionPolicy } from '../ui';
 import { buildDays, calendarDays, dateLabel, dayKey, daySnippets, dotTier, findHits, keyToDate, rangesFor, snippet, termsFor, textFor } from './history';
@@ -54,6 +55,7 @@ function cardLabel(card: { key: string; lines: Array<PerfRow & { main: boolean }
 
 export function HistoryPanel({
   open,
+  feedback,
   messages,
   scenes,
   loading,
@@ -67,6 +69,7 @@ export function HistoryPanel({
   openerRef,
 }: {
   open: boolean;
+  feedback?: ReactNode;
   messages: PerfRow[];
   scenes: PerfScene[];
   loading: boolean;
@@ -117,6 +120,8 @@ export function HistoryPanel({
   }, [hits]);
   const latestKey = useMemo(() => days.at(-1)?.key ?? '', [days]);
   const selectedDay = dayMap.get(selectedKey);
+  const hasFilters = terms.length > 0 || (!!selectedDay && selectedKey !== latestKey);
+  const noHits = terms.length > 0 && hits.length === 0;
   // 有命中的日期展示命中片段；没有命中的日期仍可查看当天会话片段。
   const cardsFor = (key: string) => {
     const searching = terms.length > 0 && (hitCounts.get(key) ?? 0) > 0;
@@ -333,6 +338,7 @@ export function HistoryPanel({
       <span className="dialogue-history-hint" role="status">{locating ? '正在定位消息…' : loading ? '正在读取完整窗口历史…' : error ? '历史读取未完成' : complete ? '当前窗口的已保存消息' : '历史读取已暂停'}</span>
       <button type="button" className="dialogue-history-close" aria-label="关闭历史消息" onClick={onClose}><Icon name="close" size={17} /></button>
     </header>
+    {feedback}
     {error && <div role="alert">{error} <button type="button" onClick={onRetry}>重试读取</button></div>}
     <div className="dialogue-history-search">
       <div className="dialogue-search-field">
@@ -350,7 +356,7 @@ export function HistoryPanel({
         <button type="button" className="dialogue-hit" aria-label="下一处" disabled={hitIndex < 0 || hitIndex >= hits.length - 1} onClick={() => gotoHit(hitIndex + 1)}><Icon name="chev-down" size={17} /></button>
       </div>
     </div>
-    <div className="dialogue-timeline">
+    {days.length > 0 && <div className="dialogue-timeline">
       <div className="dialogue-timeline-scroll" ref={timelineScroll}>
         <div className="dialogue-timeline-track" ref={track} role="toolbar" aria-orientation="horizontal" aria-label="对话日期时间轴：左右方向键切换日期，Enter 进入片段" data-searching={terms.length ? '' : undefined}
           onKeyDown={event => {
@@ -390,8 +396,8 @@ export function HistoryPanel({
           </div>)}
         </div>
       </div>
-    </div>
-    <div className="dialogue-history-day">
+    </div>}
+    {days.length > 0 && <div className="dialogue-history-day">
       <div className="dialogue-day-title">
         <strong>{selectedDay ? `${dateLabel(selectedDay.key)} · ${weekday(selectedDay.key)}` : ''}</strong>
         <span>{terms.length
@@ -400,13 +406,14 @@ export function HistoryPanel({
       </div>
       <div className="dialogue-day-tools">
         <span className="dialogue-timeline-legend" aria-hidden="true"><i className="tier-1" /><i className="tier-2" /><i className="tier-3" /><span>消息多少</span></span>
-        <button type="button" className="dialogue-clear-filters" onClick={reset}>清空条件</button>
+        {hasFilters && !noHits && <button type="button" className="dialogue-clear-filters" onClick={reset}>清空条件</button>}
       </div>
-    </div>
-    <div className="dialogue-snippets" data-empty={terms.length && !hits.length ? '' : undefined}>
-      {!days.length
-        ? <div className="dialogue-history-empty"><Icon name="history" size={28} /><h3>{loading ? '正在读取历史…' : '还没有可检索的历史。'}</h3><p>{loading ? '已保存的消息会逐页载入。' : '发出第一条消息后，这里会按日期留下对话。'}</p></div>
-        : terms.length && !hits.length
+    </div>}
+    <div className="dialogue-snippets" data-empty={noHits ? '' : undefined}>
+      {loading && !days.length ? <PaperSkeleton label="正在读取历史…"/> : !days.length
+        ? <div className="dialogue-history-empty"><Icon name="history" size={30} /><h3>还没有可检索的历史。</h3><p>发出第一条消息后，这里会按日期留下对话。</p>
+          {hasFilters && <button type="button" className="dialogue-empty-reset" onClick={reset}>清空条件</button>}</div>
+        : noHits
           ? <div className="dialogue-history-empty"><Icon name="search" size={28} /><h3>这段时间里，还没找到。</h3><p>换一个词试试，或清空条件看看全部日期。</p><button type="button" className="dialogue-empty-reset" onClick={reset}>清空条件</button></div>
           : <div className="dialogue-card-stack" ref={stack} role="group" aria-roledescription="叠放片段" aria-label="当天片段：左右方向键切换，Enter 回到这句话"
             onKeyDown={event => {
@@ -449,13 +456,13 @@ export function HistoryPanel({
               <CardBody card={cards[cardIndex]} query={query} />
             </button> : null}
           </div>}
-      <div className="dialogue-card-controls">
+      {cards.length > 0 && !noHits && <div className="dialogue-card-controls">
         <button type="button" className="dialogue-card" aria-label="上一张片段" disabled={cardIndex <= 0} onClick={() => moveCard(-1)}><Icon name="chev-left" size={17} /></button>
         <span>{cards.length ? `${cardIndex + 1} / ${cards.length}` : ''}</span>
         <button type="button" className="dialogue-card" aria-label="下一张片段" disabled={cardIndex >= cards.length - 1} onClick={() => moveCard(1)}><Icon name="chev-right" size={17} /></button>
         <span className="dialogue-card-hint">点片段，回到这句话</span>
-      </div>
-      {scene?.status === 'succeeded' && <button type="button" className="dialogue-scene-chip" onClick={() => onOpenScene(scene)}>查看{scene.mode === 'background' ? '背景图' : '人物场景图'}</button>}
+      </div>}
+      {!noHits && scene?.status === 'succeeded' && <button type="button" className="dialogue-scene-chip" onClick={() => onOpenScene(scene)}>查看{scene.mode === 'background' ? '背景图' : '人物场景图'}</button>}
     </div>
   </section>;
 }

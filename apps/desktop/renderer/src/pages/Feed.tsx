@@ -1,12 +1,14 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
-import { Button, ControlButton, Icon, IconButton, Modal, StatusDot, UiThemeScope, readMotionPx, readMotionTime, readMotionValue, useMotionPolicy, type DotStatus } from '../ui';
+import { PaperSkeleton } from '../components/PaperSkeleton';
+import { RoleFace } from '../components/RoleFace';
+import { Button, Disclosure, ControlButton, Icon, IconButton, Modal, StatusDot, UiThemeScope, readMotionPx, readMotionTime, readMotionValue, useMotionPolicy, type DotStatus } from '../ui';
 import { ConfigNotice } from '../components/config/ConfigNotice';
 import { ConfigThemeTransition } from '../ui/config-theme-transition';
 import { useThemePreset } from '../ui/presets';
 import type { RoleListItem } from '../types';
 import {
-  loadFeed, loadUpcoming, loadTranscript, messageKey, type Exchange, type ExchangeTurn,
+  loadFeed, loadUpcoming, loadTranscript, upcomingForRole, orderedExchangeTurns, messageKey, type Exchange, type ExchangeTurn,
   type Activity, type FeedData, type MemoryBatch, type RoleActivity, type SharedMessage, type Task, type Wake,
 } from '../feed/data';
 
@@ -180,9 +182,6 @@ function duration(start: string, end: string): string {
   const minutes = Math.max(1, Math.round((Date.parse(end) - Date.parse(start)) / 60000));
   return minutes < 60 ? `${minutes} 分钟` : `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分钟`;
 }
-function Face({ role, image }: { role?: RoleListItem; image?: string }) {
-  return <span className="feed-face" aria-hidden="true">{image ? <img src={image} alt=""/> : <span>{role?.displayName?.slice(0, 1) || '·'}</span>}</span>;
-}
 function StatusView({ value, visible = false }: { value: Status; visible?: boolean }) {
   return <span className="feed-status" data-pulse={value.pulse || undefined}><StatusDot status={value.status} label={value.label} bare={!visible && value.bare} faint={value.faint}/></span>;
 }
@@ -232,7 +231,7 @@ function ExchangeTranscript({ exchange }: { exchange: Exchange }) {
     const controller = new AbortController();
     setError('');
     void loadTranscript(exchange.sessionId, controller.signal).then(detail => {
-      if (!controller.signal.aborted) setTurns(detail.turns);
+      if (!controller.signal.aborted) setTurns(orderedExchangeTurns(detail.turns));
     }).catch(reason => {
       if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : String(reason));
     });
@@ -247,7 +246,7 @@ function ExchangeTranscript({ exchange }: { exchange: Exchange }) {
 }
 
 function EventContent({ event, message, task }: { event: FeedEvent; message?: SharedMessage; task?: Task }) {
-  if (event.exchange) return <p>{event.exchange.topic} · {event.exchange.turnCount} 轮</p>;
+  if (event.exchange) return <p className="feed-exchange-topic">{event.exchange.topic}</p>;
   if (message) return <p className="feed-letter-text">{message.content}</p>;
   if (event.type === 'share') return <p className="feed-muted">分享原文不可用</p>;
   if (event.activity) {
@@ -283,8 +282,7 @@ function moveTimelineFocus(event: KeyboardEvent<HTMLDivElement>) {
   button.closest('.feed-event')?.scrollIntoView({ block: 'nearest' });
 }
 
-function Upcoming({ wakes, roles, states, portraits, onOpen }: { wakes: Wake[]; roles: RoleListItem[]; states: RoleActivity[]; portraits: Record<string, string>; onOpen: (event: FeedEvent, source: HTMLElement) => void }) {
-  if (!wakes.length) return <p className="feed-next-empty">暂无安排</p>;
+function Upcoming({ wakes, roles, states, portraits, onOpen }: { wakes: Wake[]; roles: RoleListItem[]; states: RoleActivity[]; portraits: FeedData['portraits']; onOpen: (event: FeedEvent, source: HTMLElement) => void }) {
   return <ul className="feed-next-list">{wakes.map(wake => {
     const role = roles.find(item => item.roleId === wake.roleId);
     const state = states.find(item => item.roleId === wake.roleId);
@@ -295,7 +293,7 @@ function Upcoming({ wakes, roles, states, portraits, onOpen }: { wakes: Wake[]; 
       const trigger = event.currentTarget.querySelector<HTMLButtonElement>('.feed-next-open');
       if (trigger) onOpen(item, trigger);
     }}>
-      <Face role={role} image={portraits[wake.roleId]}/>
+      <RoleFace name={role?.displayName || '角色'} image={portraits[wake.roleId]}/>
       <div className="feed-next-heading"><ControlButton className="feed-next-open" onClick={event => onOpen(item, event.currentTarget)}>{role?.displayName || '角色'}</ControlButton>
         {wake.kind === 'budget_resume' && <span className="feed-kind">额度恢复后</span>}<time dateTime={wake.scheduledAt}>{dateTime(wake.scheduledAt)}</time></div>
       <Intent>{wake.intent}</Intent>{!status.bare && <StatusView value={status} visible/>}
@@ -330,7 +328,7 @@ export function FeedPage({ active, roles, rolesLoading, roleError, retryingRoles
   const pendingChat = useRef<ChatTarget | null>(null);
   const returnToEvent = useRef<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const nextRef = useRef<HTMLDivElement>(null);
+
   const [displayedFilter, setDisplayedFilter] = useState({ roleId, type, range });
   const filterRef = useRef(displayedFilter);
   filterRef.current = displayedFilter;
@@ -338,31 +336,26 @@ export function FeedPage({ active, roles, rolesLoading, roleError, retryingRoles
     const visible = filterRef.current;
     if (roleId === visible.roleId && type === visible.type && range === visible.range) return;
     const next = { roleId, type, range };
-    const targets = () => [listRef.current?.querySelector<HTMLElement>('.feed-filter-results'), nextRef.current]
-      .filter((item): item is HTMLElement => !!item);
-    const previous = targets();
-    if (reduced || !previous.length) { setDisplayedFilter(next); return; }
+    const element = listRef.current?.querySelector<HTMLElement>('.feed-filter-results');
+    if (reduced || !element) { setDisplayedFilter(next); return; }
     let cancelled = false;
-    const departures = previous.map(element => element.animate([{ opacity: 1 }, { opacity: 0 }], {
+    const departure = element.animate([{ opacity: 1 }, { opacity: 0 }], {
       duration: readMotionTime(element, '--nd-semantic-motion-micro-exit', 90),
       easing: readMotionValue(element, '--nd-semantic-motion-ease-in', 'ease-in'), fill: 'forwards',
-    }));
-    let arrivals: Animation[] = [];
-    void Promise.allSettled(departures.map(item => item.finished)).then(() => {
+    });
+    let arrival: Animation | undefined;
+    void departure.finished.then(() => {
       if (cancelled) return;
-      // 新列表与淡入起点同一帧提交，旧列表不会在离场后闪回。
       flushSync(() => setDisplayedFilter(next));
       if (cancelled) return;
-      arrivals = targets().map(element => {
-        const offset = readMotionPx(element, '--nd-semantic-motion-detail-page-offset', 4);
-        return element.animate([{ opacity: 0, transform: `translateY(${offset}px)` }, { opacity: 1, transform: 'none' }], {
-          duration: readMotionTime(element, '--nd-semantic-motion-component', 220),
-          easing: readMotionValue(element, '--nd-semantic-motion-ease-out', 'ease-out'), fill: 'backwards',
-        });
+      const offset = readMotionPx(element, '--nd-semantic-motion-detail-page-offset', 4);
+      arrival = element.animate([{ opacity: 0, transform: `translateY(${offset}px)` }, { opacity: 1, transform: 'none' }], {
+        duration: readMotionTime(element, '--nd-semantic-motion-component', 220),
+        easing: readMotionValue(element, '--nd-semantic-motion-ease-out', 'ease-out'), fill: 'backwards',
       });
-      departures.forEach(item => item.cancel());
-    });
-    return () => { cancelled = true; [...departures, ...arrivals].forEach(item => item.cancel()); };
+      departure.cancel();
+    }, () => { /* 快速切换筛选时取消旧动画。 */ });
+    return () => { cancelled = true; departure.cancel(); arrival?.cancel(); };
   }, [roleId, type, range, reduced]);
   useEffect(() => {
     if (since.current !== null) return;
@@ -453,8 +446,7 @@ export function FeedPage({ active, roles, rolesLoading, roleError, retryingRoles
   }, [sheetOpen, selectedSnapshot, selected]);
   const filtered = events.filter(event => (displayedFilter.roleId === 'all' || event.roleId === displayedFilter.roleId || event.exchange?.targetRoleId === displayedFilter.roleId) && (displayedFilter.type === 'all' || event.type === displayedFilter.type)
     && (displayedFilter.range === 'all' || (displayedFilter.range === 'today' ? dateKey(event.at) === dateKey(new Date(now)) : now - Date.parse(event.at) <= 7 * 86400000)));
-  const pending = (upcoming.data?.wakes ?? []).filter(wake => wake.status === 'pending' && (displayedFilter.roleId === 'all' || wake.roleId === displayedFilter.roleId))
-    .sort((a, b) => Date.parse(a.scheduledAt) - Date.parse(b.scheduledAt));
+  const pending = upcomingForRole(upcoming.data?.wakes ?? [], displayedFilter.roleId);
   const groups = filtered.reduce<Array<{ day: string; at: string; events: FeedEvent[] }>>((result, event) => {
     const key = dateKey(event.at);
     const last = result[result.length - 1];
@@ -493,6 +485,7 @@ export function FeedPage({ active, roles, rolesLoading, roleError, retryingRoles
   }, [active, feed.data, filterKey, sheetOpen, reduced]);
 
   const open = (event: FeedEvent, trigger: HTMLElement) => {
+    trigger.focus({ preventScroll: true });
     setSelected(event);
     setSource(trigger);
     setSheetOpen(true);
@@ -533,6 +526,7 @@ export function FeedPage({ active, roles, rolesLoading, roleError, retryingRoles
       setSheetOpen(false);
     } else onOpenChat(target);
   };
+  const emptyUpcoming = upcoming.data && pending.length === 0 && !roleError && !upcoming.error;
   const nextContent = <>
     {(roleError || upcoming.error) && <div className="feed-error" role={roleError || upcoming.initialFailure ? 'alert' : undefined}>
       读取失败：{roleError || upcoming.error}
@@ -540,8 +534,8 @@ export function FeedPage({ active, roles, rolesLoading, roleError, retryingRoles
         aria-disabled={!roleError && refreshRequest !== null && refreshRequest.upcoming === undefined ? true : undefined}
         onClick={roleError ? onRetryRoles : () => refresh('upcoming')}>重试</Button>
     </div>}
-    {!roleError && upcoming.loading && !upcoming.data
-      ? <div className="feed-skeleton" aria-busy="true">正在读取安排…</div>
+    {canRead && upcoming.loading && !upcoming.data
+      ? <PaperSkeleton label="正在读取安排…"/>
       : upcoming.data && <Upcoming wakes={pending} roles={roles} states={upcoming.data.roleActivities} portraits={portraits} onOpen={open}/>}
   </>;
 
@@ -592,7 +586,7 @@ export function FeedPage({ active, roles, rolesLoading, roleError, retryingRoles
   return <UiThemeScope theme="xiacheng" motion={reduced ? 'reduced' : 'full'} className="feed-scope">
     {active && <ConfigThemeTransition/>}
     <div className="feed-book">
-      <div className="feed-surface" aria-hidden="true"><div/><div/><div/></div>
+      <div className="feed-surface" aria-hidden="true"/>
       <section className="feed-leaf" aria-labelledby="feed-title">
         <header className="feed-mast">
           <span>{preset === 'nightwave' ? '晚风电台' : '白昼来信'}</span><i>·</i>
@@ -616,7 +610,7 @@ export function FeedPage({ active, roles, rolesLoading, roleError, retryingRoles
                   return <ControlButton key={role.roleId} className="feed-role" aria-pressed={roleId === role.roleId}
                     aria-label={`${role.displayName}${stopped ? '，已停止' : ''}`} title={`${role.displayName}${stopped ? ' · 已停止' : ''}`}
                     onClick={() => setRoleId(role.roleId)}>
-                    <Face role={role} image={portraits[role.roleId]}/><span>{role.displayName}</span>
+                    <RoleFace name={role.displayName} image={portraits[role.roleId]}/><span>{role.displayName}</span>
                     {stopped && <StatusDot status="off" label="已停止"/>}
                   </ControlButton>;
                 })}
@@ -628,16 +622,19 @@ export function FeedPage({ active, roles, rolesLoading, roleError, retryingRoles
           </div>
         <div className="feed-scroll" ref={listRef} tabIndex={-1}
           aria-busy={rolesLoading || (!roleError && feed.loading && !currentData) || undefined} onKeyDown={moveTimelineFocus}>
-          <div className="feed-filter-results"><section className="feed-next-strip" aria-label="接下来"><h2>接下来</h2>{nextContent}</section>
+          <div className="feed-filter-results">
+            {emptyUpcoming ? <p className="feed-next-empty">接下来 · 暂无安排</p> : <div className="feed-bookmark">
+              <Disclosure title="接下来" description={roleError || upcoming.error ? '读取失败' : upcoming.data ? `${pending.length} 项安排` : undefined}>
+                {nextContent}
+              </Disclosure>
+            </div>}
           {(roleError || feed.error) && <div className="feed-error" role={roleError || feed.initialFailure ? 'alert' : undefined}>
             读取失败：{roleError || feed.error}
             <Button size="sm" busy={roleError ? retryingRoles : refreshRequest?.feed !== undefined}
               aria-disabled={!roleError && refreshRequest !== null && refreshRequest.feed === undefined ? true : undefined}
               onClick={roleError ? onRetryRoles : () => refresh('feed')}>重试</Button>
           </div>}
-          {(rolesLoading || (!roleError && feed.loading && !currentData)) && <div className="feed-skeleton" role="status">
-            正在读取动态…<i/><i/><i/>
-          </div>}
+          {active && !currentData && (rolesLoading || (canRead && feed.loading)) && <PaperSkeleton label="正在读取动态…"/>}
           {!rolesLoading && currentData && !filtered.length && <div className="feed-empty">
             <p>{events.length ? '没有符合条件的动态。' : '还没有动态。'}</p>
             {events.length > 0 && <Button size="sm" onClick={() => {
@@ -656,8 +653,8 @@ export function FeedPage({ active, roles, rolesLoading, roleError, retryingRoles
             const isNew = since.current !== null && Date.parse(event.at) > since.current && !seen.has(event.id);
             return <li className="feed-event" key={event.id}>
               <time dateTime={event.at}>{timeLabel(event.at)}</time>
-              <Face role={role} image={portraits[event.roleId]}/>
-              <div className={`feed-slip${event.type === 'share' ? ' feed-letter' : ''}${event.type === 'system' ? ' feed-system' : ''}`}
+              <RoleFace name={role?.displayName || '角色'} image={portraits[event.roleId]}/>
+              <div className={`feed-slip${event.exchange ? ' feed-exchange' : ''}${event.type === 'share' ? ' feed-letter' : ''}${event.type === 'system' ? ' feed-system' : ''}`}
                 data-feed-event={event.id} data-feed-new={isNew ? event.id : undefined} onClick={click => {
                   if ((click.target as Element).closest('button')) return;
                   const button = click.currentTarget.querySelector<HTMLButtonElement>('.feed-detail');
@@ -665,7 +662,10 @@ export function FeedPage({ active, roles, rolesLoading, roleError, retryingRoles
                 }}>
                 <div className="feed-slip-main">
                   <div className="feed-event-title">
-                    <strong>{event.exchange ? `${event.exchange.initiatorName} 与 ${event.exchange.targetName} 进行了对话` : role?.displayName || '角色'}</strong><span>· {labels[event.type]}</span>
+                    {event.exchange ? <>
+                      <strong>{event.exchange.initiatorName}</strong><span>与</span><strong>{event.exchange.targetName}</strong>
+                      <span className="feed-turn-count">{event.exchange.turnCount} 轮</span>
+                    </> : <><strong>{role?.displayName || '角色'}</strong><span>· {labels[event.type]}</span></>}
                     {isNew && <span className="feed-new" data-fading={fading.has(event.id) || undefined}>新</span>}
                   </div>
                   <EventContent event={event} message={message} task={task}/>
@@ -686,7 +686,6 @@ export function FeedPage({ active, roles, rolesLoading, roleError, retryingRoles
           </section>)}</div>
         </div></div>
       </section>
-      <aside className="feed-next"><h2>接下来</h2><div ref={nextRef}>{nextContent}</div></aside>
     </div>
     <Modal open={sheetOpen} title={selected ? `${labels[selected.type]} · ${selected.exchange ? selected.exchange.initiatorName + ' 与 ' + selected.exchange.targetName : roleFor(selected.roleId)?.displayName || '角色'}` : '详情'}
       description={selected ? dateTime(selected.at) : undefined} source={source} className="feed-dialog"

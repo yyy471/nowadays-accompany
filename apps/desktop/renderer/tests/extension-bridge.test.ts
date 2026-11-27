@@ -95,14 +95,18 @@ test('仅可信宿主点击派发共玩，导航前发起的共玩回执丢弃',
   const play = (isTrusted: boolean) => bridge.play({isTrusted} as MouseEvent, 'page', 'ui/index.html','roll','b');
   await play(false);
   assert.deepEqual(calls, []);
-  await play(true);
+  assert.deepEqual(await play(true), { type:'ext:coplay-result', action:'roll', ok:true, data:6 });
   const late = play(true);
   frame.dispatchEvent(new Event('load'));
-  await late;
+  assert.equal(await late, undefined);
   assert.equal(calls.length, 2);
   assert.deepEqual(calls[0], { version:'v1', action:'roll', coplay:true, roleId:'b', slot:'page', file:'ui/index.html', payload:null });
   assert.deepEqual(replies, [{ type:'ext:coplay-result', action:'roll', ok:true, data:6 }]);
   bridge.dispose();
+  const failing = bindSlotBridge(frame, 'dice', 'v2', () => {}, async () => { throw new ApiError('动作失败', 409, 'GAME_STOPPED'); });
+  assert.deepEqual(await failing.play({isTrusted:true} as MouseEvent, 'page', 'ui/index.html','roll','b'),
+    { type:'ext:coplay-result', action:'roll', ok:false, error:'GAME_STOPPED' });
+  failing.dispose();
 });
 
 test('卸载、换版和同一 contentWindow 再导航均丢弃迟到回包', async () => {

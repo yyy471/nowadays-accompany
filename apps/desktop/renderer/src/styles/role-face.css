@@ -1,0 +1,9 @@
+.role-face {
+  width: 30px; height: 30px; flex: none; display: grid; place-items: center; overflow: hidden;
+  border: 1px solid var(--nd-semantic-color-line-decorative);
+  border-radius: var(--nd-semantic-radius-round);
+  background: var(--nd-semantic-color-surface);
+  font-family: var(--nd-semantic-font-heading);
+}
+.role-face img { width: 100%; height: 100%; object-fit: contain; }
+.role-face img[data-preset] { object-fit: cover; object-position: center top; transform: translateY(4%) scale(2.8); transform-origin: center top; }

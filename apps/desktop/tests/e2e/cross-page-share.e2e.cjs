@@ -1,7 +1,8 @@
 'use strict';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const { xiachengPortraitFixture } = require('../helpers/paths.cjs');
+const path = require('node:path');
+const { xiachengPortraitFixture, testResultsDir } = require('../helpers/paths.cjs');
 const { check } = require('./settings-media-sheet.e2e.cjs');
 const { configControls, element, setValue } = require('../helpers/config-page-controls.cjs');
 
@@ -9,6 +10,7 @@ const roles = ['a', 'b'].map((roleId, i) => ({
   roleId, displayName: i ? '乙角色' : '甲角色', status: 'ready', isBuiltin: !!i,
   defaultWindowId: roleId + '-main',
 }));
+let engineeringStream;
 const notices = new Set();
 const chats = new Map();
 const shares = [];
@@ -32,6 +34,12 @@ function route(path, req, res) {
     void rolesReady.promise.then(() => json({items: roles}));
     return true;
   }
+  if (path === '/v1/engineering/events') {
+    engineeringStream = res;
+    stream();
+    res.write('event: snapshot\ndata: ' + JSON.stringify([{jobId:'a1',extId:'index',title:'整理索引',startedAt:date}]) + '\n\n');
+    return true;
+  }
   if (path === '/v1/extension-events') {
     stream();
     const share = (id, summary) => res.write(`id: ${JSON.stringify({a: id})}\nevent: coplay-share\ndata: ${JSON.stringify({
@@ -44,6 +52,7 @@ function route(path, req, res) {
       assert.equal(req.headers['last-event-id'], '{"a":1}');
       share(2, '断流期间的共玩');
       share(2, '断流期间的共玩');
+      res.write('event: notice\ndata: ' + JSON.stringify({extId:'labels',version:'1',message:'工具已打开'}) + '\n\n');
       rolesReady.resolve();
     }
     return true;
@@ -79,9 +88,9 @@ function route(path, req, res) {
   return false;
 }
 
-function publish(id, source = 'autonomy_share') {
+function publish(id, source = 'autonomy_share', summary = id) {
   if (source === 'autonomy_share' && !shares.includes(id)) shares.push(id);
-  const payload = {source, roleId: 'b', windowId: 'b-main', messageId: id, summary: id, homeAssetId: 'home'};
+  const payload = {source, roleId: 'b', windowId: 'b-main', messageId: id, summary, homeAssetId: 'home'};
   for (const res of notices) res.write(`id: ${shares.length}\nevent: share\ndata: ${JSON.stringify(payload)}\n\n`);
 }
 
@@ -101,13 +110,69 @@ check(async ({cmd, ev, until, errors}) => {
   await until(async () => !await has(card), '共玩重放按消息号去重');
 
   // 真正编辑配置纸笺，取消离开后可继续原编辑。
+  await cmd('Emulation.setDeviceMetricsOverride', {width:720,height:540,deviceScaleFactor:1,mobile:false});
+  await until(() => ev("innerWidth===720 && innerHeight===540 && !!document.querySelector('.extension-overlays')"), '窄屏统一浮层');
   await tab('模型');
   await openRoleRow('model:chat');
   await ev(setValue(element('.config-sheet input'), '草稿模型'));
   await ev("document.querySelector('.config-sheet input').focus(); window.prompts=[]; window.confirm=msg=>{prompts.push(msg);return false}");
-  publish('草稿中的分享');
-  await waitCard('草稿中的分享');
+  const summary = '窗外的梧桐开始落叶了，我把今天的见闻写在这里。'.repeat(12);
+  publish('草稿中的分享', 'autonomy_share', summary);
+  await waitCard(summary);
   assert.equal(await ev("document.activeElement===document.querySelector('.config-sheet input')"), true);
+  await ev("Promise.allSettled(document.querySelector('.config-sheet').getAnimations().map(a=>a.finished))");
+  const clearance = await ev(`(() => {
+    const rect = s => document.querySelector(s).getBoundingClientRect();
+    const hit = s => {
+      const el = document.querySelector(s), r = rect(s);
+      const top = document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
+      return el.contains(top) || [r.toJSON(), top?.className];
+    };
+    const left = rect('.studio-floating-column'), right = rect('.share-slip');
+    const text = document.querySelector('.share-slip p');
+    text.scrollTop = text.scrollHeight;
+    return {height:left.height, gap:right.left-left.right, share:hit('${open}'), closeShare:hit('[aria-label="关闭分享提示"]'),
+      scroll:text.scrollTop, shareWidth:right.width, shareHeight:right.height,
+      save:hit('.config-sheet .config-save-btn'), close:hit('.config-sheet-x'), dock:hit('.ui-menu-trigger')};
+  })()`);
+  assert.ok(clearance.height<=192 && clearance.gap>=32, JSON.stringify(clearance));
+  assert.ok(clearance.shareHeight <= 144 && clearance.shareWidth === 320 && clearance.gap === 32 && clearance.scroll > 0, JSON.stringify(clearance));
+  console.log('窄屏浮层', JSON.stringify(clearance));
+  await ev("document.querySelector('.share-slip p').scrollTop=0");
+  const stageDir = path.join(testResultsDir, 'frontend-refinement-stage2');
+  fs.mkdirSync(stageDir, {recursive:true});
+  fs.writeFileSync(path.join(stageDir, 'share-720x540-draft.png'), Buffer.from((await cmd('Page.captureScreenshot', {format:'png'})).data, 'base64'));
+  assert.ok([clearance.share,clearance.closeShare,clearance.save,clearance.close,clearance.dock].every(value => value === true), JSON.stringify(clearance));
+  await click(element('.ui-menu-trigger'));
+  await until(() => ev(`(() => {
+    const items=[...document.querySelectorAll('.ui-menu-panel .ui-menu-item')];
+    return items.length && items.every(item => {
+      const r=item.getBoundingClientRect();
+      return item.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));
+    });
+  })()`), '纸笺与左右浮层同时显示时更多菜单可命中');
+  await ev("Promise.all(document.querySelector('.ui-menu-panel').getAnimations().map(a=>a.finished))");
+  const menuGap = await ev("document.querySelector('.ui-menu-trigger').getBoundingClientRect().top - document.querySelector('.ui-menu-panel').getBoundingClientRect().bottom");
+  assert.ok(Math.abs(menuGap - 8) < 1, '更多菜单向上展开，距触发器 8px');
+  const key = async (key, code) => {
+    for (const type of ['keyDown','keyUp']) await cmd('Input.dispatchKeyEvent', {type,key,windowsVirtualKeyCode:code});
+  };
+  await key('Escape', 27);
+  await until(() => ev("document.activeElement.matches('.ui-menu-trigger') && !document.querySelector('.ui-menu-panel')"), '关闭菜单归还焦点');
+  await key('ArrowUp', 38);
+  await until(() => ev("document.activeElement===document.querySelector('.ui-menu-item:last-child')"), '向上进入末项');
+  await key('ArrowDown', 40);
+  assert.equal(await ev("document.activeElement===document.querySelector('.ui-menu-item:first-child')"), true);
+  await key('End', 35);
+  assert.equal(await ev("document.activeElement===document.querySelector('.ui-menu-item:last-child')"), true);
+  await key('Escape', 27);
+  await click("[...document.querySelectorAll('.extension-overlays button')].find(b=>b.textContent.includes('关闭提示'))");
+  engineeringStream.write('event: snapshot\ndata: []\n\n');
+  await until(() => ev("!document.querySelector('.studio-floating-column > *')"), '两项左下反馈都结束');
+  assert.equal(await ev(`['.config-sheet-x','.config-save-btn','.ui-menu-trigger','${open}'].every(selector => {
+    const button = document.querySelector(selector), box = button.getBoundingClientRect();
+    return button.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2));
+  })`), true, '仅右下分享在场时纸笺和底栏仍可点');
   const point = await ev(`(() => {
     const target = document.querySelector('${open}');
     const r = target.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
@@ -122,6 +187,7 @@ check(async ({cmd, ev, until, errors}) => {
   await ev('window.confirm=()=>true');
   await click(element(open));
   await locate('草稿中的分享');
+  await cmd('Emulation.setDeviceMetricsOverride', {width:1280,height:800,deviceScaleFactor:1,mobile:false});
   assert.equal(await has(card), false);
   publish('主窗口中的分享');
   await ev("document.querySelector('.dialogue-role-switch button').click()");
@@ -130,7 +196,13 @@ check(async ({cmd, ev, until, errors}) => {
   assert.equal(await has(card), false);
   const ongoing = chats.get('a');
   await until(() => has('.dialogue-advance-bar'), '普通角色正在生成');
+  await click(element('[aria-label="演出设置"]'));
+  await until(() => has('[role="dialog"]'), '打开全局弹窗');
   publish('生成期间的分享');
+  await waitCard('生成期间的分享');
+  assert.equal(await ev("!!document.querySelector('.share-slip').closest('[inert][aria-hidden=true]')"), true);
+  await click(element('[role="dialog"] [aria-label="关闭弹窗"]'));
+  await until(async () => !await has('[role="dialog"]'), '恢复背景交互');
   await waitCard('生成期间的分享');
   assert.equal(chats.get('a'), ongoing);
   await click(element('[aria-label="关闭分享提示"]'));
@@ -146,7 +218,11 @@ check(async ({cmd, ev, until, errors}) => {
   assert.equal(chats.get('a'), ongoing);
   assert.equal(writes.some(p => p.endsWith('/cancel') || p.endsWith('/messages')), false);
   await click(element(open));
-  await locate('同页跳转');
+  try { await locate('同页跳转'); }
+  catch (error) {
+    console.error('分享定位现场', {messages:shares, windows:[...chats.keys()], view:await ev('document.body.innerText.slice(-1200)')});
+    throw error;
+  }
 
   await click(element('.ui-studio-brand'));
   await until(() => ev("document.querySelector('.studio-shell').dataset.page==='home'"), '主页');

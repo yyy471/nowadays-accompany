@@ -128,7 +128,6 @@ export function ConversationStage({
       <PhotoDevelopment state={regenerating ? 'pending' : 'failed'} reason={sceneFailure} onRetry={() => onRegenerate(visible)} />
     </div> : null}
     <div key={showCue ? current?.id : undefined} className="dialogue-stage-cue" aria-hidden="true" data-live={showCue ? 'cue' : ''} />
-    <i className="dialogue-sun-beam" aria-hidden="true" />
     {visible ? <div className="dialogue-scene-actions">
       <Button size="sm" className="dialogue-scene-dismiss" onClick={onDismiss}>收起过场图</Button>
       <Button size="sm" className="dialogue-scene-regenerate" aria-disabled={regenerating || undefined}

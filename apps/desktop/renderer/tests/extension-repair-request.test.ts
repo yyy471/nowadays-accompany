@@ -55,11 +55,35 @@ test('同一窗口和扩展只重试当前完整故障，恢复、换版和移�
   reconcile([a]);
   await send(seat, a);
   assert.equal(ids[0], ids[1]);
-  await send(seat, b);
-  await send(seat, a);
+  reconcile([b]); await send(seat, b);
+  reconcile([a]); await send(seat, a);
   for (const snapshot of [[item], [{ ...a, version: 'v2' }], []]) {
     reconcile(snapshot);
     await send(seat, a);
   }
   assert.equal(new Set(ids.slice(1)).size, ids.length - 1);
+});
+
+test('在途与送达状态按窗口和故障复用，旧故障的迟到结果不覆盖下一次故障', async t => {
+  const fault = { ...item, status: 'failed' };
+  const next = { ...fault, version: 'v2' };
+  const first = Promise.withResolvers<Response>();
+  let calls = 0;
+  const post = t.mock.method(globalThis, 'fetch', async () => ++calls === 1 ? first.promise : Response.json({}));
+  const repairs = createRepairSender();
+  const flight = repairs.send(seat, fault);
+  assert.equal(repairs.read(seat, fault)?.flight, flight);
+  assert.equal(repairs.send(seat, fault), flight);
+  repairs.reconcile([next]);
+  await repairs.send(seat, next);
+  await repairs.send(seat, next);
+  first.resolve(Response.json({}));
+  await flight;
+  assert.equal(repairs.read(seat, fault), undefined);
+  assert.ok(repairs.read(seat, next)?.result?.sent);
+  assert.equal(post.mock.callCount(), 2);
+  await repairs.send({ ...seat, defaultWindowId: 'another' }, next);
+  assert.equal(post.mock.callCount(), 3);
+  repairs.reconcile([]);
+  assert.equal(repairs.read(seat, next), undefined);
 });

@@ -676,9 +676,9 @@ async function run() {
   await clickWhen(sheetButton('添加'));
   await waitService('文件工具');
   const extension = (await request('/v1/resources')).items.find(item => item.name === '文件工具');
-  await returnRole();
-  await tab('扩展');
-  await openRoleRow('ext:mcp');
+  await clickWhen(button('去角色配置启用', '.config-prose:not([hidden])'));
+  await until(() => ev("document.querySelector('.config-toggle-row[data-located]')?.innerText.includes('文件工具')"), '导入资源定位');
+  assert.equal(await ev(`${field('[role=switch][aria-label="为角色开启文件工具"]')}.getAttribute('aria-checked')`), 'false');
   await clickWhen(field('[role=switch][aria-label="为角色开启文件工具"]'));
   await clickWhen(saveButton(true), 'pause for extension binding');
   await until(async () => (await request(`/v1/roles/${roleA.roleId}/bindings`)).items.some(item => item.resourceId === extension.resourceId && item.enabled), 'ext-saved-real');
@@ -817,12 +817,29 @@ async function run() {
   const inFlightEdit1 = comfyB.holdNextPrompt('r06-inflight-edit-1-prompt');
   await until(() => ev(previewReady), 'r06-preview-focusable-before-start');
   await ev(`${previewButton}.focus({ preventScroll: true })`);
+  await ev(`(() => {
+    const button = ${previewButton};
+    const timing = window.previewBusyTiming = {};
+    button.addEventListener('click', () => {timing.start = performance.now()}, {capture:true, once:true});
+    const observer = new MutationObserver(() => {
+      if (!button.matches('[aria-busy=true][aria-disabled=true]')) return;
+      const spinner = !!button.querySelector('.spinner');
+      timing.initialSpinner ??= spinner;
+      if (spinner) { timing.shown = performance.now() - timing.start; observer.disconnect(); }
+    });
+    observer.observe(button, {attributes:true,childList:true,subtree:true});
+  })()`);
   const promptsBeforeFirstClick = comfyB.prompts.length;
   await clickWhen(previewButton);
   await inFlightEdit1.arrived;
   await until(() => ev(previewPending), 'r06-inflight-busy-1');
   assert.equal(await ev(`document.activeElement === ${previewButton}`), true, '出图等待期间应保留测试按钮的焦点');
   assert.equal(await ev(`${previewButton}.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))`), false, '等待期间应拦截重复提交');
+  await until(() => ev("window.previewBusyTiming.shown > 0"), '持续忙碌显示 spinner');
+  const spinnerTiming = await ev('window.previewBusyTiming');
+  assert.equal(spinnerTiming.initialSpinner, false);
+  assert.ok(spinnerTiming.shown >= 300, JSON.stringify(spinnerTiming));
+  console.log('测试生图按钮', JSON.stringify(spinnerTiming));
   await setInput("document.querySelector('.config-sheet .nd-image-preview input')", '雨夜霓虹街景');
   await until(() => ev(previewReady), 'r06-button-restored-after-prompt-edit');
   inFlightEdit1.release();

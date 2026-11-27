@@ -23,6 +23,8 @@
 .role-entry-card:active { transform: translateY(var(--nd-semantic-motion-detail-press-offset)); transition-duration: var(--nd-semantic-motion-micro); transition-timing-function: var(--nd-semantic-motion-ease-out); }
 .role-entry-card:focus-visible { outline: var(--nd-component-focus-width) solid var(--nd-component-focus-color); outline-offset: var(--nd-component-focus-offset); }
 .role-entry-figure { position: relative; display: grid; min-width: 0; width: 100%; max-height: 35dvh; aspect-ratio: 4 / 5; overflow: hidden; border: 1px solid var(--nd-semantic-color-line-decorative); border-radius: var(--nd-semantic-radius-surface); background: var(--nd-semantic-color-canvas); }
+.role-entry-seal { display: none; position: absolute; inset: auto 4px 4px auto; padding: 1px 5px; border: 1px solid currentColor; border-radius: var(--nd-semantic-radius-tick); color: var(--nd-semantic-color-entry); background: var(--nd-semantic-color-surface); font: var(--nd-semantic-type-caption-size)/var(--nd-semantic-type-caption-line) var(--nd-semantic-font-title); letter-spacing: .1em; }
+.role-entry-card[aria-pressed="true"] .role-entry-seal { display: block; }
 .role-entry-figure .config-portrait { display: grid; place-items: center; width: 100%; height: 100%; min-height: 0; }
 .role-entry-figure .config-portrait img { width: 100%; height: 100%; object-fit: contain; }
 .role-entry-figure .config-portrait span { color: var(--nd-semantic-color-text-muted); font-size: var(--nd-semantic-type-caption-size); }

@@ -2,11 +2,12 @@ import { createContext, useCallback, useContext, useEffect, useLayoutEffect, use
 import { flushSync } from 'react-dom';
 import { UiThemeProvider } from './appearance';
 import { createThemeTransition, type ThemeTransitionStrategy } from './theme-transition';
-import { ThemeWeather } from './theme-weather';
 import './theme-transition.css';
 
+import { readThemePreset } from './theme-storage';
+
 export type ThemePreset = 'daylight' | 'nightwave';
-const STORAGE_KEY = 'nowadays.theme-preset.v1';
+export { readThemePreset } from './theme-storage';
 type PresetContextValue = {
   preset: ThemePreset;
   requestedPreset: ThemePreset;
@@ -15,16 +16,9 @@ type PresetContextValue = {
 };
 const PresetContext = createContext<PresetContextValue>({ preset: 'daylight', requestedPreset: 'daylight', select() {}, registerTransitionStrategy: () => () => {} });
 
-/** 只保存本机外观偏好，不写账号配置，不发送业务请求。 */
-export function readThemePreset(): ThemePreset {
-  try { return window.localStorage.getItem(STORAGE_KEY) === 'nightwave' ? 'nightwave' : 'daylight'; }
-  catch { return 'daylight'; }
-}
-
 export function ThemePresetProvider({ children }: { children: ReactNode }) {
   const [preset, setPreset] = useState<ThemePreset>(readThemePreset);
   const [requestedPreset, setRequestedPreset] = useState(preset);
-  const [weather, setWeather] = useState<ThemePreset>();
   const transition = useRef<ReturnType<typeof createThemeTransition> | undefined>(undefined);
   const strategy = useRef<ThemeTransitionStrategy | undefined>(undefined);
   useLayoutEffect(() => {
@@ -35,8 +29,8 @@ export function ThemePresetProvider({ children }: { children: ReactNode }) {
     return () => { delete document.documentElement.dataset.uiPreset; };
   }, [preset]);
   useEffect(() => {
-    const controller = createThemeTransition(readThemePreset(), (next, decoration) => {
-      flushSync(() => { setPreset(next); setWeather(decoration); });
+    const controller = createThemeTransition(readThemePreset(), next => {
+      flushSync(() => setPreset(next));
     }, strategy.current);
     transition.current = controller;
     return () => { controller.dispose(); transition.current = undefined; };
@@ -54,7 +48,7 @@ export function ThemePresetProvider({ children }: { children: ReactNode }) {
       transition.current?.setStrategy(undefined);
     };
   }, []);
-  return <PresetContext.Provider value={{ preset, requestedPreset, select, registerTransitionStrategy }}><UiThemeProvider theme="xiacheng" preset={preset}>{children}{weather && <ThemeWeather preset={weather}/>}</UiThemeProvider></PresetContext.Provider>;
+  return <PresetContext.Provider value={{ preset, requestedPreset, select, registerTransitionStrategy }}><UiThemeProvider theme="xiacheng" preset={preset}>{children}</UiThemeProvider></PresetContext.Provider>;
 }
 
 export function useThemePreset() { return useContext(PresetContext); }

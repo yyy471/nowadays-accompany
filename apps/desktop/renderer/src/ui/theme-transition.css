@@ -1,25 +1,27 @@
-.ui-theme-weather { position: fixed; inset: 0; pointer-events: none; overflow: clip; contain: layout style; }
-.ui-theme-leaf { position: absolute; width: 38px; height: 57px; color: var(--nd-semantic-color-accent-decorative); }
-.ui-theme-leaf-1 { right: 4%; top: 8%; view-transition-name: theme-leaf-1; }
-.ui-theme-leaf-2 { right: 1%; top: 25%; width: 26px; height: 39px; color: var(--nd-semantic-color-entry); view-transition-name: theme-leaf-2; }
-.ui-theme-leaf-3 { right: 12%; top: 3%; width: 31px; height: 47px; view-transition-name: theme-leaf-3; }
-.ui-theme-dawn {
-  position: absolute; inset: 0; view-transition-name: theme-dawn; transform-origin: left bottom;
-  background: radial-gradient(ellipse at 0% 100%, var(--nd-semantic-color-warning-surface), var(--nd-semantic-color-selection) 24%, transparent 68%);
+@property --theme-edge {
+  syntax: '<percentage>';
+  inherits: true;
+  initial-value: -8%;
 }
-/* 命名快照位于浏览器过渡层；整个层透传输入，编辑器和焦点仍属于真实DOM。 */
-html[data-theme-transition]::view-transition { pointer-events: none; }
+.theme-snapshot, .theme-feather {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+.theme-snapshot { z-index: var(--nd-semantic-layer-theme-transition); }
+.theme-feather {
+  --theme-direction: to bottom;
+  mask-image: linear-gradient(var(--theme-direction), transparent calc(var(--theme-edge) - 8%), currentColor calc(var(--theme-edge) + 8%));
+}
+.theme-feather[data-direction="up"] { --theme-direction: to top; }
+.theme-feather::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(var(--theme-direction), transparent calc(var(--theme-edge) - 8%),
+    color-mix(in srgb, var(--nd-semantic-color-accent-decorative) 10%, transparent) var(--theme-edge),
+    transparent calc(var(--theme-edge) + 8%));
+}
+/* 旧页已处于展开态；复制历史层或纸笺时不重播入场。 */
+.config-theme-veil *, .config-theme-veil *::before, .config-theme-veil *::after { animation: none !important; }
 html[data-theme-transition] * { transition: none !important; }
-html[data-theme-transition-live] { view-transition-name: none; }
-html[data-theme-transition]::view-transition-group(*),
-html[data-theme-transition]::view-transition-image-pair(*),
-html[data-theme-transition]::view-transition-old(*),
-html[data-theme-transition]::view-transition-new(*) { animation: none; mix-blend-mode: normal; pointer-events: none; }
-html[data-theme-transition]::view-transition-group(root) { z-index: 0; }
-html[data-theme-transition]::view-transition-image-pair(root) { isolation: isolate; }
-html[data-theme-transition]::view-transition-old(root) { opacity: 1; }
-html[data-theme-transition]::view-transition-group(theme-leaf-1),
-html[data-theme-transition]::view-transition-group(theme-leaf-2),
-html[data-theme-transition]::view-transition-group(theme-leaf-3),
-html[data-theme-transition]::view-transition-group(theme-dawn) { z-index: 1; }
-html[data-theme-transition]::view-transition-new(theme-dawn) { transform-origin: left bottom; }

@@ -79,7 +79,7 @@ export function RoleEntry({
                 onClick={() => setSelected(role.roleId)}
                 onDoubleClick={() => onEnter(role.roleId)}
               >
-                <span className="role-entry-figure"><RolePortrait roleId={role.roleId}/></span>
+                <span className="role-entry-figure"><RolePortrait roleId={role.roleId}/><span className="role-entry-seal" aria-hidden="true">此位</span></span>
                 <span className="role-entry-meta">
                   <span className="role-entry-name"><strong title={role.displayName}>{role.displayName}</strong>{entryBadge(role) && <em>{entryBadge(role)}</em>}</span>
                   <span className="role-entry-bio">{entrySubtitle(role)}</span>

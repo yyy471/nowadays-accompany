@@ -1,3 +1,4 @@
+import { PaperSkeleton } from '../components/PaperSkeleton';
 import { Fragment, useEffect, useId, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import type { RoleListItem } from '../types';
 import { Button, IconButton, UiThemeScope, readMotionTime, useMotionPolicy } from '../ui';
@@ -174,6 +175,7 @@ export function Relations({ roles, error, currentId, visit, onSelect, onOpenSett
     return () => document.removeEventListener('keydown', onKey);
   });
 
+  const firstPacketRead = loadingPacket && !packet && !displayedUi.error;
   const memoriesLoading = !!packet && (packet.pending.events || packet.pending.summaries);
   const previewEvent = packet?.events[0]?.title || (packet ? (memoriesLoading ? '正在读取' : packet.memoryError ? '经历暂时无法读取' : '还没有经历') : '正在读取');
   const previewDiary = packet?.diaries[0]?.title ? `「${packet.diaries[0].title}」` : (packet ? (packet.pending.diaries ? '正在读取' : packet.diaryError ? '日记暂时无法读取' : '还没有日记') : '正在读取');
@@ -226,6 +228,7 @@ export function Relations({ roles, error, currentId, visit, onSelect, onOpenSett
                 <i className="tape" aria-hidden="true" />
                 {packet?.portraitUrl && !portraitFailed
                   ? <img key={packet.portraitUrl} src={packet.portraitUrl} alt={`${profile.name}的主页立绘`} onError={() => setPortraitFailed(true)} />
+                  : firstPacketRead ? <div className="portrait-empty">正在读取立绘…</div>
                   : <div className="portrait-empty">{currentId ? '暂无立绘' : '还没有角色'}</div>}
                 <span className="portrait-tint" aria-hidden="true" />
                 <span className="photo-caption"><span className="day-only">本页请来的人</span><span className="night-only">留在这一页的人</span></span>
@@ -242,7 +245,8 @@ export function Relations({ roles, error, currentId, visit, onSelect, onOpenSett
             <div className="home-eyebrow"><span className="day-only">A NOTE FOR OUR DAYS</span><span className="night-only">STAY A LITTLE, LISTEN A LITTLE</span></div>
             <h1>把日常，<br /><span>收进这一页。</span></h1>
             <p>一张人物藏书票，几页一起走过的日常。</p>
-            <div className="quiet-note"><span className="day-only">还有一些空白，留给以后。</span><span className="night-only">白天没说完的话，今晚也有人听。</span></div>
+            {firstPacketRead ? <PaperSkeleton label="正在读取这一页…"/> :
+              <div className="quiet-note"><span className="day-only">还有一些空白，留给以后。</span><span className="night-only">白天没说完的话，今晚也有人听。</span></div>}
             <div className="postmark" aria-hidden="true"><div>日常<br /><b>藏本</b></div><svg viewBox="0 0 160 50"><path d="M0 14c25-18 35 18 65 0s40 18 90 0M0 26c25-18 35 18 65 0s40 18 90 0M0 38c25-18 35 18 65 0s40 18 90 0" /></svg></div>
           </div>
         </div> : <section className={'inner-view view' + (enter && enter !== 'home' ? ` enter-${enter}` : '')} aria-labelledby="inner-title">
@@ -273,7 +277,7 @@ export function Relations({ roles, error, currentId, visit, onSelect, onOpenSett
             </header>
             <div id="reading-content" data-testid="reading" data-role-id={packet?.roleId ?? ''}>
               {(error || (!loadingPacket && ui.error)) && <p className="status-line error" role="alert">{error || ui.error}</p>}
-              {loadingPacket && <p className={packet ? 'sr-only' : 'status-line'} role="status">{packet ? '正在更新藏页…' : '正在读取这一页…'}</p>}
+              {loadingPacket && (packet || displayedUi.error ? <p className="sr-only" role="status">正在更新藏页…</p> : <PaperSkeleton label="正在读取这一页…"/>)}
               {ui.view === 'experiences' && packet && <>
                 <p className="chapter-intro">翻开一条经历，可以回看其中记下的感受和原始记录。</p>
                 <Button size="sm" onClick={e => setCorrection({ roleId: currentId, target: null, source: e.currentTarget })}>查找并更正记忆</Button>

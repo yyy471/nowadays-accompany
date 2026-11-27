@@ -1,8 +1,6 @@
 "use strict";
 
-// 换光验收：真实 Electron + 隔离假服务，实拍对话页日夜切换的中间帧，
-// 并确认关系页仍是原来的折页刻度（快照推进方案已回滚）。
-// 仓库根目录运行：node apps/desktop/tests/theme-transition-check.cjs
+// Electron 换光验收：在真实渲染进程内观测点击、羽化、折页与图层清理。
 const http = require('node:http');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
@@ -12,7 +10,7 @@ const assert = require('node:assert/strict');
 const { resolveElectronExecutable } = require('../helpers/electron-executable.cjs');
 
 const { repoRoot: root, desktopDir, xiachengPortraitFixture, testResultsDir } = require('../helpers/paths.cjs');
-const results = path.join(testResultsDir, 'theme-transition');
+const results = path.join(testResultsDir, 'frontend-refinement-stage2');
 fs.mkdirSync(results, { recursive: true });
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'theme-transition-'));
 const now = '2026-11-09T10:00:00.000Z';
@@ -37,6 +35,7 @@ function json(res, value, status = 200) {
   res.end(JSON.stringify(value));
 }
 
+let healthy = true, microPageLoads = 0;
 const server = http.createServer((req, res) => {
   let raw = '';
   req.on('data', chunk => { raw += chunk; });
@@ -44,7 +43,17 @@ const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     const p = url.pathname;
     const role = roles.find(item => p.includes(`/roles/${item.roleId}`)) ?? roles[0];
-    if (p === '/v1/health') return json(res, { status: 'ok', version: 'test' });
+    if (p === '/v1/health') return json(res, { status: healthy ? 'ok' : 'unavailable', version: 'test' }, healthy ? 200 : 503);
+    if (p === '/v1/extension-events') {
+      res.writeHead(200, { 'content-type':'text/event-stream', 'access-control-allow-origin':'*' });
+      res.write('event: snapshot\ndata: ' + JSON.stringify([{extId:'theme-sample',status:'enabled',version:'v1',ui:[{slot:'page',file:'ui/index.html'}]}]) + '\n\n');
+      return;
+    }
+    if (p === '/v1/extensions/theme-sample/ui/index.html') {
+      microPageLoads++;
+      res.writeHead(200, {'content-type':'text/html; charset=utf-8'});
+      return res.end('<!doctype html><title>书签</title><p>今日书签</p>');
+    }
     if (p === '/v1/roles') return json(res, { items: roles });
     if (p === `/v1/roles/${role.roleId}`) return json(res, { ...role, definition: { text: `${role.displayName}的介绍`, payload: {} }, definitionRevision: 1 });
     if (p.endsWith('/appearance/outfits')) return json(res, { items: [{ outfitId: 'o', roleId: role.roleId, name: '服饰', home: { assetId: 'portrait', outfitId: 'o', usage: 'home' }, sprites: [] }] });
@@ -104,13 +113,97 @@ async function shot(name) {
 }
 const themeButton = label => `[...document.querySelectorAll('.ui-theme-switcher button')].find(x=>x.textContent.includes('${label}'))`;
 
-async function burst(prefix, count, gap) {
-  for (let index = 0; index < count; index += 1) {
-    const at = Date.now();
-    await shot(`${prefix}-${String(index + 1).padStart(2, '0')}.png`);
-    timeline.push(`${prefix}-${index + 1} ${Date.now() - at}ms 截图`);
-    await delay(gap);
+// 以下探针在渲染进程内运行。点击、提交和节点移除共用 performance.now()。
+function observeSwitch(to, fold) {
+  const root = document.documentElement;
+  const history = document.querySelector('.dialogue-history[data-open]');
+  const selector = fold ? '.fold-morph i' : '.theme-snapshot';
+  const present = () => !!document.querySelector(selector);
+  const result = { to, dpr: devicePixelRatio, visibility: document.visibilityState, frames: [], ripple: false };
+  return new Promise((resolve, reject) => {
+    let start, raf;
+    const timeout = setTimeout(() => { cleanup(); reject(Error('THEME_CLEANUP_TIMEOUT')); }, 2400);
+    const observer = new MutationObserver(() => {
+      if (!present()) {
+        result.elapsed = performance.now() - start;
+        result.final = root.dataset.uiPreset;
+        result.clean = !document.querySelector('.theme-snapshot,.fold-morph i,.exlibris-ripple,.collection.illuminating')
+          && !root.hasAttribute('data-switching') && !root.hasAttribute('data-theme-transition');
+        result.history = !history || history === document.querySelector('.dialogue-history[data-open]');
+        cleanup();
+        resolve(result);
+      }
+    });
+    function cleanup() { clearTimeout(timeout); cancelAnimationFrame(raf); observer.disconnect(); }
+    function sample() {
+      if (!present()) return;
+      result.firstFrameMs ??= performance.now() - start;
+      result.ripple ||= !!document.querySelector('.exlibris-ripple');
+      if (fold) {
+        const bars = [...document.querySelectorAll(selector)];
+        const strip = document.querySelector('.edition-strip');
+        const day = getComputedStyle(strip.querySelector('.letter-strip'));
+        const night = getComputedStyle(strip.querySelector('.glass'));
+        if (!result.bars) {
+          const ticks = [...strip.querySelectorAll('.scale-ticks i')].map(i => i.getBoundingClientRect()).filter(r => r.width);
+          const rect = strip.getBoundingClientRect(), parent = strip.parentElement;
+          result.stripVisible = rect.height > 0 && rect.width > 0 && parent.querySelector('.breadcrumb').getBoundingClientRect().right <= rect.left && rect.right <= parent.querySelector('.folio').getBoundingClientRect().left;
+          result.bars = bars.length;
+          result.aligned = bars.length === ticks.length && bars.every((bar, i) => Math.abs(parseFloat(bar.style.getPropertyValue('--tick-x')) - ticks[i].left) < 1);
+          result.lastTick = bars.at(-1).getAnimations()[0]?.effect.getComputedTiming().endTime;
+          result.fade = [parseFloat(day.transitionDuration), parseFloat(night.transitionDuration)];
+        }
+        result.crossfade ||= Number(day.opacity) > .01 && Number(day.opacity) < .99 && Number(night.opacity) > .01 && Number(night.opacity) < .99;
+        if (!result.commit && root.dataset.uiPreset === to) result.commit = performance.now() - start;
+      } else {
+        const feather = document.querySelector('.theme-feather'), style = getComputedStyle(feather);
+        const edge = parseFloat(style.getPropertyValue('--theme-edge'));
+        if (edge > 0 && edge < 100) {
+          result.frames.push(edge);
+          result.direction = style.getPropertyValue('--theme-direction').trim();
+          result.mask = style.maskImage;
+          result.warm = getComputedStyle(feather, '::after').backgroundImage;
+          result.historyDuring = !history || (history.isConnected && !!feather.querySelector('.dialogue-history[data-open]'));
+          result.iframes = feather.querySelectorAll('iframe').length;
+        }
+      }
+      raf = requestAnimationFrame(sample);
+    }
+    const button = document.querySelector('.ui-theme-switcher [data-theme-choice="' + to + '"]');
+    button.addEventListener('click', () => { start = performance.now(); }, { once: true, capture: true });
+    observer.observe(document.body, { subtree: true, childList: true, attributes: true });
+    button.click();
+    result.clickMs = performance.now() - start;
+    if (!present()) { cleanup(); reject(Error('THEME_LAYER_MISSING ' + JSON.stringify(result))); return; }
+    raf = requestAnimationFrame(sample);
+  });
+}
+
+async function measure(page, to, count) {
+  const v = await ev('(' + observeSwitch.toString() + ')(' + JSON.stringify(to) + ',' + Boolean(count) + ')');
+  timeline.push(page + ' ' + JSON.stringify(v));
+  assert.equal(v.final, to);
+  assert.ok(v.clean && v.history && !v.ripple, JSON.stringify(v));
+  if (count) {
+    assert.ok(v.elapsed >= 800 && v.elapsed <= 900, JSON.stringify(v));
+    assert.equal(v.bars, count);
+    assert.ok(v.stripVisible && v.aligned && v.crossfade && v.fade.every(n => n > 0), JSON.stringify(v));
+    assert.ok(v.commit > 0 && v.commit < v.lastTick && v.lastTick >= 800 && v.lastTick <= v.elapsed, JSON.stringify(v));
+  } else {
+    assert.ok(v.elapsed <= 550 && v.frames.length > 1 && v.frames.at(-1) > v.frames[0], JSON.stringify(v));
+    assert.equal(v.direction, to === 'daylight' ? 'to bottom' : 'to top');
+    assert.match(v.mask, /linear-gradient/);
+    assert.match(v.warm, /linear-gradient/);
+    assert.ok(v.historyDuring && v.iframes === 0, JSON.stringify(v));
   }
+}
+
+// 截图单独走一次切换，截图编码和 CDP 往返均不进入时限断言。
+async function pictureSwitch(to, name) {
+  await ev("document.querySelector('[data-theme-choice=" + to + "]').click()");
+  await ev("new Promise(resolve=>{const tick=()=>{const el=document.querySelector('.theme-feather');if(!el || parseFloat(getComputedStyle(el).getPropertyValue('--theme-edge'))>28)resolve();else requestAnimationFrame(tick)};tick()})");
+  await shot(name);
+  await until(() => ev("!document.querySelector('.theme-snapshot')"));
 }
 
 async function run() {
@@ -141,145 +234,91 @@ async function run() {
     } else if (message.method === 'Runtime.exceptionThrown') errors.push(message.params.exceptionDetails.text);
   };
   await cmd('Runtime.enable');
+  // 并发 Electron 窗口可能互相遮挡，持续按用户正查看此页的状态测量可见帧。
+  await cmd('Emulation.setFocusEmulationEnabled', { enabled: true });
   await until(() => ev("!!document.querySelector('.ui-page-dock') && !!document.querySelector('.ui-theme-switcher')"));
-  await cmd('Emulation.setDeviceMetricsOverride', { width: 1280, height: 820, deviceScaleFactor: 1, mobile: false });
+  const resize = (width, height, deviceScaleFactor = 1) => cmd('Emulation.setDeviceMetricsOverride', {width, height, deviceScaleFactor, mobile:false});
+  const direct = label => ev("[...document.querySelectorAll('.ui-dock-item')].find(b=>b.textContent.includes(" + JSON.stringify(label) + ")).click()");
+  await cmd('Emulation.setEmulatedMedia', {features:[{name:'prefers-reduced-motion',value:'no-preference'}]});
+  await until(() => ev("document.querySelector('.studio-connection')?.dataset.state==='online' && document.fonts.status==='loaded'"));
+  // 原生窗口的首个样本从首页立绘就绪并绘制后开始，与后续页面使用同一点击计时口径。
+  await until(() => ev("document.querySelector('.home-scene-character')?.naturalWidth > 0"));
+  await ev('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+  const nativeWindow = await ev("({width:innerWidth,height:innerHeight,dpr:devicePixelRatio})");
+  timeline.push('Windows 原生窗口 ' + JSON.stringify(nativeWindow));
+  await measure('Windows 原生窗口', 'nightwave');
+  await pictureSwitch('daylight', 'native-dpi-dawn.png');
+  await resize(1280, 800);
+  await cmd('Emulation.setEmulatedMedia', {features: [{name:'prefers-reduced-motion', value:'no-preference'}]});
+  await until(() => ev("document.querySelector('.studio-connection')?.dataset.state === 'online'"));
+  healthy = false;
+  await ev("window.dispatchEvent(new Event('focus'))");
+  await until(() => ev("document.querySelector('.studio-connection')?.dataset.state === 'offline' && document.querySelector('.studio-runtime').textContent.includes('2 位角色')"));
+  healthy = true;
+  await ev("window.dispatchEvent(new Event('focus'))");
+  await until(() => ev("document.querySelector('.studio-connection')?.dataset.state === 'online'"));
+  await shot('home-1280x800-daylight.png');
+  await measure('桌面', 'nightwave');
+  await shot('home-1280x800-nightwave.png');
+  await measure('桌面', 'daylight');
 
-  await cmd('Emulation.setEmulatedMedia', {features: [{name: 'prefers-reduced-motion', value: 'no-preference'}]});
-  await ev(`${themeButton('晚风电台')}.click()`);
-  await until(() => ev(`document.getAnimations().some(animation =>
-    animation.effect?.pseudoElement === '::view-transition-old(root)' &&
-    animation.effect.getKeyframes().some(frame => Number(frame.opacity) === 0)
-  )`));
-  await ev("document.documentElement.dataset.motion='reduced'");
-  await until(() => ev("document.documentElement.dataset.uiPreset==='nightwave' && !document.documentElement.hasAttribute('data-theme-transition') && !document.querySelector('.ui-theme-weather')"));
-  await ev(`${themeButton('白昼来信')}.click()`);
-  await until(() => ev("document.documentElement.dataset.uiPreset==='daylight'"));
-  assert.equal(await ev("document.documentElement.hasAttribute('data-theme-transition')"), false);
-  await ev("delete document.documentElement.dataset.motion");
+  await ev("document.querySelector('.ui-menu-trigger').click()");
+  await ev("[...document.querySelectorAll('.ui-menu-item')].find(b=>b.textContent==='角色配置').click()");
+  await until(() => ev("document.querySelector('.studio-shell')?.dataset.page === 'role-config' && !!document.querySelector('.config-book')"));
+  await delay(600);
+  await measure('设置壳', 'nightwave');
+  await measure('设置壳', 'daylight');
 
-  // ---------- 关系页：保持原有折页刻度（快照推进方案已按用户意见回滚） ----------
-  await ev("[...document.querySelectorAll('.ui-dock-item')].find(x=>x.textContent.includes('关系')).click()");
+  await ev("document.querySelector('.ui-menu-trigger').click()");
+  await ev("[...document.querySelectorAll('.ui-menu-item')].find(b=>b.textContent==='扩展').click()");
+  await until(() => microPageLoads === 1 && ev("!!document.querySelector('iframe[data-extension-slot=page]')"));
+  await measure('扩展微页', 'nightwave');
+  await measure('扩展微页', 'daylight');
+  assert.equal(microPageLoads, 1, '两次切屏只加载一次活动微页');
+  await direct('关系');
   await until(() => ev("document.querySelector('.exlibris .collection')?.getBoundingClientRect().width > 1100"));
-  await delay(1200);
-  await shot('relations-day.png');
-  await ev(`${themeButton('晚风电台')}.click()`);
-  await delay(160);
-  const fold = await ev("JSON.stringify({mode:document.documentElement.dataset.themeTransition||'',bars:document.querySelectorAll('.fold-morph i').length,ripple:document.querySelectorAll('.exlibris-ripple').length,theme:document.querySelector('.exlibris')?.dataset.theme})");
-  timeline.push(`关系 夜切: ${fold}`);
-  assert.match(fold, /"mode":"relationship-journal"/);
-  assert.match(fold, /"bars":41/);
-  assert.match(fold, /"ripple":0/);
-  const stripAlignment = await ev("(()=>{const r=document.querySelector('.edition-strip').getBoundingClientRect(),bars=[...document.querySelectorAll('.fold-morph i')],x=e=>parseFloat(e.style.getPropertyValue('--tick-x'));return {left:r.left,right:r.right,first:x(bars[0]),last:x(bars[bars.length-1]),dayFade:getComputedStyle(document.querySelector('.edition-strip .letter-strip')).transitionDuration,nightFade:getComputedStyle(document.querySelector('.edition-strip .glass')).transitionDuration}})()");
-  assert.ok(stripAlignment.first >= stripAlignment.left && stripAlignment.last <= stripAlignment.right, `折页终点未对齐装饰条: ${JSON.stringify(stripAlignment)}`);
-  assert.ok(parseFloat(stripAlignment.dayFade) > 0 && parseFloat(stripAlignment.nightFade) > 0, `装饰条缺少淡入淡出: ${JSON.stringify(stripAlignment)}`);
-  await until(() => ev("(()=>{const day=Number(getComputedStyle(document.querySelector('.edition-strip .letter-strip')).opacity),night=Number(getComputedStyle(document.querySelector('.edition-strip .glass')).opacity);return day>.01&&day<.99&&night>.01&&night<.99})()"));
-  await shot('relations-fold.png');
-  await delay(1900);
-  await shot('relations-night.png');
-  const nightState = await ev("JSON.stringify({theme:document.querySelector('.exlibris')?.dataset.theme,transition:document.documentElement.dataset.themeTransition||'',ripple:document.querySelectorAll('.exlibris-ripple').length,illuminating:document.querySelector('.collection')?.classList.contains('illuminating')})");
-  timeline.push(`关系 夜: ${nightState}`);
-  assert.match(nightState, /"theme":"night"/);
-  assert.match(nightState, /"transition":""/);
-  assert.match(nightState, /"ripple":0/);
-  assert.match(nightState, /"illuminating":false/);
-
-  await ev(`${themeButton('白昼来信')}.click()`);
-  await delay(420);
-  await shot('relations-dawn.png');
-  await delay(1600);
-  await shot('relations-day-again.png');
-  const dayState = await ev("JSON.stringify({theme:document.querySelector('.exlibris')?.dataset.theme,transition:document.documentElement.dataset.themeTransition||'',ripple:document.querySelectorAll('.exlibris-ripple').length})");
-  timeline.push(`关系 昼: ${dayState}`);
-  assert.match(dayState, /"theme":"day"/);
-  assert.match(dayState, /"transition":""/);
-  assert.match(dayState, /"ripple":0/);
-
-  // ---------- 对话页 ----------
-  await ev("[...document.querySelectorAll('.ui-dock-item')].find(x=>x.textContent.includes('对话')).click()");
-  await until(() => ev("document.querySelectorAll('.dialogue-pane .dialogue-message').length >= 4"));
   await delay(900);
-  await shot('dialogue-day.png');
+  await measure('关系宽屏', 'nightwave', 41);
+  await shot('relations-1280x800-nightwave.png');
+  await resize(720, 540);
+  await measure('关系窄屏', 'daylight', 25);
+  await shot('relations-720x540-daylight.png');
   await ev(`${themeButton('晚风电台')}.click()`);
-  await delay(50);
-  const lighting = await ev("JSON.stringify({lighting:document.querySelector('.dialogue-page')?.dataset.lighting||'',dir:document.querySelector('.dialogue-page')?.dataset.lightDir||'',beam:!!document.querySelector('.dialogue-sun-beam')})");
-  timeline.push(`对话 50ms: ${lighting}`);
-  assert.match(lighting, /"dir":"dusk"/);
-  assert.match(lighting, /"beam":true/);
-  const beam = await ev("(()=>{const b=document.querySelector('.dialogue-sun-beam');const s=getComputedStyle(b);const r=b.getBoundingClientRect();return JSON.stringify({top:s.top,op:s.opacity,name:s.animationName,anim:b.getAnimations().length,h:Math.round(r.height),w:Math.round(r.width),y:Math.round(r.top)})})()");
-  timeline.push(`对话 光线: ${beam}`);
-  assert.match(beam, /"name":"dialogue-beam-down"/);
-  const rowSweep = await until(() => ev(`(() => {
-    const pane = document.querySelector('.dialogue-pane.sweeping');
-    if (!pane) return false;
-    const progress = Number(pane.style.getPropertyValue('--band'));
-    if (progress <= 0 || progress >= 1) return false;
-    const bounds = pane.getBoundingClientRect();
-    const visible = [...pane.querySelectorAll('.dialogue-message')].filter(row => {
-      const box = row.getBoundingClientRect();
-      return box.bottom > bounds.top && box.top < bounds.bottom;
-    });
-    const latestFlipped = visible.findLast(row => row.classList.contains('flipped'));
-    const earliestPending = visible.find(row => !row.classList.contains('flipped'));
-    if (!latestFlipped || !earliestPending) return false;
-    const paperColor = row => getComputedStyle(row).getPropertyValue('--dlg-paper').trim();
-    const transform = getComputedStyle(pane, '::before').transform;
-    return { progress, transformScale: new DOMMatrixReadOnly(transform).d,
-      ordered: latestFlipped.getBoundingClientRect().top < earliestPending.getBoundingClientRect().top,
-      distinctPaper: paperColor(latestFlipped) !== paperColor(earliestPending) };
-  })()`), 4500);
-  assert.ok(rowSweep.ordered && rowSweep.distinctPaper && Math.abs(rowSweep.transformScale - rowSweep.progress) < .001, `对话未逐行换色: ${JSON.stringify(rowSweep)}`);
-  timeline.push(`对话 逐行: ${JSON.stringify(rowSweep)}`);
-  await burst('dialogue-dusk', 5, 0);
-  const sweep = await ev("JSON.stringify({sweeping:document.querySelector('.dialogue-pane')?.classList.contains('sweeping'),band:document.querySelector('.dialogue-pane')?.style.getPropertyValue('--band')||'',pinned:document.querySelectorAll('.dialogue-pane .dlg-pal').length,flipped:document.querySelectorAll('.dialogue-pane .flipped').length,paper:document.querySelector('.dialogue-pane')?.style.getPropertyValue('--sweep-paper')||''})");
-  timeline.push(`对话 换光中: ${sweep}`);
-  await delay(1200);
-  await shot('dialogue-night.png');
-  const dialogueNight = await ev("JSON.stringify({theme:document.querySelector('.dialogue-page')?.dataset.theme,lighting:document.querySelector('.dialogue-page')?.dataset.lighting||'',sweeping:document.querySelector('.dialogue-pane')?.classList.contains('sweeping'),pinned:document.querySelectorAll('.dialogue-pane .dlg-pal').length,paper:getComputedStyle(document.querySelector('.dialogue-pane')).backgroundColor})");
-  timeline.push(`对话 夜: ${dialogueNight}`);
-  assert.match(dialogueNight, /"theme":"night"/);
-  assert.match(dialogueNight, /"lighting":""/);
-  assert.match(dialogueNight, /"sweeping":false/);
-  assert.match(dialogueNight, /"pinned":0/);
+  await delay(400);
+  await shot('relations-720x540-fold.png');
+  await until(() => ev("!document.querySelector('.fold-morph i')"));
 
-  await ev(`${themeButton('白昼来信')}.click()`);
-  await delay(420);
-  await shot('dialogue-dawn.png');
-  await delay(1300);
-  await shot('dialogue-day-again.png');
-  const dialogueDay = await ev("JSON.stringify({theme:document.querySelector('.dialogue-page')?.dataset.theme,pinned:document.querySelectorAll('.dialogue-pane .dlg-pal').length,paper:getComputedStyle(document.querySelector('.dialogue-pane')).backgroundColor})");
-  timeline.push(`对话 昼: ${dialogueDay}`);
-  assert.match(dialogueDay, /"theme":"day"/);
-
-  // ---------- 历史层打开时换光 ----------
-  await ev("document.querySelector('.dialogue-history-button').click()");
-  await until(() => ev("!!document.querySelector('.dialogue-history')"));
+  await direct('对话');
+  await until(() => ev("document.querySelectorAll('.dialogue-message').length >= 4"));
   await delay(500);
-  await ev(`${themeButton('晚风电台')}.click()`);
-  await delay(520);
-  const historySweep = await ev("JSON.stringify({sweeping:document.querySelector('.dialogue-pane')?.classList.contains('sweeping'),band:document.querySelector('.dialogue-pane')?.style.getPropertyValue('--band')||'',pinned:document.querySelectorAll('.dialogue-pane .dlg-pal').length})");
-  timeline.push(`对话 历史层换光: ${historySweep}`);
-  assert.match(historySweep, /"sweeping":true/);
-  await shot('dialogue-history-dusk.png');
-  await delay(1400);
-  const historyEnd = await ev("JSON.stringify({theme:document.querySelector('.dialogue-page')?.dataset.theme,pinned:document.querySelectorAll('.dialogue-pane .dlg-pal').length,transition:document.documentElement.dataset.themeTransition||''})");
-  timeline.push(`对话 历史层收尾: ${historyEnd}`);
-  assert.match(historyEnd, /"theme":"night"/);
-  assert.match(historyEnd, /"pinned":0/);
+  await measure('对话窄屏', 'daylight');
+  await shot('dialogue-720x540-daylight.png');
+  await pictureSwitch('nightwave', 'dialogue-720x540-dusk.png');
+  await shot('dialogue-720x540-nightwave.png');
+  await resize(1280, 800);
+  await pictureSwitch('daylight', 'dialogue-1280x800-dawn.png');
+  await measure('对话宽屏', 'nightwave');
   await ev("document.querySelector('.dialogue-history-button').click()");
-  await delay(320);
-  await ev(`${themeButton('白昼来信')}.click()`);
-  await delay(1500);
+  await until(() => ev("!!document.querySelector('.dialogue-history[data-open]')"));
+  await delay(400);
+  await measure('对话历史', 'daylight');
+  await resize(1280, 800, 1.25);
+  await ev('new Promise(resolve => requestAnimationFrame(resolve))');
+  await measure('对话历史 125% DPI', 'nightwave');
+  await pictureSwitch('daylight', 'history-125pct-dawn.png');
+  await ev("document.querySelector('.dialogue-history-button').click()");
+  await ev(`${themeButton('晚风电台')}.click();document.documentElement.dataset.motion='reduced'`);
+  await until(() => ev("!document.querySelector('.theme-snapshot') && document.documentElement.dataset.uiPreset==='nightwave'"));
+  await ev(`${themeButton('白昼来信')}.click();delete document.documentElement.dataset.motion`);
+  await resize(1280, 800);
 
   // ---------- 减少动效 ----------
   await cmd('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
   await delay(120);
   await ev(`${themeButton('晚风电台')}.click()`);
-  await delay(80);
-  const reducedState = await ev("JSON.stringify({theme:document.querySelector('.dialogue-page')?.dataset.theme,lighting:document.querySelector('.dialogue-page')?.dataset.lighting||'',pinned:document.querySelectorAll('.dialogue-pane .dlg-pal').length,transition:document.documentElement.dataset.themeTransition||''})");
-  timeline.push(`对话 减少动效: ${reducedState}`);
-  assert.match(reducedState, /"theme":"night"/);
-  assert.match(reducedState, /"lighting":""/);
-  assert.match(reducedState, /"pinned":0/);
+  const reducedState = await ev("({theme:document.querySelector('.dialogue-page').dataset.theme, layers:document.querySelectorAll('.theme-snapshot,.config-theme-veil,.fold-morph i,.exlibris-ripple').length})");
+  timeline.push('对话系统减少动效 ' + JSON.stringify(reducedState));
+  assert.deepEqual(reducedState, {theme:'night',layers:0});
   await shot('dialogue-reduced-night.png');
 
   // 显式开启完整动效时允许折页，恢复系统减少动效则立即收束在最新主题。

@@ -164,6 +164,7 @@ async function run() {
   assert.ok(builtin, '内置夏澄应带内置标识');
   assert.equal(builtin.badge, '常驻主角色 · 默认保留');
   assert.ok(builtin.bio.trim().length > 10, '入口页应显示首次播种的人物介绍');
+  assert.ok(builtin.bio.includes('既能在日常对话里随时聊聊') && !builtin.bio.includes('陪伴'));
   if (layoutTheme === 'nightwave') {
     // 通过实际主题控件保存偏好，再冷启动选角页，覆盖入口本身的夜间样式。
     await ev("[...document.querySelectorAll('.role-entry-actions button')].find(b => b.textContent === '进入书房')?.click()");
@@ -190,12 +191,22 @@ async function run() {
     await click(button(label, menu ? '.ui-menu-panel:not([inert])' : '.ui-page-dock'));
     await until(() => ev(`document.querySelector('.studio-shell').dataset.page === ${JSON.stringify(page)}`), page);
     await delay(350);
+    if (page === 'feed') {
+      await until(() => ev("document.querySelector('.feed-next-empty')?.textContent === '接下来 · 暂无安排'"), '无安排时显示单行提示');
+      assert.equal(await ev("!!document.querySelector('.feed-bookmark .ui-disclosure-trigger, .feed-next-list')"), false);
+    }
+    if (page === 'settings') assert.equal(await ev("document.querySelector('.studio-footer-info')?.innerText.trim()"), cards.length + ' 位角色');
     await checkLayout(page);
     if (page === 'settings' || page === 'conversation') {
       const settings = page === 'settings';
       await click(element(settings ? '.config-index-new' : '.dialogue-history-button'));
       await until(() => ev(settings ? "!!document.querySelector('.config-sheet')" : "!!document.querySelector('.dialogue-history[data-open]')"));
       await delay(350);
+      if (!settings) {
+        await until(() => ev("!!document.querySelector('.dialogue-history-empty > svg')"), '无历史时直接显示时钟');
+        assert.equal(await ev("!!document.querySelector('.dialogue-timeline, .dialogue-history-day, .dialogue-clear-filters, .dialogue-empty-reset, .dialogue-card-controls')"), false);
+        assert.equal(await ev("document.querySelector('.dialogue-history-empty > svg').getBoundingClientRect().height"), 30);
+      }
       await checkLayout(settings ? 'model-editor' : 'history');
       await click(element(settings ? '.config-sheet-x' : '.dialogue-history-close'));
       await until(() => ev(settings ? "!document.querySelector('.config-sheet')" : "!document.querySelector('.dialogue-history')"));

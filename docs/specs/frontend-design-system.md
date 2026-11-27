@@ -12,13 +12,27 @@
 - **样式里禁止直接写**字体栈、`cubic-bezier()`、`ms`/`s` 时长、十六进制与 `rgb()`/`hsl()` 颜色、带模糊的 `box-shadow`、`border-radius` 的 px 字面量（第 11 节）。确需例外，写带原因的豁免注释。
 - 自检：在 `apps/desktop/renderer` 运行 `npm run check`（令牌同步 + 样式检查 + 类型检查），`apps/desktop` 的 `npm test` 也包含样式检查。
 
+## 桌面启动与离窗
+
+打开桌面时先显示静态书房封面。封面从本机保存的昼夜预设读取画布与纸面令牌，原生窗口在显示前使用同一画布底色。后端健康检查、独立扩展协议和主帧签名就绪后才装载业务页及其订阅。失败原因与「重新连接」留在封面上，恢复后沿用原有冷启动选角流程。
+
+配置有未保存修改时，关窗与托盘退出使用同一套全局确认纸笺，默认焦点在「继续编辑」。关窗确认「保留草稿并隐藏」，重开时回到原输入。退出确认「放弃修改并退出」，主进程直接关闭已确认的窗口。无草稿直接执行。每次只处理一个请求，等待用户期间保持心跳，主帧失联才由原生对话框接手。
+
 ## 扩展槽位（DL-188）
 
 Dock 的「全部菜单 → 扩展」提供启停开关、微页选择和挂件区。跨页浮层与通知位于左下角，宿主提供关闭按钮，主角色的分享纸笺位于右下角。停用或删除扩展立即卸载其槽位。
 
 带 `ui[].coplay` 的槽位由宿主在 iframe 上方放置 `Select` 与 `Button`。陪玩角色默认选主角色，按钮以「动作 · 让角色名回应」显示当前点名对象。宿主收到可信原生点击才派发共玩，子页接收来自 parent 的 `{type:'ext:coplay-result',action,ok,data?,error?}` 更新画面。导航或卸载后丢弃旧文档的回包。角色实际分享后，右下角纸签显示发送者和摘要。
 
-后台工程胶囊位于顶栏下方左侧，跨页保留。每项显示短标题、运行状态、由桌面本地时钟计算的耗时和单项取消按钮。列表为空时收起。胶囊使用纸面、边线和 sheet 层级令牌；出现或更新时保持当前输入焦点。
+工程工签与扩展浮层共享左下列，层级 60，距左 24px、距底 104px，对话隐藏 Dock 时距底 24px。整列宽至多 320px、高至多 192px。720×540 默认显示 40px 高的工程摘要，展开后可滚动到每项取消按钮。工签显示真实运行任务和本地计时，更新时保持输入焦点。
+
+右下分享纸笺与左列同高定位，宽至多 320px、高至多 144px。长摘要在正文区滚动，关闭和查看按钮始终可见。720×540 时两列满宽净距为 32px。配置回执从顶部 66px 处居中展开，最多 420×80px。对话反馈位距当前工具条 8px，宽至多为 320px 与栏宽减 32px 中的较小值，高至多 64px。普通提示透传指针，长错误可在反馈位内滚动。全局弹窗打开时，背景分享保留至关闭后处理。
+
+宽屏扩展目录与台面并列。窄屏的「台面 / 已安装」在同一组槽位上切换。邀请笺只在本次连接收到成功空快照时出现。目录按启用态和工具的角色声明筛选，故障和无工具条目始终可查。交修按目标窗口、扩展与完整故障指纹保留在途请求、提交号和送达回执，权威快照确认变化后清理。
+
+「一起玩的角色」席签只使用已读取的图片。预设裁切以素材的 `isPreset` 为准，自定义图完整显示，缺图或载入失败显示姓名首字。共玩按钮的忙态止于该次请求返回。由扩展页分享进入对话可依书签回到原视图、扩展与文件，返回时采用当前启用版本。
+
+全局 MCP 与 Skill 详情提供「去角色配置启用」。入口沿用配置页草稿守卫，以当前编辑角色和所选资源 ID 打开绑定纸笺，焦点落在目标资源。绑定仍由用户手动开启并保存。
 
 每个 `manifest.ui` 项用 `slot` 与 `file` 声明。独立微页用 `page`、挂件用 `widget`、浮层用 `overlay`。这些入口指向 `ui/` 下的 HTML，需要引用的 CSS、JS 等逐个用 `asset` 声明。桌面通过 `nd-ext://<extId>/ui/<文件>?v=<版本>` 载入，升级时重新挂载。Electron 只代理该扩展的受控资产出口。子页响应 CSP 限制脚本、样式和图片来源，禁止连接网络、加载嵌套框架、对象及提交表单。
 
@@ -135,7 +149,7 @@ iframe 使用 `sandbox="allow-scripts"`。宿主按当前元素的 `contentWindo
 | 场景 | `scene` 900ms / `scene-long` 1800ms | — | 手账翻页、藏书票等编排型场景（只用于有编排的页面） |
 | 常驻 | `ambient` 12s | — | 呼吸、漂浮等环境循环（周期 ≥10s，且必须能被 reduced 关掉） |
 | 错峰 | `stagger` 35ms / `stagger-fine` 16ms | — | 逐项延迟的步长（首屏错峰最多 6 项，总长 ≤300ms） |
-| 主题 | `theme-reveal` 400ms / `theme-total` 550ms | — | 昼夜视图过渡，仅 `theme-transition.ts` 使用 |
+| 主题 | `theme-reveal` 400ms / `theme-total` 550ms | — | 全站连续羽化，切白昼向下、切夜幕向上，自点击至清理 ≤550ms；关系页折页 800～900ms |
 
 旧名 `feedback`（=micro）、`control`（=component-exit）、`disclosure`（=component）保留为别名，新代码用档位名。
 
@@ -210,7 +224,7 @@ iframe 使用 `sandbox="allow-scripts"`。宿主按当前元素的 `contentWindo
 | 键盘焦点 | **只在 `:focus-visible` 显示**：`outline: var(--nd-component-focus-width) solid var(--nd-component-focus-color); outline-offset: var(--nd-component-focus-offset)`（2px 实线、偏移 2px）；需要更醒目时再叠 `box-shadow: var(--nd-component-focus-halo)` | 强制颜色模式下改用 `Highlight` |
 | 配置书文本框及下拉框 | 常态使用 `input-border`、`input-radius`、`input-background` 组件令牌。聚焦时使用 `focus-color` 与 `focus-halo`，键盘焦点环偏移 −1px，与控件边框重合。 | v6 开发规范 §6.5，其他控件沿用通用焦点环 |
 | 禁用 | 底色 `color-disabled-surface`、文字 `color-disabled-text`、`cursor: not-allowed`，**不用降低 opacity** 表示禁用；`aria-disabled` 与 `disabled` 同样处理 | |
-| 忙碌 | 保留可聚焦，`aria-busy`；按钮宽度不抖动（`Button` 已锁最小宽度），重复触发被拦截 | `Button busy`、`Switch busy` |
+| 忙碌 | 保留可聚焦，`aria-busy`；立即拦截重复触发并锁住最小宽度，`Button` 持续忙碌 300ms 后才显示 spinner | `Button busy`、`Switch busy` |
 | 选中 | `color-selection` 底；菜单/导航用 `--nd-component-menu-selected-background`、`--nd-component-dock-selected-*` | |
 | 错误 / 成功 | 错误用 `danger` + `danger-surface`；成功用 `success` + `success-surface`；同时有图标或文字，不只靠颜色 | `Button feedback` |
 
@@ -263,6 +277,12 @@ iframe 使用 `sandbox="allow-scripts"`。宿主按当前元素的 `contentWindo
 - **不发明内容**：角色台词、旁白、占位文案都不得自行编写，缺内容用 `Empty` 的真实空态文案。
 - **图片**：立绘与场景图保持原色和比例（`object-fit`），不随主题改色；只给图片外的容器换纸与边框。
 - **留余量**：三种尺寸下文字不得被截断到不可读，必要时折行或换成两行布局，而不是缩小到小于 `caption`（12px）。
+
+### 核心页面的首屏与选择状态
+
+- 对话窗口列表与消息、动态、关系藏页、扩展目录在首次读取期间显示静态纸纹骨架。已有数据继续留在原位。空态、读取错误和断线重连各自使用对应的状态文本。
+- 动态的「接下来」位于时间线上方。读取成功且当前角色筛选下没有安排时，显示单行「接下来 · 暂无安排」。有安排时可展开书签，数量与列表采用同一角色筛选，安排按预定时间排列，随书页纵向滚动。往来合笺并列显示双方姓名及轮数，话题独占一行。详情沿墨线按轮序显示发言，关闭后焦点回到原卡。
+- 选角以卡片的 `aria-pressed` 驱动图框纸边的「此位」，键盘焦点由独立外环标示。动态时间线、角色筛选、安排与扩展共玩席签共享 `RoleFace` 的素材识别和缺图处理。
 
 ## 10. 令牌命名与新增流程
 
@@ -345,7 +365,7 @@ node apps/desktop/scripts/check-design-tokens.mjs --list-allow
 当前历史豁免主要分为四类：
 
 - **旧版琥珀调板与基础色阶**（`styles.css`、`ui/theme.css`）：与 `xiacheng` 语义色不同值，待设计确认后整体迁移。
-- **独立页面艺术色与光效**（`styles/settings-workspace.css`、`styles/relations-exlibris.css`、`styles/conversation.css`、`styles/appearance.css`、`styles/voice.css`、`ui/theme-transition.css`）：如配置书封面/丝带（`--cfg-*`）、藏书票页内独立 `data-theme`、对话页昼夜光束渐变与遮罩透明度。
+- **独立页面艺术色与光效**（`styles/settings-workspace.css`、`styles/relations-exlibris.css`、`styles/conversation.css`、`styles/appearance.css`、`styles/voice.css`）：如配置书封面/丝带（`--cfg-*`）、藏书票页内独立 `data-theme`、对话页昼夜提示线。
 - **逐件调校的纸感投影**（`styles/settings-workspace.css`、`styles/relations-exlibris.css`、`ui/dock-notebook.css`、`styles.css`、`styles/conversation.css`）：负扩散与偏移逐件调校，暂未并入层级阴影令牌。
 
 ## 12. 未覆盖与后续

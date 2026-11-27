@@ -22,6 +22,15 @@ export function sceneForEachReply(scenes: readonly PerfScene[]): Map<string, Per
   return replies;
 }
 
+/** entries 已按窗口消息顺序排列；已有图片、在途和失败任务各有自己的操作。 */
+export function latestSceneTarget(entries: readonly { record: MessageView; segments: SegmentView[] }[], excluded: ReadonlySet<string>) {
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const { record, segments } = entries[index];
+    if (record.sender === 'assistant' && record.status === 'completed' && segments.length && !excluded.has(record.messageId)) return record.messageId;
+  }
+  return null;
+}
+
 export type SceneRequestError = { reason: string; mode: SceneLayerMode };
 
 /** 请求错误与后台任务失败都保留原图层，重试时不需要再次选择。 */
