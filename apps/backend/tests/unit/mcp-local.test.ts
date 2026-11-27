@@ -58,6 +58,13 @@ test("local MCP tools read, write, search and run commands inside the workspace"
     assert.equal(command.ok, true);
     assert.match(command.stdout as string, /tool-ok/);
 
+    const missingCommand = await callJson(client, "command_run", {
+      command: path.join(root, "missing-executable"),
+    });
+    assert.equal(missingCommand.ok, false);
+    assert.equal(missingCommand.timedOut, false);
+    assert.match(missingCommand.error as string, /ENOENT/);
+
     const escaped = await client.callTool("workspace_read", {
       path: "../outside.txt",
     });

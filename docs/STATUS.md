@@ -4,6 +4,8 @@
 
 ## 1. 当前结论概览
 
+**409 Round 1（`BUG-01` / `BUG-02` / `BUG-08`）已通过 Astra 审核与主进程最终复核。** `BUG-01` 托管后端 `--watch-stdin` 优雅退出、重启零异常中断误报与 Windows 5 秒超时 `taskkill /T /F` 杀树兜底，`BUG-02` 托管日志轮转脱敏与 BootGate 失败诊断/日志目录入口，`BUG-08` `command_run` / `skill_run` Windows Job Object 进程树回收均通过实证。仓库 Node 24.22.2 下，后端 635/635、离线验收 21/21 步及 81 个场景、Pi 5/5、渲染器检查（37 CSS 0 违规）与 185/185 单测、生产构建、桌面壳 21/21 通过；串行 Electron E2E 28/29 在受限沙箱通过，第 29 项 `managed-backend-shutdown.e2e.cjs`（含 `taskkill /T /F` 强杀实证）在宿主 Windows 会话复跑通过，29/29 全量闭环且新增 Node / Electron 残留 0。[409 审核与专项实证](./archive/07-documentation/409-project-audit-and-remediation-backlog.md)
+
 **前端精修 Batch 2 已通过主代理合审与 Windows 离线门禁，待用户最终视觉复核。** 启动封面按原始 demo 的灯光与翻页参数去框，七页壳层和普通导航统一。720×540 停止态对话保留 186.67px 消息区，关系首屏可见藏书票人像。仓库 Node 24.22.2 下，渲染器检查、185/185 单测、生产构建、桌面壳 18/18 单测、全量串行 Electron 27/27 通过。两张指定启动截图已更新。[408 Batch 2 验证记录](./archive/02-desktop-ui-and-relations/408-frontend-refinement-v2.md#batch-2-壳层转场与页面细节) · [第一批记录](./archive/02-desktop-ui-and-relations/408-frontend-refinement-v2.md#第一批启动动画首次活动与断线恢复)
 
 **Pi 工程消耗池与独立设置分区（DL-201）**已通过后端、协议和桌面三块交叉复核。空池隐藏工程工具，首轮 429 结束当前工程，下一工程按策略选择成员。两条本地端点的并发回放验证了任务粘性、清池后续行和删除保护。已用实际 Pi SDK 回放五条本地线路，验证回环鉴权、Vertex 入口、分帧用量与撤租。真实远端服务联调另行留证。[工程契约](./specs/role-config-and-activity.md#36-受托管工程-mcpdl-195) · [产品决定](./161-digital-life-direction-decisions.md#dl-201-pi-使用独立工程模型消耗池)

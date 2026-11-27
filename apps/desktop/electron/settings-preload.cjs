@@ -11,6 +11,7 @@ if (process.isMainFrame && location.href === "desk://bundle/index.html") {
     ...ipcRenderer.sendSync("desk:config"),
     setWindowTheme: (preset, color) => ipcRenderer.send("desk:window-theme", preset, color),
     boot: () => ipcRenderer.invoke("desk:boot"),
+    openBackendLogs: () => ipcRenderer.invoke("desk:open-backend-logs"),
     onIntent: callback => {
       listener = callback;
       const cancel = (_event, id) => callback({ id, action: "cancel" });

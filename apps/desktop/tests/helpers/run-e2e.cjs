@@ -19,6 +19,8 @@ const relationModes = ["base", "slow", "switch", "batch", "inner", "many", "focu
 
 const SUITE = [
   "boot-window-intent.e2e.cjs",
+  "managed-backend-shutdown.e2e.cjs",
+  "managed-backend-diagnostics.e2e.cjs",
   "startup-flow-fixes.e2e.cjs",
   "settings-workspace.e2e.cjs",
   "settings-real-backend.e2e.cjs",

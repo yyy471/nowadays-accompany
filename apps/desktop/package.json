@@ -20,7 +20,7 @@
   },
   "build": {
     "appId": "app.nowadays.desk",
-    "files": ["renderer/dist/**", "electron/main.cjs", "electron/window-intent.cjs", "electron/settings-preload.cjs", "electron/backend-paths.cjs", "electron/extension-protocol.cjs", "assets/window.png", "assets/window.ico"],
+    "files": ["renderer/dist/**", "electron/main.cjs", "electron/window-intent.cjs", "electron/settings-preload.cjs", "electron/backend-paths.cjs", "electron/backend-log.cjs", "electron/extension-protocol.cjs", "assets/window.png", "assets/window.ico"],
     "extraResources": [
       {
         "from": "../../.tools/node-v24",

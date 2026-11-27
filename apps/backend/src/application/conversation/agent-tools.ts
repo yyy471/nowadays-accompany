@@ -1,5 +1,4 @@
 import path from "node:path";
-import { spawn } from "node:child_process";
 import {
   eventCorrectionSchema,
   memorySearchRequestSchema,
@@ -16,6 +15,7 @@ import type {
   ConversationToolOutcome,
   SkillBrief,
 } from "../../domain/conversation.js";
+import { runScopedProcess } from "../../infra/process-tree.js";
 import { MemoryQueryService } from "../memory/memory-query-service.js";
 import type { RoleExchangeService } from "./role-exchanges.js";
 import type { AutonomyService } from "./autonomy-service.js";
@@ -1170,79 +1170,61 @@ export function runSkillScriptProcess(
       if (count) chunks[target].push(chunk.subarray(0, count));
       bytes[target] += count;
     };
-    let timedOut = false;
-    let settled = false;
     const flags = controlledPackage ? ["--permission", "--allow-fs-read=" + controlledPackage,
       "--allow-fs-read=" + cwd, "--allow-fs-write=" + cwd] : [];
-    const child = spawn(process.execPath, [...flags, scriptPath, ...scriptArgs], {
+    // 已派发脚本按实际退出或自身超时结算，插话不终止脚本，结果归原调用。
+    runScopedProcess({
+      command: process.execPath,
+      args: [...flags, scriptPath, ...scriptArgs],
       cwd,
       env: {
         ...(controlledPackage ? { SystemRoot: process.env.SystemRoot } : process.env),
         NOWADAYS_WORKSPACE: workspaceDir,
         NOWADAYS_SKILL_DIR: controlledPackage ?? cwd,
       },
-      shell: false,
-      windowsHide: true,
-    });
-    child.stdout?.on("data", (chunk: Buffer) => append("out", chunk));
-    child.stderr?.on("data", (chunk: Buffer) => append("err", chunk));
-    // 已派发脚本的副作用已经发生，插话只替代回复，不终止脚本本身；
-    // 脚本按实际退出或自身超时结算，结果仍归原调用。
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGKILL");
-    }, timeoutMs);
-    timer.unref?.();
-    const finish = (outcome: ConversationToolOutcome): void => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timer);
-      resolve(outcome);
-    };
-    child.on("error", (error) => {
-      finish(
-        failedOutcome(
-          "SKILL_SCRIPT_SPAWN_FAILED",
-          safeMessage(error, "Skill 脚本启动失败"),
-        ),
-      );
-    });
-    child.on("close", (code, signalName) => {
-      const output = {
-        exitCode: code,
-        signal: signalName,
-        timedOut,
-        stdout: Buffer.concat(chunks.out, bytes.out).toString("utf8"),
-        stderr: Buffer.concat(chunks.err, bytes.err).toString("utf8"),
-        truncated,
-      };
-      if (timedOut) {
-        finish({
+      timeoutMs,
+      timeoutSignal: "SIGKILL",
+      unrefTimer: true,
+      onOutput: (stream, chunk) => append(stream === "stdout" ? "out" : "err", chunk),
+      onError: (error) => resolve(failedOutcome(
+        "SKILL_SCRIPT_SPAWN_FAILED",
+        safeMessage(error, "Skill 脚本启动失败"),
+      )),
+      onClose: ({ code, signal, timedOut }) => {
+        const output = {
+          exitCode: code,
+          signal,
+          timedOut,
+          stdout: Buffer.concat(chunks.out, bytes.out).toString("utf8"),
+          stderr: Buffer.concat(chunks.err, bytes.err).toString("utf8"),
+          truncated,
+        };
+        if (timedOut) {
+          resolve({
+            status: "failed",
+            rawResponse: output,
+            adaptedResult: truncateValue(output, TOOL_RESULT_LIMIT),
+            diagnosticCode: "SKILL_SCRIPT_TIMEOUT",
+            error: { message: "Skill 脚本执行超时" },
+          });
+          return;
+        }
+        if (code === 0) {
+          resolve({
+            status: "success",
+            rawResponse: output,
+            adaptedResult: truncateValue(output, TOOL_RESULT_LIMIT),
+          });
+          return;
+        }
+        resolve({
           status: "failed",
           rawResponse: output,
           adaptedResult: truncateValue(output, TOOL_RESULT_LIMIT),
-          diagnosticCode: "SKILL_SCRIPT_TIMEOUT",
-          error: { message: "Skill 脚本执行超时" },
+          diagnosticCode: "SKILL_SCRIPT_EXIT",
+          error: { message: `Skill 脚本以退出码 ${code} 结束`, exitCode: code },
         });
-        return;
-      }
-      if (code === 0) {
-        finish({
-          status: "success",
-          rawResponse: output,
-          adaptedResult: truncateValue(output, TOOL_RESULT_LIMIT),
-        });
-        return;
-      }
-      finish({
-        status: "failed",
-        rawResponse: output,
-        adaptedResult: truncateValue(output, TOOL_RESULT_LIMIT),
-        diagnosticCode: "SKILL_SCRIPT_EXIT",
-        error: { message: `Skill 脚本以退出码 ${code} 结束`, exitCode: code },
-      });
+      },
     });
   });
 }

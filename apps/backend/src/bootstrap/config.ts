@@ -16,6 +16,7 @@ export interface BackendConfig {
   presetAssetsDir: string;
   port: number;
   host: typeof LOOPBACK_HOST;
+  watchStdin: boolean;
   hostToken?: string;
 }
 
@@ -37,9 +38,14 @@ export function parseBackendConfig(
   let appRoot: string | undefined;
   let presetAssetsDir: string | undefined;
   let port = DEFAULT_PORT;
+  let watchStdin = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
+    if (arg === "--watch-stdin") {
+      watchStdin = true;
+      continue;
+    }
     if (arg === "--app-root") {
       const value = argv[index + 1];
       if (!value) {
@@ -90,6 +96,7 @@ export function parseBackendConfig(
     presetAssetsDir: resolvedPresetAssetsDir,
     port,
     host: LOOPBACK_HOST,
+    watchStdin,
     ...(env.NOWADAYS_HOST_TOKEN && { hostToken: env.NOWADAYS_HOST_TOKEN }),
   };
 }

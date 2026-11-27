@@ -1,9 +1,9 @@
-import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { runScopedProcess } from "../infra/process-tree.js";
 
 const workspace = process.env.NOWADAYS_WORKSPACE;
 if (!workspace) {
@@ -287,18 +287,6 @@ function runCommand(
     let stdout = "";
     let stderr = "";
     let truncated = false;
-    let timedOut = false;
-    let settled = false;
-    const child = spawn(command, args, {
-      cwd,
-      env: process.env,
-      shell: false,
-      windowsHide: true,
-    });
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill();
-    }, timeoutMs);
     const append = (current: string, chunk: Buffer): string => {
       const next = current + chunk.toString("utf8");
       if (next.length > MAX_TEXT_BYTES) {
@@ -307,36 +295,23 @@ function runCommand(
       }
       return next;
     };
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout = append(stdout, chunk);
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr = append(stderr, chunk);
-    });
-    child.once("error", (error) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timer);
-      resolve({
+    runScopedProcess({
+      command, args, cwd, env: process.env, timeoutMs, timeoutSignal: "SIGTERM",
+      onOutput: (stream, chunk) => {
+        if (stream === "stdout") stdout = append(stdout, chunk);
+        else stderr = append(stderr, chunk);
+      },
+      onError: (error) => resolve({
         ok: false,
         exitCode: null,
         signal: null,
-        timedOut,
+        timedOut: false,
         stdout,
         stderr,
         truncated,
         error: error.message,
-      });
-    });
-    child.once("close", (code, signal) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timer);
-      resolve({
+      }),
+      onClose: ({ code, signal, timedOut }) => resolve({
         ok: code === 0 && !timedOut,
         exitCode: code,
         signal,
@@ -344,7 +319,7 @@ function runCommand(
         stdout,
         stderr,
         truncated,
-      });
+      }),
     });
   });
 }

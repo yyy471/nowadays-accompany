@@ -137,6 +137,10 @@ async function run() {
   assert.deepEqual(await (await fetch(process.env.NOWADAYS_BACKEND_URL+'/test/fail')).json(), []);
   await wait("!document.querySelector('.boot-gate button').hidden", '失败纸页');
   assert.match(await ev("document.querySelector('.boot-gate [role=status]').textContent"), /健康检查/);
+  assert.equal(await ev("document.querySelector('.boot-open-logs').hidden"), true, '外接后端失败不显示托管日志入口');
+  for (const suffix of ['', '.1', '.2']) {
+    assert.equal(fs.existsSync(path.join(app.getPath('userData'), 'logs', 'backend-latest.log' + suffix)), false);
+  }
   assert.equal(await ev("document.querySelector('.boot-gate').dataset.phase"), 'failed');
   assert.equal(await ev("getComputedStyle(document.querySelector('.boot-lamp')).opacity"), '0.35');
   await shots('failed');

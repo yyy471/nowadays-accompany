@@ -11,7 +11,8 @@ const status = cover.querySelector<HTMLElement>('[role="status"]')!;
 const details = cover.querySelector<HTMLElement>('.boot-details')!;
 const elapsed = cover.querySelector<HTMLElement>('.boot-elapsed')!;
 const steps = cover.querySelectorAll<HTMLElement>('.boot-steps li');
-const retry = cover.querySelector<HTMLButtonElement>('button')!;
+const retry = cover.querySelector<HTMLButtonElement>('.boot-retry')!;
+const openLogs = cover.querySelector<HTMLButtonElement>('.boot-open-logs')!;
 const preset = readThemePreset();
 cover.dataset.uiPreset = preset;
 cover.querySelector<HTMLImageElement>('.boot-mark')!.src = preset === 'nightwave' ? darkMark : lightMark;
@@ -38,6 +39,8 @@ function turnPage() {
 
 async function openDesk() {
   retry.hidden = true;
+  openLogs.hidden = true;
+  let canOpenLogs = false;
   advance('service', '正在启动本机服务');
   elapsed.textContent = '';
   const start = performance.now();
@@ -51,7 +54,10 @@ async function openDesk() {
     let skipRolePicker = false;
     if (window.nowadaysDesk) {
       const result = await window.nowadaysDesk.boot();
-      if (!result.ok) throw new Error(result.reason);
+      if (!result.ok) {
+        canOpenLogs = result.canOpenLogs;
+        throw new Error(result.reason);
+      }
       skipRolePicker = result.skipRolePicker;
     } else if (location.protocol === 'desk:') {
       throw new Error('桌面连接尚未建立，请重新打开书房。');
@@ -71,6 +77,7 @@ async function openDesk() {
     status.textContent = '书房启动失败。' + reason;
     elapsed.textContent = '';
     retry.hidden = false;
+    openLogs.hidden = !canOpenLogs;
     retry.focus();
   } finally {
     window.clearInterval(ticker);
@@ -78,6 +85,15 @@ async function openDesk() {
   }
 }
 retry.addEventListener('click', () => void openDesk());
+openLogs.addEventListener('click', async () => {
+  const failure = '未能打开日志目录。';
+  try {
+    const result = await window.nowadaysDesk?.openBackendLogs();
+    if (result?.ok === false && !openLogs.hidden) elapsed.textContent = result.message || failure;
+  } catch {
+    if (!openLogs.hidden) elapsed.textContent = failure;
+  }
+});
 // 隐藏窗口先合成所选主题的第一帧，再显示并接通后端。
 requestAnimationFrame(() => requestAnimationFrame(() => {
   syncWindowTheme(preset);

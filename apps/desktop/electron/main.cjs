@@ -1,11 +1,12 @@
 "use strict";
 
-const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeTheme, net, protocol } = require("electron");
-const { spawn } = require("node:child_process");
+const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeTheme, net, protocol, shell } = require("electron");
+const { execFile, spawn } = require("node:child_process");
 const fs = require("node:fs");
 const { join, resolve } = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { resolveBackendLayout, resolveNodeExecutable } = require("./backend-paths.cjs");
+const { createBackendLog, summarizeBackendFailure } = require("./backend-log.cjs");
 const { extensionHandler, allowSlotNavigation } = require("./extension-protocol.cjs");
 const { createWindowIntent } = require("./window-intent.cjs");
 
@@ -31,12 +32,18 @@ protocol.registerSchemesAsPrivileged([
 let window;
 let tray;
 let quitting = false;
+let allowQuit = false;
+let windowIntents;
+let quitPromise = null;
 let backendChild = null;
+let canOpenBackendLogs = false;
 const configuredBackend = process.env.NOWADAYS_BACKEND_URL?.replace(/\/$/, "");
 let backendBaseUrl = "";
 const hostToken = configuredBackend ? process.env.NOWADAYS_HOST_TOKEN : require("node:crypto").randomBytes(32).toString("hex");
 const hostHeaders = hostToken ? { "X-Nowadays-Host-Token": hostToken } : {};
 let backendReadyPromise = null;
+
+const backendLogDirectory = () => join(app.getPath("userData"), "logs");
 
 // 开发仓库与打包产物的后端、预置素材与 Node 运行时位置统一由布局解析给出（310 §3.2）。
 function backendLayout() {
@@ -53,6 +60,8 @@ function resolveNode24Executable(layout) {
 }
 
 async function startManagedBackend() {
+  if (quitting) throw new Error("桌面正在退出。");
+  if (backendChild) throw new Error("上一轮本地服务仍未退出。");
   const layout = backendLayout();
   const backendRoot = layout.backendRoot;
   // 打包态写到用户数据目录，避免落在 Program Files 类只读安装位导致后端写失败；
@@ -62,8 +71,28 @@ async function startManagedBackend() {
   const nodeBin = resolveNode24Executable(layout);
   const mainScript = layout.entry;
 
-  return new Promise((resolveStart, rejectStart) => {
-    const child = spawn(
+  const { promise: started, resolve: resolveStart, reject: rejectStart } = Promise.withResolvers();
+  let managed;
+  const log = createBackendLog({
+    logDirectory: backendLogDirectory(),
+    hostToken,
+    onStdoutLine(line) {
+      if (!managed || managed.closed || managed.stopPromise || quitting) return;
+      try {
+        const evt = JSON.parse(line);
+        if (evt.event === "listening" && evt.port) {
+          clearTimeout(managed.startTimer);
+          resolveStart({ base: `http://${evt.host || "127.0.0.1"}:${evt.port}`, managed });
+        }
+      } catch {
+        // 非就绪协议日志仅落盘。
+      }
+    }
+  });
+  canOpenBackendLogs = log.canOpenLogs;
+  let child;
+  try {
+    child = spawn(
       nodeBin,
       [
         "--import",
@@ -74,63 +103,116 @@ async function startManagedBackend() {
         "--preset-assets-dir",
         layout.presetAssetsDir,
         "--port",
-        "0"
+        "0",
+        "--watch-stdin"
       ],
       {
         cwd: backendRoot,
         env: { ...process.env, NOWADAYS_HOST_TOKEN: hostToken, NOWADAYS_PI_MCP_ROOT: layout.piMcpRoot, NO_COLOR: "1" },
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true
       }
     );
-    backendChild = child;
-    let stdoutBuf = "";
-    child.stderr.resume();
-    const timer = setTimeout(() => {
-      rejectStart(new Error("等待本地服务启动超时。"));
-    }, 18000);
-
-    child.stdout.on("data", (chunk) => {
-      stdoutBuf += chunk.toString();
-      const lines = stdoutBuf.split("\n");
-      stdoutBuf = lines.pop() || "";
-      for (const rawLine of lines) {
-        const line = rawLine.trim();
-        if (!line.startsWith("{")) continue;
-        try {
-          const evt = JSON.parse(line);
-          if (evt.event === "listening" && evt.port) {
-            clearTimeout(timer);
-            resolveStart(`http://${evt.host || "127.0.0.1"}:${evt.port}`);
-            return;
-          }
-        } catch {
-          // ignore non-json lines
-        }
-      }
+  } catch (error) {
+    log.lifecycle(error.message);
+    log.close();
+    throw new Error(summarizeBackendFailure({ error, stderrTail: log.stderrTail }));
+  }
+  managed = backendChild = {
+    child, log, stopPromise: null, forceKill: null, closed: false,
+    bootAbort: new AbortController(),
+    cancelStart: () => rejectStart(new Error("本地服务已结束启动。"))
+  };
+  log.lifecycle(`backend_spawn pid=${child.pid ?? "unknown"}`);
+  child.stdin.on("error", error => log.lifecycle(`backend_stdin_error ${error.message}`));
+  child.stdout.on("data", chunk => log.stdout(chunk));
+  child.stderr.on("data", chunk => log.stderr(chunk));
+  child.once("error", error => {
+    managed.spawnError = error;
+    log.lifecycle(`backend_spawn_error ${error.message}`);
+  });
+  managed.startTimer = setTimeout(() => rejectStart(new Error("等待本地服务启动超时。")), 18000);
+  managed.drained = new Promise(resolveClose => {
+    child.once("close", (code, signal) => {
+      managed.closed = true;
+      clearTimeout(managed.startTimer);
+      resolveClose({ code, signal });
     });
+  }).then(async ({ code, signal }) => {
+    if (managed.forceKill) await managed.forceKill;
+    log.lifecycle(`backend_close pid=${child.pid ?? "unknown"} code=${code} signal=${signal}`);
+    log.close();
+    if (backendChild === managed) {
+      backendChild = null;
+      backendBaseUrl = "";
+    }
+    const failure = new Error(summarizeBackendFailure({ code, signal, error: managed.spawnError, stderrTail: log.stderrTail }));
+    if (code !== 0 || signal) managed.abnormalExit = failure;
+    rejectStart(failure);
+    return failure;
+  });
+  return started;
+}
 
-    child.once("error", (err) => {
-      clearTimeout(timer);
-      rejectStart(err);
-    });
+async function waitForDrain(managed, timeout) {
+  let timer;
+  try {
+    return await Promise.race([
+      managed.drained.then(() => true),
+      new Promise(resolveWait => { timer = setTimeout(() => resolveWait(false), timeout); })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
-    child.once("exit", (code) => {
-      clearTimeout(timer);
-      rejectStart(new Error(`本地服务在启动期间退出（${code}）。`));
-    });
+function forceWindowsBackendTree(managed) {
+  const { child, log } = managed;
+  log.lifecycle(`backend_shutdown_timeout pid=${child.pid} taskkill /T /F after 5000ms`);
+  return new Promise(resolveKill => {
+    execFile("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"],
+      { timeout: 2000, windowsHide: true, encoding: "buffer" }, (error, _stdout, stderr) => {
+        const locale = Intl.DateTimeFormat().resolvedOptions().locale;
+        const detail = new TextDecoder(locale.startsWith("zh-CN") ? "gbk" : "utf-8")
+          .decode(stderr).trim().replace(/[\r\n]+/g, " ");
+        log.lifecycle(error ?
+          `backend_taskkill_failed pid=${child.pid} code=${error.code ?? "unknown"} signal=${error.signal ?? "none"} ${detail}` :
+          `backend_taskkill_complete pid=${child.pid}`);
+        resolveKill();
+      });
   });
 }
 
 function stopManagedBackend() {
-  if (backendChild && backendChild.exitCode === null) {
-    try {
-      backendChild.kill("SIGTERM");
-    } catch {
-      // ignore
+  const managed = backendChild;
+  if (!managed) return Promise.resolve();
+  const { child, log } = managed;
+  managed.stopPromise ??= (async () => {
+    managed.bootAbort.abort();
+    if (quitting) managed.cancelStart();
+    if (!managed.closed && !child.stdin.destroyed && !child.stdin.writableEnded) {
+      log.lifecycle(`backend_shutdown_request pid=${child.pid ?? "unknown"} source=stdin`);
+      child.stdin.end();
     }
-    backendChild = null;
-  }
+    if (await waitForDrain(managed, 5000)) return;
+    if (backendChild === managed && !managed.closed && child.pid && child.exitCode === null && child.signalCode === null) {
+      if (process.platform === "win32") {
+        managed.forceKill = forceWindowsBackendTree(managed);
+        await managed.forceKill;
+      } else {
+        log.lifecycle(`backend_shutdown_timeout pid=${child.pid} SIGTERM after 5000ms`);
+        child.kill("SIGTERM");
+      }
+    }
+    if (await waitForDrain(managed, 2000)) return;
+    log.lifecycle(`backend_shutdown_drain_timeout pid=${child.pid ?? "unknown"}`);
+    child.stdin.destroy();
+    child.stdout.destroy();
+    child.stderr.destroy();
+    child.unref();
+    log.close();
+  })();
+  return managed.stopPromise;
 }
 
 function revealDesk() {
@@ -220,11 +302,29 @@ function startDesk() {
     event.returnValue = trusted(event) ? { hostHeaders, isPackaged: app.isPackaged } : {};
   });
   async function prepareBackend() {
-    const base = configuredBackend || await startManagedBackend();
-    const response = await fetch(base + "/v1/health", {
-      headers: hostHeaders, redirect: "error", signal: AbortSignal.timeout(18000)
-    });
-    if (!response.ok || (await response.json()).status !== "ok") throw new Error("本地服务健康检查未通过。");
+    const { base, managed } = configuredBackend ? { base: configuredBackend } : await startManagedBackend();
+    const timeout = AbortSignal.timeout(18000);
+    const signal = managed ? AbortSignal.any([timeout, managed.bootAbort.signal]) : timeout;
+    const check = async () => {
+      const response = await fetch(base + "/v1/health", { headers: hostHeaders, redirect: "error", signal });
+      if (!response.ok || (await response.json()).status !== "ok") throw new Error("本地服务健康检查未通过。");
+    };
+    try {
+      if (managed) await Promise.race([check(), managed.drained.then(failure => { throw failure; })]);
+      else await check();
+    } catch (error) {
+      if (managed && (managed.closed || managed.child.exitCode !== null || managed.child.signalCode !== null)) {
+        throw await managed.drained;
+      }
+      if (managed && error.message === "fetch failed") {
+        await stopManagedBackend();
+        if (!managed.forceKill && managed.abnormalExit) throw managed.abnormalExit;
+      }
+      throw error;
+    }
+    if (quitting || (!configuredBackend && (!managed || backendChild !== managed || managed.closed || managed.stopPromise))) {
+      throw new Error("本地服务已结束启动。");
+    }
     // EventSource 无自定义头 API。限定后端地址与主框架，不向扩展子帧签发。
     if (hostToken && base) window.webContents.session.webRequest.onBeforeSendHeaders(
       { urls: [new URL(base).protocol + "//" + new URL(base).hostname + "/*"] },
@@ -239,14 +339,25 @@ function startDesk() {
   }
   ipcMain.handle("desk:boot", event => {
     if (!trusted(event)) throw new Error("DESK_BOOT_DENIED");
-    backendReadyPromise ??= prepareBackend().catch(error => {
-      stopManagedBackend();
+    backendReadyPromise ??= prepareBackend().catch(async error => {
+      await stopManagedBackend();
       backendReadyPromise = null;
       const reason = error.message === "fetch failed" ? "无法连接本地服务。" :
         error.name === "TimeoutError" ? "等待本地服务响应超时。" : error.message;
-      return { ok: false, reason };
+      return { ok: false, reason, canOpenLogs: !configuredBackend && canOpenBackendLogs };
     });
     return backendReadyPromise;
+  });
+  ipcMain.handle("desk:open-backend-logs", async (event, ...args) => {
+    if (!trusted(event) || args.length) throw new Error("DESK_BACKEND_LOGS_DENIED");
+    if (configuredBackend || !canOpenBackendLogs) return { ok: false, message: "本地服务日志目录不可用。" };
+    try {
+      const result = await shell.openPath(backendLogDirectory());
+      if (!result) return { ok: true };
+    } catch {
+      // 不将系统路径或本机错误带回界面。
+    }
+    return { ok: false, message: "无法打开本地服务日志目录。" };
   });
   ipcMain.on("desk:window-theme", (event, preset, color) => {
     if (!trusted(event) || !["daylight", "nightwave"].includes(preset) || typeof color !== "string" || !/^#[a-f0-9]{6}$/i.test(color)) return;
@@ -268,15 +379,14 @@ function startDesk() {
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event) => event.preventDefault());
   window.webContents.on("will-prevent-unload", (event) => {
-    if (intents.pending) { quitting = false; return; }
+    if (windowIntents.pending) return;
     const choice = dialog.showMessageBoxSync(window, {
       type: "warning", message: "配置有改动未保存。要放弃修改并离开吗？",
       buttons: ["继续编辑", "放弃修改"], defaultId: 0, cancelId: 0, noLink: true
     });
     if (choice === 1) event.preventDefault();
-    else quitting = false;
   });
-  const intents = createWindowIntent({
+  const intents = windowIntents = createWindowIntent({
     send(channel, data) {
       if (!window.isDestroyed() && !window.webContents.isCrashed()) window.webContents.send("desk:intent-" + channel, data);
     },
@@ -319,10 +429,28 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on("second-instance", revealDesk);
-  app.on("before-quit", () => {
+  app.on("before-quit", event => {
+    if (allowQuit) return;
+    if (!quitting && window && !window.isDestroyed()) {
+      event.preventDefault();
+      windowIntents.request("quit");
+      return;
+    }
     quitting = true;
+    if (configuredBackend) {
+      allowQuit = true;
+      return;
+    }
+    event.preventDefault();
+    quitPromise ??= (async () => {
+      try {
+        await stopManagedBackend();
+      } finally {
+        allowQuit = true;
+        app.quit();
+      }
+    })();
   });
-  app.on("will-quit", stopManagedBackend);
   app.on("window-all-closed", () => {
     app.quit();
   });
