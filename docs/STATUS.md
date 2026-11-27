@@ -4,6 +4,8 @@
 
 ## 1. 当前结论概览
 
+**409 R11（`UX-05`）已完成修复与精准复验。** 后端抽取复用已打开 `AppStore` 的单角色迁移核心，新增 `RoleTransferHttpService`（实例级串行队列 + `activity.guardRole` 停机保护 + `blockAndEvict` 排空）与 `RoleWorkspaceService`（深度 6 / 500 项 / 512 KiB 限制，拒绝符号链接与越界），挂接 6 条 HTTP 接口；桌面主进程新增受控导出/导入文件选择及 `desk:open-role-workspace` 目录打开 IPC（零 `sendSync`、不泄露路径），渲染器新增角色配置「书案笔记（工作空间）」只读 Markdown 浏览器与「设置 → 角色状态」图形化导出/导入向导（含预检、运行态停止、绑定映射与分化时间线选择）。Node 24.22.2 下后端 `typecheck` + 21/21 专项测试、渲染器 `check`（38 CSS 0 违规）+ 9/9 单测 + 构建、桌面壳 `preload-boundary` 3/3、以及 Electron 39 `settings-workspace` 均通过。[409 R11 专项记录](./archive/07-documentation/409-project-audit-and-remediation-backlog.md#ux-05-单角色迁移与角色工作空间笔记缺少桌面图形入口)
+
 **409 R10（`UX-02` / `DL-201` 方案 B）已完成修复与精准复验。** 扩展 `Settings.tsx` `WorkspaceRequest` 支持直达全局设置分区；首页新增非阻塞轻量「起手三步」卡片（添加模型服务 → 为角色绑定对话模型并启用 → 开始对话），静默探测并在配齐后自动收起；扩展页检测 `GET /v1/engineering/settings` 为空或未开启时给出清晰提示并支持一键直达「设置 → 工程」，同时严格保持独立工程池（不设一键复用对话模型）。Node 24.22.2 下渲染器 `check`（37 CSS 0 违规）+ `onboarding-steps` 9/9 + 生产构建，以及 Electron 39 实窗 E2E `pack3-entry`（720×540～1440×840 全视口零裁切）、`extension-ui-slots`、`dialogue-layout` 3/3 均通过。[409 R10 专项记录](./archive/07-documentation/409-project-audit-and-remediation-backlog.md#ux-02-首次上手与后台工程能力存在冷启动悬崖)
 
 **409 R9b（`UX-01` / `DL-148` 方案 A）已完成修复与精准复验。** 后端 `config-writes.ts` 按并发风险将角色配置写接口分为 7 项停机保护（删除角色、修改人设、修改绑定及 4 类删除受引用媒体/服饰）与 12 项热生效（世界书、自主额度、语音配置/开关/上传参考、生图配置/服饰锚点、外观新增/改名/传立绘与表情），运行中修改热生效配置零停机生效；桌面角色配置页同步取消热生效区的停机流程，并在停机角色首次绑定对话模型时提供默认勾选的「保存并立即启用角色」。Node 24.22.2 下后端 `typecheck` + 39/39 专项集成测试、渲染器 `check`（37 CSS 0 违规）+ `role-write-tier` 4/4 + 构建、以及 Electron 39 实窗 E2E `settings-workspace` 与 `workflow-real-backend-chain`（26.1s）均通过。[409 R9b 专项记录](./archive/07-documentation/409-project-audit-and-remediation-backlog.md#ux-01-几乎全部角色配置写入都强制先停机把并发锁转嫁给用户)

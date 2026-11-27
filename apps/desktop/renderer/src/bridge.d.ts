@@ -8,5 +8,8 @@ interface Window {
     onIntent(callback: (request: DeskIntent) => void): () => void;
     waiting(id: number): void;
     reply(id: number, accepted: boolean): void;
-    chooseSkillDirectory: () => Promise<string | null> };
+    chooseSkillDirectory: () => Promise<string | null>;
+    chooseRoleExportFile?: (defaultName?: string) => Promise<string | null>;
+    chooseRoleImportFile?: () => Promise<string | null>;
+    openRoleWorkspace?: (roleId: string) => Promise<{ ok: true } | { ok: false; message: string }> };
 }

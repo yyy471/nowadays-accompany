@@ -30,6 +30,8 @@ import { RoleAccess } from "../application/role/role-access.js";
 import { RoleService } from "../application/role/role-service.js";
 import { RoleActivityService } from "../application/role/role-activity-service.js";
 import { RoleDeletionService } from "../application/role/role-deletion-service.js";
+import { RoleWorkspaceService } from "../application/role/role-workspace-service.js";
+import { RoleTransferHttpService } from "../application/transfer/role-transfer-service.js";
 import { TokenUsageService } from "../application/resources/token-usage-service.js";
 import { ensurePresetAssistant } from "../application/role/preset-assistant.js";
 import type { AdminToolServices } from "../application/role/admin-tools.js";
@@ -523,6 +525,8 @@ function assembleBackendApp(
       extensions.publishCoplayShare({ roleId, windowId, messageId, ...coplayShare });
     conversation.queueSegmentAnnotation(notice);
   });
+  const roleWorkspace = new RoleWorkspaceService({ dataRoot: config.dataRoot, roleAccess });
+  const roleTransfer = new RoleTransferHttpService({ config, appStore, roleAccess, activity, feedEvents });
   const services: ApiServices = {
     roles: roleService,
     messages: messageService,
@@ -539,6 +543,8 @@ function assembleBackendApp(
     sceneImageSettings,
     activity,
     roleDeletion,
+    roleWorkspace,
+    roleTransfer,
     mediaMaintenance,
     tokenUsage,
     pi, modelProxy, toolProxy, engineeringPool,

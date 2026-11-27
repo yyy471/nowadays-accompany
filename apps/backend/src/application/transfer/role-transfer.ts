@@ -20,16 +20,51 @@ type TimelineEvidence = { facts: Set<string>; userMessages: Set<string> };
 
 const snapshotLimit = 128;
 
+/**
+ * 一次迁移操作访问应用库的方式。
+ *
+ * 离线 CLI 在获取安装锁后自行打开只读／写入连接；运行态 HTTP 后端已持有
+ * 同一个 `AppStore`，复用它的连接既能避免二次加锁，也能看到本进程刚写入的
+ * 活动状态。两条路径共享下面的核心逻辑，保证行为一致。
+ */
+interface TransferContext {
+  read<T>(action: (db: Database.Database | null) => T): T;
+  write<T>(action: (store: AppStore) => T): T;
+}
+
+function installationContext(config: BackendConfig): TransferContext {
+  return {
+    read<T>(action: (db: Database.Database | null) => T): T { return withAppRead(config, action); },
+    write<T>(action: (store: AppStore) => T): T { return withAppWrite(config, action); },
+  };
+}
+
+function openedStoreContext(store: AppStore): TransferContext {
+  return {
+    read<T>(action: (db: Database.Database | null) => T): T { return action(store.db); },
+    write<T>(action: (target: AppStore) => T): T { return action(store); },
+  };
+}
+
+/**
+ * 崩溃日志检查：上次进程可能在发布迁移包的中途退出。Journal 表或 .role-transfer
+ * 目录仍有残留时先收敛，避免留下半换名的角色目录。运行态后端启动时已做过一次，
+ * 这里保持幂等，让 CLI 与 HTTP 两条路径都能防御异常退出。
+ */
+function recoverPendingTransfer(config: BackendConfig, context: TransferContext): void {
+  const hasJournal = context.read((db) => tableExists(db, "role_transfer_publication") &&
+    Boolean(db!.prepare("SELECT 1 FROM role_transfer_publication WHERE singleton = 1").get()));
+  const root = path.join(config.dataRoot, ".role-transfer");
+  if (hasJournal || (checkedInstallEntry(root, "directory") && fs.readdirSync(root).length > 0)) {
+    context.write((store) => recoverRoleTransfer(config, store));
+  }
+}
+
 function withInstallation<T>(config: BackendConfig, file: string, action: () => T): T {
   const release = lockInstallation(config);
   try {
     assertPackageFileOutsideManagedDirs(config, file);
-    const hasJournal = withAppRead(config, (db) => tableExists(db, "role_transfer_publication") &&
-      Boolean(db!.prepare("SELECT 1 FROM role_transfer_publication WHERE singleton = 1").get()));
-    const root = path.join(config.dataRoot, ".role-transfer");
-    if (hasJournal || (checkedInstallEntry(root, "directory") && fs.readdirSync(root).length > 0)) {
-      withAppWrite(config, (store) => recoverRoleTransfer(config, store));
-    }
+    recoverPendingTransfer(config, installationContext(config));
     return action();
   } finally {
     release();
@@ -132,23 +167,38 @@ function assertPackageFileOutsideManagedDirs(config: BackendConfig, file: string
   }
 }
 
-export function exportRoleTransfer(config: BackendConfig, roleId: string, file: string) {
-  return withInstallation(config, file, () => {
-    rolePaths(config.dataRoot, roleId);
-    if (!checkTransferRoleDirectory(config, roleId)) throw new Error("ROLE_TRANSFER_ROLE_MISSING");
-    const pkg = captureRoleTransfer(config, roleId);
-    const evidence = timelineEvidence(pkg);
-    const ancestors = withAppRead(config, (db) => {
-      const index = readIndex(db, roleId);
-      if (index && (index.builtin_key ?? null) !== pkg.builtinKey) throw new Error("ROLE_TRANSFER_PRESET_IDENTITY_MISMATCH");
-      return localSnapshots(db, roleId).filter((snapshot) => containsFacts(evidence.facts, snapshot.facts) ||
-        keepsMessageAnchors(evidence, snapshot)).map(({ fingerprint }) => fingerprint);
-    });
-    const exported = roleTransferWithAncestors(pkg, ancestors);
-    writeRoleTransferPackage(file, exported);
-    withAppWrite(config, (store) => store.db.transaction(() => saveSnapshot(store.db, pkg, evidence))());
-    return { roleId, digest: exported.digest, timelineFingerprint: exported.timelineFingerprint, bindings: exported.bindings };
+function exportWithContext(config: BackendConfig, context: TransferContext, roleId: string, file: string) {
+  rolePaths(config.dataRoot, roleId);
+  if (!checkTransferRoleDirectory(config, roleId)) throw new Error("ROLE_TRANSFER_ROLE_MISSING");
+  const pkg = captureRoleTransfer(config, roleId);
+  const evidence = timelineEvidence(pkg);
+  const ancestors = context.read((db) => {
+    const index = readIndex(db, roleId);
+    if (index && (index.builtin_key ?? null) !== pkg.builtinKey) throw new Error("ROLE_TRANSFER_PRESET_IDENTITY_MISMATCH");
+    return localSnapshots(db, roleId).filter((snapshot) => containsFacts(evidence.facts, snapshot.facts) ||
+      keepsMessageAnchors(evidence, snapshot)).map(({ fingerprint }) => fingerprint);
   });
+  const exported = roleTransferWithAncestors(pkg, ancestors);
+  writeRoleTransferPackage(file, exported);
+  context.write((store) => store.db.transaction(() => saveSnapshot(store.db, pkg, evidence))());
+  return { roleId, digest: exported.digest, timelineFingerprint: exported.timelineFingerprint, bindings: exported.bindings };
+}
+
+export function exportRoleTransfer(config: BackendConfig, roleId: string, file: string) {
+  return withInstallation(config, file, () => exportWithContext(config, installationContext(config), roleId, file));
+}
+
+/**
+ * 运行态 HTTP 后端使用的导出：复用已打开的 `AppStore`，不再获取安装锁，
+ * 也不关闭传入的 `store`。调用方负责先把角色停下来并驱逐角色库连接。
+ */
+export function exportRoleTransferWithStore(
+  config: BackendConfig, store: AppStore, roleId: string, file: string,
+) {
+  assertPackageFileOutsideManagedDirs(config, file);
+  const context = openedStoreContext(store);
+  recoverPendingTransfer(config, context);
+  return exportWithContext(config, context, roleId, file);
 }
 
 function compareTimelines(
@@ -179,7 +229,7 @@ function compareTimelines(
   return "unknown";
 }
 
-function inspectTransfer(config: BackendConfig, file: string, mapping: TransferMapping) {
+function inspectTransfer(config: BackendConfig, context: TransferContext, file: string, mapping: TransferMapping) {
   const incoming = readRoleTransferPackage(file);
   const bindings = resolveRoleTransferBindings(config, incoming, mapping);
   const tables = portableTransferTables(incoming.tables);
@@ -188,7 +238,7 @@ function inspectTransfer(config: BackendConfig, file: string, mapping: TransferM
   const incomingEvidence = timelineEvidence(portable);
   const { roleId, builtinKey } = incoming;
   const hasDirectory = checkTransferRoleDirectory(config, roleId);
-  return withAppRead(config, (db) => {
+  return context.read((db) => {
     const index = readIndex(db, roleId);
     const local = hasDirectory ? captureRoleTransfer(config, roleId) : null;
     if ((index && !local) || (index && (index.builtin_key ?? null) !== builtinKey) || (local && local.builtinKey !== builtinKey)) {
@@ -223,7 +273,69 @@ function inspectTransfer(config: BackendConfig, file: string, mapping: TransferM
 }
 
 export function preflightRoleTransfer(config: BackendConfig, file: string, mapping: TransferMapping = {}) {
-  return withInstallation(config, file, () => inspectTransfer(config, file, mapping).preview);
+  return withInstallation(config, file, () => inspectTransfer(config, installationContext(config), file, mapping).preview);
+}
+
+/** 运行态 HTTP 后端使用的预检：复用已打开的 `AppStore`，不获取安装锁。 */
+export function preflightRoleTransferWithStore(
+  config: BackendConfig, store: AppStore, file: string, mapping: TransferMapping = {},
+) {
+  assertPackageFileOutsideManagedDirs(config, file);
+  const context = openedStoreContext(store);
+  recoverPendingTransfer(config, context);
+  return inspectTransfer(config, context, file, mapping).preview;
+}
+
+function applyWithContext(
+  config: BackendConfig,
+  context: TransferContext,
+  file: string,
+  token: string,
+  mapping: TransferMapping,
+  choice: TransferChoice | undefined,
+  hook: PublicationHook | undefined,
+) {
+  const { preview, incoming, incomingEvidence, bindings, index, selection } = inspectTransfer(config, context, file, mapping);
+  if (token !== preview.token) throw new Error("ROLE_TRANSFER_PREFLIGHT_STALE");
+  if (preview.requiresChoice && !choice) throw new Error("ROLE_TRANSFER_CHOICE_REQUIRED");
+  if (choice === "local") {
+    if (preview.relation === "new") throw new Error("ROLE_TRANSFER_LOCAL_TIMELINE_MISSING");
+    return { ...preview, outcome: "kept-local" };
+  }
+  const alreadyApplied = selection?.package_digest === incoming.digest && selection.target_fingerprint === bindings.targetFingerprint;
+  if (preview.relation === "local-ahead" || (index && preview.relation === "same" &&
+      (alreadyApplied || choice !== "package"))) return { ...preview, outcome: "unchanged" };
+  context.write((store) => publishRoleTransfer(config, store, incoming, bindings, () => {
+    const role = incoming.tables.roles[0]!;
+    const stoppedAt = new Date().toISOString();
+    store.db.prepare(`
+      INSERT INTO roles (role_id, relative_dir, builtin_key, init_status, init_error, init_payload_json, created_at, updated_at)
+      VALUES (?, ?, ?, 'ready', NULL, NULL, ?, ?)
+      ON CONFLICT(role_id) DO UPDATE SET updated_at = excluded.updated_at
+    `).run(incoming.roleId, `roles/${incoming.roleId}`, incoming.builtinKey, role.created_at, role.updated_at);
+    store.db.prepare(`
+      INSERT INTO role_activity (role_id, state, requested_at, confirmed_at, boundary_execution_id, updated_at)
+      VALUES (?, 'stopped', NULL, ?, NULL, ?)
+      ON CONFLICT(role_id) DO UPDATE SET
+        state = 'stopped', requested_at = NULL, confirmed_at = excluded.confirmed_at,
+        boundary_execution_id = NULL, updated_at = excluded.updated_at
+    `).run(incoming.roleId, stoppedAt, stoppedAt);
+    // 媒体依赖投影跟随导入后的最终 service_id（目标机映射结果），
+    // 与写入角色库的值保持一致；未解析的目标不登记依赖。
+    const importedService = (capability: "voice" | "image"): string | null => {
+      const binding = incoming.bindings.find(item => item.capability === capability);
+      return binding ? (bindings.targets.get(binding.key)?.resourceId ?? null) : null;
+    };
+    store.setRoleMediaBinding(incoming.roleId, "voice", importedService("voice"), stoppedAt);
+    store.setRoleMediaBinding(incoming.roleId, "image", importedService("image"), stoppedAt);
+    saveSnapshot(store.db, { ...incoming, timelineFingerprint: preview.packageFingerprint }, incomingEvidence);
+    store.db.prepare(`
+      INSERT INTO role_transfer_selections (role_id, package_digest, target_fingerprint) VALUES (?, ?, ?)
+      ON CONFLICT(role_id) DO UPDATE SET
+        package_digest = excluded.package_digest, target_fingerprint = excluded.target_fingerprint
+    `).run(incoming.roleId, incoming.digest, bindings.targetFingerprint);
+  }, hook));
+  return { ...preview, outcome: "published" };
 }
 
 export function applyRoleTransfer(
@@ -234,47 +346,22 @@ export function applyRoleTransfer(
   choice?: TransferChoice,
   hook?: PublicationHook,
 ) {
-  return withInstallation(config, file, () => {
-    const { preview, incoming, incomingEvidence, bindings, index, selection } = inspectTransfer(config, file, mapping);
-    if (token !== preview.token) throw new Error("ROLE_TRANSFER_PREFLIGHT_STALE");
-    if (preview.requiresChoice && !choice) throw new Error("ROLE_TRANSFER_CHOICE_REQUIRED");
-    if (choice === "local") {
-      if (preview.relation === "new") throw new Error("ROLE_TRANSFER_LOCAL_TIMELINE_MISSING");
-      return { ...preview, outcome: "kept-local" };
-    }
-    const alreadyApplied = selection?.package_digest === incoming.digest && selection.target_fingerprint === bindings.targetFingerprint;
-    if (preview.relation === "local-ahead" || (index && preview.relation === "same" &&
-        (alreadyApplied || choice !== "package"))) return { ...preview, outcome: "unchanged" };
-    withAppWrite(config, (store) => publishRoleTransfer(config, store, incoming, bindings, () => {
-      const role = incoming.tables.roles[0]!;
-      const stoppedAt = new Date().toISOString();
-      store.db.prepare(`
-        INSERT INTO roles (role_id, relative_dir, builtin_key, init_status, init_error, init_payload_json, created_at, updated_at)
-        VALUES (?, ?, ?, 'ready', NULL, NULL, ?, ?)
-        ON CONFLICT(role_id) DO UPDATE SET updated_at = excluded.updated_at
-      `).run(incoming.roleId, `roles/${incoming.roleId}`, incoming.builtinKey, role.created_at, role.updated_at);
-      store.db.prepare(`
-        INSERT INTO role_activity (role_id, state, requested_at, confirmed_at, boundary_execution_id, updated_at)
-        VALUES (?, 'stopped', NULL, ?, NULL, ?)
-        ON CONFLICT(role_id) DO UPDATE SET
-          state = 'stopped', requested_at = NULL, confirmed_at = excluded.confirmed_at,
-          boundary_execution_id = NULL, updated_at = excluded.updated_at
-      `).run(incoming.roleId, stoppedAt, stoppedAt);
-      // 媒体依赖投影跟随导入后的最终 service_id（目标机映射结果），
-      // 与写入角色库的值保持一致；未解析的目标不登记依赖。
-      const importedService = (capability: "voice" | "image"): string | null => {
-        const binding = incoming.bindings.find(item => item.capability === capability);
-        return binding ? (bindings.targets.get(binding.key)?.resourceId ?? null) : null;
-      };
-      store.setRoleMediaBinding(incoming.roleId, "voice", importedService("voice"), stoppedAt);
-      store.setRoleMediaBinding(incoming.roleId, "image", importedService("image"), stoppedAt);
-      saveSnapshot(store.db, { ...incoming, timelineFingerprint: preview.packageFingerprint }, incomingEvidence);
-      store.db.prepare(`
-        INSERT INTO role_transfer_selections (role_id, package_digest, target_fingerprint) VALUES (?, ?, ?)
-        ON CONFLICT(role_id) DO UPDATE SET
-          package_digest = excluded.package_digest, target_fingerprint = excluded.target_fingerprint
-      `).run(incoming.roleId, incoming.digest, bindings.targetFingerprint);
-    }, hook));
-    return { ...preview, outcome: "published" };
-  });
+  return withInstallation(config, file, () =>
+    applyWithContext(config, installationContext(config), file, token, mapping, choice, hook));
+}
+
+/** 运行态 HTTP 后端使用的导入：复用已打开的 `AppStore`，不获取安装锁。 */
+export function applyRoleTransferWithStore(
+  config: BackendConfig,
+  store: AppStore,
+  file: string,
+  token: string,
+  mapping: TransferMapping = {},
+  choice?: TransferChoice,
+  hook?: PublicationHook,
+) {
+  assertPackageFileOutsideManagedDirs(config, file);
+  const context = openedStoreContext(store);
+  recoverPendingTransfer(config, context);
+  return applyWithContext(config, context, file, token, mapping, choice, hook);
 }

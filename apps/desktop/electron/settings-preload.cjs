@@ -23,6 +23,9 @@ if (process.isMainFrame && location.href === "desk://bundle/index.html") {
     },
     waiting: id => ipcRenderer.send("desk:intent-waiting", id),
     reply: (id, accepted) => ipcRenderer.send("desk:intent-reply", id, accepted),
-    chooseSkillDirectory: () => ipcRenderer.invoke("settings:choose-skill-directory")
+    chooseSkillDirectory: () => ipcRenderer.invoke("settings:choose-skill-directory"),
+    chooseRoleExportFile: defaultName => ipcRenderer.invoke("settings:choose-transfer-export-file", defaultName),
+    chooseRoleImportFile: () => ipcRenderer.invoke("settings:choose-transfer-import-file"),
+    openRoleWorkspace: roleId => ipcRenderer.invoke("desk:open-role-workspace", roleId)
   });
 }

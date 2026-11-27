@@ -36,7 +36,7 @@
 | [ARCH-02](#arch-02-桌面端四条通信通道混用且动态页退化为-15-秒全量轮询) | 架构债务 | **P2** | `desk://`、直连 `127.0.0.1`、`nd-ext://`、`ipcMain` 混用；动态页无推送 | 否 | 已修复，R8b 精准复验通过 |
 | [ARCH-03](#arch-03-记忆检索纯依赖字面-fts5-trigram缺乏语义召回能力) | 核心能力 | **P2** | 换个同义说法即召回失效，制约精细记忆模型的实际效果 | 需确认（`DL-51`） | `[ ]` 待排查 |
 | [ARCH-04](#arch-04-启动期同步-ipc-阻塞令牌暴露给渲染层与维护期隐性-on-存储扫描) | 性能/架构 | **P2** | `preload` 同步 `sendSync` 并暴露 `hostHeaders`；`MediaMaintenance` 逐角色开关双库 | 否 | 已修复，R8a 精准复验通过 |
-| [UX-05](#ux-05-单角色迁移与角色工作空间笔记缺少桌面图形入口) | 功能短板 | **P2** | 角色导出/导入停留在 CLI；用户需手工翻数据目录看角色 Markdown 笔记 | 否 | `[ ]` 待排查 |
+| [UX-05](#ux-05-单角色迁移与角色工作空间笔记缺少桌面图形入口) | 功能短板 | **P2** | 角色导出/导入停留在 CLI；用户需手工翻数据目录看角色 Markdown 笔记 | 否 | 已修复，R11 精准复验通过 |
 | [UX-06](#ux-06-多窗口跳转丢失上下文与主角色自改权限割裂) | 操作体验 | **P2** | 对话页跳设置返回后丢子窗口；主角色能管别人却改不了自己任何配置 | 部分需确认（`DL-159`） | 多窗口记忆已修复（R9a）；自改待确认 |
 
 ### 0.2 建议修复分期路线
@@ -523,7 +523,11 @@ Windows、仓库 Node 24.22.2、离线夹具下，主审核人独立执行以下
 
 ### UX-05 单角色迁移与角色工作空间笔记缺少桌面图形入口
 
-- **优先级**：P2 · **状态**：`[ ]` 待排查
+- **优先级**：P2 · **状态**：已修复，R11 精准复验通过
+- **R11 实施与复验（2026-11-28）**：
+  - **后端运行态迁移与工作空间服务**：[role-transfer.ts](../../../apps/backend/src/application/transfer/role-transfer.ts) 抽取复用已打开 `AppStore` 的 `exportRoleTransferWithStore` / `preflightRoleTransferWithStore` / `applyRoleTransferWithStore`（保留 CLI 原契约）；新增 [role-transfer-service.ts](../../../apps/backend/src/application/transfer/role-transfer-service.ts)（实例级串行队列、`activity.guardRole` 停机保护、`roleAccess.blockAndEvict` 排空与结构化错误映射）与 [role-workspace-service.ts](../../../apps/backend/src/application/role/role-workspace-service.ts)（只读遍历工作空间 `.md`/`.markdown`，深度 6 / 500 项 / 512 KiB 限制，拒绝符号链接与路径穿越），通过 [role-transfer-workspace-routes.ts](../../../apps/backend/src/http/role-transfer-workspace-routes.ts) 注册 6 条 HTTP 接口并接入 [routes.ts](../../../apps/backend/src/http/routes.ts) 与 [app.ts](../../../apps/backend/src/bootstrap/app.ts)；
+  - **桌面安全 IPC 与图形入口**：[main.cjs](../../../apps/desktop/electron/main.cjs) 与 [settings-preload.cjs](../../../apps/desktop/electron/settings-preload.cjs) 新增 3 个 `trusted(event)` 校验异步通道（导出保存框、导入文件框与不泄露路径的 `desk:open-role-workspace`）；渲染器在角色配置「扩展」分区新增 [WorkspaceNotesPanel.tsx](../../../apps/desktop/renderer/src/components/config/role/WorkspaceNotesPanel.tsx)（「书案笔记（工作空间）」默认折叠面板 + 预览 + 在资源管理器中打开目录），在「设置 → 角色状态」新增 [RoleTransferModal.tsx](../../../apps/desktop/renderer/src/components/config/RoleTransferModal.tsx) 图形化导入向导（预检、运行中角色停机、按类筛选本机资源映射自动重检、分化时间线双选）与每卡一键导出；
+  - **精准复验（Node 24.22.2）**：后端 `typecheck` + **21/21** 集成测试（`workspace-and-transfer-http` 3/3 + `role-transfer` 9/9 + `role-activity` 9/9）、渲染器 `check`（38 CSS 0 违规）+ `role-transfer-workspace.test.ts` **9/9** + 生产构建、桌面壳 `preload-boundary` **3/3**、以及 Electron 39 实窗 E2E `settings-workspace`（`errors: []`）均通过。
 - **证据位置**：
   - [apps/backend/README.md](../../../apps/backend/README.md#L167-L193)（单角色迁移仅提供 5 条 PowerShell CLI 命令）
   - [docs/specs/storage-memory-and-autonomy.md](../../specs/storage-memory-and-autonomy.md#L52)（角色工作空间 `workspace/` 无 UI 文件浏览器）

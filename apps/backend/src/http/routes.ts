@@ -39,6 +39,8 @@ import type { VoiceService } from "../application/media/voice-service.js";
 import type { GlobalVoiceService } from "../application/media/global-voice-service.js";
 import type { RoleActivityService } from "../application/role/role-activity-service.js";
 import type { RoleDeletionService } from "../application/role/role-deletion-service.js";
+import type { RoleTransferHttpService } from "../application/transfer/role-transfer-service.js";
+import type { RoleWorkspaceService } from "../application/role/role-workspace-service.js";
 import type { TokenUsageService } from "../application/resources/token-usage-service.js";
 import {
   TOKEN_USAGE_CATEGORIES,
@@ -47,6 +49,7 @@ import {
   type TokenUsageRange,
 } from "../domain/token-usage.js";
 import { registerRoleActivityRoutes } from "./role-activity-routes.js";
+import { registerRoleTransferWorkspaceRoutes } from "./role-transfer-workspace-routes.js";
 import { registerExtensionImportRoutes } from "./extension-import-routes.js";
 import { uiActionPayloadBytes, uiActionSchema } from "../application/extensions/extension-files.js";
 import { extensionSummary, type CoplayShare } from "../application/extensions/extension-host.js";
@@ -114,6 +117,8 @@ export interface ApiServices {
   sceneImageSettings: SceneImageSettingsService;
   activity: RoleActivityService;
   roleDeletion: RoleDeletionService;
+  roleWorkspace: RoleWorkspaceService;
+  roleTransfer: RoleTransferHttpService;
   mediaMaintenance: MediaMaintenance;
   tokenUsage: TokenUsageService;
   feedEvents: FeedEventHub;
@@ -191,6 +196,7 @@ export function registerApiRoutes(
     return handler;
   });
   registerRoleActivityRoutes(router, activity);
+  registerRoleTransferWorkspaceRoutes(router, services);
   registerExtensionImportRoutes(router, services.resources);
   router.add("GET", "/v1/extension-events", ({ request, response }) => {
     const header = request.headers["last-event-id"];

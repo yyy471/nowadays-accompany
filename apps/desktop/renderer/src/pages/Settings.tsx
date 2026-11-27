@@ -14,6 +14,8 @@ import { WriteProvider, WriteResultNotice, useWrite } from '../components/config
 import { RoleSheetHost } from '../components/config/role/RoleSheetHost';
 import { ProbeFeedback } from '../components/config/ProbeFeedback';
 import { WorldbooksPanel } from '../components/config/role/WorldbooksPanel';
+import { WorkspaceNotesPanel } from '../components/config/role/WorkspaceNotesPanel';
+import { RoleExportModal, RoleTransferModal, exportRolePackage } from '../components/config/RoleTransferModal';
 import { shouldDefaultEnableOnChatBind } from '../components/config/role-write-tier';
 import { Sheet } from '../components/config/sheet/Sheet';
 import { chatRowStatus, memoryRowStatus, quotaLimitBad, rowDotVisible } from '../components/config/summary';
@@ -707,7 +709,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
               </MediaGroup>
             </>}
           </NewModelSheet>
-          {settingsActive && settingsSection === 'roles' && <RoleStatusCards roles={roles} activities={activities} loading={!activityReady || activityRefreshing} error={activityError}
+          {settingsActive && settingsSection === 'roles' && <RoleStatusCards roles={roles} activities={activities} resources={resources} voiceServices={voiceServices} imageServices={imageServices} loading={!activityReady || activityRefreshing} error={activityError}
             onRefresh={readActivities} onRolesChanged={onRefresh}
             onChanged={item => { if (item.state === 'stopping') requestedStops.current.add(item.roleId); activityRead.current += 1; setActivityRefreshing(false); setActivities(previous => [...previous.filter(value => value.roleId !== item.roleId), item]); }}
             onConfigure={roleId => { setEditId(roleId); setRoleSection('profile'); onNavigate('role-config'); focusSectionHeadingSoon(); }}/>}
@@ -1114,6 +1116,7 @@ function RoleEditor({ roleId, roleCount, active, activity, activityLoading = fal
       {!firstReadError && (['mcp','skill'] as const).map(kind => <ExtensionRow key={kind} kind={kind} resources={resources.filter(item => item.kind === kind)} draft={extensionDraft} bindings={bindings} loaded={bindingLoaded} busy={bindingBusy || !bindingRevision || !!resourceError} onOpen={trigger => openExtension(kind, trigger)}/>)}
       {bindingNotice && <p role="status">{bindingNotice}</p>}
       <ExtSheetHosts active={active && section === 'ext'} resources={resources} draft={extensionDraft} setDraft={setExtensionDraft} bindings={bindings} loaded={bindingLoaded} notice={bindingNotice} error={bindingError} pause={activity?.state !== "stopped"} busy={bindingBusy} onReload={needsBindingRead ? reloadBindings : undefined} onSave={saveBindings} onManage={onOpenSettings}/>
+      <WorkspaceNotesPanel roleId={roleId} active={active && section === 'ext'}/>
     </div>
     <div hidden={!active || section !== 'quota'} className="config-prose"><header className="config-sec-head"><h2 tabIndex={-1}>自主额度</h2></header>
       {budget ? <><div className="config-sum" data-edit="quota" onClick={event => openQuota(event.currentTarget.querySelector<HTMLElement>('.config-sum-edit') ?? event.currentTarget)}>
@@ -1511,14 +1514,42 @@ function SettingsRefresh({ label, success, disabled, onRefresh }: { label: strin
   }}><span><Icon name="refresh" size={15}/></span></ControlButton>;
 }
 
-function RoleStatusCards({ roles, activities, loading, error, onRefresh, onRolesChanged, onChanged, onConfigure }: {
+function RoleStatusCards({ roles, activities, resources, voiceServices, imageServices, loading, error, onRefresh, onRolesChanged, onChanged, onConfigure }: {
   roles: RoleListItem[]; activities: Activity[]; loading: boolean; error: string;
+  resources: Resource[]; voiceServices: VoiceServiceItem[]; imageServices: ImageService[];
   onRefresh: (signal: AbortSignal) => Promise<boolean>; onRolesChanged: () => Promise<void>;
   onChanged: (activity: Activity) => void; onConfigure: (roleId: string) => void;
 }) {
   const write = useWrite();
   const [pending, setPending] = useState<Record<string, 'stop' | 'resume'>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [importOpen, setImportOpen] = useState(false);
+  const [exportRole, setExportRole] = useState<RoleListItem | null>(null);
+  const [exporting, setExporting] = useState('');
+  const refreshActivities = () => { void onRefresh(new AbortController().signal); };
+  const exportPackage = async (role: RoleListItem, state: string | undefined) => {
+    if (state !== 'stopped') {
+      write.reportResult('请先停止角色活动再导出角色包', 'warning');
+      return;
+    }
+    if (exporting) return;
+    const chooser = window.nowadaysDesk?.chooseRoleExportFile;
+    if (!chooser) {
+      setExportRole(role);
+      return;
+    }
+    setExporting(role.roleId);
+    try {
+      const file = await chooser(`${role.displayName || role.roleId}.json`);
+      if (!file) return;
+      await exportRolePackage(role.roleId, file);
+      write.reportResult('已导出角色包');
+    } catch (reason) {
+      write.reportResult(`导出角色包未完成：${errorText(reason)}`, 'error');
+    } finally {
+      setExporting('');
+    }
+  };
   const change = async (roleId: string, operation: 'stop' | 'resume') => {
     const finish = write.beginWrite();
     if (!finish) return;
@@ -1542,7 +1573,7 @@ function RoleStatusCards({ roles, activities, loading, error, onRefresh, onRoles
       finish();
     }
   };
-  return <div className="config-prose config-status-page"><header className="config-sec-head"><h2 tabIndex={-1}>角色状态</h2><SettingsRefresh label="刷新状态" success="状态已刷新" disabled={write.busy || write.resuming} onRefresh={onRefresh}/></header>
+  return <div className="config-prose config-status-page"><header className="config-sec-head"><h2 tabIndex={-1}>角色状态</h2><Button size="sm" onClick={() => setImportOpen(true)}>导入角色包</Button><SettingsRefresh label="刷新状态" success="状态已刷新" disabled={write.busy || write.resuming} onRefresh={onRefresh}/></header>
     {error && <p role="alert">状态获取失败：{error}</p>}
     <div className="config-status-wall">{roles.map(role => {
       const activity = activities.find(item => item.roleId === role.roleId);
@@ -1560,10 +1591,14 @@ function RoleStatusCards({ roles, activities, loading, error, onRefresh, onRoles
         <span className="config-status-state"><StatusDot status={status} label={label}/></span>
         {failed && <small className="config-status-error">{T21(role.initError || '初始化失败')}</small>}
         <div className="config-status-actions">{(activity || failed) && <Button size="sm" busy={moving} disabled={!moving && (write.busy || write.resuming)} onClick={() => void change(role.roleId, state === 'stopped' ? 'resume' : 'stop')}>{activityLabel}</Button>}
+          <Button size="sm" variant="ghost" busy={exporting === role.roleId} disabled={write.busy || write.resuming || (!!exporting && exporting !== role.roleId)} onClick={() => void exportPackage(role, state)}>导出</Button>
           <button type="button" className="config-status-link" aria-label={`${role.displayName}的角色配置`} onClick={() => onConfigure(role.roleId)}>{T20.configure}</button></div>
         {errors[role.roleId] && <small className="config-status-error" role="alert">{errors[role.roleId]}</small>}
       </article>;
     })}</div>
+    <RoleTransferModal open={importOpen} onClose={() => setImportOpen(false)} resources={resources} voiceServices={voiceServices} imageServices={imageServices}
+      onImported={() => { void onRolesChanged(); refreshActivities(); }} onActivityChanged={refreshActivities}/>
+    <RoleExportModal open={Boolean(exportRole)} role={exportRole} onClose={() => setExportRole(null)}/>
   </div>;
 }
 

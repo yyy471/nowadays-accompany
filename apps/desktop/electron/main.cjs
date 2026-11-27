@@ -461,6 +461,60 @@ function startDesk() {
     const result = await dialog.showOpenDialog(window, { properties: ["openDirectory"] });
     return result.canceled ? null : result.filePaths[0] ?? null;
   });
+  ipcMain.handle("settings:choose-transfer-export-file", async (event, defaultName) => {
+    if (!trusted(event)) {
+      throw new Error("SETTINGS_TRANSFER_EXPORT_DENIED");
+    }
+    const requested = typeof defaultName === "string" ? defaultName : "";
+    // 只保留文件名，去掉路径分隔符、控制字符与 Windows 保留字符，避免借默认名跳到任意位置。
+    const base = requested.trim()
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-")
+      .replace(/[. ]+$/g, "")
+      .slice(0, 80) || "role-transfer";
+    const fileName = base.toLowerCase().endsWith(".json") ? base : `${base}.json`;
+    const result = await dialog.showSaveDialog(window, {
+      title: "导出角色包",
+      defaultPath: join(app.getPath("documents"), fileName),
+      filters: [{ name: "Nowadays 角色包", extensions: ["json"] }]
+    });
+    return result.canceled ? null : result.filePath ?? null;
+  });
+  ipcMain.handle("settings:choose-transfer-import-file", async (event) => {
+    if (!trusted(event)) {
+      throw new Error("SETTINGS_TRANSFER_IMPORT_DENIED");
+    }
+    const result = await dialog.showOpenDialog(window, {
+      title: "选择角色包",
+      properties: ["openFile"],
+      filters: [{ name: "Nowadays 角色包", extensions: ["json"] }]
+    });
+    return result.canceled ? null : result.filePaths[0] ?? null;
+  });
+  ipcMain.handle("desk:open-role-workspace", async (event, roleId) => {
+    if (!trusted(event)) {
+      throw new Error("DESK_OPEN_WORKSPACE_DENIED");
+    }
+    const failed = { ok: false, message: "无法打开角色工作空间目录。" };
+    if (typeof roleId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(roleId)) return failed;
+    if (!backendBaseUrl) return failed;
+    try {
+      // 目录由后端给出，主进程自行校验；绝对路径不回传渲染层。
+      const response = await fetch(
+        `${backendBaseUrl}/v1/roles/${encodeURIComponent(roleId)}/workspace/path`,
+        { headers: hostHeaders, redirect: "error" }
+      );
+      if (!response.ok) return failed;
+      const payload = await response.json();
+      const dir = payload?.path;
+      if (typeof dir !== "string" || !dir) return failed;
+      const stat = fs.lstatSync(dir);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) return failed;
+      const outcome = await shell.openPath(dir);
+      return outcome ? failed : { ok: true };
+    } catch {
+      return failed;
+    }
+  });
   window.webContents.on("will-frame-navigate", event => {
     if (!event.isMainFrame && !allowSlotNavigation(event, window.webContents.mainFrame)) event.preventDefault();
   });
