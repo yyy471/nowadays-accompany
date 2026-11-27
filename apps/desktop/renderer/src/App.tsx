@@ -19,6 +19,7 @@ import { HomePage } from './pages/Home';
 import { Relations } from './pages/Relations';
 import { SettingsWorkspace, type ConfigNavigationGuard, type WorkspaceRequest } from './pages/Settings';
 import { ConversationPage } from './pages/Conversation';
+import { createRoleWindowMemory } from './conversation/window-memory';
 import { FeedPage } from './pages/Feed';
 import { RoleEntry } from './pages/RoleEntry';
 import { needsEntryPick } from './entry/role-entry';
@@ -38,6 +39,9 @@ function DeskWorkspace({ skipEntry }: { skipEntry: boolean }) {
   const [conversationTarget, setConversationTarget] = useState<{ roleId: string; windowId: string; messageId?: string } | null>(null);
   const deskPosition = useRef<DeskPosition>({ view: 'desk' });
   const rememberDesk = useCallback((position: DeskPosition) => { deskPosition.current = position; }, []);
+  // 壳层按角色记忆最近活跃的对话子窗口，切页返回时不丢失。
+  const roleWindowMemory = useRef(createRoleWindowMemory());
+  const rememberWindow = useCallback((roleId: string, windowId: string) => { roleWindowMemory.current.remember(roleId, windowId); }, []);
   const [deskBookmark, setDeskBookmark] = useState<DeskPosition>();
   const [returnPosition, setReturnPosition] = useState<DeskPosition>();
   const [conversationFromFeed, setConversationFromFeed] = useState(false);
@@ -288,6 +292,7 @@ function DeskWorkspace({ skipEntry }: { skipEntry: boolean }) {
     setRevision(value => value + 1);
   }, [currentId, roleListError, retryRoles]);
   const removeRoleLocally = useCallback((roleId: string) => {
+    roleWindowMemory.current.forget(roleId);
     removedRoles.current.add(roleId);
     roleListRequest.current += 1;
     const remaining = rolesRef.current.filter(role => role.roleId !== roleId);
@@ -418,7 +423,7 @@ function DeskWorkspace({ skipEntry }: { skipEntry: boolean }) {
           initial={returnPosition} onPosition={rememberDesk} onIdea={() => navigate('conversation')}
           onOpenWindow={target => navigate('conversation', () => { setCurrentId(target.roleId); setConversationTarget(target); })}/>}
         {page === 'roles' && <Relations roles={roles || []} loading={!roles && !error} retrying={retryingRoles} onRetry={retryRoles} error={error} currentId={currentId} visit={rolesVisit} onSelect={setCurrentId} onOpenSettings={() => navigate('role-config')}/>}
-        {page === 'conversation' && <ConversationPage roles={roles || []} retrying={retryingRoles} onRetry={retryRoles} currentId={currentId} currentOutfit={currentOutfit} outfits={outfits} outfitHomeUrl={outfitHomeUrl} appearanceLoading={appearanceLoading} loading={!roles && !error} error={error} hideDock={hideConversationDock} onHideDockChange={setConversationDockHidden} onSelectRole={id => { setCurrentId(id); setConversationTarget(null); }} onOpenRelations={() => navigate('roles')} onConfigureModel={() => navigate('role-config', () => issueWorkspaceRequest({ kind: 'section', roleId: currentId, section: 'models' }))} onCreateRole={() => navigate('role-config', () => issueWorkspaceRequest({ kind: 'create' }))} onRoleStateChanged={() => { void refresh(); }} initialTarget={conversationTarget} onVisibleWindow={setVisibleWindow} onTargetHandled={handleConversationTarget} onReturnDesk={deskBookmark ? () => navigate('extensions', () => setReturnPosition(deskBookmark)) : undefined} onReturnFeed={conversationFromFeed ? () => navigateFeedChat('feed') : undefined}/>}
+        {page === 'conversation' && <ConversationPage roles={roles || []} retrying={retryingRoles} onRetry={retryRoles} currentId={currentId} currentOutfit={currentOutfit} outfits={outfits} outfitHomeUrl={outfitHomeUrl} appearanceLoading={appearanceLoading} loading={!roles && !error} error={error} hideDock={hideConversationDock} onHideDockChange={setConversationDockHidden} onSelectRole={id => { setCurrentId(id); setConversationTarget(null); }} onOpenRelations={() => navigate('roles')} onConfigureModel={() => navigate('role-config', () => issueWorkspaceRequest({ kind: 'section', roleId: currentId, section: 'models' }))} onCreateRole={() => navigate('role-config', () => issueWorkspaceRequest({ kind: 'create' }))} onRoleStateChanged={() => { void refresh(); }} initialTarget={conversationTarget} rememberedWindowId={roleWindowMemory.current.resolvePreferredWindow(currentId, {})} onRememberWindow={rememberWindow} onVisibleWindow={setVisibleWindow} onTargetHandled={handleConversationTarget} onReturnDesk={deskBookmark ? () => navigate('extensions', () => setReturnPosition(deskBookmark)) : undefined} onReturnFeed={conversationFromFeed ? () => navigateFeedChat('feed') : undefined}/>}
         {(page === 'feed' || feedVisited) && <div className="feed-mounted" hidden={page !== 'feed'}><FeedPage active={page === 'feed'} roles={roles || []} rolesLoading={!roles && !roleListError} roleError={roleListError} retryingRoles={retryingRoles} onRetryRoles={() => void retryRoles()} onOpenChat={target => navigateFeedChat('conversation', target)}/></div>}
         {settingsVisited && <SettingsWorkspace page={page} roles={roles || []} currentId={currentId} roleListError={roleListError} retryingRoles={retryingRoles} onRetryRoles={() => void retryRoles()} onRoleDeleted={removeRoleLocally} onRefresh={refresh} onNavigate={applyPage} navigationGuard={configGuard} footerLeft={configFooterLeft} footerRight={configFooterRight} workspaceRequest={workspaceRequest} onConfigureResource={(roleId, resourceId) => navigate('role-config', () => issueWorkspaceRequest({ kind: 'section', section: 'ext', roleId, resourceId }))} onWorkspaceRequestHandled={handleWorkspaceRequestHandled} onStartConversation={roleId => navigate('conversation', () => setCurrentId(roleId))}/>}
       </div>

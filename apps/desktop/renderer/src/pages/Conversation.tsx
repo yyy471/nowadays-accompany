@@ -51,6 +51,8 @@ export function ConversationPage({
   onCreateRole,
   onRoleStateChanged,
   initialTarget,
+  rememberedWindowId,
+  onRememberWindow,
   onTargetHandled,
   onVisibleWindow,
   onReturnFeed,
@@ -74,6 +76,8 @@ export function ConversationPage({
   onCreateRole: () => void;
   onRoleStateChanged?: () => void;
   initialTarget?: { roleId: string; windowId: string; messageId?: string } | null;
+  rememberedWindowId?: string | null;
+  onRememberWindow?: (roleId: string, windowId: string) => void;
   onTargetHandled?: () => void;
   onVisibleWindow: (id: string | null) => void;
   onReturnDesk?: () => void;
@@ -175,7 +179,7 @@ export function ConversationPage({
   const handleEventRef = useRef<(snapshot: ConversationSnapshot, event: SessionEvent) => void>(() => {});
   const session = useWindowSession({
     roleId: currentId,
-    preferredWindowId: initialTarget?.roleId === currentId ? initialTarget.windowId : role?.defaultWindowId ?? null,
+    preferredWindowId: initialTarget?.roleId === currentId ? initialTarget.windowId : rememberedWindowId ?? role?.defaultWindowId ?? null,
     onEvent: (snapshot, event) => handleEventRef.current(snapshot, event)
   });
   const snapshot = session.snapshot;
@@ -206,6 +210,10 @@ export function ConversationPage({
     onVisibleWindow(visibleWindow);
     return () => onVisibleWindow(null);
   }, [onVisibleWindow, visibleWindow]);
+  // 记住当前角色停留的自定义子窗口，切去设置等页面返回时可直接恢复。
+  useEffect(() => {
+    if (visibleWindow && currentId) onRememberWindow?.(currentId, visibleWindow);
+  }, [onRememberWindow, currentId, visibleWindow]);
   const targetRequest = useRef(false);
   useEffect(() => {
     if (!initialTarget || initialTarget.roleId !== currentId || !snapshot || snapshot.roleId !== currentId || snapshot.loading || snapshot.loadError || targetRequest.current) return;
