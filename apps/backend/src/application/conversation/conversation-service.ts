@@ -2261,6 +2261,7 @@ export class ConversationService {
           protocol: binding.config.protocol,
           ...(binding.config.provider === undefined ? {} : { provider: binding.config.provider }),
           baseUrl: binding.config.baseUrl,
+          ...(binding.config.vertexSafety === undefined ? {} : { vertexSafety: binding.config.vertexSafety }),
           ...(binding.config.maxInputChars === undefined ? {} : { maxInputChars: binding.config.maxInputChars }),
           ...(binding.config.maxOutputChars === undefined ? {} : { maxOutputChars: binding.config.maxOutputChars }),
         };

@@ -93,6 +93,7 @@ export const createResourceSchema = z
     secret: z.string().min(1).max(4000).optional(),
     /** 新建前做过草稿连接测试时携带的记录编号，配置一致则绑定到新建资源。 */
     draftTestCallId: z.uuid().optional(),
+    draftRouteTestIds: z.array(z.uuid()).max(100).optional(),
   })
   .strict();
 
@@ -107,6 +108,7 @@ export const updateResourceSchema = z
       .optional(),
     /** 编辑连接参数后做过草稿连接测试时携带的记录编号，配置一致则绑定到资源。 */
     draftTestCallId: z.uuid().optional(),
+    draftRouteTestIds: z.array(z.uuid()).max(100).optional(),
   })
   .strict()
   .refine(

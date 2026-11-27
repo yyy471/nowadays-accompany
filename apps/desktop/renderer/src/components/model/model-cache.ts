@@ -10,6 +10,7 @@ interface ModelCacheResourceLike {
     protocol?: unknown;
     provider?: unknown;
     baseUrl?: unknown;
+    vertexRouting?: unknown;
   } | null;
   credential?: {
     status?: unknown;
@@ -26,6 +27,7 @@ export function providerCacheKey(resource: unknown): string {
     String(config.protocol ?? ''),
     String(config.provider ?? ''),
     String(config.baseUrl ?? ''),
+    ...(config.vertexRouting === 'manual' ? ['manual'] : []),
     credential
       ? `${String(credential.status ?? '')}:${String(credential.reference ?? '')}`
       : '',

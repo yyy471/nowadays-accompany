@@ -1,15 +1,12 @@
-import { readThemePreset } from './ui/theme-storage';
+import { readThemePreset, syncWindowTheme } from './ui/theme-storage';
 import './ui/character-tokens.css';
 import './styles/boot-gate.css';
 
 const cover = document.querySelector<HTMLElement>('.boot-gate')!;
 const status = cover.querySelector<HTMLElement>('[role="status"]')!;
 const retry = cover.querySelector<HTMLButtonElement>('button')!;
-cover.dataset.uiPreset = readThemePreset();
-// 取已解析的同一画布令牌，原生窗口在首次 show 前同步底色。
-const canvas = document.createElement('canvas').getContext('2d')!;
-canvas.fillStyle = getComputedStyle(cover).backgroundColor;
-const canvasColor = canvas.fillStyle;
+const preset = readThemePreset();
+cover.dataset.uiPreset = preset;
 
 async function openDesk() {
   retry.hidden = true;
@@ -37,6 +34,6 @@ async function openDesk() {
 retry.addEventListener('click', () => void openDesk());
 // 隐藏窗口先合成所选主题的第一帧，再显示并接通后端。
 requestAnimationFrame(() => requestAnimationFrame(() => {
-  window.nowadaysDesk?.coverPainted(canvasColor);
+  syncWindowTheme(preset);
   void openDesk();
 }));

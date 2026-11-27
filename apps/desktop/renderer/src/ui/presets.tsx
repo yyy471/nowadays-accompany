@@ -4,7 +4,7 @@ import { UiThemeProvider } from './appearance';
 import { createThemeTransition, type ThemeTransitionStrategy } from './theme-transition';
 import './theme-transition.css';
 
-import { readThemePreset } from './theme-storage';
+import { readThemePreset, syncWindowTheme } from './theme-storage';
 
 export type ThemePreset = 'daylight' | 'nightwave';
 export { readThemePreset } from './theme-storage';
@@ -24,8 +24,7 @@ export function ThemePresetProvider({ children }: { children: ReactNode }) {
   useLayoutEffect(() => {
     document.documentElement.dataset.uiPreset = preset;
     // 在实际提交新预置时同步原生窗口，冷启动恢复的主题也走同一条路径。
-    const bridge = window.nowadays ?? window.accompany;
-    if (bridge?.setWindowTheme) void bridge.setWindowTheme(preset).catch(() => undefined);
+    syncWindowTheme(preset);
     return () => { delete document.documentElement.dataset.uiPreset; };
   }, [preset]);
   useEffect(() => {

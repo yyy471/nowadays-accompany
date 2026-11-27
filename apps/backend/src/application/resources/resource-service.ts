@@ -40,12 +40,14 @@ import type { ModelBindingResolver } from "./model-binding-resolver.js";
 import type { ModelServiceConfig } from "../../domain/model.js";
 import {
   fingerprintOf,
+  vertexRouteFingerprint,
   modelServiceIdentity,
   probeSalt,
   summarizeModelTest,
   type ModelTestSummary,
 } from "./model-service.js";
 import { RoleAccess } from "../role/role-access.js";
+import { autoVertexConnection } from "../../domain/model-providers.js";
 
 export interface CreateResourceInput {
   kind: ResourceKind;
@@ -55,6 +57,7 @@ export interface CreateResourceInput {
   /** 只写的模型服务密钥；创建时与资源同一事务落库。 */
   secret?: string | undefined;
   draftTestCallId?: string | undefined;
+  draftRouteTestIds?: string[] | undefined;
 }
 
 export interface UpdateResourceInput {
@@ -64,6 +67,7 @@ export interface UpdateResourceInput {
   /** undefined 保留、null 清除、字符串替换。 */
   secret?: string | null | undefined;
   draftTestCallId?: string | undefined;
+  draftRouteTestIds?: string[] | undefined;
 }
 
 export interface BindingInput {
@@ -270,10 +274,10 @@ export class ResourceService {
       if (input.secret !== undefined) {
         this.credentials.setSecret(resourceId, input.secret, now);
       }
-      if (input.kind === "model" && input.draftTestCallId !== undefined) {
+      if (input.kind === "model" && (input.draftTestCallId || input.draftRouteTestIds?.length)) {
         this.attachDraftTestCall({
           resourceId,
-          testCallId: input.draftTestCallId,
+          testCallId: input.draftTestCallId, routeIds: input.draftRouteTestIds,
           config,
           expectedSalts: [
             probeSalt({
@@ -351,7 +355,7 @@ export class ResourceService {
     const now = this.now().toISOString();
     const priorSavedSalt =
       current.kind === "model" &&
-      input.draftTestCallId !== undefined &&
+      (input.draftTestCallId || input.draftRouteTestIds?.length) &&
       replacingSecret === undefined &&
       input.secret !== null
         ? (() => {
@@ -384,7 +388,7 @@ export class ResourceService {
         // 地址或协议变了，旧测试结果不再对应当前服务。
         this.appStore.deleteModelTestCalls(resourceId);
       }
-      if (current.kind === "model" && input.draftTestCallId !== undefined) {
+      if (current.kind === "model" && (input.draftTestCallId || input.draftRouteTestIds?.length)) {
         const parsedNext = modelConfigSchema.safeParse(nextConfig);
         if (parsedNext.success) {
           const expectedSalts: string[] = [];
@@ -403,7 +407,7 @@ export class ResourceService {
           }
           this.attachDraftTestCall({
             resourceId,
-            testCallId: input.draftTestCallId,
+            testCallId: input.draftTestCallId, routeIds: input.draftRouteTestIds,
             config: parsedNext.data,
             expectedSalts,
           });
@@ -762,6 +766,7 @@ export class ResourceService {
       nextConfig.provider !== current.config.provider ||
       String(nextConfig.protocol) !== String(current.config.protocol) ||
       String(nextConfig.baseUrl) !== String(current.config.baseUrl) ||
+      nextConfig.vertexRouting !== current.config.vertexRouting ||
       nextConfig.credentialRef !== current.config.credentialRef ||
       input.secret !== undefined;
     if (!connectionChanged) {
@@ -1002,36 +1007,28 @@ export class ResourceService {
   /** 当草稿测试指纹与实际保存的配置及密钥一致时，把测试记录绑定到该资源。 */
   private attachDraftTestCall(input: {
     resourceId: string;
-    testCallId: string;
+    testCallId: string | undefined;
+    routeIds: string[] | undefined;
     config: Record<string, unknown>;
     expectedSalts: readonly string[];
   }): void {
     const parsed = modelConfigSchema.safeParse(input.config);
     if (!parsed.success) return;
-    const record = this.appStore.getModelTestCall(input.testCallId);
-    if (record === null || record.resourceId !== null) return;
-    if (
-      parsed.data.modelName !== undefined &&
-      parsed.data.modelName !== record.modelName
-    ) {
-      return;
+    const auto = autoVertexConnection(parsed.data);
+    const ids = new Set(auto ? input.routeIds : []);
+    if (input.testCallId) ids.add(input.testCallId);
+    const expected = input.expectedSalts.map(salt => fingerprintOf(parsed.data, salt));
+    const salt = this.credentials.fingerprintSalt(input.resourceId, parsed.data.credentialRef);
+    for (const testCallId of ids) {
+      const record = this.appStore.getModelTestCall(testCallId);
+      if (!record || record.resourceId !== null || !record.configFingerprint || !expected.includes(record.configFingerprint)) continue;
+      const otherModel = parsed.data.modelName && parsed.data.modelName !== record.modelName;
+      if (otherModel && !(auto && input.routeIds?.includes(testCallId) && record.status === "succeeded")) continue;
+      this.appStore.attachModelTestCall({
+        testCallId, resourceId: input.resourceId, nextFingerprint: fingerprintOf(parsed.data, salt),
+        routeFingerprint: vertexRouteFingerprint(parsed.data, salt),
+      });
     }
-    const matched = input.expectedSalts.some(
-      (salt) => record.configFingerprint === fingerprintOf(parsed.data, salt),
-    );
-    if (!matched) return;
-    const nextFingerprint = fingerprintOf(
-      parsed.data,
-      this.credentials.fingerprintSalt(
-        input.resourceId,
-        parsed.data.credentialRef,
-      ),
-    );
-    this.appStore.attachModelTestCall({
-      testCallId: input.testCallId,
-      resourceId: input.resourceId,
-      nextFingerprint,
-    });
   }
 
   private assertNotInUse(
@@ -1059,7 +1056,7 @@ export class ResourceService {
     const testCall =
       config === null
         ? null
-        : this.appStore.latestModelTestCall(record.resourceId);
+        : this.appStore.latestModelTestCall(record.resourceId, autoVertexConnection(config) ? config.modelName : undefined);
     const lastTest =
       config === null || testCall === null
         ? null

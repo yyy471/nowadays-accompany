@@ -1,6 +1,6 @@
 'use strict';
 // 仅测试入口拦获真实托盘菜单引用。生产 preload 和 Electron 主进程无自动化入口。
-const { app, BrowserWindow, Tray, dialog } = require('electron');
+const { app, BrowserWindow, Tray, dialog, nativeTheme } = require('electron');
 const { setTimeout: delay } = require('node:timers/promises');
 const { spawn } = require('node:child_process');
 const assert = require('node:assert/strict');
@@ -32,7 +32,6 @@ app.on('quit', () => console.log('STAGE4_QUIT'));
 app.on('will-quit', () => {
   if (expectingExit && nativeCalls === Number(mode === 'unresponsive') && beforeUnload === 0) console.log('STAGE4_EXIT_VERIFIED');
 });
-require('electron').ipcMain.on('desk:cover', (event,color) => console.log('STAGE4_PALETTE', color, event.senderFrame.url));
 require('../../electron/main.cjs');
 
 async function run() {
@@ -54,6 +53,7 @@ async function run() {
   assert.ok(elapsed < 3000, '窗口应在健康检查仍在途时秒开');
   const preset = mode === 'daylight' ? mode : 'nightwave';
   assert.equal(await ev("document.querySelector('.boot-gate')?.dataset.uiPreset"), preset);
+  assert.equal(nativeTheme.themeSource, preset === 'daylight' ? 'light' : 'dark');
   assert.equal(win.getBackgroundColor().slice(-6).toUpperCase(), preset === 'daylight' ? 'F5F0E8' : '171D29');
   assert.equal(await ev("!!document.querySelector('.studio-shell,.role-entry')"), false);
   assert.equal(await ev("fetch('/api-config.json').then(r=>r.json()).then(x=>x.backendBaseUrl)"), '');
@@ -77,6 +77,13 @@ async function run() {
   await shots('failed');
   await ev("document.querySelector('.boot-gate button').click()");
   await wait("!!document.querySelector('.ui-menu-trigger')", '重试入壳');
+  if (mode === 'daylight') {
+    for (const [choice, source, color] of [['nightwave', 'dark', '171D29'], ['daylight', 'light', 'F5F0E8']]) {
+      await ev(`document.querySelector('[data-theme-choice="${choice}"]').click()`);
+      await until(() => nativeTheme.themeSource === source && win.getBackgroundColor().toUpperCase().endsWith(color), '原生窗口随昼夜切换');
+      if (process.platform === 'win32') assert.equal(win.getAccentColor().replace('#', '').toUpperCase(), color);
+    }
+  }
   await until(async () => (await (await fetch(process.env.NOWADAYS_BACKEND_URL + '/test/streams', { headers: { connection: 'close' } })).json()).length >= 2, '业务订阅');
   win.close();
   await until(() => !win.isVisible(), '干净窗口直接隐藏');

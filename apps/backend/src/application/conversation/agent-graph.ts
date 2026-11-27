@@ -32,7 +32,7 @@ import {
 } from "../../domain/model.js";
 import { mergeModelUsage, type TokenUsageCallEvent } from "../../domain/token-usage.js";
 import { webReadingReference } from "../../domain/web-reading.js";
-import type { ModelProvider } from "../../domain/model-providers.js";
+import type { ModelProvider, VertexSafetyLevel } from "../../domain/model-providers.js";
 import type { WorldbookSelection } from "../../domain/worldbook.js";
 import type { ConversationStore } from "../../storage/conversation/conversation-store.js";
 import type { RoleStore } from "../../storage/role/role-store.js";
@@ -44,6 +44,7 @@ export interface AgentModelHandle {
   modelName: string;
   protocol: ModelProtocol;
   provider?: ModelProvider;
+  vertexSafety?: VertexSafetyLevel;
   baseUrl?: string;
   maxInputChars?: number;
   maxOutputChars?: number;
@@ -292,6 +293,7 @@ export class AgentGraphRunner {
       prompt: typeof prompt === "string" ? { required: prompt, optional: [] } : prompt,
       protocol: current.protocol,
       ...(current.provider === undefined ? {} : { provider: current.provider }),
+      ...(current.vertexSafety === undefined ? {} : { vertexSafety: current.vertexSafety }),
       baseUrl: current.baseUrl ?? "",
       ...(current.maxInputChars === undefined ? {} : { maxInputChars: current.maxInputChars }),
       ...(current.maxOutputChars === undefined ? {} : { maxOutputChars: current.maxOutputChars }),

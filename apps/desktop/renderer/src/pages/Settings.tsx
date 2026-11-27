@@ -37,6 +37,8 @@ import {
   MODEL_ADAPTER_OPTIONS,
   modelAdapterOf,
   modelConnectionFields,
+  parseVertexLocation, vertexLocationAddress, type VertexLocation,
+  hasVertexSafety, vertexSafetyOf, type VertexSafetyLevel,
   modelCredentialScope,
   modelPresets,
   hideUneditedSecret,
@@ -165,7 +167,9 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
   const [newExtension, setNewExtension] = useState<'mcp' | 'skill' | null>(null);
   const [modelName, setModelName] = useState('');
   const [newModelName, setNewModelName] = useState('');
-  const [modelUrl, setModelUrl] = useState('');
+  const [modelSafety, setModelSafety] = useState<VertexSafetyLevel>('default');
+  const newAddress = useModelAddress('');
+  const { url: modelUrl, setAddress: setModelUrl } = newAddress;
   const [modelAdapter, setModelAdapter] = useState('openai-chat');
   const [modelSecret, setModelSecret] = useState('');
   const [showNewSecret, setShowNewSecret] = useState(false);
@@ -205,7 +209,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
       window.removeEventListener('nowadays:check-drafts', checkDrafts);
     };
   }, [navigationGuard]);
-  const newModelProbe = useModelProbe(`${modelAdapter}|${modelUrl}|${modelSecret}`);
+  const newModelProbe = useModelProbe(`${modelAdapter}|${modelUrl}|${modelSafety}|${newAddress.manualExpress}|${modelSecret}`);
   const changeNewModelAdapter = (next: string) => {
     const url = resolveModelBaseUrlOnProtocolChange(modelUrl, next, modelAdapter);
     if (modelCredentialScope(next, url) !== modelCredentialScope(modelAdapter, modelUrl)) {
@@ -220,6 +224,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
     setNewModel(false);
     setModelName('');
     setModelAdapter('openai-chat');
+    setModelSafety('default');
     setModelUrl('');
     setModelSecret('');
     setShowNewSecret(false);
@@ -342,10 +347,10 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
     // 跨页跳转后原按钮随角色页面卸载，焦点会落回 body；交给设置分区的标题（R12-1 同类）。
     focusSectionHeadingSoon();
   };
-  useEffect(() => setNewModelProbePrompt(null), [modelUrl, modelAdapter, modelSecret, newModelName, newModelVisible]);
-  const newModelTarget = (): ModelProbeTarget => ({ kind: 'draft', config: { ...modelConnectionFields(modelAdapter, modelUrl), ...(modelSecret ? { secret: modelSecret } : {}) } });
+  useEffect(() => setNewModelProbePrompt(null), [modelUrl, modelAdapter, modelSafety, newAddress.manualExpress, modelSecret, newModelName, newModelVisible]);
+  const newModelTarget = (): ModelProbeTarget => ({ kind: 'draft', config: { ...modelConnectionFields(modelAdapter, modelUrl, undefined, modelSafety, newAddress.manualExpress), ...(modelSecret ? { secret: modelSecret } : {}) } });
   const runNewModelProbe = (action: 'test' | 'list') => {
-    const required = !modelUrl.trim() ? T16.needUrl : action === 'test' && !newModelName.trim() ? T16.needModel : '';
+    const required = newAddress.error || (!modelUrl.trim() ? T16.needUrl : action === 'test' && !newModelName.trim() ? T16.needModel : '');
     setNewModelProbePrompt(required ? { source: action, role: 'alert', text: required } : null);
     if (required) { newModelProbe.clearLog(); return; }
     if (action === 'list') void newModelProbe.refresh(newModelTarget());
@@ -363,7 +368,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
     setModelBusy(true); setModelError('');
     try {
       const config: Record<string, unknown> = {
-        ...modelConnectionFields(modelAdapter, modelUrl),
+        ...modelConnectionFields(modelAdapter, modelUrl, undefined, modelSafety, newAddress.manualExpress),
         ...(trimmedModel ? { modelName: trimmedModel } : {}),
       };
       const resource = await api<Resource>('/v1/resources', {
@@ -374,6 +379,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
           config,
           ...(modelSecret ? { secret: modelSecret } : {}),
           ...(carriedTestCallId ? { draftTestCallId: carriedTestCallId } : {}),
+          ...(newModelProbe.draftRouteTestIds.length ? { draftRouteTestIds: newModelProbe.draftRouteTestIds } : {}),
         },
       });
       if (newModelProbe.listLoaded) writeModelCache(providerCacheKey(resource), carriedModels);
@@ -634,15 +640,15 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
           {settingsActive && catalogKind === 'voice' && newVoiceService && <VoiceServiceCreate trigger={addTrigger.current} onCancel={() => setNewVoiceService(false)} onCreated={(service, tested) => { if (tested !== undefined) rememberTest(service.serviceId, tested); bumpVoiceServiceEpoch(service.serviceId); setVoiceServices(previous => [...previous.filter(item => item.serviceId !== service.serviceId), service]); selectAfterChange(service.serviceId, true); setNewVoiceService(false); setVoiceServiceVersion(v => v + 1); setRefreshVersion(v => v + 1); }}/>}
           {settingsActive && catalogKind === 'image' && newImageService && <ImageServiceCreate trigger={addTrigger.current} onCancel={() => setNewImageService(false)} onCreated={(service, tested) => { if (tested !== undefined) rememberTest(service.serviceId, tested); bumpImageServiceEpoch(service.serviceId); setImageServices(previous => [...previous.filter(item => item.serviceId !== service.serviceId), service]); selectAfterChange(service.serviceId, true); setNewImageService(false); setImageServiceVersion(v => v + 1); setRefreshVersion(v => v + 1); }}/>}
           <NewModelSheet active={newModelVisible} trigger={addTrigger.current}
-            count={[modelName.trim(), modelUrl.trim(), modelSecret, newModelName.trim(), modelAdapter !== 'openai-chat'].filter(Boolean).length}
-            busy={modelBusy} invalid={!modelName.trim() ? T10.name : !modelUrl.trim() ? T10.url : ''}
+            count={[modelName.trim(), modelUrl.trim(), modelSecret, newModelName.trim(), modelAdapter !== 'openai-chat', hasVertexSafety(modelAdapter, modelUrl) && modelSafety !== 'default'].filter(Boolean).length}
+            busy={modelBusy} invalid={!modelName.trim() ? T10.name : newAddress.error || (!modelUrl.trim() ? T10.url : '')}
             error={modelError} onSave={() => void createModel()} onCancel={closeNewModelDraft}>
             {group => <>
               <MediaGroup title="名称" group={group}>
                 <div className="config-service-field-one"><Field label="模型服务名称"><Input disabled={modelBusy} value={modelName} maxLength={200} placeholder="起一个好认的名字" onChange={event => setModelName(event.target.value)}/></Field></div>
               </MediaGroup>
               <MediaGroup title="连接" group={group}>
-                <ModelConnectionInputs adapter={modelAdapter} address={modelUrl} disabled={modelBusy} onAdapter={changeNewModelAdapter}
+                <ModelConnectionInputs safety={modelSafety} onSafety={setModelSafety} adapter={modelAdapter} address={newAddress} disabled={modelBusy} onAdapter={changeNewModelAdapter}
                   onAddress={value => { setModelUrl(value); newModelProbe.reset(); }}/>
               </MediaGroup>
               <MediaGroup title="密钥" group={group}>
@@ -1363,15 +1369,41 @@ function WorkspaceSheets({ pendingSwitch, clearPendingSwitch, onSwitch, onCreate
   </>;
 }
 
-function ModelConnectionInputs({ adapter, address, disabled, onAdapter, onAddress }: {
-  adapter: string; address: string; disabled: boolean; onAdapter: (value: string) => void; onAddress: (value: string) => void;
+function useModelAddress(initial: string, initialRouting?: unknown) {
+  const [raw, setRaw] = useState(initial);
+  const [routing, setRouting] = useState(initialRouting);
+  const [edited, setLocation] = useState<VertexLocation>();
+  const parsed = parseVertexLocation(raw);
+  const location = edited ?? (parsed && !parsed.region && routing === 'manual' ? { ...parsed, region: 'express' } : parsed);
+  const { url, error } = edited ? vertexLocationAddress(edited) : { url: raw, error: '' };
+  const setAddress = (value: string, mode?: unknown) => { setRaw(value); setRouting(mode); setLocation(undefined); };
+  return { url, error, location, manualExpress: location?.region.trim() === 'express', setAddress, setLocation };
+}
+
+function ModelConnectionInputs({ adapter, address, safety, disabled, onAdapter, onAddress, onSafety }: {
+  safety: VertexSafetyLevel; onSafety: (value: VertexSafetyLevel) => void;
+  adapter: string; address: ReturnType<typeof useModelAddress>; disabled: boolean; onAdapter: (value: string) => void; onAddress: (value: string) => void;
 }) {
+  const regions = useId();
+  const location = adapter === 'google-gemini' ? address.location : undefined;
+  const addressField = <Field label="服务地址"><Input disabled={disabled} value={address.url} placeholder={address.error ? '填写地区和项目后生成地址' : modelBaseUrlPlaceholder(adapter)}
+    onChange={event => onAddress(event.target.value)}/></Field>;
   return <div className="config-connection">
     <Field label="协议"><Select disabled={disabled} value={adapter} onChange={event => onAdapter(event.target.value)}>
       {MODEL_ADAPTER_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
     </Select></Field>
-    <Field label="服务地址"><Input disabled={disabled} value={address} placeholder={modelBaseUrlPlaceholder(adapter)}
-      onChange={event => onAddress(event.target.value)}/></Field>
+    {location ? <details><summary>高级设置 · {location.region || '自动选择入口'}</summary>
+      <Field label="地区" hint="留空时，测试连接会为该模型寻找可用入口。指定地区后始终直连。"><Input disabled={disabled} list={regions} value={location.region} placeholder="自动选择"
+        onChange={event => address.setLocation({ ...location, region: event.target.value })}/>
+        <datalist id={regions}>{['express', 'global', 'us-central1', 'europe-west4', 'asia-northeast1'].map(region => <option key={region} value={region}/>)}</datalist>
+      </Field>
+      {location.region.trim() && location.region.trim() !== 'express' && <Field label="Google Cloud 项目"><Input disabled={disabled} value={location.project} placeholder="项目 ID 或项目编号"
+        onChange={event => address.setLocation({ ...location, project: event.target.value })}/></Field>}
+      {addressField}
+    </details> : addressField}
+    {(location || hasVertexSafety(adapter, address.url)) && <Field label="安全阈值"><Select aria-label="安全阈值" disabled={disabled} value={safety} onChange={event => onSafety(vertexSafetyOf(event.target.value))}>
+      <option value="high">高</option><option value="default">默认</option><option value="off">关闭</option>
+    </Select></Field>}
   </div>;
 }
 
@@ -1497,7 +1529,9 @@ function ResourceDetail({ resource, onConfigure, roles, activities, active, canW
   const [busy, setBusy] = useState(false);
   const [draftName, setDraftName] = useState(resource.name);
   const [draftAdapter, setDraftAdapter] = useState(modelAdapterOf(resource.config));
-  const [draftUrl, setDraftUrl] = useState(String(resource.config.baseUrl || ''));
+  const [draftSafety, setDraftSafety] = useState(() => vertexSafetyOf(resource.config.vertexSafety));
+  const draftAddress = useModelAddress(String(resource.config.baseUrl || ''), resource.config.vertexRouting);
+  const { url: draftUrl, setAddress: setDraftUrl } = draftAddress;
   const [secretDraft, setSecretDraft] = useState(() => createSecretDraft(resource.credential?.status));
   const secretStatusRef = useRef(resource.credential?.status);
   const [secretVisible, setSecretVisible] = useState(false);
@@ -1515,8 +1549,10 @@ function ResourceDetail({ resource, onConfigure, roles, activities, active, canW
   const savedKey = providerCacheKey(resource);
   const secretOp = secretOperationOf(secretDraft);
   const secretProbeKey = secretOp.action === 'replace' ? `replace:${secretOp.secret}` : secretOp.action;
-  const sameConnection = secretOp.action === 'keep' && draftAdapter === savedAdapter && draftUrl.trim() === savedBaseUrl;
-  const probe = useModelProbe(sameConnection ? savedKey : `${savedKey}|${secretProbeKey}|${draftAdapter}|${draftUrl}`, {
+  const safetyDirty = hasVertexSafety(draftAdapter, draftUrl) && draftSafety !== vertexSafetyOf(resource.config.vertexSafety);
+  const routingDirty = draftAddress.manualExpress !== (resource.config.vertexRouting === 'manual');
+  const sameConnection = !routingDirty && !safetyDirty && secretOp.action === 'keep' && draftAdapter === savedAdapter && draftUrl.trim() === savedBaseUrl;
+  const probe = useModelProbe(sameConnection ? savedKey : `${savedKey}|${secretProbeKey}|${draftAdapter}|${draftUrl}|${draftSafety}|${draftAddress.manualExpress}`, {
     shared: sameConnection, onSavedList: () => onUpdated(), onSavedTest: () => onUpdated(),
   });
   const changeDraftAdapter = (next: string) => {
@@ -1622,17 +1658,17 @@ function ResourceDetail({ resource, onConfigure, roles, activities, active, canW
   };
   // 未保存的修改用草稿探测；保留密钥时按资源解析（后端核对协议与 origin）。
   const probeTarget = (forTest = false): ModelProbeTarget => {
-    const base = modelConnectionFields(draftAdapter, draftUrl, resource.config.provider);
+    const base = modelConnectionFields(draftAdapter, draftUrl, resource.config.provider, draftSafety, draftAddress.manualExpress);
     // 未改动的配置走按资源接口，结果写回资源摘要；其余用草稿探测。
-    if (secretOp.action === 'keep' && draftAdapter === savedAdapter && draftUrl.trim() === savedBaseUrl && (!forTest || model.trim() === savedModelNameOf(resource))) {
+    if (sameConnection && (!forTest || (draftAddress.location && !draftAddress.location.region && draftAdapter === 'google-gemini') || model.trim() === savedModelNameOf(resource))) {
       return { kind: 'saved', resourceId: resource.resourceId, cacheKey: savedKey };
     }
     if (secretOp.action === 'replace') return { kind: 'draft', config: { ...base, secret: secretOp.secret } };
     if (secretOp.action === 'clear' || !secretDraft.hasExisting) return { kind: 'draft', config: base };
     return { kind: 'draft', config: { ...base, resourceId: resource.resourceId } };
   };
-  useEffect(() => setProbePrompt(null), [draftUrl, draftAdapter, secretProbeKey, model]);
-  const connectionDirty = !sameConnection;
+  useEffect(() => setProbePrompt(null), [draftUrl, draftAdapter, draftSafety, draftAddress.manualExpress, secretProbeKey, model]);
+  const connectionDirty = routingDirty || secretOp.action !== 'keep' || draftAdapter !== savedAdapter || draftUrl.trim() !== savedBaseUrl;
   const activeDeps = (impact?.roles ?? []).filter(item => item.state !== 'stopped' && item.usages.some(usage => usage !== 'task'));
   const pauseNames = connectionDirty ? activeDeps.map(item => item.displayName) : [];
   const staleSite = !!draftUrl.trim() && secretDraft.hasExisting && secretOp.action === 'keep' &&
@@ -1640,14 +1676,14 @@ function ResourceDetail({ resource, onConfigure, roles, activities, active, canW
   const credentialNotice = serviceHost(draftUrl) === serviceHost(savedBaseUrl) ? '服务商或协议已更换，请重新填写密钥。' : T12;
   const runProbe = (action: 'test' | 'list', group: 'connection' | 'model' = 'model') => {
     setProbeGroup(group);
-    const problem = !draftUrl.trim() ? T16.needUrl : action === 'test' && !model.trim() ? T16.needModel : staleSite ? credentialNotice : '';
+    const problem = draftAddress.error || (!draftUrl.trim() ? T16.needUrl : action === 'test' && !model.trim() ? T16.needModel : staleSite ? credentialNotice : '');
     setProbePrompt(problem ? { source: action, role: 'alert', text: problem } : null);
     if (problem) { probe.clearLog(); return; }
     if (action === 'list') void probe.refresh(probeTarget());
     else void probe.test(probeTarget(true), model.trim());
   };
   const probeNotice = probePrompt ?? serviceProbeNotice(probe.notice, probe.models.length);
-  const count = [draftName !== resource.name, draftAdapter !== savedAdapter, draftUrl.trim() !== savedBaseUrl, model.trim() !== savedModelNameOf(resource), secretOp.action !== 'keep'].filter(Boolean).length;
+  const count = [routingDirty, safetyDirty, draftName !== resource.name, draftAdapter !== savedAdapter, draftUrl.trim() !== savedBaseUrl, model.trim() !== savedModelNameOf(resource), secretOp.action !== 'keep'].filter(Boolean).length;
   const save = async () => {
     if (busy || !canWrite || !count || !draftName.trim() || !draftUrl.trim() || staleSite) return;
     const finish = write.beginWrite(connectionDirty ? activeDeps.map(item => item.roleId) : []);
@@ -1659,7 +1695,9 @@ function ResourceDetail({ resource, onConfigure, roles, activities, active, canW
     const carriedResult = probe.notice?.source === 'test' && probe.testModel === trimmedModel ? probe.notice.role === 'status' : undefined;
     setBusy(true); setMessage('');
     try {
-      const config: Record<string, unknown> = { ...resource.config, ...modelConnectionFields(draftAdapter, draftUrl, resource.config.provider) };
+      const config: Record<string, unknown> = { ...resource.config, ...modelConnectionFields(draftAdapter, draftUrl, resource.config.provider, draftSafety, draftAddress.manualExpress) };
+      if (!draftAddress.manualExpress) delete config.vertexRouting;
+      if (!hasVertexSafety(draftAdapter, draftUrl)) delete config.vertexSafety;
       if (trimmedModel) {
         config.modelName = trimmedModel;
       } else {
@@ -1675,6 +1713,7 @@ function ResourceDetail({ resource, onConfigure, roles, activities, active, canW
             config,
             ...(secretOp.action === 'replace' ? { secret: secretOp.secret } : secretOp.action === 'clear' ? { secret: null } : {}),
             ...(carriedTestCallId ? { draftTestCallId: carriedTestCallId } : {}),
+            ...(probe.draftRouteTestIds.length ? { draftRouteTestIds: probe.draftRouteTestIds } : {}),
           },
         },
       );
@@ -1690,13 +1729,14 @@ function ResourceDetail({ resource, onConfigure, roles, activities, active, canW
       secretStatusRef.current = result.credential?.status;
       setDraftName(result.name);
       setDraftAdapter(modelAdapterOf(result.config));
-      setDraftUrl(String(result.config.baseUrl || ''));
+      setDraftSafety(vertexSafetyOf(result.config.vertexSafety));
+      setDraftUrl(String(result.config.baseUrl || ''), result.config.vertexRouting);
       setModel(nextSavedModel);
       setSecretDraft(createSecretDraft(result.credential?.status));
       setSecretVisible(false);
       setSecretError('');
       if (carriedResult !== undefined) onTested(carriedResult);
-      else if (connectionDirty || model.trim() !== savedModelNameOf(resource)) onTested(null);
+      else if (!sameConnection || model.trim() !== savedModelNameOf(resource)) onTested(null);
       setMessage('');
       sheetApi.closeNow(undefined, `${result.name} 已保存`);
       onUpdated(result);
@@ -1709,7 +1749,7 @@ function ResourceDetail({ resource, onConfigure, roles, activities, active, canW
   };
   if (resource.kind !== 'model') return <ExtensionManagement onConfigure={onConfigure} resource={resource} roles={roles} activities={activities} active={active} onRemoved={onRemoved} onUpdated={onUpdated}/>;
   const open = (group?: string, trigger?: HTMLElement) => sheetApi.open({ id: sheetId, title: group ? `${resource.name} · ${group}` : `编辑「${resource.name}」`, shape: group ? 'compact' : 'full', group, anchor: trigger?.closest<HTMLElement>('.config-sum') ?? trigger, focusReturn: trigger?.matches('button') ? trigger : trigger?.querySelector<HTMLElement>('.config-sum-edit') });
-  const discard = () => { const saved = savedRef.current; setDraftName(saved.name); setDraftAdapter(modelAdapterOf(saved.config)); setDraftUrl(String(saved.config.baseUrl || '')); setModel(savedModelNameOf(saved)); setSecretDraft(createSecretDraft(saved.credential?.status)); setSecretVisible(false); setSecretError(''); setMessage(''); probe.cancelPending(); };
+  const discard = () => { const saved = savedRef.current; setDraftName(saved.name); setDraftSafety(vertexSafetyOf(saved.config.vertexSafety)); setDraftAdapter(modelAdapterOf(saved.config)); setDraftUrl(String(saved.config.baseUrl || ''), saved.config.vertexRouting); setModel(savedModelNameOf(saved)); setSecretDraft(createSecretDraft(saved.credential?.status)); setSecretVisible(false); setSecretError(''); setMessage(''); probe.cancelPending(); };
   const secretStatus = !resource.credential?.status || resource.credential.status === 'missing' ? 'none' : resource.credential?.status === 'unavailable' ? 'error' : 'ok';
   const tested = testedOverride !== undefined ? testedOverride : resource.lastTest && !resource.lastTest.stale ? resource.lastTest.ok : null;
   return <div hidden={!active} className="config-prose">
@@ -1719,11 +1759,11 @@ function ResourceDetail({ resource, onConfigure, roles, activities, active, canW
     <ServiceRow label="模型" value={savedModelNameOf(resource) || '未选择'} keys={sameConnection && probe.listLoaded ? [`${probe.models.length} 个可选`] : []} status={tested === null ? 'off' : tested ? 'ok' : 'error'} statusText={tested === null ? '尚未测试' : tested ? '连接正常' : '连接失败'} onOpen={trigger => open('模型', trigger)}/>
     <ModelManagement resource={resource} roles={roles} activities={activities} impact={impact} active={active} canWrite={canWrite} onRemoved={onRemoved} onUpdated={onUpdated}/>
     <ServiceSheet id={sheetId} active={active} count={count} busy={busy} onDiscard={discard}
-      footer={<ServiceSheetActions count={count} busy={busy} invalid={!draftName.trim() ? T10.name : !draftUrl.trim() ? T10.url : !!staleSite} error={message} pauseNames={pauseNames} onSubmit={() => void save()}/>}>
+      footer={<ServiceSheetActions count={count} busy={busy} invalid={!draftName.trim() ? T10.name : draftAddress.error || (!draftUrl.trim() ? T10.url : !!staleSite)} error={message} pauseNames={pauseNames} onSubmit={() => void save()}/>}>
       {group => <>
         <MediaGroup title="名称" group={group}><div className="config-service-field-one"><Field label="模型服务名称"><Input aria-label="模型服务名称" maxLength={200} disabled={busy} value={draftName} onChange={event => setDraftName(event.target.value)}/></Field></div></MediaGroup>
         <MediaGroup title="连接" group={group}>
-          <ModelConnectionInputs adapter={draftAdapter} address={draftUrl} disabled={busy} onAdapter={changeDraftAdapter}
+          <ModelConnectionInputs safety={draftSafety} onSafety={setDraftSafety} adapter={draftAdapter} address={draftAddress} disabled={busy} onAdapter={changeDraftAdapter}
             onAddress={value => { setDraftUrl(value); probe.reset(); }}/>
           {group === '连接' && <ServiceProbeAction busy={probe.testBusy} disabled={busy || probe.listBusy} notice={probeGroup === 'connection' ? probeNotice : null} onClick={() => runProbe('test', 'connection')}/>}
           <div className="config-connection-feedback">{staleSite && <p className="config-service-form-note">{credentialNotice}</p>}

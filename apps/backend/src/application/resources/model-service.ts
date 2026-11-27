@@ -8,7 +8,8 @@ import {
 } from "../../domain/errors.js";
 import { isIncompleteCompletion } from "../../domain/model.js";
 import { modelConfigSchema } from "../../domain/resource.js";
-import { usesVertexExpressPresets, VERTEX_EXPRESS_MODELS } from "../../domain/model-providers.js";
+import { autoVertexConnection, vertexModelPresets } from "../../domain/model-providers.js";
+import { VertexEndpointNotFound } from "../../model/google-gemini.js";
 import type {
   ModelEvent,
   ModelListResult,
@@ -70,7 +71,8 @@ export class ModelService {
     config: ModelServiceProbe,
     options: { signal?: AbortSignal } = {},
   ): Promise<ModelListResult> {
-    if (usesVertexExpressPresets(config.protocol, config.baseUrl)) return { models: [...VERTEX_EXPRESS_MODELS], source: "preset" };
+    const presets = vertexModelPresets(config.protocol, config.baseUrl);
+    if (presets) return { models: [...presets], source: "preset" };
     const adapter = this.probeAdapter(config);
     return {
       models: await adapter.listModels(options.signal),
@@ -78,13 +80,13 @@ export class ModelService {
   }
 
   async test(config: ModelServiceTest): Promise<ModelTestResult> {
-    const fingerprint = fingerprintOf(config, this.probeSaltOf(config));
+    const salt = this.probeSaltOf(config);
     return this.runTest({
       config,
       model: config.model,
-      createAdapter: () => this.probeAdapter(config),
+      createAdapter: baseUrl => this.probeAdapter({ ...config, baseUrl }),
       resourceId: null,
-      fingerprint,
+      salt,
     });
   }
 
@@ -94,7 +96,8 @@ export class ModelService {
     options: { signal?: AbortSignal } = {},
   ): Promise<ModelListResult> {
     const { config } = this.requireModelResource(resourceId);
-    if (usesVertexExpressPresets(config.protocol, config.baseUrl)) return { models: [...VERTEX_EXPRESS_MODELS], source: "preset" };
+    const presets = vertexModelPresets(config.protocol, config.baseUrl);
+    if (presets) return { models: [...presets], source: "preset" };
     const adapter = this.savedAdapter(resourceId, config);
     return {
       models: await adapter.listModels(options.signal),
@@ -107,16 +110,12 @@ export class ModelService {
     model: string,
   ): Promise<ModelTestResult> {
     const { config } = this.requireModelResource(resourceId);
-    const fingerprint = fingerprintOf(
-      config,
-      this.saltForSaved(resourceId, config),
-    );
     return this.runTest({
       config,
       model,
-      createAdapter: () => this.savedAdapter(resourceId, config),
+      createAdapter: baseUrl => this.savedAdapter(resourceId, { ...config, baseUrl }),
       resourceId,
-      fingerprint,
+      salt: this.saltForSaved(resourceId, config),
     });
   }
 
@@ -125,7 +124,7 @@ export class ModelService {
     resourceId: string,
     config: ModelServiceConfig,
   ): ModelTestSummary | null {
-    const record = this.appStore.latestModelTestCall(resourceId);
+    const record = this.appStore.latestModelTestCall(resourceId, autoVertexConnection(config) ? config.modelName : undefined);
     if (record === null) {
       return null;
     }
@@ -139,9 +138,9 @@ export class ModelService {
   private async runTest(input: {
     config: ModelServiceProbe;
     model: string;
-    createAdapter: () => HttpModelAdapter;
+    createAdapter: (baseUrl: string) => HttpModelAdapter;
     resourceId: string | null;
-    fingerprint: string;
+    salt: string;
   }): Promise<ModelTestResult> {
     const startedAt = this.now();
     const startedMs = startedAt.getTime();
@@ -150,8 +149,10 @@ export class ModelService {
     let errorMessage: string | null = null;
     let usage: ModelUsage | null = null;
     const testTimeout = AbortSignal.timeout(this.testTimeoutMs);
-    try {
-      const adapter = input.createAdapter();
+    const automatic = autoVertexConnection(input.config);
+    let baseUrl = input.config.baseUrl;
+    const probe = async () => {
+      const adapter = input.createAdapter(baseUrl);
       let sawOutput = false;
       let completed = false;
       let incomplete = false;
@@ -183,10 +184,20 @@ export class ModelService {
           reason: "STREAM_TRUNCATED",
         });
       }
-      if (!sawOutput && !incomplete) {
+      if (!sawOutput && (!incomplete || automatic)) {
         throw new ModelRequestFailedError("模型连接测试未收到有效输出", {
           reason: "EMPTY_RESPONSE",
         });
+      }
+    };
+    try {
+      try {
+        await probe();
+      } catch (error) {
+        if (!automatic || !(error instanceof VertexEndpointNotFound)) throw error;
+        if (!error.globalBase) throw new ModelRequestFailedError("Express 返回 404，无法识别项目。请在高级设置中选择 global 并填写 Google Cloud 项目 ID 或编号。");
+        baseUrl = error.globalBase;
+        await probe();
       }
       status = "succeeded";
     } catch (error) {
@@ -202,17 +213,22 @@ export class ModelService {
     }
     const usageJson = usage === null ? null : JSON.stringify(usage);
     const finishedAt = this.now();
-    const testCallId = this.appStore.saveModelTestCall({
-      resourceId: input.resourceId,
-      modelName: input.model,
-      protocol: input.config.protocol,
-      status,
-      errorCode,
-      configFingerprint: input.fingerprint,
-      startedAt: startedAt.toISOString(),
-      finishedAt: finishedAt.toISOString(),
-      usageJson,
-    });
+    const fingerprint = fingerprintOf(input.config, input.salt);
+    const testCallId = this.appStore.db.transaction(() => {
+      const id = this.appStore.saveModelTestCall({
+        resourceId: input.resourceId,
+        modelName: input.model,
+        protocol: input.config.protocol,
+        status,
+        errorCode,
+        configFingerprint: fingerprint,
+        startedAt: startedAt.toISOString(),
+        finishedAt: finishedAt.toISOString(),
+        usageJson,
+      });
+      if (automatic && status === "succeeded") this.appStore.saveVertexTestRoute(id, vertexRouteFingerprint(input.config, input.salt), baseUrl);
+      return id;
+    })();
     this.onModelCallFinished?.({
       sourceCallId: `test:${testCallId}`,
       roleId: null,
@@ -229,14 +245,15 @@ export class ModelService {
       return {
         ok: true,
         elapsedMs: finishedAt.getTime() - startedMs,
-        fingerprint: input.fingerprint,
+        fingerprint,
+        ...(automatic ? { vertexRegion: baseUrl === input.config.baseUrl ? "Express" : "global" } : {}),
         testCallId,
       };
     }
     return {
       ok: false,
       elapsedMs: finishedAt.getTime() - startedMs,
-      fingerprint: input.fingerprint,
+      fingerprint,
       testCallId,
       error: {
         code: errorCode ?? "MODEL_REQUEST_FAILED",
@@ -361,11 +378,17 @@ export function fingerprintOf(
         protocol: config.protocol,
         provider: config.provider,
         baseUrl: config.baseUrl,
+        vertexSafety: config.vertexSafety === "default" ? undefined : config.vertexSafety,
+        vertexRouting: config.vertexRouting,
         salt,
       }),
     )
     .digest("hex")
     .slice(0, 32);
+}
+
+export function vertexRouteFingerprint(config: ModelServiceConfig, salt: string): string {
+  return fingerprintOf({ ...config, vertexSafety: undefined }, salt);
 }
 
 /** 把测试记录转换成资源视图里的摘要，并按当前配置判断是否过期。 */

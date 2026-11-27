@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { createBackendApp } from "../../src/bootstrap/app.js";
 import { parseBackendConfig } from "../../src/bootstrap/config.js";
 import { modelConfigSchema } from "../../src/domain/resource.js";
-import { MODEL_PROVIDERS, GOOGLE_VERTEX_EXPRESS_URL, type ModelProvider } from "../../src/domain/model-providers.js";
+import { MODEL_PROVIDERS, GOOGLE_VERTEX_EXPRESS_URL, VERTEX_EXPRESS_MODELS, type ModelProvider } from "../../src/domain/model-providers.js";
 import { modelServiceProbeSchema, modelServiceTestSchema, type ModelEvent, type ModelRequest } from "../../src/domain/model.js";
 import { HttpModelAdapter, serializeModelRequest } from "../../src/model/protocols.js";
 import { fingerprintOf } from "../../src/application/resources/model-service.js";
@@ -212,7 +212,7 @@ test("Vertex Express 直接提供预置，AI Studio 完整翻页，OpenRouter �
     });
     return Response.json({ models: [{ name: "models/first" }], nextPageToken: "next/1" });
   });
-  assert.deepEqual(await new HttpModelAdapter({ protocol: "google-gemini", baseUrl: GOOGLE_VERTEX_EXPRESS_URL }, undefined).listModels(), ["gemini-3.8-flash", "gemini-3.5-flash"]);
+  assert.deepEqual(await new HttpModelAdapter({ protocol: "google-gemini", baseUrl: GOOGLE_VERTEX_EXPRESS_URL }, undefined).listModels(), [...VERTEX_EXPRESS_MODELS]);
   assert.equal(urls.length, 0);
   const studio = new HttpModelAdapter({ protocol: "google-gemini", baseUrl: "https://studio.example/v1beta" }, "test-key");
   assert.deepEqual(await studio.listModels(), ["first", "second"]);
@@ -262,7 +262,7 @@ test("已保存的资源、探测与测试指纹区分共用协议和地址的�
     protocol: "google-gemini", baseUrl: GOOGLE_VERTEX_EXPRESS_URL, credentialRef: "env:NOWADAYS_MISSING_PRESET_TEST_KEY",
   } });
   assert.deepEqual(await app.services.modelServices.listModelsForResource(vertex.resourceId), {
-    models: ["gemini-3.8-flash", "gemini-3.5-flash"], source: "preset",
+    models: [...VERTEX_EXPRESS_MODELS], source: "preset",
   });
   const changed = { ...legacy, provider: "zai" as const };
   assert.notEqual(fingerprintOf(changed, "salt"), fingerprintOf(config, "salt"));

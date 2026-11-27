@@ -135,18 +135,30 @@ export class AppStore {
     return testCallId;
   }
 
-  latestModelTestCall(resourceId: string): ModelTestCallRecord | null {
+  latestModelTestCall(resourceId: string, model?: string): ModelTestCallRecord | null {
     const row = this.db
       .prepare(
         `SELECT test_call_id, resource_id, model_name, protocol, status,
                 error_code, config_fingerprint, started_at, finished_at
            FROM model_test_calls
-          WHERE resource_id = ?
+          WHERE resource_id = ? AND (? IS NULL OR model_name = ?)
           ORDER BY finished_at DESC, rowid DESC
           LIMIT 1`,
       )
-      .get(resourceId) as ModelTestCallRow | undefined;
+      .get(resourceId, model ?? null, model ?? null) as ModelTestCallRow | undefined;
     return row === undefined ? null : mapModelTestCall(row);
+  }
+
+  saveVertexTestRoute(testCallId: string, fingerprint: string, baseUrl: string): void {
+    this.db.prepare("INSERT INTO vertex_test_routes (test_call_id, route_fingerprint, base_url) VALUES (?, ?, ?)")
+      .run(testCallId, fingerprint, baseUrl);
+  }
+
+  verifiedVertexBase(resourceId: string, model: string, fingerprint: string): string | undefined {
+    const row = this.db.prepare(`SELECT r.base_url FROM model_test_calls t JOIN vertex_test_routes r USING (test_call_id)
+      WHERE t.resource_id = ? AND t.model_name = ? AND r.route_fingerprint = ? AND t.status = 'succeeded'
+      ORDER BY t.finished_at DESC, t.rowid DESC LIMIT 1`).get(resourceId, model, fingerprint) as { base_url: string } | undefined;
+    return row?.base_url;
   }
 
   getModelTestCall(testCallId: string): ModelTestCallRecord | null {
@@ -166,6 +178,7 @@ export class AppStore {
     testCallId: string;
     resourceId: string;
     nextFingerprint: string;
+    routeFingerprint?: string;
   }): boolean {
     const result = this.db
       .prepare(
@@ -174,6 +187,10 @@ export class AppStore {
           WHERE test_call_id = ? AND resource_id IS NULL`,
       )
       .run(input.resourceId, input.nextFingerprint, input.testCallId);
+    if (result.changes && input.routeFingerprint) {
+      this.db.prepare("UPDATE vertex_test_routes SET route_fingerprint = ? WHERE test_call_id = ?")
+        .run(input.routeFingerprint, input.testCallId);
+    }
     return result.changes > 0;
   }
 

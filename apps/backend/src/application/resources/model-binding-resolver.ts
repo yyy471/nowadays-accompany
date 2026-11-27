@@ -3,6 +3,9 @@ import {
   ResourceKindMismatchError,
 } from "../../domain/errors.js";
 import { modelConfigSchema } from "../../domain/resource.js";
+import { autoVertexConnection } from "../../domain/model-providers.js";
+import { vertexRouteFingerprint } from "./model-service.js";
+import type { CredentialResolver } from "./credential-resolver.js";
 import type { ModelServiceConfig } from "../../domain/model.js";
 import type { RoleAccess } from "../role/role-access.js";
 import type { AppStore, ResourceRecord } from "../../storage/core/app-store.js";
@@ -18,6 +21,7 @@ export class ModelBindingResolver {
   constructor(
     private readonly appStore: AppStore,
     private readonly access: RoleAccess,
+    private readonly credentials?: CredentialResolver,
   ) {}
 
   resolveChat(roleId: string): ResolvedModelBinding {
@@ -85,7 +89,7 @@ export class ModelBindingResolver {
         capability: "chat_model",
         resourceId,
         modelName,
-        config,
+        config: this.withVerifiedRoute(config, resourceId, modelName),
       };
     }
     return null;
@@ -151,14 +155,12 @@ export class ModelBindingResolver {
       return binding;
     }
     const config = parseModelConfig(resource) ?? binding.config;
+    const modelName = latest?.resourceId === binding.resourceId ? latest.modelName : binding.modelName;
     return {
       capability: binding.capability,
       resourceId: binding.resourceId,
-      modelName:
-        latest?.resourceId === binding.resourceId
-          ? latest.modelName
-          : binding.modelName,
-      config,
+      modelName,
+      config: this.withVerifiedRoute(config, binding.resourceId, modelName),
     };
   }
 
@@ -250,8 +252,15 @@ export class ModelBindingResolver {
       capability,
       resourceId: resource.resourceId,
       modelName: binding.modelName,
-      config,
+      config: this.withVerifiedRoute(config, resource.resourceId, binding.modelName),
     };
+  }
+
+  private withVerifiedRoute(config: ModelServiceConfig, resourceId: string, model: string): ModelServiceConfig {
+    if (!autoVertexConnection(config)) return config;
+    const salt = this.credentials?.fingerprintSalt(resourceId, config.credentialRef) ?? `reference:${config.credentialRef ?? "none"}`;
+    const baseUrl = this.appStore.verifiedVertexBase(resourceId, model, vertexRouteFingerprint(config, salt));
+    return baseUrl ? { ...config, baseUrl } : config;
   }
 }
 

@@ -9,7 +9,7 @@ if (process.isMainFrame && location.href === "desk://bundle/index.html") {
   });
   contextBridge.exposeInMainWorld("nowadaysDesk", {
     hostHeaders: ipcRenderer.sendSync("desk:host-headers"),
-    coverPainted: color => ipcRenderer.send("desk:cover", color),
+    setWindowTheme: (preset, color) => ipcRenderer.send("desk:window-theme", preset, color),
     boot: () => ipcRenderer.invoke("desk:boot"),
     onIntent: callback => {
       listener = callback;

@@ -194,6 +194,7 @@ function stateLabel(key: string): string {
   const known: Record<string, string> = {
     mood: "近况",
     moodSummary: "近况",
+      outfitReviewedOn: "服饰确认日期",
     note: "近况",
     心境: "心境",
     关注: "关注",

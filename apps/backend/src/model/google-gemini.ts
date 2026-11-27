@@ -1,6 +1,6 @@
 import { APPLICATION_TRIGGER_INPUT } from "../domain/model.js";
 import { createHash, createSign, randomUUID } from "node:crypto";
-import { usesVertexExpressPresets, VERTEX_EXPRESS_MODELS, type ModelProvider } from "../domain/model-providers.js";
+import { isVertexPublisherBaseUrl, vertexModelPresets, type VertexSafetyLevel, type ModelProvider } from "../domain/model-providers.js";
 import {
   ModelListIncompatibleError,
   ModelRequestFailedError,
@@ -99,6 +99,28 @@ export function buildGeminiStreamUrl(baseUrl: string, modelName: string): string
   return `${cleanBase}/models/${encodeURIComponent(modelId)}:streamGenerateContent?alt=sse`;
 }
 
+/** 仅提取官方 Express 对同一模型返回的项目编号，不采用上游提供的 URL。 */
+export function vertexGlobalProbeBase(url: string, body: string): string | undefined {
+  const request = /^https:\/\/aiplatform\.googleapis\.com\/(v1(?:beta1)?)\/publishers\/google\/models\/([\w.-]+):streamGenerateContent\?alt=sse$/.exec(url);
+  if (!request) return;
+  try {
+    const payload: unknown = JSON.parse(body);
+    const rpc = Array.isArray(payload) ? payload[0] : payload;
+    if (!isPlainRecord(rpc) || !isPlainRecord(rpc.error) || rpc.error.status !== "NOT_FOUND" || typeof rpc.error.message !== "string") return;
+    const resource = /\bprojects\/(\d+)\/locations\/([a-z0-9-]+)\/publishers\/google\/models\/([\w.-]+)/.exec(rpc.error.message);
+    if (resource && resource[2] !== "global" && resource[3] === request[2]) {
+      return `https://aiplatform.googleapis.com/${request[1]}/projects/${resource[1]}/locations/global/publishers/google`;
+    }
+  } catch { /* 上游未返回结构化错误。 */ }
+}
+
+export class VertexEndpointNotFound extends ModelRequestFailedError {
+  constructor(readonly globalBase: string | undefined) {
+    super("模型服务返回 HTTP 404", { status: 404, reason: "not_found_error" });
+  }
+}
+
+
 /** 解析 Google AI Studio (`models`) 或 Vertex AI (`publisherModels`) 模型列表响应。 */
 export function parseGoogleModelsList(parsed: unknown): string[] {
   if (!isPlainRecord(parsed)) {
@@ -177,22 +199,6 @@ export async function buildGoogleHeaders(
   return headers;
 }
 
-/** 判断是否为 Vertex AI Publisher 接口前缀（Express Mode 不提供列出模型目录端点）。 */
-function isVertexPublisherBaseUrl(baseUrl: string): boolean {
-  try {
-    const parsed = new URL(baseUrl);
-    const pathname = parsed.pathname.replace(/\/+$/, "").toLowerCase();
-    const host = parsed.hostname.toLowerCase();
-    return (
-      pathname.endsWith("/publishers/google") ||
-      host === "aiplatform.googleapis.com" ||
-      host.endsWith("-aiplatform.googleapis.com")
-    );
-  } catch {
-    return false;
-  }
-}
-
 /** 拉取 Google Gemini / Vertex AI 可用模型列表。 */
 export async function listGoogleModels(input: {
   baseUrl: string;
@@ -202,7 +208,8 @@ export async function listGoogleModels(input: {
   timeoutMs: number;
   signal?: AbortSignal;
 }): Promise<string[]> {
-  if (usesVertexExpressPresets("google-gemini", input.baseUrl)) return [...VERTEX_EXPRESS_MODELS];
+  const presets = vertexModelPresets("google-gemini", input.baseUrl);
+  if (presets) return [...presets];
   const headers = await buildGoogleHeaders(
     input.credential,
     "application/json",
@@ -258,7 +265,7 @@ export async function* streamGoogleGemini(input: {
   cacheRef: { current: GoogleOAuthTokenCache | undefined };
   request: ModelRequest;
   transport: GoogleGeminiTransport;
-  serializedBody?: string;
+  serializedBody: string;
 }): AsyncGenerator<ModelEvent> {
   const { request, transport } = input;
   const headers = await buildGoogleHeaders(
@@ -273,14 +280,7 @@ export async function* streamGoogleGemini(input: {
     {
       method: "POST",
       headers,
-      body: input.serializedBody ?? JSON.stringify(
-        buildGeminiGenerateBody(
-          request,
-          request.modelName,
-          input.baseUrl,
-          transport.continuationItems,
-        ),
-      ),
+      body: input.serializedBody,
       ...(request.signal === undefined ? {} : { signal: request.signal }),
     },
   );
@@ -447,8 +447,16 @@ export function buildGeminiGenerateBody(
   modelName: string,
   baseUrl: string,
   continuationItems: GoogleGeminiTransport["continuationItems"],
+  vertexSafety?: VertexSafetyLevel,
 ): Record<string, unknown> {
+  const thresholds = { high: "BLOCK_LOW_AND_ABOVE", default: "HARM_BLOCK_THRESHOLD_UNSPECIFIED", off: "OFF" };
   return {
+    ...(vertexSafety === undefined ? {} : {
+      safetySettings: ["HARM_CATEGORY_HATE_SPEECH", "HARM_CATEGORY_HARASSMENT",
+        "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT"].map(category => ({
+        category, threshold: thresholds[vertexSafety],
+      })),
+    }),
     ...(request.system.length > 0
       ? { systemInstruction: { parts: [{ text: request.system }] } }
       : {}),

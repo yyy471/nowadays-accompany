@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { InvalidResourceConfigError } from "./errors.js";
-import { isModelProvider, MODEL_PROVIDERS, type ModelProvider } from "./model-providers.js";
+import { isModelProvider, MODEL_PROVIDERS, VERTEX_SAFETY_LEVELS, type ModelProvider } from "./model-providers.js";
 
 export const resourceKindSchema = z.enum(["model", "mcp", "skill"]);
 export type ResourceKind = z.infer<typeof resourceKindSchema>;
@@ -64,6 +64,8 @@ export const modelBaseConfigSchema = z
     protocol: modelProtocolSchema,
     provider: z.custom<ModelProvider>(isModelProvider, "未知模型服务商").optional(),
     baseUrl: modelBaseUrlSchema,
+    vertexSafety: z.enum(VERTEX_SAFETY_LEVELS).optional(),
+    vertexRouting: z.literal("manual").optional(),
     /** 默认模型名称（选填，供设置界面回显与角色默认预填）。 */
     modelName: z.string().trim().min(1).max(200).optional(),
     credentialRef: credentialRefSchema.optional(),

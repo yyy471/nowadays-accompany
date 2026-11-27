@@ -1,6 +1,6 @@
 import { APPLICATION_TRIGGER_INPUT } from "../domain/model.js";
 import { createHash, randomUUID } from "node:crypto";
-import type { ModelProvider } from "../domain/model-providers.js";
+import { isVertexPublisherBaseUrl, type ModelProvider } from "../domain/model-providers.js";
 import { ChatReasoning } from "./chat-reasoning.js";
 import {
   ModelListIncompatibleError,
@@ -22,6 +22,7 @@ import {
   listGoogleModels,
   mapGoogleErrorReason,
   streamGoogleGemini,
+  vertexGlobalProbeBase, VertexEndpointNotFound,
   type GoogleGeminiTransport,
   type GoogleOAuthTokenCache,
 } from "./google-gemini.js";
@@ -111,7 +112,7 @@ export class HttpModelAdapter implements ModelPort {
         cacheRef: this.googleTokenCache,
         request,
         transport: this.googleTransport(),
-        serializedBody: serializeModelRequest("google-gemini", this.config.baseUrl, request, this.config.provider),
+        serializedBody: serializeModelRequest("google-gemini", this.config.baseUrl, request, this.config.provider, this.config.vertexSafety),
       });
     }
     return this.streamAnthropic(request);
@@ -771,6 +772,10 @@ export class HttpModelAdapter implements ModelPort {
     }
     if (!response.ok) {
       const body = await response.text();
+      if (response.status === 404 && this.config.protocol === "google-gemini" && init.method === "POST" &&
+          /^https:\/\/aiplatform\.googleapis\.com\/v1(?:beta1)?\/publishers\/google\/models\//.test(url)) {
+        throw new VertexEndpointNotFound(vertexGlobalProbeBase(url, body));
+      }
       throw new ModelRequestFailedError(
         `模型服务返回 HTTP ${response.status}`,
         {
@@ -789,6 +794,7 @@ export function serializeModelRequest(
   baseUrl: string,
   request: ModelRequest,
   provider?: ModelProvider,
+  vertexSafety?: ModelServiceConfig["vertexSafety"],
 ): string {
   const requiresChatReasoning = request.tools.length > 0 && (provider === "deepseek" || provider === "mimo");
   const messages = request.messages.map((message): ModelMessage => {
@@ -879,6 +885,7 @@ export function serializeModelRequest(
       return JSON.stringify(buildGeminiGenerateBody(
         { ...request, messages }, request.modelName, baseUrl,
         (message, protocol, model, base) => continuationItems(message, protocol, model, base, provider),
+        provider !== "google-ai-studio" && isVertexPublisherBaseUrl(baseUrl) ? vertexSafety ?? "default" : undefined,
       ));
   }
 }

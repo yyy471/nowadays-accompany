@@ -18,17 +18,39 @@ export function isModelProvider(value: unknown): value is ModelProvider {
   return typeof value === "string" && Object.hasOwn(MODEL_PROVIDERS, value);
 }
 
-// 2026-11-20 核对 Express 快速入门、生成示例及模型生命周期，出处见角色配置规范。
-export const VERTEX_EXPRESS_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash"] as const;
+export const VERTEX_SAFETY_LEVELS = ["high", "default", "off"] as const;
+export type VertexSafetyLevel = typeof VERTEX_SAFETY_LEVELS[number];
 
-export function usesVertexExpressPresets(protocol: unknown, baseUrl: unknown): boolean {
-  if (protocol !== "google-gemini" || typeof baseUrl !== "string") return false;
+export function isVertexPublisherBaseUrl(baseUrl: string): boolean {
   try {
-    const url = new URL(baseUrl.trim());
-    return url.origin === "https://aiplatform.googleapis.com" &&
-      /^\/v1(?:beta1)?\/publishers\/google\/*$/.test(url.pathname) &&
-      !url.search && !url.hash && !url.username && !url.password;
+    const url = new URL(baseUrl);
+    return /\/publishers\/google\/*$/i.test(url.pathname) ||
+      url.hostname === "aiplatform.googleapis.com" || url.hostname.endsWith("-aiplatform.googleapis.com");
   } catch {
     return false;
+  }
+}
+
+// 供用户选择的模型 ID，实际可用性由当前端点和账号决定。
+export const VERTEX_EXPRESS_MODELS = [
+  "gemini-4-neon", "gemini-4-hydrogen", "gemini-4-carbon", "gemini-4-argon",
+  "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-3-flash-preview",
+  "gemini-3.5-flash-lite", "gemini-3.1-flash-lite",
+] as const;
+
+export function autoVertexConnection(config: { protocol: string; baseUrl: string; provider?: string | undefined; vertexRouting?: string | undefined }): boolean {
+  return config.protocol === "google-gemini" && !config.provider && config.vertexRouting !== "manual"
+    && /^https:\/\/aiplatform\.googleapis\.com\/v1(?:beta1)?\/publishers\/google\/*$/.test(config.baseUrl);
+}
+
+export function vertexModelPresets(protocol: unknown, baseUrl: unknown): readonly string[] | undefined {
+  if (protocol !== "google-gemini" || typeof baseUrl !== "string") return;
+  try {
+    const url = new URL(baseUrl.trim());
+    if (url.origin !== "https://aiplatform.googleapis.com" || url.search || url.hash || url.username || url.password) return;
+    if (/^\/v1(?:beta1)?\/publishers\/google\/*$/.test(url.pathname)) return VERTEX_EXPRESS_MODELS;
+    if (/^\/v1(?:beta1)?\/projects\/[^/]+\/locations\/global\/publishers\/google\/*$/.test(url.pathname)) return VERTEX_EXPRESS_MODELS;
+  } catch {
+    return undefined;
   }
 }

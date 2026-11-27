@@ -1,6 +1,6 @@
 import { AppError } from "../../domain/errors.js";
 import type { MemoryDelivery, ModelMessage, ModelProtocol, ModelRequest } from "../../domain/model.js";
-import type { ModelProvider } from "../../domain/model-providers.js";
+import type { ModelProvider, VertexSafetyLevel } from "../../domain/model-providers.js";
 import type { WorldbookMatch, WorldbookSelection } from "../../domain/worldbook.js";
 import { renderWebReadingPrefix, webReadingCandidates, webReadingRequest } from "../../domain/web-reading.js";
 import { serializeModelRequest } from "../../model/protocols.js";
@@ -32,6 +32,7 @@ export function selectAgentContext(input: {
   prompt: AgentSystemPrompt;
   protocol: ModelProtocol;
   provider?: ModelProvider;
+  vertexSafety?: VertexSafetyLevel;
   baseUrl: string;
   maxInputChars?: number;
   maxOutputChars?: number;
@@ -76,7 +77,7 @@ export function selectAgentContext(input: {
     const system = [request.system, dateNote, input.prompt.requiredFooter].filter(Boolean).join("\n");
     return { ...request, system, messages };
   };
-  const size = () => serializeModelRequest(input.protocol, input.baseUrl, withSelection(), input.provider).length;
+  const size = () => serializeModelRequest(input.protocol, input.baseUrl, withSelection(), input.provider, input.vertexSafety).length;
   const fits = () => size() + reserve <= maxInputChars;
   const minimumChars = size();
   if (minimumChars + reserve > maxInputChars) {

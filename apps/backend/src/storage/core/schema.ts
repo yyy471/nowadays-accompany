@@ -11,7 +11,7 @@ import { restoreAutonomyShareLinks } from "../conversation/autonomy-store.js";
 import { MemoryStore } from "../memory/memory-store.js";
 import { retireLegacyWebPrefetchEvidence, WEB_READING_SCHEMA_SQL } from "../conversation/web-reading.js";
 
-export const APP_SCHEMA_VERSION = 13;
+export const APP_SCHEMA_VERSION = 14;
 export const BUSINESS_SCHEMA_VERSION = 30;
 export const EXECUTION_SCHEMA_VERSION = 2;
 
@@ -22,6 +22,7 @@ export const APP_TABLES = [
   "resource_deletions",
   "role_deletions",
   "model_test_calls",
+  "vertex_test_routes",
   "resource_secrets",
   "image_services",
   "voice_services",
@@ -2084,6 +2085,14 @@ CREATE TABLE IF NOT EXISTS builtin_resource_seeds (
 );
 `;
 
+const APP_V14_SQL = `
+CREATE TABLE IF NOT EXISTS vertex_test_routes (
+  test_call_id TEXT PRIMARY KEY REFERENCES model_test_calls(test_call_id) ON DELETE CASCADE,
+  route_fingerprint TEXT NOT NULL,
+  base_url TEXT NOT NULL
+);
+`;
+
 export function openAppDatabase(dbPath: string): OpenedDatabase {
   return openVersionedDatabase(
     dbPath,
@@ -2100,7 +2109,7 @@ export function openAppDatabase(dbPath: string): OpenedDatabase {
       APP_V10_SQL +
       APP_V11_SQL +
       APP_V12_SQL +
-      APP_V13_SQL,
+      APP_V13_SQL + APP_V14_SQL,
     {
       1: (db) => db.exec(APP_V2_SQL),
       2: (db) => db.exec(APP_V3_SQL),
@@ -2114,6 +2123,7 @@ export function openAppDatabase(dbPath: string): OpenedDatabase {
       10: (db) => db.exec(APP_V11_SQL),
       11: (db) => db.exec(APP_V12_SQL),
       12: (db) => db.exec(APP_V13_SQL),
+      13: (db) => db.exec(APP_V14_SQL),
     },
     APP_TABLES,
     APP_INDEXES,

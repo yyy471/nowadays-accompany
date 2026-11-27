@@ -13,6 +13,7 @@ const results = path.join(testResultsDir, 'relations-v2');
 fs.mkdirSync(results, { recursive: true });
 const temp = fs.mkdtempSync(path.join(results, 'profile-'));
 const now = '2026-11-09T10:00:00.000Z';
+const profileFields = { outfitReviewedOn: '2026-11-25', longCustomProfileFieldWithoutSpaces: 'longValue'.repeat(12) };
 const requests = [];
 const evidenceResponses = [];
 let rolesAvailable = false;
@@ -40,7 +41,7 @@ const server = http.createServer((req, res) => {
     if (p.endsWith('/appearance/assets/portrait')) { res.writeHead(200, { 'content-type': 'image/png' }); return res.end(fs.readFileSync(xiachengPortraitFixture)); }
     if (p.endsWith('/state')) {
       if (holdRefresh && role.roleId === 'role-two') { refreshResponse = res; holdRefresh = false; return; }
-      return json(res, { state: { outfitId: 'o', mood: `${role.displayName}的近况` }, stateVersion: 1, updatedAt: now });
+      return json(res, { state: { outfitId: 'o', mood: `${role.displayName}的近况`, ...profileFields }, stateVersion: 1, updatedAt: now });
     }
     if (p.endsWith('/memory/search')) {
       const type = body?.types?.[0];
@@ -149,7 +150,7 @@ async function verifyRefresh() {
   await ev("document.querySelector('[aria-label=刷新藏页]').focus(); document.querySelector('[aria-label=刷新藏页]').click()");
   await until(() => refreshResponse && ev("document.querySelector('[aria-label=刷新藏页]')?.getAttribute('aria-busy') === 'true'"));
   assert.ok(await ev("document.querySelector('.evidence[data-state=ready]')?.textContent.includes('保存的原始记录')"));
-  json(refreshResponse, { state: { outfitId: 'o', mood: '已更新的近况' }, stateVersion: 2, updatedAt: now });
+  json(refreshResponse, { state: { outfitId: 'o', mood: '已更新的近况', ...profileFields }, stateVersion: 2, updatedAt: now });
   await until(() => ev("document.querySelector('.rail-identity')?.textContent.includes('已更新的近况') && !document.querySelector('[aria-label=刷新藏页]').hasAttribute('aria-busy')"));
 }
 async function verifyCorrectionLayout() {
@@ -184,6 +185,17 @@ async function verifyCorrectionLayout() {
   await until(() => ev("!document.querySelector('.memory-correction') && document.activeElement?.textContent === '更正经历'"));
   await cmd('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
   await until(() => ev('innerWidth === 1280'));
+}
+async function verifyProfileFields() {
+  assert.ok(await ev(`(() => {
+    const list = document.querySelector('.profile-lines');
+    return list.textContent.includes('服饰确认日期2026-11-25') && [...list.querySelectorAll('dt')].every(label => {
+      const text = document.createRange();
+      text.selectNodeContents(label);
+      const value = label.nextElementSibling;
+      return text.getBoundingClientRect().right < value.getBoundingClientRect().left && value.scrollWidth <= value.clientWidth + 1;
+    });
+  })()`), '介绍字段与日期应可完整阅读，长字段应在各自列内换行');
 }
 async function run() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -236,6 +248,7 @@ async function run() {
   assert.equal(await ev("document.querySelectorAll('.date-index button')[1].getAttribute('aria-selected')"), 'true');
   await ev("[...document.querySelectorAll('.inner-nav button')].find(x=>x.textContent.includes('角色介绍')).click()");
   await until(() => ev("document.querySelector('[data-testid=profile-definition]')?.textContent.includes('乙角色的介绍')"));
+  await verifyProfileFields();
   await checkStrip('day');
   await ev("document.querySelector('.back-button').click()");
   await until(() => ev("!!document.querySelector('.tab-experiences')")); await delay(1000);
@@ -263,6 +276,7 @@ async function run() {
   await checkStrip('night');
   await ev("[...document.querySelectorAll('.inner-nav button')].find(x=>x.textContent.includes('角色介绍')).click()");
   await until(() => ev("document.querySelector('[data-testid=profile-definition]')?.textContent.includes('乙角色的介绍')"));
+  await verifyProfileFields();
   await checkStrip('night');
   await ev("document.querySelector('.back-button').click()"); await delay(1000);
   assert.equal(await ev("document.activeElement?.classList.contains('tab-diary')"), true, '返回日记藏页时焦点应回到日记标签');

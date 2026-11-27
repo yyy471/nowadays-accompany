@@ -6,8 +6,39 @@
 
 import {
   GOOGLE_AI_STUDIO_URL, GOOGLE_VERTEX_EXPRESS_URL, isModelProvider, MODEL_PROVIDERS,
-  usesVertexExpressPresets, VERTEX_EXPRESS_MODELS,
+  isVertexPublisherBaseUrl, vertexModelPresets, type VertexSafetyLevel,
 } from "../../../../../backend/src/domain/model-providers";
+
+export type { VertexSafetyLevel };
+export function vertexSafetyOf(value: unknown): VertexSafetyLevel {
+  return value === "high" || value === "off" ? value : "default";
+}
+export function hasVertexSafety(adapter: string, address: string): boolean {
+  return adapter === "google-gemini" && isVertexPublisherBaseUrl(address);
+}
+
+export interface VertexLocation {
+  version: string;
+  project: string;
+  region: string;
+}
+
+/** 仅官方 Vertex 端点可由地区字段改写，代理地址仍由用户直接维护。 */
+export function parseVertexLocation(address: string): VertexLocation | undefined {
+  const match = /^https:\/\/(?:([a-z0-9-]+)-)?aiplatform\.googleapis\.com\/(v1(?:beta1)?)(?:\/projects\/([a-zA-Z0-9.:-]+)\/locations\/([a-z0-9-]+))?\/publishers\/google\/*$/.exec(address.trim());
+  if (!match || (match[1] && match[1] !== match[4])) return;
+  return { version: match[2]!, project: match[3] ?? "", region: match[4] ?? "" };
+}
+
+export function vertexLocationAddress({ version, project, region }: VertexLocation) {
+  const location = region.trim();
+  const projectId = project.trim();
+  if (!location || location === "express") return { url: `https://aiplatform.googleapis.com/${version}/publishers/google`, error: "" };
+  if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(location) || location.length > 52) return { url: "", error: "地区只能包含小写字母、数字和连字符。" };
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9.:-]*$/.test(projectId)) return { url: "", error: "请填写 Google Cloud 项目 ID 或项目编号。" };
+  const host = location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`;
+  return { url: `https://${host}/${version}/projects/${projectId}/locations/${location}/publishers/google`, error: "" };
+}
 
 export interface ProbeNotice {
   source: "list" | "test";
@@ -50,14 +81,19 @@ export function modelConnectionFields(
   adapter: string,
   baseUrl: string,
   savedProvider?: unknown,
-): { protocol: string; provider?: string; baseUrl: string } {
+  vertexSafety?: VertexSafetyLevel,
+  manualExpress = false,
+): { protocol: string; provider?: string; baseUrl: string; vertexSafety?: VertexSafetyLevel; vertexRouting?: 'manual' } {
   const address = baseUrl.trim();
   const protocol = isModelProvider(adapter) ? MODEL_PROVIDERS[adapter].protocol : adapter;
   // 旧版官方 Studio 资源已能从地址识别，保存时沿用其凭据身份。自定义 Studio 地址显式保存入口。
   const implicitStudio = adapter === "google-ai-studio" && savedProvider !== adapter &&
     address.replace(/\/+$/, "") === GOOGLE_AI_STUDIO_URL;
   const provider = isModelProvider(adapter) && !implicitStudio ? adapter : undefined;
-  return { protocol, provider, baseUrl: address };
+  return { protocol, provider, baseUrl: address,
+    ...(manualExpress && hasVertexSafety(adapter, address) ? { vertexRouting: 'manual' as const } : {}),
+    ...(vertexSafety && hasVertexSafety(adapter, address) ? { vertexSafety } : {}),
+  };
 }
 
 export function modelCredentialScope(adapter: string, baseUrl: string, savedProvider?: unknown): string {
@@ -69,7 +105,7 @@ export function modelCredentialScope(adapter: string, baseUrl: string, savedProv
 
 export function modelPresets(protocol: unknown, baseUrl: unknown): readonly string[] | undefined {
   const wire = protocol === "google-ai-studio" ? "google-gemini" : protocol;
-  return usesVertexExpressPresets(wire, baseUrl) ? VERTEX_EXPRESS_MODELS : undefined;
+  return vertexModelPresets(wire, baseUrl);
 }
 
 /** 返回所选服务商或 Gemini 入口的默认地址，通用协议允许自行填写。 */

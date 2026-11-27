@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { api, ApiError } from '../../api';
-import { modelTestNote, type ProbeNotice } from './model-picker';
+import { modelTestNote, type ProbeNotice, type VertexSafetyLevel } from './model-picker';
 import { T4 } from '../config/config-texts';
 import {
   getModelCacheEpoch,
@@ -18,6 +18,8 @@ export type ModelProbeTarget =
         protocol: string;
         provider?: string;
         baseUrl: string;
+        vertexSafety?: VertexSafetyLevel;
+        vertexRouting?: 'manual';
         secret?: string;
         /** 复用已保存服务的密钥；仅同协议、同 origin 时后端才放行。 */
         resourceId?: string;
@@ -44,6 +46,7 @@ interface ModelListResult {
 }
 
 interface ModelTestResult {
+  vertexRegion?: string;
   ok?: boolean;
   elapsedMs?: number;
   testCallId?: string;
@@ -86,6 +89,7 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
   const [testNote, setTestNote] = useState('');
   const [testModel, setTestModel] = useState('');
   const [draftTestCallId, setDraftTestCallId] = useState<string | null>(null);
+  const draftRoutes = useRef(new Map<string, string>());
   const [notice, setNotice] = useState<ProbeNotice | null>(null);
   const listGeneration = useRef(0);
   const testGeneration = useRef(0);
@@ -101,6 +105,7 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
 
   // 配置键变化：丢弃两类在途请求，并读取共享候选。
   useEffect(() => {
+    draftRoutes.current.clear();
     listGeneration.current += 1;
     testGeneration.current += 1;
     clickLogSeq.current += 1;
@@ -288,10 +293,12 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
       if (staleAfterRotation(target, epoch)) return;
       if (target.kind === 'draft' && result.ok === true && typeof result.testCallId === 'string') {
         setDraftTestCallId(result.testCallId);
+        if (result.vertexRegion) draftRoutes.current.set(model, result.testCallId);
       }
-      const note = savedHooks.current.scope === 'role'
+      const message = savedHooks.current.scope === 'role'
         ? result.ok === true ? T4.ok(Math.max(0, Math.round(result.elapsedMs ?? 0))) : T4.fail(result.error?.message ?? '模型请求失败')
         : modelTestNote(result);
+      const note = result.ok && result.vertexRegion ? `${message} · ${result.vertexRegion} 入口` : message;
       if (logSeq === clickLogSeq.current) {
         setTestNote(note);
         setNotice({
@@ -331,6 +338,7 @@ export function useModelProbe(key: string, options: ModelProbeOptions = {}) {
     testNote,
     testModel,
     draftTestCallId,
+    draftRouteTestIds: [...draftRoutes.current.values()].slice(-100),
     notice,
     refresh,
     test,

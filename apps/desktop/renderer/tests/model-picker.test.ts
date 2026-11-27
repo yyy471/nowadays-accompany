@@ -5,6 +5,24 @@ import * as targetModule from "../src/components/model/model-picker.ts";
 
 const load = async () => targetModule;
 
+test("Vertex 地区可从旧地址回显，可手填并生成直连地址", () => {
+  const { parseVertexLocation, vertexLocationAddress } = targetModule;
+  const express = "https://aiplatform.googleapis.com/v1beta1/publishers/google";
+  const draft = parseVertexLocation(express)!;
+  assert.deepEqual(draft, { version: "v1beta1", region: "", project: "" });
+  assert.equal(vertexLocationAddress({ ...draft, region: "global" }).url, "");
+  for (const region of ["global", "us-central1", "australia-southeast1"]) {
+    const location = { ...draft, project: "my-project", region };
+    const host = region === "global" ? "" : region + "-";
+    const url = `https://${host}aiplatform.googleapis.com/v1beta1/projects/my-project/locations/${region}/publishers/google`;
+    assert.deepEqual(vertexLocationAddress(location), { url, error: "" });
+    assert.deepEqual(parseVertexLocation(url), location);
+    assert.equal(vertexLocationAddress({ ...location, region: "" }).url, express);
+  }
+  assert.equal(vertexLocationAddress({ ...draft, region: "us/x", project: "123" }).url, "");
+  assert.equal(parseVertexLocation("https://proxy.example/v1/publishers/google"), undefined);
+});
+
 test("模型候选按输入过滤、去重并保留手填", async () => {
   const { filterModelNames } = await load();
   const models = ["gpt-a", "gpt-b", "claude-x", "gpt-a", 42, ""];
@@ -102,7 +120,16 @@ test("服务商选项回显官网地址、实际协议与独立的凭据范围",
   assert.equal(modelAdapterOf(studioProxy), "google-ai-studio");
   assert.equal(studioProxy.provider, "google-ai-studio");
   assert.equal(modelPresets(studio.protocol, studio.baseUrl), undefined);
-  assert.deepEqual(modelPresets("google-gemini", defaultModelBaseUrl("google-gemini")), ["gemini-3.8-flash", "gemini-3.5-flash"]);
+  const express = defaultModelBaseUrl("google-gemini");
+  const global = "https://aiplatform.googleapis.com/v1/projects/my-project/locations/global/publishers/google";
+  assert.deepEqual(modelPresets("google-gemini", express), [
+    "gemini-4-neon", "gemini-4-hydrogen", "gemini-4-carbon", "gemini-4-argon",
+    "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-3-flash-preview",
+    "gemini-3.5-flash-lite", "gemini-3.1-flash-lite",
+  ]);
+  assert.ok(modelPresets("google-gemini", global)?.includes("gemini-4-neon"));
+  assert.equal(modelConnectionFields("google-gemini", global, undefined, "off").vertexSafety, "off");
+  assert.equal(modelConnectionFields("google-ai-studio", defaultModelBaseUrl("google-ai-studio"), undefined, "off").vertexSafety, undefined);
   assert.equal(modelPresets("google-gemini", shared + "/publishers/google"), undefined);
 });
 

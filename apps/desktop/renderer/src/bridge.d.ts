@@ -1,9 +1,7 @@
-interface Window { nowadays?: { setWindowTheme?: (preset: 'daylight' | 'nightwave') => Promise<boolean> }; accompany?: Window['nowadays'] }
-
 type DeskIntent = { id: number; action: 'hide' | 'quit' | 'cancel' };
 interface Window {
   nowadaysDesk?: {
-    coverPainted(color: string): void;
+    setWindowTheme(preset: 'daylight' | 'nightwave', color: string): void;
     boot(): Promise<{ ok: true; skipRolePicker: boolean } | { ok: false; reason: string }>;
     onIntent(callback: (request: DeskIntent) => void): () => void;
     waiting(id: number): void;

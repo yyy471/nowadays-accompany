@@ -175,6 +175,7 @@ export interface ModelListResult {
 }
 
 export interface ModelTestResult {
+  vertexRegion?: string;
   ok: boolean;
   elapsedMs: number;
   /** 本次测试对应的配置与凭据版本；与当前配置不一致即视为过期。 */

@@ -1,6 +1,6 @@
 "use strict";
 
-const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, net, protocol } = require("electron");
+const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeTheme, net, protocol } = require("electron");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const { join, resolve } = require("node:path");
@@ -246,8 +246,10 @@ function startDesk() {
     });
     return backendReadyPromise;
   });
-  ipcMain.on("desk:cover", (event, color) => {
-    if (!trusted(event) || !/^#[a-f0-9]{6}$/i.test(color)) return;
+  ipcMain.on("desk:window-theme", (event, preset, color) => {
+    if (!trusted(event) || !["daylight", "nightwave"].includes(preset) || typeof color !== "string" || !/^#[a-f0-9]{6}$/i.test(color)) return;
+    nativeTheme.themeSource = preset === "nightwave" ? "dark" : "light";
+    if (process.platform === "win32") window.setAccentColor(color);
     window.setBackgroundColor(color);
     if (!coverShown) { coverShown = true; revealDesk(); }
   });

@@ -11,6 +11,11 @@ import { createBackendApp, listen } from "../../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths } from "../../src/bootstrap/config.js";
 import { APPLICATION_TRIGGER_INPUT, isIncompleteCompletion, type ModelEvent, type ModelMessage, type ModelToolSpec } from "../../src/domain/model.js";
 import { HttpModelAdapter } from "../../src/model/protocols.js";
+import { ModelBindingResolver } from "../../src/application/resources/model-binding-resolver.js";
+import { CredentialResolver } from "../../src/application/resources/credential-resolver.js";
+import { RoleAccess } from "../../src/application/role/role-access.js";
+import { SecretStore } from "../../src/storage/core/secret-store.js";
+import { SecretCipher } from "../../src/security/secret-cipher.js";
 import { AppStore } from "../../src/storage/core/app-store.js";
 import { RoleStore } from "../../src/storage/role/role-store.js";
 
@@ -116,6 +121,91 @@ async function collectEvents(
   }
   return events;
 }
+
+test("Vertex 直连配置的地区，404 后不再切区", async (t) => {
+  const model = "gemini-4-hydrogen";
+  const urls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (url: string) => {
+    urls.push(url);
+    const resource = `projects/123456/locations/us-central1/publishers/google/models/${model}`;
+    return Response.json({ error: { status: "NOT_FOUND", message: `Publisher Model ${resource} was not found.` } }, { status: 404 });
+  });
+  const bases = [
+    "https://aiplatform.googleapis.com/v1/publishers/google",
+    "https://aiplatform.googleapis.com/v1/projects/123456/locations/global/publishers/google",
+    "https://us-central1-aiplatform.googleapis.com/v1/projects/123456/locations/us-central1/publishers/google",
+  ];
+  for (const baseUrl of bases) {
+    const adapter = new HttpModelAdapter({ protocol: "google-gemini", baseUrl }, "test-key");
+    await assert.rejects(collectEvents(adapter, [{ role: "user", content: "ping" }], [], model), /HTTP 404/);
+  }
+  assert.deepEqual(urls, bases.map(base => `${base}/models/${model}:streamGenerateContent?alt=sse`));
+});
+
+test("Vertex 草稿保存两个已验证入口，重启后正式请求按服务和模型直连", async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "vertex-routes-"));
+  const config = parseBackendConfig(["--app-root", root, "--port", "0"]);
+  let app = createBackendApp(config);
+  t.after(async () => { await app.close(); fs.rmSync(root, { recursive: true, force: true }); });
+  const express = "https://aiplatform.googleapis.com/v1/publishers/google";
+  const global = "https://aiplatform.googleapis.com/v1/projects/123/locations/global/publishers/google";
+  const hydrogen = "gemini-4-hydrogen", flash = "gemini-3.8-flash";
+  const reqs: string[] = [];
+  t.mock.method(globalThis, "fetch", async (url: string) => {
+    reqs.push(url);
+    if (url.startsWith(express) && url.includes(hydrogen)) {
+      return Response.json({ error: { status: "NOT_FOUND", message: `projects/123/locations/us-central1/publishers/google/models/${hydrogen}` } }, { status: 404 });
+    }
+    return new Response(sse({ candidates: [{ content: { parts: [{ text: "pong" }] }, finishReason: "STOP" }] }));
+  });
+  const base = { protocol: "google-gemini" as const, baseUrl: express };
+  const secret = "offline-key";
+  const probe = app.services.modelServices;
+  const manual = await probe.test({ ...base, secret, model: hydrogen, vertexRouting: "manual" });
+  assert.equal(manual.ok, false);
+  assert.equal(reqs.length, 1);
+  const first = await probe.test({ ...base, secret, model: hydrogen });
+  const second = await probe.test({ ...base, secret, model: flash });
+  assert.equal(first.vertexRegion, "global");
+  assert.equal(second.vertexRegion, "Express");
+  const resource = app.services.resources.create({ kind: "model", name: "Vertex", config: { ...base, modelName: flash }, secret,
+    draftRouteTestIds: [first.testCallId!, second.testCallId!] });
+  const role = app.services.roles.createRole({ displayName: "路由测试", definition: { text: "测试" } });
+  app.services.resources.replaceBindings(role.roleId, [
+    { capability: "chat_model", resourceId: resource.resourceId, modelName: hydrogen, enabled: true },
+    { capability: "memory_model", resourceId: resource.resourceId, modelName: flash, enabled: true },
+  ]);
+  await app.close();
+  app = createBackendApp(config);
+  const credentials = new CredentialResolver(root, new SecretStore(app.appStore.db, new SecretCipher(root)));
+  const resolver = new ModelBindingResolver(app.appStore, new RoleAccess(app.appStore, config.dataRoot), credentials);
+  const chat = resolver.resolveChat(role.roleId);
+  assert.equal(chat.config.baseUrl, global);
+  assert.equal(resolver.resolveMemory(role.roleId).config.baseUrl, express);
+  reqs.length = 0;
+  await collectEvents(new HttpModelAdapter(chat.config, secret), [{ role: "user", content: "ping" }], [], chat.modelName);
+  assert.deepEqual(reqs, [`${global}/models/${hydrogen}:streamGenerateContent?alt=sse`]);
+  app.services.resources.update(resource.resourceId, { secret: "replacement-key" });
+  assert.equal(resolver.resolveChat(role.roleId).config.baseUrl, express);
+});
+
+test("Vertex 三档安全阈值随每个生成请求发送，旧配置使用平台默认值", async () => {
+  const server = await startHttpMock(() => ({ headers: { "content-type": "text/event-stream" },
+    body: sse({ candidates: [{ content: { role: "model", parts: [{ text: "ok" }] }, finishReason: "STOP" }] }) }));
+  try {
+    for (const [level, threshold] of [[undefined, "HARM_BLOCK_THRESHOLD_UNSPECIFIED"], ["default", "HARM_BLOCK_THRESHOLD_UNSPECIFIED"],
+      ["high", "BLOCK_LOW_AND_ABOVE"], ["off", "OFF"]] as const) {
+      const adapter = new HttpModelAdapter({ protocol: "google-gemini", baseUrl: server.baseUrl + "/v1/publishers/google",
+        ...(level && { vertexSafety: level }) }, "test-key");
+      await collectEvents(adapter, [{ role: "user", content: "你好" }]);
+      const wire = server.requests.at(-1)!.jsonBody as { safetySettings: { category: string; threshold: string }[] };
+      assert.deepEqual(wire.safetySettings.map(s => s.category).sort(), [
+        "HARM_CATEGORY_DANGEROUS_CONTENT", "HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH", "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+      ]);
+      assert.ok(wire.safetySettings.every(s => s.threshold === threshold));
+    }
+  } finally { await server.close(); }
+});
 
 test("Vertex 无用户新发言的历史工具事实仍由应用送入，原生工具续行的首尾均为 user", async () => {
   const server = await startHttpMock(() => ({headers:{"content-type":"text/event-stream"},
@@ -931,6 +1021,7 @@ test("SQLite 老库迁移（v7->v8 与 v17->v18）及 ModelService / 资源创�
           kind: "model",
           name: "Vertex Express",
           config: {
+            vertexSafety: "high",
             protocol: "google-gemini",
             baseUrl: `${server.baseUrl}/v1/publishers/google`,
           },
@@ -940,9 +1031,10 @@ test("SQLite 老库迁移（v7->v8 与 v17->v18）及 ModelService / 资源创�
       assert.equal(createRes.status, 201);
       const resource = (await createRes.json()) as {
         resourceId: string;
-        config: { protocol: string };
+        config: { protocol: string; vertexSafety: string };
       };
       assert.equal(resource.config.protocol, "google-gemini");
+      assert.equal(resource.config.vertexSafety, "high");
 
       const testRes = await fetch(`${base}/v1/model-services/test`, {
         method: "POST",
@@ -952,11 +1044,13 @@ test("SQLite 老库迁移（v7->v8 与 v17->v18）及 ModelService / 资源创�
           protocol: "google-gemini",
           baseUrl: `${server.baseUrl}/v1/publishers/google`,
           model: "gemini-3.8-flash",
+          vertexSafety: "off",
         }),
       });
       assert.equal(testRes.status, 200);
       const testBody = (await testRes.json()) as { ok: boolean };
       assert.equal(testBody.ok, true);
+      assert.match(JSON.stringify(server.requests.at(-1)?.jsonBody), /"threshold":"OFF"/);
       assert.equal(server.requests.at(-1)?.headers["x-goog-api-key"], "AQ.http-test-secret");
 
       // 3. 绑定角色并发起端到端对话，验证 AgentGraph -> ConversationStore -> model_calls 全链路通过。
@@ -1010,7 +1104,7 @@ test("SQLite 老库迁移（v7->v8 与 v17->v18）及 ModelService / 资源创�
         (r) =>
           r.url ===
           "/v1/publishers/google/models/gemini-3.8-flash:streamGenerateContent?alt=sse" &&
-          JSON.stringify(r.jsonBody).includes("你好 Gemini"),
+          JSON.stringify(r.jsonBody).includes("你好 Gemini") && JSON.stringify(r.jsonBody).includes('"threshold":"BLOCK_LOW_AND_ABOVE"'),
       );
       assert.ok(chatReq, "对话应按 Vertex Express 路径发出流式生成请求");
       assert.equal(chatReq.headers["x-goog-api-key"], "AQ.http-test-secret");

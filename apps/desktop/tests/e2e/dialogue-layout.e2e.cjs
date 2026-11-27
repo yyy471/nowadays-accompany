@@ -200,6 +200,18 @@ async function run() {
     const boxes = await layoutAt(width, height);
     layouts.set(width, boxes);
     const { stage, pane, page, messages, zone } = boxes;
+    assert.ok(await ev(`(async () => {
+      const image = document.querySelector('.dialogue-background img.active');
+      await image.decode();
+      const stage = image.closest('.dialogue-stage').getBoundingClientRect();
+      const box = image.getBoundingClientRect();
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 32;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(image, 0, 0, 32, 32);
+      return box.width === stage.width && box.height === stage.height && getComputedStyle(image).objectFit === 'cover'
+        && ctx.getImageData(0, 0, 32, 32).data.every((channel, i) => i % 4 !== 3 || channel === 255);
+    })()`), '背景应铺满左侧舞台，素材边缘也应有画面');
     const toolbar = boxes['pane-toolbar'];
     const tolerance = 0.5;
     assert.ok(Math.abs(stage.top - pane.top) < tolerance && stage.top - page.top < 12 && stage.right <= pane.left + tolerance, JSON.stringify(boxes));
