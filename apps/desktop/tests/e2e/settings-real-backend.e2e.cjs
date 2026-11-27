@@ -109,10 +109,10 @@ async function verifyModelProviders(roleId) {
     const address = element(`${sheet} .config-connection input`);
     const name = element(`${sheet} .config-service-field-one input`);
     const model = element(`${sheet} .nd-model-picker input`);
-    const option = element(`${sheet} [role=option] button`);
+    const option = expected => button(expected, `${sheet} [role=option]`);
     const openCandidates = expected => until(() => ev(`(() => {
-      const field=${model}, item=${option};
-      if (item?.getClientRects().length && item.textContent.trim()===${JSON.stringify(expected)}) return true;
+      const field=${model}, item=${option(expected)};
+      if (item) return true;
       if (field && !field.disabled && !field.closest('[inert]') && field.getClientRects().length) {
         field.focus(); field.click();
       }
@@ -137,7 +137,7 @@ async function verifyModelProviders(roleId) {
     await click(button('读取列表', sheet));
     await until(() => reads === 1);
     await openCandidates('mimo-offline-chat');
-    await ev(`${option}.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}))`);
+    await ev(`${option('mimo-offline-chat')}.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}))`);
     await click(element(`${sheet} .config-save-btn`));
     const saved = await until(async () => (await request('/v1/resources')).items.find(item => item.name === 'MiMo 联调'));
     assert.deepEqual([saved.config.provider, saved.config.protocol, saved.config.modelName], ['mimo','openai-chat','mimo-offline-chat']);
@@ -158,7 +158,7 @@ async function verifyModelProviders(roleId) {
       await click(button('读取列表', sheet));
       await until(() => reads === previousReads + 1);
       await openCandidates('mimo-offline-chat');
-      await ev(`${option}.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}))`);
+      await ev(`${option('mimo-offline-chat')}.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}))`);
       await click(element(`${sheet} .config-save-btn`));
       await until(async () => (await request(`/v1/roles/${roleId}/bindings`)).items
         .some(item => item.capability === `${kind}_model` && item.resourceId === saved.resourceId && item.modelName === 'mimo-offline-chat'));
@@ -207,9 +207,14 @@ async function run() {
   const nameInput = element(`${sheet} input[data-sheet-focus]`);
   await until(() => ev(`${nameInput}?.value==='春装'`));
   await ev(setValue(nameInput, '春日'));
+  // 在真实写入期间暂停 Chromium 动画时间线，关闭纸笺不能依赖窗口恢复绘制。
+  await cmd('Animation.enable');
+  await cmd('Animation.setPlaybackRate', { playbackRate: 0 });
   await click(element(`${sheet} .config-save-btn`));
   await until(async () => (await request(`/v1/roles/${a.roleId}/appearance/outfits`)).items.some(item => item.name === '春日'));
   await until(() => ev(`!${element(sheet)}`));
+  await cmd('Animation.setPlaybackRate', { playbackRate: 1 });
+  await cmd('Animation.disable');
   await openSheet(outfitCard('春日'), '编辑服饰');
   await until(() => ev(`!!${button('替换主页立绘', sheet)} && !${button('替换主页立绘', sheet)}.disabled`));
   await until(() => ev("document.querySelector('.config-sheet .config-outfit-hero-thumb[data-photo-state=developed] img')?.naturalWidth > 0"));

@@ -8,7 +8,7 @@ import { createBackendApp } from "../../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths } from "../../src/bootstrap/config.js";
 import { loadAgentTools } from "../../src/application/conversation/agent-tools.js";
 import { RoleAccess } from "../../src/application/role/role-access.js";
-import { ModelBindingResolver } from "../../src/application/resources/model-binding-resolver.js";
+import { seedEngineeringPool } from "../fixtures/engineering-pool.js";
 import { isAdminSeat } from "../../src/domain/admin-seat.js";
 import { SkillLibrary } from "../../src/skills/skill-library.js";
 import { ManagedPi } from "../../src/mcp/managed-pi.js";
@@ -101,7 +101,9 @@ test("普通角色即使残留绑定或续用权也不可发现、借用或派�
     const catalog = await loadAgentTools({ roleId, appStore: app.appStore, roleAccess: access, memory: app.services.memory,
       continuationResourceIds: [id], appRoot: f.root, workspaceDir: rolePaths(app.config.dataRoot, roleId).workspaceDir });
     try { assert.ok(!catalog.tools.some(t => t.name.includes("pi_task_"))); } finally { await catalog.close(); }
-    const pi = new ManagedPi(app.services.modelProxy, app.services.toolProxy, new ModelBindingResolver(app.appStore, access),
+    const model = app.services.resources.create({ name: "工程", kind: "model", config: { protocol: "openai-chat", baseUrl: "http://127.0.0.1:1" } });
+    seedEngineeringPool(app, model.resourceId);
+    const pi = new ManagedPi(app.services.modelProxy, app.services.toolProxy, app.services.engineeringPool,
       app.services.extensions.work, () => 0, () => true, id => isAdminSeat(access.getIndex(id).builtinKey), access, () => [adminId], () => {});
     try {
       await assert.rejects(pi.tools(roleId), { code: "PI_ADMIN_SEAT_REQUIRED" });

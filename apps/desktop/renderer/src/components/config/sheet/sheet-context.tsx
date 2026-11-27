@@ -155,8 +155,13 @@ export function SheetProvider({ children, controller }: { children: ReactNode; c
     if (saved) requestAnimationFrame(() => {
       if (leaving.current && closeSeq.current === seq) savedFeedback.current?.hold();
     });
-    // M2/M6 用三层实际动画完成信号；同一提交卸载三个节点，再开始保存反馈或下一步。
-    void Promise.allSettled(exits.map(animation => animation.finished)).then(finalize);
+    // 后台窗口可能暂停文档动画时间线。正常按三层完成信号关闭，停帧时也要释放正文和写入回执。
+    const duration = Math.max(...exits.map(animation => Number(animation.effect!.getComputedTiming().endTime)));
+    const deadline = window.setTimeout(finalize, 2 * duration);
+    void Promise.allSettled(exits.map(animation => animation.finished)).then(() => {
+      window.clearTimeout(deadline);
+      finalize();
+    });
   }, [exitMotion, focusAfterClose, reduced, reportResult, setBusy]);
 
   const closeNow = useCallback((then?: () => void, receipt?: string) => close(true, then, receipt), [close]);

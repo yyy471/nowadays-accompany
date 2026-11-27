@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import type { TaskStatus } from "../role/role-store.js";
 
 export const engineeringWait = "AWAITING_ENGINEERING_JOB";
 export type EngineeringTerminal = "completed" | "failed" | "cancelled" | "timed_out" | "interrupted_unknown";
@@ -6,15 +7,34 @@ export interface EngineeringJob {
   jobId: string; roleId: string; taskId: string; windowId: string; origin: "user" | "autonomous";
   extId: string; title: string; workDir: string; startedAt: string; finishedAt: string | null;
   status: "running" | EngineeringTerminal; summary: string;
+  modelResourceId: string | null; modelName: string | null;
 }
 const projection = `job_id AS jobId, role_id AS roleId, task_id AS taskId, window_id AS windowId,
-  origin, ext_id AS extId, title, work_dir AS workDir, started_at AS startedAt, finished_at AS finishedAt, status, summary`;
+  origin, ext_id AS extId, title, work_dir AS workDir, started_at AS startedAt, finished_at AS finishedAt, status, summary,
+  model_resource_id AS modelResourceId, model_name AS modelName`;
+
+// 本机派发总会登记工作目录；角色包从不携带该目录，导入后的空值只代表历史记录。
+const localAssignment = "j.work_dir <> ''";
 
 export class EngineeringJobs {
   constructor(private db: Database.Database) {}
   register(job: Omit<EngineeringJob, "status" | "finishedAt" | "summary">) {
-    this.db.prepare(`INSERT INTO engineering_jobs(job_id,role_id,task_id,window_id,origin,ext_id,title,work_dir,started_at,status)
-      VALUES (@jobId,@roleId,@taskId,@windowId,@origin,@extId,@title,@workDir,@startedAt,'running')`).run(job);
+    this.db.prepare(`INSERT INTO engineering_jobs(job_id,role_id,task_id,window_id,origin,ext_id,title,work_dir,started_at,status,model_resource_id,model_name)
+      VALUES (@jobId,@roleId,@taskId,@windowId,@origin,@extId,@title,@workDir,@startedAt,'running',@modelResourceId,@modelName)`).run(job);
+  }
+
+  chainModels(taskId: string) {
+    return this.db.prepare(`SELECT j.model_resource_id AS resourceId, j.model_name AS modelName
+      FROM engineering_jobs j JOIN tasks t USING(task_id)
+      WHERE j.task_id=? AND ${localAssignment} AND t.status IN ('active','paused') AND j.model_resource_id IS NOT NULL AND j.model_name IS NOT NULL
+      GROUP BY j.model_resource_id, j.model_name ORDER BY MIN(j.rowid)`).all(taskId) as Array<{ resourceId: string; modelName: string }>;
+  }
+
+  modelReferences(resourceId: string) {
+    return this.db.prepare(`SELECT DISTINCT j.task_id AS taskId, t.status AS taskStatus
+      FROM engineering_jobs j JOIN tasks t USING(task_id) WHERE j.model_resource_id=? AND ${localAssignment}
+      AND (t.status IN ('active','paused') OR j.status='running') ORDER BY j.task_id`)
+      .all(resourceId) as Array<{ taskId: string; taskStatus: TaskStatus }>;
   }
   find(id: string) {
     return this.db.prepare("SELECT " + projection + " FROM engineering_jobs WHERE job_id=?").get(id) as EngineeringJob | undefined;

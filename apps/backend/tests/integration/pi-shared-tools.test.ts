@@ -4,6 +4,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import test from "node:test";
+import { seedEngineeringPool } from "../fixtures/engineering-pool.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { listen } from "../../src/bootstrap/app.js";
 import { McpToolClient, type McpToolInfo } from "../../src/mcp/client.js";
@@ -119,6 +120,7 @@ fs.writeFileSync("output.txt",process.argv[2]);console.log("SCRIPT_OK", import.m
     await listen(f.app.server, 0, "127.0.0.1");
     const model = f.app.services.resources.create({ kind: "model", name: "fixture", config: { protocol: "openai-chat", baseUrl: "http://127.0.0.1:" + target } });
     addBinding(f, "chat_model", model.resourceId);
+    seedEngineeringPool(f.app, model.resourceId, "offline-chat");
     f.app.services.activity.resume(f.roleId);
     await f.app.conversation.waitForIdle(f.roleId, 30000);
     const skill = f.app.services.resources.create({ kind: "skill", name: "shared", config: { sourcePath: path.dirname(doc) } });

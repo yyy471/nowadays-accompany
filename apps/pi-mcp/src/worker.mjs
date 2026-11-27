@@ -31,12 +31,12 @@ export async function workspaceTools(cwd, { createWriteToolDefinition, createEdi
 }
 
 process.on("disconnect", () => process.exit(1));
-process.once("message", async ({ prompt, cwd, baseUrl, lease, modelName, protocol, agentDir, sharedTools, skills }) => {
+process.once("message", async ({ prompt, cwd, baseUrl, lease, modelName, apiFlavor, agentDir, sharedTools, skills }) => {
   let session;
   try {
     const sdk = await import("@earendil-works/pi-coding-agent");
     const { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager, ModelRuntime } = sdk;
-    const settingsManager = SettingsManager.inMemory({ cacheWarming: { mode: "off" } });
+    const settingsManager = SettingsManager.inMemory({ cacheWarming: { mode: "off" }, retry: { enabled: false, provider: { maxRetries: 0 } } });
     const extensionDir = new URL("./extensions/", import.meta.url);
     const extensionFactories = [];
     for (const name of (await fs.readdir(extensionDir)).sort()) {
@@ -51,11 +51,14 @@ process.once("message", async ({ prompt, cwd, baseUrl, lease, modelName, protoco
     await loader.reload();
     if (loader.getExtensions().errors.length) throw new Error("PI_EXTENSION_LOAD_FAILED");
     const runtime = await ModelRuntime.create({ authPath: path.join(agentDir, "auth.json"), modelsPath: null, refreshOnCreate: false });
-    const provider = { baseUrl, apiKey: lease, api: protocol === "openai-chat" ? "openai-completions" : "openai-responses",
-      models: [{ id: modelName, name: modelName, reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    // 两个 Google SDK 各自拼接路由前缀，只注册型号的最后一段。
+    const modelId = apiFlavor === "google-generative-ai" || apiFlavor === "google-vertex"
+      ? modelName.replace(/^(?:publishers\/google\/)?models\//, "") : modelName;
+    const provider = { baseUrl, apiKey: lease, api: apiFlavor,
+      models: [{ id: modelId, name: modelId, reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         contextWindow: 128000, maxTokens: 8192 }] };
     runtime.registerProvider("nowadays", provider);
-    ({ session } = await createAgentSession({ cwd, agentDir, modelRuntime: runtime, model: runtime.getModel("nowadays", modelName),
+    ({ session } = await createAgentSession({ cwd, agentDir, modelRuntime: runtime, model: runtime.getModel("nowadays", modelId),
       customTools: await workspaceTools(cwd, sdk), settingsManager, resourceLoader: loader, sessionManager: SessionManager.inMemory(cwd), thinkingLevel: "off",
       ...(process.platform === "win32" && { tools: ["-bash", "+powershell"] }) }));
     await session.bindExtensions({});

@@ -257,11 +257,22 @@ export class ModelBindingResolver {
   }
 
   private withVerifiedRoute(config: ModelServiceConfig, resourceId: string, model: string): ModelServiceConfig {
-    if (!autoVertexConnection(config)) return config;
-    const salt = this.credentials?.fingerprintSalt(resourceId, config.credentialRef) ?? `reference:${config.credentialRef ?? "none"}`;
-    const baseUrl = this.appStore.verifiedVertexBase(resourceId, model, vertexRouteFingerprint(config, salt));
-    return baseUrl ? { ...config, baseUrl } : config;
+    return withVerifiedRoute(this.appStore, this.credentials, config, resourceId, model);
   }
+}
+
+/** 对话、记忆和工程代理共同使用当前凭据对应的已验证 Vertex 入口。 */
+export function withVerifiedRoute(
+  store: AppStore,
+  credentials: CredentialResolver | undefined,
+  config: ModelServiceConfig,
+  resourceId: string,
+  model: string,
+): ModelServiceConfig {
+  if (!autoVertexConnection(config)) return config;
+  const salt = credentials?.fingerprintSalt(resourceId, config.credentialRef) ?? `reference:${config.credentialRef ?? "none"}`;
+  const baseUrl = store.verifiedVertexBase(resourceId, model, vertexRouteFingerprint(config, salt));
+  return baseUrl ? { ...config, baseUrl } : config;
 }
 
 function parseModelConfig(resource: ResourceRecord): ModelServiceConfig | null {

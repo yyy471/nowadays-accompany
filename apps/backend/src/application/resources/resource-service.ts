@@ -34,6 +34,7 @@ import type {
   RoleBindingRecord,
 } from "../../storage/role/role-store.js";
 import type { RoleStorage } from "../../storage/core/role-storage.js";
+import { EngineeringJobs } from "../../storage/conversation/engineering-jobs.js";
 import { runWithDecisionCommit } from "../../storage/core/transaction-group.js";
 import type { CredentialSummary, CredentialResolver } from "./credential-resolver.js";
 import type { ModelBindingResolver } from "./model-binding-resolver.js";
@@ -466,6 +467,12 @@ export class ResourceService {
       this.assertSecretAllowed(current.kind, config ?? current.config);
     }
     const nextConfig = config ?? current.config;
+    if (current.kind === "model" && input.secret === null && this.credentials.hasStoredSecret(resourceId)) {
+      const refs = this.appStore.listRoleIndexes().filter(role => role.initStatus === "ready").flatMap(role =>
+        this.access.withStore(role.roleId, ({ business }) => new EngineeringJobs(business.db).modelReferences(resourceId))
+          .map(task => ({ ...task, roleId: role.roleId, reason: "TASK_CHAIN" as const, capability: null, bindingEnabled: null })));
+      if (refs.length) throw new ResourceInUseError(resourceId, "UPDATE", refs);
+    }
     const keepsStoredSecret =
       input.secret === undefined &&
       this.credentials.hasStoredSecret(resourceId);
@@ -710,8 +717,7 @@ export class ResourceService {
         index.roleId,
         (storage) => ({
           displayName: storage.business.getRole(index.roleId).displayName,
-          taskIds: storage.business
-            .listOpenResourceContinuations(resourceId)
+          taskIds: this.openTaskReferences(storage, resource)
             .map((task) => task.taskId),
         }),
       );
@@ -835,9 +841,7 @@ export class ResourceService {
             reason: "ROLE_BINDING",
           });
         }
-        for (const task of storage.business.listOpenResourceContinuations(
-          resourceId,
-        )) {
+        for (const task of this.openTaskReferences(storage, resource)) {
           references.push({
             roleId: index.roleId,
             capability: null,
@@ -884,6 +888,14 @@ export class ResourceService {
       canDelete:
         !enabledBinding && chains.length === 0 && inflight.length === 0,
     };
+  }
+
+  private openTaskReferences(storage: RoleStorage, resource: ResourceRecord) {
+    const tasks = storage.business.listOpenResourceContinuations(resource.resourceId);
+    if (resource.kind !== "model") return tasks;
+    const byId = new Map(tasks.map(task => [task.taskId, task]));
+    for (const task of new EngineeringJobs(storage.business.db).modelReferences(resource.resourceId)) byId.set(task.taskId, task);
+    return [...byId.values()];
   }
 
   /**

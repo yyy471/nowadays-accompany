@@ -33,12 +33,14 @@ import { listWebReadingPositions, webSourceLocations } from "../../storage/conve
 
 export interface AgentToolCatalog {
   tools: ConversationTool[];
+  refreshEngineering?(taskId: string): Promise<void>;
   skillBriefs: SkillBrief[];
   warnings: string[];
   close(): Promise<void>;
 }
 
 export interface LoadAgentToolsInput {
+  taskId?: string | null;
   exchanges?: RoleExchangeService;
   exchangeTurn?: { sessionId: string; after: number } | null;
   roleId: string;
@@ -141,6 +143,14 @@ export async function loadAgentTools(
   }
   const skillBriefs: SkillBrief[] = [];
   const skillResourceIds: string[] = [];
+  const pi = adminSeat ? input.admin?.pi : undefined;
+  let piTools: ConversationTool[] = [];
+  const readEngineering = async (taskId?: string | null) => {
+    if (!pi) return;
+    try { piTools = await pi.tools(input.roleId, taskId); }
+    catch (error) { piTools = []; warnings.push("Pi MCP 不可用：" + safeMessage(error)); }
+  };
+  await readEngineering(input.taskId);
   const resources = input.roleAccess.withStore(input.roleId, ({ business }) =>
     taskToolResources(input.appStore, business.listRoleBindings(input.roleId), input.continuationResourceIds ?? []));
   for (const resource of resources) {
@@ -171,10 +181,6 @@ export async function loadAgentTools(
         continue;
       }
       if (config.command === managedPiCommand) {
-        if (adminSeat && input.admin?.pi && !tools.some(tool => tool.name === "pi_task_start")) {
-          try { tools.push(...await input.admin.pi.tools(input.roleId)); }
-          catch (error) { warnings.push("Pi MCP 不可用：" + safeMessage(error)); }
-        }
         continue;
       }
       let client: McpToolClient | null = null;
@@ -223,7 +229,7 @@ export async function loadAgentTools(
   }
   return {
     get tools() {
-      if (!extensions) return tools;
+      if (!extensions) return [...tools, ...piTools];
       const caller = { adminSeat, roleId: input.roleId };
       const registered = extensions.tools(caller).map(({ extId, spec }): ConversationTool => ({
         ...spec, name: `ext_${extId}__${spec.name}`, source: "extension", recorded: true,
@@ -236,9 +242,10 @@ export async function loadAgentTools(
           return { status: "success", adaptedResult: await result };
         }),
       }));
-      return [...tools, ...registered];
+      return [...tools, ...piTools, ...registered];
     },
     skillBriefs: dedupeSkills(skillBriefs),
+    ...(pi && { refreshEngineering: readEngineering }),
     warnings,
     async close() {
       await Promise.all(mcpPools.map((pool) => pool.close()));

@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
+import { seedEngineeringPool } from "../fixtures/engineering-pool.js";
 import type { ExtensionHost } from "../../src/application/extensions/extension-host.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { McpToolClient, type PiReceipt } from "../../src/mcp/client.js";
@@ -81,7 +82,6 @@ assert.equal(label,"verified-label","FIRST_TEST_FAILED");console.log("MOD_TEST_P
       attempts.push(req.url!);
       assert.equal(req.headers.authorization, "Bearer " + mockKey);
       assert.equal(body.model, "offline-pi");
-      if (attempts.length === 1) { res.writeHead(503).end(); return; }
       toolOutputs.push(JSON.stringify(body.messages.at(-1)));
       const i = requestBodies.push(JSON.stringify(body)) - 1;
       if (!i) { reached.resolve(); await gate.promise; }
@@ -140,6 +140,7 @@ assert.equal(label,"verified-label","FIRST_TEST_FAILED");console.log("MOD_TEST_P
     const resource = app.services.resources.create({ kind: "model", name: "离线 Pi", secret: mockKey,
       config: { baseUrl: "http://127.0.0.1:" + upstreamPort + "/v1", protocol: "openai-chat" } });
     const [piBinding] = app.services.resources.listBindings(id);
+    seedEngineeringPool(app, resource.resourceId, "offline-pi");
     assert.equal(piBinding?.enabled, true);
     assert.equal(app.services.resources.getView(piBinding.resourceId).adminSeatOnly, true);
     app.services.resources.replaceBindings(id, [
@@ -190,10 +191,10 @@ assert.equal(label,"verified-label","FIRST_TEST_FAILED");console.log("MOD_TEST_P
     assert.match(result(model.requests.at(-1)!), /verified-label/);
     const rows = app.appStore.db.prepare("SELECT * FROM token_usage_records WHERE source_call_id LIKE 'pi:%'").all() as
       { status: string; input_tokens: number; output_tokens: number; role_id: string }[];
-    assert.equal(attempts.length, 9);
+    assert.equal(attempts.length, 8);
     assert.equal(rows.length, attempts.length);
     assert.equal(rows.filter(r => r.status === "succeeded").length, 8);
-    assert.equal(rows.filter(r => r.status === "failed").length, 1);
+    assert.equal(rows.filter(r => r.status === "failed").length, 0);
     assert.ok(rows.filter(r => r.status === "succeeded").every(r => Number(r.input_tokens) === 13 && Number(r.output_tokens) === 7 && r.role_id === id));
     assert.deepEqual(errors, []);
   } finally { delete process.env.NOWADAYS_PI_TEST_CREDENTIAL; gate.resolve(); await f.close(); upstream.closeAllConnections(); await new Promise<void>(resolve => upstream.close(() => resolve())); }
@@ -212,7 +213,7 @@ test("同名工程分别发布自己的内容；重复终态与归属不匹配�
       withStorage(f, ({business}) => {
         const task = business.createTask({roleId:f.roleId,goal:"制作样例"});
         const jobs = new EngineeringJobs(business.db);
-        jobs.register({jobId, extId:"sample", roleId:f.roleId, windowId:f.windowId, taskId:task.taskId,
+        jobs.register({jobId, extId:"sample", roleId:f.roleId, windowId:f.windowId, taskId:task.taskId, modelResourceId:null, modelName:null,
           workDir:dir, origin:"user", title:"样例", startedAt:new Date().toISOString()});
         business.db.exec("CREATE TEMP TRIGGER reject_wake BEFORE INSERT ON engineering_wakes BEGIN SELECT RAISE(ABORT, 'TEST_WAKE_FAILURE'); END");
         assert.throws(() => jobs.settle(jobId,"completed",version,new Date().toISOString()), /TEST_WAKE_FAILURE/);
@@ -259,7 +260,7 @@ test("重启收敛遗留 running，停机保留 wake，恢复时用户新消息�
       const {execution} = store.beginExecution({windowId})!;
       const {taskId} = business.createTask({roleId:id,goal:"检查已有工程",initiatorExecutionId:execution.executionId});
       business.linkExecutionTask({roleId:id,taskId,executionId:execution.executionId,relation:"initiates"});
-      new EngineeringJobs(business.db).register({jobId,roleId:id,taskId,windowId,origin:"user",extId:"probe",
+      new EngineeringJobs(business.db).register({jobId,roleId:id,taskId,windowId,origin:"user",extId:"probe",modelResourceId:null,modelName:null,
         title:"速查",workDir:app.services.extensions.work.workspace("probe",jobId),startedAt:new Date().toISOString()});
       return taskId;
     });
@@ -315,6 +316,7 @@ test("自主工程在前台提交前结束，只在自主窗口领取一次并�
     const main = {...f,roleId:id,windowId};
     const resource = app.services.resources.create({kind:"model",name:"离线模型",config:{protocol:"openai-chat",baseUrl:"http://127.0.0.1:"+port}});
     const [pi] = app.services.resources.listBindings(id);
+    seedEngineeringPool(app, resource.resourceId);
     app.services.resources.replaceBindings(id,[{resourceId:resource.resourceId,capability:"chat_model",enabled:true,modelName:"offline"},
       {resourceId:pi!.resourceId,capability:"mcp",enabled:true}]);
     app.services.activity.resume(id);
@@ -359,6 +361,7 @@ for (const reason of ["AWAITING_USER_INPUT", "CIRCUIT_BREAKER"]) {
       const resource = app.services.resources.create({ kind: "model", name: "离线", config: {
         protocol: "openai-chat", baseUrl: "http://127.0.0.1:" + port } });
       const [pi] = app.services.resources.listBindings(roleId);
+      seedEngineeringPool(app, resource.resourceId);
       app.services.resources.replaceBindings(roleId, [{ resourceId: pi!.resourceId, capability: "mcp" },
         { resourceId: resource.resourceId, capability: "chat_model", modelName: "offline" }]);
       app.services.activity.resume(roleId);
@@ -400,7 +403,10 @@ test("工程登记失败回收本次草稿，保留已有工程目录", async t 
     const roleId = app.appStore.getRoleIndexByBuiltinKey("xiacheng")!.roleId;
     const windowId = app.services.roles.initializeRole(roleId).defaultWindowId;
     const resource = app.services.resources.create({ kind: "model", name: "模型", config: { protocol: "openai-chat", baseUrl: "http://127.0.0.1:1" } });
-    app.services.resources.replaceBindings(roleId, [{ resourceId: resource.resourceId, capability: "chat_model", modelName: "offline" }]);
+    const [pi] = app.services.resources.listBindings(roleId);
+    app.services.resources.replaceBindings(roleId, [{ resourceId: resource.resourceId, capability: "chat_model", modelName: "offline" },
+      { resourceId: pi!.resourceId, capability: "mcp" }]);
+    seedEngineeringPool(app, resource.resourceId);
     app.services.activity.resume(roleId);
     await app.conversation.waitForIdle(roleId, 30000);
     const task = withStorage({ ...f, roleId }, ({ business }) => business.createTask({ roleId, goal: "启动检查" }));

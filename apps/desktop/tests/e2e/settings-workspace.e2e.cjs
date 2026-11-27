@@ -334,7 +334,8 @@ const waiting = new Map(), errors = [];
 function cmd(method, params = {}) { return new Promise((resolve, reject) => { const n = ++id; waiting.set(n, { resolve, reject }); ws.send(JSON.stringify({ id: n, method, params })); }); }
 async function ev(expression, userGesture = false) { const result = await cmd('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true, userGesture }); if (result.exceptionDetails) throw Error(JSON.stringify(result.exceptionDetails)); return result.result.value; }
 function mouse(type, { x, y }) {
-  return cmd('Input.dispatchMouseEvent', { type, x, y, ...(type === 'mouseMoved' ? {} : { button: 'left', clickCount: 1 }) });
+  return cmd('Input.dispatchMouseEvent', { type, x, y, buttons: type === 'mousePressed' ? 1 : 0,
+    ...(type === 'mouseMoved' ? {} : { button: 'left', clickCount: 1 }) });
 }
 async function pointClick(point) {
   await mouse('mouseMoved', point);
@@ -418,8 +419,23 @@ async function run() {
   await mouse('mousePressed', hoveredTab);
   await until(async () => (await tabGeometry('外观')).top > idleTab.top + 0.5);
   await mouse('mouseReleased', hoveredTab);
+  let retryTabClickAfter = Date.now() + 500;
   await until(async () => {
     const selected = await tabGeometry('外观');
+    if (selected.current !== 'page' && Date.now() >= retryTabClickAfter) {
+      // 原生点击后若仍停在旧分区，等书页过渡落定并核实命中点，再按实时几何重试。
+      const ready = await ev(`(() => {
+        const tab = document.querySelector('.config-tabs button[aria-label="外观"]');
+        const { left, top, width, height } = tab.getBoundingClientRect();
+        const hit = document.elementFromPoint(left + width / 2, top + height / 2);
+        const body = document.querySelector('.config-leaf-body');
+        return tab.contains(hit) && !body.getAnimations().some(a => a.pending || a.playState === 'running');
+      })()`);
+      if (ready) {
+        retryTabClickAfter = Date.now() + 500;
+        await pointClick(selected);
+      }
+    }
     return selected.current === 'page' && selected.hovered && selected.transform === 'none';
   });
   await cmd('Emulation.setEmulatedMedia', { features: [{ name:'prefers-reduced-motion', value:'reduce' }] });

@@ -62,7 +62,7 @@ export function mergeBindingDrafts({
       conflicts.push(key);
       continue;
     }
-    const chosen = userChanged ? mine : server ?? mine;
+    const chosen = userChanged ? mine : server;
     if (chosen) merged.set(key, chosen);
   }
   return { items: [...merged.values()], conflicts };

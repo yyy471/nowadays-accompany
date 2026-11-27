@@ -305,6 +305,48 @@ test("进程在换名各阶段退出时，下一次正常启动恢复到完整�
   }
 });
 
+test("迁入主角色的工程历史不能续用或锁住目标机的同 ID 模型", async t => {
+  const source = installation(t), target = installation(t);
+  const origin = createBackendApp(source, { ...options, disablePresetAssistant: false });
+  const roleId = origin.appStore.getRoleIndexByBuiltinKey("xiacheng")!.roleId;
+  const modelName = "source-model";
+  const { resourceId } = origin.services.resources.create({ kind: "model", name: "源机服务",
+    config: { protocol: "openai-chat", baseUrl: "http://localhost" } });
+  let taskId: string;
+  const jobId = randomUUID();
+  const store = RoleStorage.openExisting(rolePaths(source.dataRoot, roleId));
+  try {
+    const windowId = origin.services.roles.getRole(roleId).defaultWindowId!;
+    taskId = store.business.createTask({ roleId, goal: "工程回执" }).taskId;
+    const jobs = new EngineeringJobs(store.business.db);
+    jobs.register({ roleId, taskId, windowId, jobId, modelResourceId: resourceId, modelName,
+      workDir: source.appRoot, title: "源机工程", extId: "sample", startedAt: new Date().toISOString(), origin: "user" });
+    jobs.settle(jobId, "completed", "源机回执", new Date().toISOString());
+    store.business.pauseTask({ roleId, taskId, waitReason: "AWAITING_ENGINEERING_JOB", endReason: "等工程" });
+  } finally { store.close(); await origin.close(); }
+  const packet = path.join(source.appRoot, "seat.json");
+  exportRoleTransfer(source, roleId, packet);
+  transfer(target, packet);
+  const destination = createBackendApp(target, options);
+  try {
+    destination.appStore.createResource({ resourceId, kind: "model", name: "目标机服务", enabled: true,
+      config: { protocol: "openai-chat", baseUrl: "http://localhost" } });
+    const { engineeringPool: pool, resources } = destination.services;
+    assert.equal(pool.update({ enabled: true, members: [] }).readiness, "empty");
+    assert.deepEqual(await destination.services.pi.tools(roleId, taskId), []);
+    assert.throws(() => pool.allocate(roleId, taskId), { code: "PI_ENGINEERING_POOL_EXHAUSTED" });
+    assert.equal(resources.references(resourceId).canDelete, true);
+    resources.remove(resourceId);
+    const imported = RoleStorage.openExisting(rolePaths(target.dataRoot, roleId));
+    try {
+      const history = new EngineeringJobs(imported.business.db).find(jobId);
+      assert.equal(history?.modelResourceId, resourceId);
+      assert.equal(history?.modelName, modelName);
+      assert.equal(history?.summary, "源机回执");
+    } finally { imported.close(); }
+  } finally { await destination.close(); }
+});
+
 test("工程迁移保留回执，收敛在途作业和旧包悬空等待", async t => {
   const source = installation(t), target = installation(t), legacy = installation(t);
   const { roleId, defaultWindowId: windowId } = await createRole(source);
@@ -316,7 +358,7 @@ test("工程迁移保留回执，收敛在途作业和旧包悬空等待", async
       const { taskId } = store.business.createTask({ roleId, goal: "迁移样例" });
       tasks.push(taskId);
       jobs.register({ roleId, jobId: id, windowId, taskId, workDir: source.appRoot, title: "样例", extId: "sample",
-        startedAt: new Date().toISOString(), origin: "user" });
+        startedAt: new Date().toISOString(), origin: "user", modelResourceId: "engineering-service", modelName: "pool-model" });
       store.business.pauseTask({ roleId, taskId, waitReason: "AWAITING_ENGINEERING_JOB", endReason: "等工程" });
     }
     jobs.settle(ids[0]!, "completed", "结果已存档", new Date().toISOString());
@@ -330,12 +372,30 @@ test("工程迁移保留回执，收敛在途作业和旧包悬空等待", async
     assert.deepEqual(jobs.nextDelivery(), { windowId, taskId: tasks[0] });
     assert.equal(jobs.find(ids[1]!)?.status, "interrupted_unknown");
     assert.equal(jobs.find(ids[0]!)?.workDir, "");
+    assert.equal(jobs.find(ids[0]!)?.modelResourceId, "engineering-service");
+    assert.equal(jobs.find(ids[0]!)?.modelName, "pool-model");
     assert.equal(imported.business.getTask(roleId, tasks[1]!).waitReason, "ROLE_TRANSFER_INTERRUPTED");
     const { executionId } = imported.business.createExecution({ roleId, windowId, triggerType: "user_message" });
     assert.equal(jobs.claim(tasks[0]!, executionId), 1);
     assert.match(JSON.stringify(jobs.receipts(tasks[0]!, executionId)), /结果已存档/);
   } finally { imported.close(); }
   const pkg = readRoleTransferPackage(file);
+  for (const row of pkg.tables.engineering_jobs) {
+    Reflect.deleteProperty(row, "model_resource_id");
+    Reflect.deleteProperty(row, "model_name");
+  }
+  const v30File = path.join(source.appRoot, "jobs-v30.json");
+  pkg.timelineFingerprint = roleTransferTimelineFingerprint(pkg);
+  writeRoleTransferPackage(v30File, roleTransferWithAncestors(pkg, []));
+  const v30 = installation(t);
+  transfer(v30, v30File);
+  assert.equal(preflightRoleTransfer(v30, v30File).relation, "same");
+  const oldJobs = RoleStorage.openExisting(rolePaths(v30.dataRoot, roleId));
+  try {
+    const job = new EngineeringJobs(oldJobs.business.db).find(ids[0]!);
+    assert.equal(job?.modelResourceId, null);
+    assert.equal(job?.modelName, null);
+  } finally { oldJobs.close(); }
   Reflect.deleteProperty(pkg.tables, "engineering_jobs");
   Reflect.deleteProperty(pkg.tables, "engineering_wakes");
   const oldFile = path.join(source.appRoot, "legacy.json");

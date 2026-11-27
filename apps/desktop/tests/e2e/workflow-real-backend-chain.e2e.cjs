@@ -585,12 +585,13 @@ async function run() {
   assert.equal(await ev("document.querySelector('.config-kind-tabs button[aria-pressed=true]')?.textContent"), '模型', '查看对话模型应回到模型分类');
 
   await tab('MCP');
+  assert.equal(await ev("document.querySelector('.config-index')?.innerText.includes('内置 Pi 工程助手')"), false);
   await addService('添加 MCP');
   await returnRole(true);
   await tab('扩展');
   await openRoleRow('ext:mcp');
-  await until(() => ev("document.querySelector('.config-sheet')?.innerText.includes('内置 Pi 工程助手')"), '主角色预置工程绑定');
-  await clickWhen(sheetButton('在设置中管理 →'));
+  assert.equal(await ev("document.querySelector('.config-sheet')?.innerText.includes('内置 Pi 工程助手')"), false);
+  await clickWhen(sheetButton('去设置添加 →'));
   await until(() => ev("document.querySelector('.studio-shell')?.dataset.page==='settings'"));
   assert.equal(await ev("!!document.querySelector('.config-sheet')"), false, '进入扩展管理不得滞留未关闭的添加表单');
 
@@ -617,6 +618,24 @@ async function run() {
   const resourcesInit = await request('/v1/resources');
   const m1 = resourcesInit.items.find(i => i.name === '主对话模型');
   const m2 = resourcesInit.items.find(i => i.name === '次模型');
+  const engineering = '/v1/engineering/settings';
+  await tab('工程');
+  await until(() => ev("document.querySelector('.engineering-settings')?.innerText.includes('尚未添加工程模型')"), '工程初始为空池');
+  assert.equal(await ev("document.querySelector('.config-book').dataset.layout"), 'wide');
+  await openSheet(button('添加成员', '.engineering-settings'), '添加工程模型');
+  await setSelect(field('select'), m2.resourceId);
+  await setInput(field('input'), 'fake-engineering');
+  // 让下一次分区轮询带回不同摘要，确认纸笺不会丢失用户已填的型号。
+  await request(engineering, { ...jsonReq({ mode: 'round_robin' }), method: 'PUT' });
+  await until(() => ev("document.querySelector('.engineering-settings select')?.value==='round_robin'"), '纸笺打开期间同步调度模式');
+  assert.equal(await ev(`${field('input')}.value`), 'fake-engineering');
+  await clickWhen(sheetButton('添加'));
+  await until(async () => (await request(engineering)).members[0]?.modelName === 'fake-engineering', '工程成员已保存');
+  await until(() => ev("!document.querySelector('.config-sheet')"), '工程纸笺关闭');
+  await setSelect(element('.engineering-settings select'), 'priority');
+  await until(async () => (await request(engineering)).mode === 'priority', '优先级降级已保存');
+  await clickWhen(element('.engineering-settings [aria-label="移除 次模型 · fake-engineering"]'));
+  await until(async () => (await request(engineering)).members.length === 0, '工程成员移除');
 
   await returnRole();
   await tab('设定');
@@ -684,6 +703,25 @@ async function run() {
   await until(async () => (await request(`/v1/roles/${roleA.roleId}/bindings`)).items.some(item => item.resourceId === extension.resourceId && item.enabled), 'ext-saved-real');
   await resumePaused();
   await until(async () => (await request(`/v1/roles/${roleA.roleId}/activity`)).activity.state === 'active', 'resume-a-after-ext');
+
+  await pickRole('夏澄');
+  await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='夏澄'"), '编辑主角色');
+  const mainId = await ev("document.querySelector('.config-role-switch').value");
+  const mainBindings = () => request(`/v1/roles/${mainId}/bindings`);
+  const piId = resourcesInit.items.find(item => item.adminSeatOnly).resourceId;
+  const hiddenPi = (await mainBindings()).items.find(item => item.resourceId === piId);
+  assert.ok(hiddenPi?.enabled);
+  for (const enabled of [true, false]) {
+    await openRoleRow('ext:mcp');
+    assert.equal(await ev("document.querySelector('.config-sheet').innerText.includes('内置 Pi 工程助手')"), false);
+    await clickWhen(field('[role=switch][aria-label="为角色开启文件工具"]'));
+    await clickWhen(saveButton());
+    await until(async () => (await mainBindings()).items.find(item => item.resourceId === extension.resourceId)?.enabled === enabled, '主角色普通 MCP 保存');
+    assert.equal((await mainBindings()).items.find(item => item.resourceId === piId)?.enabled, hiddenPi.enabled);
+    await until(() => ev("!document.querySelector('.config-sheet')"), '普通 MCP 保存完成');
+  }
+  await pickRole('甲角色');
+  await until(() => ev("document.querySelector('.config-footer-ident strong')?.textContent==='甲角色'"), '切回甲角色');
 
   await openRoleRow('ext:mcp');
   await clickWhen(sheetButton('在设置中管理 →'));
@@ -1216,6 +1254,8 @@ async function run() {
     modelMainAndSelectivePauseBranch: true,
     modelUpdatedUsedInChat: true,
     extensionBindAndCleanup: true,
+    engineeringSettingsAndDraftRefresh: true,
+    hiddenPiBindingPreserved: true,
     imageServiceConvergedNoInlineCreate: true,
     imageSiteChangeGuardedBeforePause: true,
     imageDeletedServiceGuardedAndDisplayed: true,

@@ -45,15 +45,15 @@
 
 | 路径 | 职责与版本 | 关键约束 |
 | --- | --- | --- |
-| `<app-root>/data/app.sqlite` | 全局索引库（V13） | 存角色索引、活动状态、预置身份、资源与加密凭据、内置资源首次绑定进度（`builtin_resource_seeds` 记录待写入的资源 ID，角色分库写入后清空该字段并保留播种记录）、删除队列、单角色迁移的基线／选择记录／发布日志，以及全局持久 Token 用量台账（`token_usage_records`、`token_usage_meta`，含本机历史一次性回填；删除角色或模型服务保留名称快照，不随单角色迁移导入外部历史，`DL-183`） |
+| `<app-root>/data/app.sqlite` | 全局索引库（V15） | `engineering_settings` 单行存储调度模式和有序成员，默认优先级与空列表。总开关复用内置 Pi 资源的 enabled。存角色索引、活动状态、预置身份、资源与加密凭据、内置资源首次绑定进度（`builtin_resource_seeds` 记录待写入的资源 ID，角色分库写入后清空该字段并保留播种记录）、删除队列、单角色迁移的基线／选择记录／发布日志，以及全局持久 Token 用量台账（`token_usage_records`、`token_usage_meta`，含本机历史一次性回填；删除角色或模型服务保留名称快照，不随单角色迁移导入外部历史，`DL-183`） |
 | `<app-root>/secrets/master.key` | 本地主密钥盒（AES-256-GCM `v1`） | [secret-cipher.ts](../../apps/backend/src/security/secret-cipher.ts#L20-L100) `0o700` 目录／`0o600` 密钥文件，竞争写使用 `flag: "wx"` |
-| `.../roles/<roleId>/business.sqlite` | 角色业务库（V30） | 保存身份与首次启用资格、窗口消息、任务、执行与计量、记忆证据、自主安排、外观与媒体、普通角色对话批次及消息归属。网页原文的实际送达区间由 `web_reading_deliveries` 保存 |
+| `.../roles/<roleId>/business.sqlite` | 角色业务库（V31） | 保存身份与首次启用资格、窗口消息、任务、执行与计量、记忆证据、自主安排、外观与媒体、普通角色对话批次及消息归属。网页原文的实际送达区间由 `web_reading_deliveries` 保存 |
 | `.../roles/<roleId>/execution.sqlite` | 节点检查点库（`EXECUTION_SCHEMA_VERSION = 2`） | `execution_checkpoints` 按执行编号与步号保存完整状态、下一节点与保存时间 |
 | `.../roles/<roleId>/workspace/` | 角色独立工作空间 | 本地 MCP 根目录；日记落盘 `diaries/YYYY-MM-DD/<diaryId>.md`；外观／语音／过场图分置同级 `appearance/`、`voice/`、`scene-images/` |
 
 - **统一 PRAGMA 与强校验**（[schema.ts](../../apps/backend/src/storage/core/schema.ts#L1644-L1738)）：全部连接强制开启 `journal_mode = WAL`、`foreign_keys = ON`、`busy_timeout = 5000`。打开时在同一事务内校验 `user_version`、必需表、索引（含部分索引 `WHERE`）、必需列以及 `memory_search_fts`（FTS5 `trigram`），缺任一项直接 fail-closed；跨库变更通过 [transaction-group.ts](../../apps/backend/src/storage/core/transaction-group.ts#L14-L45) 的 `runWithDecisionCommit` 由 `app.sqlite` 先提交，从库失败留待读侧过滤或启动清理。
 
-**工程终态与续行（DL-195）**。角色业务库 V30 的 `engineering_jobs` 持久登记工程，`engineering_wakes` 保存唯一的 `pi:<jobId>`。宿主只接受拥有该 job 的 stdio 连接发来的终态，事务内同时更新 running 记录、摘要和 wake。终态包括 completed、failed、cancelled、timed_out 和 interrupted_unknown。租约的 HTTP release 同时关闭模型和共享工具的后续请求。已派发的共享工具继续结算到原角色库的 tool_calls 与 tool_results；最后一项结算后按父任务状态释放续用关系。启动时将未核实的 running 工程结算为 interrupted_unknown，保留原草稿供核查。
+**工程终态与续行（DL-195）**。角色业务库 V31 的 `engineering_jobs` 在登记时记录 `model_resource_id`、`model_name`，既有记录与旧迁移包允许两列为空。工程链凭这些字段取得模型续用权和资源删除保护，`engineering_wakes` 保存唯一的 `pi:<jobId>`。宿主只接受拥有该 job 的 stdio 连接发来的终态，事务内同时更新 running 记录、摘要和 wake。终态包括 completed、failed、cancelled、timed_out 和 interrupted_unknown。租约的 HTTP release 同时关闭模型和共享工具的后续请求。已派发的共享工具继续结算到原角色库的 tool_calls 与 tool_results；最后一项结算后按父任务状态释放续用关系。启动时将未核实的 running 工程结算为 interrupted_unknown，保留原草稿供核查。
 
 主角色交出工程后的首轮回复与父任务的 `AWAITING_ENGINEERING_JOB` 等待态一起提交。调度器先处理用户消息，再为仍在工程等待态的父任务创建续行执行，同事务领取该任务已到达的回执。尚有工程运行时可继续等待。角色停机保留回执，恢复后按相同优先级领取。已显式结束或取消的父任务只归档结果。用户委派沿原任务、原对话窗口和 user_chat 计量交付；自主委派沿自主窗口、额度与活动记录处理，由角色通过 autonomy_share 决定是否分享。
 

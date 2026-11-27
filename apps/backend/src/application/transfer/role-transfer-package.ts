@@ -233,7 +233,9 @@ function validateOwnership(roleId: string, builtinKey: unknown, tables: Transfer
   }
   for (const table of TRANSFER_TABLES) {
     for (const row of tables[table] ?? []) {
+      const legacyJob = table === "engineering_jobs" && !Object.hasOwn(row, "model_resource_id") && !Object.hasOwn(row, "model_name");
       const columns = transferColumns(table).filter(column =>
+        !(legacyJob && (column === "model_resource_id" || column === "model_name")) &&
         !(table === "role_scene_image_settings" && !Object.hasOwn(row, "auto_generate_enabled") &&
           !Object.hasOwn(row, "auto_cooldown_minutes") && column.startsWith("auto_")));
       if (Object.keys(row).length !== columns.length || !columns.every((column) => Object.hasOwn(row, column))) {
@@ -275,7 +277,8 @@ export function roleTransferWithAncestors(
 function timelineProjection(pkg: Pick<RoleTransferPackage, "roleId" | "tables" | "files">) {
   const tables = Object.fromEntries(TRANSFER_TABLES.filter((table) => table !== "execution_stream_events" &&
     (!(isEngineeringTable(table) || isWorldbookTable(table) || table === "role_scene_references") || pkg.tables[table]?.length)).map((table) => {
-    const rows = pkg.tables[table].map((row) => Object.fromEntries(Object.entries(row).filter(([column]) =>
+    const rows = pkg.tables[table].map((row) => Object.fromEntries(Object.entries(row).filter(([column, value]) =>
+      !(table === "engineering_jobs" && value === null && (column === "model_resource_id" || column === "model_name")) &&
       column !== "updated_at" && !(table === "model_calls" && column === "resource_id") &&
       !(table === "role_voice_settings" && column === "enabled"))));
     return [table, sortedRows(rows)];
@@ -311,7 +314,10 @@ function writeBusinessFacts(
       for (const table of TRANSFER_TABLES) {
         if (table === "role_voice_settings" || table === "role_scene_image_settings") continue;
         const rows = tables[table] ?? [];
-        insertRows(db, table, table === "engineering_jobs" ? rows.map(row => ({ ...row, work_dir: "" })) : rows);
+        // 源机型号留作历史；空工作目录表示目标机没有派发过这项工程。
+        insertRows(db, table, table === "engineering_jobs" ? rows.map(row => ({
+          model_resource_id: null, model_name: null, ...row, work_dir: "",
+        })) : rows);
       }
       insertRows(db, "role_bindings", general);
       insertRows(db, "role_voice_settings", voice);

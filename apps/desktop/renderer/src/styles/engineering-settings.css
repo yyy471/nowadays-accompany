@@ -1,0 +1,37 @@
+.engineering-settings .nd-usage-section {
+  display: grid;
+  gap: var(--nd-semantic-space-label-field);
+  justify-items: start;
+}
+.engineering-pool-heading, .engineering-pool-actions, .engineering-pool-list li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--nd-semantic-space-label-field);
+}
+.engineering-pool-list, .engineering-pool-heading {
+  width: 100%;
+}
+.engineering-pool-heading, .engineering-pool-list li {
+  justify-content: space-between;
+}
+.engineering-pool-list {
+  margin: 0;
+  padding: 0;
+}
+.engineering-pool-list li {
+  border-top: 1px solid var(--nd-semantic-color-line-decorative);
+  padding-block: var(--nd-semantic-space-label-field);
+}
+.engineering-pool-list li > div:first-child {
+  display: grid;
+  overflow-wrap: anywhere;
+}
+.engineering-pool-list .nd-usage-caption {
+  font-variant-numeric: tabular-nums;
+}
+/* 矮窗七枚分区书签仍可通过鼠标滚轮或方向键逐项到达。 */
+.config-tabs[aria-label="设置分区"] {
+  min-height: 0;
+  overflow-y: auto;
+}

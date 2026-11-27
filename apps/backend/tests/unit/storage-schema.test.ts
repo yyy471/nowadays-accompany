@@ -84,6 +84,7 @@ test("app and role stores initialize, persist and reopen", async () => {
     assert.equal(app.appStore.db.pragma("journal_mode", { simple: true }), "wal");
     assert.deepEqual(tableNames(app.appStore.db), [
       "builtin_resource_seeds",
+      "engineering_settings",
       "image_services",
       "model_test_calls",
       "resource_deletions",
@@ -97,6 +98,7 @@ test("app and role stores initialize, persist and reopen", async () => {
       "roles",
       "token_usage_meta",
       "token_usage_records",
+      "vertex_test_routes",
       "voice_services",
     ]);
 

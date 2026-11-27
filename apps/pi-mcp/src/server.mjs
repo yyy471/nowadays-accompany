@@ -25,6 +25,8 @@ const reply = value => ({ content: [{ type: "text", text: JSON.stringify(value) 
 async function start(prompt, job) {
   if (!job?.jobId || !job.lease || !path.isAbsolute(job.cwd) || new URL(job.baseUrl).hostname !== "127.0.0.1")
     throw new Error("PI_HOST_LEASE_REQUIRED");
+  if (!["openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai", "google-vertex"].includes(job.apiFlavor))
+    throw new Error("PI_PROTOCOL_UNSUPPORTED");
   if (jobs.has(job.jobId)) throw new Error("PI_JOB_DUPLICATE");
   const agentDir = mkdtempSync(path.join(tmpdir(), "nowadays-pi-"));
   const child = fork(new URL("./worker.mjs", import.meta.url), [], { cwd: job.cwd, windowsHide: true,

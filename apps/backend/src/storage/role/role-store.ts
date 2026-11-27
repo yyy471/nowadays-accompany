@@ -800,11 +800,12 @@ export class RoleStore {
     return rows.map(mapRoleBinding);
   }
 
-  ensureMcpBinding(roleId: string, resourceId: string): void {
+  ensureMcpBinding(roleId: string, resourceId: string, enableExisting = false): void {
     const now = new Date().toISOString();
     this.db.prepare(`INSERT INTO role_bindings (role_id, capability, resource_id, enabled, created_at, updated_at)
-      VALUES (?, 'mcp', ?, 1, ?, ?) ON CONFLICT(role_id, capability, resource_id) DO NOTHING`)
-      .run(roleId, resourceId, now, now);
+      VALUES (?, 'mcp', ?, 1, ?, ?) ON CONFLICT(role_id, capability, resource_id)
+      DO UPDATE SET enabled=1, updated_at=excluded.updated_at WHERE ? AND role_bindings.enabled=0`)
+      .run(roleId, resourceId, now, now, Number(enableExisting));
   }
 
   replaceRoleBindings(

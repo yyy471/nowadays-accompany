@@ -18,6 +18,7 @@ import {
 import { MessageService } from "../application/conversation/message-service.js";
 import { PiToolProxy } from "../mcp/tool-proxy.js";
 import { ManagedPi } from "../mcp/managed-pi.js";
+import { EngineeringPool } from "../mcp/engineering-pool.js";
 import { isAdminSeat } from "../domain/admin-seat.js";
 import { PiModelProxy } from "../mcp/model-proxy.js";
 import { ModelBindingResolver } from "../application/resources/model-binding-resolver.js";
@@ -275,10 +276,16 @@ function assembleBackendApp(
       );
   // 管理工具需要反向引用对话服务（任务查询与记忆触发），构造完成后再补上。
   const extensions = new ExtensionHost(config.appRoot, options.extensionTimeouts, autonomy.coplay);
-  const modelProxy = new PiModelProxy(credentials, tokenUsage, resourceService);
+  const engineeringPool = new EngineeringPool(appStore, resourceService, roleAccess);
+  const modelProxy = new PiModelProxy(credentials, tokenUsage, resourceService, appStore,
+    (id, model, status, retryAfter) => {
+      if (status === undefined || status === 401 || status === 402 || status === 403 || status === 429 || status >= 500) {
+        engineeringPool.reportFailure(id, model, status === 429 ? retryAfter : null);
+      }
+    });
   const toolProxy = new PiToolProxy(modelProxy, appStore, roleAccess, autonomy, config.appRoot,
     (roleId, taskId) => conversation.releaseTaskResources(roleId, taskId));
-  const pi: ManagedPi = new ManagedPi(modelProxy, toolProxy, bindings, extensions.work, () => {
+  const pi: ManagedPi = new ManagedPi(modelProxy, toolProxy, engineeringPool, extensions.work, () => {
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("PI_HTTP_SERVER_UNAVAILABLE");
     return address.port;
@@ -532,7 +539,7 @@ function assembleBackendApp(
     roleDeletion,
     mediaMaintenance,
     tokenUsage,
-    pi, modelProxy, toolProxy,
+    pi, modelProxy, toolProxy, engineeringPool,
     extensions,
   };
   if (options.disablePresetAssistant !== true) {

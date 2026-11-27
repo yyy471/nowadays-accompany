@@ -441,6 +441,13 @@ export async function* streamGoogleGemini(input: {
   };
 }
 
+/** Vertex 使用服务配置的安全阈值，工程调用和对话调用保持同一口径。 */
+export function vertexSafetySettings(level: VertexSafetyLevel) {
+  const thresholds = { high: "BLOCK_LOW_AND_ABOVE", default: "HARM_BLOCK_THRESHOLD_UNSPECIFIED", off: "OFF" };
+  return ["HARM_CATEGORY_HATE_SPEECH", "HARM_CATEGORY_HARASSMENT",
+    "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT"].map(category => ({ category, threshold: thresholds[level] }));
+}
+
 /** 构造 Google Gemini `generateContent` 请求体。 */
 export function buildGeminiGenerateBody(
   request: ModelRequest,
@@ -449,14 +456,8 @@ export function buildGeminiGenerateBody(
   continuationItems: GoogleGeminiTransport["continuationItems"],
   vertexSafety?: VertexSafetyLevel,
 ): Record<string, unknown> {
-  const thresholds = { high: "BLOCK_LOW_AND_ABOVE", default: "HARM_BLOCK_THRESHOLD_UNSPECIFIED", off: "OFF" };
   return {
-    ...(vertexSafety === undefined ? {} : {
-      safetySettings: ["HARM_CATEGORY_HATE_SPEECH", "HARM_CATEGORY_HARASSMENT",
-        "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT"].map(category => ({
-        category, threshold: thresholds[vertexSafety],
-      })),
-    }),
+    ...(vertexSafety === undefined ? {} : { safetySettings: vertexSafetySettings(vertexSafety) }),
     ...(request.system.length > 0
       ? { systemInstruction: { parts: [{ text: request.system }] } }
       : {}),
@@ -680,7 +681,7 @@ function wrapGeminiToolResponse(content: string): Record<string, unknown> {
   return { output: content };
 }
 
-function readGeminiUsage(raw: unknown): ModelUsage {
+export function readGeminiUsage(raw: unknown): ModelUsage {
   if (!isPlainRecord(raw)) {
     return {};
   }

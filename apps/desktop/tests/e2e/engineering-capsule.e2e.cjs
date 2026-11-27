@@ -12,6 +12,8 @@ async function run() {
   const { tsImport } = createRequire(path.join(backendDir, 'package.json'))('tsx/esm/api');
   const { createFixtureWithModel, ScriptedChatModel } = await tsImport(
     pathToFileURL(path.join(backendDir, 'tests/fixtures/conversation-fixture.ts')).href, __filename);
+  const { seedEngineeringPool } = await tsImport(
+    pathToFileURL(path.join(backendDir, 'tests/fixtures/engineering-pool.ts')).href, __filename);
   const stop = {type:'completed', stopReason:'stop'};
   const say = text => [{type:'text_delta', text}, stop];
   const start = (id, prompt) => ({type:'tool_call', callId:id, name:'pi_task_start', arguments:{extId:id, prompt}});
@@ -36,6 +38,7 @@ async function run() {
     const windowId = app.services.roles.initializeRole(roleId).defaultWindowId;
     const resource = app.services.resources.create({kind:'model',name:'本地工程',config:{
       protocol:'openai-chat',baseUrl:'http://127.0.0.1:' + upstream.address().port + '/v1'}});
+    seedEngineeringPool(app, resource.resourceId, 'offline');
     const [pi] = app.services.resources.listBindings(roleId);
     app.services.resources.replaceBindings(roleId,[{resourceId:pi.resourceId,capability:'mcp',enabled:true},
       {resourceId:resource.resourceId,capability:'chat_model',modelName:'offline',enabled:true}]);

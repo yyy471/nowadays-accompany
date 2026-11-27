@@ -15,7 +15,7 @@ const PROJECTION = {
   tasks: "task_id role_id goal status end_reason created_at updated_at origin initiator_execution_id continuable wait_reason consecutive_failures consecutive_no_progress",
   executions: "execution_id role_id window_id trigger_type trigger_message_id status state_version_loaded state_version_committed created_at updated_at decision_round superseded_by_execution_id task_decision_json",
   execution_tasks: "execution_id task_id relation created_at",
-  engineering_jobs: "job_id role_id task_id window_id origin ext_id title started_at finished_at status summary",
+  engineering_jobs: "job_id role_id task_id window_id origin ext_id title started_at finished_at status summary model_resource_id model_name",
   engineering_wakes: "wake_id job_id execution_id",
   tool_calls: "tool_call_id task_id execution_id step_key tool_name args_json status created_at started_at finished_at",
   tool_call_mode_events: "event_id tool_call_id mode changed_at",

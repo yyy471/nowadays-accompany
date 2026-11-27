@@ -2299,9 +2299,12 @@ export class ConversationService {
         cachedCatalog.roleId === roleId
       ) {
         catalog = cachedCatalog.catalog;
+        // 工程权来自该链实际登记的 job；复用对话目录时重新读取工程池与该链证据。
+        if (input.taskId) await catalog.refreshEngineering?.(input.taskId);
       } else {
         catalog = await loadAgentTools({
           roleId,
+          taskId: input.taskId ?? null,
           readWebToolProjection: readWebHistoryProjection,
           appStore: this.appStore,
           roleAccess: this.roleAccess,

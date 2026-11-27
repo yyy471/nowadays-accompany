@@ -55,6 +55,8 @@ import { savedImageModelOf } from '../image-config';
 import { useThemePreset } from '../ui/presets';
 import { ConfigThemeTransition } from '../ui/config-theme-transition';
 import { TokenUsageSection } from '../components/config/TokenUsageSection';
+import { EngineeringSection } from '../components/config/EngineeringSection';
+import { isOrdinaryResource } from '../components/config/engineering-settings';
 
 type Resource = { resourceId: string; adminSeatOnly?: boolean; kind: 'model' | 'mcp' | 'skill'; name: string; enabled: boolean; config: Record<string, unknown>; credential?: { status: string; reference?: string | null; resolvable: boolean }; lastTest?: { ok: boolean; stale: boolean; modelName: string } | null };
 
@@ -67,7 +69,7 @@ function savedModelNameOf(resource: Resource): string {
 type Binding = { capability: string; resourceId: string; modelName: string | null; enabled: boolean };
 type Activity = { roleId: string; state: 'active' | 'stopping' | 'stopped'; running: boolean; initStatus: string };
 type RoleSection = 'profile' | 'look' | 'models' | 'ext' | 'quota' | 'done';
-type SettingsSection = 'model' | 'mcp' | 'skill' | 'roles' | 'usage' | 'local';
+type SettingsSection = 'model' | 'mcp' | 'skill' | 'roles' | 'usage' | 'local' | 'engineering';
 type OpenSettingsOptions = {
   modelKind?: 'model' | 'voice' | 'image';
   resourceId?: string;
@@ -76,7 +78,8 @@ type OpenSettingsOptions = {
 };
 type Draft = { name: string; definition: string; revision: number; payload: Record<string, unknown>; isBuiltin: boolean; bio: string };
 const roleSections: Array<[RoleSection, string, string]> = [['profile', '设定', '关于这个人'], ['look', '外观', '立绘与服饰'], ['models', '模型', '对话与演出'], ['ext', '扩展', '工具与知识'], ['quota', '自主额度', '属于自己的时间'], ['done', '完成度', '慢慢补全']];
-const settingSections: Array<[SettingsSection, string, string]> = [['model', '模型', '服务与连接'], ['mcp', 'MCP', '工具服务'], ['skill', 'Skill', '方法与知识'], ['roles', '角色状态', '活动与停止'], ['usage', '用量', 'Token 消耗'], ['local', '本机', '此设备的偏好']];
+const settingSections: Array<[SettingsSection, string, string]> = [['model', '模型', '服务与连接'], ['mcp', 'MCP', '工具服务'], ['skill', 'Skill', '方法与知识'], ['roles', '角色状态', '活动与停止'], ['usage', '用量', 'Token 消耗'], ['local', '本机', '此设备的偏好'], ['engineering', '工程', '工程模型与调度']];
+const wideSection = (id: string) => id === 'roles' || id === 'usage' || id === 'engineering';
 const modelBaseUrlPlaceholder = (adapter: string) => defaultModelBaseUrl(adapter) || 'https://…/v1';
 const modelAdapterLabel = (adapter: string) => MODEL_ADAPTER_OPTIONS.find(option => option.value === adapter)?.label ?? adapter;
 const errorText = (e: unknown) => e instanceof Error ? e.message : String(e);
@@ -108,7 +111,8 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
   const [roleDirty, setRoleDirty] = useState<Record<string, RoleDirty>>({});
   const [profileCounts, setProfileCounts] = useState<Record<string, number>>({});
   const editorActions = useRef(new Map<string, RoleEditorState>());
-  const [resources, setResources] = useState<Resource[]>([]);
+  const [allResources, setResources] = useState<Resource[]>([]);
+  const resources = useMemo(() => allResources.filter(isOrdinaryResource), [allResources]);
   const [removedResources, setRemovedResources] = useState<string[]>([]);
   const [resourceError, setResourceError] = useState('');
   const [activities, setActivities] = useState<Activity[]>([]);
@@ -319,7 +323,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
   useLayoutEffect(() => {
     const previous = lastIndexSection.current;
     lastIndexSection.current = settingsActive ? settingsSection : null;
-    if (!settingsActive || !previous || previous === settingsSection || previous === 'roles' || settingsSection === 'roles') return;
+    if (!settingsActive || !previous || previous === settingsSection || wideSection(previous) || wideSection(settingsSection)) return;
     const element = indexRef.current;
     if (!element) return;
     const duration = readMotionTime(element, '--nd-semantic-motion-component', 220);
@@ -464,8 +468,8 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
       const currentSection = roleActive ? roleSection : settingsSection;
       if (currentSection === id) { cancelWorkspaceMotion(); return; }
       const content = contentRef.current;
-      const currentWide = currentSection === 'roles' || currentSection === 'usage';
-      const nextWide = id === 'roles' || id === 'usage';
+      const currentWide = wideSection(currentSection);
+      const nextWide = wideSection(id);
       const full = settingsActive && currentWide !== nextWide;
       const targets = () => full ? [...document.querySelectorAll<HTMLElement>('.studio-shell:not(.config-theme-veil) :is(.config-stage,.config-index,.config-tabs,.config-leaf,#config-footer-left,#config-footer-right)')].filter(item => item.offsetParent !== null) : content ? [content] : [];
       animateWorkspaceChange(targets, sequence => {
@@ -524,7 +528,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
   })) : filtered.map(item => ({
     id: item.resourceId, name: item.name,
     subtitle: item.kind === 'model' ? `${savedModelNameOf(item) || '未选模型'} · ${serviceHost(String(item.config.baseUrl ?? ''))}`
-      : item.adminSeatOnly ? '内置工程工具 · 仅主角色可用' : item.kind === 'mcp' ? `stdio · ${String(item.config.command ?? '')}`
+      : item.kind === 'mcp' ? `stdio · ${String(item.config.command ?? '')}`
       : String(item.config.sourcePath ?? '').split(/[\\/]/).filter(Boolean).slice(-2).join('\\'),
     status: serviceStatus(item.enabled, item.kind === 'model' ? item.resourceId in catalogTests ? catalogTests[item.resourceId] : item.lastTest && !item.lastTest.stale ? item.lastTest.ok : null : undefined),
   }));
@@ -592,7 +596,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
       {roles.map(role => { const state = activities.find(item => item.roleId === role.roleId)?.state; return <option key={role.roleId} value={role.roleId}>{role.displayName}{state === 'stopped' ? '（已停止）' : ''}</option>; })}
       <option value="__new">＋ 新建角色…</option>
     </select></div>, footerRight)}
-    <div className="config-book" data-layout={settingsActive && (settingsSection === 'roles' || settingsSection === 'usage') ? 'wide' : settingsActive ? 'catalog' : 'role'}>
+    <div className="config-book" data-layout={settingsActive && wideSection(settingsSection) ? 'wide' : settingsActive ? 'catalog' : 'role'}>
       <div className="config-book-surface" aria-hidden="true"><div className="config-paper-left"/><div className="config-gutter"/><div className="config-paper-right"/><div className="config-grain"/><div className="config-thread"><i/><i/></div></div>
       {roleActive ? <aside className="config-stage"><figure className="config-plate"><div className="config-plate-mat"/><div className="config-stage-label" data-testid="stage-label" title={stageOutfitName}><span>{stageOutfitName}</span></div>
         <RolePortrait roleId={editId} version={refreshVersion} previewAssetId={stagePreview?.roleId === editId && roleSection === 'look' ? stagePreview.assetId : undefined} onOutfitName={setStageOutfitName} />
@@ -618,7 +622,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
             if (!resource) return null;
             const visible = settingsActive && !catalogError && id === selectedResource && resource.kind === catalogKind;
             return <ResourceDetail key={id} resource={resource}
-              onConfigure={editId && !resource.adminSeatOnly ? () => onConfigureResource(editId, id) : undefined} roles={roles} activities={activities} active={visible} canWrite={true} testedOverride={catalogTests[id]} onTested={tested => rememberTest(id, tested)}
+              onConfigure={editId ? () => onConfigureResource(editId, id) : undefined} roles={roles} activities={activities} active={visible} canWrite={true} testedOverride={catalogTests[id]} onTested={tested => rememberTest(id, tested)}
               onRemoved={resourceId => { removeCatalogItem(resourceId); setResources(previous => previous.filter(item => item.resourceId !== resourceId)); setRemovedResources(previous => previous.includes(resourceId) ? previous : [...previous, resourceId]); }}
               onUpdated={item => { if (item) setResources(previous => previous.map(existing => existing.resourceId === item.resourceId ? item : existing)); setRefreshVersion(v => v + 1); }}/>;
           })}
@@ -668,6 +672,10 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
             onChanged={item => { if (item.state === 'stopping') requestedStops.current.add(item.roleId); activityRead.current += 1; setActivityRefreshing(false); setActivities(previous => [...previous.filter(value => value.roleId !== item.roleId), item]); }}
             onConfigure={roleId => { setEditId(roleId); setRoleSection('profile'); onNavigate('role-config'); focusSectionHeadingSoon(); }}/>}
           {settingsActive && settingsSection === 'usage' && <TokenUsageSection active={true} />}
+          {settingsActive && settingsSection === 'engineering' && <EngineeringSection models={resources.filter(item => item.kind === 'model' && item.enabled)}
+            catalogError={resourceError} catalogReady={catalogReady.resources} onAddService={() => {
+              setModelKind('model'); changeSection('model'); setNewModel(true);
+            }}/>}
           {settingsActive && settingsSection === 'local' && <div className="config-prose config-local-page"><header className="config-sec-head"><h2 tabIndex={-1}>本机</h2></header>
             <div className="config-grp" id="config-local-appearance"><div className="config-grp-label"><b>外观与动效</b></div><div className="config-grp-fields"><Field label="动效偏好"><Select value={motion.preference} onChange={event => motion.select(event.target.value as MotionPreference)}><option value="system">跟随系统</option><option value="reduced">减少动效</option><option value="full">完整动效</option></Select></Field></div></div>
             <div className="config-grp" id="config-local-connection"><div className="config-grp-label"><b>版本与连接</b></div><div className="config-grp-fields config-local-values">
@@ -705,8 +713,8 @@ function RoleFooterIdentity({ role, activity, error, englishName }: { role?: Rol
   </div>;
 }
 
-function RoleEditor({ roleId, roleCount, active, activity, activityLoading = false, voiceServiceVersion = 0, voiceServiceEpochs = {}, imageServiceVersion = 0, imageServiceEpochs = {}, section, draft, setDraft, resources: catalog, removedResources, resourceError, onEditorState, onOpenSettings, onStartConversation, onPreviewOutfit, onPreviewAsset, onClearPreview, onDeleted, onRefresh, onChangeSection }: { roleId: string; roleCount: number; active: boolean; activity?: Activity; activityLoading?: boolean; voiceServiceVersion?: number; voiceServiceEpochs?: Record<string, number>; imageServiceVersion?: number; imageServiceEpochs?: Record<string, number>; section: RoleSection; draft?: Draft; setDraft: (draft: Draft) => void; resources: Resource[]; removedResources: string[]; resourceError: string; onEditorState: (roleId: string, state: RoleEditorState | null) => void; onOpenSettings: (section: SettingsSection, options?: OpenSettingsOptions) => void; onStartConversation?: (roleId: string) => void; onPreviewOutfit: (outfit: Outfit) => void; onPreviewAsset: (assetId: string) => void; onClearPreview: () => void; onDeleted: (roleId: string, keepHistory: boolean, filesRemoved: boolean) => Promise<void>; onRefresh: () => Promise<void>; onChangeSection: (section: RoleSection) => void }) {
-  const resources = useMemo(() => draft?.isBuiltin ? catalog : catalog.filter(item => !item.adminSeatOnly), [catalog, draft?.isBuiltin]);
+function RoleEditor({ roleId, roleCount, active, activity, activityLoading = false, voiceServiceVersion = 0, voiceServiceEpochs = {}, imageServiceVersion = 0, imageServiceEpochs = {}, section, draft, setDraft, resources, removedResources, resourceError, onEditorState, onOpenSettings, onStartConversation, onPreviewOutfit, onPreviewAsset, onClearPreview, onDeleted, onRefresh, onChangeSection }: { roleId: string; roleCount: number; active: boolean; activity?: Activity; activityLoading?: boolean; voiceServiceVersion?: number; voiceServiceEpochs?: Record<string, number>; imageServiceVersion?: number; imageServiceEpochs?: Record<string, number>; section: RoleSection; draft?: Draft; setDraft: (draft: Draft) => void; resources: Resource[]; removedResources: string[]; resourceError: string; onEditorState: (roleId: string, state: RoleEditorState | null) => void; onOpenSettings: (section: SettingsSection, options?: OpenSettingsOptions) => void; onStartConversation?: (roleId: string) => void; onPreviewOutfit: (outfit: Outfit) => void; onPreviewAsset: (assetId: string) => void; onClearPreview: () => void; onDeleted: (roleId: string, keepHistory: boolean, filesRemoved: boolean) => Promise<void>; onRefresh: () => Promise<void>; onChangeSection: (section: RoleSection) => void }) {
+
   const write = useWrite();
   const sheetApi = useSheet();
   // 扩展与自主额度都按「一行 = 一张紧凑纸笺」打开（规范 §二.3 点击映射）。
@@ -2090,7 +2098,7 @@ function ExtensionManagement({ resource, onConfigure, roles, activities, active,
     setName(saved.name); setCommand(String(saved.config.command || '')); setArgs(Array.isArray(saved.config.args) ? saved.config.args.join('\n') : '');
     setEnv(JSON.stringify(saved.config.env || {}, null, 2)); setSourcePath(String(saved.config.sourcePath || '')); setWriteError('');
   };
-  const address = resource.adminSeatOnly ? '内置工程工具 · 仅主角色可用' : isMcp ? `stdio · ${String(resource.config.command || '')}` : String(resource.config.sourcePath || '');
+  const address = isMcp ? `stdio · ${String(resource.config.command || '')}` : String(resource.config.sourcePath || '');
   const envKeys = Object.keys((resource.config.env || {}) as Record<string, unknown>);
   return <div hidden={!active} className="config-prose">
     <ServiceHeading title={resource.name} address={address} enabled={resource.enabled} onEdit={trigger => open(undefined, trigger)}/>

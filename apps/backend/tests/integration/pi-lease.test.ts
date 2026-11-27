@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { McpToolClient, managedPiCommand } from "../../src/mcp/client.js";
 import { listen } from "../../src/bootstrap/app.js";
+import { seedEngineeringPool } from "../fixtures/engineering-pool.js";
 import { addBinding, createFixtureWithModel, deferred, ScriptedChatModel, withStorage } from "../fixtures/conversation-fixture.js";
 
 test("Responses 转发固定模型与鉴权，每次出站尝试单独计费，租约撤销与过期拒绝派发", async () => {
@@ -43,12 +44,13 @@ test("Responses 转发固定模型与鉴权，每次出站尝试单独计费，�
     const binding = { capability: "chat_model" as const, resourceId: res.resourceId, modelName: "fixture",
       config: { protocol: "openai-responses" as const, baseUrl: "http://127.0.0.1:" + port + "/v1" } };
     const host = await listen(f.app.server, 0, "127.0.0.1");
-    function post(token: string, route = "responses") {
+    function post(token: string, route = "responses", extra = {}) {
       return fetch("http://127.0.0.1:" + host + "/v1/internal/model-proxy/" + route, { method: "POST",
-        headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" }, body: JSON.stringify({ model: "override", input: "hello" }) });
+        headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" }, body: JSON.stringify({ model: "fixture", input: "hello", ...extra }) });
     }
     const token = proxy.issue(f.roleId, binding, false, Date.now() + 5000);
     assert.equal((await post(token, "chat/completions")).status, 403);
+    assert.equal(calls, 0);
     assert.equal((await post(token)).status, 200);
     assert.equal((await post(token)).status, 200);
     proxy.revoke(token);
@@ -62,7 +64,7 @@ test("Responses 转发固定模型与鉴权，每次出站尝试单独计费，�
       const baseUrl = "http://127.0.0.1:" + host + "/v1/internal/model-proxy";
       const start = await client.callTool("pi_task_start", { extId: "probe", prompt: "验证 Responses" }, { meta: { nowadays: {
         jobId, cwd: f.app.services.extensions.work.workspace("probe"), baseUrl, lease, modelName: "fixture",
-        protocol: "openai-responses", expiresAt: Date.now() + 30000,
+        apiFlavor: "openai-responses", expiresAt: Date.now() + 30000,
       } } });
       assert.equal(start.isError, false);
       let view;
@@ -107,6 +109,7 @@ for (const mode of ["pi_task_cancel", "role_stop", "task_cancel", "task_finish"]
       const issued = t.mock.method(app.services.modelProxy, "issue");
       app.services.activity.requestStop(roleId);
       const resource = app.services.resources.create({ name: "模型", kind: "model", config: { protocol: "openai-chat", baseUrl: "http://127.0.0.1:" + target } });
+      seedEngineeringPool(app, resource.resourceId, "test");
       const [mcp] = app.services.resources.listBindings(roleId);
       app.services.resources.replaceBindings(roleId, [{ resourceId: resource.resourceId, capability: "chat_model", enabled: true, modelName: "test" },
         { resourceId: mcp!.resourceId, capability: "mcp", enabled: true }]);
@@ -202,7 +205,7 @@ test("宿主令牌统一保护 API，预检只放行桌面和本地来源", asyn
   else process.env.NOWADAYS_HOST_TOKEN = previous;
   try {
     const base = "http://127.0.0.1:" + await listen(f.app.server, 0, "127.0.0.1");
-    const routes = [["GET", "/v1/roles"], ["POST", "/v1/engineering/jobs/sample/cancel"],
+    const routes = [["GET", "/v1/roles"], ["GET", "/v1/engineering/settings"], ["PUT", "/v1/engineering/settings"], ["POST", "/v1/engineering/jobs/sample/cancel"],
       ["POST", "/v1/engineering-jobs/sample/cancel"], ["POST", "/v1/extensions/sample/ui-action"]];
     for (const [method, route] of routes) {
       for (const value of ["", randomUUID()]) assert.equal((await fetch(base + route, {

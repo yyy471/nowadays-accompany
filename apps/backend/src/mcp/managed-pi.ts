@@ -3,20 +3,20 @@ import { EngineeringJobs, type EngineeringTerminal } from "../storage/conversati
 import type { RoleAccess } from "../application/role/role-access.js";
 import { AppError, PiAdminSeatRequiredError } from "../domain/errors.js";
 import type { ExtensionFiles } from "../application/extensions/extension-files.js";
-import type { ModelBindingResolver } from "../application/resources/model-binding-resolver.js";
+import type { EngineeringPool } from "./engineering-pool.js";
 import type { ConversationTool, ConversationToolContext } from "../domain/conversation.js";
 import { McpToolClient, managedPiCommand } from "./client.js";
-import type { PiModelProxy } from "./model-proxy.js";
+import { piApiFlavor, type PiModelProxy } from "./model-proxy.js";
 
 import type { PiToolProxy } from "./tool-proxy.js";
 
 export class ManagedPi {
   private readonly clients = new Map<string, Promise<McpToolClient>>();
-  private readonly jobs = new Map<string, { roleId: string; taskId: string; owner: McpToolClient; connection: Promise<McpToolClient>; token: string; timer: NodeJS.Timeout }>();
+  private readonly jobs = new Map<string, { roleId: string; taskId: string; owner: McpToolClient; connection: Promise<McpToolClient>; token: string; timer: NodeJS.Timeout; failureCode?: string }>();
   private readonly stopping = new Set<Promise<void>>();
   private closing = false;
   private listeners = new Set<() => void>();
-  constructor(private proxy: PiModelProxy, private toolsProxy: PiToolProxy, private bindings: ModelBindingResolver, private work: ExtensionFiles,
+  constructor(private proxy: PiModelProxy, private toolsProxy: PiToolProxy, private pool: EngineeringPool, private work: ExtensionFiles,
     private port: () => number, private active: (roleId: string) => boolean,
     private adminSeat: (roleId: string) => boolean, private access: RoleAccess,
     private readySeats: () => string[], private schedule: (roleId: string) => void, private ttlMs = 15 * 60_000) {}
@@ -44,7 +44,9 @@ export class ManagedPi {
     }
     return pending;
   }
-  async tools(roleId: string): Promise<ConversationTool[]> {
+  async tools(roleId: string, taskId?: string | null): Promise<ConversationTool[]> {
+    if (!this.adminSeat(roleId)) throw new PiAdminSeatRequiredError();
+    if (!this.pool.discover(roleId, taskId)) return [];
     const discovery = await this.connection(roleId);
     return (await discovery.listTools()).map(tool => ({ name: tool.name, description: tool.description,
       inputSchema: tool.inputSchema as Record<string, unknown>, source: "mcp",
@@ -54,10 +56,15 @@ export class ManagedPi {
         const client = await pending;
         context.checkDispatch?.();
         if (context.signal.aborted || this.clients.get(roleId) !== pending) throw new Error("PI_ROLE_STOPPED");
-        context.onDispatch?.();
-        const result = tool.name === "pi_task_start" ? await this.start(client, pending, args, context) :
-          await this.call(client, roleId, tool.name, args);
-        return { status: result.isError ? "failed" : "success", adaptedResult: result.structuredContent ?? result.content };
+        try {
+          const result = tool.name === "pi_task_start" ? await this.start(client, pending, args, context) :
+            await this.call(client, roleId, tool.name, args, context);
+          return { status: result.isError ? "failed" : "success", adaptedResult: result.structuredContent ?? result.content };
+        } catch (error) {
+          if (!(error instanceof AppError)) throw error;
+          const diagnostic = { code: error.code, message: error.message, details: error.details };
+          return { status: "failed", diagnosticCode: error.code, error: diagnostic, adaptedResult: { error: diagnostic } };
+        }
       } }));
   }
   private async start(client: McpToolClient, connection: Promise<McpToolClient>, args: Record<string, unknown>, context: ConversationToolContext) {
@@ -65,18 +72,21 @@ export class ManagedPi {
     if (typeof args.extId !== "string" || typeof args.prompt !== "string" || !args.prompt.trim()) throw new Error("PI_ARGUMENTS_INVALID");
     if (!taskId) throw new Error("PI_PARENT_TASK_REQUIRED");
     this.access.withStore(roleId, ({ business }) => business.getTask(roleId, taskId));
-    const binding = this.bindings.resolveChatForTask(roleId, taskId) ?? this.bindings.resolveChat(roleId);
+    const binding = this.pool.allocate(roleId, taskId);
     const jobId = randomUUID();
     const baseUrl = "http://127.0.0.1:" + this.port() + "/v1/internal/model-proxy";
     const expiresAt = Date.now() + this.ttlMs;
     const cwd = this.work.workspacePath(args.extId, jobId);
     const shared = this.toolsProxy.forJob({ jobId, roleId, taskId, cwd, executionId: context.executionId, autonomous: !!context.autonomous });
-    const token = this.proxy.issue(roleId, binding, !!context.autonomous, expiresAt, shared);
+    const token = this.proxy.issue(roleId, binding, !!context.autonomous, expiresAt, shared, code => {
+      const job = this.jobs.get(jobId);
+      if (job) job.failureCode = code;
+    });
     try {
       this.work.workspace(args.extId, jobId);
       this.store(roleId, jobs => jobs.register({ jobId, roleId, taskId, windowId: context.windowId,
         origin: context.autonomous ? "autonomous" : "user", extId: String(args.extId), title: String(args.prompt).trim().slice(0, 80),
-        workDir: cwd, startedAt: new Date().toISOString() }));
+        modelResourceId: binding.resourceId, modelName: binding.modelName, workDir: cwd, startedAt: new Date().toISOString() }));
     } catch (error) {
       this.proxy.revoke(token);
       this.work.discardJob(jobId);
@@ -86,8 +96,9 @@ export class ManagedPi {
     this.jobs.set(jobId, { roleId, taskId, token, timer, owner: client, connection });
     this.notify();
     try {
+      context.onDispatch?.();
       const result = await client.callTool("pi_task_start", { extId: args.extId, prompt: args.prompt }, { meta: { nowadays: {
-        jobId, cwd, baseUrl, sharedTools: true, skills: shared.briefs(), lease: token, expiresAt, modelName: binding.modelName, protocol: binding.config.protocol,
+        jobId, cwd, baseUrl, sharedTools: true, skills: shared.briefs(), lease: token, expiresAt, modelName: binding.modelName, apiFlavor: piApiFlavor(binding.config),
       } } });
       if (result.isError) {
         this.finish(jobId, "failed", "Pi 拒绝启动工程");
@@ -116,17 +127,21 @@ export class ManagedPi {
   private finish(id: string, status: EngineeringTerminal, summary: string) {
     const job = this.jobs.get(id);
     if (!job) return;
-    this.store(job.roleId, jobs => jobs.settle(id, status, summary, new Date().toISOString()));
+    const modelError = (status === "completed" || status === "failed") && job.failureCode;
+    this.store(job.roleId, jobs => jobs.settle(id, modelError ? "failed" : status, modelError || summary, new Date().toISOString()));
     this.proxy.revoke(job.token);
     clearTimeout(job.timer);
     this.jobs.delete(id);
     this.notify();
     if (!this.closing) this.schedule(job.roleId);
   }
-  private async call(client: McpToolClient, roleId: string, name: string, args: Record<string, unknown>) {
+  private async call(client: McpToolClient, roleId: string, name: string, args: Record<string, unknown>, context: ConversationToolContext) {
     const id = String(args.jobId);
     const job = this.store(roleId, jobs => jobs.find(id));
     if (!job) throw new AppError(404, "PI_JOB_NOT_FOUND", "找不到工程");
+    if (!this.pool.discover(roleId) && (job.taskId !== context.taskId || !this.pool.discover(roleId, context.taskId)))
+      throw new AppError(403, "PI_JOB_UNAVAILABLE", "当前任务没有此工程的续用记录");
+    context.onDispatch?.();
     if (job.status !== "running") {
       const view = { jobId: id, state: job.status, result: job.summary };
       return { isError: false, structuredContent: view, content: view };

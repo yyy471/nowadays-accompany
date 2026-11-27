@@ -88,10 +88,12 @@ import { registerImageServiceRoutes } from "./image-service-routes.js";
 import { registerVoiceRoutes } from "./voice-routes.js";
 import { registerVoiceServiceRoutes } from "./voice-service-routes.js";
 import { putWorldbooksSchema } from "../domain/worldbook.js";
+import { engineeringSettingsUpdate, type EngineeringPool } from "../mcp/engineering-pool.js";
 
 import type { MediaMaintenance } from '../application/media/media-maintenance.js';
 
 export interface ApiServices {
+  engineeringPool: EngineeringPool;
   pi: import("../mcp/managed-pi.js").ManagedPi;
   toolProxy: import("../mcp/tool-proxy.js").PiToolProxy;
   modelProxy: import("../mcp/model-proxy.js").PiModelProxy;
@@ -125,9 +127,13 @@ export function registerApiRoutes(
       status: 200, body: await services.toolProxy.forward(request, route),
     }));
   }
-  for (const route of ["chat/completions", "responses"]) {
-    router.add("POST", "/v1/internal/model-proxy/" + route, async ({ request, response }) => {
-      await services.modelProxy.forward(request, response, route);
+  for (const [path, flavor] of [
+    ["chat/completions", "openai-completions"], ["responses", "openai-responses"],
+    ["v1/messages", "anthropic-messages"], ["models/:action", "google-generative-ai"],
+    ["publishers/google/models/:action", "google-vertex"],
+  ] as const) {
+    router.add("POST", "/v1/internal/model-proxy/" + path, async ({ request, response, params }) => {
+      await services.modelProxy.forward(request, response, flavor, params.action);
       return undefined;
     });
   }
@@ -137,6 +143,10 @@ export function registerApiRoutes(
     return undefined;
   });
   router.add("GET", "/v1/engineering/jobs", () => ({ status: 200, body: { items: services.pi.running() } }));
+  router.add("GET", "/v1/engineering/settings", () => ({ status: 200, body: services.engineeringPool.settings() }));
+  router.add("PUT", "/v1/engineering/settings", async ({ request }) => ({
+    status: 200, body: services.engineeringPool.update(parseBody(engineeringSettingsUpdate, await readJsonBody(request))),
+  }));
   for (const route of ["/v1/engineering/jobs/:jobId/cancel", "/v1/engineering-jobs/:jobId/cancel"]) router.add("POST", route, async ({ params }) => {
     const result = await services.pi.cancel(params.jobId ?? "");
     if (result.isError) throw new AppError(409, "PI_CANCEL_FAILED", "工程取消失败");

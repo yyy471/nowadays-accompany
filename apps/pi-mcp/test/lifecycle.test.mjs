@@ -58,7 +58,7 @@ for (const mode of ["complete", "cancel", "timeout", "close"]) test("真实 Pi �
     const expiresAt = Date.now() + (mode === "timeout" ? 7000 : 60000);
     const id = "test-" + mode;
     const result = await client.callTool({ name: "pi_task_start", arguments: { extId: "test", prompt: "启动测试程序" },
-      _meta: { nowadays: { cwd, baseUrl, lease: "synthetic", jobId: id, modelName: "test", protocol: "openai-chat", expiresAt } } });
+      _meta: { nowadays: { cwd, baseUrl, lease: "synthetic", jobId: id, modelName: "test", apiFlavor: "openai-completions", expiresAt } } });
     assert.equal(result.structuredContent?.state, "running");
     const status = async () => (await client.callTool({ name: "pi_task_status", arguments: { jobId: id } })).structuredContent.state;
     await until(() => fs.existsSync(path.join(cwd, "pid")));

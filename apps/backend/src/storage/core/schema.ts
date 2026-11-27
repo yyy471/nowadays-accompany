@@ -11,14 +11,15 @@ import { restoreAutonomyShareLinks } from "../conversation/autonomy-store.js";
 import { MemoryStore } from "../memory/memory-store.js";
 import { retireLegacyWebPrefetchEvidence, WEB_READING_SCHEMA_SQL } from "../conversation/web-reading.js";
 
-export const APP_SCHEMA_VERSION = 14;
-export const BUSINESS_SCHEMA_VERSION = 30;
+export const APP_SCHEMA_VERSION = 15;
+export const BUSINESS_SCHEMA_VERSION = 31;
 export const EXECUTION_SCHEMA_VERSION = 2;
 
 export const APP_TABLES = [
   "roles",
   "resources",
   "builtin_resource_seeds",
+  "engineering_settings",
   "resource_deletions",
   "role_deletions",
   "model_test_calls",
@@ -700,7 +701,7 @@ interface RequiredColumns {
 }
 
 const BUSINESS_COLUMNS: readonly RequiredColumns[] = [
-  { table: "engineering_jobs", columns: ["job_id","role_id","task_id","window_id","origin","ext_id","title","work_dir","status","summary","started_at","finished_at"] },
+  { table: "engineering_jobs", columns: ["job_id","role_id","task_id","window_id","origin","ext_id","title","work_dir","status","summary","started_at","finished_at","model_resource_id","model_name"] },
   { table: "engineering_wakes", columns: ["wake_id","job_id","execution_id"] },
   { table: "role_exchange_sessions", columns: ["sessionId", "initiatorRoleId", "targetRoleId", "initiatorName", "targetName", "topic", "status", "maxTurns", "turnCount", "startedAt", "endedAt", "reason", "mirrorPending"] },
   { table: "role_exchange_turns", columns: ["sessionId", "turnIndex", "exchangeId", "speakerRoleId", "speakerName", "content", "createdAt"] },
@@ -1968,6 +1969,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_app_roles_builtin_key
 `;
 
 const APP_COLUMNS: readonly RequiredColumns[] = [
+  { table: "engineering_settings", columns: ["id", "mode", "members_json"] },
   { table: "builtin_resource_seeds", columns: ["command", "pending_resource_id"] },
   {
     table: "roles",
@@ -2093,6 +2095,15 @@ CREATE TABLE IF NOT EXISTS vertex_test_routes (
 );
 `;
 
+const APP_V15_SQL = `
+CREATE TABLE IF NOT EXISTS engineering_settings (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  mode TEXT NOT NULL DEFAULT 'priority' CHECK (mode IN ('priority','round_robin')),
+  members_json TEXT NOT NULL DEFAULT '[]'
+);
+INSERT OR IGNORE INTO engineering_settings (id) VALUES (1);
+`;
+
 export function openAppDatabase(dbPath: string): OpenedDatabase {
   return openVersionedDatabase(
     dbPath,
@@ -2109,7 +2120,7 @@ export function openAppDatabase(dbPath: string): OpenedDatabase {
       APP_V10_SQL +
       APP_V11_SQL +
       APP_V12_SQL +
-      APP_V13_SQL + APP_V14_SQL,
+      APP_V13_SQL + APP_V14_SQL + APP_V15_SQL,
     {
       1: (db) => db.exec(APP_V2_SQL),
       2: (db) => db.exec(APP_V3_SQL),
@@ -2124,6 +2135,7 @@ export function openAppDatabase(dbPath: string): OpenedDatabase {
       11: (db) => db.exec(APP_V12_SQL),
       12: (db) => db.exec(APP_V13_SQL),
       13: (db) => db.exec(APP_V14_SQL),
+      14: (db) => db.exec(APP_V15_SQL),
     },
     APP_TABLES,
     APP_INDEXES,
@@ -2217,6 +2229,11 @@ CREATE TABLE IF NOT EXISTS engineering_wakes (
   execution_id TEXT REFERENCES executions(execution_id)
 );`;
 
+const BUSINESS_V31_SQL = `
+ALTER TABLE engineering_jobs ADD COLUMN model_resource_id TEXT;
+ALTER TABLE engineering_jobs ADD COLUMN model_name TEXT;
+`;
+
 export function openBusinessDatabase(
   dbPath: string,
   options: DatabaseOpenOptions = {},
@@ -2224,7 +2241,7 @@ export function openBusinessDatabase(
   return openVersionedDatabase(
     dbPath,
     BUSINESS_SCHEMA_VERSION,
-    BUSINESS_SCHEMA_V22_SQL + BUSINESS_V23_SQL + BUSINESS_V24_SQL + BUSINESS_V26_SQL + BUSINESS_V27_SQL + BUSINESS_V28_SQL + BUSINESS_V29_SQL + BUSINESS_V30_SQL,
+    BUSINESS_SCHEMA_V22_SQL + BUSINESS_V23_SQL + BUSINESS_V24_SQL + BUSINESS_V26_SQL + BUSINESS_V27_SQL + BUSINESS_V28_SQL + BUSINESS_V29_SQL + BUSINESS_V30_SQL + BUSINESS_V31_SQL,
     {
       1: (db) => {
         db.exec(BUSINESS_V2_SQL);
@@ -2276,6 +2293,10 @@ export function openBusinessDatabase(
       27: (db) => db.exec(BUSINESS_V28_SQL),
       28: (db) => db.exec(BUSINESS_V29_SQL),
       29: (db) => db.exec(BUSINESS_V30_SQL),
+      30: (db) => {
+        addColumnIfMissing(db, "engineering_jobs", "model_resource_id", "TEXT");
+        addColumnIfMissing(db, "engineering_jobs", "model_name", "TEXT");
+      },
     },
     BUSINESS_TABLES,
     BUSINESS_INDEXES,
