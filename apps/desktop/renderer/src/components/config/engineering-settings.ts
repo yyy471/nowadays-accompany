@@ -1,4 +1,8 @@
-export type EngineeringMember = { resourceId: string; modelName: string; enabled: boolean };
+export type EngineeringThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+export type EngineeringMember = {
+  resourceId: string; modelName: string; enabled: boolean;
+  maxTokens?: number; contextWindow?: number; thinkingLevel?: EngineeringThinkingLevel;
+};
 type MemberState = 'ready' | 'disabled' | 'invalid' | 'maintenance' | 'cooldown';
 export type MemberSummary = EngineeringMember & { resourceName: string | null; state: MemberState; retryAfterSeconds: number | null };
 export type EngineeringSettings = {
@@ -14,7 +18,12 @@ export function isOrdinaryResource(item: { kind: string; adminSeatOnly?: boolean
 }
 
 export function memberInputs(members: EngineeringMember[]): EngineeringMember[] {
-  return members.map(({ resourceId, modelName, enabled }) => ({ resourceId, modelName, enabled }));
+  return members.map(({ resourceId, modelName, enabled, maxTokens, contextWindow, thinkingLevel }) => ({
+    resourceId, modelName, enabled,
+    ...(maxTokens === undefined ? {} : { maxTokens }),
+    ...(contextWindow === undefined ? {} : { contextWindow }),
+    ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
+  }));
 }
 
 export function moveMember(members: EngineeringMember[], index: number, direction: -1 | 1) {

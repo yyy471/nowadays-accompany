@@ -21,7 +21,7 @@
 | [DELIV-01](#deliv-01-桌面生产包直接打包未编译-ts-源码与-tsx且缺-node-24-构建流水线) | 交付打包 | **P0** | 生产包用 `tsx` 现场转译 TS，缺少干净 Windows 机可验证的发行包 | 否 | 已修复并离线验证，干净机验收待办 |
 | [BUG-03](#bug-03-roleaccesswithstore-每次操作现开现关两个-sqlite-库且实例未统一) | 性能/稳定性 | **P1** | 无连接复用；单次查询同步开关双库，且 `RoleService` / `ConversationService` 绕开统一入口 | 否 | `[ ]` 待排查 |
 | [BUG-04](#bug-04-维护窗口暂停多角色采用串行轮询最坏线性卡死) | 性能/稳定性 | **P1** | 模型与媒体维护曾逐角色串行等待停机 | 否 | 已修复，R4 精准独立复验通过 |
-| [BUG-05](#bug-05-pi-工程模型参数硬编码阉割reasoning-固定关闭且输出上限-8k) | 功能缺陷 | **P1** | Pi 注册模型固定 `reasoning: false` / `maxTokens: 8192` | 否 | `[ ]` 待排查 |
+| [BUG-05](#bug-05-pi-工程模型参数硬编码阉割reasoning-固定关闭且输出上限-8k) | 功能缺陷 | **P1** | Pi 注册模型固定 `reasoning: false` / `maxTokens: 8192` | 否 | 已修复，R6 精准复验通过 |
 | [BUG-06](#bug-06-对话页默认背景硬编码绑定夏澄资产) | 功能缺陷 | **P1** | 普通角色对话背景直接写死引用 `assets/themes/xiacheng/` | 否 | 已修复，R5 精准复验通过 |
 | [BUG-07](#bug-07-扩展-sse-瞬断直接清空列表销毁全部微页且-backendbaseurl-永久缓存) | 运行时 Bug | **P1** | `use-extensions.ts` `onerror` 清空 `items` 销毁全部 iframe；后端换端口后 `backendBaseUrl` 永不刷新 | 否 | 已修复，R5 精准复验通过 |
 | [BUG-08](#bug-08-windows-下命令与-skill-脚本超时只杀父进程不回收进程树) | 运行时 Bug | **P1** | `command_run` 与 `skill_run` 超时仅 `child.kill()`，未复用进程树回收，孙进程泄漏为孤儿 | 否 | 已修复，独立复验通过 |
@@ -29,7 +29,7 @@
 | [SEC-04](#sec-04-windows-静态密钥文件权限失效与独立模式-http-鉴权cors-过宽) | 安全边界 | **P1** | `0o600` 在 NTFS 失效且未接系统密钥链；CORS 放行全部 `localhost:*` / `file://` | 需确认（`DL-121`） | `[ ]` 待排查 |
 | [UX-01](#ux-01-几乎全部角色配置写入都强制先停机把并发锁转嫁给用户) | 操作体验 | **P1** | 改世界书、传表情图、调额度、给服饰改名均要求角色先 `stopped` | **是**（`DL-148`） | `[ ]` 待排查 |
 | [UX-02](#ux-02-首次上手与后台工程能力存在冷启动悬崖) | 操作体验 | **P1** | 无开箱引导；Pi 工程池默认空且隐藏工具，用户根本发现不了核心功能 | 需确认（`DL-201`） | `[ ]` 待排查 |
-| [UX-03](#ux-03-后台工程pi缺乏历史记录与失败过程日志) | 功能短板 | **P1** | 任务结束胶囊即消失，失败/超时后无法查看改了什么、死在哪步 | 否（增只读视图） | `[ ]` 待排查 |
+| [UX-03](#ux-03-后台工程pi缺乏历史记录与失败过程日志) | 功能短板 | **P1** | 任务结束胶囊即消失，失败/超时后无法查看改了什么、死在哪步 | 否（增只读视图） | 已修复，R6 精准复验通过 |
 | [UX-04](#ux-04-设置页两处操作仍使用阻塞式原生-windowconfirm) | 视觉/交互 | **P1** | `Settings.tsx` 离开草稿拦截与结束任务确认弹出原生 `window.confirm` | 否 | 已修复，R5 精准复验通过 |
 | [DELIV-02](#deliv-02-真实云端模型多模态与媒体服务全链路联调长期缺位) | 质量/验证 | **P1** | 624+ 离线测试掩盖真实模型、长上下文、TTS、ComfyUI 实机并发缺陷 | 否 | `[ ]` 待排查 |
 | [ARCH-01](#arch-01-后端与前端存在多个两千至三千行级上帝文件) | 架构债务 | **P1** | `conversation-service.ts` 3803 行、`Settings.tsx` 2116 行等触发仓库体积告警 | 否 | `[ ]` 待排查 |
@@ -179,7 +179,8 @@ Windows、仓库 Node 24.22.2、离线夹具下，主审核人独立执行以下
 
 ### BUG-05 Pi 工程模型参数硬编码阉割（`reasoning` 固定关闭且输出上限 8K）
 
-- **优先级**：P1 · **状态**：`[ ]` 待排查
+- **优先级**：P1 · **状态**：已修复，R6 精准复验通过
+- **R6 实施与复验（2026-11-27）**：`engineering-pool.ts` 成员结构增加可选 `maxTokens`（1024..131072）、`contextWindow`（8192..2,000,000）、`thinkingLevel`（零迁移兼容旧 `members_json`）并经 `ManagedPi.start` 透传至 `worker.mjs`；`worker.mjs` 抽出 `resolveModelSpec` 按协议补合理默认（`openai-completions` 16384/128000，其余 32768/200000，思考开启自动设 `reasoning: true`）；前端 `EngineeringSection` 表单支持可选配置并在列表项展示。精准复验：`model-spec.test.mjs` 3/3、后端 `engineering-settings`/`managed-pi` 17/17、前端 `engineering-settings` 6/6 与构建均通过。
 - **证据位置**：
   - [apps/pi-mcp/src/worker.mjs](../../../apps/pi-mcp/src/worker.mjs#L57-L63)
 - **根因分析**：
@@ -461,7 +462,8 @@ Windows、仓库 Node 24.22.2、离线夹具下，主审核人独立执行以下
 
 ### UX-03 后台工程（Pi）缺乏历史记录与失败过程日志
 
-- **优先级**：P1 · **状态**：`[ ]` 待排查
+- **优先级**：P1 · **状态**：已修复，R6 精准复验通过
+- **R6 实施与复验（2026-11-27）**：新增 `EngineeringJobsStore.listRecent(limit)` 与 `ManagedPi.recent(limit)`，在 `GET /v1/engineering/jobs` 支持 `?includeRecent=1&limit=20` 返回 `{ items, recent }`（兼容无参数默认 `{ items }`）；`apps/pi-mcp/src/worker.mjs` 订阅 `tool_execution_start`/`tool_execution_end`，在 `<jobDir>/steps.json` 受控记录最多 50 条脱敏步骤日志（工具名、参数摘要、耗时、成败与结果摘要）；桌面扩展页新增默认折叠的「最近工程记录」`Disclosure` 面板（含状态、模型、耗时、摘要、步骤展开与「查看对应对话」按钮，遵循 Tone B 令牌无硬编码色值）。离线精准复验：后端 `engineering-settings.test.ts` 与 `managed-pi.test.ts` 17/17 通过，渲染器 `npm run check`（37 个 CSS 零违规）+ `engineering-settings.test.ts` 6/6 + `npm run build` 通过。
 - **证据位置**：
   - [apps/backend/src/mcp/managed-pi.ts](../../../apps/backend/src/mcp/managed-pi.ts#L118-L121)（`running()` 仅返回运行中作业）
   - [apps/backend/src/http/routes.ts](../../../apps/backend/src/http/routes.ts#L145)（`GET /v1/engineering/jobs` 无历史查询）

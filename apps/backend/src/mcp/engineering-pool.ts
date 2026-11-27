@@ -13,6 +13,9 @@ import { runWithDecisionCommit } from "../storage/core/transaction-group.js";
 const modelNameSchema = z.string().trim().min(1).max(200);
 const memberSchema = z.object({
   resourceId: z.string().min(1), modelName: modelNameSchema, enabled: z.boolean(),
+  maxTokens: z.number().int().min(1024).max(131072).optional(),
+  contextWindow: z.number().int().min(8192).max(2_000_000).optional(),
+  thinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
 }).strict();
 const modeSchema = z.enum(["priority", "round_robin"]);
 export const engineeringSettingsUpdate = z.object({
@@ -174,7 +177,10 @@ export class EngineeringPool {
       const row = rows[(start + i) % rows.length]!;
       if (row.state !== "ready" || !row.config) continue;
       this.lastAssigned = row.key;
-      return { resourceId: row.resourceId, modelName: row.modelName, config: row.config, allowShell };
+      return { resourceId: row.resourceId, modelName: row.modelName, config: row.config, allowShell,
+        ...(row.maxTokens === undefined ? {} : { maxTokens: row.maxTokens }),
+        ...(row.contextWindow === undefined ? {} : { contextWindow: row.contextWindow }),
+        ...(row.thinkingLevel === undefined ? {} : { thinkingLevel: row.thinkingLevel }) };
     }
     const available = rows.filter(eligible);
     const waits = available.flatMap(row => row.retryAfterSeconds === null ? [] : [row.retryAfterSeconds]);

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isOrdinaryResource, memberInputs, memberStatus, moveMember, type MemberSummary } from '../src/components/config/engineering-settings.ts';
+import { isOrdinaryResource, memberInputs, memberStatus, moveMember, type EngineeringMember, type MemberSummary } from '../src/components/config/engineering-settings.ts';
 import { mergeBindingDrafts } from '../src/components/model/binding-merge.ts';
 import { createServer } from 'vite';
 import { after } from 'node:test';
@@ -21,6 +21,23 @@ test('工程排序保留独立服务和启停状态，提交字段只包含有�
   ]);
   assert.deepEqual(moveMember(moved, 0, 1), memberInputs(members));
   assert.equal(members[0], first);
+});
+
+test('工程成员可选模型参数在排序与提交字段中保留', () => {
+  const members: EngineeringMember[] = [
+    { resourceId: 'a', modelName: 'shared', enabled: true, maxTokens: 32768, thinkingLevel: 'medium' },
+    { resourceId: 'b', modelName: 'shared', enabled: false, contextWindow: 200000 },
+  ];
+  assert.deepEqual(memberInputs(members), [
+    { resourceId: 'a', modelName: 'shared', enabled: true, maxTokens: 32768, thinkingLevel: 'medium' },
+    { resourceId: 'b', modelName: 'shared', enabled: false, contextWindow: 200000 },
+  ]);
+  assert.deepEqual(moveMember(members, 1, -1), [
+    { resourceId: 'b', modelName: 'shared', enabled: false, contextWindow: 200000 },
+    { resourceId: 'a', modelName: 'shared', enabled: true, maxTokens: 32768, thinkingLevel: 'medium' },
+  ]);
+  assert.deepEqual(memberInputs([{ resourceId: 'c', modelName: 'plain', enabled: true }]),
+    [{ resourceId: 'c', modelName: 'plain', enabled: true }]);
 });
 
 test('本地冷却倒计时归零后等待服务报告恢复', () => {

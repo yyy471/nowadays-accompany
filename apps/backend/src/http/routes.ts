@@ -142,7 +142,13 @@ export function registerApiRoutes(
     response.writeHead(204).end();
     return undefined;
   });
-  router.add("GET", "/v1/engineering/jobs", () => ({ status: 200, body: { items: services.pi.running() } }));
+  router.add("GET", "/v1/engineering/jobs", ({ url }) => {
+    if (url.searchParams.get("includeRecent") !== "1") {
+      return { status: 200, body: { items: services.pi.running() } };
+    }
+    const limit = queryInt(url, "limit", { min: 1, max: 50, defaultValue: 20 });
+    return { status: 200, body: { items: services.pi.running(), recent: services.pi.recent(limit) } };
+  });
   router.add("GET", "/v1/engineering/settings", () => ({ status: 200, body: services.engineeringPool.settings() }));
   router.add("PUT", "/v1/engineering/settings", async ({ request }) => ({
     status: 200, body: services.engineeringPool.update(parseBody(engineeringSettingsUpdate, await readJsonBody(request))),

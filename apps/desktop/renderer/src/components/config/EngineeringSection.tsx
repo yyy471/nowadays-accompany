@@ -2,7 +2,7 @@ import { errorText } from '../../lib/error-text';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../api';
 import { AsyncBoundary, Button, Field, Input, Select, Switch } from '../../ui';
-import { memberInputs, memberStatus, moveMember, type EngineeringMember, type EngineeringSettings } from './engineering-settings';
+import { memberInputs, memberStatus, moveMember, type EngineeringMember, type EngineeringSettings, type EngineeringThinkingLevel } from './engineering-settings';
 import { ShellSetting } from './ShellSetting';
 import { ServiceSheet, ServiceSheetActions } from './ServiceParts';
 import { useSheet } from './sheet/sheet-context';
@@ -27,6 +27,8 @@ export function EngineeringSection({ models, catalogError, catalogReady, onAddSe
   const [now, setNow] = useState(Date.now);
   const [resourceId, setResourceId] = useState('');
   const [modelName, setModelName] = useState('');
+  const [maxTokens, setMaxTokens] = useState('');
+  const [thinkingLevel, setThinkingLevel] = useState<EngineeringThinkingLevel>('off');
   const [saving, setSaving] = useState(false);
   const version = useRef(0);
   const writing = useRef(false);
@@ -89,11 +91,15 @@ export function EngineeringSection({ models, catalogError, catalogReady, onAddSe
       finish();
     }
   };
-  const resetForm = () => { setResourceId(''); setModelName(''); setWriteError(''); };
+  const resetForm = () => { setResourceId(''); setModelName(''); setMaxTokens(''); setThinkingLevel('off'); setWriteError(''); };
   const selected = models.find(item => item.resourceId === resourceId);
   const trimmedName = modelName.trim();
   const duplicate = settings?.members.some(item => item.resourceId === resourceId && item.modelName === trimmedName);
-  const invalid = !selected ? '请选择模型服务' : !trimmedName ? '请填写模型名' : duplicate ? '这个服务和型号已在池中' : '';
+  const parsedTokens = maxTokens.trim() ? Number(maxTokens) : undefined;
+  const tokensInvalid = parsedTokens !== undefined && (!Number.isInteger(parsedTokens) || parsedTokens < 1024 || parsedTokens > 131072);
+  const invalid = !selected ? '请选择模型服务' : !trimmedName ? '请填写模型名'
+    : tokensInvalid ? '最大输出 Token 需为 1024～131072 的整数'
+    : duplicate ? '这个服务和型号已在池中' : '';
   const count = Number(!!resourceId) + Number(!!trimmedName);
   const elapsed = snapshot ? Math.max(0, Math.floor((now - snapshot.received) / 1000)) : 0;
   return <div className="config-prose nd-usage-page engineering-settings">
@@ -122,8 +128,12 @@ export function EngineeringSection({ models, catalogError, catalogReady, onAddSe
           {settings.members.length === 0 ? <p className="nd-usage-empty">尚未添加工程模型</p> :
             <ol className="engineering-pool-list">{settings.members.map((member, index) => {
               const name = `${member.resourceName ?? member.resourceId} · ${member.modelName}`;
+              const extras = [
+                member.maxTokens === undefined ? '' : `上限 ${member.maxTokens}`,
+                member.thinkingLevel && member.thinkingLevel !== 'off' ? `思考 ${member.thinkingLevel}` : '',
+              ].filter(Boolean).join(' · ');
               return <li key={JSON.stringify([member.resourceId, member.modelName])}>
-                <div><strong>{name}</strong><span className="nd-usage-caption">{memberStatus(member, elapsed)}</span></div>
+                <div><strong>{name}</strong><span className="nd-usage-caption">{memberStatus(member, elapsed)}{extras ? ` · ${extras}` : ''}</span></div>
                 <div className="engineering-pool-actions" role="group" aria-label={name}>
                   <Switch label="参与调度" checked={member.enabled} disabled={blocked}
                     onCheckedChange={enabled => void save({ members: memberInputs(settings.members).map((item, i) => i === index ? { ...item, enabled } : item) }, '已更新成员状态')}/>
@@ -143,14 +153,26 @@ export function EngineeringSection({ models, catalogError, catalogReady, onAddSe
         <p className="nd-usage-caption">共享主角色已启用的 Skill 与常规外部 MCP</p>
         <ServiceSheet id={addSheet} active={adding} count={count} busy={saving} onDiscard={resetForm}
           footer={<ServiceSheetActions creating count={count} busy={saving} error={writeError} invalid={invalid} onSubmit={() => {
-            if (!invalid) void save({ members: [...memberInputs(settings.members), { resourceId, modelName: trimmedName, enabled: true }] }, '已添加工程模型');
+            if (!invalid) void save({ members: [...memberInputs(settings.members), {
+              resourceId, modelName: trimmedName, enabled: true,
+              ...(parsedTokens === undefined ? {} : { maxTokens: parsedTokens }),
+              ...(thinkingLevel === 'off' ? {} : { thinkingLevel }),
+            }] }, '已添加工程模型');
           }}/>}>
           {() => <div className="config-grp-fields"><Field label="模型服务"><Select value={resourceId} disabled={saving} onChange={event => {
             const resource = models.find(item => item.resourceId === event.target.value);
             setResourceId(event.target.value);
             setModelName(typeof resource?.config.modelName === 'string' ? resource.config.modelName : '');
           }}><option value="">请选择模型服务</option>{models.map(item => <option key={item.resourceId} value={item.resourceId}>{item.name}</option>)}</Select></Field>
-          <Field label="模型名"><Input value={modelName} maxLength={200} disabled={saving} onChange={event => setModelName(event.target.value)}/></Field></div>}
+          <Field label="模型名"><Input value={modelName} maxLength={200} disabled={saving} onChange={event => setModelName(event.target.value)}/></Field>
+          <Field label="最大输出 Token"><Input type="number" inputMode="numeric" min={1024} max={131072} step={1}
+            value={maxTokens} placeholder="默认按协议自动（16384 / 32768）" disabled={saving}
+            onChange={event => setMaxTokens(event.target.value)}/></Field>
+          <Field label="深度思考"><Select value={thinkingLevel} disabled={saving}
+            onChange={event => setThinkingLevel(event.target.value as EngineeringThinkingLevel)}>
+            <option value="off">关闭（默认）</option><option value="low">低（low）</option>
+            <option value="medium">中（medium）</option><option value="high">高（high）</option>
+          </Select></Field></div>}
         </ServiceSheet>
       </>}
     </AsyncBoundary>

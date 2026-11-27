@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { EngineeringJobs, type EngineeringTerminal } from "../storage/conversation/engineering-jobs.js";
+import fs from "node:fs";
+import path from "node:path";
+import { EngineeringJobs, type EngineeringJob, type EngineeringTerminal } from "../storage/conversation/engineering-jobs.js";
 import type { RoleAccess } from "../application/role/role-access.js";
 import { AppError, PiAdminSeatRequiredError } from "../domain/errors.js";
 import type { ExtensionFiles } from "../application/extensions/extension-files.js";
@@ -9,6 +11,17 @@ import { McpToolClient, managedPiCommand } from "./client.js";
 import { piApiFlavor, type PiModelProxy } from "./model-proxy.js";
 
 import type { PiToolProxy } from "./tool-proxy.js";
+
+export interface EngineeringStep {
+  at: string; tool: string; target?: string; isError: boolean;
+  durationMs?: number; exitCode?: number; tail?: string;
+}
+export interface EngineeringRecentJob {
+  jobId: string; roleId: string; taskId: string; windowId: string; origin: "user" | "autonomous";
+  extId: string; title: string; modelName: string | null;
+  status: "running" | EngineeringTerminal; startedAt: string; finishedAt: string | null;
+  durationMs: number | null; summary: string; steps: EngineeringStep[];
+}
 
 export class ManagedPi {
   private readonly clients = new Map<string, Promise<McpToolClient>>();
@@ -99,6 +112,9 @@ export class ManagedPi {
       context.onDispatch?.();
       const result = await client.callTool("pi_task_start", { extId: args.extId, prompt: args.prompt }, { meta: { nowadays: {
         jobId, cwd, baseUrl, allowShell: binding.allowShell, sharedTools: true, skills: shared.briefs(), lease: token, expiresAt, modelName: binding.modelName, apiFlavor: piApiFlavor(binding.config),
+        ...(binding.maxTokens === undefined ? {} : { maxTokens: binding.maxTokens }),
+        ...(binding.contextWindow === undefined ? {} : { contextWindow: binding.contextWindow }),
+        ...(binding.thinkingLevel === undefined ? {} : { thinkingLevel: binding.thinkingLevel }),
       } } });
       if (result.isError) {
         this.finish(jobId, "failed", "Pi 拒绝启动工程");
@@ -118,6 +134,42 @@ export class ManagedPi {
   running() {
     return this.readySeats().flatMap(id => this.store(id, jobs => jobs.listRunning())).map(
       ({ jobId, roleId, extId, title, startedAt, status }) => ({ jobId, roleId, extId, title, startedAt, status }));
+  }
+  recent(limit = 20): EngineeringRecentJob[] {
+    return this.readySeats()
+      .flatMap(id => this.store(id, jobs => jobs.listRecent(limit)))
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt) || b.jobId.localeCompare(a.jobId))
+      .slice(0, limit)
+      .map(job => ({
+        jobId: job.jobId, roleId: job.roleId, taskId: job.taskId, windowId: job.windowId, origin: job.origin,
+        extId: job.extId, title: job.title, modelName: job.modelName, status: job.status, summary: job.summary,
+        startedAt: job.startedAt, finishedAt: job.finishedAt,
+        durationMs: job.finishedAt ? Math.max(0, Date.parse(job.finishedAt) - Date.parse(job.startedAt)) : null,
+        steps: this.steps(job),
+      }));
+  }
+  // 步骤日志位于草稿目录的上一级；缺失、损坏或不属于本工程时一律视为无记录。
+  private steps(job: EngineeringJob): EngineeringStep[] {
+    if (!job.workDir) return [];
+    try {
+      const parsed = JSON.parse(fs.readFileSync(path.join(path.dirname(job.workDir), "steps.json"), "utf8")) as
+        { jobId?: unknown; steps?: unknown } | null;
+      if (!parsed || parsed.jobId !== job.jobId || !Array.isArray(parsed.steps)) return [];
+      return parsed.steps.slice(-50).flatMap(raw => {
+        if (!raw || typeof raw !== "object") return [];
+        const step = raw as Record<string, unknown>;
+        if (typeof step.at !== "string" || typeof step.tool !== "string") return [];
+        return [{
+          at: step.at, tool: step.tool,
+          ...(typeof step.target === "string" ? { target: step.target.slice(0, 160) } : {}),
+          isError: step.isError === true,
+          ...(typeof step.durationMs === "number" && Number.isFinite(step.durationMs)
+            ? { durationMs: Math.max(0, Math.round(step.durationMs)) } : {}),
+          ...(typeof step.exitCode === "number" && Number.isInteger(step.exitCode) ? { exitCode: step.exitCode } : {}),
+          ...(typeof step.tail === "string" ? { tail: step.tail.slice(-240) } : {}),
+        }];
+      });
+    } catch { return []; }
   }
   subscribe(listener: () => void) {
     this.listeners.add(listener);

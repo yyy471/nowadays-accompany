@@ -142,3 +142,63 @@ iframe[data-extension-slot="widget"], iframe[data-extension-slot="overlay"] { he
   .extension-layout[data-view="desk"] .extension-catalog,
   .extension-layout[data-view="catalog"] .extension-slots { display: none; }
 }
+
+.extension-recent { display: grid; gap: var(--nd-semantic-space-field-hint); }
+.extension-catalog > .ui-disclosure { background: none; border: 0; padding: 0; }
+.extension-recent-bar,
+.extension-recent-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--nd-semantic-space-icon-label);
+}
+.extension-recent-list { display: grid; gap: var(--nd-semantic-space-field-hint); }
+.extension-recent-list > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: var(--nd-semantic-space-field-hint);
+  padding-block: var(--nd-semantic-space-field-hint);
+}
+.extension-recent-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--nd-semantic-space-icon-label);
+}
+.extension-recent-status {
+  flex: none;
+  padding-inline: var(--nd-semantic-space-field-hint);
+  border: 1px solid var(--nd-semantic-color-line-decorative);
+  border-radius: var(--nd-semantic-radius-round);
+  font-size: var(--nd-semantic-type-caption-size);
+  line-height: var(--nd-semantic-type-caption-line);
+  color: var(--nd-semantic-color-text-muted);
+}
+.extension-recent-status[data-status="running"] { color: var(--nd-semantic-color-accent-decorative); }
+.extension-recent-status:is([data-status="failed"], [data-status="timed_out"], [data-status="interrupted_unknown"]) {
+  color: var(--nd-semantic-color-danger);
+}
+.extension-recent-summary { overflow-wrap: anywhere; }
+.extension-recent-steps {
+  display: grid;
+  gap: var(--nd-semantic-space-field-hint);
+  margin: var(--nd-semantic-space-field-hint) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.extension-recent-steps > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: var(--nd-semantic-space-field-hint);
+  padding-block: var(--nd-semantic-space-field-hint);
+}
+.extension-recent-steps pre {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 8rem;
+  overflow: auto;
+  font-family: var(--nd-semantic-font-code);
+  font-size: var(--nd-semantic-type-caption-size);
+}

@@ -42,6 +42,10 @@ export class EngineeringJobs {
   listRunning() {
     return this.db.prepare("SELECT " + projection + " FROM engineering_jobs WHERE status='running' ORDER BY started_at, job_id").all() as EngineeringJob[];
   }
+  listRecent(limit = 20) {
+    return this.db.prepare("SELECT " + projection +
+      " FROM engineering_jobs ORDER BY started_at DESC, job_id DESC LIMIT ?").all(limit) as EngineeringJob[];
+  }
   settle(id: string, state: EngineeringTerminal, summary: string, finishedAt: string) {
     return this.db.transaction(() => {
       const changed = this.db.prepare(`UPDATE engineering_jobs SET status=?, summary=?, finished_at=?

@@ -1,7 +1,8 @@
 import { PaperSkeleton } from '../components/PaperSkeleton';
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api } from '../api';
-import { Button, Field, Select, Switch, UiThemeScope } from '../ui';
+import { errorText } from '../lib/error-text';
+import { Button, Disclosure, Field, Select, Switch, UiThemeScope } from '../ui';
 import { useSurfaceDismiss } from '../ui/surface-dismiss';
 import { ExtensionSlotFrame, type Extension, type Slot } from './ExtensionSlotFrame';
 import type { ExtensionState } from './use-extensions';
@@ -53,9 +54,83 @@ function ExtensionRow({ item, roles, seat, repairs }: RepairTarget & { item: Ext
   </li>;
 }
 
-export function ExtensionsPage({ state, roles, seat, image, initial, onPosition, onIdea }: {
+type RecentStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'timed_out' | 'interrupted_unknown';
+interface RecentStep { at: string; tool: string; target?: string; isError: boolean; durationMs?: number; exitCode?: number; tail?: string }
+interface RecentJob {
+  jobId: string; roleId: string; taskId: string; windowId: string; extId: string; title: string;
+  modelName: string | null; status: RecentStatus; summary: string; startedAt: string; finishedAt: string | null;
+  durationMs: number | null; steps: RecentStep[];
+}
+const recentStatusLabels: Record<RecentStatus, string> = {
+  running: '进行中', completed: '已完成', failed: '失败', cancelled: '已取消', timed_out: '已超时', interrupted_unknown: '中断未知',
+};
+
+function durationText(ms: number | null) {
+  if (ms === null) return '耗时未知';
+  if (ms < 1000) return `${ms} 毫秒`;
+  const seconds = Math.round(ms / 1000);
+  return seconds < 60 ? `${seconds} 秒` : `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
+}
+
+function RecentStepRow({ step }: { step: RecentStep }) {
+  const meta = [step.isError ? '失败' : '完成',
+    step.exitCode === undefined ? '' : `退出码 ${step.exitCode}`,
+    step.durationMs === undefined ? '' : durationText(step.durationMs)].filter(Boolean).join(' · ');
+  return <li>
+    <span>{step.tool}{step.target ? ` · ${step.target}` : ''}</span>
+    <span className="nd-usage-caption">{meta}</span>
+    {step.tail && <pre>{step.tail}</pre>}
+  </li>;
+}
+
+function RecentJobs({ onOpenWindow }: { onOpenWindow?: (target: { roleId: string; windowId: string }) => void }) {
+  const [open, setOpen] = useState(false);
+  const [jobs, setJobs] = useState<RecentJob[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [refresh, setRefresh] = useState(0);
+  useEffect(() => {
+    if (!open) return;
+    const request = new AbortController();
+    setLoading(true);
+    setError('');
+    api<{ recent: RecentJob[] }>('/v1/engineering/jobs?includeRecent=1&limit=20', { signal: request.signal })
+      .then(result => { if (!request.signal.aborted) setJobs(Array.isArray(result.recent) ? result.recent : []); })
+      .catch(reason => { if (!request.signal.aborted) setError(errorText(reason)); })
+      .finally(() => { if (!request.signal.aborted) setLoading(false); });
+    return () => request.abort();
+  }, [open, refresh]);
+  return <Disclosure title="最近工程记录" open={open} onOpenChange={setOpen}>
+    <div className="extension-recent">
+      <div className="extension-recent-bar">
+        <Button size="sm" disabled={loading} onClick={() => setRefresh(value => value + 1)}>{loading ? '正在刷新…' : '刷新'}</Button>
+        {error && <span className="extension-error" role="alert">{error}</span>}
+      </div>
+      {!error && jobs === null && loading && <p role="status">正在读取最近工程记录…</p>}
+      {!error && jobs !== null && jobs.length === 0 && <p>暂无工程记录</p>}
+      {jobs !== null && jobs.length > 0 && <ul className="extension-recent-list">{jobs.map(job => <li key={job.jobId}>
+        <div className="extension-recent-head">
+          <strong>{job.extId} · {job.title}</strong>
+          <span className="extension-recent-status" data-status={job.status}>{recentStatusLabels[job.status]}</span>
+        </div>
+        <p className="nd-usage-caption">{[job.modelName, durationText(job.durationMs)].filter(Boolean).join(' · ')}</p>
+        {job.status !== 'running' && job.summary && <p className="extension-recent-summary">{job.summary}</p>}
+        {job.steps.length > 0 && <details className="extension-diagnostic">
+          <summary>过程记录（{job.steps.length} 步）</summary>
+          <ol className="extension-recent-steps">{job.steps.map((step, index) => <RecentStepRow key={index} step={step}/>)}</ol>
+        </details>}
+        {onOpenWindow && job.roleId && job.windowId && <div className="extension-recent-actions">
+          <Button size="sm" onClick={() => onOpenWindow({ roleId: job.roleId, windowId: job.windowId })}>查看对应对话</Button>
+        </div>}
+      </li>)}</ul>}
+    </div>
+  </Disclosure>;
+}
+
+export function ExtensionsPage({ state, roles, seat, image, initial, onPosition, onIdea, onOpenWindow }: {
   state: ExtensionState; roles: RoleListItem[]; seat?: RoleListItem; image?: RoleFaceImage; initial?: DeskPosition;
   onPosition: (position: DeskPosition) => void; onIdea: () => void;
+  onOpenWindow?: (target: { roleId: string; windowId: string }) => void;
 }) {
   const [position, setPosition] = useState(initial);
   const [selection, setSelection] = useState('');
@@ -115,6 +190,7 @@ export function ExtensionsPage({ state, roles, seat, image, initial, onPosition,
           {catalog.length ? <ul>{catalog.map(item => <ExtensionRow key={item.extId} item={item} roles={roles} seat={seat}
             repairs={state.repairs}/>)}</ul> : <p>此角色暂无可用工具。</p>}
         </>}
+        <RecentJobs onOpenWindow={onOpenWindow}/>
       </section>
       {hasSlots && <div className="extension-slots">
         {selected && <section aria-label="扩展微页">

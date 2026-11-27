@@ -3,6 +3,41 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
+const MAX_STEPS = 50;
+const MAX_TAIL = 240;
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"];
+
+/** 由工程池成员的可选参数推出 provider 注册与思考等级所需的最终值。 */
+export function resolveModelSpec({ modelName, apiFlavor, maxTokens, contextWindow, thinkingLevel }) {
+  // 两个 Google SDK 各自拼接路由前缀，只注册型号的最后一段。
+  const modelId = apiFlavor === "google-generative-ai" || apiFlavor === "google-vertex"
+    ? modelName.replace(/^(?:publishers\/google\/)?models\//, "") : modelName;
+  const completions = apiFlavor === "openai-completions";
+  const resolvedMaxTokens = Number.isInteger(maxTokens) && maxTokens >= 1024 && maxTokens <= 131072
+    ? maxTokens : completions ? 16384 : 32768;
+  const resolvedContextWindow = Number.isInteger(contextWindow) && contextWindow >= 8192 && contextWindow <= 2_000_000
+    ? contextWindow : completions ? 128000 : 200000;
+  const resolvedThinkingLevel = THINKING_LEVELS.includes(thinkingLevel) ? thinkingLevel : "off";
+  return { modelId, maxTokens: resolvedMaxTokens, contextWindow: resolvedContextWindow,
+    thinkingLevel: resolvedThinkingLevel, reasoning: resolvedThinkingLevel !== "off" };
+}
+
+function stepTarget(tool, args) {
+  const input = args && typeof args === "object" ? args : {};
+  const value = tool === "write" || tool === "edit" || tool === "read" ? input.path
+    : tool === "draft_test" ? input.file
+    : tool === "powershell" || tool === "bash" ? input.command : undefined;
+  return typeof value === "string" ? value.slice(0, 160) : "";
+}
+
+function stepTail(content, lease) {
+  const text = Array.isArray(content)
+    ? content.map(part => typeof part?.text === "string" ? part.text : "").join("")
+    : typeof content === "string" ? content : "";
+  const scrubbed = lease ? text.replaceAll(String(lease), "[lease]") : text;
+  return scrubbed.length > MAX_TAIL ? scrubbed.slice(-MAX_TAIL) : scrubbed;
+}
+
 // SDK 已展开 ~、@ 和相对路径，在真实文件操作处检查最终路径。
 export async function workspaceTools(cwd, { createReadToolDefinition, createWriteToolDefinition, createEditToolDefinition }) {
   const root = await fs.realpath(cwd);
@@ -86,8 +121,20 @@ export async function workspaceTools(cwd, { createReadToolDefinition, createWrit
 }
 
 process.on("disconnect", () => process.exit(1));
-process.once("message", async ({ prompt, cwd, baseUrl, lease, modelName, apiFlavor, agentDir, sharedTools, skills, allowShell }) => {
+process.once("message", async ({ prompt, cwd, baseUrl, lease, modelName, apiFlavor, agentDir, sharedTools, skills, allowShell,
+  jobId, maxTokens, contextWindow, thinkingLevel }) => {
   let session;
+  const steps = [];
+  const startedSteps = new Map();
+  // 步骤日志放在草稿目录上一级，避免进入扩展发布文件；仅在目录确属本工程时落盘。
+  const stepLogPath = jobId && path.basename(path.dirname(cwd)) === jobId
+    ? path.join(path.dirname(cwd), "steps.json") : null;
+  const writeSteps = async () => {
+    if (!stepLogPath) return;
+    try {
+      await fs.writeFile(stepLogPath, JSON.stringify({ jobId, updatedAt: new Date().toISOString(), steps }));
+    } catch { /* 诊断日志失败绝不影响任务执行 */ }
+  };
   try {
     const sdk = await import("@earendil-works/pi-coding-agent");
     const { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager, ModelRuntime } = sdk;
@@ -107,17 +154,36 @@ process.once("message", async ({ prompt, cwd, baseUrl, lease, modelName, apiFlav
     if (loader.getExtensions().errors.length) throw new Error("PI_EXTENSION_LOAD_FAILED");
     const extensionToolNames = loader.getExtensions().extensions.flatMap(extension => [...extension.tools.keys()]);
     const runtime = await ModelRuntime.create({ authPath: path.join(agentDir, "auth.json"), modelsPath: null, refreshOnCreate: false });
-    // 两个 Google SDK 各自拼接路由前缀，只注册型号的最后一段。
-    const modelId = apiFlavor === "google-generative-ai" || apiFlavor === "google-vertex"
-      ? modelName.replace(/^(?:publishers\/google\/)?models\//, "") : modelName;
+    const spec = resolveModelSpec({ modelName, apiFlavor, maxTokens, contextWindow, thinkingLevel });
     const provider = { baseUrl, apiKey: lease, api: apiFlavor,
-      models: [{ id: modelId, name: modelId, reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        contextWindow: 128000, maxTokens: 8192 }] };
+      models: [{ id: spec.modelId, name: spec.modelId, reasoning: spec.reasoning, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: spec.contextWindow, maxTokens: spec.maxTokens }] };
     runtime.registerProvider("nowadays", provider);
-    ({ session } = await createAgentSession({ cwd, agentDir, modelRuntime: runtime, model: runtime.getModel("nowadays", modelId),
-      customTools: await workspaceTools(cwd, sdk), settingsManager, resourceLoader: loader, sessionManager: SessionManager.inMemory(cwd), thinkingLevel: "off",
+    ({ session } = await createAgentSession({ cwd, agentDir, modelRuntime: runtime, model: runtime.getModel("nowadays", spec.modelId),
+      customTools: await workspaceTools(cwd, sdk), settingsManager, resourceLoader: loader, sessionManager: SessionManager.inMemory(cwd), thinkingLevel: spec.thinkingLevel,
       tools: ["read", "write", "edit", "draft_test", ...(allowShell === true ? [process.platform === "win32" ? "powershell" : "bash"] : []), ...extensionToolNames] }));
     await session.bindExtensions({});
+    session.subscribe(event => {
+      if (event.type === "tool_execution_start") {
+        startedSteps.set(event.toolCallId, { tool: event.toolName, target: stepTarget(event.toolName, event.args) });
+        return;
+      }
+      if (event.type !== "tool_execution_end") return;
+      const start = startedSteps.get(event.toolCallId);
+      startedSteps.delete(event.toolCallId);
+      const tail = stepTail(event.result?.content, lease);
+      steps.push({
+        at: new Date().toISOString(),
+        tool: typeof event.toolName === "string" ? event.toolName : start?.tool,
+        ...(start?.target ? { target: start.target } : {}),
+        isError: Boolean(event.isError),
+        ...(typeof event.durationMs === "number" ? { durationMs: Math.round(event.durationMs) } : {}),
+        ...(typeof event.result?.details?.exitCode === "number" ? { exitCode: event.result.details.exitCode } : {}),
+        ...(tail ? { tail } : {}),
+      });
+      if (steps.length > MAX_STEPS) steps.splice(0, steps.length - MAX_STEPS);
+      void writeSteps();
+    });
     await session.prompt(prompt);
     const last = session.messages.at(-1);
     if (last?.role !== "assistant" || ["error", "aborted"].includes(last.stopReason)) throw new Error("PI_MODEL_FAILED");
@@ -125,6 +191,7 @@ process.once("message", async ({ prompt, cwd, baseUrl, lease, modelName, apiFlav
   } catch (error) {
     process.send({ state: "failed", error: String(error.message).replaceAll(lease, "[lease]").slice(0, 500) });
   } finally {
+    await writeSteps();
     session?.dispose();
     process.disconnect();
   }
