@@ -18,6 +18,8 @@ export interface AutonomyServiceOptions {
   coplayWindowMs?: number | undefined;
   coplayActive?: (roleId: string) => boolean;
   onCoplayDue?: (roleId: string) => void;
+  /** 自主安排或活动状态变化后广播，前端据此重取对应角色的状态流。 */
+  onFeedChange?: (topic: "wake" | "activity", roleId: string) => void;
 }
 
 export interface AutonomyStatus {
@@ -41,6 +43,9 @@ export class AutonomyService {
   readonly coplay: CoplayBatches;
   private readonly now: () => Date;
   private readonly timeZone: string | undefined;
+  private readonly onFeedChange:
+    | ((topic: "wake" | "activity", roleId: string) => void)
+    | undefined;
   private wakeListener: ((roleId: string) => void) | null = null;
   private proactiveMessageListener:
     | ((notice: ProactiveMessageNotice) => void)
@@ -52,6 +57,7 @@ export class AutonomyService {
   ) {
     this.now = options.now ?? (() => new Date());
     this.timeZone = options.timeZone;
+    this.onFeedChange = options.onFeedChange;
     this.coplay = new CoplayBatches(roleId => {
       if (!options.coplayActive?.(roleId)) return false;
       const budget = this.getBudget(roleId);
@@ -67,6 +73,14 @@ export class AutonomyService {
     listener: ((notice: ProactiveMessageNotice) => void) | null,
   ): void {
     this.proactiveMessageListener = listener;
+  }
+
+  private notifyFeed(topic: "wake" | "activity", roleId: string): void {
+    try {
+      this.onFeedChange?.(topic, roleId);
+    } catch {
+      // 广播失败不得影响自主安排的持久化结果。
+    }
   }
 
   getStatus(roleId: string, activityLimit = 20): AutonomyStatus {
@@ -143,6 +157,7 @@ export class AutonomyService {
       }),
     );
     this.wakeListener?.(roleId);
+    this.notifyFeed("wake", roleId);
     return wake;
   }
 
@@ -160,6 +175,7 @@ export class AutonomyService {
       ),
     );
     this.wakeListener?.(roleId);
+    this.notifyFeed("wake", roleId);
     return wake;
   }
 
@@ -168,13 +184,15 @@ export class AutonomyService {
     taskId: string,
     reason: string,
   ): number {
-    return this.access.withStore(roleId, (storage) =>
+    const cancelled = this.access.withStore(roleId, (storage) =>
       this.store(storage.business.db, roleId).cancelPendingBudgetResumes(
         taskId,
         reason,
         this.now().toISOString(),
       ),
     );
+    if (cancelled > 0) this.notifyFeed("wake", roleId);
+    return cancelled;
   }
 
   listActivities(roleId: string, limit = 100, offset = 0): AutonomyActivityRecord[] {
@@ -199,6 +217,7 @@ export class AutonomyService {
     this.access.withStore(roleId, (storage) =>
       this.store(storage.business.db, roleId).enqueueFirstActivation(this.now().toISOString()),
     );
+    this.notifyFeed("activity", roleId);
   }
 
   nextPendingWake(roleId: string): AutonomyWakeRecord | null {
@@ -217,12 +236,14 @@ export class AutonomyService {
   }
 
   beginDueWake(roleId: string, windowId: string, coplay?: { wakeId: string; intent: string }): BegunAutonomyWake | null {
-    return this.access.withStore(roleId, (storage) =>
+    const begun = this.access.withStore(roleId, (storage) =>
       this.store(storage.business.db, roleId).beginDueWake({
         windowId, coplay,
         now: this.now().toISOString(),
       }),
     );
+    if (begun !== null) this.notifyFeed("wake", roleId);
+    return begun;
   }
 
   completeWake(
@@ -230,13 +251,15 @@ export class AutonomyService {
     wakeId: string,
     errorCode: string | null = null,
   ): AutonomyWakeRecord {
-    return this.access.withStore(roleId, (storage) =>
+    const wake = this.access.withStore(roleId, (storage) =>
       this.store(storage.business.db, roleId).completeWake({
         wakeId,
         errorCode,
         now: this.now().toISOString(),
       }),
     );
+    this.notifyFeed("wake", roleId);
+    return wake;
   }
 
   updateActivity(
@@ -249,12 +272,14 @@ export class AutonomyService {
       sharedMessageId?: string | null;
     },
   ): AutonomyActivityRecord {
-    return this.access.withStore(roleId, (storage) =>
+    const activity = this.access.withStore(roleId, (storage) =>
       this.store(storage.business.db, roleId).updateActivity({
         ...input,
         now: this.now().toISOString(),
       }),
     );
+    this.notifyFeed("activity", roleId);
+    return activity;
   }
 
   getLatestActivityByTask(
@@ -324,6 +349,7 @@ export class AutonomyService {
         messageId: message.messageId,
         executionId: input.executionId,
       });
+      this.notifyFeed("activity", roleId);
       return { messageId: message.messageId, windowId: window.windowId };
     });
   }
@@ -413,7 +439,7 @@ export class AutonomyService {
     },
   ): AutonomyWakeRecord {
     const now = this.now().toISOString();
-    return this.access.withStore(roleId, (storage) => {
+    const wake = this.access.withStore(roleId, (storage) => {
       const store = this.store(storage.business.db, roleId);
       const task = storage.business.getTask(roleId, input.taskId);
       if (task.status === "active") {
@@ -455,6 +481,9 @@ export class AutonomyService {
         now,
       });
     });
+    this.notifyFeed("activity", roleId);
+    this.notifyFeed("wake", roleId);
+    return wake;
   }
 
   private store(db: Database.Database, roleId: string): AutonomyStore {

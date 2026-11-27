@@ -33,7 +33,7 @@
 | [UX-04](#ux-04-设置页两处操作仍使用阻塞式原生-windowconfirm) | 视觉/交互 | **P1** | `Settings.tsx` 离开草稿拦截与结束任务确认弹出原生 `window.confirm` | 否 | 已修复，R5 精准复验通过 |
 | [DELIV-02](#deliv-02-真实云端模型多模态与媒体服务全链路联调长期缺位) | 质量/验证 | **P1** | 624+ 离线测试掩盖真实模型、长上下文、TTS、ComfyUI 实机并发缺陷 | 否 | `[ ]` 待排查 |
 | [ARCH-01](#arch-01-后端与前端存在多个两千至三千行级上帝文件) | 架构债务 | **P1** | `conversation-service.ts` 3803 行、`Settings.tsx` 2116 行等触发仓库体积告警 | 否 | `[ ]` 待排查 |
-| [ARCH-02](#arch-02-桌面端四条通信通道混用且动态页退化为-15-秒全量轮询) | 架构债务 | **P2** | `desk://`、直连 `127.0.0.1`、`nd-ext://`、`ipcMain` 混用；动态页无推送 | 否 | `[ ]` 待排查 |
+| [ARCH-02](#arch-02-桌面端四条通信通道混用且动态页退化为-15-秒全量轮询) | 架构债务 | **P2** | `desk://`、直连 `127.0.0.1`、`nd-ext://`、`ipcMain` 混用；动态页无推送 | 否 | 已修复，R8b 精准复验通过 |
 | [ARCH-03](#arch-03-记忆检索纯依赖字面-fts5-trigram缺乏语义召回能力) | 核心能力 | **P2** | 换个同义说法即召回失效，制约精细记忆模型的实际效果 | 需确认（`DL-51`） | `[ ]` 待排查 |
 | [ARCH-04](#arch-04-启动期同步-ipc-阻塞令牌暴露给渲染层与维护期隐性-on-存储扫描) | 性能/架构 | **P2** | `preload` 同步 `sendSync` 并暴露 `hostHeaders`；`MediaMaintenance` 逐角色开关双库 | 否 | 已修复，R8a 精准复验通过 |
 | [UX-05](#ux-05-单角色迁移与角色工作空间笔记缺少桌面图形入口) | 功能短板 | **P2** | 角色导出/导入停留在 CLI；用户需手工翻数据目录看角色 Markdown 笔记 | 否 | `[ ]` 待排查 |
@@ -379,7 +379,11 @@ Windows、仓库 Node 24.22.2、离线夹具下，主审核人独立执行以下
 
 ### ARCH-02 桌面端四条通信通道混用，且动态页退化为 15 秒全量轮询
 
-- **优先级**：P2 · **状态**：`[ ]` 待排查
+- **优先级**：P2 · **状态**：已修复，R8b 精准复验通过
+- **R8b 实施与复验（2026-11-27）**：
+  - **统一 HTTP + SSE 单通道**：`main.cjs` 的 `desk://bundle/v1/*` 协议代理改用独立 Node `http.request` 连接池（`maxSockets: 64` + `ReadableStream` 逐块透传 + `cancel()`/`request.signal` 立即销毁上游），既消除 Chromium `net.fetch` 单源 6 连接上限对多路 SSE 的阻塞，又彻底移除 `webRequest.onBeforeSendHeaders` 补头；`backendBaseUrl()` 在 `desk:` 来源下直接返回 `null`，所有业务 `EventSource` 均走同源 `/v1/*`；
+  - **轻量全局动态 SSE**：后端新增实例级 `FeedEventHub` 与 `GET /v1/feed-events`，在 `RoleActivityService`、`AutonomyService`、`RoleExchangeService`、`MemoryRuntime` 状态变更点广播 `role_activity`/`wake`/`activity`/`exchange`/`memory` 主题；`Feed.tsx` 移除 15 秒 `setInterval` 全量轮询，改为 250ms 防抖事件驱动按主题静默补刷（断线重连与恢复可见自动补齐，静止期零周期性轮询）；
+  - **精准复验（Node 24.22.2）**：后端 `typecheck` + 13/13 专项集成测试（含新增 `feed-events.test.ts` 验证实时推送与断连零订阅泄漏）、渲染器 `check`（37 CSS 0 违规）+ `backend-base` 3/3 + 生产构建、桌面壳 `preload-boundary` 3/3、Electron 39 实窗 E2E `engineering-capsule`（4.1s）、`role-exchanges`（5.2s）、`extension-ui-slots`（17.0s）、`cross-page-share`（4.8s）4/4 全通过。
 - **证据位置**：
   - [apps/desktop/electron/main.cjs](../../../apps/desktop/electron/main.cjs#L172-L195)（`desk://bundle/v1/*` 代理）
   - [apps/desktop/electron/main.cjs](../../../apps/desktop/electron/main.cjs#L228-L235)（`EventSource` 直连 `http://127.0.0.1` + `webRequest` 补头）

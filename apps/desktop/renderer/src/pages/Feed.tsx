@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { PaperSkeleton } from '../components/PaperSkeleton';
 import { RoleFace } from '../components/RoleFace';
@@ -8,6 +8,7 @@ import { ConfigThemeTransition } from '../ui/config-theme-transition';
 import { useThemePreset } from '../ui/presets';
 import { errorText } from '../lib/error-text';
 import { errorDescriptions } from '../lib/error-descriptions';
+import { backendBaseUrl } from '../conversation/backend-base';
 import { isFirstActivation, wakeText } from '../feed/wake-label';
 import type { RoleListItem } from '../types';
 import {
@@ -50,6 +51,8 @@ function useFeedRead<T>(roles: RoleListItem[], loader: (roles: RoleListItem[], s
   const [refreshResult, setRefreshResult] = useState<RefreshResult | null>(null);
   const retrySeq = useRef(0);
   const pendingRetry = useRef(0);
+  // 供事件流静默补刷：不入队 refreshResult，也不打扰手动刷新提示。
+  const silentRead = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (!activePage) { pendingRetry.current = 0; return; }
     let active = true;
@@ -82,19 +85,21 @@ function useFeedRead<T>(roles: RoleListItem[], loader: (roles: RoleListItem[], s
       }
     };
     void read(true);
-    const timer = window.setInterval(() => { if (!document.hidden) void read(); }, 15000);
+    silentRead.current = () => { void read(); };
     const onVisible = () => { if (!document.hidden) void read(); };
     document.addEventListener('visibilitychange', onVisible);
     return () => {
       active = false;
+      silentRead.current = null;
       controller.abort();
-      window.clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, [roles, loader, retry, activePage]);
+  const reload = useCallback(() => { silentRead.current?.(); }, []);
   return {
     ...state,
     refreshResult,
+    reload,
     retry: () => {
       const token = ++retrySeq.current;
       pendingRetry.current = token;
@@ -432,6 +437,66 @@ export function FeedPage({ active, roles, rolesLoading, roleError, retryingRoles
       upcoming: scope !== 'feed' ? upcoming.retry() : undefined,
     });
   };
+  // 动态页可见时维持单一事件流：后端通知按主题静默补刷，替代原先 15 秒全量轮询。
+  useEffect(() => {
+    if (!active || typeof EventSource === 'undefined') return;
+    let disposed = false;
+    let stream: EventSource | null = null;
+    let reconnectPending = false;
+    let reconnectTimer = 0;
+    let timer = 0;
+    const topics = new Set<string>();
+    const flush = () => {
+      timer = 0;
+      if (!topics.size) return;
+      const changed = new Set(topics);
+      topics.clear();
+      if (changed.has('wake') || changed.has('role_activity')) {
+        feed.reload();
+        upcoming.reload();
+      } else if (changed.has('activity') || changed.has('exchange') || changed.has('memory')) {
+        feed.reload();
+      }
+    };
+    const onChange = (event: Event) => {
+      const data = (event as MessageEvent<string>).data;
+      if (typeof data !== 'string') return;
+      try {
+        const payload = JSON.parse(data) as { topic?: unknown };
+        if (typeof payload.topic === 'string') topics.add(payload.topic);
+      } catch { return; }
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(flush, 250);
+    };
+    const connect = (refresh = false) => {
+      void backendBaseUrl(refresh ? { refresh: true } : undefined).then(base => {
+        if (disposed) return;
+        const es = new EventSource(`${base ?? ''}/v1/feed-events`);
+        stream = es;
+        es.addEventListener('change', event => { if (stream === es) onChange(event); });
+        es.addEventListener('ready', () => {
+          if (stream !== es || !reconnectPending) return;
+          reconnectPending = false;
+          feed.reload();
+          upcoming.reload();
+        });
+        es.onerror = () => {
+          if (disposed || stream !== es) return;
+          reconnectPending = true;
+          if (es.readyState !== EventSource.CLOSED) return;
+          if (reconnectTimer) window.clearTimeout(reconnectTimer);
+          reconnectTimer = window.setTimeout(() => { reconnectTimer = 0; if (!disposed) connect(true); }, 1000);
+        };
+      });
+    };
+    connect(false);
+    return () => {
+      disposed = true;
+      if (timer) window.clearTimeout(timer);
+      if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      stream?.close();
+    };
+  }, [active, feed.reload, upcoming.reload]);
   const events = useMemo(() => feed.data ? eventList(feed.data) : [], [feed.data]);
   const selected = useMemo(() => {
     if (!selectedSnapshot || (!selectedSnapshot.exchange && !roles.some(role => role.roleId === selectedSnapshot.roleId))) return null;

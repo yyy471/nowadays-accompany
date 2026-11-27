@@ -44,6 +44,8 @@ export interface MemoryRuntimeOptions {
   isRoleDeleting?: (roleId: string) => boolean;
   /** 模型调用结束时上报全局 Token 账本（DL-183）。 */
   onModelCallFinished?: (event: TokenUsageCallEvent) => void;
+  /** 记忆整理批次开始或状态变化（完成／失败／部分完成）后广播。 */
+  onFeedChange?: (roleId: string) => void;
 }
 
 interface QueueState {
@@ -75,6 +77,7 @@ export class MemoryRuntime {
   private readonly onIdle: (roleId: string) => void;
   private readonly isRoleDeleting: (roleId: string) => boolean;
   private readonly onModelCallFinished: ((event: TokenUsageCallEvent) => void) | undefined;
+  private readonly onFeedChange: ((roleId: string) => void) | undefined;
   /** 角色当前正在整理的模型服务；维护等待按目标服务判断在途调用（283 §6 R01）。 */
   private readonly activeResources = new Map<string, string>();
   /** 删除保护期间或触发写入失败时暂存的任务结束通知，待后续对账／唤醒恢复（283 §18/§22）。 */
@@ -107,6 +110,7 @@ export class MemoryRuntime {
     this.onIdle = options.onIdle ?? (() => undefined);
     this.isRoleDeleting = options.isRoleDeleting ?? (() => false);
     this.onModelCallFinished = options.onModelCallFinished;
+    this.onFeedChange = options.onFeedChange;
     this.customModelFactory = options.modelFactory !== undefined;
     this.modelFactory =
       options.modelFactory ??
@@ -307,6 +311,14 @@ export class MemoryRuntime {
   }
 
   restoreRole(roleId: string): void { this.disposedRoles.delete(roleId); }
+
+  private notifyFeedChange(roleId: string): void {
+    try {
+      this.onFeedChange?.(roleId);
+    } catch {
+      // 状态流广播失败不得影响记忆整理结果。
+    }
+  }
 
   private enqueue(
     roleId: string,
@@ -743,12 +755,23 @@ export class MemoryRuntime {
           const dueMaintenanceCheck = checkAt !== null && checkAt <= nowIso;
           const pendingTriggers = store.listPendingTriggers(roleId);
           if (pendingTriggers.length > 0 || dueRetry) {
-            await service.runPending(roleId, {
-              includeRefinement: true,
-              includeDeferred: pendingTriggers.some((trigger) => trigger.kind === "manual" && trigger.batchId === null),
-            });
+            this.notifyFeedChange(roleId);
+            try {
+              await service.runPending(roleId, {
+                includeRefinement: true,
+                includeDeferred: pendingTriggers.some((trigger) => trigger.kind === "manual" && trigger.batchId === null),
+              });
+            } finally {
+              // 完成、失败或部分完成都会落库，统一在结束后再广播一次。
+              this.notifyFeedChange(roleId);
+            }
           } else if (dueMaintenance || dueMaintenanceCheck) {
-            await service.runBatch(roleId, { maintenanceOnly: true });
+            this.notifyFeedChange(roleId);
+            try {
+              await service.runBatch(roleId, { maintenanceOnly: true });
+            } finally {
+              this.notifyFeedChange(roleId);
+            }
           }
 
           // 若失败任务的工具证据已在本轮其余触发中被整理完成，清理其过期暂存与重试计数。

@@ -3,6 +3,8 @@
 const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeTheme, net, protocol, shell } = require("electron");
 const { execFile, spawn } = require("node:child_process");
 const fs = require("node:fs");
+const http = require("node:http");
+const https = require("node:https");
 const { join, resolve } = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { resolveBackendLayout, resolveNodeExecutable } = require("./backend-paths.cjs");
@@ -226,6 +228,88 @@ function trusted(event) {
     event.senderFrame === window.webContents.mainFrame && event.senderFrame?.url === home;
 }
 
+const backendHttpAgent = new http.Agent({ keepAlive: true, maxSockets: 64 });
+const backendHttpsAgent = new https.Agent({ keepAlive: true, maxSockets: 64 });
+
+function proxyBackendRequest(targetUrl, request, headers, body) {
+  return new Promise((resolveResponse, rejectResponse) => {
+    const parsed = new URL(targetUrl);
+    const transport = parsed.protocol === "https:" ? https : http;
+    const reqHeaders = {};
+    for (const [name, value] of headers.entries()) {
+      const lower = name.toLowerCase();
+      if (lower === "host" || lower === "connection" || lower === "content-length") continue;
+      reqHeaders[name] = value;
+    }
+    if (body) reqHeaders["content-length"] = String(body.byteLength);
+    let settled = false;
+    const upstreamReq = transport.request(parsed, {
+      method: request.method,
+      headers: reqHeaders,
+      agent: parsed.protocol === "https:" ? backendHttpsAgent : backendHttpAgent
+    }, (upstreamRes) => {
+      const responseHeaders = new Headers();
+      for (let i = 0; i < upstreamRes.rawHeaders.length; i += 2) {
+        const name = upstreamRes.rawHeaders[i];
+        const value = upstreamRes.rawHeaders[i + 1];
+        if (!name) continue;
+        const lower = name.toLowerCase();
+        if (lower === "transfer-encoding" || lower === "connection" || lower === "keep-alive") continue;
+        responseHeaders.append(name, value ?? "");
+      }
+      const status = upstreamRes.statusCode ?? 502;
+      if (request.method === "HEAD" || status === 204 || status === 304) {
+        upstreamRes.resume();
+        settled = true;
+        resolveResponse(new Response(null, { status, headers: responseHeaders }));
+        return;
+      }
+      let closed = false;
+      const stream = new ReadableStream({
+        start(controller) {
+          upstreamRes.on("data", (chunk) => {
+            if (closed) return;
+            try { controller.enqueue(chunk); }
+            catch { closed = true; upstreamReq.destroy(); }
+          });
+          upstreamRes.on("end", () => {
+            if (closed) return;
+            closed = true;
+            try { controller.close(); } catch { /* 已关闭 */ }
+          });
+          upstreamRes.on("aborted", () => {
+            if (closed) return;
+            closed = true;
+            try { controller.close(); } catch { /* 已关闭 */ }
+          });
+          upstreamRes.on("error", (err) => {
+            if (closed) return;
+            closed = true;
+            try { controller.error(err); } catch { /* 已关闭 */ }
+          });
+        },
+        cancel() {
+          closed = true;
+          upstreamReq.destroy();
+        }
+      });
+      settled = true;
+      resolveResponse(new Response(stream, { status, headers: responseHeaders }));
+    });
+    const onAbort = () => upstreamReq.destroy();
+    if (request.signal) {
+      if (request.signal.aborted) { upstreamReq.destroy(); return; }
+      request.signal.addEventListener("abort", onAbort, { once: true });
+      upstreamReq.once("close", () => request.signal.removeEventListener("abort", onAbort));
+    }
+    upstreamReq.on("error", (err) => {
+      if (!settled) { settled = true; rejectResponse(err); }
+    });
+    if (body) upstreamReq.end(Buffer.from(body));
+    else upstreamReq.end();
+  });
+}
+
 function startDesk() {
   protocol.handle("desk", async (request) => {
     const { hostname, pathname, search } = new URL(request.url);
@@ -249,7 +333,7 @@ function startDesk() {
       );
     }
 
-    // 2. 同源代理 /v1/* 请求至真实本地后端
+    // 2. 同源代理 /v1/* 请求（含 HTTP 与 SSE）至真实本地后端；使用独立 Node 连接池避免 Chromium 单源 6 连接阻塞。
     if (pathname.startsWith("/v1/")) {
       // 扩展文件只通过 nd-ext 加载，避免同一份代码也能从桌面来源取得。
       if (/^\/v1\/extensions\/[^/]+\/ui\//.test(pathname)) return new Response(null, { status: 404 });
@@ -258,18 +342,14 @@ function startDesk() {
       );
       if (!backendBaseUrl) return offline();
       const targetUrl = `${backendBaseUrl}${pathname}${search}`;
-      const init = {
-        method: request.method,
-        headers: new Headers(request.headers),
-        redirect: "manual"
-      };
+      const headers = new Headers(request.headers);
       // 主进程代理向固定后端补签：所有方法统一签发，渲染层不再持有宿主令牌。
-      if (hostToken && !pathname.startsWith("/v1/internal/")) init.headers.set("X-Nowadays-Host-Token", hostToken);
-      if (request.method !== "GET" && request.method !== "HEAD" && request.body) {
-        init.body = await request.arrayBuffer();
-      }
+      if (hostToken && !pathname.startsWith("/v1/internal/")) headers.set("X-Nowadays-Host-Token", hostToken);
+      const body = request.method !== "GET" && request.method !== "HEAD" && request.body
+        ? await request.arrayBuffer()
+        : null;
       try {
-        return await net.fetch(targetUrl, init);
+        return await proxyBackendRequest(targetUrl, request, headers, body);
       } catch {
         return offline();
       }
@@ -322,14 +402,7 @@ function startDesk() {
     if (quitting || (!configuredBackend && (!managed || backendChild !== managed || managed.closed || managed.stopPromise))) {
       throw new Error("本地服务已结束启动。");
     }
-    // EventSource 无自定义头 API。限定后端地址与主框架，不向扩展子帧签发。
-    if (hostToken && base) window.webContents.session.webRequest.onBeforeSendHeaders(
-      { urls: [new URL(base).protocol + "//" + new URL(base).hostname + "/*"] },
-      (details, callback) => {
-        if (!window.isDestroyed() && details.method === "GET" && details.url.startsWith(base + "/v1/") && details.frame === window.webContents.mainFrame &&
-            details.frame.url === home) Object.assign(details.requestHeaders, hostHeaders);
-        callback({ requestHeaders: details.requestHeaders });
-      });
+    // HTTP 与 SSE 全部经 desk://bundle/v1/* 由主进程补签宿主令牌，渲染层不再直连后端。
     window.webContents.session.protocol.handle("nd-ext", extensionHandler(base, (url, init) => net.fetch(url, { ...init, headers: hostHeaders })));
     backendBaseUrl = base;
     return { ok: true, skipRolePicker: process.env.NOWADAYS_SKIP_ROLE_PICKER === "1", isPackaged: app.isPackaged };

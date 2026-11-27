@@ -5,6 +5,7 @@ import {
   type ChatModelPortFactory,
 } from "../application/conversation/conversation-service.js";
 import { AutonomyService } from "../application/conversation/autonomy-service.js";
+import { FeedEventHub } from "../application/conversation/feed-events.js";
 import { AppearanceService } from "../application/media/appearance-service.js";
 import { GlobalVoiceService } from "../application/media/global-voice-service.js";
 import { VoiceService } from "../application/media/voice-service.js";
@@ -141,6 +142,11 @@ function assembleBackendApp(
   );
   const roleService = new RoleService(appStore, config.dataRoot, roleAccess);
   const activity = new RoleActivityService(appStore, { now });
+  // 状态流只广播变更主题与角色，前端据此增量重取。
+  const feedEvents = new FeedEventHub(now);
+  const unsubscribeActivityFeed = activity.subscribe((roleId) =>
+    feedEvents.emit("role_activity", roleId),
+  );
   const messageService = new MessageService(roleAccess, now);
   // 模型解析同时服务运行时、影响报告与维护校验（283 R04）。
   const bindings = new ModelBindingResolver(appStore, roleAccess, credentials);  // 资源服务先于对话服务创建；唤醒回调在对话服务就绪后接入（R02）。
@@ -235,6 +241,7 @@ function assembleBackendApp(
     now, coplayWindowMs: options.coplayWindowMs,
     coplayActive: id => appStore.getRoleIndex(id)?.initStatus === "ready" && activity.gate.canStart(id),
     onCoplayDue: id => conversation.runDueAutonomy(id),
+    onFeedChange: (topic, roleId) => feedEvents.emit(topic, roleId),
     ...(options.timeZone === undefined ? {} : { timeZone: options.timeZone }),
   });
   const memoryRuntime = options.disableMemoryRuntime
@@ -263,6 +270,7 @@ function assembleBackendApp(
           // 删除收尾期间不再接收新的记忆整理（283 §16）。
           isRoleDeleting: (roleId) => isRoleDeleting(roleId),
           onModelCallFinished,
+          onFeedChange: (roleId) => feedEvents.emit("memory", roleId),
         },
       );
   // 管理工具需要反向引用对话服务（任务查询与记忆触发），构造完成后再补上。
@@ -363,6 +371,10 @@ function assembleBackendApp(
     },
   );
   adminServices.conversation = conversation;
+  // 互聊开始、每轮发言与收尾都广播 exchange 主题（会话服务内部构造，装配后注入）。
+  conversation.exchanges.setFeedChangeListener((roleId) =>
+    feedEvents.emit("exchange", roleId),
+  );
   // 首句合成遇到后台正在进行的句段情绪标注时短暂等待其落库，不抢在无情绪状态下先发合成。
   voiceService.setAnnotationWaiter((messageId, timeoutMs, signal) =>
     conversation.awaitMessageAnnotation(messageId, timeoutMs, signal),
@@ -521,6 +533,7 @@ function assembleBackendApp(
     tokenUsage,
     pi, modelProxy, toolProxy, engineeringPool,
     extensions,
+    feedEvents,
   };
   const server = createHttpServer({ version: "0.1.0", services, hostToken: config.hostToken });
 
@@ -532,8 +545,9 @@ function assembleBackendApp(
       if (server.listening) await closeServer(server);
       for (const result of stopped) if (result.status === "rejected") throw result.reason;
     } finally {
-      try { await sceneImages.close(); }
-      finally { await extensions.close(); }
+      try { unsubscribeActivityFeed(); }
+      finally { try { await sceneImages.close(); }
+      finally { await extensions.close(); } }
     }
   })();
   registerStartupStop(closeRuntime);

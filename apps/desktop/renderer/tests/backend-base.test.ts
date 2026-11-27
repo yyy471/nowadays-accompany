@@ -30,3 +30,16 @@ test('失效与强制刷新会重新请求地址', async t => {
   assert.equal(await backendBaseUrl({ refresh: true }), 'http://127.0.0.1:3333');
   assert.equal(fetcher.mock.callCount(), 3);
 });
+
+test('桌面来源直接返回空地址且不请求配置', async t => {
+  const original: Location | undefined = globalThis.location;
+  const fetcher = t.mock.method(globalThis, 'fetch', async () => Response.json({ backendBaseUrl: 'http://127.0.0.1:1234' }));
+  try {
+    globalThis.location = { protocol: 'desk:' } as Location;
+    assert.equal(await backendBaseUrl(), null);
+    assert.equal(fetcher.mock.callCount(), 0);
+  } finally {
+    if (original === undefined) delete (globalThis as { location?: Location }).location;
+    else globalThis.location = original;
+  }
+});

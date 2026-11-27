@@ -7,6 +7,11 @@ export function invalidateBackendBaseUrl(): void {
 }
 
 export function backendBaseUrl(options?: { refresh?: boolean }): Promise<string | null> {
+  // 桌面渲染层由 desk:// 同源代理 /v1/*（主进程补签宿主令牌），无需再读取直连地址。
+  if (typeof location !== 'undefined' && location.protocol === 'desk:') {
+    cached = null;
+    return Promise.resolve(null);
+  }
   if (options?.refresh) cached = null;
   if (cached === null) {
     cached = fetch('/api-config.json', { cache: 'no-store' })

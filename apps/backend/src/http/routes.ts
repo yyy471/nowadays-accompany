@@ -26,6 +26,7 @@ import type { Router } from "./router.js";
 import type { AppearanceService } from "../application/media/appearance-service.js";
 import type { ConversationService } from "../application/conversation/conversation-service.js";
 import type { AutonomyService } from "../application/conversation/autonomy-service.js";
+import type { FeedEventHub } from "../application/conversation/feed-events.js";
 import type { MemoryQueryService } from "../application/memory/memory-query-service.js";
 import type { MessageService } from "../application/conversation/message-service.js";
 import type { ModelService } from "../application/resources/model-service.js";
@@ -115,6 +116,7 @@ export interface ApiServices {
   roleDeletion: RoleDeletionService;
   mediaMaintenance: MediaMaintenance;
   tokenUsage: TokenUsageService;
+  feedEvents: FeedEventHub;
 }
 
 export function registerApiRoutes(
@@ -163,6 +165,16 @@ export function registerApiRoutes(
     const send = () => response.write("event: snapshot\ndata: " + JSON.stringify(services.pi.running()) + "\n\n");
     response.once("close", services.pi.subscribe(send));
     send();
+    return undefined;
+  });
+  // 状态流变更推送：只发送主题与序号，客户端按需重取对应角色的数据。
+  router.add("GET", "/v1/feed-events", ({ response }) => {
+    response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
+    response.write(`event: ready\ndata: ${JSON.stringify({ seq: services.feedEvents.currentSeq() })}\n\n`);
+    const unsubscribe = services.feedEvents.subscribe((event) => {
+      response.write(`id: ${event.seq}\nevent: change\ndata: ${JSON.stringify(event)}\n\n`);
+    });
+    response.once("close", unsubscribe);
     return undefined;
   });
   const { activity } = services;

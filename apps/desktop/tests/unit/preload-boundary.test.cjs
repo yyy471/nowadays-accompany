@@ -21,3 +21,10 @@ test("设置 preload 零 sendSync、不暴露 hostHeaders 与 desk:config", () =
 test("主进程不再提供 desk:config 同步通道", () => {
   assert.doesNotMatch(read("main.cjs"), /desk:config/);
 });
+
+test("主进程代理补签宿主令牌并透传中止信号，不再注册 onBeforeSendHeaders", () => {
+  const main = read("main.cjs");
+  assert.doesNotMatch(main, /onBeforeSendHeaders/);
+  assert.match(main, /request\.signal/);
+  assert.match(main, /maxSockets:\s*64/);
+});

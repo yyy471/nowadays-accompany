@@ -40,10 +40,28 @@ function summary(db: Database.Database, id: string) {
 }
 
 export class RoleExchangeService {
+  private feedChange: ((roleId: string) => void) | null;
+
   constructor(private readonly app: AppStore, private readonly access: RoleAccess,
     private readonly now: () => Date, private readonly canStart: (id: string) => boolean,
     private readonly wakeChanged: (id: string) => void, private readonly memoryChanged: (id: string) => void,
-    private readonly timeZone?: string, private readonly onExchange?: (session: ExchangeSession) => void) {}
+    private readonly timeZone?: string, private readonly onExchange?: (session: ExchangeSession) => void,
+    onFeedChange?: (roleId: string) => void) {
+    this.feedChange = onFeedChange ?? null;
+  }
+
+  /** 应用装配完成后再注入状态流广播；扩展宿主等构造期依赖无需传入此回调。 */
+  setFeedChangeListener(listener: ((roleId: string) => void) | null): void {
+    this.feedChange = listener;
+  }
+
+  private notifyFeed(roleId: string): void {
+    try {
+      this.feedChange?.(roleId);
+    } catch {
+      // 广播失败不得影响会话落库与镜像。
+    }
+  }
 
   private withDb<T>(roleId: string, fn: (db: Database.Database) => T) {
     return this.access.withStore(roleId, s => fn(s.business.db));
@@ -130,6 +148,9 @@ export class RoleExchangeService {
       db.prepare("UPDATE role_exchange_sessions SET mirrorPending=0 WHERE sessionId=?").run(s.sessionId);
     });
     this.onExchange?.(s);
+    // 每次提交都广播：会话开始时、每轮发言入库后，以及 completed/failed/cancelled 收尾。
+    this.notifyFeed(s.initiatorRoleId);
+    this.notifyFeed(s.targetRoleId);
     if (s.status === "active") this.wakeChanged(nextSpeaker(s));
     if (s.status === "completed") {
       this.memoryChanged(s.initiatorRoleId);
