@@ -25,6 +25,8 @@ const { resolveElectronExecutableInfo } = require('../helpers/electron-executabl
 
 const { repoRoot: root, desktopDir, backendDir, xiachengPortraitFixture } = require('../helpers/paths.cjs');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'nowadays-308-fixes-'));
+const hostToken = require('node:crypto').randomBytes(32).toString('hex');
+const hostHeaders = { 'X-Nowadays-Host-Token': hostToken };
 const emptyPresets = path.join(temp, 'presets');
 fs.mkdirSync(emptyPresets, { recursive: true });
 const imagePath = xiachengPortraitFixture;
@@ -195,7 +197,7 @@ async function setSelect(selectorExpr, value) {
   await ev(`(()=>{const e=${selectorExpr};Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('change',{bubbles:true}));})()`);
 }
 async function request(route, options = {}) {
-  const response = await fetch(base + route, options);
+  const response = await fetch(base + route, { ...options, headers: { ...hostHeaders, ...options.headers } });
   const body = await response.json();
   if (!response.ok) throw Error(`${response.status}: ${JSON.stringify(body)}`);
   return body;
@@ -225,6 +227,7 @@ async function run() {
 
   backend = spawn(process.execPath, ['--import', 'tsx', 'src/main.ts', '--app-root', path.join(temp, 'app'), '--port', '0', '--preset-assets-dir', emptyPresets], {
     cwd: backendDir,
+    env: { ...process.env, NOWADAYS_HOST_TOKEN: hostToken },
     windowsHide: true,
   });
   backend.stdout.on('data', data => backendLog += data);
@@ -234,7 +237,7 @@ async function run() {
 
   // 启动 Electron（初始 0 角色）
   // 这些脚本直接验证工作区页面，跳过冷启动选角页；选角页本身由 pack3-entry 单测覆盖。
-  const env = { ...process.env, NOWADAYS_BACKEND_URL: base, NOWADAYS_APP_ROOT: path.join(temp, 'desktop'), NOWADAYS_SKIP_ROLE_PICKER: '1' };
+  const env = { ...process.env, NOWADAYS_BACKEND_URL: base, NOWADAYS_APP_ROOT: path.join(temp, 'desktop'), NOWADAYS_HOST_TOKEN: hostToken, NOWADAYS_SKIP_ROLE_PICKER: '1' };
   delete env.ELECTRON_RUN_AS_NODE;
   const electronInfo = resolveElectronExecutableInfo({ repoRoot: root });
   electron = spawn(electronInfo.executable, [

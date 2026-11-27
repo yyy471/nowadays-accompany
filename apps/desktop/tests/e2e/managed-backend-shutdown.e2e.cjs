@@ -102,7 +102,8 @@ async function electronSession() {
 }
 
 async function launch(tmp, root, mode, extra = {}) {
-  const profile = path.join(tmp, mode);
+  // 重启复用同一 Electron userData 配置目录，与真实关启一致（safeStorage/DPAPI 密钥随同一 profile 解密）。
+  const profile = path.join(tmp, mode === 'restart' ? 'active' : mode);
   const env = { ...process.env, ...extra, NOWADAYS_APP_ROOT: root, NOWADAYS_SKIP_ROLE_PICKER: '1',
     NOWADAYS_NODE_PATH: process.execPath, ND_SHUTDOWN_TEST_MODE: mode,
     ND_SHUTDOWN_TEST_PRELOAD: path.join(tmp, 'backend-probe.cjs') };

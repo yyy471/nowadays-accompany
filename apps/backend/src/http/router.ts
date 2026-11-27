@@ -36,9 +36,17 @@ interface Route {
 
 export class Router {
   private readonly routes: Route[] = [];
+  private readonly allowedOrigins: readonly string[];
   private guard: RouteGuard | null = null;
 
-  constructor(private readonly hostToken?: string) {}
+  constructor(
+    private readonly hostToken?: string,
+    allowedOrigins: readonly string[] | undefined = undefined,
+  ) {
+    this.allowedOrigins = (allowedOrigins ?? []).map((origin) =>
+      origin.trim().replace(/\/+$/, "").toLowerCase(),
+    );
+  }
 
   setGuard(guard: RouteGuard): this {
     this.guard = guard;
@@ -89,8 +97,10 @@ export class Router {
     const origin = request.headers.origin;
     response.setHeader("vary", "Origin");
     if (origin !== undefined) {
-      const local = /^(?:http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?|desk:\/\/bundle|file:\/\/|app:\/\/[a-z0-9.-]*)$/i.test(origin);
-      if (!local) {
+      // 默认只信任桌面壳；file:// 与未显式配置的 localhost 来源一律拒绝。
+      const normalized = origin.trim().replace(/\/+$/, "").toLowerCase();
+      const desktopBundle = /^(?:desk|app):\/\/bundle$/.test(normalized);
+      if (!desktopBundle && !this.allowedOrigins.includes(normalized)) {
         writeError(response, new HttpError(403, "ORIGIN_DENIED", "请求来源不受支持"));
         return;
       }

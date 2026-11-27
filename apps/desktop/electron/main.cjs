@@ -1,6 +1,6 @@
 "use strict";
 
-const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeTheme, net, protocol, shell } = require("electron");
+const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeTheme, net, protocol, safeStorage, shell } = require("electron");
 const { execFile, spawn } = require("node:child_process");
 const fs = require("node:fs");
 const http = require("node:http");
@@ -9,6 +9,7 @@ const { join, resolve } = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { resolveBackendLayout, resolveNodeExecutable } = require("./backend-paths.cjs");
 const { createBackendLog, summarizeBackendFailure } = require("./backend-log.cjs");
+const { resolveManagedMasterKey } = require("./master-key.cjs");
 const { extensionHandler, allowSlotNavigation } = require("./extension-protocol.cjs");
 const { createWindowIntent } = require("./window-intent.cjs");
 
@@ -73,11 +74,21 @@ async function startManagedBackend() {
   const nodeBin = resolveNode24Executable(layout);
   const mainScript = layout.entry;
 
+  // 托管主密钥：优先 DPAPI 密文复用/迁移/生成；失败时安全中止并交由上层提示。
+  let masterKey;
+  try {
+    masterKey = resolveManagedMasterKey({ appRoot, safeStorage });
+  } catch (error) {
+    console.error("backend_master_key_error", error instanceof Error ? error.message : String(error));
+    throw new Error("无法准备本机服务的主密钥。");
+  }
+
   const { promise: started, resolve: resolveStart, reject: rejectStart } = Promise.withResolvers();
   let managed;
   const log = createBackendLog({
     logDirectory: backendLogDirectory(),
     hostToken,
+    extraSecrets: masterKey.masterKeyBase64 ? [masterKey.masterKeyBase64] : [],
     onStdoutLine(line) {
       if (!managed || managed.closed || managed.stopPromise || quitting) return;
       try {
@@ -92,6 +103,7 @@ async function startManagedBackend() {
     }
   });
   canOpenBackendLogs = log.canOpenLogs;
+  log.lifecycle("backend_master_key mode=" + masterKey.mode);
   let child;
   try {
     child = spawn(
@@ -109,7 +121,13 @@ async function startManagedBackend() {
       ],
       {
         cwd: backendRoot,
-        env: { ...process.env, NOWADAYS_HOST_TOKEN: hostToken, NOWADAYS_PI_MCP_ROOT: layout.piMcpRoot, NO_COLOR: "1" },
+        env: {
+          ...process.env,
+          NOWADAYS_HOST_TOKEN: hostToken,
+          ...(masterKey.masterKeyBase64 ? { NOWADAYS_MASTER_KEY: masterKey.masterKeyBase64 } : {}),
+          NOWADAYS_PI_MCP_ROOT: layout.piMcpRoot,
+          NO_COLOR: "1"
+        },
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true
       }

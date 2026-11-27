@@ -196,13 +196,17 @@ for (const mode of ["pi_task_cancel", "role_stop", "task_cancel", "task_finish"]
   });
 }
 
-test("宿主令牌统一保护 API，预检只放行桌面和本地来源", async () => {
+test("宿主令牌统一保护 API，来源默认只放行桌面壳并支持显式白名单", async () => {
   const token = randomUUID();
   const previous = process.env.NOWADAYS_HOST_TOKEN;
+  const previousOrigins = process.env.NOWADAYS_ALLOWED_ORIGINS;
   process.env.NOWADAYS_HOST_TOKEN = token;
+  process.env.NOWADAYS_ALLOWED_ORIGINS = "http://localhost:5173";
   const f = createFixtureWithModel(new ScriptedChatModel([]));
   if (previous === undefined) delete process.env.NOWADAYS_HOST_TOKEN;
   else process.env.NOWADAYS_HOST_TOKEN = previous;
+  if (previousOrigins === undefined) delete process.env.NOWADAYS_ALLOWED_ORIGINS;
+  else process.env.NOWADAYS_ALLOWED_ORIGINS = previousOrigins;
   try {
     const base = "http://127.0.0.1:" + await listen(f.app.server, 0, "127.0.0.1");
     const routes = [["GET", "/v1/roles"], ["GET", "/v1/engineering/settings"], ["PUT", "/v1/engineering/settings"], ["POST", "/v1/engineering/jobs/sample/cancel"],
@@ -212,20 +216,31 @@ test("宿主令牌统一保护 API，预检只放行桌面和本地来源", asyn
         method: method!, headers: value ? { "X-Nowadays-Host-Token": value } : {},
       })).status, 401);
     }
-    const headers = { "X-Nowadays-Host-Token": token, origin: "http://localhost:1234" };
-    const roles = await fetch(base + "/v1/roles", { headers });
-    assert.equal(roles.status, 200);
-    assert.equal(roles.headers.get("access-control-allow-origin"), headers.origin);
+    for (const origin of ["desk://bundle", "app://bundle"]) {
+      const roles = await fetch(base + "/v1/roles", { headers: { "X-Nowadays-Host-Token": token, origin } });
+      assert.equal(roles.status, 200);
+      assert.equal(roles.headers.get("access-control-allow-origin"), origin);
+      const preflight = await fetch(base + "/v1/roles", { method: "OPTIONS", headers: { origin } });
+      assert.equal(preflight.status, 204);
+      assert.equal(preflight.headers.get("access-control-allow-origin"), origin);
+      assert.match(preflight.headers.get("access-control-allow-headers")!, /x-nowadays-host-token/i);
+    }
+    // 显式白名单精确放行，但不放宽其他 localhost 端口。
+    const allowedOrigin = "http://localhost:5173";
+    const allowed = await fetch(base + "/v1/roles", { headers: { "X-Nowadays-Host-Token": token, origin: allowedOrigin } });
+    assert.equal(allowed.status, 200);
+    assert.equal(allowed.headers.get("access-control-allow-origin"), allowedOrigin);
+    const headers = { "X-Nowadays-Host-Token": token, origin: "desk://bundle" };
     const cancel = await fetch(base + "/v1/engineering/jobs/sample/cancel", { method: "POST", headers });
     assert.equal(cancel.status, 409);
     assert.match(await cancel.text(), /PI_JOB_NOT_RUNNING/);
-    const preflight = await fetch(base + "/v1/roles", { method: "OPTIONS", headers: { origin: "app://bundle" } });
-    assert.equal(preflight.status, 204);
-    assert.match(preflight.headers.get("access-control-allow-headers")!, /x-nowadays-host-token/i);
-    for (const method of ["OPTIONS", "POST"]) {
-      const denied = await fetch(base + "/v1/roles", { method, headers: { ...headers, origin: "https://evil.example" } });
-      assert.equal(denied.status, 403);
-      assert.equal(denied.headers.get("access-control-allow-origin"), null);
+    for (const origin of ["http://localhost:9999", "http://127.0.0.1:1234", "file://", "https://evil.example"]) {
+      for (const method of ["OPTIONS", "POST"]) {
+        const denied = await fetch(base + "/v1/roles", { method, headers: { ...headers, origin } });
+        assert.equal(denied.status, 403);
+        assert.match(await denied.text(), /ORIGIN_DENIED/);
+        assert.equal(denied.headers.get("access-control-allow-origin"), null);
+      }
     }
     const leaseOnly = await fetch(base + "/v1/internal/tool-proxy/list", { method: "POST", headers });
     assert.match(await leaseOnly.text(), /PI_LEASE/);

@@ -35,7 +35,7 @@ for (const duringStartup of [true, false]) {
     const child = spawn(process.execPath, [
       ...(duringStartup ? ["--require", preload] : []),
       "--import", "tsx", "src/main.ts", "--app-root", root, "--port", "0", "--watch-stdin",
-    ], { cwd: backendRoot, windowsHide: true, stdio: "pipe" });
+    ], { cwd: backendRoot, windowsHide: true, stdio: "pipe", env: isolatedEnv() });
     const closed = once(child, "close");
     const lines: string[] = [];
     let stderr = "";
@@ -56,5 +56,16 @@ for (const duringStartup of [true, false]) {
     assert.equal(lines.filter(line => line.includes('"event":"listening"')).length, duringStartup ? 0 : 1);
     assert.deepEqual(lines.filter(line => line.includes("shutdown_complete")), ['{"event":"shutdown_complete","source":"stdin"}']);
     assert.throws(() => process.kill(child.pid!, 0), { code: "ESRCH" });
+    // 独立模式生成的会话令牌文件随优雅退出清理。
+    assert.equal(fs.existsSync(path.join(root, "runtime", "session.token")), false);
   });
+}
+
+function isolatedEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.NOWADAYS_HOST_TOKEN;
+  delete env.NOWADAYS_MASTER_KEY;
+  delete env.NOWADAYS_ALLOWED_ORIGINS;
+  delete env.NOWADAYS_APP_ROOT;
+  return env;
 }

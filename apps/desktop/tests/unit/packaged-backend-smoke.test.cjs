@@ -11,6 +11,9 @@ const http = require("node:http");
 const { pathToFileURL } = require("node:url");
 const { setTimeout: delay } = require("node:timers/promises");
 
+const hostToken = require("node:crypto").randomBytes(32).toString("hex");
+const hostHeaders = { "X-Nowadays-Host-Token": hostToken };
+
 const staging = path.resolve(__dirname, "../../build-staging");
 const hasStage = fs.existsSync(staging);
 
@@ -42,7 +45,7 @@ function processOutput(child) {
 }
 
 async function api(base, route, options = {}) {
-  const response = await fetch(base + route, options);
+  const response = await fetch(base + route, { ...options, headers: { ...hostHeaders, ...options.headers } });
   const body = await response.json();
   assert.ok(response.ok, `${route}: ${response.status} ${JSON.stringify(body)}`);
   return body;
@@ -76,7 +79,7 @@ test("脱仓生产包离线启动、对话、扩展与工具链及关停回收",
     for (const file of [node, entry, presets]) assert.ok(fs.existsSync(file), `missing staged asset: ${file}`);
     const start = performance.now();
     child = spawn(node, [entry, "--app-root", appRoot, "--preset-assets-dir", presets, "--port", "0", "--watch-stdin"],
-      { cwd: temp, env: cleanEnv(temp), stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+      { cwd: temp, env: { ...cleanEnv(temp), NOWADAYS_HOST_TOKEN: hostToken }, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     const output = processOutput(child);
     let spawnError;
     child.on("error", error => { spawnError = error; });
@@ -86,7 +89,7 @@ test("脱仓生产包离线启动、对话、扩展与工具链及关停回收",
       return output.events().find(event => event.event === "listening");
     });
     const base = `http://127.0.0.1:${listening.port}`;
-    await waitFor(async () => { try { return (await fetch(base + "/v1/health")).status === 200; } catch { return false; } });
+    await waitFor(async () => { try { return (await fetch(base + "/v1/health", { headers: hostHeaders })).status === 200; } catch { return false; } });
     t.diagnostic(`spawn to first health 200: ${Math.round(performance.now() - start)} ms`);
     assert.ok(copiedNodeProcesses(node).some(item => item.Id === child.pid), "process enumeration must find the live backend at the copied path");
     const roles = await api(base, "/v1/roles");
@@ -98,7 +101,7 @@ test("脱仓生产包离线启动、对话、扩展与工具链及关停回收",
     assert.equal(outfits.items.filter(item => item.isPreset).length, 2);
     const home = outfits.items.find(item => item.presetKey === "default").home;
     assert.ok(home);
-    const image = await fetch(`${base}/v1/roles/${preset.roleId}/appearance/assets/${home.assetId}`);
+    const image = await fetch(`${base}/v1/roles/${preset.roleId}/appearance/assets/${home.assetId}`, { headers: hostHeaders });
     assert.equal(image.status, 200);
     assert.match(image.headers.get("content-type"), /^image\//);
     assert.ok((await image.arrayBuffer()).byteLength > 0);

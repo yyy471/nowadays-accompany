@@ -10,6 +10,8 @@ const { resolveBackendLayout, resolveNodeExecutable } = require('../../electron/
 const { button, configControls, editor, element, setValue, sheet } = require('../helpers/config-page-controls.cjs');
 const { repoRoot: root, desktopDir, backendDir, electronDir, xiachengPortraitFixture, testResultsDir, backendTestResultsDir } = require('../helpers/paths.cjs');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'nowadays-ui-real-'));
+const hostToken = require('node:crypto').randomBytes(32).toString('hex');
+const hostHeaders = { 'X-Nowadays-Host-Token': hostToken };
 const emptyPresets = path.join(temp, 'presets');
 fs.mkdirSync(emptyPresets, { recursive: true });
 const layout = resolveBackendLayout({ isPackaged: false, dirname: electronDir, env: process.env });
@@ -22,10 +24,10 @@ const waiting = new Map(), errors = [];
 function cmd(method, params = {}) { return new Promise((resolve, reject) => { const id = ++nextId; waiting.set(id, { resolve, reject }); ws.send(JSON.stringify({ id, method, params })); }); }
 async function ev(expression) { const result = await cmd('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }); if (result.exceptionDetails) throw Error(JSON.stringify(result.exceptionDetails)); return result.result.value; }
 const { click, pickRole, tab, openRoleRow } = configControls(ev, until);
-async function request(route, options = {}) { const response = await fetch(base + route, options); const body = await response.json(); if (!response.ok) throw Error(`${response.status}: ${JSON.stringify(body)}`); return body; }
+async function request(route, options = {}) { const response = await fetch(base + route, { ...options, headers: { ...hostHeaders, ...options.headers } }); const body = await response.json(); if (!response.ok) throw Error(`${response.status}: ${JSON.stringify(body)}`); return body; }
 const json = body => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 async function run() {
-  backend = spawn(node, ['--import', 'tsx', 'src/main.ts', '--app-root', path.join(temp, 'app'), '--port', '0', '--preset-assets-dir', emptyPresets], { cwd: backendDir, windowsHide: true });
+  backend = spawn(node, ['--import', 'tsx', 'src/main.ts', '--app-root', path.join(temp, 'app'), '--port', '0', '--preset-assets-dir', emptyPresets], { cwd: backendDir, env: { ...process.env, NOWADAYS_HOST_TOKEN: hostToken }, windowsHide: true });
   backend.stdout.on('data', data => backendLog += data); backend.stderr.on('data', data => backendLog += data);
   const port = await until(() => { const match = /"event":"listening","host":"[^"]+","port":(\d+)/.exec(backendLog); return match?.[1]; });
   base = `http://127.0.0.1:${port}`;
@@ -48,7 +50,7 @@ async function run() {
     if (name === '春装') form.append('sprites', new Blob([bytes], { type: 'image/png' }), '微笑.png');
     await request(`/v1/roles/${a.roleId}/appearance/outfits`, { method: 'POST', body: form });
   }
-  const env = { ...process.env, NOWADAYS_BACKEND_URL: base, NOWADAYS_APP_ROOT: path.join(temp, 'desktop'), NOWADAYS_SKIP_ROLE_PICKER: '1' }; delete env.ELECTRON_RUN_AS_NODE;
+  const env = { ...process.env, NOWADAYS_BACKEND_URL: base, NOWADAYS_APP_ROOT: path.join(temp, 'desktop'), NOWADAYS_HOST_TOKEN: hostToken, NOWADAYS_SKIP_ROLE_PICKER: '1' }; delete env.ELECTRON_RUN_AS_NODE;
   electron = spawn(resolveElectronExecutable({ repoRoot: root }), ['--no-sandbox', '--remote-debugging-port=0', `--user-data-dir=${path.join(temp, 'profile')}`, desktopDir], { env, windowsHide: true });
   electron.stdout.on('data', data => electronLog += data); electron.stderr.on('data', data => electronLog += data);
   const debugPort = await until(() => /DevTools listening on ws:\/\/127\.0\.0\.1:(\d+)/.exec(electronLog)?.[1]);
@@ -109,7 +111,7 @@ async function run() {
   await click(button('删除 MCP…'));
   await click(button('删除', sheet));
   await until(() => ev("typeof window.releaseReviewBinding==='function'"));
-  assert.equal((await fetch(base + '/v1/resources/' + mcp.resourceId)).status, 404);
+  assert.equal((await fetch(base + '/v1/resources/' + mcp.resourceId, { headers: hostHeaders })).status, 404);
 
   // v6 的脏纸笺离开会要求放弃。保留真实删除与刷新链路，控制刷新返回时机，
   // 在返回角色页后仍可编辑已读到的模型字段，并观察重读是否只更新未改字段。

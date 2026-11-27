@@ -10,6 +10,13 @@ const FORMAT_VERSION = "v1";
 /** 当前密钥格式版本；写入新密文时随记录保存，便于以后轮换。 */
 export const SECRET_KEY_VERSION = 1;
 
+export interface SecretCipherOptions {
+  /** 由宿主（如 Electron DPAPI）注入的 32 字节主密钥；提供后绝不读写磁盘。 */
+  masterKey?: Buffer | string;
+  /** 回退到磁盘 master.key 时，是否在 Windows 上打印一次安全告警。 */
+  warnFallback?: boolean;
+}
+
 /**
  * 本地密钥盒：用应用目录下的主密钥文件加密模型服务密钥。
  *
@@ -19,8 +26,24 @@ export const SECRET_KEY_VERSION = 1;
  */
 export class SecretCipher {
   private key: Buffer | null = null;
+  private readonly warnFallback: boolean;
+  private warnedFallback = false;
 
-  constructor(private readonly appRoot: string) {}
+  constructor(
+    private readonly appRoot: string,
+    options?: SecretCipherOptions,
+  ) {
+    if (options?.masterKey !== undefined) {
+      const decoded = Buffer.isBuffer(options.masterKey)
+        ? Buffer.from(options.masterKey)
+        : Buffer.from(options.masterKey, "base64");
+      if (decoded.length !== KEY_BYTES) {
+        throw new Error("SECRET_KEY_INVALID");
+      }
+      this.key = decoded;
+    }
+    this.warnFallback = options?.warnFallback === true;
+  }
 
   encrypt(plaintext: string): string {
     const key = this.loadKey();
@@ -68,6 +91,13 @@ export class SecretCipher {
   private loadKey(): Buffer {
     if (this.key !== null) {
       return this.key;
+    }
+    if (this.warnFallback && !this.warnedFallback && process.platform === "win32") {
+      this.warnedFallback = true;
+      console.warn(
+        "SECRET_MASTER_KEY_FILE_FALLBACK",
+        "Windows 独立模式回退本地 master.key 文件，NTFS 权限不隔离同账户其他进程",
+      );
     }
     const directory = path.join(this.appRoot, "secrets");
     const keyPath = path.join(directory, "master.key");

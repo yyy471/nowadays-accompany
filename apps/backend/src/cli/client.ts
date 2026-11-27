@@ -17,10 +17,15 @@ interface BackendErrorBody {
   };
 }
 
+export interface HttpClientOptions {
+  hostToken?: string;
+}
+
 export class HttpClient {
   private readonly baseUrl: string;
+  private readonly hostToken: string | undefined;
 
-  constructor(baseUrl: string) {
+  constructor(baseUrl: string, options: HttpClientOptions = {}) {
     let parsed: URL;
     try {
       parsed = new URL(baseUrl);
@@ -34,6 +39,7 @@ export class HttpClient {
       );
     }
     this.baseUrl = parsed.toString().replace(/\/$/, "");
+    this.hostToken = options.hostToken;
   }
 
   async request(
@@ -41,12 +47,18 @@ export class HttpClient {
     path: string,
     body?: unknown,
   ): Promise<unknown> {
+    const headers: Record<string, string> = {};
+    if (body !== undefined) {
+      headers["content-type"] = "application/json";
+    }
+    if (this.hostToken !== undefined) {
+      headers["X-Nowadays-Host-Token"] = this.hostToken;
+    }
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl}${path}`, {
         method,
-        headers:
-          body === undefined ? {} : { "content-type": "application/json" },
+        headers,
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
     } catch {
@@ -89,7 +101,12 @@ export class HttpClient {
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl}${path}`, {
-        headers: { accept: "text/event-stream" },
+        headers: {
+          accept: "text/event-stream",
+          ...(this.hostToken === undefined
+            ? {}
+            : { "X-Nowadays-Host-Token": this.hostToken }),
+        },
       });
     } catch {
       throw new CliError(

@@ -18,6 +18,10 @@ export interface BackendConfig {
   host: typeof LOOPBACK_HOST;
   watchStdin: boolean;
   hostToken?: string;
+  masterKey?: string;
+  allowedOrigins?: string[];
+  allowUnauthenticated?: boolean;
+  warnFallbackMasterKey?: boolean;
 }
 
 export interface RolePaths {
@@ -39,11 +43,18 @@ export function parseBackendConfig(
   let presetAssetsDir: string | undefined;
   let port = DEFAULT_PORT;
   let watchStdin = false;
+  let hostToken: string | undefined;
+  let allowUnauthenticated = false;
+  const cliOrigins: string[] = [];
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--watch-stdin") {
       watchStdin = true;
+      continue;
+    }
+    if (arg === "--allow-unauthenticated") {
+      allowUnauthenticated = true;
       continue;
     }
     if (arg === "--app-root") {
@@ -73,6 +84,25 @@ export function parseBackendConfig(
       index += 1;
       continue;
     }
+    if (arg === "--host-token") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("HOST_TOKEN_VALUE_REQUIRED");
+      }
+      hostToken = value;
+      index += 1;
+      continue;
+    }
+    if (arg === "--allow-origin") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("ALLOW_ORIGIN_VALUE_REQUIRED");
+      }
+      const normalized = normalizeOrigin(value);
+      if (normalized.length > 0) cliOrigins.push(normalized);
+      index += 1;
+      continue;
+    }
     throw new Error(`UNKNOWN_ARGUMENT:${arg ?? ""}`);
   }
 
@@ -83,6 +113,14 @@ export function parseBackendConfig(
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
     throw new Error(`INVALID_PORT:${port}`);
   }
+
+  const envOrigins = (env.NOWADAYS_ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map(normalizeOrigin)
+    .filter((value) => value.length > 0);
+  const allowedOrigins = [...new Set([...cliOrigins, ...envOrigins])];
+  const resolvedHostToken = hostToken ?? env.NOWADAYS_HOST_TOKEN;
+  const masterKey = env.NOWADAYS_MASTER_KEY?.trim();
 
   const absoluteAppRoot = path.resolve(resolvedAppRoot);
   const dataRoot = path.join(absoluteAppRoot, "data");
@@ -97,8 +135,18 @@ export function parseBackendConfig(
     port,
     host: LOOPBACK_HOST,
     watchStdin,
-    ...(env.NOWADAYS_HOST_TOKEN && { hostToken: env.NOWADAYS_HOST_TOKEN }),
+    allowUnauthenticated,
+    ...(resolvedHostToken !== undefined && resolvedHostToken !== ""
+      ? { hostToken: resolvedHostToken }
+      : {}),
+    ...(masterKey !== undefined && masterKey !== "" ? { masterKey } : {}),
+    ...(allowedOrigins.length > 0 ? { allowedOrigins } : {}),
   };
+}
+
+/** 统一来源写法：去空白并去掉末尾斜杠，便于与请求头精确比较。 */
+function normalizeOrigin(value: string): string {
+  return value.trim().replace(/\/+$/, "");
 }
 
 export function rolePaths(dataRoot: string, roleId: string): RolePaths {

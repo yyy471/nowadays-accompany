@@ -138,7 +138,17 @@ function assembleBackendApp(
   const now = options.now ?? (() => new Date());
   const credentials = new CredentialResolver(
     config.appRoot,
-    new SecretStore(appStore.db, new SecretCipher(config.appRoot)),
+    new SecretStore(
+      appStore.db,
+      new SecretCipher(config.appRoot, {
+        ...(config.masterKey === undefined
+          ? {}
+          : { masterKey: config.masterKey }),
+        ...(config.warnFallbackMasterKey === undefined
+          ? {}
+          : { warnFallback: config.warnFallbackMasterKey }),
+      }),
+    ),
   );
   const roleService = new RoleService(appStore, config.dataRoot, roleAccess);
   const activity = new RoleActivityService(appStore, { now });
@@ -535,7 +545,12 @@ function assembleBackendApp(
     extensions,
     feedEvents,
   };
-  const server = createHttpServer({ version: "0.1.0", services, hostToken: config.hostToken });
+  const server = createHttpServer({
+    version: "0.1.0",
+    services,
+    hostToken: config.hostToken,
+    allowedOrigins: config.allowedOrigins,
+  });
 
   let closing: Promise<void> | undefined;
   const closeRuntime = (): Promise<void> => closing ??= (async () => {

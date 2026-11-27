@@ -14,6 +14,8 @@ const { button, configControls, element, setValue } = require('../helpers/config
 
 const { repoRoot: root, desktopDir, backendDir } = require('../helpers/paths.cjs');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'nowadays-token-usage-e2e-'));
+const hostToken = require('node:crypto').randomBytes(32).toString('hex');
+const hostHeaders = { 'X-Nowadays-Host-Token': hostToken };
 const emptyPresets = path.join(temp, 'presets');
 fs.mkdirSync(emptyPresets, { recursive: true });
 const node = process.execPath;
@@ -64,7 +66,7 @@ async function ev(expression) {
 const { click, tab } = configControls(ev, until);
 
 async function request(route, options = {}) {
-  const response = await fetch(base + route, options);
+  const response = await fetch(base + route, { ...options, headers: { ...hostHeaders, ...options.headers } });
   const body = await response.json();
   if (!response.ok) {
     throw new Error(`${response.status}: ${JSON.stringify(body)}`);
@@ -153,7 +155,7 @@ async function run() {
   backend = spawn(
     node,
     ['--import', 'tsx', 'src/main.ts', '--app-root', path.join(temp, 'app'), '--port', '0', '--preset-assets-dir', emptyPresets],
-    { cwd: backendDir, windowsHide: true },
+    { cwd: backendDir, env: { ...process.env, NOWADAYS_HOST_TOKEN: hostToken }, windowsHide: true },
   );
   backend.stdout.on('data', (data) => {
     backendLog += data;
@@ -257,6 +259,7 @@ async function run() {
     ...process.env,
     NOWADAYS_BACKEND_URL: base,
     NOWADAYS_APP_ROOT: path.join(temp, 'desktop'),
+    NOWADAYS_HOST_TOKEN: hostToken,
     NOWADAYS_SKIP_ROLE_PICKER: '1',
   };
   delete env.ELECTRON_RUN_AS_NODE;

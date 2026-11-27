@@ -17,6 +17,8 @@ const { resolveElectronExecutableInfo } = require('../helpers/electron-executabl
 
 const { repoRoot: root, desktopDir, backendDir, xiachengPortraitFixture, testResultsDir } = require('../helpers/paths.cjs');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'nowadays-p3-entry-'));
+const hostToken = require('node:crypto').randomBytes(32).toString('hex');
+const hostHeaders = { 'X-Nowadays-Host-Token': hostToken };
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(fn, label = 'condition', timeoutMs = 30000) {
@@ -122,6 +124,7 @@ async function checkLayout(page) {
 async function run() {
   backend = spawn(process.execPath, ['--import', 'tsx', 'src/main.ts', '--app-root', path.join(temp, 'app'), '--port', '0'], {
     cwd: backendDir,
+    env: { ...process.env, NOWADAYS_HOST_TOKEN: hostToken },
     windowsHide: true,
   });
   backend.stdout.on('data', data => backendLog += data);
@@ -130,7 +133,7 @@ async function run() {
   base = `http://127.0.0.1:${port}`;
 
   // 冷启动：不设置 NOWADAYS_SKIP_ROLE_PICKER，验证入口页真实出现。
-  const env = { ...process.env, NOWADAYS_BACKEND_URL: base, NOWADAYS_APP_ROOT: path.join(temp, 'desktop') };
+  const env = { ...process.env, NOWADAYS_BACKEND_URL: base, NOWADAYS_APP_ROOT: path.join(temp, 'desktop'), NOWADAYS_HOST_TOKEN: hostToken };
   delete env.NOWADAYS_SKIP_ROLE_PICKER;
   delete env.ELECTRON_RUN_AS_NODE;
   const electronInfo = resolveElectronExecutableInfo({ repoRoot: root });
@@ -258,8 +261,8 @@ async function run() {
   await until(() => ev(`!${element(sheet)}`), 'outfit-saved');
   await openSheet(element(editor + ' .config-outfit-card'), '编辑服饰');
   await until(() => ev(`${assetName}?.value === '雨后立绘'`), 'asset-name-persisted');
-  const roleId = (await (await fetch(`${base}/v1/roles`)).json()).items.find(role => role.builtinKey === 'xiacheng').roleId;
-  const outfits = async () => (await (await fetch(`${base}/v1/roles/${roleId}/appearance/outfits`)).json()).items;
+  const roleId = (await (await fetch(`${base}/v1/roles`, { headers: hostHeaders })).json()).items.find(role => role.builtinKey === 'xiacheng').roleId;
+  const outfits = async () => (await (await fetch(`${base}/v1/roles/${roleId}/appearance/outfits`, { headers: hostHeaders })).json()).items;
   const outfit = (await outfits()).find(item => item.home?.displayName === '雨后立绘');
   assert.ok(outfit?.sprites.length);
   const readOutfit = async () => (await outfits()).find(item => item.outfitId === outfit.outfitId);
@@ -296,7 +299,7 @@ async function run() {
   assert.equal(plateName, '岚', '关系页应停在选角页选定的角色上');
 
   for (let i = 0; i < 12; i++) {
-    const response = await fetch(base + '/v1/roles', { method: 'POST', headers: {'Content-Type':'application/json'},
+    const response = await fetch(base + '/v1/roles', { method: 'POST', headers: { ...hostHeaders, 'Content-Type':'application/json'},
       body: JSON.stringify({ displayName: 'ArchiveKeeperWithAnUnbrokenName' + i, definition: {text:'选角布局测试'} }) });
     assert.ok(response.ok, '创建长名称测试角色');
   }

@@ -9,11 +9,15 @@ const LOG_NAME = "backend-latest.log";
 const AUTHORIZATION = /((?<![\w-])["']?(?:proxy-)?authorization["']?[ \t]*[:=][ \t]*)(?:"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)|[^"'].*)/gi;
 const SECRET_FIELD = /((?<![\w-])["']?(?:(?:[\w-]*[-_])?api[ _-]?key|[\w-]*token|[\w-]*password|[\w-]*secret)["']?[ \t]*[:=][ \t]*)(?:"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)|[^\s"'<>;,}\]]+)/gi;
 
-function redact(line, hostToken) {
+function redact(line, hostToken, extraSecrets = []) {
   const safe = line.replace(AUTHORIZATION, "$1[REDACTED]")
     .replace(SECRET_FIELD, "$1[REDACTED]")
     .replace(/\bBearer[ \t]+[^\s"'<>;,}\]]+/gi, "Bearer [REDACTED]");
-  return hostToken ? safe.replaceAll(hostToken, "[REDACTED]") : safe;
+  let result = safe;
+  for (const secret of [hostToken, ...extraSecrets]) {
+    if (typeof secret === "string" && secret) result = result.replaceAll(secret, "[REDACTED]");
+  }
+  return result;
 }
 
 // 先拼成完整 UTF-8 文本行，再脱敏和识别启动消息。
@@ -43,7 +47,7 @@ function rotate(latest) {
   }
 }
 
-function createBackendLog({ logDirectory, hostToken, onStdoutLine }) {
+function createBackendLog({ logDirectory, hostToken, extraSecrets = [], onStdoutLine }) {
   let fd;
   let canOpenLogs = false;
   try {
@@ -62,7 +66,7 @@ function createBackendLog({ logDirectory, hostToken, onStdoutLine }) {
     fd = undefined;
   }
   function record(source, line) {
-    const safe = redact(line, hostToken);
+    const safe = redact(line, hostToken, extraSecrets);
     if (source === "stderr") {
       const bytes = Buffer.from(safe + "\n");
       tail = bytes.length >= TAIL_BYTES ? Buffer.from(bytes.subarray(-TAIL_BYTES)) :

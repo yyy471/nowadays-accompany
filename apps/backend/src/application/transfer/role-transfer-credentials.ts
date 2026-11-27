@@ -97,11 +97,21 @@ export function installCredentialValues(config: BackendConfig, app: Database.Dat
   if (localKey) {
     values.add(fs.readFileSync(keyPath, "utf8").trim());
   }
+  if (config.masterKey) {
+    values.add(config.masterKey);
+  }
+  const hasKey = Boolean(localKey || config.masterKey);
   if (hasTable.get("resource_secrets")) {
-    const cipher = new SecretCipher(config.appRoot);
+    // 桌面 DPAPI 模式使用宿主注入的主密钥，不依赖磁盘上的明文 master.key。
+    const cipher = hasKey
+      ? new SecretCipher(
+          config.appRoot,
+          config.masterKey ? { masterKey: config.masterKey } : undefined,
+        )
+      : null;
     for (const row of app.prepare("SELECT ciphertext FROM resource_secrets").iterate() as Iterable<{ ciphertext: string }>) {
       values.add(row.ciphertext);
-      const plain = localKey ? cipher.decrypt(row.ciphertext) : null;
+      const plain = cipher?.decrypt(row.ciphertext) ?? null;
       if (plain === null) throw new Error("ROLE_TRANSFER_SOURCE_CREDENTIAL_UNAVAILABLE");
       values.add(plain);
     }

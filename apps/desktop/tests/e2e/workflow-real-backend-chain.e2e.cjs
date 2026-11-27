@@ -24,6 +24,8 @@ const { repoRoot: root, desktopDir, backendDir, xiachengPortraitFixture, testRes
 const screenshotDir = path.join(testResultsDir, 'full-chain-review');
 fs.mkdirSync(screenshotDir, { recursive: true });
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'nowadays-chain-'));
+const hostToken = require('node:crypto').randomBytes(32).toString('hex');
+const hostHeaders = { 'X-Nowadays-Host-Token': hostToken };
 const imagePath = xiachengPortraitFixture;
 const pngBytes = fs.readFileSync(imagePath);
 
@@ -393,7 +395,7 @@ async function sceneActionStyles() {
   })()`);
 }
 async function request(route, options = {}) {
-  const response = await fetch(base + route, options);
+  const response = await fetch(base + route, { ...options, headers: { ...hostHeaders, ...options.headers } });
   const body = await response.json();
   if (!response.ok) throw Error(`${response.status} ${route}: ${JSON.stringify(body)}`);
   return body;
@@ -458,6 +460,7 @@ async function run() {
 
   backend = spawn(process.execPath, ['--import', 'tsx', 'src/main.ts', '--app-root', path.join(temp, 'app'), '--port', '0'], {
     cwd: backendDir,
+    env: { ...process.env, NOWADAYS_HOST_TOKEN: hostToken },
     windowsHide: true,
   });
   backend.stdout.on('data', d => backendLog += d);
@@ -487,7 +490,7 @@ async function run() {
   const outfitB = await request(`/v1/roles/${roleB.roleId}/appearance/outfits`, { method: 'POST', body: outfitFormB });
 
   // 这些脚本直接验证工作区页面，跳过冷启动选角页；选角页本身由 pack3-entry 单测覆盖。
-  const env = { ...process.env, NOWADAYS_BACKEND_URL: base, NOWADAYS_APP_ROOT: path.join(temp, 'desktop'), NOWADAYS_SKIP_ROLE_PICKER: '1' };
+  const env = { ...process.env, NOWADAYS_BACKEND_URL: base, NOWADAYS_APP_ROOT: path.join(temp, 'desktop'), NOWADAYS_HOST_TOKEN: hostToken, NOWADAYS_SKIP_ROLE_PICKER: '1' };
   delete env.ELECTRON_RUN_AS_NODE;
   const electronInfo = resolveElectronExecutableInfo({ repoRoot: root });
   electron = spawn(electronInfo.executable, [

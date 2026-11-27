@@ -26,7 +26,7 @@
 | [BUG-07](#bug-07-扩展-sse-瞬断直接清空列表销毁全部微页且-backendbaseurl-永久缓存) | 运行时 Bug | **P1** | `use-extensions.ts` `onerror` 清空 `items` 销毁全部 iframe；后端换端口后 `backendBaseUrl` 永不刷新 | 否 | 已修复，R5 精准复验通过 |
 | [BUG-08](#bug-08-windows-下命令与-skill-脚本超时只杀父进程不回收进程树) | 运行时 Bug | **P1** | `command_run` 与 `skill_run` 超时仅 `child.kill()`，未复用进程树回收，孙进程泄漏为孤儿 | 否 | 已修复，独立复验通过 |
 | [SEC-03](#sec-03-热扩展子进程未限制网络访问且-kv-存盘无容量与限频保护) | 安全边界 | **P1** | Node `--permission` 不拦网络；KV 同步全量覆写 `manifest.json` 无上限 | 否 | 已修复，R7a 精准复验通过 |
-| [SEC-04](#sec-04-windows-静态密钥文件权限失效与独立模式-http-鉴权cors-过宽) | 安全边界 | **P1** | `0o600` 在 NTFS 失效且未接系统密钥链；CORS 放行全部 `localhost:*` / `file://` | 需确认（`DL-121`） | `[ ]` 待排查 |
+| [SEC-04](#sec-04-windows-静态密钥文件权限失效与独立模式-http-鉴权cors-过宽) | 安全边界 | **P1** | `0o600` 在 NTFS 失效且未接系统密钥链；CORS 放行全部 `localhost:*` / `file://` | 方案 A 已确认（`DL-121`） | 已修复，R7b 精准复验通过 |
 | [UX-01](#ux-01-几乎全部角色配置写入都强制先停机把并发锁转嫁给用户) | 操作体验 | **P1** | 改世界书、传表情图、调额度、给服饰改名均要求角色先 `stopped` | **是**（`DL-148`） | `[ ]` 待排查 |
 | [UX-02](#ux-02-首次上手与后台工程能力存在冷启动悬崖) | 操作体验 | **P1** | 无开箱引导；Pi 工程池默认空且隐藏工具，用户根本发现不了核心功能 | 需确认（`DL-201`） | `[ ]` 待排查 |
 | [UX-03](#ux-03-后台工程pi缺乏历史记录与失败过程日志) | 功能短板 | **P1** | 任务结束胶囊即消失，失败/超时后无法查看改了什么、死在哪步 | 否（增只读视图） | 已修复，R6 精准复验通过 |
@@ -331,7 +331,11 @@ Windows、仓库 Node 24.22.2、离线夹具下，主审核人独立执行以下
 
 ### SEC-04 Windows 静态密钥文件权限失效与独立模式 HTTP 鉴权/CORS 过宽
 
-- **优先级**：P1 · **状态**：`[ ]` 待排查 · **决策影响**：涉及独立 CLI/API 使用方式（关联 [DL-121](../../161-digital-life-direction-decisions.md#dl-121-本地客户端通信http-api-与-ssecli-和桌面共用入口)）
+- **优先级**：P1 · **状态**：已修复，R7b 精准复验通过（方案 A，用户于 2026-11-27 确认） · **决策影响**：已补充登记至 [DL-121](../../161-digital-life-direction-decisions.md#dl-121-本地客户端通信http-api-与-ssecli-和桌面共用入口)
+- **R7b 实施与复验（2026-11-27）**：
+  - **桌面态 DPAPI 主密钥封装**：新增 `apps/desktop/electron/master-key.cjs`（并登记入 `apps/desktop/package.json` 打包清单），主进程优先调用 Electron `safeStorage`（Windows DPAPI）管理 `<appRoot>/secrets/master.key.dpapi`（首次自动迁移并校验清除旧明文 `master.key`，加密失败保留旧明文），通过 `NOWADAYS_MASTER_KEY` 注入后端内存并接入 `backend-log.cjs` 脱敏；后端 `main.ts` 解析后立即清除 `NOWADAYS_HOST_TOKEN`/`NOWADAYS_MASTER_KEY` 环境变量，`SecretCipher` 与角色迁移 `installCredentialValues` 均支持注入主密钥不落明文文件，Windows 独立 CLI 回退本地文件时打印 `SECRET_MASTER_KEY_FILE_FALLBACK` 告警；
+  - **CORS 收紧与独立模式默认令牌**：`Router` 默认仅放行 `desk://bundle` / `app://bundle`，拒绝 `file://` 与未显式配置的 `http://localhost:*` / `127.0.0.1:*`（返回 `403 ORIGIN_DENIED`），支持 `--allow-origin` / `NOWADAYS_ALLOWED_ORIGINS` 精确白名单；独立模式 `main.ts` 默认生成 32 字节随机令牌原子写入 `<appRoot>/runtime/session.token`（退出仅删本实例写入的令牌，不打印到 stdout），`cli.ts`/`HttpClient` 支持 `--token`/`NOWADAYS_HOST_TOKEN`/`--app-root` 自动读取；渲染层 `hostHeaders` 已在 R8a 彻底移除；
+  - **精准复验（Node 24.22.2）**：后端 `typecheck` + 25/25 专项测试（`sec-04-security` 6/6、`pi-lease` 6/6、`api-cli-smoke`、`managed-shutdown` 3/3、`role-transfer` 9/9）、桌面壳 20/20 单测（`master-key` 6/6、`backend-log` 3/3、`preload-boundary` 3/3、`pack3-packaging` 8/8）、Electron 39 实窗 E2E `managed-backend-shutdown`（验证真实 Windows DPAPI 迁移 + 跨重启解密模型密钥）、`pack3-entry`、`settings-auto-reload` 3/3 全通过。
 - **证据位置**：
   - [apps/backend/src/security/secret-cipher.ts](../../../apps/backend/src/security/secret-cipher.ts#L72-L85)
   - [apps/backend/src/http/router.ts](../../../apps/backend/src/http/router.ts#L91-L120)

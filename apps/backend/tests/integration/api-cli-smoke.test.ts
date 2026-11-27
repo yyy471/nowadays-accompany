@@ -27,6 +27,19 @@ function tempRoot(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "nowadays-p1-05-"));
 }
 
+/** 独立模式由后端生成会话令牌，测试进程不继承任何宿主令牌。 */
+function isolatedEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.NOWADAYS_HOST_TOKEN;
+  delete env.NOWADAYS_MASTER_KEY;
+  delete env.NOWADAYS_ALLOWED_ORIGINS;
+  delete env.NOWADAYS_APP_ROOT;
+  return env;
+}
+
+/** CLI 通过 --app-root 自动读取本次后端会话令牌。 */
+let cliAppRoot: string | undefined;
+
 function startBackend(root: string): Promise<BackendProcess> {
   const emptyPresets = path.join(root, "empty-presets");
   fs.mkdirSync(emptyPresets, { recursive: true });
@@ -44,7 +57,7 @@ function startBackend(root: string): Promise<BackendProcess> {
         "--port",
         "0",
       ],
-      { cwd: backendRoot, env: process.env, stdio: ["ignore", "pipe", "pipe"] },
+      { cwd: backendRoot, env: isolatedEnv(), stdio: ["ignore", "pipe", "pipe"] },
     );
     let stdout = "";
     let stderr = "";
@@ -128,8 +141,16 @@ function runCli(baseUrl: string, args: readonly string[]): Promise<CliResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(
       process.execPath,
-      ["--import", "tsx", cliEntry, "--base-url", baseUrl, ...args],
-      { cwd: backendRoot, env: process.env, stdio: ["ignore", "pipe", "pipe"] },
+      [
+        "--import",
+        "tsx",
+        cliEntry,
+        "--base-url",
+        baseUrl,
+        ...(cliAppRoot === undefined ? [] : ["--app-root", cliAppRoot]),
+        ...args,
+      ],
+      { cwd: backendRoot, env: isolatedEnv(), stdio: ["ignore", "pipe", "pipe"] },
     );
     let stdout = "";
     let stderr = "";
@@ -229,9 +250,16 @@ function countRoleDirs(root: string): number {
 test("independent CLI completes the P1 flow through the backend process", async () => {
   const root = tempRoot();
   let backend: BackendProcess | undefined;
+  cliAppRoot = root;
   try {
     backend = await startBackend(root);
     let baseUrl = `http://127.0.0.1:${backend.port}`;
+
+    // 独立模式默认生成 runtime/session.token；无令牌直连 API 必须被拒绝。
+    assert.ok(fs.existsSync(path.join(root, "runtime", "session.token")));
+    const unauthorized = await fetch(`${baseUrl}/v1/roles`);
+    assert.equal(unauthorized.status, 401);
+    assert.match(await unauthorized.text(), /HOST_TOKEN_INVALID/);
 
     const health = ok(await runCli(baseUrl, ["health"]));
     assert.equal(health.status, "ok");
@@ -501,6 +529,7 @@ test("independent CLI completes the P1 flow through the backend process", async 
     assert.equal(cliError(offline), "BACKEND_UNREACHABLE");
     assert.equal(countRoleDirs(root), rolesBefore);
   } finally {
+    cliAppRoot = undefined;
     if (backend) {
       await stopBackend(backend);
     }
