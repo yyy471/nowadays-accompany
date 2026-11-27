@@ -11,6 +11,8 @@ import { toolScopeLabel } from './tool-scope';
 import type { RoleFaceImage } from '../components/RoleFace';
 import { catalogForRole, catalogStatus, entries, resolveDesk, slotId, type DeskPosition } from './desk';
 import { hasExtensionFault } from './repair-request';
+import { resolveEngineeringPoolHint } from './engineering-hint';
+import type { EngineeringSettings } from '../components/config/engineering-settings';
 import '../styles/extensions.css';
 
 interface RepairTarget {
@@ -127,14 +129,25 @@ function RecentJobs({ onOpenWindow }: { onOpenWindow?: (target: { roleId: string
   </Disclosure>;
 }
 
-export function ExtensionsPage({ state, roles, seat, image, initial, onPosition, onIdea, onOpenWindow }: {
+export function ExtensionsPage({ state, roles, seat, image, initial, onPosition, onIdea, onOpenWindow, onOpenEngineering }: {
   state: ExtensionState; roles: RoleListItem[]; seat?: RoleListItem; image?: RoleFaceImage; initial?: DeskPosition;
   onPosition: (position: DeskPosition) => void; onIdea: () => void;
   onOpenWindow?: (target: { roleId: string; windowId: string }) => void;
+  onOpenEngineering?: () => void;
 }) {
   const [position, setPosition] = useState(initial);
   const [selection, setSelection] = useState('');
   const [roleId, setRoleId] = useState('');
+  const [engineeringSettings, setEngineeringSettings] = useState<EngineeringSettings | null>(null);
+  // 后台工程池提示只做静默旁路读取，读取失败不影响扩展页正常浏览。
+  useEffect(() => {
+    const request = new AbortController();
+    api<EngineeringSettings>('/v1/engineering/settings', { signal: request.signal })
+      .then(result => { if (!request.signal.aborted) setEngineeringSettings(result); })
+      .catch(() => { /* 读取失败时保持无提示。 */ });
+    return () => request.abort();
+  }, []);
+  const poolHint = resolveEngineeringPoolHint(engineeringSettings);
   const restore = useRef(initial);
   const { pages, widgets, page, view, target } = resolveDesk(state.items, position, !!restore.current);
   const selected = pages.find(s => slotId(s.extension, s.entry) === selection) ?? page;
@@ -190,6 +203,13 @@ export function ExtensionsPage({ state, roles, seat, image, initial, onPosition,
           {catalog.length ? <ul>{catalog.map(item => <ExtensionRow key={item.extId} item={item} roles={roles} seat={seat}
             repairs={state.repairs}/>)}</ul> : <p>此角色暂无可用工具。</p>}
         </>}
+        {poolHint && <aside className="extension-pool-hint" data-kind={poolHint.kind} aria-label="工程模型池状态提示">
+          <div className="extension-pool-hint-copy">
+            <strong>{poolHint.title}</strong>
+            <p>{poolHint.detail}</p>
+          </div>
+          {onOpenEngineering && <Button size="sm" variant="default" onClick={onOpenEngineering}>{poolHint.actionLabel}</Button>}
+        </aside>}
         <RecentJobs onOpenWindow={onOpenWindow}/>
       </section>
       {hasSlots && <div className="extension-slots">

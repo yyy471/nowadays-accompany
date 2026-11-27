@@ -202,3 +202,27 @@ iframe[data-extension-slot="widget"], iframe[data-extension-slot="overlay"] { he
   font-family: var(--nd-semantic-font-code);
   font-size: var(--nd-semantic-type-caption-size);
 }
+
+.extension-pool-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--nd-semantic-space-icon-label);
+  padding: var(--nd-semantic-space-field-hint) var(--nd-semantic-space-icon-label);
+  border: 1px solid var(--nd-semantic-color-line-decorative);
+  border-inline-start: 3px solid var(--nd-semantic-color-warning);
+  border-radius: var(--nd-semantic-radius-action);
+  background: color-mix(in srgb, var(--nd-semantic-color-warning) 8%, var(--nd-semantic-color-surface));
+  min-width: 0;
+}
+.extension-pool-hint-copy { display: grid; min-width: 0; }
+.extension-pool-hint-copy strong {
+  font-family: var(--nd-semantic-font-heading);
+  font-size: var(--nd-semantic-type-caption-size);
+  line-height: var(--nd-semantic-type-caption-line);
+}
+.extension-pool-hint-copy p {
+  font-size: var(--nd-semantic-type-caption-size);
+  line-height: var(--nd-semantic-type-caption-line);
+}

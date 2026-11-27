@@ -72,7 +72,7 @@ function savedModelNameOf(resource: Resource): string {
 type Binding = { capability: string; resourceId: string; modelName: string | null; enabled: boolean };
 type Activity = { roleId: string; state: 'active' | 'stopping' | 'stopped'; running: boolean; initStatus: string };
 type RoleSection = 'profile' | 'look' | 'models' | 'ext' | 'quota' | 'done';
-type SettingsSection = 'model' | 'mcp' | 'skill' | 'roles' | 'usage' | 'local' | 'engineering';
+export type SettingsSection = 'model' | 'mcp' | 'skill' | 'roles' | 'usage' | 'local' | 'engineering';
 type OpenSettingsOptions = {
   modelKind?: 'model' | 'voice' | 'image';
   resourceId?: string;
@@ -88,7 +88,8 @@ const modelAdapterLabel = (adapter: string) => MODEL_ADAPTER_OPTIONS.find(option
 type RoleDirty = { profile: boolean; models: boolean; voice: boolean; image: boolean; ext: boolean; quota: boolean };
 type RoleEditorState = { dirty: RoleDirty; busy: boolean; profileCount: number; discardProfile: () => void; discard: () => void };
 export type WorkspaceRequest = { kind: 'create' } | { kind: 'section'; section: 'models'; roleId: string }
-  | { kind: 'section'; section: 'ext'; roleId: string; resourceId: string };
+  | { kind: 'section'; section: 'ext'; roleId: string; resourceId: string }
+  | { kind: 'settings'; section: SettingsSection; modelKind?: 'model' | 'voice' | 'image' };
 export type ConfigNavigationGuard = (next: string, proceed: () => void) => void;
 type Props = { page: string; roles: RoleListItem[]; currentId: string; roleListError: string; retryingRoles: boolean; onRetryRoles: () => void; onRoleDeleted: (id: string) => void; onRefresh: () => Promise<void>; onNavigate: (page: string) => void; navigationGuard?: MutableRefObject<ConfigNavigationGuard | null>; footerLeft?: HTMLElement | null; footerRight?: HTMLElement | null; workspaceRequest?: (WorkspaceRequest & { key: number }) | null; onConfigureResource: (roleId: string, resourceId: string) => void; onWorkspaceRequestHandled?: (key: number) => void; onStartConversation?: (roleId: string) => void };
 
@@ -280,8 +281,22 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
   }, [roles, currentId, editId]);
   useEffect(() => { if (editId) setVisited(previous => previous.includes(editId) ? previous : [...previous, editId]); }, [editId]);
   useEffect(() => {
-    if (!workspaceRequest || page !== 'role-config') return;
+    if (!workspaceRequest) return;
     if (handledWorkspaceKey.current === workspaceRequest.key) return;
+    if (workspaceRequest.kind === 'settings') {
+      if (page !== 'settings') return;
+      handledWorkspaceKey.current = workspaceRequest.key;
+      setNewModel(false);
+      setNewExtension(null);
+      setNewVoiceService(false);
+      setNewImageService(false);
+      if (workspaceRequest.modelKind) setModelKind(workspaceRequest.modelKind);
+      setSettingsSection(workspaceRequest.section);
+      focusSectionHeadingSoon();
+      onWorkspaceRequestHandled?.(workspaceRequest.key);
+      return;
+    }
+    if (page !== 'role-config') return;
     if (workspaceRequest.kind === 'create') {
       handledWorkspaceKey.current = workspaceRequest.key;
       sheetController.current?.open({ id: 'create-role', title: '新建角色', shape: 'full' });

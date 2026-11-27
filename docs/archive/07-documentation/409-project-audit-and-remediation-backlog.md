@@ -28,7 +28,7 @@
 | [SEC-03](#sec-03-热扩展子进程未限制网络访问且-kv-存盘无容量与限频保护) | 安全边界 | **P1** | Node `--permission` 不拦网络；KV 同步全量覆写 `manifest.json` 无上限 | 否 | 已修复，R7a 精准复验通过 |
 | [SEC-04](#sec-04-windows-静态密钥文件权限失效与独立模式-http-鉴权cors-过宽) | 安全边界 | **P1** | `0o600` 在 NTFS 失效且未接系统密钥链；CORS 放行全部 `localhost:*` / `file://` | 方案 A 已确认（`DL-121`） | 已修复，R7b 精准复验通过 |
 | [UX-01](#ux-01-几乎全部角色配置写入都强制先停机把并发锁转嫁给用户) | 操作体验 | **P1** | 改世界书、传表情图、调额度、给服饰改名均要求角色先 `stopped` | 方案 A 已确认（`DL-148`） | 已修复，R9b 精准复验通过 |
-| [UX-02](#ux-02-首次上手与后台工程能力存在冷启动悬崖) | 操作体验 | **P1** | 无开箱引导；Pi 工程池默认空且隐藏工具，用户根本发现不了核心功能 | 需确认（`DL-201`） | `[ ]` 待排查 |
+| [UX-02](#ux-02-首次上手与后台工程能力存在冷启动悬崖) | 操作体验 | **P1** | 无开箱引导；Pi 工程池默认空且隐藏工具，用户根本发现不了核心功能 | 方案 B 已确认（`DL-201`） | 已修复，R10 精准复验通过 |
 | [UX-03](#ux-03-后台工程pi缺乏历史记录与失败过程日志) | 功能短板 | **P1** | 任务结束胶囊即消失，失败/超时后无法查看改了什么、死在哪步 | 否（增只读视图） | 已修复，R6 精准复验通过 |
 | [UX-04](#ux-04-设置页两处操作仍使用阻塞式原生-windowconfirm) | 视觉/交互 | **P1** | `Settings.tsx` 离开草稿拦截与结束任务确认弹出原生 `window.confirm` | 否 | 已修复，R5 精准复验通过 |
 | [DELIV-02](#deliv-02-真实云端模型多模态与媒体服务全链路联调长期缺位) | 质量/验证 | **P1** | 624+ 离线测试掩盖真实模型、长上下文、TTS、ComfyUI 实机并发缺陷 | 否 | `[ ]` 待排查 |
@@ -466,7 +466,12 @@ Windows、仓库 Node 24.22.2、离线夹具下，主审核人独立执行以下
 
 ### UX-02 首次上手与后台工程能力存在“冷启动悬崖”
 
-- **优先级**：P1 · **状态**：`[ ]` 待排查 · **决策影响**：涉及空工程池展示策略（关联 [DL-201](../../161-digital-life-direction-decisions.md#dl-201-pi-使用独立工程模型消耗池)）
+- **优先级**：P1 · **状态**：已修复，R10 精准复验通过（方案 B，用户于 2026-11-27 确认） · **决策影响**：已补充登记至 [DL-201](../../161-digital-life-direction-decisions.md#dl-201-pi-使用独立工程模型消耗池)
+- **R10 实施与复验（2026-11-27）**：
+  - **跨页分区直达**：[Settings.tsx](../../../apps/desktop/renderer/src/pages/Settings.tsx) 导出 `SettingsSection` 并扩展 `WorkspaceRequest` 支持 `{ kind: 'settings'; section; modelKind? }`，支持一键直达「设置 → 模型」与「设置 → 工程」；
+  - **首页非阻塞起手三步**：新增纯逻辑 [onboarding-steps.ts](../../../apps/desktop/renderer/src/components/home/onboarding-steps.ts)，在 [Home.tsx](../../../apps/desktop/renderer/src/pages/Home.tsx) 与 [home.css](../../../apps/desktop/renderer/src/styles/home.css) 静默探测模型服务、当前角色对话绑定（兼容 `chat_model`/`chat`）与运行态，在 `.home-primary-actions` 下方展示紧凑「起手三步」卡片（添加模型服务 → 为角色绑定对话模型并启用 → 开始对话），配齐后自动收起；
+  - **扩展页工程池空态提示（方案 B）**：新增 [engineering-hint.ts](../../../apps/desktop/renderer/src/extensions/engineering-hint.ts)，在 [ExtensionViews.tsx](../../../apps/desktop/renderer/src/extensions/ExtensionViews.tsx) 与 [extensions.css](../../../apps/desktop/renderer/src/styles/extensions.css) 静默读取 `/v1/engineering/settings`，当工程池为空或工程未开启时于目录区展示独立 `.extension-pool-hint` 提示与直达「设置 → 工程」按钮，保留 `.extension-invitation` 原有邀请笺结构，严格维持独立工程池不增一键复用按钮；
+  - **精准复验（Node 24.22.2）**：渲染器 `npm run check`（37 CSS 0 违规）+ `onboarding-steps.test.ts` **9/9 通过** + 生产构建，以及 Electron 39 实窗 E2E `pack3-entry`（720×540～1440×840 全视口零裁切零溢出，截图目检通过）、`extension-ui-slots`、`dialogue-layout` **3/3 通过**。
 - **证据位置**：
   - [apps/backend/src/mcp/managed-pi.ts](../../../apps/backend/src/mcp/managed-pi.ts#L47-L50)（工程池为空时直接隐藏全部 `pi_task_*` 工具）
   - [apps/desktop/renderer/src/pages/Settings.tsx](../../../apps/desktop/renderer/src/pages/Settings.tsx)（配置项分散在角色 6 分区 + 全局 7 分区）
