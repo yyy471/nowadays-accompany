@@ -37,7 +37,7 @@
 | [ARCH-03](#arch-03-记忆检索纯依赖字面-fts5-trigram缺乏语义召回能力) | 核心能力 | **P2** | 换个同义说法即召回失效，制约精细记忆模型的实际效果 | 需确认（`DL-51`） | `[ ]` 待排查 |
 | [ARCH-04](#arch-04-启动期同步-ipc-阻塞令牌暴露给渲染层与维护期隐性-on-存储扫描) | 性能/架构 | **P2** | `preload` 同步 `sendSync` 并暴露 `hostHeaders`；`MediaMaintenance` 逐角色开关双库 | 否 | 已修复，R8a 精准复验通过 |
 | [UX-05](#ux-05-单角色迁移与角色工作空间笔记缺少桌面图形入口) | 功能短板 | **P2** | 角色导出/导入停留在 CLI；用户需手工翻数据目录看角色 Markdown 笔记 | 否 | 已修复，R11 精准复验通过 |
-| [UX-06](#ux-06-多窗口跳转丢失上下文与主角色自改权限割裂) | 操作体验 | **P2** | 对话页跳设置返回后丢子窗口；主角色能管别人却改不了自己任何配置 | 部分需确认（`DL-159`） | 多窗口记忆已修复（R9a）；自改待确认 |
+| [UX-06](#ux-06-多窗口跳转丢失上下文与主角色自改权限割裂) | 操作体验 | **P2** | 对话页跳设置返回后丢子窗口；主角色能管别人却改不了自己任何配置 | 方案 A 已确认（`DL-159`） | 已修复，R9a + R13 精准复验通过 |
 
 ### 0.2 建议修复分期路线
 
@@ -547,8 +547,9 @@ Windows、仓库 Node 24.22.2、离线夹具下，主审核人独立执行以下
 
 ### UX-06 多窗口跳转丢失上下文与主角色自改权限割裂
 
-- **优先级**：P2 · **状态**：多窗口记忆已修复（R9a）；主角色自改部分待确认决策 · **决策影响**：主角色自改涉及 [DL-159](../../161-digital-life-direction-decisions.md#dl-159-夏澄首版管理-nowadays外部操作通过-mcp)
-- **R9a 实施与复验（2026-11-27）**：新增实例级 `createRoleWindowMemory()` 并在 `App.tsx` 与 `Conversation.tsx` 接入：按 `roleId` 记忆最近活跃对话子窗口，遵循「显式跳转目标 > 已记忆子窗口 > 默认主窗口」优先级，删除角色时清理记忆，已删子窗口由 `useWindowSession` 自动回退默认主窗口。精准复验：渲染器 `npm run check`（37 CSS 0 违规）、`window-memory.test.ts` 5/5 通过与生产构建通过。主角色自改部分遵循协作规则留待 `UX-01` 与 `DL-159` 决策后再议。
+- **优先级**：P2 · **状态**：已修复，R9a + R13 精准复验通过（主角色自改按方案 A，用户于 2026-11-28 确认） · **决策影响**：已修订登记至 [DL-159](../../161-digital-life-direction-decisions.md#dl-159-夏澄首版管理-nowadays外部操作通过-mcp)
+- **R9a 实施与复验（2026-11-27）**：新增实例级 `createRoleWindowMemory()` 并在 `App.tsx` 与 `Conversation.tsx` 接入：按 `roleId` 记忆最近活跃对话子窗口，遵循「显式跳转目标 > 已记忆子窗口 > 默认主窗口」优先级，删除角色时清理记忆，已删子窗口由 `useWindowSession` 自动回退默认主窗口。精准复验：渲染器 `npm run check`（37 CSS 0 违规）、`window-memory.test.ts` 5/5 通过与生产构建通过。
+- **R13 实施与复验（2026-11-28）**：按 `DL-159` 方案 A 与 `DL-148` 方案 A 对齐，[admin-tools.ts](../../../apps/backend/src/application/role/admin-tools.ts) 放开 `app_role_autonomy_set` 对主角色自身的热生效自改，新增 `app_role_voice_toggle`、`app_role_worldbooks_set`、`app_role_scene_image_set` 及 `app_role_records_query` 的 `worldbooks`/`voice`/`scene_image` 只读查询，[app.ts](../../../apps/backend/src/bootstrap/app.ts) 注入 `voice` 与 `sceneImageSettings`，[conversation-prompt-builder.ts](../../../apps/backend/src/application/conversation/conversation-prompt-builder.ts) 同步管理员底座边界；改自身人设/绑定、停机自身及在用模型连接仍严格以 `SELF_MODIFICATION_VIA_SETTINGS_ONLY` 拦截。精准复验（Node 24.22.2）：后端 `typecheck` + `preset-assistant-outfits` / `preset-assistant-core` / `role-activity` **29/29** 全通过。
 - **证据位置**：
   - [docs/specs/storage-memory-and-autonomy.md](../../specs/storage-memory-and-autonomy.md#L137)（从对话页进设置再点「开始对话」丢失原自定义子窗口 ID）
   - [docs/161-digital-life-direction-decisions.md](../../161-digital-life-direction-decisions.md#dl-159-夏澄首版管理-nowadays外部操作通过-mcp)（主角色运行中拒绝自改自身任意受保护配置）

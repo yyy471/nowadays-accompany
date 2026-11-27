@@ -572,6 +572,8 @@ test("包2：夏澄内部管理工具只挂载到内置助手，读写边界与�
       modelServices: app.services.modelServices,
       voiceServices: app.services.voiceServices,
       imageServices: app.services.imageServices,
+      voice: app.services.voice,
+      sceneImageSettings: app.services.sceneImageSettings,
       now: () => new Date(),
     });
 
@@ -585,6 +587,104 @@ test("包2：夏澄内部管理工具只挂载到内置助手，读写边界与�
     assert.equal(media.status, "success");
     assert.ok(Array.isArray((media.adaptedResult as { voice: unknown[] }).voice));
 
+    // DL-159 方案 A：主角色运行中可直接自改热生效的轻量偏好，且不影响活动态。
+    app.services.activity.resume(builtinId);
+    assert.equal(app.services.activity.view(builtinId).state, "active");
+
+    const budget = await callAdminTool(tools, "app_role_autonomy_set", {
+      roleId: builtinId,
+      unlimited: false,
+      dailyLimit: 7,
+    });
+    assert.equal(budget.status, "success");
+    const savedBudget = app.services.autonomy.getBudget(builtinId);
+    assert.equal(savedBudget.unlimited, false);
+    assert.equal(savedBudget.dailyLimit, 7);
+    assert.equal(app.services.activity.view(builtinId).state, "active");
+
+    const originalBooks = app.services.roles.getWorldbooks(builtinId);
+    const savedBooks = await callAdminTool(tools, "app_role_worldbooks_set", {
+      roleId: builtinId,
+      expectedRevision: String(originalBooks.revision),
+      books: [
+        {
+          id: "wb-self",
+          name: "自改世界书",
+          enabled: true,
+          entries: [
+            {
+              id: "entry-self",
+              title: "自改条目",
+              keywords: ["自改"],
+              content: "主角色在对话中写入的世界书条目。",
+              enabled: true,
+              visibility: "known",
+            },
+          ],
+        },
+      ],
+    });
+    assert.equal(savedBooks.status, "success");
+    assert.equal(app.services.activity.view(builtinId).state, "active");
+    const worldbooksQuery = await callAdminTool(tools, "app_role_records_query", {
+      roleId: builtinId,
+      kind: "worldbooks",
+    });
+    assert.equal(worldbooksQuery.status, "success");
+    const bookSnapshot = worldbooksQuery.adaptedResult as {
+      revision: number;
+      books: Array<{ id: string }>;
+    };
+    assert.ok(bookSnapshot.books.some((book) => book.id === "wb-self"));
+    assert.equal(app.services.activity.view(builtinId).state, "active");
+
+    app.services.voice.saveVoice(builtinId, { baseUrl: "http://127.0.0.1:1" });
+    assert.equal(app.services.voice.getVoice(builtinId).voice?.enabled, true);
+    const voiceToggle = await callAdminTool(tools, "app_role_voice_toggle", {
+      roleId: builtinId,
+      enabled: false,
+    });
+    assert.equal(voiceToggle.status, "success");
+    assert.equal(app.services.voice.getVoice(builtinId).voice?.enabled, false);
+    assert.equal(app.services.activity.view(builtinId).state, "active");
+    const voiceQuery = await callAdminTool(tools, "app_role_records_query", {
+      roleId: builtinId,
+      kind: "voice",
+    });
+    assert.equal(voiceQuery.status, "success");
+    const voiceView = voiceQuery.adaptedResult as {
+      voice: { enabled: boolean } | null;
+    };
+    assert.equal(voiceView.voice?.enabled, false);
+    assert.equal(app.services.activity.view(builtinId).state, "active");
+
+    const imageService = app.services.imageServices.create({
+      name: "管理测试生图",
+      config: { protocol: "comfyui", baseUrl: "http://127.0.0.1:1" },
+    });
+    const sceneImageSet = await callAdminTool(tools, "app_role_scene_image_set", {
+      roleId: builtinId,
+      serviceId: imageService.serviceId,
+      modelType: "text2img",
+      modelPath: "offline.safetensors",
+      sampler: "er_sde",
+      scheduler: "simple",
+    });
+    assert.equal(sceneImageSet.status, "success");
+    assert.equal(app.services.activity.view(builtinId).state, "active");
+    const sceneImageQuery = await callAdminTool(tools, "app_role_records_query", {
+      roleId: builtinId,
+      kind: "scene_image",
+    });
+    assert.equal(sceneImageQuery.status, "success");
+    const sceneView = sceneImageQuery.adaptedResult as {
+      settings: { serviceId: string } | null;
+      configured: boolean;
+    };
+    assert.equal(sceneView.settings?.serviceId, imageService.serviceId);
+    assert.equal(sceneView.configured, true);
+    assert.equal(app.services.activity.view(builtinId).state, "active");
+
     // 普通角色运行中改设定：先停到确认停止，写入后按原状态恢复。
     app.services.activity.resume(ordinary.roleId);
     const updated = await callAdminTool(tools, "app_role_update", {
@@ -595,10 +695,10 @@ test("包2：夏澄内部管理工具只挂载到内置助手，读写边界与�
     assert.equal(app.services.roles.getRole(ordinary.roleId).definition.text, "更新后的普通人设");
     assert.equal(app.services.activity.view(ordinary.roleId).state, "active");
 
-    // 自改红线：改自己、改自己的额度、改自己正在用的模型连接都必须引导去设置页。
+    // 自改红线：改自己人设／绑定、停自己、改自己正在用的模型连接都必须引导去设置页。
     for (const [name, args] of [
       ["app_role_update", { roleId: builtinId, definitionText: "自改" }],
-      ["app_role_autonomy_set", { roleId: builtinId, unlimited: false, dailyLimit: 5 }],
+      ["app_role_bindings_set", { roleId: builtinId, bindings: [] }],
       ["app_role_activity", { roleId: builtinId, action: "stop" }],
       ["app_resource_update", { resourceId: modelRes.resourceId, name: "换个名字" }],
       ["app_resource_delete", { resourceId: modelRes.resourceId }],
@@ -609,6 +709,7 @@ test("包2：夏澄内部管理工具只挂载到内置助手，读写边界与�
     }
     assert.equal(app.services.roles.getRole(builtinId).displayName, "岚");
     assert.equal(app.services.resources.getView(modelRes.resourceId).name, "管理测试模型");
+    assert.equal(app.services.activity.view(builtinId).state, "active");
 
     // 全局 MCP 只切换开关，不需要停止角色。
     const toggled = await callAdminTool(tools, "app_resource_toggle", {

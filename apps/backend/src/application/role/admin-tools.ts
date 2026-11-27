@@ -1,6 +1,8 @@
 import { AppError } from "../../domain/errors.js";
 import type { ExtensionHost } from "../extensions/extension-host.js";
 import { upsertSchema } from "../extensions/extension-files.js";
+import { sceneImageSettingsSchema } from "../../domain/scene-image-settings.js";
+import { putWorldbooksSchema } from "../../domain/worldbook.js";
 import { z } from "zod";
 import type {
   ConversationTool,
@@ -12,6 +14,8 @@ import type { AutonomyService } from "../conversation/autonomy-service.js";
 import type { ConversationService } from "../conversation/conversation-service.js";
 import type { GlobalVoiceService } from "../media/global-voice-service.js";
 import type { ImageServiceService } from "../media/image-service.js";
+import type { SceneImageSettingsService } from "../media/scene-image-settings.js";
+import type { VoiceService } from "../media/voice-service.js";
 import type { MemoryQueryService } from "../memory/memory-query-service.js";
 import type { MessageService } from "../conversation/message-service.js";
 import type { ModelService } from "../resources/model-service.js";
@@ -25,11 +29,16 @@ import type { RoleService } from "./role-service.js";
  * 只在 `builtin_key = 'xiacheng'` 的预置助手上挂载：直接调用现有应用服务，
  * 不走本地 HTTP 自循环，保留操作来源与任务记录。
  *
- * 读写边界（方案 A）：
- * - 只读：可查询全部角色、活动三态、任务／用量、记忆、资源与媒体服务；
- * - 写：可管理**其他普通角色**的设定、绑定、额度与启停，以及全局模型／MCP／Skill；
- * - 红线：修改主角色自身配置、其正在使用的模型连接、以及任何全局语音／生图服务
- *   一律返回 `409 SELF_MODIFICATION_VIA_SETTINGS_ONLY`，引导用户去设置页。
+ * 读写边界（DL-148 / DL-159 方案 A）：
+ * - 只读：可查询全部角色、活动三态、任务／用量、记忆、资源、媒体服务、
+ *   世界书、语音设置与过场图设置；
+ * - 写：可管理**其他普通角色**的设定、绑定与启停，以及全局模型／MCP／Skill；
+ * - 热生效自改：主角色可在对话中直接修改**自己的**自主额度、语音开关、
+ *   过场图设置与世界书，这些轻量偏好无需停机；
+ * - 红线：自改设定正文／显示名、模型／MCP／Skill 绑定、启停或删除自身、
+ *   删除外观／语音参考、修改自身正在使用的模型服务连接与凭据，以及增删改
+ *   任何全局语音／生图服务，一律返回 `409 SELF_MODIFICATION_VIA_SETTINGS_ONLY`，
+ *   引导用户去「角色配置」或「设置」页。
  */
 export interface AdminToolServices {
   pi?: import("../../mcp/managed-pi.js").ManagedPi;
@@ -47,6 +56,10 @@ export interface AdminToolServices {
   modelServices: ModelService;
   voiceServices: GlobalVoiceService;
   imageServices: ImageServiceService;
+  /** 角色语音服务：只读查询与热生效开关；未注入时相关工具返回 503。 */
+  voice?: VoiceService;
+  /** 角色过场图设置：只读查询与热生效写入；未注入时相关工具返回 503。 */
+  sceneImageSettings?: SceneImageSettingsService;
   now: () => Date;
 }
 
@@ -258,14 +271,25 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
     ),
     defineTool(
       "app_role_records_query",
-      "按角色查询记录：窗口消息、任务（含 token 用量）、记忆检索结果、日记、自主额度与唤醒队列。只读。",
+      "按角色查询记录：窗口消息、任务（含 token 用量）、记忆检索结果、日记、自主额度、唤醒队列、世界书、语音设置与过场图设置。只读。",
       {
         type: "object",
         properties: {
           roleId: { type: "string" },
           kind: {
             type: "string",
-            enum: ["messages", "tasks", "task", "memories", "diaries", "budget", "wakes"],
+            enum: [
+              "messages",
+              "tasks",
+              "task",
+              "memories",
+              "diaries",
+              "budget",
+              "wakes",
+              "worldbooks",
+              "voice",
+              "scene_image",
+            ],
           },
           windowId: { type: "string", description: "可选：默认取角色主窗口" },
           batchId: { type: "string", description: "仅返回该批次实际处理的消息，可用 nextAfter 续页" },
@@ -349,6 +373,30 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
             return autonomy.getBudget(roleId);
           case "wakes":
             return autonomy.listWakes(roleId, limit);
+          case "worldbooks":
+            return roles.getWorldbooks(roleId);
+          case "voice": {
+            const voice = input.voice;
+            if (voice === undefined) {
+              throw new AppError(
+                503,
+                "VOICE_SERVICE_NOT_READY",
+                "语音服务尚未就绪",
+              );
+            }
+            return voice.getVoice(roleId);
+          }
+          case "scene_image": {
+            const sceneImage = input.sceneImageSettings;
+            if (sceneImage === undefined) {
+              throw new AppError(
+                503,
+                "SCENE_IMAGE_SETTINGS_NOT_READY",
+                "过场图设置服务尚未就绪",
+              );
+            }
+            return sceneImage.get(roleId);
+          }
           default:
             return badArguments(`不支持的查询类型 ${kind}`);
         }
@@ -665,7 +713,7 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
     ),
     defineTool(
       "app_role_autonomy_set",
-      "设置其他普通角色的自主活动每日额度（或无限）。不能修改主角色自己的额度。",
+      "设置角色（含主角色自己）的自主活动每日额度（或无限），热生效无需停机。",
       {
         type: "object",
         properties: {
@@ -680,13 +728,140 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
         if (roleId === null || typeof args.unlimited !== "boolean") {
           return badArguments("app_role_autonomy_set 需要 roleId 与 unlimited");
         }
-        assertNotSelf(roleId, "role_autonomy_set");
         requireRole(roleId);
         const dailyLimit = integerArg(args, "dailyLimit");
         return autonomy.setBudget(roleId, {
           unlimited: args.unlimited,
           ...(dailyLimit === null ? {} : { dailyLimit }),
         });
+      },
+    ),
+    defineTool(
+      "app_role_voice_toggle",
+      "切换角色（含主角色自己）的语音开关，热生效无需停机。",
+      {
+        type: "object",
+        properties: {
+          roleId: { type: "string" },
+          enabled: { type: "boolean" },
+        },
+        required: ["roleId", "enabled"],
+      },
+      async (args) => {
+        const roleId = stringArg(args, "roleId");
+        if (roleId === null || typeof args.enabled !== "boolean") {
+          return badArguments("app_role_voice_toggle 需要 roleId 与 enabled");
+        }
+        requireRole(roleId);
+        const voice = input.voice;
+        if (voice === undefined) {
+          throw new AppError(
+            503,
+            "VOICE_SERVICE_NOT_READY",
+            "语音服务尚未就绪",
+          );
+        }
+        return voice.setEnabled(roleId, args.enabled);
+      },
+    ),
+    defineTool(
+      "app_role_worldbooks_set",
+      "整体替换角色（含主角色自己）的世界书列表，需提供 expectedRevision 防止并发覆盖，热生效无需停机。",
+      {
+        type: "object",
+        properties: {
+          roleId: { type: "string" },
+          expectedRevision: { type: "string" },
+          books: { type: "array", items: { type: "object" } },
+        },
+        required: ["roleId", "expectedRevision", "books"],
+      },
+      async (args) => {
+        const roleId = stringArg(args, "roleId");
+        if (roleId === null) {
+          return badArguments("app_role_worldbooks_set 需要 roleId");
+        }
+        requireRole(roleId);
+        // 领域 schema 的 revision 是整数；工具入参声明为字符串，这里把
+        // 纯数字字符串归一后再交给领域校验，其余非法值仍由校验拒绝。
+        const rawRevision = args.expectedRevision;
+        const expectedRevision =
+          typeof rawRevision === "string" && rawRevision.trim() !== ""
+            ? Number(rawRevision)
+            : rawRevision;
+        const parsed = putWorldbooksSchema.safeParse({
+          expectedRevision,
+          books: args.books,
+        });
+        if (!parsed.success) {
+          return badArguments(
+            `世界书参数不正确：${parsed.error.issues
+              .map((issue) => `${issue.path.join(".") || "body"} ${issue.message}`)
+              .join("；")}`,
+          );
+        }
+        return roles.putWorldbooks(
+          roleId,
+          parsed.data.expectedRevision,
+          parsed.data.books,
+        );
+      },
+    ),
+    defineTool(
+      "app_role_scene_image_set",
+      "修改角色（含主角色自己）的过场图设置（含开关、服务、模型与默认参数），热生效无需停机。",
+      {
+        type: "object",
+        properties: {
+          roleId: { type: "string" },
+          serviceId: { type: "string" },
+          modelType: { type: "string", enum: ["text2img", "img2img"] },
+          autoGenerateEnabled: { type: "boolean" },
+          autoCooldownMinutes: { type: "integer", minimum: 0, maximum: 10080 },
+          modelPath: { type: "string" },
+          basePrompt: { type: "string" },
+          negativePrompt: { type: "string" },
+          outfitPrompts: {
+            type: "object",
+            additionalProperties: { type: "string" },
+          },
+          width: { type: "integer", minimum: 256, maximum: 2048, multipleOf: 16 },
+          height: { type: "integer", minimum: 256, maximum: 2048, multipleOf: 16 },
+          steps: { type: "integer", minimum: 1, maximum: 150 },
+          cfg: { type: "number", minimum: 0, maximum: 30 },
+          sampler: { type: "string" },
+          scheduler: { type: "string" },
+          seed: { type: ["integer", "null"], minimum: 0, maximum: 2_147_483_647 },
+          workflow: { type: ["object", "null"] },
+          outputNodeId: { type: ["string", "null"] },
+        },
+        required: ["roleId", "serviceId", "modelType", "modelPath"],
+      },
+      async (args) => {
+        const roleId = stringArg(args, "roleId");
+        if (roleId === null) {
+          return badArguments("app_role_scene_image_set 需要 roleId");
+        }
+        requireRole(roleId);
+        const sceneImage = input.sceneImageSettings;
+        if (sceneImage === undefined) {
+          throw new AppError(
+            503,
+            "SCENE_IMAGE_SETTINGS_NOT_READY",
+            "过场图设置服务尚未就绪",
+          );
+        }
+        const payload = { ...args };
+        delete payload.roleId;
+        const parsed = sceneImageSettingsSchema.safeParse(payload);
+        if (!parsed.success) {
+          return badArguments(
+            `过场图设置参数不正确：${parsed.error.issues
+              .map((issue) => `${issue.path.join(".") || "body"} ${issue.message}`)
+              .join("；")}`,
+          );
+        }
+        return sceneImage.save(roleId, parsed.data);
       },
     ),
   ];

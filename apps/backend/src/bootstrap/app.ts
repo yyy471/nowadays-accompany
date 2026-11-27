@@ -315,6 +315,8 @@ function assembleBackendApp(
     modelServices: modelService,
     voiceServices,
     imageServices,
+    voice: voiceService,
+    sceneImageSettings,
     now,
   };
   const conversation = new ConversationService(
