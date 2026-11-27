@@ -196,6 +196,22 @@ async function run() {
       console.log('桌面已订阅，安装 v1');
       await host.upsert(extension('v1', [f.roleId, 'removed-role']));
       await verify('v1','daylight');
+      // 微页挂载后真实断流：保留同一 iframe 与 DOM 标记，重连快照恢复后仍复用。
+      await ev(`(() => {
+        const frame = document.querySelector('[data-extension-slot="page"]');
+        frame.dataset.keptMark = 'kept';
+        window.keptFrame = frame;
+      })()`);
+      const mountedStream = stream;
+      mountedStream.end();
+      await wait("document.querySelector('.extension-catalog [role=status]')?.textContent.includes('正在重连')", '微页挂载后的 SSE 断线');
+      assert.equal(await ev("document.querySelector('[data-extension-slot=\"page\"]') === window.keptFrame"), true);
+      assert.equal(await ev("document.querySelector('[data-extension-slot=\"page\"]')?.dataset.keptMark"), 'kept');
+      assert.equal(await ev("document.querySelectorAll('iframe[data-extension-slot]').length"), 3);
+      await until(() => stream !== mountedStream, '微页挂载后的事件重连');
+      await wait("!!document.querySelector('.extension-filter')", '重连快照恢复已安装视图');
+      assert.equal(await ev("document.querySelector('[data-extension-slot=\"page\"]') === window.keptFrame"), true);
+      assert.equal(await ev("document.querySelector('[data-extension-slot=\"page\"]')?.dataset.keptMark"), 'kept');
       await wait("document.querySelector('.extension-tool')?.textContent==='stamp → 主角色、阿澄、removed-role'", '名单显示角色名与缺失 ID');
       await verifyLayout(true);
       await capture('daylight-with-overlays');

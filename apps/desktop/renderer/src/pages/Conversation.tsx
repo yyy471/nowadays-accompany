@@ -16,8 +16,8 @@ import { pickCancelableTask, taskCancelLabel, taskCancelNotice, taskCancelTitle,
 import { ConversationStage, type StageSources } from '../conversation/ConversationStage';
 import { ChatPane, type DialogueLocation } from '../conversation/ChatPane';
 import { HistoryPanel } from '../conversation/HistoryPanel';
-import scene from '../assets/themes/xiacheng/dialogue-day.webp';
-import nightScene from '../assets/themes/xiacheng/dialogue-night.webp';
+import scene from '../assets/themes/study/dialogue-day.webp';
+import nightScene from '../assets/themes/study/dialogue-night.webp';
 
 function readPreference(name: string): boolean {
   try { return localStorage.getItem(`nowadays-dialogue-${name}`) === '1'; } catch { return false; }

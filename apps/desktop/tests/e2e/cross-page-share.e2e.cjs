@@ -115,7 +115,7 @@ check(async ({cmd, ev, until, errors}) => {
   await tab('模型');
   await openRoleRow('model:chat');
   await ev(setValue(element('.config-sheet input'), '草稿模型'));
-  await ev("document.querySelector('.config-sheet input').focus(); window.prompts=[]; window.confirm=msg=>{prompts.push(msg);return false}");
+  await ev("document.querySelector('.config-sheet input').focus()");
   const summary = '窗外的梧桐开始落叶了，我把今天的见闻写在这里。'.repeat(12);
   publish('草稿中的分享', 'autonomy_share', summary);
   await waitCard(summary);
@@ -182,10 +182,22 @@ check(async ({cmd, ev, until, errors}) => {
   for (const type of ['mousePressed', 'mouseReleased']) {
     await cmd('Input.dispatchMouseEvent', {type, x: point.x, y: point.y, button: 'left', clickCount: 1});
   }
-  assert.match(await ev('prompts.at(-1)'), /放弃修改/);
+  const alertDialog = '[role="alertdialog"]';
+  const dialogButton = label => `[...document.querySelectorAll('${alertDialog} button')].find(button=>button.textContent.trim()===${JSON.stringify(label)})`;
+  const waitLeaveConfirm = () => until(() => ev(`(() => {
+    const dialog = document.querySelector('${alertDialog}');
+    return !!dialog && dialog.textContent.includes('放弃修改');
+  })()`), '离开草稿的确认纸笺');
+  await waitLeaveConfirm();
+  await until(() => ev("document.activeElement?.textContent?.trim()==='继续编辑'"), '默认焦点在继续编辑');
+  await click(dialogButton('继续编辑'));
+  await until(() => ev("!document.querySelector('[role=\"alertdialog\"]')"), '取消离开草稿');
   assert.equal(await ev("document.querySelector('.config-sheet input').value"), '草稿模型');
-  await ev('window.confirm=()=>true');
-  await click(element(open));
+  for (const type of ['mousePressed', 'mouseReleased']) {
+    await cmd('Input.dispatchMouseEvent', {type, x: point.x, y: point.y, button: 'left', clickCount: 1});
+  }
+  await waitLeaveConfirm();
+  await click(dialogButton('放弃修改'));
   await locate('草稿中的分享');
   await cmd('Emulation.setDeviceMetricsOverride', {width:1280,height:800,deviceScaleFactor:1,mobile:false});
   assert.equal(await has(card), false);

@@ -1,7 +1,13 @@
 /** 桌面壳通过 /api-config.json 暴露本地后端地址；浏览器预览时退回同源代理。 */
 let cached: Promise<string | null> | null = null;
 
-export function backendBaseUrl(): Promise<string | null> {
+/** 后端地址可能随重启变化：丢弃缓存，下一次读取重新请求配置。 */
+export function invalidateBackendBaseUrl(): void {
+  cached = null;
+}
+
+export function backendBaseUrl(options?: { refresh?: boolean }): Promise<string | null> {
+  if (options?.refresh) cached = null;
   if (cached === null) {
     cached = fetch('/api-config.json', { cache: 'no-store' })
       .then(response => (response.ok ? response.json() : null))

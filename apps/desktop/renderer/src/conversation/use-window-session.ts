@@ -16,7 +16,7 @@ import type {
 } from './api-types';
 import type { PerfRow } from './history';
 import type { PerformanceSnapshot, SceneLayerMode } from './performance';
-import { backendBaseUrl } from './backend-base';
+import { backendBaseUrl, invalidateBackendBaseUrl } from './backend-base';
 import { applySegmentAnnotations, createRowIdRegistry, groupSegments, isSubmissionConfirmed, latestSceneTarget, lastRowOf, mergeSegments, messageStatusOf, newerSceneTask, nextMessageSequence, reconcileFinalSegments, rowsForMessage, sceneView } from './window-model';
 import { createTypingState } from './typing-state';
 import type { SceneRequestError } from './window-model';
@@ -525,6 +525,8 @@ export function useWindowSession({
     stream.onerror = () => {
       if (state.current.generation !== generation) return;
       const next: ConnectionState = stream.readyState === EventSource.CLOSED ? 'closed' : 'retrying';
+      // 关闭后不会自动重连：丢弃地址缓存，用户重试时重新读取（后端重启可能换端口）。
+      if (stream.readyState === EventSource.CLOSED) invalidateBackendBaseUrl();
       if (state.current.connection !== next) {
         state.current.connection = next;
         emit({ reason: 'connection', message: next === 'closed' ? '实时连接已断开。' : undefined });

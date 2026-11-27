@@ -5,7 +5,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 import { createPortal, flushSync } from 'react-dom';
 import { api, ApiError } from '../api';
 import type { Outfit, RoleDetail, RoleListItem } from '../types';
-import { Button, ControlButton, Field, Icon, Input, LiveAnnouncer, Select, StatusDot, Switch, Textarea, announceLive, readMotionTime, readMotionValue, useMotionPolicy } from '../ui';
+import { Button, ControlButton, Field, Icon, Input, LiveAnnouncer, Select, StatusDot, Switch, Textarea, announceLive, readMotionTime, readMotionValue, useConfirm, useMotionPolicy } from '../ui';
 import { readMotionPx, type MotionPreference } from '../ui/motion';
 import { AppearancePanel } from '../components/appearance/AppearancePanel';
 import { RolePortrait } from '../components/RolePortrait';
@@ -181,6 +181,8 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
   const [modelError, setModelError] = useState('');
   const [newModelProbePrompt, setNewModelProbePrompt] = useState<ReturnType<typeof serviceProbeNotice>>(null);
   const writeController = useRef<ReturnType<typeof useWrite> | null>(null);
+  const confirm = useConfirm();
+  const leaveConfirmingRef = useRef(false);
   const hasDrafts = () => !!sheetController.current?.dirty || [...editorActions.current.values()].some(item => Object.values(item.dirty).some(Boolean));
   useLayoutEffect(() => {
     if (!navigationGuard) return;
@@ -192,7 +194,28 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
         else proceed();
         return;
       }
-      if (hasDrafts() && !window.confirm('还有改动没保存，要放弃修改并离开配置页吗？')) return;
+      if (hasDrafts()) {
+        if (leaveConfirmingRef.current) return;
+        leaveConfirmingRef.current = true;
+        void confirm({
+          title: '放弃未保存的改动？',
+          description: '还有改动没保存，要放弃修改并离开配置页吗？',
+          confirmLabel: '放弃修改',
+          cancelLabel: '继续编辑',
+          tone: 'danger',
+        }).then(accepted => {
+          leaveConfirmingRef.current = false;
+          if (!accepted) return;
+          const leave = () => {
+            editorActions.current.forEach(item => { if (Object.values(item.dirty).some(Boolean)) item.discard(); });
+            proceed();
+          };
+          const currentController = sheetController.current;
+          if (currentController?.sheet) currentController.discardNow(leave);
+          else leave();
+        });
+        return;
+      }
       const leave = () => { editorActions.current.forEach(item => { if (Object.values(item.dirty).some(Boolean)) item.discard(); }); proceed(); };
       if (controller?.sheet) controller.discardNow(leave);
       else leave();
@@ -212,7 +235,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
       window.removeEventListener('beforeunload', beforeUnload);
       window.removeEventListener('nowadays:check-drafts', checkDrafts);
     };
-  }, [navigationGuard]);
+  }, [navigationGuard, confirm]);
   const newModelProbe = useModelProbe(`${modelAdapter}|${modelUrl}|${modelSafety}|${newAddress.manualExpress}|${modelSecret}`);
   const changeNewModelAdapter = (next: string) => {
     const url = resolveModelBaseUrlOnProtocolChange(modelUrl, next, modelAdapter);
@@ -1870,6 +1893,7 @@ async function closeRoleResourceBinding(roleId: string, resourceId: string, role
 
 function useResourceUseActions(resourceId: string, roles: RoleListItem[], onChanged: () => void) {
   const write = useWrite();
+  const confirm = useConfirm();
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState('');
   const run = async (key: string, action: () => Promise<void>) => {
@@ -1894,7 +1918,14 @@ function useResourceUseActions(resourceId: string, roles: RoleListItem[], onChan
     if (failures.length > 0) setError(failures.join('；'));
   });
   const endTask = async (roleId: string, taskId: string) => {
-    if (!window.confirm(`结束任务 ${taskId}？后续步骤不再执行，已发出的调用按原任务结算。`)) return;
+    const accepted = await confirm({
+      title: '结束运行中的任务？',
+      description: `结束任务 ${taskId}？后续步骤不再执行，已发出的调用按原任务结算。`,
+      confirmLabel: '结束任务',
+      cancelLabel: '取消',
+      tone: 'danger',
+    });
+    if (!accepted) return;
     await run(`task:${roleId}:${taskId}`, async () => {
       await finishTaskForResource(roleId, taskId);
       write.reportResult('已结束任务');

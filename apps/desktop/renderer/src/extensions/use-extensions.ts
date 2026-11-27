@@ -1,5 +1,5 @@
 import { useEffect, useEffectEvent, useRef, useState } from 'react';
-import { backendBaseUrl } from '../conversation/backend-base';
+import { backendBaseUrl, invalidateBackendBaseUrl } from '../conversation/backend-base';
 import type { Extension } from './ExtensionSlotFrame';
 import { createRepairSender } from './repair-request';
 
@@ -19,26 +19,42 @@ export function useExtensions(onCoplayShare: (event: MessageEvent) => void) {
   useEffect(() => {
     let active = true;
     let source: EventSource | undefined;
-    void backendBaseUrl().then(base => {
-      if (!active) return;
-      source = new EventSource((base ?? '') + '/v1/extension-events');
-      source.addEventListener('coplay-share', receiveShare);
-      source.addEventListener('snapshot', event => {
-        const next = parseExtensionSnapshot(event.data);
-        repairs.reconcile(next);
-        setItems(next);
-        setNotices(previous => Object.fromEntries(Object.entries(previous).filter(([id, notice]) =>
-          next.some(item => item.extId === id && item.version === notice.version && item.status === 'enabled'))));
-        setConnection('ready');
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+    const connect = (refresh: boolean) => {
+      void backendBaseUrl(refresh ? { refresh: true } : undefined).then(base => {
+        if (!active) return;
+        const es = new EventSource((base ?? '') + '/v1/extension-events');
+        source = es;
+        es.addEventListener('coplay-share', receiveShare);
+        es.addEventListener('snapshot', event => {
+          if (source !== es) return;
+          const next = parseExtensionSnapshot(event.data);
+          repairs.reconcile(next);
+          setItems(next);
+          setNotices(previous => Object.fromEntries(Object.entries(previous).filter(([id, notice]) =>
+            next.some(item => item.extId === id && item.version === notice.version && item.status === 'enabled'))));
+          setConnection('ready');
+        });
+        es.addEventListener('notice', event => {
+          if (source !== es) return;
+          const payload: Omit<Notice, 'receiptId'> = JSON.parse(event.data);
+          const notice = { ...payload, receiptId: ++nextReceipt.current };
+          setNotices(previous => ({ ...previous, [notice.extId]: notice }));
+        });
+        es.onerror = () => {
+          if (!active || source !== es) return;
+          // 瞬断只标记重连：保留已挂载的扩展微页与挂件，等新快照到达再更新。
+          invalidateBackendBaseUrl();
+          setConnection('reconnecting');
+          if (es.readyState !== EventSource.CLOSED) return;
+          // 浏览器不会重连已关闭的流：重读地址后重建连接，避免沿用旧端口。
+          clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(() => { if (active) connect(true); }, 1000);
+        };
       });
-      source.addEventListener('notice', event => {
-        const payload: Omit<Notice, 'receiptId'> = JSON.parse(event.data);
-        const notice = { ...payload, receiptId: ++nextReceipt.current };
-        setNotices(previous => ({ ...previous, [notice.extId]: notice }));
-      });
-      source.onerror = () => { setItems([]); setNotices({}); setConnection('reconnecting'); };
-    });
-    return () => { active = false; source?.close(); };
+    };
+    connect(false);
+    return () => { active = false; clearTimeout(reconnectTimer); source?.close(); };
   }, [repairs]);
   return { items, connection, notices, repairs, dismiss(notice: Notice) {
     setNotices(previous => {

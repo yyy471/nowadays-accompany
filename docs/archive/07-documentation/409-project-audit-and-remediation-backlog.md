@@ -22,15 +22,15 @@
 | [BUG-03](#bug-03-roleaccesswithstore-每次操作现开现关两个-sqlite-库且实例未统一) | 性能/稳定性 | **P1** | 无连接复用；单次查询同步开关双库，且 `RoleService` / `ConversationService` 绕开统一入口 | 否 | `[ ]` 待排查 |
 | [BUG-04](#bug-04-维护窗口暂停多角色采用串行轮询最坏线性卡死) | 性能/稳定性 | **P1** | 模型与媒体维护曾逐角色串行等待停机 | 否 | 已修复，R4 精准独立复验通过 |
 | [BUG-05](#bug-05-pi-工程模型参数硬编码阉割reasoning-固定关闭且输出上限-8k) | 功能缺陷 | **P1** | Pi 注册模型固定 `reasoning: false` / `maxTokens: 8192` | 否 | `[ ]` 待排查 |
-| [BUG-06](#bug-06-对话页默认背景硬编码绑定夏澄资产) | 功能缺陷 | **P1** | 普通角色对话背景直接写死引用 `assets/themes/xiacheng/` | 否 | `[ ]` 待排查 |
-| [BUG-07](#bug-07-扩展-sse-瞬断直接清空列表销毁全部微页且-backendbaseurl-永久缓存) | 运行时 Bug | **P1** | `use-extensions.ts` `onerror` 清空 `items` 销毁全部 iframe；后端换端口后 `backendBaseUrl` 永不刷新 | 否 | `[ ]` 待排查 |
+| [BUG-06](#bug-06-对话页默认背景硬编码绑定夏澄资产) | 功能缺陷 | **P1** | 普通角色对话背景直接写死引用 `assets/themes/xiacheng/` | 否 | 已修复，R5 精准复验通过 |
+| [BUG-07](#bug-07-扩展-sse-瞬断直接清空列表销毁全部微页且-backendbaseurl-永久缓存) | 运行时 Bug | **P1** | `use-extensions.ts` `onerror` 清空 `items` 销毁全部 iframe；后端换端口后 `backendBaseUrl` 永不刷新 | 否 | 已修复，R5 精准复验通过 |
 | [BUG-08](#bug-08-windows-下命令与-skill-脚本超时只杀父进程不回收进程树) | 运行时 Bug | **P1** | `command_run` 与 `skill_run` 超时仅 `child.kill()`，未复用进程树回收，孙进程泄漏为孤儿 | 否 | 已修复，独立复验通过 |
 | [SEC-03](#sec-03-热扩展子进程未限制网络访问且-kv-存盘无容量与限频保护) | 安全边界 | **P1** | Node `--permission` 不拦网络；KV 同步全量覆写 `manifest.json` 无上限 | 否 | `[ ]` 待排查 |
 | [SEC-04](#sec-04-windows-静态密钥文件权限失效与独立模式-http-鉴权cors-过宽) | 安全边界 | **P1** | `0o600` 在 NTFS 失效且未接系统密钥链；CORS 放行全部 `localhost:*` / `file://` | 需确认（`DL-121`） | `[ ]` 待排查 |
 | [UX-01](#ux-01-几乎全部角色配置写入都强制先停机把并发锁转嫁给用户) | 操作体验 | **P1** | 改世界书、传表情图、调额度、给服饰改名均要求角色先 `stopped` | **是**（`DL-148`） | `[ ]` 待排查 |
 | [UX-02](#ux-02-首次上手与后台工程能力存在冷启动悬崖) | 操作体验 | **P1** | 无开箱引导；Pi 工程池默认空且隐藏工具，用户根本发现不了核心功能 | 需确认（`DL-201`） | `[ ]` 待排查 |
 | [UX-03](#ux-03-后台工程pi缺乏历史记录与失败过程日志) | 功能短板 | **P1** | 任务结束胶囊即消失，失败/超时后无法查看改了什么、死在哪步 | 否（增只读视图） | `[ ]` 待排查 |
-| [UX-04](#ux-04-设置页两处操作仍使用阻塞式原生-windowconfirm) | 视觉/交互 | **P1** | `Settings.tsx` 离开草稿拦截与结束任务确认弹出原生 `window.confirm` | 否 | `[ ]` 待排查 |
+| [UX-04](#ux-04-设置页两处操作仍使用阻塞式原生-windowconfirm) | 视觉/交互 | **P1** | `Settings.tsx` 离开草稿拦截与结束任务确认弹出原生 `window.confirm` | 否 | 已修复，R5 精准复验通过 |
 | [DELIV-02](#deliv-02-真实云端模型多模态与媒体服务全链路联调长期缺位) | 质量/验证 | **P1** | 624+ 离线测试掩盖真实模型、长上下文、TTS、ComfyUI 实机并发缺陷 | 否 | `[ ]` 待排查 |
 | [ARCH-01](#arch-01-后端与前端存在多个两千至三千行级上帝文件) | 架构债务 | **P1** | `conversation-service.ts` 3803 行、`Settings.tsx` 2116 行等触发仓库体积告警 | 否 | `[ ]` 待排查 |
 | [ARCH-02](#arch-02-桌面端四条通信通道混用且动态页退化为-15-秒全量轮询) | 架构债务 | **P2** | `desk://`、直连 `127.0.0.1`、`nd-ext://`、`ipcMain` 混用；动态页无推送 | 否 | `[ ]` 待排查 |
@@ -196,7 +196,7 @@ Windows、仓库 Node 24.22.2、离线夹具下，主审核人独立执行以下
 
 ### BUG-06 对话页默认背景硬编码绑定夏澄资产
 
-- **优先级**：P1 · **状态**：`[ ]` 待排查
+- **优先级**：P1 · **状态**：已修复，R5 精准复验通过
 - **证据位置**：
   - [apps/desktop/renderer/src/pages/Conversation.tsx](../../../apps/desktop/renderer/src/pages/Conversation.tsx#L19-L20)
 - **根因分析**：
@@ -208,12 +208,13 @@ Windows、仓库 Node 24.22.2、离线夹具下，主审核人独立执行以下
   2. 后续支持按角色可选配置自定义默认对话背景（缺省回退通用书房底图）。
 - **验收标准**：
   - 移除 `Conversation.tsx` 对 `xiacheng` 目录的直接硬编码依赖，所有现有 E2E 与主题切屏截图回归通过。
+- **R5 实施与复验（2026-11-27）**：将 `dialogue-day.webp` 与 `dialogue-night.webp` 迁至 `apps/desktop/renderer/src/assets/themes/study/` 并更新 `Conversation.tsx` 导入；渲染器 `check`（37 CSS 0 违规）与生产构建通过。
 
 ---
 
 ### BUG-07 扩展 SSE 瞬断直接清空列表销毁全部微页，且 `backendBaseUrl` 永久缓存
 
-- **优先级**：P1 · **状态**：`[ ]` 待排查
+- **优先级**：P1 · **状态**：已修复，R5 精准复验通过
 - **证据位置**：
   - [apps/desktop/renderer/src/extensions/use-extensions.ts](../../../apps/desktop/renderer/src/extensions/use-extensions.ts#L22-L40)（第 39 行 `source.onerror = () => { setItems([]); setNotices({}); setConnection('reconnecting'); }`）
   - [apps/desktop/renderer/src/conversation/backend-base.ts](../../../apps/desktop/renderer/src/conversation/backend-base.ts#L2-L22)（首次非空结果永久缓存，无失效机制）
@@ -226,6 +227,7 @@ Windows、仓库 Node 24.22.2、离线夹具下，主审核人独立执行以下
   2. 为 `backendBaseUrl` 增加缓存失效入口（或在收口至 `ARCH-02` 单一 `desk://` 同源流后直接淘汰直连地址缓存）。
 - **验收标准**：
   - 模拟扩展 SSE 瞬断重连，正在打开的扩展微页 `<iframe>` 保持挂载且内部状态不丢失；断连期间显示重连状态并在恢复后自动同步最新快照。
+- **R5 实施与复验（2026-11-27）**：`use-extensions.ts` 在 `onerror` 仅失效地址缓存并置 `reconnecting`（保留已有 `items`/`notices`，`CLOSED` 时 1s 后带 `{ refresh: true }` 重建流并校验旧流守卫）；`backend-base.ts` 新增 `invalidateBackendBaseUrl()` 与 `{ refresh?: boolean }`，`use-window-session.ts` 流关闭时同步失效缓存。精准复验：`backend-base.test.ts` 2/2 通过，Electron 39 定点 `extension-ui-slots.e2e.cjs` 实证微页挂载后真实断流重连全程复用同一 `<iframe>` 引用且 DOM 标记未丢。
 
 ---
 
@@ -477,7 +479,8 @@ Windows、仓库 Node 24.22.2、离线夹具下，主审核人独立执行以下
 
 ### UX-04 设置页两处操作仍使用阻塞式原生 `window.confirm`
 
-- **优先级**：P1 · **状态**：`[ ]` 待排查
+- **优先级**：P1 · **状态**：已修复，R5 精准复验通过
+- **R5 实施与复验（2026-11-27）**：直接复用 `main.tsx` 根节点已挂载的设计系统 `useConfirm()`（底层 `Modal`、`role="alertdialog"`、默认安全焦点在取消按钮、`Esc` 关闭与焦点归还），替换 `Settings.tsx` 离开脏草稿拦截与结束运行中任务两处原生 `window.confirm`；全仓 `apps/desktop/renderer/src/` 扫描 `window.confirm` / `alert` / `prompt` 为 0；同步更新 `cross-page-share.e2e.cjs` 为真实 `[role="alertdialog"]` 交互断言（默认焦点在「继续编辑」、取消保留草稿、确认「放弃修改」正常离开）并实窗通过。
 - **证据位置**：
   - [apps/desktop/renderer/src/pages/Settings.tsx](../../../apps/desktop/renderer/src/pages/Settings.tsx#L194)（离开配置页脏草稿确认）
   - [apps/desktop/renderer/src/pages/Settings.tsx](../../../apps/desktop/renderer/src/pages/Settings.tsx#L1896)（手动结束运行中任务确认）

@@ -4,6 +4,8 @@
 
 ## 1. 当前结论概览
 
+**409 R5（`BUG-06` / `BUG-07` / `UX-04`）已完成修复与精准复验。** 对话页默认昼夜底图迁至角色无关目录 `assets/themes/study/`；扩展 SSE 瞬断不再清空 `items`/`notices`，保住已挂载的扩展微页 `<iframe>` 与内部状态，并为 `backendBaseUrl` 新增失效/刷新接口与流关闭重建；`Settings.tsx` 两处 `window.confirm` 统一替换为设计系统 `useConfirm()` 确认纸笺，全仓渲染器原生弹窗扫描为 0。Node 24.22.2 下渲染器 `check`（37 CSS 0 违规）、`backend-base` 2/2、生产构建，以及 Electron 39 定点 E2E `cross-page-share` 与 `extension-ui-slots`（含真实断流保留同 iframe 引用断言）均通过。[409 R5 专项记录](./archive/07-documentation/409-project-audit-and-remediation-backlog.md#bug-06-对话页默认背景硬编码绑定夏澄资产)
+
 **409 R4（`BUG-03` / `BUG-04`）已完成修复与精准复验。** 后端统一唯一 `RoleAccess` 注入并引入按角色租借复用、60 秒 `.unref()` 空闲回收、删除前封锁排空、`app.close()` 关池与 `execution.sqlite` 懒打开；实测 5 角色并发聊天 + 60 次动态刷新 SQLite 打开次数从 350 降至 10（降幅 **97.14%**），纯动态读取打开执行库 **0 次**。`RoleActivityService.pauseRoles` 与 `MediaMaintenance` 改为并发停机与事件唤醒，3 角色各 1 秒收尾实测 **1,001.8 ms**（原串行 ≥3s），并补齐管理工具部分停机回滚。Node 24.22.2 下后端 `typecheck` 及受影响单测/集成测试 71/71 通过，文档巡检 0 错误 0 警告。[409 R4 专项记录](./archive/07-documentation/409-project-audit-and-remediation-backlog.md#bug-03-roleaccesswithstore-每次操作现开现关两个-sqlite-库且实例未统一)
 
 **409 DELIV-01 生产打包已修复并通过 Windows 离线脱仓独立复验，干净机便携 EXE 验收待办。** 固定 Node 24 的 staging 包含编译后端、生产依赖、Pi 子包与预置素材；仓外含空格目录覆盖离线对话、热扩展与工具、真实 Pi worker 工具集、本地 MCP 和退出回收。独立复验 1/1、无跳过，首个 health 为 4267 ms，未达到原 <2 秒目标；该测试不代表真实服务或便携 EXE 的干净机验收。[实施与待验清单](./archive/07-documentation/409-project-audit-and-remediation-backlog.md#deliv-01-实施与离线验证2026-11-27)
