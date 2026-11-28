@@ -60,7 +60,7 @@ async function stop(): Promise<void> {
 }
 
 async function cli(port: number, args: string[]): Promise<Record<string, unknown>> {
-  const child = spawn(process.execPath, ["--import", "tsx", "src/cli.ts", "--base-url", `http://127.0.0.1:${port}`, ...args], { cwd: backend, env: process.env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  const child = spawn(process.execPath, ["--import", "tsx", "src/cli.ts", "--app-root", appRoot, "--base-url", `http://127.0.0.1:${port}`, ...args], { cwd: backend, env: process.env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   let out = ""; let err = "";
   child.stdout!.on("data", (chunk: Buffer) => { out += chunk.toString(); });
   child.stderr!.on("data", (chunk: Buffer) => { err += chunk.toString(); });

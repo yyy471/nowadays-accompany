@@ -232,6 +232,8 @@ test("同一任务两次唤醒在后台读完后，各自关联真实分享，�
       business.db.prepare("UPDATE autonomy_activities SET shared_message_id=NULL").run();
       business.db.pragma("user_version=24");
     });
+    // 清理连接池中的旧句柄，模拟进程重启后重新打开角色库并触发 V24 迁移回填。
+    await fixture.app.roleAccess.evict(role);
     const restored = autonomy.listActivities(role);
     for (const row of expected) {
       assert.equal(restored.find(activity => activity.activityId === row.activityId)?.sharedMessageId, row.shareId);

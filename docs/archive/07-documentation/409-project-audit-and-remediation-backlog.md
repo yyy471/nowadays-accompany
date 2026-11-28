@@ -644,3 +644,18 @@ Windows、仓库 Node 24.22.2、离线夹具下，主审核人独立执行以下
   1. 修正总表中 `SEC-01`、`SEC-02`、`BUG-08`、`SEC-03` 的 4 处锚点不一致，并消除标题中下划线与数学公式符号在 GitHub 与 `check-docs.mjs` 间的 slug 差异；
   2. 按实测行数校准 `ARCH-01` 全部 9 个巨石文件行数，并补入 `check-repo-hygiene.mjs` 已触发的 `conversation-service.ts`（144.3 KB）与 `Settings.tsx`（165.6 KB）超限告警；
   3. 确认全部站内文件链接、行号范围与跨文档 `DL-xx` 锚点 0 失效，文档巡检 0 错误 0 警告。
+
+### 第 4 轮全仓离线门禁终验（2026-11-28）
+- 完成 R1～R14 全部 23/24 离线项改造后执行全仓离线门禁（`node scripts/verify.mjs gate` + 串行 `E2E_CONCURRENCY=1` + Pi 串行全量）：
+  - **门禁暴露并当场修补的 6 处回归/适配**：
+    1. [process-smoke.ts](../../../apps/backend/scripts/verify/process-smoke.ts) 调用 `cli.ts` 补传 `--app-root`，完整验证 `SEC-04` 独立模式 `runtime/session.token` 自动鉴权；
+    2. [worldbooks.test.ts](../../../apps/backend/tests/unit/worldbooks.test.ts) 与 [startup-flow-fixes.e2e.cjs](../../../apps/desktop/tests/e2e/startup-flow-fixes.e2e.cjs) 同步适配 `UX-01`（`DL-148` 方案 A：世界书热生效与停机角色首绑默认立即启用）；
+    3. [tts-unified.test.ts](../../../apps/backend/tests/integration/tts-unified.test.ts) 与 [background-tools.test.ts](../../../apps/backend/tests/integration/background-tools.test.ts) 在手动降级 `user_version` 后调用 `roleAccess.evict()`，避免复用 R4 连接池旧句柄而跳过重启迁移验证；
+    4. [relations-exlibris.css](../../../apps/desktop/renderer/src/styles/relations-exlibris.css) 在 `@media(max-width:599px)` 收紧 `.plate-heading` 左右留白与间距，修复 320px 窄屏（高 DPI 滚动条下）`.edition-strip` 宽度不足 24px 的边界问题。
+  - **最终离线全量实测结果（Windows x64 / Node v24.22.2 / `realServiceCalls = 0`）**：
+    - `accept-offline`：**21/21 步全通过**（后端正式单测/集成 **672/672**、交付单测 **5/5**、`process-cli-restart` 通过、81 场景全通；报告 `test-results/backend-acceptance/p5-2026-11-28T03-50-30-659Z-2c68722b/summary.json`）；
+    - `backend-eval-tests`：**8/8**；`feed-integration`：**3/3**；Pi 子包串行：**11/11**（`survivors = 0`）；
+    - 渲染器 `npm run check`（38 CSS 0 违规）+ **222/222** 单测 + Vite 构建；桌面壳单测：**32/32**（含脱仓打包冒烟）；
+    - Electron 39 E2E：3 并发 **28/29**（仅 `settings-media-sheet` 并发像素帧捕获抖动），串行（`E2E_CONCURRENCY=1`）同轮 **29/29 全通过**（报告 `test-results/desktop-e2e/e2e-2026-11-28T03-53-33-786Z-b73614d4/gates.json`）；
+    - 文档巡检 0 错误 0 警告，仓库卫生巡检 0 错误且手写源码 `>100 KB` 告警归零，全过程结束后 Node / Electron / esbuild 新增进程残留 **0**。
+  - **范围声明**：以上为 Windows 离线全量门禁基线；`DELIV-01` 干净机便携 EXE 实机验收与 `DELIV-02` 真实云端模型 / ComfyUI / TTS 联调仍需在真实环境另行留证。

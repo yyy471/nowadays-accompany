@@ -150,7 +150,7 @@ html[data-theme-transition="relationship-journal"] .exlibris[data-motion="full"]
   .exlibris .edition-strip .letter-strip>span{font-size:var(--nd-semantic-type-caption-size);letter-spacing:0;overflow:hidden;text-overflow:ellipsis}
   .exlibris .edition-strip .letter-strip>i{display:none}
 }
-@media(max-width:599px){.exlibris .edition-strip{height:30px}}
+@media(max-width:599px){.exlibris .edition-strip{height:30px}.exlibris .plate-heading{left:14px;right:14px;gap:var(--nd-semantic-space-field-hint)}}
 .exlibris button{font:inherit;color:inherit;cursor:pointer;border:0;background:none;touch-action:manipulation}
 .exlibris button:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .exlibris .back-button{justify-content:flex-start;padding:6px 0;width:max-content;min-height:36px;gap:9px}

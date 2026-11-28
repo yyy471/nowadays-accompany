@@ -63,8 +63,8 @@ test("正式消息接口只登记模型收到的条目；记忆关联按证据�
       ).get(roleId) as { id: string }).id);
     };
     assert.deepEqual(await (await fetch(base + "/worldbooks")).json(), { revision: 0, books: [] });
-    assert.equal((await put(0, books)).status, 409);
-    await write("/activity/stop", "POST");
+    // DL-148 方案 A：世界书属于热生效配置，运行中可直接保存，同时保留版本冲突保护。
+    assert.equal((await put(99, books)).status, 409);
     const large = Array.from({ length: 4 }, (_, n) => ({ id: "large-" + n, name: "大书", enabled: true,
       entries: Array.from({ length: 64 }, (_, k) => entry("entry-" + k, "大书", "字".repeat(1800))) }));
     assert.ok(Buffer.byteLength(JSON.stringify(large)) > 1024 * 1024);
@@ -76,7 +76,6 @@ test("正式消息接口只登记模型收到的条目；记忆关联按证据�
     assert.equal((await put(1, [book, book])).status, 400);
     assert.equal((await put(1, [book, books[1]!])).status, 200);
     assert.equal((await put(1, [])).status, 409);
-    await write("/activity/resume", "POST");
     const executionId = await submit("去雾港。");
     const model = fixture.model as ScriptedChatModel;
     assert.match(model.requests[0]!.system, /摆渡凭青陶牌/);

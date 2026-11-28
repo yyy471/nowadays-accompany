@@ -409,8 +409,7 @@ async function run() {
   await ev("document.querySelector('.dialogue-role-switch button').click()");
   await ev("[...document.querySelectorAll('.dialogue-role-switch [role=menuitemradio]')].find(x=>x.textContent.includes('林雾')).click()");
   await until(() => ev("document.querySelector('.dialogue-role-switch button')?.getAttribute('aria-label')?.includes('林雾')"), 'conversation-selected-role');
-  await until(() => ev("[...document.querySelectorAll('button')].some(button=>button.textContent==='恢复活动')"), 'conversation-resume-visible');
-  await ev("[...document.querySelectorAll('button')].find(button=>button.textContent==='恢复活动').click()");
+  // DL-148 方案 A：停机角色首次绑定对话模型默认勾选「保存并立即启用角色」，进对话页已处于活动态。
   await until(async () => (await request(`/v1/roles/${roleId}/activity`)).activity.state === 'active', 'conversation-role-active');
 
   // === #3 & 用户裁决 2(B)：已有导入服饰且未选首套时，仅展示背景 + 「即将赶来」，不闪现主题图和「当前未选择服饰」 ===

@@ -1231,6 +1231,8 @@ test("v9 voice rows migrate to v12 without touching messages, segments or SSE cu
     } finally {
       raw.close();
     }
+    // 清理连接池中的旧句柄，模拟进程重启后重新打开角色库并触发 V9→V32 迁移。
+    await fixture.app.roleAccess.evict(fixture.roleId);
 
     const voice = fixture.app.services.voice.getVoice(fixture.roleId);
     assert.equal(voice.voice?.protocol, "indextts");
