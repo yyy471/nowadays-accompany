@@ -137,8 +137,9 @@ if (process.argv[2] === "--worker") {
       const status = restored.services.autonomy.getStatus(fixture.roleId);
       const savedWake = restored.services.autonomy.listWakes(fixture.roleId).find((w) => w.wakeId === wake.wakeId);
       const system = model.requests[0]?.system ?? "";
-      return { contractPassed: model.requests.length === 1 && system.includes("最新蓝色角色设定") && system.includes("期待重启") && savedWake?.status === "completed" && status.budget.dailyLimit === 7 && status.budget.usedPoints === 1,
-        observed: { calls: model.requests.length, latestDefinition: system.includes("最新蓝色角色设定"), latestState: system.includes("期待重启"), wake: savedWake, status } };
+      const turn = model.requests[0]?.turnContext ?? "";
+      return { contractPassed: model.requests.length === 1 && system.includes("最新蓝色角色设定") && turn.includes("期待重启") && savedWake?.status === "completed" && status.budget.dailyLimit === 7 && status.budget.usedPoints === 1,
+        observed: { calls: model.requests.length, latestDefinition: system.includes("最新蓝色角色设定"), latestState: turn.includes("期待重启"), wake: savedWake, status } };
     } finally { await restored?.close(); await fixture.close(); }
   });
 

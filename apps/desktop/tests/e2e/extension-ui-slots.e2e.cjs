@@ -88,7 +88,7 @@ async function run() {
   process.env.NOWADAYS_HOST_TOKEN = require("node:crypto").randomBytes(32).toString("hex");
   const f = createFixtureWithModel(new ScriptedChatModel([
     request => {
-      assert.match(request.system, /共玩 1 次。最后一次掷骰：骰点 1/);
+      assert.match(request.turnContext ?? '', /共玩 1 次。最后一次掷骰：骰点 1/);
       return [{type:'tool_call', callId:'dice-share', name:'autonomy_share', arguments:{content:'我看见这次的骰点了。'}},
         {type:'completed', stopReason:'tool_calls'}];
     }, [{type:'text_delta', text:'已分享。'}, {type:'completed', stopReason:'stop'}]

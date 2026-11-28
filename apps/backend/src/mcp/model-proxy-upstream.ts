@@ -1,5 +1,16 @@
-import type { ReadableStreamDefaultReader, ReadableStreamReadResult } from "node:stream/web";
 import { ModelRequestTimeoutError } from "../domain/errors.js";
+
+/** 兼容 node:stream/web 与全局 Fetch/DOM ReadableStreamReadResult 的分片结果。 */
+export type ByteStreamReadResult =
+  | { done: true; value?: Uint8Array | undefined }
+  | { done: false; value: Uint8Array };
+
+/** 兼容 node:stream/web 与全局 Fetch/DOM ReadableStreamDefaultReader 的最小读取器契约。 */
+export interface ByteStreamReader {
+  read(): Promise<ByteStreamReadResult>;
+  cancel(reason?: unknown): Promise<unknown>;
+  releaseLock(): void;
+}
 
 /** 非流式模型响应的正文字节上限；流式响应的正文由下游背压控制，不在此累积。 */
 export const DEFAULT_MAX_NON_STREAM_RESPONSE_BYTES = 16 * 1024 * 1024;
@@ -52,9 +63,9 @@ export async function fetchWithHeaderTimeout(
  * 超时先拒绝竞态再取消底层 reader，避免 pending read 先被结算为正常结束。
  */
 export async function readChunkWithIdleTimeout(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
+  reader: ByteStreamReader,
   idleTimeoutMs: number,
-): Promise<ReadableStreamReadResult<Uint8Array>> {
+): Promise<ByteStreamReadResult> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const read = reader.read();
@@ -81,7 +92,7 @@ export async function readChunkWithIdleTimeout(
 
 /** 释放 reader 锁；超时取消时底层流可能仍在结算，不让清理异常覆盖超时错误。 */
 export function releaseReader(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
+  reader: Pick<ByteStreamReader, "releaseLock">,
 ): void {
   try {
     reader.releaseLock();
