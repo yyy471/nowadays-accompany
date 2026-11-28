@@ -18,6 +18,13 @@ function createAbortError(signal) {
     : Object.assign(new Error("Request aborted"), { name: "AbortError" });
 }
 
+// 上游未正常结束就断开（aborted / error / close without end）时使用的错误码。
+function createUpstreamAbortError() {
+  return Object.assign(new Error("Upstream response aborted before completion"), {
+    code: "ERR_STREAM_PREMATURE_CLOSE"
+  });
+}
+
 function proxyBackendRequest(targetUrl, request, headers, options = {}) {
   if (request.signal?.aborted) {
     return Promise.reject(createAbortError(request.signal));
@@ -43,6 +50,7 @@ function proxyBackendRequest(targetUrl, request, headers, options = {}) {
     let settled = false;
     let abortRequested = false;
     let upstreamResRef = null;
+    let failResponseStream = null;
     let bodyStream = null;
     let signalCleaned = false;
 
@@ -90,15 +98,24 @@ function proxyBackendRequest(targetUrl, request, headers, options = {}) {
       let waitingForPull = false;
       const stream = new ReadableStream({
         start(controller) {
+          // 单一幂等失败出口：aborted / error / close-without-end 都从这里结算，
+          // 只有正常 end 才 close，避免把上游断流伪装成完整响应。
+          function failStream(err) {
+            if (closed) return;
+            closed = true;
+            cleanupSignal();
+            try { controller.error(err ?? createUpstreamAbortError()); } catch { /* 已关闭或已取消 */ }
+            if (!upstreamRes.destroyed) upstreamRes.destroy();
+            if (!upstreamReq.destroyed) upstreamReq.destroy();
+          }
+          failResponseStream = failStream;
+
           upstreamRes.on("data", (chunk) => {
             if (closed) return;
             try {
               controller.enqueue(chunk);
             } catch {
-              closed = true;
-              cleanupSignal();
-              upstreamRes.destroy();
-              upstreamReq.destroy();
+              failStream(createUpstreamAbortError());
               return;
             }
             if ((controller.desiredSize ?? 0) <= 0) {
@@ -107,22 +124,25 @@ function proxyBackendRequest(targetUrl, request, headers, options = {}) {
             }
           });
           upstreamRes.on("end", () => {
+            // 防御性判断：只有声明完整结束的上游才是正常完成。
+            if (upstreamRes.complete === false) {
+              failStream(createUpstreamAbortError());
+              return;
+            }
             if (closed) return;
             closed = true;
             cleanupSignal();
             try { controller.close(); } catch { /* 已关闭 */ }
           });
           upstreamRes.on("aborted", () => {
-            if (closed) return;
-            closed = true;
-            cleanupSignal();
-            try { controller.close(); } catch { /* 已关闭 */ }
+            failStream(abortRequested ? createAbortError(request.signal) : createUpstreamAbortError());
           });
           upstreamRes.on("error", (err) => {
-            if (closed) return;
-            closed = true;
-            cleanupSignal();
-            try { controller.error(err); } catch { /* 已关闭 */ }
+            failStream(err);
+          });
+          upstreamRes.on("close", () => {
+            // 正常 end / 主动取消已先置 closed；此处只处理没有 end 的关闭。
+            failStream(abortRequested ? createAbortError(request.signal) : createUpstreamAbortError());
           });
         },
         pull() {
@@ -146,7 +166,11 @@ function proxyBackendRequest(targetUrl, request, headers, options = {}) {
       abortRequested = true;
       const err = createAbortError(request.signal);
       if (bodyStream && !bodyStream.destroyed) bodyStream.destroy(err);
-      upstreamReq.destroy(err);
+      // 响应已开始下发时，以 AbortError 结算下游正文；尚未返回响应头则由 fail() 拒绝。
+      if (failResponseStream) {
+        failResponseStream(err);
+      }
+      if (!upstreamReq.destroyed) upstreamReq.destroy(err);
       if (upstreamResRef && !upstreamResRef.destroyed) upstreamResRef.destroy(err);
       fail(err);
     }

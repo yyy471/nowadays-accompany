@@ -130,6 +130,44 @@ test("SSE 流中途中止会终止下游流并关闭上游连接", async (t) => 
   await waitFor(() => upstreamClosed);
 });
 
+// 上游只发已知部分分片后粗暴断开：正文必须失败，不能以 200 + 短正文正常结束。
+async function assertPrematureUpstreamFails(t, extraHeaders) {
+  let upstreamRes = null;
+  const partial = Buffer.from("abc");
+  const { base, agent } = await startServer(t, (_req, res) => {
+    res.on("error", () => {});
+    res.writeHead(200, { "content-type": "application/octet-stream", ...extraHeaders });
+    res.write(partial);
+    upstreamRes = res;
+  });
+  const response = await proxyBackendRequest(`${base}/v1/blob`, request(), new Headers(), { httpAgent: agent });
+  assert.equal(response.status, 200);
+
+  const reader = response.body.getReader();
+  const first = await reader.read();
+  assert.ok(Buffer.from(first.value).equals(partial), "首个分片应已由代理送达");
+  assert.ok(upstreamRes, "上游响应应已建立");
+  upstreamRes.destroy();
+
+  await assert.rejects(
+    (async () => {
+      for (;;) {
+        const { done } = await reader.read();
+        if (done) return;
+      }
+    })(),
+    err => err instanceof Error && (err.code === "ERR_STREAM_PREMATURE_CLOSE" || err.code === "ECONNRESET")
+  );
+}
+
+test("上游声明 Content-Length 后中断，消费正文失败", async (t) => {
+  await assertPrematureUpstreamFails(t, { "content-length": "8" });
+});
+
+test("上游无 Content-Length 的 chunked 流中断，消费正文失败", async (t) => {
+  await assertPrematureUpstreamFails(t, {});
+});
+
 test("慢消费端触发 upstream 背压，读尽后字节完整一致", async (t) => {
   const chunkSize = 64 * 1024;
   const chunks = Array.from({ length: 64 }, (_, index) => Buffer.alloc(chunkSize, index));
