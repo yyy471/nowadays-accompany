@@ -389,3 +389,16 @@
   - 已落位 `build-staging` 带 `NODE_COMPILE_CACHE` 二次/常规启动实测：首包 `/v1/health 200` **`443 ms` → `417 ms`**（进程内 `bootMs = 147–153 ms`，稳定 `<0.5s`，远优于 `<2s` 目标）；
   - 后端 `typecheck` + `npm run build` + `mcp-local` 5/5 通过。
 - **明确边界**：以上均为离线与本机打包态实测；干净无 Node 的 Windows 虚拟机便携 EXE 实机验收与 `DELIV-02` 真实云端模型/ComfyUI/TTS 联调仍需在真实外部环境下另行执行与留证。
+
+### 第 3 轮全仓离线门禁终验（2026-11-28）
+- **并发 E2E 稳定性收口**：
+  - `apps/desktop/tests/e2e/settings-media-sheet.e2e.cjs` 将羽化中段采帧升级为拦截单次 `.theme-feather` Web Animation 并定格在 `currentTime = 220ms`，彻底消除 3 并发窗口遮挡导致 `rAF` 节流跳过 500ms 过渡窗口的偶发超时；
+  - `apps/desktop/tests/e2e/cross-page-share.e2e.cjs` 在打开配置纸笺后先等待纸笺初始焦点落定，再聚焦草稿输入框，消除高并发下焦点竞态。
+- **全量离线门禁实跑结果（Windows x64，仓库 Node `v24.22.2`，`realServiceCalls = 0`）**：
+  - 后端离线验收 `accept-offline.mjs`：**21/21 步全通**（`typecheck` + `review-typecheck` + 89 个测试文件 **696/696** + 交付 **5/5** + `process-cli-restart` + 81 场景），报告 `test-results/backend-acceptance/p5-2026-11-28T07-16-22-674Z-8f6716db/summary.json`；
+  - Pi 子包全量串行测试：**14/14 通过**（4 种退出模式均 `survivors = 0`）；
+  - 桌面渲染器：`npm run check`（38 CSS 0 违规）+ **225/225** 全量单测 + Vite 生产构建通过；
+  - 桌面壳全量单测：**38/38 通过**（含 `backend-proxy` 5/5、`preload-boundary` 4/4 与脱仓生产包冒烟）；
+  - Electron 39 E2E（`node scripts/verify.mjs e2e`，默认 **3 并发**）：**29/29 全绿通过**（85.1s，`settings-media-sheet` 8.48s、`cross-page-share` 5.15s），报告 `test-results/desktop-e2e/e2e-2026-11-28T07-14-46-524Z-abf18613/gates.json`；
+  - 仓库巡检：`check-docs.mjs` **0 错误 0 警告**；`check-repo-hygiene.mjs` **0 错误**（手写超大源码告警 0）。
+- **离线 vs 真实边界声明**：410 清单 12 项离线可闭环项与 `R2-12` 离线冷启动优化已全部验证关闭；`R2-12` 剩余的**干净无 Node Windows 便携 EXE 实机验收**与 **`DELIV-02` 真实云端模型/ComfyUI/TTS 联调**需在真实外部服务与干净机环境另行执行并留证，不以离线全通外推。

@@ -154,9 +154,38 @@ async function run(verify) {
   const before = await cmd('Page.captureScreenshot', {format:'png',clip:portrait});
   fs.writeFileSync(path.join(out,'portrait-before.png'), Buffer.from(before.data,'base64'));
   await cmd('Emulation.setEmulatedMedia', { features: [{ name:'prefers-reduced-motion', value:'no-preference' }] });
-  await ev("document.querySelector('.ui-theme-switcher [data-theme-choice=nightwave]').click()");
-  await until(() => ev("document.querySelector('.theme-snapshot')?.style.maskComposite.includes('subtract') && parseFloat(getComputedStyle(document.querySelector('.theme-feather')).getPropertyValue('--theme-edge')) > 8"), '羽化中间帧保留立绘挖空');
+  // 拦截单次 .theme-feather Web Animation，定格在羽化中段（currentTime=220ms）再截屏，彻底消除并发窗口遮挡/掉帧导致的竞态。
+  await ev(`(() => {
+    const origAnimate = Element.prototype.animate;
+    window.__pausedThemeAnim = null;
+    window.__midFramePromise = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        Element.prototype.animate = origAnimate;
+        reject(new Error('羽化中间帧保留立绘挖空'));
+      }, 8000);
+      Element.prototype.animate = function(keyframes, options) {
+        const anim = origAnimate.call(this, keyframes, options);
+        if (this.classList?.contains('theme-feather')) {
+          Element.prototype.animate = origAnimate;
+          clearTimeout(timer);
+          anim.pause();
+          anim.currentTime = 220;
+          window.__pausedThemeAnim = anim;
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            const snap = document.querySelector('.theme-snapshot');
+            const edge = parseFloat(getComputedStyle(this).getPropertyValue('--theme-edge'));
+            if (snap?.style.maskComposite.includes('subtract') && edge > 8) resolve(edge);
+            else reject(new Error('羽化中间帧保留立绘挖空: edge=' + edge));
+          }));
+        }
+        return anim;
+      };
+    });
+    document.querySelector('.ui-theme-switcher [data-theme-choice=nightwave]').click();
+  })()`);
+  await ev('window.__midFramePromise');
   const middle = await cmd('Page.captureScreenshot', {format:'png',clip:portrait});
+  await ev(`(() => { if (window.__pausedThemeAnim) { window.__pausedThemeAnim.play(); window.__pausedThemeAnim = null; } })()`);
   const midPixels = PNG.sync.read(Buffer.from(middle.data,'base64'));
   await until(() => ev("!document.querySelector('.theme-snapshot') && document.documentElement.dataset.uiPreset==='nightwave'"), '夜幕收束');
   await waitPortraitSettled();

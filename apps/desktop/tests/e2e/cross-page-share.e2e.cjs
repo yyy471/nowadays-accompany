@@ -114,6 +114,7 @@ check(async ({cmd, ev, until, errors}) => {
   await until(() => ev("innerWidth===720 && innerHeight===540 && !!document.querySelector('.extension-overlays')"), '窄屏统一浮层');
   await tab('模型');
   await openRoleRow('model:chat');
+  await until(() => ev("document.querySelector('.config-sheet')?.contains(document.activeElement)"), '纸笺初始焦点落定');
   await ev(setValue(element('.config-sheet input'), '草稿模型'));
   await ev("document.querySelector('.config-sheet input').focus()");
   const summary = '窗外的梧桐开始落叶了，我把今天的见闻写在这里。'.repeat(12);
