@@ -7,6 +7,8 @@ import type { RoleAccess } from "../role/role-access.js";
 export interface RoleWorkspaceServiceDeps {
   dataRoot: string;
   roleAccess: RoleAccess;
+  maxVisitedEntries?: number;
+  maxNoteEntries?: number;
 }
 
 export interface WorkspaceNoteEntry {
@@ -20,10 +22,17 @@ export interface WorkspaceNote extends WorkspaceNoteEntry {
   content: string;
 }
 
+export interface WorkspaceNotesListResult {
+  items: WorkspaceNoteEntry[];
+  truncated: boolean;
+}
+
 const MAX_WALK_DEPTH = 6;
-const MAX_NOTE_ENTRIES = 500;
+const DEFAULT_MAX_VISITED_ENTRIES = 5000;
+const DEFAULT_MAX_NOTE_ENTRIES = 500;
 const MAX_NOTE_BYTES = 512 * 1024;
 const NOTE_EXTENSIONS = [".md", ".markdown"] as const;
+const SKIPPED_DIRECTORIES = new Set(["node_modules", "__pycache__", "dist", "build", "target", ".git", ".venv", "venv"]);
 
 function invalidNotePath(): AppError {
   return new AppError(400, "WORKSPACE_NOTE_PATH_INVALID", "笔记路径无效");
@@ -80,10 +89,17 @@ export class RoleWorkspaceService {
   }
 
   listNotes(roleId: string): WorkspaceNoteEntry[] {
+    return this.listNotesWithMeta(roleId).items;
+  }
+
+  listNotesWithMeta(roleId: string): WorkspaceNotesListResult {
     const root = this.getWorkspaceDir(roleId);
+    const maxVisitedEntries = this.deps.maxVisitedEntries ?? DEFAULT_MAX_VISITED_ENTRIES;
+    const maxNoteEntries = this.deps.maxNoteEntries ?? DEFAULT_MAX_NOTE_ENTRIES;
     const items: WorkspaceNoteEntry[] = [];
+    let visited = 0;
+    let truncated = false;
     const walk = (dir: string, depth: number): void => {
-      if (depth >= MAX_WALK_DEPTH || items.length >= MAX_NOTE_ENTRIES) return;
       let entries: fs.Dirent[];
       try {
         entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -91,9 +107,15 @@ export class RoleWorkspaceService {
         return;
       }
       for (const entry of entries) {
-        if (items.length >= MAX_NOTE_ENTRIES) return;
-        // 隐藏项与符号链接都不进入浏览范围。
+        if (truncated) return;
+        // 隐藏项与依赖目录都不进入浏览范围；依赖目录在计数与递归前就跳过。
         if (entry.name.startsWith(".")) continue;
+        if (entry.isDirectory() && SKIPPED_DIRECTORIES.has(entry.name.toLowerCase())) continue;
+        visited += 1;
+        if (visited > maxVisitedEntries) {
+          truncated = true;
+          return;
+        }
         const full = path.join(dir, entry.name);
         let info: fs.Stats;
         try {
@@ -103,10 +125,16 @@ export class RoleWorkspaceService {
         }
         if (info.isSymbolicLink()) continue;
         if (info.isDirectory()) {
+          if (SKIPPED_DIRECTORIES.has(entry.name.toLowerCase())) continue;
+          if (depth + 1 >= MAX_WALK_DEPTH) continue;
           walk(full, depth + 1);
           continue;
         }
         if (!info.isFile() || !isNoteExtension(entry.name)) continue;
+        if (items.length >= maxNoteEntries) {
+          truncated = true;
+          return;
+        }
         items.push({
           relativePath: path.relative(root, full).split(path.sep).join("/"),
           name: entry.name,
@@ -120,7 +148,7 @@ export class RoleWorkspaceService {
       if (left.updatedAt !== right.updatedAt) return left.updatedAt < right.updatedAt ? 1 : -1;
       return left.relativePath < right.relativePath ? -1 : left.relativePath > right.relativePath ? 1 : 0;
     });
-    return items;
+    return { items, truncated };
   }
 
   readNote(roleId: string, relativePath: string): WorkspaceNote {

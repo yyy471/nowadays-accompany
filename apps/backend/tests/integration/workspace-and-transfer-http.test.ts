@@ -7,6 +7,7 @@ import test, { type TestContext } from "node:test";
 import { createBackendApp, listen } from "../../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths, type BackendConfig } from "../../src/bootstrap/config.js";
 import { RoleTransferHttpService } from "../../src/application/transfer/role-transfer-service.js";
+import { RoleWorkspaceService } from "../../src/application/role/role-workspace-service.js";
 import { AppError } from "../../src/domain/errors.js";
 
 /**
@@ -130,6 +131,67 @@ test("工作空间笔记只读浏览：过滤扩展名、递归排序、越界�
     const dir = await api(base, "GET", `/v1/roles/${role.roleId}/workspace/path`);
     assert.equal(dir.status, 200);
     assert.equal(dir.body.path, fs.realpathSync(workspace));
+  } finally {
+    await app.close();
+  }
+});
+
+test("工作空间笔记扫描：跳过依赖目录并受访问数与笔记数上限约束", async (t) => {
+  const config = installation(t, "workspace-limits");
+  const app = createBackendApp(config, options);
+  try {
+    const base = await start(app);
+    const role = app.services.roles.createRole({ displayName: "扫描角色", definition: { text: "扫描工作空间。" } });
+    const workspace = rolePaths(config.dataRoot, role.roleId).workspaceDir;
+    const dependencyNotes: Array<[string, string]> = [
+      ["node_modules/pkg", "README.md"],
+      ["dist", "out.md"],
+      ["__pycache__", "doc.md"],
+      ["build", "b.md"],
+      ["target", "t.md"],
+    ];
+    for (const [directory, file] of dependencyNotes) {
+      fs.mkdirSync(path.join(workspace, directory), { recursive: true });
+      fs.writeFileSync(path.join(workspace, directory, file), `依赖目录笔记 ${file}`);
+    }
+    fs.writeFileSync(path.join(workspace, "保留.md"), "真正的笔记");
+
+    // 依赖目录整体跳过：既不进入列表，也不触发截断提示。
+    const listed = await api(base, "GET", `/v1/roles/${role.roleId}/workspace/notes`);
+    assert.equal(listed.status, 200, JSON.stringify(listed.body));
+    const items = listed.body.items as Array<{ relativePath: string }>;
+    assert.deepEqual(items.map((item) => item.relativePath), ["保留.md"]);
+    assert.equal(listed.body.truncated, false);
+
+    // 访问条目上限：40 个文件只允许统计到 15 个，返回 truncated 且列表不超过访问上限。
+    const visitedRole = app.services.roles.createRole({ displayName: "访问上限角色", definition: { text: "大量文件。" } });
+    const visitedWorkspace = rolePaths(config.dataRoot, visitedRole.roleId).workspaceDir;
+    for (let index = 0; index < 40; index += 1) {
+      fs.writeFileSync(path.join(visitedWorkspace, `note-${String(index).padStart(2, "0")}.md`), `# ${index}`);
+    }
+    const visitedService = new RoleWorkspaceService({
+      dataRoot: config.dataRoot,
+      roleAccess: app.roleAccess,
+      maxVisitedEntries: 15,
+    });
+    const visited = visitedService.listNotesWithMeta(visitedRole.roleId);
+    assert.equal(visited.truncated, true);
+    assert.ok(visited.items.length <= 15, `访问上限内条目数应不超过 15，实际 ${visited.items.length}`);
+
+    // 笔记数上限：5 篇笔记只返回前 3 篇，并标记截断。
+    const noteRole = app.services.roles.createRole({ displayName: "笔记上限角色", definition: { text: "多篇笔记。" } });
+    const noteWorkspace = rolePaths(config.dataRoot, noteRole.roleId).workspaceDir;
+    for (let index = 0; index < 5; index += 1) {
+      fs.writeFileSync(path.join(noteWorkspace, `第${index}篇.md`), `# 第 ${index} 篇`);
+    }
+    const noteService = new RoleWorkspaceService({
+      dataRoot: config.dataRoot,
+      roleAccess: app.roleAccess,
+      maxNoteEntries: 3,
+    });
+    const limited = noteService.listNotesWithMeta(noteRole.roleId);
+    assert.equal(limited.items.length, 3);
+    assert.equal(limited.truncated, true);
   } finally {
     await app.close();
   }

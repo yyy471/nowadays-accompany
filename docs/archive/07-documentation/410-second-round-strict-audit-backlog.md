@@ -21,10 +21,10 @@
 | [R2-02](#r2-02-混合检索-embedding-存在漏防重定向缺账本绕维护与首聊阻塞四重硬伤) | 409 新引入（R14） | 安全 / 账本 / 性能 | **P0** | 缺 `redirect: "error"`、跨协议乱配不拦、未入 Token 账本与维护守卫、海量未向量化记忆阻塞首聊且超时丢已算结果 | 关联 `DL-51` / `DL-183` | `[x]` 已修复 |
 | [R2-03](#r2-03-运行态单角色迁移接口存在主线程硬阻塞无体积上限与写路径过宽问题) | 409 新引入（R11） | 安全 / DoS | **P0** | `Atomics.wait` 同步冻住主线程 200ms、`readFileSync` 无上限易 OOM、导出路径只拦两子目录、`/workspace/path` 仍向渲染层暴露 | 否 | `[x]` 已修复 |
 | [R2-08](#r2-08-模型流式生成请求完全缺少首包超时与流空闲超时) | 底层核心 | 稳定性 / 死锁 | **P0** | 四条流式协议入口均未设首包或 chunk 空闲超时，上游半开连接可永久锁死角色执行槽位 | 否 | `[x]` 已修复 |
-| [R2-04](#r2-04-工作空间笔记扫描未跳过依赖目录且无遍历数上限) | 409 新引入（R11） | 性能 / DoS | **P1** | `RoleWorkspaceService.listNotes` 不跳过 `node_modules` 且无总访问数上限，易同步卡死主线程 | 否 | `[ ]` 待排查 |
-| [R2-05](#r2-05-pi-步骤日志并发无序写盘竞态且硬依赖-sdk-私有内部路径) | 409 新引入（R6） | 并发 Bug / 脆性 | **P1** | `worker.mjs` 并发 `writeSteps()` 无串行队列与原子改名易 `EBUSY`/错序；硬导入 SDK 未导出内部路径 `./utils/paths.js` | 否 | `[ ]` 待排查 |
+| [R2-04](#r2-04-工作空间笔记扫描未跳过依赖目录且无遍历数上限) | 409 新引入（R11） | 性能 / DoS | **P1** | `RoleWorkspaceService.listNotes` 不跳过 `node_modules` 且无总访问数上限，易同步卡死主线程 | 否 | `[x]` 已修复 |
+| [R2-05](#r2-05-pi-步骤日志并发无序写盘竞态且硬依赖-sdk-私有内部路径) | 409 新引入（R6） | 并发 Bug / 脆性 | **P1** | `worker.mjs` 并发 `writeSteps()` 无串行队列与原子改名易 `EBUSY`/错序；硬导入 SDK 未导出内部路径 `./utils/paths.js` | 否 | `[x]` 已修复 |
 | [R2-06](#r2-06-热生效配置把删除图生图服饰参考图误划入免停机区) | 409 新引入（R9b） | 并发竞态 | **P1** | `DELETE .../scene-image/outfits/:outfitId/reference` 免停机且立刻删盘，与在途自动 `img2img` 任务竞态报错 | 关联 `DL-148` | `[ ]` 待排查 |
-| [R2-07](#r2-07-roleaccess-连接池缺少坏句柄校验与异常驱逐自愈) | 409 新引入（R4） | 稳定性 / 容错 | **P1** | `borrow()` 不验 `db.open`，遇到 `SQLITE_IOERR`/`SQLITE_CORRUPT` 不驱逐脏连接，坏句柄滞留 60s | 否 | `[ ]` 待排查 |
+| [R2-07](#r2-07-roleaccess-连接池缺少坏句柄校验与异常驱逐自愈) | 409 新引入（R4） | 稳定性 / 容错 | **P1** | `borrow()` 不验 `db.open`，遇到 `SQLITE_IOERR`/`SQLITE_CORRUPT` 不驱逐脏连接，坏句柄滞留 60s | 否 | `[x]` 已修复 |
 | [R2-09](#r2-09-google-服务账号凭据-token-地址允许任意明文-http-触发-ssrf) | 底层核心 | 安全边界 | **P1** | `parseServiceAccountCredential` 放行明文 `http:` 且不限域名，篡改 JSON 可将签名 JWT 发往恶意或内网地址 | 否 | `[x]` 已修复 |
 | [R2-10](#r2-10-未配置生图服务时手动点击过场图仍静默生成假占位图落盘) | 底层核心 | 产品缺陷 | **P1** | `ConfiguredSceneImageGenerator` 仍回退 `FakeSceneImageGenerator`，向真实角色库写入假占位 PNG | 需确认边界（`DL-142` / `DL-150`） | `[ ]` 待排查 |
 | [R2-11](#r2-11-仓储层与核心执行层仍残存-11-个千行至近三千行巨石文件) | 架构遗留 | 架构债务 | **P1** | R12 仅拆掉 2 个 >100 KB 告警文件；`memory-store`、`schema.ts`（V32）等 11 个核心文件仍超千行 | 否 | `[ ]` 待排查 |
@@ -108,7 +108,7 @@
 
 ### R2-04 工作空间笔记扫描未跳过依赖目录且无遍历数上限
 
-- **优先级**：P1 · **来源**：409 R11（`UX-05`） · **状态**：`[ ]` 待排查
+- **优先级**：P1 · **来源**：409 R11（`UX-05`） · **状态**：`[x]` 已修复（R4，2026-11-28）
 - **证据位置**：
   - [apps/backend/src/application/role/role-workspace-service.ts](../../../apps/backend/src/application/role/role-workspace-service.ts#L82-L118)
   - 对照已有安全写法：[apps/backend/src/mcp/local-server.ts](../../../apps/backend/src/mcp/local-server.ts#L103-L114)（跳过 `node_modules`、限制 `visited > 2000`）
@@ -124,7 +124,7 @@
 
 ### R2-05 Pi 步骤日志并发无序写盘竞态，且硬依赖 SDK 私有内部路径
 
-- **优先级**：P1 · **来源**：409 R6（`BUG-05` / `UX-03`） · **状态**：`[ ]` 待排查
+- **优先级**：P1 · **来源**：409 R6（`BUG-05` / `UX-03`） · **状态**：`[x]` 已修复（R4，2026-11-28）
 - **证据位置**：
   - [apps/pi-mcp/src/worker.mjs](../../../apps/pi-mcp/src/worker.mjs#L132-L137) 与 [worker.mjs#L185-L194](../../../apps/pi-mcp/src/worker.mjs#L185-L194)
   - [apps/pi-mcp/src/worker.mjs](../../../apps/pi-mcp/src/worker.mjs#L65)（`import(new URL("./utils/paths.js", import.meta.resolve("@earendil-works/pi-coding-agent")))`）
@@ -157,7 +157,7 @@
 
 ### R2-07 `RoleAccess` 连接池缺少坏句柄校验与异常驱逐自愈
 
-- **优先级**：P1 · **来源**：409 R4（`BUG-03`） · **状态**：`[ ]` 待排查
+- **优先级**：P1 · **来源**：409 R4（`BUG-03`） · **状态**：`[x]` 已修复（R4，2026-11-28）
 - **证据位置**：
   - [apps/backend/src/application/role/role-access.ts](../../../apps/backend/src/application/role/role-access.ts#L47-L81)
 - **根因分析**：
@@ -326,3 +326,17 @@
 - **精准离线复验（仓库 Node `v24.22.2`）**：
   - 后端 `tsc --noEmit` 0 错误；`memory-hybrid-search` **11/11** 全通过（覆盖 302 拦截、声明与流式超限拒绝、跨协议 400、测试连接与混合检索用量入账、维护期零请求回退、中途失败前序向量持久化、200 条文档有界在线 + 后台补全与优雅关闭）；
   - 渲染器 `npm run check`（38 CSS 0 违规）+ `memory-embedding-settings` **7/7** + Vite 生产构建全通过。
+
+#### R4：`R2-04`（工作空间笔记扫描跳过依赖目录与上限）+ `R2-05`（Pi 步骤日志原子串行落盘与去私有路径）+ `R2-07`（`RoleAccess` 连接池坏句柄自愈）
+- **工作空间扫描保护（`R2-04`）**：
+  - `apps/backend/src/application/role/role-workspace-service.ts` 跳过 `node_modules`、`__pycache__`、`dist`、`build`、`target`、`.git`、`.venv`、`venv`（大小写不敏感），增加 `MAX_VISITED_ENTRIES = 5000` 遍历上限与 `listNotesWithMeta()` 返回 `{ items, truncated }`；
+  - `role-transfer-workspace-routes.ts` 透出 `truncated`，`WorkspaceNotesPanel.tsx` 复用 `.workspace-notes-notice` 在截断时展示轻提示（零新增样式）。
+- **Pi 步骤日志与去私有 SDK 依赖（`R2-05`）**：
+  - `apps/pi-mcp/src/worker-helpers.mjs` 内聚 `normalizeWorkspacePath`（剥离 `@`、兼容 `file://` URL 与 Unicode 空格归一化）及 `createStepWriter`（`writing`/`dirty` 串行合并写 + 唯一 `.tmp` 临时文件 `rename` 原子落盘 + `finally` `flush()` 收尾）；`worker.mjs` 彻底移除对 `@earendil-works/pi-coding-agent` `./utils/paths.js` 的私有导入。
+- **连接池自愈（`R2-07`）**：
+  - `apps/backend/src/storage/core/role-storage.ts` 新增 `isClosed` 与 `isHealthy`（同时检查 `business.db.open` 与已打开的 `checkpointStore.db.open`）；
+  - `apps/backend/src/application/role/role-access.ts` 在 `borrow()` 命中异常关闭句柄时立即替换重开，在 `withStore`/`withStoreAsync` 捕获 `SQLITE_IOERR`/`SQLITE_CORRUPT`/`SQLITE_NOTADB`/`database connection is not open` 等致命错误后释放租约并立即 `evict(roleId)`。
+- **精准离线复验（仓库 Node `v24.22.2`）**：
+  - 后端 `tsc --noEmit` 0 错误；`role-access` + `workspace-and-transfer-http` **11/11** 全通过；
+  - Pi 子包全量串行测试 **14/14** 全通过（含新增 `worker-helpers` 3/3 与真实 Pi SDK 进程回收 `survivors=0`）；
+  - 渲染器 `npm run check`（38 CSS 0 违规）+ Vite 生产构建全通过。

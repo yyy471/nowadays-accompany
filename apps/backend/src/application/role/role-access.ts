@@ -15,6 +15,7 @@ interface PoolEntry {
   refs: number;
   timer?: NodeJS.Timeout;
   drain?: { promise: Promise<void>; resolve: () => void };
+  stale?: boolean;
 }
 
 export class RoleAccess {
@@ -48,6 +49,16 @@ export class RoleAccess {
     this.requireReady(roleId);
     if (this.closing || this.blocked.has(roleId)) throw new StorageError("\u89d2\u8272\u5b58\u50a8\u4e0d\u53ef\u7528", { reason: "ROLE_STORAGE_BLOCKED" });
     let entry = this.entries.get(roleId);
+    if (entry && !entry.drain && !entry.storage.isHealthy) {
+      if (entry.timer) { clearTimeout(entry.timer); delete entry.timer; }
+      this.entries.delete(roleId);
+      if (entry.refs === 0) {
+        try { entry.storage.close(); } catch { /* ignore */ }
+      } else {
+        entry.stale = true;
+      }
+      entry = undefined;
+    }
     if (!entry) {
       let storage: RoleStorage;
       try { storage = RoleStorage.openExisting(rolePaths(this.dataRoot, roleId)); }
@@ -66,12 +77,14 @@ export class RoleAccess {
       current.refs--;
       if (current.refs === 0) {
         if (current.drain) {
-          this.entries.delete(roleId);
-          current.storage.close();
+          if (this.entries.get(roleId) === current) this.entries.delete(roleId);
+          try { current.storage.close(); } catch { /* ignore */ }
           current.drain.resolve();
+        } else if (current.stale) {
+          try { current.storage.close(); } catch { /* ignore */ }
         } else if (!this.closing && !this.blocked.has(roleId)) {
           current.timer = setTimeout(() => {
-            this.entries.delete(roleId);
+            if (this.entries.get(roleId) === current) this.entries.delete(roleId);
             current.storage.close();
           }, 60_000);
           current.timer.unref();
@@ -82,12 +95,18 @@ export class RoleAccess {
 
   withStore<T>(roleId: string, action: (storage: RoleStorage) => T): T {
     const lease = this.borrow(roleId);
-    try { return action(lease.storage); } finally { lease.release(); }
+    let fatal = false;
+    try { return action(lease.storage); }
+    catch (error) { fatal = isFatalSqliteError(error); throw error; }
+    finally { lease.release(); if (fatal) void this.evict(roleId); }
   }
 
   async withStoreAsync<T>(roleId: string, action: (storage: RoleStorage) => Promise<T>): Promise<T> {
     const lease = this.borrow(roleId);
-    try { return await action(lease.storage); } finally { lease.release(); }
+    let fatal = false;
+    try { return await action(lease.storage); }
+    catch (error) { fatal = isFatalSqliteError(error); throw error; }
+    finally { lease.release(); if (fatal) void this.evict(roleId); }
   }
 
   withReadyStores<T>(roleIds: Iterable<string>, action: (stores: RoleStorage[]) => T): T {
@@ -105,7 +124,7 @@ export class RoleAccess {
     if (entry.timer) { clearTimeout(entry.timer); delete entry.timer; }
     if (entry.refs === 0) {
       this.entries.delete(roleId);
-      entry.storage.close();
+      try { entry.storage.close(); } catch { /* ignore */ }
       return;
     }
     let resolve!: () => void;
@@ -133,6 +152,15 @@ export class RoleAccess {
 
 
 
+}
+
+function isFatalSqliteError(error: unknown): boolean {
+  const code = (error as { code?: unknown })?.code;
+  if (typeof code === "string" && /^SQLITE_(?:IOERR|CORRUPT|NOTADB|CANTOPEN|READONLY_DBMOVED)/.test(code)) {
+    return true;
+  }
+  return error instanceof Error &&
+    /database connection is not open|ROLE_STORAGE_CLOSED|SQLITE_IOERR|SQLITE_CORRUPT|SQLITE_NOTADB/i.test(error.message);
 }
 
 function toStorageError(error: unknown): AppError {

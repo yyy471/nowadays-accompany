@@ -40,10 +40,10 @@ export function registerRoleTransferWorkspaceRoutes(
   router.add(
     "GET",
     "/v1/roles/:roleId/workspace/notes",
-    ({ params }): JsonResponse => ({
-      status: 200,
-      body: { items: services.roleWorkspace.listNotes(params.roleId ?? "") },
-    }),
+    ({ params }): JsonResponse => {
+      const { items, truncated } = services.roleWorkspace.listNotesWithMeta(params.roleId ?? "");
+      return { status: 200, body: { items, truncated } };
+    },
   );
 
   router.add(

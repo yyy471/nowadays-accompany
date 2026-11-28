@@ -17,6 +17,7 @@ type Props = { roleId: string; active: boolean };
 export function WorkspaceNotesPanel({ roleId, active }: Props) {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<WorkspaceNoteSummary[]>([]);
+  const [truncated, setTruncated] = useState(false);
   const [selected, setSelected] = useState<{ roleId: string; path: string } | null>(null);
   // 选中路径与角色绑定：角色切换的同一帧里不会拿旧路径去请求新角色。
   const selectedPath = selected?.roleId === roleId ? selected.path : '';
@@ -31,6 +32,7 @@ export function WorkspaceNotesPanel({ roleId, active }: Props) {
   // 角色切换时清空旧选择，避免把上一个角色的笔记带到新角色。
   useEffect(() => {
     setItems([]);
+    setTruncated(false);
     setSelected(null);
     setNote(null);
     setListError('');
@@ -43,10 +45,11 @@ export function WorkspaceNotesPanel({ roleId, active }: Props) {
     const request = new AbortController();
     setListLoading(true);
     setListError('');
-    api<{ items: WorkspaceNoteSummary[] }>(`/v1/roles/${encodeURIComponent(roleId)}/workspace/notes`, { signal: request.signal })
+    api<{ items: WorkspaceNoteSummary[]; truncated?: boolean }>(`/v1/roles/${encodeURIComponent(roleId)}/workspace/notes`, { signal: request.signal })
       .then(result => {
         if (request.signal.aborted) return;
         setItems(result.items);
+        setTruncated(result.truncated === true);
         setSelected(previous => {
           const kept = previous?.roleId === roleId ? previous.path : '';
           const path = pickSelectedNotePath(result.items, kept);
@@ -95,6 +98,7 @@ export function WorkspaceNotesPanel({ roleId, active }: Props) {
       {listError && <p className="workspace-notes-error" role="alert">{listError}</p>}
       {!listError && listLoading && !items.length && <p className="workspace-notes-notice" role="status">正在读取工作空间笔记…</p>}
       {!listError && !listLoading && items.length === 0 && <p className="workspace-notes-empty">工作空间里还没有 Markdown 笔记。</p>}
+      {!listError && truncated && <p className="workspace-notes-notice" role="status">工作空间目录较大，仅展示前 {items.length} 篇笔记（已跳过 node_modules 等依赖目录）。</p>}
       {items.length > 0 && <div className="workspace-notes-layout">
         <ul className="workspace-notes-list" aria-label="工作空间笔记">
           {items.map(item => <li key={item.relativePath}>

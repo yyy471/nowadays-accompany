@@ -16,6 +16,18 @@ export class RoleStorage {
   }
   private closed = false;
 
+  get isClosed(): boolean {
+    return this.closed;
+  }
+
+  get isHealthy(): boolean {
+    return (
+      !this.closed &&
+      this.business.db.open &&
+      (this.checkpointStore === undefined || this.checkpointStore.db.open)
+    );
+  }
+
   constructor(paths: RolePaths, mode: RoleStorageMode = "initialize") {
     this.paths = paths;
     if (mode === "open") {

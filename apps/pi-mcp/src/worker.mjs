@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
+import { createStepWriter, normalizeWorkspacePath } from "./worker-helpers.mjs";
 
 const MAX_STEPS = 50;
 const MAX_TAIL = 240;
@@ -61,11 +62,9 @@ export async function workspaceTools(cwd, { createReadToolDefinition, createWrit
     return real;
   }
   const read = createReadToolDefinition(root);
-  // 复用 SDK 的路径归一化规则；升级 SDK 时需核对该内部模块路径。
-  const { resolvePath } = await import(new URL("./utils/paths.js", import.meta.resolve("@earendil-works/pi-coding-agent")));
   const executeRead = read.execute;
   read.execute = async (id, args, signal, update, ctx) => {
-    const file = await checked(resolvePath(args.path, root, { normalizeUnicodeSpaces: true, stripAtPrefix: true }));
+    const file = await checked(normalizeWorkspacePath(args.path, root));
     await fs.access(file);
     return executeRead(id, { ...args, path: pathToFileURL(file).href }, signal, update, { ...ctx, cwd: root });
   };
@@ -129,12 +128,8 @@ process.once("message", async ({ prompt, cwd, baseUrl, lease, modelName, apiFlav
   // 步骤日志放在草稿目录上一级，避免进入扩展发布文件；仅在目录确属本工程时落盘。
   const stepLogPath = jobId && path.basename(path.dirname(cwd)) === jobId
     ? path.join(path.dirname(cwd), "steps.json") : null;
-  const writeSteps = async () => {
-    if (!stepLogPath) return;
-    try {
-      await fs.writeFile(stepLogPath, JSON.stringify({ jobId, updatedAt: new Date().toISOString(), steps }));
-    } catch { /* 诊断日志失败绝不影响任务执行 */ }
-  };
+  const stepWriter = createStepWriter(stepLogPath,
+    () => JSON.stringify({ jobId, updatedAt: new Date().toISOString(), steps: [...steps] }));
   try {
     const sdk = await import("@earendil-works/pi-coding-agent");
     const { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager, ModelRuntime } = sdk;
@@ -182,7 +177,7 @@ process.once("message", async ({ prompt, cwd, baseUrl, lease, modelName, apiFlav
         ...(tail ? { tail } : {}),
       });
       if (steps.length > MAX_STEPS) steps.splice(0, steps.length - MAX_STEPS);
-      void writeSteps();
+      stepWriter.schedule();
     });
     await session.prompt(prompt);
     const last = session.messages.at(-1);
@@ -191,7 +186,7 @@ process.once("message", async ({ prompt, cwd, baseUrl, lease, modelName, apiFlav
   } catch (error) {
     process.send({ state: "failed", error: String(error.message).replaceAll(lease, "[lease]").slice(0, 500) });
   } finally {
-    await writeSteps();
+    await stepWriter.flush();
     session?.dispose();
     process.disconnect();
   }
