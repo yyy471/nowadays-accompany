@@ -124,3 +124,9 @@
 - 笔记面板分别呈现完整空列表、截断空列表和截断非空列表。截断空列表提示在当前扫描范围内未找到 Markdown 笔记。
 - 预览状态绑定角色、选中路径和刷新轮次。切换时立即呈现加载状态，当前请求的失败和成功各自更新预览。
 - Claude CLI 实施后，主进程通过渲染器令牌、样式、类型检查，14 项笔记与迁移单测，生产构建与 Electron `settings-workspace` 单场景。实窗覆盖慢响应、当前笔记请求失败及三种列表状态。首次运行定位到隐藏的编辑器副本，改用当前可见编辑器定位后复验通过。
+
+### 第八阶段 `R3-07` 和 `R3-16` 门禁接入与行号越界巡检
+
+- `scripts/repo-paths.mjs` 导出 `piMcpDir`，`scripts/verify.mjs` 新增 `piTests()`（固定 `--test-concurrency=1` 串行执行 `apps/pi-mcp/test/*.test.mjs`），接入 `fast`（支持单改 `apps/pi-mcp/` 变更映射、无改动默认集及关键字过滤）、`unit` 与 `gate` 独立结果列，失败时使对应根命令返回非零。
+- `scripts/check-docs.mjs` 补齐源码 `#L` / `#Lstart-Lend` 行号越界巡检（`docs/line-range-oob` 告警），覆盖全部核心文档（含 `docs/specs/`）及 `410+` 非历史归档文档，保留 `410` 之前历史归档豁免；同步修正 3 份现行规范中 6 处重构前残留行号链接。
+- 仓库 Node 24.22.2 定向复验：`check-docs.mjs` 错误 0、警告 0；临时注入 `#L99999` 精准报 `docs/line-range-oob`；`verify.mjs fast -- worker-helpers` 触发 `pi-tests:1` 通过，临时注入失败 Pi 用例时 `verify.mjs` 返回退出码 1，`check-repo-hygiene.mjs` 错误 0。

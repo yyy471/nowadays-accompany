@@ -8,6 +8,7 @@ import {
   backendDir,
   docsDir,
   localNode24Exe,
+  piMcpDir,
   rendererDir,
   repoRoot,
   toolsDir,
@@ -83,6 +84,10 @@ function desktopUnitTestFiles() {
 
 function rendererUnitTestFiles() {
   return walkFiles(path.join(rendererDir, "tests"), ".test.ts", rendererDir);
+}
+
+function piTestFiles() {
+  return walkFiles(path.join(piMcpDir, "test"), ".test.mjs", piMcpDir);
 }
 
 function targetedBackendTests(files) {
@@ -187,6 +192,16 @@ const commands = {
       cwd: rendererDir,
     };
   },
+  piTests(tests = piTestFiles()) {
+    const allCount = piTestFiles().length;
+    // Pi 子包生命周期与进程树清理用例必须串行运行，避免并发子进程互相干扰残留检查。
+    return {
+      name: tests.length === allCount ? "pi-tests" : `pi-tests:${tests.length}`,
+      cmd: process.execPath,
+      args: ["--test", "--test-concurrency=1", ...tests],
+      cwd: piMcpDir,
+    };
+  },
   feedIntegration() {
     return {
       name: "feed-integration",
@@ -275,14 +290,16 @@ async function fastCommands(files, keywords = []) {
   if (keywords.length > 0) {
     const backendMatches = filterByKeywords(backendTestFiles(), keywords);
     const evalMatches = filterByKeywords(backendEvalTestFiles(), keywords);
+    const piMatches = filterByKeywords(piTestFiles(), keywords);
     const desktopMatches = filterByKeywords(desktopUnitTestFiles(), keywords);
     const rendererMatches = filterByKeywords(rendererUnitTestFiles(), keywords);
     const list = [commands.docs(), commands.hygiene(), commands.backendTypecheck(), commands.rendererCheck()];
     if (backendMatches.length > 0) list.push(commands.backendTests(backendMatches));
     if (evalMatches.length > 0) list.push(commands.backendEvalTests(evalMatches));
+    if (piMatches.length > 0) list.push(commands.piTests(piMatches));
     if (desktopMatches.length > 0) list.push(commands.desktopTests(desktopMatches));
     if (rendererMatches.length > 0) list.push(commands.rendererTests(rendererMatches));
-    if (backendMatches.length === 0 && evalMatches.length === 0 && desktopMatches.length === 0 && rendererMatches.length === 0) {
+    if (backendMatches.length === 0 && evalMatches.length === 0 && piMatches.length === 0 && desktopMatches.length === 0 && rendererMatches.length === 0) {
       console.error(`[verify] 未匹配到包含关键字 [${keywords.join(", ")}] 的单测文件`);
       process.exit(2);
     }
@@ -290,11 +307,12 @@ async function fastCommands(files, keywords = []) {
   }
 
   if (files.length === 0) {
-    return [commands.docs(), commands.hygiene(), commands.backendTypecheck(), commands.backendEvalTests(), commands.rendererCheck(), commands.desktopTests(), commands.rendererTests()];
+    return [commands.docs(), commands.hygiene(), commands.backendTypecheck(), commands.backendEvalTests(), commands.piTests(), commands.rendererCheck(), commands.desktopTests(), commands.rendererTests()];
   }
   const list = [commands.docs(), commands.hygiene()];
   const rootInfraChanged = files.some((file) => ["package.json", "scripts/repo-paths.mjs", "scripts/ensure-tools.mjs"].includes(file));
   const backendChanged = rootInfraChanged || files.some((file) => file.startsWith("apps/backend/"));
+  const piChanged = rootInfraChanged || files.some((file) => file.startsWith("apps/pi-mcp/"));
   const rendererChanged = rootInfraChanged || files.some((file) =>
     file.startsWith("apps/desktop/renderer/") ||
     file.startsWith("apps/desktop/scripts/") ||
@@ -315,6 +333,9 @@ async function fastCommands(files, keywords = []) {
       list.push(commands.backendEvalTests());
     }
   }
+  if (piChanged) {
+    list.push(commands.piTests());
+  }
   if (rendererChanged) {
     list.push(commands.rendererCheck());
     list.push(commands.rendererTests());
@@ -327,7 +348,7 @@ async function fastCommands(files, keywords = []) {
 }
 
 async function unitCommands() {
-  // 轻量与前端构建先并发跑完，再独占资源执行高并发后端全量单测，避免 CPU 争抢引起子进程启动超时。
+  // 轻量与前端构建先并发跑完，再独占资源依次执行高并发后端单测与串行 Pi 子包测试，避免 CPU 争抢引起子进程超时。
   const quick = await runParallel([
     commands.docs(),
     commands.hygiene(),
@@ -340,12 +361,13 @@ async function unitCommands() {
     commands.feedIntegration(),
   ]);
   const backend = await run(commands.backendTests());
-  return [...quick, backend];
+  const pi = await run(commands.piTests());
+  return [...quick, backend, pi];
 }
 
 async function gateCommands() {
   // 前端校验/轻量检查/构建 与 后端离线验收 互不写同一目录，并行执行以缩短总墙钟；
-  // 桌面 Electron E2E 在两者全部落定后独占 CPU 顺序执行，避免动画与后端重载池争时序。
+  // Pi 子包串行测试与桌面 Electron E2E 在两者落定后独占 CPU 顺序执行，避免动画与进程树残留检查争时序。
   const frontendAndLight = (async () => {
     const preflight = await runParallel([
       commands.rendererCheck(),
@@ -364,7 +386,8 @@ async function gateCommands() {
     frontendAndLight,
     run(commands.acceptance()),
   ]);
-  const results = [...preflight, ...(build ? [build] : []), acceptance];
+  const pi = await run(commands.piTests());
+  const results = [...preflight, ...(build ? [build] : []), acceptance, pi];
   if (!build?.passed) return results;
   const e2e = await run(commands.e2e());
   return [...results, e2e];

@@ -44,9 +44,15 @@ const LEGACY_REMOVED_TARGETS = new Set([
 ]);
 // 归档记录保留当时路径：退役目录不在现行结构中出现，但历史链接不要求复活目标。
 const LEGACY_REMOVED_PREFIXES = ['prototypes/'];
+// 410 之前的历史归档文档记录重构前快照行号，豁免源码 #L 行号越界巡检；现行核心文档及 410+ 审计/修订文档须校验行号范围。
+const MIN_LINE_RANGE_CHECKED_ARCHIVE_ID = 410;
 const isLegacyRemoved = target => {
   const normalized = rel(target);
   return LEGACY_REMOVED_TARGETS.has(normalized) || LEGACY_REMOVED_PREFIXES.some(prefix => normalized.startsWith(prefix));
+};
+const shouldCheckArchiveLineRanges = filePath => {
+  const match = /^(\d+)-/.exec(path.basename(filePath));
+  return match !== null && Number(match[1]) >= MIN_LINE_RANGE_CHECKED_ARCHIVE_ID;
 };
 
 const errors = [];
@@ -121,7 +127,37 @@ function checkSizeAndLines(filePath, { maxBytes = Infinity, maxLineChars = MAX_L
   });
 }
 
-function checkLinks(filePath, { checkAnchors = false, allowLegacy = false } = {}) {
+const lineCountCache = new Map();
+function getFileLineCount(filePath) {
+  if (lineCountCache.has(filePath)) return lineCountCache.get(filePath);
+  const stat = fs.statSync(filePath);
+  if (!stat.isFile()) {
+    lineCountCache.set(filePath, null);
+    return null;
+  }
+  const count = fs.readFileSync(filePath, 'utf8').split(/\r?\n/).length;
+  lineCountCache.set(filePath, count);
+  return count;
+}
+
+function checkLineRangeAnchor(sourceFile, lineIdx, targetFile, anchor) {
+  const match = /^L(\d+)(?:-L?(\d+))?$/i.exec(anchor);
+  if (!match) return false;
+  const totalLines = getFileLineCount(targetFile);
+  if (totalLines === null) return true;
+  const start = Number(match[1]);
+  const end = match[2] ? Number(match[2]) : start;
+  if (start < 1 || end < start || end > totalLines) {
+    addWarn(
+      'docs/line-range-oob',
+      rel(sourceFile),
+      `第 ${lineIdx + 1} 行行号锚点 #${anchor} 越界（目标：${rel(targetFile)} 共 ${totalLines} 行）`,
+    );
+  }
+  return true;
+}
+
+function checkLinks(filePath, { checkAnchors = false, checkLineRanges = false, allowLegacy = false } = {}) {
   if (!fs.existsSync(filePath)) return;
   const text = fs.readFileSync(filePath, 'utf8');
   const dir = path.dirname(filePath);
@@ -141,13 +177,13 @@ function checkLinks(filePath, { checkAnchors = false, allowLegacy = false } = {}
       const rawTarget = inner.replace(/\s+"[^"]*"$/, '').trim();
       if (!rawTarget || /^(https?:|mailto:)/i.test(rawTarget)) continue;
       if (rawTarget.startsWith('#')) {
-        if (checkAnchors && filePath.endsWith('.md')) {
-          const anchor = decodeURIComponent(rawTarget.slice(1));
-          if (anchor && !/^L\d+(-L?\d+)?$/i.test(anchor)) {
-            const slugs = getHeadingSlugs(filePath);
-            if (!slugs.has(anchor.toLowerCase())) {
-              addWarn('docs/anchor-mismatch', rel(filePath), `第 ${idx + 1} 行未匹配到页内标题锚点 #${anchor}`);
-            }
+        const anchor = decodeURIComponent(rawTarget.slice(1));
+        if (anchor && /^L\d+(-L?\d+)?$/i.test(anchor)) {
+          if (checkLineRanges) checkLineRangeAnchor(filePath, idx, filePath, anchor);
+        } else if (checkAnchors && filePath.endsWith('.md') && anchor) {
+          const slugs = getHeadingSlugs(filePath);
+          if (!slugs.has(anchor.toLowerCase())) {
+            addWarn('docs/anchor-mismatch', rel(filePath), `第 ${idx + 1} 行未匹配到页内标题锚点 #${anchor}`);
           }
         }
         continue;
@@ -167,7 +203,9 @@ function checkLinks(filePath, { checkAnchors = false, allowLegacy = false } = {}
         addError('docs/broken-link', rel(filePath), `第 ${idx + 1} 行目标不存在：${rawTarget}`);
         continue;
       }
-      if (checkAnchors && anchor && resolved.endsWith('.md') && !/^L\d+(-L?\d+)?$/i.test(anchor)) {
+      if (anchor && /^L\d+(-L?\d+)?$/i.test(anchor)) {
+        if (checkLineRanges) checkLineRangeAnchor(filePath, idx, resolved, anchor);
+      } else if (checkAnchors && anchor && resolved.endsWith('.md')) {
         const slugs = getHeadingSlugs(resolved);
         if (!slugs.has(anchor.toLowerCase())) {
           addWarn('docs/anchor-mismatch', rel(filePath), `第 ${idx + 1} 行未匹配到标题锚点 #${anchor}（目标：${rel(resolved)}）`);
@@ -250,10 +288,14 @@ const coreDocs = [
 const coreSet = new Set(coreDocs.map(p => path.resolve(p)));
 const archiveDocs = fs.existsSync(archiveDir) ? walk(archiveDir).filter(f => f.endsWith('.md')) : [];
 
-for (const doc of coreDocs) checkLinks(doc, { checkAnchors: true });
+for (const doc of coreDocs) checkLinks(doc, { checkAnchors: true, checkLineRanges: true });
 for (const doc of archiveDocs) {
   if (coreSet.has(path.resolve(doc))) continue;
-  checkLinks(doc, { checkAnchors: false, allowLegacy: true });
+  checkLinks(doc, {
+    checkAnchors: false,
+    checkLineRanges: shouldCheckArchiveLineRanges(doc),
+    allowLegacy: true,
+  });
 }
 
 if (process.argv.includes('--json')) {

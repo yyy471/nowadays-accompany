@@ -85,7 +85,7 @@
    - 空闲连接每 `15_000` ms 输出 `: heartbeat\n\n`；客户端断连或 `closeStreams(roleId)` 时立即清理对应的 `clientId` 输入态并尝试恢复队列调度。
 2. **现行 13 种 `ConversationStreamType`**（[conversation.ts](../../apps/backend/src/domain/conversation.ts#L6-L23)，已从 `174 §8.5` 原设计的 8 种扩展）：
    - `execution_started`、`message_delta`、`tool_started`、`tool_backgrounded`、`tool_result_saved`、`message_segments`（支持流式 `partial: true` 与终态正式段）、`segment_annotations`、`scene_image_task`、`message_completed`、`message_interrupted`、`execution_superseded`、`execution_paused`、`execution_failed`。
-3. **消息接收等待原因 `ConversationWaitReason`**（[conversation.ts](../../apps/backend/src/domain/conversation.ts#L25-L30) 与 [conversation-service.ts](../../apps/backend/src/application/conversation/conversation-service.ts#L1091-L1134)）：
+3. **消息接收等待原因 `ConversationWaitReason`**（[conversation.ts](../../apps/backend/src/domain/conversation.ts#L25-L30) 与 [conversation-scheduler.ts](../../apps/backend/src/application/conversation/conversation-scheduler.ts)）：
    - `ROLE_STOPPED`：角色处于停止／暂停态。
    - `MODEL_MISSING`：未配置或缺失可用对话模型。
    - `BUSY`：角色其他执行仍在运行（含后台任务／主动执行占槽）。
@@ -104,7 +104,7 @@
   - `POST .../messages` 先查 `findSubmittedMessage`：已存在的 `submissionId` 跳过「禁止新建」门槛，重新清理 `blockedWindows` 并重新评估调度与 `waitReason` 返回 `200`；真正的新提交才触发 `activity.assertCanStart(roleId)`，角色停止时拒绝入库并返回 `409 ROLE_ACTIVITY_STOPPED`。
   - 当返回 `decisionScheduled: false` 且 `waitReason` 为 `ROLE_STOPPED`、`MODEL_MISSING` 或 `WINDOW_BLOCKED` 时，桌面端释放待机输入区并保留原 `submissionId`，显示对应的就地动作（「恢复活动」／「配置对话模型」／「重试」）。
   - 并发竞争保护（`283 §5 R02`）：若 POST 响应尚未返回时 SSE `execution_started` 已经到达并点名 `messageIds` 包含刚入库的用户消息，前端先在 `awaitingSubmission` 期将事件缓存在 `bufferedEvents`，拿到响应后优先以 SSE 为准进入正常演出，避免误跌入 `wait` 提示。
-- **打断与暂停节点收敛**（[conversation-service.ts](../../apps/backend/src/application/conversation/conversation-service.ts#L1859-L2338)）：
+- **打断与暂停节点收敛**（[conversation-execution-runner.ts](../../apps/backend/src/application/conversation/conversation-execution-runner.ts)）：
   - **新消息抢占（`supersedeWindow`）**：同窗口运行中（或他窗口正在自主运行）的执行被标为 `superseded` 并中止控制器；若已有 `partialText`，落库为 `status = 'interrupted'`、生成正式句段并发送 `message_segments` -> `message_interrupted` -> `execution_superseded`；若尚无文字，则清理占位生成的空 `generating` 记录。
   - **角色请求停止（`ROLE_STOP_REQUESTED`）**：只在图节点边界检查（`checkStopBoundary`），不在模型流吐字半途强切；执行与任务记为 `paused`，用户消息保持 claimed 状态等待恢复后续行；若没有后台记忆等在途收尾工作则立即确认停止。
   - **慢工具转后台（`TOOL_BACKGROUNDED`）**：放弃当前执行槽位并保留用户消息领取态，待工具完成后续行。

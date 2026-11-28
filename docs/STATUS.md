@@ -4,6 +4,8 @@
 
 ## 1. 当前结论概览
 
+**411 第八阶段 `R3-07`、`R3-16` 已修复并通过定向离线复验。** 根级 `scripts/verify.mjs` 在 `fast`（含 `apps/pi-mcp/` 变更映射与关键字过滤）、`unit` 和 `gate` 中接入串行 `pi-tests` 独立项；`scripts/check-docs.mjs` 对核心文档与 `410+` 审计文档补齐源码 `#L` 行号越界巡检，并修正 3 份规范中 6 处旧行号引用。文档巡检 0 错误 0 警告、正负向验证通过。[411 第八阶段](./archive/07-documentation/411-post-remediation-targeted-review.md#第八阶段-r3-07-和-r3-16-门禁接入与行号越界巡检)
+
 **411 第一阶段 `R3-10` 已修复并通过定向离线复验。** Pi 模型代理接入独立的响应头与正文分片空闲超时，非 SSE 正文限制为 16 MiB，故障释放模型调用占位并记录失败账本。后端类型检查及 Pi 代理、租约、线协议和工程调度测试 18/18 通过。[411 第一阶段](./archive/07-documentation/411-post-remediation-targeted-review.md#第一阶段-r3-10-pi-模型代理出站保护)
 
 **411 第二阶段 `R3-01`、`R3-02` 已修复并通过定向离线复验。** 角色包导出与导入共用 256 MiB UTF-8 预算，HTTP 预检和应用各自使用单次读取并校验的快照。后端类型检查与迁移、包格式和 HTTP 测试 29/29 通过。[411 第二阶段](./archive/07-documentation/411-post-remediation-targeted-review.md#第二阶段-r3-01-和-r3-02-角色迁移)
