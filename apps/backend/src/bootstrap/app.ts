@@ -23,7 +23,7 @@ import { PiToolProxy } from "../mcp/tool-proxy.js";
 import { ManagedPi } from "../mcp/managed-pi.js";
 import { EngineeringPool } from "../mcp/engineering-pool.js";
 import { isAdminSeat } from "../domain/admin-seat.js";
-import { PiModelProxy } from "../mcp/model-proxy.js";
+import { PiModelProxy, type PiModelProxyOptions } from "../mcp/model-proxy.js";
 import { ModelBindingResolver } from "../application/resources/model-binding-resolver.js";
 import { ModelService } from "../application/resources/model-service.js";
 import { CredentialResolver } from "../application/resources/credential-resolver.js";
@@ -86,6 +86,8 @@ export interface BackendAppOptions {
   onlineBackfillBudgetMs?: number;
   embeddingQueryTimeoutMs?: number;
   embeddingBatchTimeoutMs?: number;
+  /** 工程模型代理的首包/空闲超时与非流式正文上限（测试可缩短）。 */
+  piModelProxyOptions?: PiModelProxyOptions;
 }
 
 import { MediaMaintenance } from '../application/media/media-maintenance.js';
@@ -332,7 +334,7 @@ function assembleBackendApp(
       if (status === undefined || status === 401 || status === 402 || status === 403 || status === 429 || status >= 500) {
         engineeringPool.reportFailure(id, model, status === 429 ? retryAfter : null);
       }
-    });
+    }, options.piModelProxyOptions);
   const toolProxy = new PiToolProxy(modelProxy, appStore, roleAccess, autonomy, config.appRoot,
     (roleId, taskId) => conversation.releaseTaskResources(roleId, taskId));
   const pi: ManagedPi = new ManagedPi(modelProxy, toolProxy, engineeringPool, extensions.work, () => {

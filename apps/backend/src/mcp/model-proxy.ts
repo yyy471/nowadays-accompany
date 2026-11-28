@@ -12,8 +12,16 @@ import { isVertexPublisherBaseUrl } from "../domain/model-providers.js";
 import { modelConfigSchema } from "../domain/resource.js";
 import { readJsonBody } from "../http/body.js";
 import { buildGeminiStreamUrl, buildGoogleHeaders, normalizeGeminiModelId, vertexSafetySettings, type GoogleOAuthTokenCache } from "../model/google-gemini.js";
+import { DEFAULT_STREAM_HEADER_TIMEOUT_MS, DEFAULT_STREAM_IDLE_TIMEOUT_MS } from "../model/protocols.js";
 import type { AppStore } from "../storage/core/app-store.js";
 import { PiModelReceipt } from "./model-receipt.js";
+import {
+  DEFAULT_MAX_NON_STREAM_RESPONSE_BYTES,
+  fetchWithHeaderTimeout,
+  readBoundedResponseBody,
+  readChunkWithIdleTimeout,
+  releaseReader,
+} from "./model-proxy-upstream.js";
 import type { PiJobTools } from "./tool-proxy.js";
 
 export function piApiFlavor(config: ModelServiceConfig) {
@@ -33,14 +41,32 @@ type Lease = {
 };
 const denied = () => new AppError(403, "PI_LEASE_REVOKED", "工程租约或请求目标无效");
 
+/** 工程上游网络边界；默认值与主对话 `HttpModelAdapter` 的流式超时保持一致。 */
+export interface PiModelProxyOptions {
+  /** 上游（含凭据获取）等待响应头的上限。 */
+  streamHeaderTimeoutMs?: number;
+  /** SSE 分片或非 SSE 正文相邻数据块之间的空闲上限。 */
+  streamIdleTimeoutMs?: number;
+  /** 非 SSE 成功响应的正文字节上限。 */
+  maxResponseBytes?: number;
+}
+
 export class PiModelProxy {
   private readonly leases = new Map<string, Lease>();
   private readonly googleTokens: { current: GoogleOAuthTokenCache | undefined } = { current: undefined };
+  private readonly streamHeaderTimeoutMs: number;
+  private readonly streamIdleTimeoutMs: number;
+  private readonly maxResponseBytes: number;
 
   constructor(
     private credentials: CredentialResolver, private usage: TokenUsageService, private resources: ResourceService,
     private store: AppStore, private onSourceFailure: (resourceId: string, modelName: string, status?: number, retryAfter?: string | null) => void,
-  ) {}
+    options: PiModelProxyOptions = {},
+  ) {
+    this.streamHeaderTimeoutMs = options.streamHeaderTimeoutMs ?? DEFAULT_STREAM_HEADER_TIMEOUT_MS;
+    this.streamIdleTimeoutMs = options.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS;
+    this.maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_NON_STREAM_RESPONSE_BYTES;
+  }
 
   issue(roleId: string, binding: Binding, autonomous: boolean, expiresAt: number, tools?: PiJobTools, onFailure?: (code: string) => void) {
     const token = randomUUID();
@@ -106,7 +132,8 @@ export class PiModelProxy {
     const disconnect = new AbortController();
     const abort = () => disconnect.abort();
     response.once("close", abort);
-    const signal = AbortSignal.any([lease.controller.signal, disconnect.signal]);
+    // 仅租约与下游断开参与“取消”判定；首包/空闲超时与体积超限仍按上游失败记账。
+    const cancelSignal = AbortSignal.any([lease.controller.signal, disconnect.signal]);
     let status: number | undefined;
     let retryAfter: string | null = null;
     let succeeded = false;
@@ -121,8 +148,11 @@ export class PiModelProxy {
         url = buildGeminiStreamUrl(base, modelName);
         if (lease.flavor === "google-vertex") body.safetySettings = vertexSafetySettings(config.vertexSafety ?? "default");
         headers = await buildGoogleHeaders(credential, "text/event-stream", this.googleTokens, {
-          request: (url, init) => fetch(url, { ...init, signal, redirect: "error" }),
-        }, { signal });
+          request: (url, init, requestOptions) => fetchWithHeaderTimeout(url, init, {
+            timeoutMs: requestOptions?.timeoutMs ?? this.streamHeaderTimeoutMs,
+            signal: requestOptions?.signal ?? cancelSignal,
+          }),
+        }, { signal: cancelSignal, timeoutMs: this.streamHeaderTimeoutMs });
       } else if (config.protocol === "anthropic-messages") {
         url = base + "/messages?beta=true";
         headers["anthropic-version"] = "2023-06-01";
@@ -137,7 +167,9 @@ export class PiModelProxy {
         if (chat && body.stream) body.stream_options = { include_usage: true };
       }
       if (config.provider === "opencode-go") headers["user-agent"] = "Nowadays";
-      const upstream = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), redirect: "error", signal });
+      const upstream = await fetchWithHeaderTimeout(url,
+        { method: "POST", headers, body: JSON.stringify(body) },
+        { timeoutMs: this.streamHeaderTimeoutMs, signal: cancelSignal });
       if (!upstream.ok || !upstream.body) {
         status = upstream.ok ? 502 : upstream.status;
         retryAfter = upstream.headers.get("retry-after");
@@ -147,21 +179,31 @@ export class PiModelProxy {
       const type = upstream.headers.get("content-type") ?? "application/json";
       response.setHeader("Content-Type", type);
       if (type.includes("text/event-stream")) {
-        for await (const bytes of upstream.body) {
-          receipt.push(bytes);
-          if (!response.write(bytes)) await once(response, "drain", { signal });
+        const reader = upstream.body.getReader();
+        try {
+          for (;;) {
+            const { done, value } = await readChunkWithIdleTimeout(reader, this.streamIdleTimeoutMs);
+            if (done) break;
+            receipt.push(value);
+            if (!response.write(value)) await once(response, "drain", { signal: cancelSignal });
+          }
+        } finally {
+          // 循环若因处理异常中断，先取消上游读取（正常结束已 done，cancel 为空操作），再释放锁。
+          void reader.cancel().catch(() => undefined);
+          releaseReader(reader);
         }
         receipt.end();
       } else {
-        const data = Buffer.from(await upstream.arrayBuffer());
+        const data = await readBoundedResponseBody(upstream,
+          { maxBytes: this.maxResponseBytes, idleTimeoutMs: this.streamIdleTimeoutMs });
         receipt.json(data.toString("utf8"));
-        response.write(data);
+        if (!response.write(data)) await once(response, "drain", { signal: cancelSignal });
       }
       if (!receipt.completed || receipt.failed) throw new Error("PI_UPSTREAM_INCOMPLETE");
       succeeded = true;
       response.end();
     } catch (error) {
-      if (signal.aborted || Date.now() >= lease.expiresAt || response.destroyed) throw denied();
+      if (cancelSignal.aborted || Date.now() >= lease.expiresAt || response.destroyed) throw denied();
       const localCredentialError = error instanceof AppError && error.code === "MODEL_CREDENTIAL_UNAVAILABLE";
       const code = localCredentialError ? error.code :
         status === 429 ? "PI_UPSTREAM_RATE_LIMITED" : "PI_UPSTREAM_FAILED";
