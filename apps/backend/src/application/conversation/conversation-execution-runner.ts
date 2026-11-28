@@ -49,6 +49,10 @@ import {
   truncate,
   windowKey,
 } from "./conversation-prompt-builder.js";
+import {
+  DEFAULT_CYCLE_TOKEN_PRESSURE_RATIO,
+  selectCycleHistory,
+} from "./window-context-cycle.js";
 
 /**
  * 单轮执行驱动：图运行、后台工具结算、分段追踪、任务完成与资源释放。
@@ -252,9 +256,22 @@ export class ConversationExecutionRunner {
           ...(binding.config.vertexSafety === undefined ? {} : { vertexSafety: binding.config.vertexSafety }),
           ...(binding.config.maxInputChars === undefined ? {} : { maxInputChars: binding.config.maxInputChars }),
           ...(binding.config.maxOutputChars === undefined ? {} : { maxOutputChars: binding.config.maxOutputChars }),
+          ...(binding.config.contextWindowTokens === undefined ? {} : { contextWindowTokens: binding.config.contextWindowTokens }),
+          ...(binding.config.maxInputTokens === undefined ? {} : { maxInputTokens: binding.config.maxInputTokens }),
+          ...(binding.config.maxOutputTokens === undefined ? {} : { maxOutputTokens: binding.config.maxOutputTokens }),
         };
       };
-      const recent = store.listRecentMessages(windowId, 30);
+      const pendingIds = new Set(pendingMessages.map((message) => message.messageId));
+      const cycle = selectCycleHistory(
+        storage.business.db,
+        roleId,
+        windowId,
+        pendingIds,
+        this.ctx.now().toISOString(),
+        this.ctx.windowCycle,
+      );
+      const recent = cycle.messages;
+      let contextPressureTriggered = false;
       // 补答遇到已派发的工具时只读取回执；即便模型再次要求执行，也没有工具可派发。
       const replyToolSource = store.savedReplyToolSource(execution.executionId);
       const replyToolTask = replyToolSource ? store.getPrimaryExecutionTask(replyToolSource)?.taskId ?? null : null;
@@ -361,9 +378,15 @@ export class ConversationExecutionRunner {
                 },
           outfitBrief,
           segmentHalt: haltKind,
+          windowContextState: cycle.state,
         });
-        if (receipts.length) prompt.required += "\n原任务的后台工程回执如下。依据实际结果完成原交办，发布对应草稿时同时传入 extId 和 jobId。interrupted_unknown 表示结果待核查，不得自动重跑工程。\n" + JSON.stringify(receipts);
-        if (replyToolSource) prompt.required += "\n上次回答中断，本轮只补答原消息。已派发操作以保存的回执为据，结果未确认的如实说明。未提交的角色状态以当前状态为准。";
+        const appendTurnRequired = (extra: string) => {
+          prompt.turnRequired = prompt.turnRequired
+            ? `${prompt.turnRequired}\n${extra}`
+            : extra;
+        };
+        if (receipts.length) appendTurnRequired("原任务的后台工程回执如下。依据实际结果完成原交办，发布对应草稿时同时传入 extId 和 jobId。interrupted_unknown 表示结果待核查，不得自动重跑工程。\n" + JSON.stringify(receipts));
+        if (replyToolSource) appendTurnRequired("上次回答中断，本轮只补答原消息。已派发操作以保存的回执为据，结果未确认的如实说明。未提交的角色状态以当前状态为准。");
         if (exchangeContext?.spoken.length) {
           return { ...prompt, worldbook, optional: [
             "与本次互聊有关、你曾向用户发表的回复摘录（按发言时间核对更正；只证明你当时这样说过）：" + JSON.stringify(exchangeContext.spoken),
@@ -452,6 +475,12 @@ export class ConversationExecutionRunner {
           ...(this.ctx.onModelCallFinished === undefined
             ? {}
             : { onModelCallFinished: this.ctx.onModelCallFinished }),
+          tokenCountCache: this.ctx.tokenCountCache,
+          onContextBudgetPressure: ({ used, limit, mode }) => {
+            if (mode === "tokens" && limit > 0 && used / limit >= DEFAULT_CYCLE_TOKEN_PRESSURE_RATIO) {
+              contextPressureTriggered = true;
+            }
+          },
           toolForegroundWaitMs: this.ctx.toolForegroundWaitMs,
           onBackgroundToolSettled: (settlement) =>
             this.handleBackgroundToolSettled(settlement),
@@ -604,6 +633,20 @@ export class ConversationExecutionRunner {
       })(result.taskId) : commitReply();
       if (committed.observedBatch) this.ctx.batchDelivery.notify(roleId);
       if (automaticScene) this.ctx.autoScenes?.dispatchAutomatic(roleId, windowId);
+      // 30+n 周期评估：本轮消息与回复提交后检查是否达到整理阈值或 token 压力；
+      // 整理在后台异步执行，完成并核对覆盖范围后才原子切换下一周期左边界。
+      const postCommitCycle = selectCycleHistory(
+        storage.business.db,
+        roleId,
+        windowId,
+        new Set(),
+        this.ctx.now().toISOString(),
+        this.ctx.windowCycle,
+        contextPressureTriggered,
+      );
+      if (postCommitCycle.compaction !== null) {
+        this.ctx.scheduleWindowCompaction(postCommitCycle.compaction);
+      }
       if (!completionOnly) this.ctx.queueSegmentAnnotation({
         roleId,
         windowId,

@@ -137,7 +137,8 @@ test("自动召回只在最终 HTTP 请求保留完整概况且供应商接收�
     };
     setLimit(128000);
     const control = await turn("completed",1,1);
-    const prompt = JSON.parse(control).messages[0].content as string;
+    const wireMessages = JSON.parse(control).messages as Array<{ content?: string }>;
+    const prompt = wireMessages.map((m) => String(m.content ?? "")).join("\n");
     const recallLine = prompt.split("\n").find(line => line.includes("HiddenDetail"));
     assert.ok(recallLine);
     assert.ok(recallLine.includes(event.eventId));

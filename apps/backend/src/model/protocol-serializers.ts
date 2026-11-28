@@ -11,7 +11,28 @@ export function endpoint(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/, "")}${path}`;
 }
 
-/** 与生成请求共用同一序列化路径，覆盖协议开销和合法续轮块。 */
+const TURN_CONTEXT_HEADER = "[系统本轮上下文（非用户发言）]";
+
+/**
+ * 计算本轮可变宿主上下文在消息序列中的安全插入位置（DL-202）：
+ * - 优先放在本轮第一条 currentUserRequest 之前，确保已提交历史前缀 100% 不变；
+ * - 若无 currentUserRequest（如自主活动），放在第一组活跃工具调用之前或消息尾部；
+ * - 绝不插在 assistant(toolCalls) 与紧随其后的 tool 结果之间。
+ */
+export function findTurnContextInsertIndex(
+  messages: readonly ModelMessage[],
+): number {
+  const firstCurrent = messages.findIndex(
+    (message) => message.role === "user" && message.source?.currentUserRequest === true,
+  );
+  if (firstCurrent >= 0) return firstCurrent;
+  const firstActiveTool = messages.findIndex(
+    (message) => message.role === "assistant" && (message.toolCalls?.length ?? 0) > 0,
+  );
+  return firstActiveTool >= 0 ? firstActiveTool : messages.length;
+}
+
+/** 与生成请求共用同一序列化路径，覆盖协议开销、显式缓存断点、本轮可变上下文和合法续轮块。 */
 export function serializeModelRequest(
   protocol: ModelServiceConfig["protocol"],
   baseUrl: string,
@@ -34,17 +55,34 @@ export function serializeModelRequest(
       content: `已保存的工具事实 [${message.source.toolCallId ?? message.source.internalStepKey ?? message.toolCallId}]（${message.toolName ?? "工具"}）：${message.content}`,
     };
   });
+  const turnContext = request.turnContext?.trim() ?? "";
+  const turnInsertAt = turnContext.length > 0 ? findTurnContextInsertIndex(messages) : -1;
   const needsSpeakerLabels = protocol === "openai-chat" && requiresChatReasoning &&
     messages.some(message => message.role === "assistant" && !message.toolCalls?.length &&
       !continuationItems(message, protocol, request.modelName, baseUrl, provider)?.[0]);
   switch (protocol) {
-    case "openai-chat":
+    case "openai-chat": {
+      const wireMessages: unknown[] = [{ role: "system", content: request.system }];
+      const turnChatMessage =
+        turnContext.length === 0
+          ? null
+          : provider === "deepseek" || provider === "mimo" || provider === "zai"
+            ? { role: "user", content: `${TURN_CONTEXT_HEADER}\n${turnContext}` }
+            : { role: "system", content: turnContext };
+      messages.forEach((message, index) => {
+        if (turnChatMessage !== null && index === turnInsertAt) {
+          wireMessages.push(turnChatMessage);
+        }
+        wireMessages.push(
+          toOpenAiChatMessage(message, request.modelName, baseUrl, provider, requiresChatReasoning, needsSpeakerLabels),
+        );
+      });
+      if (turnChatMessage !== null && turnInsertAt >= messages.length) {
+        wireMessages.push(turnChatMessage);
+      }
       return JSON.stringify({
         model: request.modelName,
-        messages: [
-          { role: "system", content: request.system },
-          ...messages.map(message => toOpenAiChatMessage(message, request.modelName, baseUrl, provider, requiresChatReasoning, needsSpeakerLabels)),
-        ],
+        messages: wireMessages,
         ...(request.tools.length === 0
           ? {}
           : {
@@ -63,13 +101,30 @@ export function serializeModelRequest(
         stream: true,
         ...(provider === "zai" ? {} : { stream_options: { include_usage: true } }),
       });
-    case "openai-responses":
+    }
+    case "openai-responses": {
+      const wireInput: unknown[] = [];
+      const turnResponsesItem =
+        turnContext.length === 0
+          ? null
+          : {
+              type: "message",
+              role: "developer",
+              content: [{ type: "input_text", text: turnContext }],
+            };
+      messages.forEach((message, index) => {
+        if (turnResponsesItem !== null && index === turnInsertAt) {
+          wireInput.push(turnResponsesItem);
+        }
+        wireInput.push(...toOpenAiResponsesInput(message, request.modelName, baseUrl, provider));
+      });
+      if (turnResponsesItem !== null && turnInsertAt >= messages.length) {
+        wireInput.push(turnResponsesItem);
+      }
       return JSON.stringify({
         model: request.modelName,
         instructions: request.system,
-        input: messages.flatMap((message) =>
-          toOpenAiResponsesInput(message, request.modelName, baseUrl, provider),
-        ),
+        input: wireInput,
         include: ["reasoning.encrypted_content"],
         ...(provider === "xai" ? { store: false } : {}),
         ...(request.tools.length === 0
@@ -87,23 +142,47 @@ export function serializeModelRequest(
           : { max_output_tokens: request.maxOutputTokens }),
         stream: true,
       });
-    case "anthropic-messages":
+    }
+    case "anthropic-messages": {
+      const promptCaching = request.promptCaching === true;
+      const systemField =
+        request.systemBlocks && request.systemBlocks.length > 0
+          ? request.systemBlocks.map((block) => ({
+              type: "text",
+              text: block.text,
+              ...(promptCaching && block.cacheControl
+                ? { cache_control: { type: block.cacheControl } }
+                : {}),
+            }))
+          : request.system;
+      const toolsField =
+        request.tools.length === 0
+          ? undefined
+          : request.tools.map((tool, index) => ({
+              name: tool.name,
+              description: tool.description,
+              input_schema: tool.inputSchema,
+              ...(promptCaching && index === request.tools.length - 1
+                ? { cache_control: { type: "ephemeral" } }
+                : {}),
+            }));
       return JSON.stringify({
         model: request.modelName,
-        system: request.system,
-        messages: toAnthropicMessages(messages, request.modelName, baseUrl, provider),
-        ...(request.tools.length === 0
-          ? {}
-          : {
-              tools: request.tools.map((tool) => ({
-                name: tool.name,
-                description: tool.description,
-                input_schema: tool.inputSchema,
-              })),
-            }),
+        system: systemField,
+        messages: toAnthropicMessages(
+          messages,
+          request.modelName,
+          baseUrl,
+          provider,
+          turnContext,
+          turnInsertAt,
+          promptCaching,
+        ),
+        ...(toolsField === undefined ? {} : { tools: toolsField }),
         max_tokens: request.maxOutputTokens ?? 1024,
         stream: true,
       });
+    }
     case "google-gemini":
       return JSON.stringify(buildGeminiGenerateBody(
         { ...request, messages }, request.modelName, baseUrl,
@@ -224,19 +303,60 @@ function toOpenAiResponsesInput(message: ModelMessage, modelName: string, baseUr
   ];
 }
 
+function attachAnthropicCacheControl(
+  items: Array<{ role: "user" | "assistant"; content: unknown[] }>,
+): void {
+  const lastItem = items.at(-1);
+  if (!lastItem || lastItem.content.length === 0) return;
+  for (let i = lastItem.content.length - 1; i >= 0; i -= 1) {
+    const block = lastItem.content[i];
+    if (block !== null && typeof block === "object" && !Array.isArray(block)) {
+      const record = block as Record<string, unknown>;
+      // thinking 块不可附加 cache_control；向前回退到可缓存内容块。
+      if (record.type === "thinking" || record.type === "redacted_thinking") continue;
+      lastItem.content[i] = { ...record, cache_control: { type: "ephemeral" } };
+      return;
+    }
+  }
+}
+
 function toAnthropicMessages(
   messages: readonly ModelMessage[],
   modelName: string,
   baseUrl: string,
   provider?: ModelProvider,
+  turnContext = "",
+  turnInsertAt = -1,
+  promptCaching = false,
 ): unknown[] {
   const items: Array<{ role: "user" | "assistant"; content: unknown[] }> = [];
+  const turnBlock =
+    turnContext.length > 0
+      ? { type: "text", text: `${TURN_CONTEXT_HEADER}\n${turnContext}` }
+      : null;
   // 自主触发可以没有用户消息。协议需要一项输入，由应用表明触发来源。
   if (messages.length === 0) {
-    return [{ role: "user", content: [{ type: "text", text: APPLICATION_TRIGGER_INPUT }] }];
+    return [{
+      role: "user",
+      content: [
+        ...(turnBlock ? [turnBlock] : []),
+        { type: "text", text: APPLICATION_TRIGGER_INPUT },
+      ],
+    }];
   }
   let lastWasToolResult = false;
-  for (const message of messages) {
+  let pendingTurnBlock: Record<string, unknown> | null = null;
+  let historyCacheMarked = false;
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index]!;
+    if (turnBlock !== null && index === turnInsertAt) {
+      // 已提交历史正好在此结束：在历史尾部落第 4 个缓存断点，确保不把本轮动态内容卷入历史缓存。
+      if (promptCaching && !historyCacheMarked && items.length > 0) {
+        attachAnthropicCacheControl(items);
+        historyCacheMarked = true;
+      }
+      pendingTurnBlock = turnBlock;
+    }
     if (message.role === "tool") {
       const block = {
         type: "tool_result",
@@ -253,6 +373,14 @@ function toAnthropicMessages(
     }
     lastWasToolResult = false;
     if (message.role === "assistant") {
+      if (pendingTurnBlock !== null) {
+        if (items.at(-1)?.role === "user") {
+          items.at(-1)!.content.push(pendingTurnBlock);
+        } else {
+          items.push({ role: "user", content: [pendingTurnBlock] });
+        }
+        pendingTurnBlock = null;
+      }
       const replay = continuationItems(message, "anthropic-messages", modelName, baseUrl, provider);
       if (replay) {
         items.push({ role: "assistant", content: replay });
@@ -274,20 +402,33 @@ function toAnthropicMessages(
       items.push({ role: "assistant", content });
       continue;
     }
+    const userContent: unknown[] = [
+      ...(pendingTurnBlock ? [pendingTurnBlock] : []),
+      ...(message.images?.map((image) => ({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: image.mediaType,
+          data: image.dataBase64,
+        },
+      })) ?? []),
+      { type: "text", text: message.content },
+    ];
+    pendingTurnBlock = null;
     items.push({
       role: "user",
-      content: [
-        ...(message.images?.map((image) => ({
-          type: "image",
-          source: {
-            type: "base64",
-            media_type: image.mediaType,
-            data: image.dataBase64,
-          },
-        })) ?? []),
-        { type: "text", text: message.content },
-      ],
+      content: userContent,
     });
+  }
+  if (turnBlock !== null && turnInsertAt >= messages.length) {
+    if (promptCaching && !historyCacheMarked && items.length > 0) {
+      attachAnthropicCacheControl(items);
+    }
+    if (items.at(-1)?.role === "user") {
+      items.at(-1)!.content.push(turnBlock);
+    } else {
+      items.push({ role: "user", content: [turnBlock] });
+    }
   }
   return items;
 }

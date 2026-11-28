@@ -528,6 +528,7 @@ export function buildGeminiGenerateBody(
       modelName,
       baseUrl,
       continuationItems,
+      request.turnContext ?? "",
     ),
     ...(request.tools.length === 0
       ? {}
@@ -548,16 +549,32 @@ export function buildGeminiGenerateBody(
   };
 }
 
+function findGeminiTurnContextInsertIndex(
+  messages: readonly ModelMessage[],
+): number {
+  const firstCurrent = messages.findIndex(
+    (message) => message.role === "user" && message.source?.currentUserRequest === true,
+  );
+  if (firstCurrent >= 0) return firstCurrent;
+  const firstActiveTool = messages.findIndex(
+    (message) => message.role === "assistant" && (message.toolCalls?.length ?? 0) > 0,
+  );
+  return firstActiveTool >= 0 ? firstActiveTool : messages.length;
+}
+
 function toGoogleGeminiContents(
   messages: readonly ModelMessage[],
   modelName: string,
   baseUrl: string,
   continuationItems: GoogleGeminiTransport["continuationItems"],
+  turnContext = "",
 ): Array<{ role: "user" | "model"; parts: unknown[] }> {
   const contents: Array<{ role: "user" | "model"; parts: unknown[] }> = [];
   // 记录每个内部 callId 对应的工具名和上游是否真正下发了 functionCall.id，
   // 避免向严格校验 schema 的 Vertex v1 回传伪造 id 触发 400 错误。
   const callMeta = new Map<string, { name: string; wireId?: string }>();
+  const trimmedTurn = turnContext.trim();
+  const turnInsertAt = trimmedTurn.length > 0 ? findGeminiTurnContextInsertIndex(messages) : -1;
 
   const pushParts = (role: "user" | "model", parts: readonly unknown[]) => {
     if (parts.length === 0) {
@@ -571,7 +588,11 @@ function toGoogleGeminiContents(
     contents.push({ role, parts: [...parts] });
   };
 
-  for (const message of messages) {
+  for (let msgIndex = 0; msgIndex < messages.length; msgIndex += 1) {
+    const message = messages[msgIndex]!;
+    if (trimmedTurn.length > 0 && msgIndex === turnInsertAt) {
+      pushParts("user", [{ text: `[系统本轮上下文（非用户发言）]\n${trimmedTurn}` }]);
+    }
     if (message.role === "user") {
       const parts: Record<string, unknown>[] = [];
       for (const image of message.images ?? []) {
@@ -651,6 +672,9 @@ function toGoogleGeminiContents(
         },
       },
     ]);
+  }
+  if (trimmedTurn.length > 0 && turnInsertAt >= messages.length) {
+    pushParts("user", [{ text: `[系统本轮上下文（非用户发言）]\n${trimmedTurn}` }]);
   }
   // 自主活动没有用户发言。延续首轮的应用触发标记，避免把历史助手文字当成本轮预填回复。
   if (contents[0]?.role === "model") {

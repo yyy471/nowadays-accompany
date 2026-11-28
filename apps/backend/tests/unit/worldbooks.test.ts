@@ -78,15 +78,15 @@ test("正式消息接口只登记模型收到的条目；记忆关联按证据�
     assert.equal((await put(1, [])).status, 409);
     const executionId = await submit("去雾港。");
     const model = fixture.model as ScriptedChatModel;
-    assert.match(model.requests[0]!.system, /摆渡凭青陶牌/);
-    assert.doesNotMatch(model.requests[0]!.system, /朱砂印|旧船|递归触发|英文词边界|未启用/);
+    assert.match(model.requests[0]!.turnContext ?? "", /摆渡凭青陶牌/);
+    assert.doesNotMatch(model.requests[0]!.turnContext ?? "", /朱砂印|旧船|递归触发|英文词边界|未启用/);
     const usage = app.services.roles.getWorldbookUsage(roleId, executionId);
     assert.deepEqual((await (await fetch(base + "/worldbooks/usage?executionId=" + executionId)).json() as { items: unknown }).items, usage);
     assert.equal(usage.filter(row => row.status === "included").length, 6);
     assert.equal(usage.filter(row => row.status === "budget_omitted").length, 2);
     const second = await submit("今晚吃面。");
     assert.equal(app.services.roles.getWorldbookUsage(roleId, second).length, 0);
-    assert.doesNotMatch(model.requests[1]!.system, /摆渡凭青陶牌|已知世界设定/);
+    assert.doesNotMatch(model.requests[1]!.turnContext ?? "", /摆渡凭青陶牌|已知世界设定/);
     const refused = await submit("又去雾港。");
     assert.equal(app.services.roles.getWorldbookUsage(roleId, refused).length, 0);
     const eventId = withStorage(fixture, ({ business }) => {
@@ -150,11 +150,11 @@ test("旧角色卡内嵌条目在单独维护后可清空，展示人物卡原�
     };
     await submit();
     const requests = (fixture.model as ScriptedChatModel).requests;
-    assert.match(requests[0]!.system, /浅读到的公开设定/);
-    assert.doesNotMatch(requests[0]!.system, /隐藏身份|character_book/);
+    assert.match(requests[0]!.turnContext ?? "", /浅读到的公开设定/);
+    assert.doesNotMatch(`${requests[0]!.system}\n${requests[0]!.turnContext ?? ""}`, /隐藏身份|character_book/);
     app.services.roles.putWorldbooks(roleId, imported.revision, []);
     await submit();
-    assert.doesNotMatch(requests[1]!.system, /浅读到的公开设定|隐藏身份|character_book/);
+    assert.doesNotMatch(`${requests[1]!.system}\n${requests[1]!.turnContext ?? ""}`, /浅读到的公开设定|隐藏身份|character_book/);
     assert.deepEqual(app.services.roles.getRole(roleId).definition.payload, payload);
   } finally { await fixture.close(); }
 });

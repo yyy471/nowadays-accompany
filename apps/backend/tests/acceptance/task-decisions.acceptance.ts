@@ -104,7 +104,7 @@ function twoPhaseModel(): ModelPort & { requests: ModelRequest[] } {
         return;
       }
       if (round === 2) {
-        const match = /taskId=([0-9a-f-]{36})/.exec(request.system);
+        const match = /taskId=([0-9a-f-]{36})/.exec(request.turnContext ?? "");
         if (!match) throw new Error("P5_TASK_BRIEF_MISSING");
         const schedule = request.tools.find((t) => t.name === "autonomy_schedule");
         if (!schedule) throw new Error("P5_SCHEDULE_TOOL_MISSING");
@@ -132,7 +132,7 @@ function twoPhaseModel(): ModelPort & { requests: ModelRequest[] } {
         (message) => message.role === "tool" && String(message.content).includes("前半部分内容"),
       );
       if (!replayed) throw new Error("P5_REPLAY_MISSING");
-      if (!/已读完前半部分/.test(request.system)) throw new Error("P5_NOTE_REPLAY_MISSING");
+      if (!/已读完前半部分/.test(request.turnContext ?? "")) throw new Error("P5_NOTE_REPLAY_MISSING");
       const finish = request.tools.find((t) => t.name === "task_finish");
       if (!finish) throw new Error("P5_FINISH_TOOL_MISSING");
       if (round === 5) {

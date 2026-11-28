@@ -41,6 +41,15 @@ import { ConversationStreamHub } from "./conversation-stream-hub.js";
 import { ConversationRecovery } from "./conversation-recovery.js";
 import { ConversationExecutionRunner } from "./conversation-execution-runner.js";
 import { ConversationScheduler } from "./conversation-scheduler.js";
+import { StaticTokenCountCache } from "./context-budget.js";
+import {
+  tryCommitWindowSummary,
+  type ProposedWindowCompaction,
+  type WindowCyclePolicy,
+  type WindowSummaryCompactor,
+} from "./window-context-cycle.js";
+import { mergeModelUsage } from "../../domain/token-usage.js";
+import type { ModelUsage } from "../../domain/model.js";
 
 export type { ChatModelPortFactory } from "./conversation-internal-types.js";
 
@@ -79,6 +88,10 @@ export interface ConversationServiceOptions {
   adminServices?: AdminToolServices | null;
   /** 模型调用结束时上报全局 Token 账本（DL-183）。 */
   onModelCallFinished?: (event: TokenUsageCallEvent) => void;
+  /** 主对话 30+n 窗口历史周期策略（DL-202）。 */
+  windowCycle?: WindowCyclePolicy;
+  /** 可选自定义窗口滚动摘要整理器（测试或扩展注入）。 */
+  windowSummaryCompactor?: WindowSummaryCompactor;
 }
 
 export interface SubmitConversationResult extends SubmitMessageResult {
@@ -210,6 +223,7 @@ export class ConversationService {
       catalogClosePending: new Set(),
       activeStreams: new Map(),
       blockedWindows: new Set(),
+      windowCompactions: new Map(),
       closed: false,
     };
     const context = { state } as unknown as ConversationContext;
@@ -241,6 +255,9 @@ export class ConversationService {
       exchanges: this.exchanges,
       batchDelivery: this.batchDelivery,
       resolveModelCredential,
+      tokenCountCache: new StaticTokenCountCache(),
+      windowCycle: options.windowCycle,
+      windowSummaryCompactor: options.windowSummaryCompactor,
       autoScenes: null,
     });
     this.state = state;
@@ -271,6 +288,7 @@ export class ConversationService {
       }
     };
     context.queueSegmentAnnotation = (input) => this.queueSegmentAnnotation(input);
+    context.scheduleWindowCompaction = (plan) => this.scheduleWindowCompaction(plan);
   }
 
   setSceneImageService(service: import("../media/scene-image-service.js").SceneImageService): void {
@@ -529,6 +547,16 @@ export class ConversationService {
       }
     }
     this.inputStates.clearRole(roleId);
+    const compactions = [...this.state.windowCompactions.entries()].filter(
+      ([, entry]) => entry.roleId === roleId,
+    );
+    for (const [key, entry] of compactions) {
+      entry.controller.abort();
+      await entry.promise.catch(() => undefined);
+      if (this.state.windowCompactions.get(key) === entry) {
+        this.state.windowCompactions.delete(key);
+      }
+    }
     const catalogs = [...this.state.taskCatalogs.entries()].filter(
       ([, entry]) => entry.roleId === roleId,
     );
@@ -537,6 +565,154 @@ export class ConversationService {
       this.state.catalogClosePending.delete(taskId);
       await entry.catalog.close();
     }
+  }
+
+  /** 等待指定角色（或全部角色）当前在途的窗口滚动摘要整理收尾；供测试与关闭收口使用。 */
+  async waitForWindowCompactions(roleId?: string): Promise<void> {
+    const tasks = [...this.state.windowCompactions.values()]
+      .filter((entry) => roleId === undefined || entry.roleId === roleId)
+      .map((entry) => entry.promise);
+    if (tasks.length > 0) {
+      await Promise.allSettled(tasks);
+    }
+  }
+
+  /** 按窗口去重调度 30+n 滚动历史摘要整理；失败或未覆盖全部待移出历史时保留旧周期。 */
+  private scheduleWindowCompaction(plan: ProposedWindowCompaction): void {
+    if (this.state.closed) return;
+    if (this.context.activity !== null && !this.context.activity.canStart(plan.roleId)) {
+      return;
+    }
+    const key = windowKey(plan.roleId, plan.windowId);
+    if (this.state.windowCompactions.has(key)) return;
+    const controller = new AbortController();
+    const promise = this.runWindowCompaction(plan, controller.signal)
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.state.windowCompactions.get(key)?.controller === controller) {
+          this.state.windowCompactions.delete(key);
+        }
+      });
+    this.state.windowCompactions.set(key, {
+      roleId: plan.roleId,
+      controller,
+      promise,
+    });
+  }
+
+  private async runWindowCompaction(
+    plan: ProposedWindowCompaction,
+    signal: AbortSignal,
+  ): Promise<void> {
+    if (this.state.closed || signal.aborted) return;
+    const compactor: WindowSummaryCompactor =
+      this.context.windowSummaryCompactor ??
+      ((input) => this.defaultWindowSummaryCompactor(input));
+    const aborted = new Promise<never>((_resolve, reject) => {
+      if (signal.aborted) {
+        reject(new Error("WINDOW_COMPACTION_ABORTED"));
+        return;
+      }
+      signal.addEventListener(
+        "abort",
+        () => reject(new Error("WINDOW_COMPACTION_ABORTED")),
+        { once: true },
+      );
+    });
+    const result = await Promise.race([
+      compactor({
+        roleId: plan.roleId,
+        windowId: plan.windowId,
+        previousSummary: plan.previousSummaryText,
+        previousCoveredUntilSequence: plan.previousCoveredUntilSequence,
+        evictedMessages: plan.evictedMessages,
+        targetCoveredUntilSequence: plan.targetCoveredUntilSequence,
+        signal,
+      }),
+      aborted,
+    ]);
+    if (this.state.closed || signal.aborted) return;
+    this.roleAccess.withStore(plan.roleId, (storage) => {
+      tryCommitWindowSummary(storage.business.db, {
+        windowId: plan.windowId,
+        roleId: plan.roleId,
+        expectedSummaryVersion: plan.previousSummaryVersion,
+        summaryText: result.summaryText,
+        coveredUntilSequence: result.coveredUntilSequence,
+        proposedLeftSequence: plan.proposedLeftSequence,
+        latestCommittedSequence: plan.latestCommittedSequence,
+        now: this.now().toISOString(),
+      });
+    });
+  }
+
+  private async defaultWindowSummaryCompactor(
+    input: Parameters<WindowSummaryCompactor>[0],
+  ): Promise<{ summaryText: string; coveredUntilSequence: number }> {
+    const binding =
+      this.bindings.resolveMemory(input.roleId) ??
+      this.bindings.resolveChat(input.roleId);
+    if (this.context.isResourceUnderMaintenance?.(binding.resourceId) === true) {
+      throw new Error("WINDOW_COMPACTION_RESOURCE_MAINTENANCE");
+    }
+    const transcript = input.evictedMessages
+      .map((msg) => `#${msg.sequence} [${msg.sender === "user" ? "用户" : "角色"}]: ${msg.content}`)
+      .join("\n");
+    const promptLines = [
+      "你是窗口历史滚动摘要整理器。请把较早的窗口对话压缩成客观、简洁、可继续衔接的中文摘要。",
+      "要求：保留关键事实、约定、任务进展、已做决定与未完成事项；区分用户所说与角色所说；不编造未出现的信息。",
+      ...(input.previousSummary.trim().length > 0
+        ? [`已有历史摘要（覆盖至 #${input.previousCoveredUntilSequence}）：\n${input.previousSummary.trim()}`]
+        : []),
+      `新增待并入的早期消息（截止序号 #${input.targetCoveredUntilSequence}）：\n${transcript}`,
+    ];
+    const port = this.context.modelFactory(binding);
+    let summaryText = "";
+    let usage: ModelUsage | null = null;
+    try {
+      for await (const event of port.stream({
+        modelName: binding.modelName,
+        resourceId: binding.resourceId,
+        system: "输出纯文本中文滚动摘要，不附额外寒暄。",
+        messages: [{ role: "user", content: promptLines.join("\n\n") }],
+        tools: [],
+        maxOutputTokens: 2_048,
+        signal: input.signal,
+      })) {
+        if (event.type === "text_delta") summaryText += event.text;
+        else if (event.type === "usage") usage = mergeModelUsage(usage, event);
+      }
+      this.context.onModelCallFinished?.({
+        sourceCallId: `window-compact:${input.windowId}:${input.targetCoveredUntilSequence}:${Date.now()}`,
+        occurredAt: this.now().toISOString(),
+        category: "memory",
+        roleId: input.roleId,
+        resourceId: binding.resourceId,
+        ...(binding.config.provider === undefined ? {} : { provider: binding.config.provider }),
+        modelName: binding.modelName,
+        protocol: binding.config.protocol,
+        status: "succeeded",
+        usage,
+      });
+    } catch (error) {
+      this.context.onModelCallFinished?.({
+        sourceCallId: `window-compact:${input.windowId}:${input.targetCoveredUntilSequence}:${Date.now()}`,
+        occurredAt: this.now().toISOString(),
+        category: "memory",
+        roleId: input.roleId,
+        resourceId: binding.resourceId,
+        ...(binding.config.provider === undefined ? {} : { provider: binding.config.provider }),
+        modelName: binding.modelName,
+        protocol: binding.config.protocol,
+        status: "failed",
+        usage,
+      });
+      throw error;
+    }
+    return {
+      summaryText: summaryText.trim(),
+      coveredUntilSequence: input.targetCoveredUntilSequence,
+    };
   }
 
   streamEvents(input: StreamEventsInput): Promise<void> {
@@ -550,6 +726,15 @@ export class ConversationService {
   async close(): Promise<void> {
     this.state.closed = true;
     this.batchDelivery.close();
+    for (const entry of this.state.windowCompactions.values()) {
+      entry.controller.abort();
+    }
+    if (this.state.windowCompactions.size > 0) {
+      await Promise.allSettled(
+        [...this.state.windowCompactions.values()].map((entry) => entry.promise),
+      );
+      this.state.windowCompactions.clear();
+    }
     for (const timer of this.state.wakeTimers.values()) {
       clearTimeout(timer);
     }

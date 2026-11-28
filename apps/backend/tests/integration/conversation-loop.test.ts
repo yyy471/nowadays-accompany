@@ -150,7 +150,7 @@ test("跨越业务本地午夜时为出站旧消息标记发送日，保留数�
     },
     request => {
       const label = "[消息发送日 2026-11-20]\n";
-      assert.equal(request.system.split("本轮当地日期 2026-11-21").length - 1, 1);
+      assert.equal((request.turnContext ?? "").split("本轮当地日期 2026-11-21").length - 1, 1);
       assert.ok(request.messages.some(m => m.role === "user" && m.content === label + "今天我按约来了。"));
       assert.ok(request.messages.some(m => m.role === "assistant" && m.content === label + "今天确实见到了。"));
       assert.equal(request.messages.at(-1)?.content, "那是今天的事吗？");
@@ -664,7 +664,7 @@ test("decisions across windows stay serial in earliest-message order", { timeout
 test("only an explicit user self-correction gets a source attribution note", async () => {
   const notes: boolean[] = [];
   const fixture = createFixture(Array.from({ length: 3 }, () => (request: import("../../src/domain/model.js").ModelRequest): ModelEvent[] => {
-    notes.push(request.system.includes("用户明确更正自己的前述说法"));
+    notes.push((request.turnContext ?? "").includes("用户明确更正自己的前述说法"));
     return [{ type: "text_delta", text: "知道了。" }, { type: "completed", stopReason: "stop" }];
   }));
   try {
@@ -681,7 +681,7 @@ test("only an explicit user self-correction gets a source attribution note", asy
 test("a two-character cue in a fresh window retrieves the agreed roles without other chat history", async () => {
   let prompt = "";
   const fixture = createFixture([(request) => {
-    prompt = request.system;
+    prompt = `${request.system}\n${request.turnContext ?? ""}`;
     assert.deepEqual(request.messages.filter(m => m.role === "user").map(m => m.content), ["乌桕。"]);
     return [{ type: "text_delta", text: "稿子给你。"}, { type: "completed", stopReason: "stop" }];
   }]);
@@ -706,21 +706,21 @@ test("a newly declared task step brings relevant dated experience into its next 
   const prompts: string[] = [];
   const fixture = createFixture([
     (request) => {
-      prompts.push(request.system);
+      prompts.push(request.turnContext ?? "");
       return [
         { type: "tool_call", callId: "declare-step", name: "task_progress", arguments: { note: "检查版权页版次" } },
         { type: "completed", stopReason: "tool_calls" },
       ];
     },
     (request) => {
-      prompts.push(request.system);
+      prompts.push(request.turnContext ?? "");
       return [
         { type: "tool_call", callId: "another-step", name: "state_update", arguments: { patch: { mood: "平静" } } },
         { type: "completed", stopReason: "tool_calls" },
       ];
     },
     (request) => {
-      prompts.push(request.system);
+      prompts.push(request.turnContext ?? "");
       return [{ type: "text_delta", text: "我先看版次。" }, { type: "completed", stopReason: "stop" }];
     },
   ]);
@@ -743,7 +743,7 @@ test("a newly declared task step brings relevant dated experience into its next 
 test("automatic recall and agent deep search use real events and original evidence", { timeout: 20_000 }, async () => {
   const contextual: import("../../src/domain/model.js").ModelPort = {
     stream: async function* (request) {
-      const system = request.system;
+      const system = request.turnContext ?? "";
       const match = /id=([0-9a-f-]{36})/.exec(system);
       const toolMessages = request.messages.filter(
         (message) => message.role === "tool",

@@ -26,19 +26,20 @@ class TwoTurnChatModel implements ModelPort {
 
   async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {
     this.requests.push(request);
-    const recalled = request.system.includes("第一次逛杭州旧书店");
+    const turn = request.turnContext ?? "";
+    const recalled = turn.includes("第一次逛杭州旧书店");
     const toolMessages = request.messages.filter(
       (message) => message.role === "tool",
     );
     // 深入回查按当前工具回执继续，不要求每一轮重复注入首次召回。
     if (!recalled && toolMessages.length === 0) {
-      assert.match(request.system, /自动召回没有命中/);
+      assert.match(turn, /自动召回没有命中/);
       yield { type: "text_delta", text: "我记住了，我们一起去了杭州旧书店。" };
       yield { type: "completed", stopReason: "stop" };
       return;
     }
     if (toolMessages.length === 0) {
-      const eventId = /id=([0-9a-f-]{36})/.exec(request.system)?.[1];
+      const eventId = /id=([0-9a-f-]{36})/.exec(turn)?.[1];
       assert.ok(eventId);
       yield {
         type: "tool_call",
@@ -192,7 +193,7 @@ test("conversation-formed memory is recalled with original evidence in the next 
     await fixture.app.conversation.waitForIdle(fixture.roleId);
 
     assert.equal(chat.requests.length, 4);
-    assert.match(chat.requests[1]?.system ?? "", /第一次逛杭州旧书店/);
+    assert.match(chat.requests[1]?.turnContext ?? "", /第一次逛杭州旧书店/);
     const messages = fixture.app.services.messages.list(
       fixture.roleId,
       fixture.windowId,

@@ -85,8 +85,8 @@ test("普通来信合批，跨重启幂等投递；主角色先回复用户，�
     await until(() => wakes().every(w => w.status === "completed"));
     await app.conversation.waitForIdle(seatId);
     assert.match(JSON.stringify(model.requests[3]?.messages), /先处理这封来信/);
-    assert.match(model.requests[4]!.system, new RegExp(a.wakeId));
-    assert.doesNotMatch(model.requests[4]!.system, /原文甲|原文乙/);
+    assert.match(model.requests[4]!.turnContext ?? "", new RegExp(a.wakeId));
+    assert.doesNotMatch(model.requests[4]!.turnContext ?? "", /原文甲|原文乙/);
     const receipt = db().withStore(seatId, s => s.business.db.prepare(
       `SELECT adapted_result_json FROM tool_results JOIN tool_calls USING(tool_call_id)
        JOIN evidence_records ON source_kind = 'tool_result' AND source_id = tool_call_id WHERE tool_name='app_role_records_query'`,

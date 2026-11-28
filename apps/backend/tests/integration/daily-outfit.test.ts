@@ -59,30 +59,33 @@ test("the first decision of the day sees the wardrobe and registers the date", {
   const fixture = createFixture(
     [
       (request) => {
-        assert.match(request.system, /今日穿搭（业务本地日期 2026-11-08）/);
+        const turn = request.turnContext ?? "";
+        assert.match(turn, /今日穿搭（业务本地日期 2026-11-08）/);
         assert.match(request.system, /黑白长裙/);
         assert.match(request.system, /白色针织裙/);
         assert.match(request.system, /日常外出/);
-        assert.match(request.system, /今天还没有完成穿搭决定/);
-        assert.match(request.system, /当前没有已选择的服饰/);
+        assert.match(turn, /今天还没有完成穿搭决定/);
+        assert.match(turn, /当前没有已选择的服饰/);
         return toolCall("wire-outfit-first", "state_update", {
           patch: { outfitId: blackId, mood: "愉快" },
         });
       },
       reply("今天穿黑白长裙。"),
       (request) => {
-        assert.match(request.system, /今天已完成穿搭决定/);
-        assert.match(request.system, /当前穿着：黑白长裙/);
-        assert.match(request.system, /业务本地日期 2026-11-08/);
+        const turn = request.turnContext ?? "";
+        assert.match(turn, /今天已完成穿搭决定/);
+        assert.match(turn, /当前穿着：黑白长裙/);
+        assert.match(turn, /业务本地日期 2026-11-08/);
         return toolCall("wire-outfit-switch", "state_update", {
           patch: { outfitId: whiteId },
         });
       },
       reply("换上白色针织裙。"),
       (request) => {
-        assert.match(request.system, /业务本地日期 2026-11-09/);
-        assert.match(request.system, /今天还没有完成穿搭决定/);
-        assert.match(request.system, /当前穿着：白色针织裙/);
+        const turn = request.turnContext ?? "";
+        assert.match(turn, /业务本地日期 2026-11-09/);
+        assert.match(turn, /今天还没有完成穿搭决定/);
+        assert.match(turn, /当前穿着：白色针织裙/);
         return reply("新的一天，先继续穿这一套。");
       },
     ],
@@ -167,7 +170,7 @@ test("an empty wardrobe adds no outfit context", { timeout: 60_000 }, async () =
   const fixture = createFixture(
     [
       (request) => {
-        assert.doesNotMatch(request.system, /今日穿搭/);
+        assert.doesNotMatch(`${request.system}\n${request.turnContext ?? ""}`, /今日穿搭/);
         return reply("普通回复。");
       },
     ],
@@ -190,7 +193,7 @@ test("outfit date follows the round start across local midnight", { timeout: 60_
   const fixture = createFixture(
     [
       (request) => {
-        assert.match(request.system, /业务本地日期 2026-11-08/);
+        assert.match(request.turnContext ?? "", /业务本地日期 2026-11-08/);
         // 模拟模型决策期间跨过本地零点，登记仍使用本轮开始日期。
         clock.now = new Date("2026-11-08T16:00:02.000Z");
         return toolCall("wire-outfit-midnight", "state_update", {
@@ -199,8 +202,9 @@ test("outfit date follows the round start across local midnight", { timeout: 60_
       },
       reply("跨零点前决定好了。"),
       (request) => {
-        assert.match(request.system, /业务本地日期 2026-11-09/);
-        assert.match(request.system, /今天还没有完成穿搭决定/);
+        const turn = request.turnContext ?? "";
+        assert.match(turn, /业务本地日期 2026-11-09/);
+        assert.match(turn, /今天还没有完成穿搭决定/);
         return reply("早上好。");
       },
     ],
@@ -267,8 +271,9 @@ test("submitting the current outfit again registers today's decision", { timeout
   const fixture = createFixture(
     [
       (request) => {
-        assert.match(request.system, /今天还没有完成穿搭决定/);
-        assert.match(request.system, /当前穿着：黑白长裙/);
+        const turn = request.turnContext ?? "";
+        assert.match(turn, /今天还没有完成穿搭决定/);
+        assert.match(turn, /当前穿着：黑白长裙/);
         return toolCall("wire-outfit-continue", "state_update", {
           patch: { outfitId },
         });

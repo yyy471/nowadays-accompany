@@ -153,7 +153,8 @@ test("包2：单段默认 15 轮，达到上限提交进度并自动续行，任
   const model: ModelPort = {
     async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {
       seen.push(request);
-      if (request.system.includes("本段收尾")) {
+      const turn = request.turnContext ?? "";
+      if (turn.includes("本段收尾")) {
         yield { type: "text_delta", text: "本段进度已保存，继续推进。" };
         yield { type: "completed", stopReason: "stop" };
         return;
@@ -173,7 +174,7 @@ test("包2：单段默认 15 轮，达到上限提交进度并自动续行，任
         yield { type: "completed", stopReason: "stop" };
         return;
       }
-      if (request.system.includes("当前执行在继续原任务")) {
+      if (turn.includes("当前执行在继续原任务")) {
         if (segmentPings === 0) {
           segmentPings += 1;
           yield { type: "tool_call", callId: "wire-ping-c", name: ping.name, arguments: {} };
@@ -226,7 +227,7 @@ test("包2：单段默认 15 轮，达到上限提交进度并自动续行，任
     );
     // 首段在 4 轮上限处停止派发：只保存实际执行过的 ping 调用。
     assert.ok(
-      seen.some((request) => request.system.includes("本段收尾（round_limit）")),
+      seen.some((request) => (request.turnContext ?? "").includes("本段收尾（round_limit）")),
       "达到上限时应进入无工具的收尾说明轮",
     );
     // 窗口没有被拉黑：完成后再发消息仍能得到新回复。
@@ -242,7 +243,8 @@ test("包2：task_pause 立即停止同批派发，用户同窗回复自动接�
   let paused = false;
   const model: ModelPort = {
     async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {
-      if (request.system.includes("本段收尾（pause_requested）")) {
+      const turn = request.turnContext ?? "";
+      if (turn.includes("本段收尾（pause_requested）")) {
         paused = true;
         yield { type: "text_delta", text: "我先停一下，等你确认后再继续这份文件。" };
         yield { type: "completed", stopReason: "stop" };
@@ -258,10 +260,10 @@ test("包2：task_pause 立即停止同批派发，用户同窗回复自动接�
         yield { type: "completed", stopReason: "stop" };
         return;
       }
-      if (request.system.includes("当前执行在继续原任务")) {
-        assert.match(request.system, /任务目标/);
+      if (turn.includes("当前执行在继续原任务")) {
+        assert.match(turn, /任务目标/);
         // 接回原任务时应重放已保存的真实工具结果与笔记。
-        assert.match(request.system, /已读完上面材料/);
+        assert.match(turn, /已读完上面材料/);
         assert.ok(
           request.messages.some(
             (message) =>
@@ -354,8 +356,9 @@ test("包2：task_pause 立即停止同批派发，用户同窗回复自动接�
 test("包2：同一工具连续失败 3 次触发熔断暂停并说明障碍", { timeout: 60_000 }, async () => {
   const model: ModelPort = {
     async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {
-      if (request.system.includes("本段收尾（circuit_breaker）")) {
-        assert.match(request.system, /熔断/);
+      const turn = request.turnContext ?? "";
+      if (turn.includes("本段收尾（circuit_breaker）")) {
+        assert.match(turn, /熔断/);
         yield { type: "text_delta", text: "连续操作都被拒绝，我先停下来说明情况。" };
         yield { type: "completed", stopReason: "stop" };
         return;
@@ -409,7 +412,7 @@ test("包2：连续 3 段续行没有新工具结果与进度笔记时熔断暂�
   let greetingSent = false;
   const model: ModelPort = {
     async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {
-      if (request.system.includes("本段收尾")) {
+      if ((request.turnContext ?? "").includes("本段收尾")) {
         yield { type: "text_delta", text: "这一段我先记下，稍后继续。" };
         yield { type: "completed", stopReason: "stop" };
         return;

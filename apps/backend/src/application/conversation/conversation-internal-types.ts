@@ -33,6 +33,12 @@ import type { MemoryRuntime } from "../memory/memory-runtime.js";
 import type { RoleExchangeService } from "./role-exchanges.js";
 import type { SegmentAnnotationService } from "./segment-annotation-service.js";
 import type { SceneImageService } from "../media/scene-image-service.js";
+import type { StaticTokenCountCache } from "./context-budget.js";
+import type {
+  ProposedWindowCompaction,
+  WindowCyclePolicy,
+  WindowSummaryCompactor,
+} from "./window-context-cycle.js";
 
 export type ChatModelPortFactory = (binding: ResolvedModelBinding) => ModelPort;
 
@@ -130,6 +136,11 @@ export interface ConversationState {
   readonly catalogClosePending: Set<string>;
   readonly activeStreams: Map<() => void, string>;
   readonly blockedWindows: Set<string>;
+  /** 按窗口去重的 30+n 滚动摘要后台整理任务（DL-202）。 */
+  readonly windowCompactions: Map<
+    string,
+    { roleId: string; controller: AbortController; promise: Promise<void> }
+  >;
   closed: boolean;
 }
 
@@ -166,6 +177,9 @@ export interface ConversationContext {
   readonly resolveModelCredential: (
     binding: ResolvedModelBinding,
   ) => string | undefined;
+  readonly tokenCountCache: StaticTokenCountCache;
+  readonly windowCycle: WindowCyclePolicy | undefined;
+  readonly windowSummaryCompactor: WindowSummaryCompactor | undefined;
   autoScenes: SceneImageService | null;
   prompt: ConversationPromptBuilder;
   streams: ConversationStreamHub;
@@ -178,6 +192,7 @@ export interface ConversationContext {
     action: (store: ConversationStore) => T,
   ): T;
   queueSegmentAnnotation(input: QueueSegmentAnnotationInput): void;
+  scheduleWindowCompaction(plan: ProposedWindowCompaction): void;
 }
 
 /** 该类收尾轮的系统指令所需的分段停止原因；供执行驱动与提示词共用。 */

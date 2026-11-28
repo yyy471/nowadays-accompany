@@ -328,7 +328,7 @@ test("共玩只投单个点名角色，普通动作、错误槽位和无摘要�
       for (let i = 0; i < 3; i++) assert.equal(await post("roll", hostButton(target)), ++count);
       await until(() => wakes(target)[0]?.status === "completed", "共玩自主执行完成");
       assert.equal(wakes(target).length, 1);
-      assert.ok(model.requests.at(-2)?.system.includes("共玩 3 次。最后一次掷骰：点数 " + count));
+      assert.ok((model.requests.at(-2)?.turnContext ?? "").includes("共玩 3 次。最后一次掷骰：点数 " + count));
       assert.equal(services.messages.list(target, win, null, 10).items.at(-1)?.content, text);
     }
     assert.deepEqual([wakes(id).length, wakes(f.roleId).length], [1,1]);

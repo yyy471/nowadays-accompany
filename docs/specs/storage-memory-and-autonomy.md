@@ -47,7 +47,7 @@
 | --- | --- | --- |
 | `<app-root>/data/app.sqlite` | 全局索引库（V15） | `engineering_settings` 单行存储调度模式和有序成员，默认优先级与空列表。总开关复用内置 Pi 资源的 enabled。存角色索引、活动状态、预置身份、资源与加密凭据、内置资源首次绑定进度（`builtin_resource_seeds` 记录待写入的资源 ID，角色分库写入后清空该字段并保留播种记录）、删除队列、单角色迁移的基线／选择记录／发布日志，以及全局持久 Token 用量台账（`token_usage_records`、`token_usage_meta`，含本机历史一次性回填；删除角色或模型服务保留名称快照，不随单角色迁移导入外部历史，`DL-183`） |
 | `<app-root>/secrets/master.key` | 本地主密钥盒（AES-256-GCM `v1`） | [secret-cipher.ts](../../apps/backend/src/security/secret-cipher.ts#L20-L100) `0o700` 目录／`0o600` 密钥文件，竞争写使用 `flag: "wx"` |
-| `.../roles/<roleId>/business.sqlite` | 角色业务库（V31） | 保存身份与首次启用资格、窗口消息、任务、执行与计量、记忆证据、自主安排、外观与媒体、普通角色对话批次及消息归属。网页原文的实际送达区间由 `web_reading_deliveries` 保存 |
+| `.../roles/<roleId>/business.sqlite` | 角色业务库（V33） | 保存身份与首次启用资格、窗口消息、任务、执行与计量、记忆证据、自主安排、外观与媒体、普通角色对话批次及消息归属，以及本机派生缓存表 `memory_search_embeddings`（V32）与主对话窗口滚动摘要周期状态表 `window_context_states`（V33）。网页原文的实际送达区间由 `web_reading_deliveries` 保存 |
 | `.../roles/<roleId>/execution.sqlite` | 节点检查点库（`EXECUTION_SCHEMA_VERSION = 2`） | `execution_checkpoints` 按执行编号与步号保存完整状态、下一节点与保存时间 |
 | `.../roles/<roleId>/workspace/` | 角色独立工作空间 | 本地 MCP 根目录；日记落盘 `diaries/YYYY-MM-DD/<diaryId>.md`；外观／语音／过场图分置同级 `appearance/`、`voice/`、`scene-images/` |
 
@@ -98,7 +98,7 @@
 
 - **节点执行与恢复**。模型节点有待调工具时进入工具节点，否则结束。工具节点完成后通常回到模型，触发切段、暂停或熔断时转入收尾。角色互聊已交付则直接结束。任务单段默认最多 15 轮，收尾轮只交付文字。每个完成节点原子写入一个检查点，第一步为 1。恢复时读取原执行的最新步，若下一节点为 `done`，用已保存的结果完成业务提交，模型调用次数为零。[执行循环](../../apps/backend/src/application/conversation/agent-graph.ts)
 - **旧库升级**。打开 V1 执行库时在原文件内创建 V2 表，保留原表及其记录。旧执行没有 V2 节点检查点时，按已有中断恢复流程重新评估，已登记的工具回执继续作为业务事实。[检查点存储](../../apps/backend/src/storage/conversation/checkpoint-store.ts)
-- **模型续轮**。[ModelPort](../../apps/backend/src/model/protocols.ts) 统一适配 `openai-chat`、`openai-responses`、`anthropic-messages` 与 `google-gemini`；同一模型绑定中保留可合法续传的厂商 `continuation` 块，配置变更则切回归一化历史；上游请求异常或提前 EOF 直接报错并保留已收到增量，**不自动切换其他模型**。
+- **模型续轮与主对话上下文前缀缓存（`DL-202`）**。[ModelPort](../../apps/backend/src/model/protocols.ts) 统一适配 `openai-chat`、`openai-responses`、`anthropic-messages` 与 `google-gemini`；同一模型绑定中保留可合法续传的厂商 `continuation` 块，配置变更则切回归一化历史；上游请求异常或提前 EOF 直接报错并保留已收到增量，**不自动切换其他模型**。主对话与工具续轮默认采用 `128,000` 输入 / `10,000` 输出 token 预算（显式透传有效输出上限；旧 `maxInputChars`/`maxOutputChars` 配置保留字符单位），通过 [context-budget.ts](../../apps/backend/src/application/conversation/context-budget.ts)、[agent-context.ts](../../apps/backend/src/application/conversation/agent-context.ts) 与 [window-context-cycle.ts](../../apps/backend/src/application/conversation/window-context-cycle.ts) 按「长期稳定前缀（固定指令 + 完整核心角色设定 + 确定性工具定义与技能）→ 周期稳定材料（窗口滚动摘要 + 衣柜目录）→ `30+n` 固定左边界已提交历史 → 本轮可变宿主上下文（状态、时间、触发世界书、自动召回、按需角色卡片段）→ 当前输入」分层组装，并在 Anthropic 协议自动落位 ≤4 个 `ephemeral` 缓存断点；窗口摘要仅在覆盖全部待移出历史时原子切换版本与左边界。
 - **工具目录与本地 MCP 隔离**（[agent-tools.ts](../../apps/backend/src/application/conversation/agent-tools.ts#L48-L1552)）：
   - **内部工具**：`memory_{search,event,evidence,summary,summary_evidence,correct_event,correct_summary,diary}`、`diary_write`、`state_update`、`autonomy_{schedule,share}`、`skill_{read,run}`、`task_{progress,pause,finish}`、`tool_reconcile`。
   - **本地 stdio MCP** 使用同一入口与握手名 `nowadays-local-tools`。默认或 `--mode workspace` 仅注册 `workspace_read`、`workspace_write`、`workspace_search`，沿用实际路径与最近存在祖先的工作空间边界检查。独立资源显式传入 `--mode command` 时仅注册 `command_run`。它从工作空间内的目录直接启动命令（`shell: false`），以当前用户权限运行，可访问工作空间外文件。两个资源分别遵循 DL-59／DL-71 的开关语义。[本地 MCP 服务](../../apps/backend/src/mcp/local-server.ts)

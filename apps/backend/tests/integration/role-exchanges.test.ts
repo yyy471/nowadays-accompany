@@ -153,13 +153,14 @@ test("记忆仍未整理时，互聊可以参考本角色近期已说过的相�
     const seat = prepareSeat(f);
     const session = f.app.conversation.exchanges.start(seat.id, f.roleId, "核对登记", "银杏书签的代号和位置是什么？", 2);
     await until(() => f.app.conversation.exchanges.detail(session.sessionId).status === "completed", "互聊已答复");
-    const prompt = requests[0]!.system;
+    const prompt = requests[0]!.turnContext ?? "";
     assert.match(prompt, /折桂731放在东窗第二格/);
     assert.doesNotMatch(prompt, /私人留言|红色琴盒/);
     const other = f.app.conversation.exchanges.start(seat.id, f.roleId, "秋日摄影", "镜头焦距是多少？", 2);
     await until(() => f.app.conversation.exchanges.detail(other.sessionId).status === "completed", "核对另一话题");
-    assert.doesNotMatch(requests.at(-1)!.system, /折桂731|私人留言|红色琴盒/);
-    assert.match(requests.at(-1)!.system, /记不清/);
+    const lastTurn = requests.at(-1)!.turnContext ?? "";
+    assert.doesNotMatch(lastTurn, /折桂731|私人留言|红色琴盒/);
+    assert.match(lastTurn, /记不清/);
   } finally { await f.close(); }
 });
 

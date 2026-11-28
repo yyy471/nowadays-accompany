@@ -299,7 +299,7 @@ test("restart resumes the same interrupted autonomous task with saved tool resul
 
     assert.equal(model.requests.length, 1);
     assert.match(model.requests[0]!.system, /重启后的最新蓝色角色设定/);
-    assert.match(model.requests[0]!.system, /重启后的最新状态/);
+    assert.match(model.requests[0]!.turnContext ?? "", /重启后的最新状态/);
     const toolMessage = model.requests[0]!.messages.find(
       (message) =>
         message.role === "tool" && message.toolCallId === seeded.savedCallId,

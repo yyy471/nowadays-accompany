@@ -69,9 +69,13 @@ export const modelBaseConfigSchema = z
     /** 默认模型名称（选填，供设置界面回显与角色默认预填）。 */
     modelName: z.string().trim().min(1).max(200).optional(),
     credentialRef: credentialRefSchema.optional(),
-    /** 可核实的模型容量声明（字符口径），供记忆整理按容量分批。 */
+    /** 可核实的模型容量声明（旧字符口径），供记忆整理分批与旧配置兼容。 */
     maxInputChars: z.number().int().positive().max(10_000_000).optional(),
     maxOutputChars: z.number().int().positive().max(10_000_000).optional(),
+    /** 可核实的模型容量声明（token 口径，DL-202 主对话预算优先使用）。 */
+    contextWindowTokens: z.number().int().positive().max(10_000_000).optional(),
+    maxInputTokens: z.number().int().positive().max(10_000_000).optional(),
+    maxOutputTokens: z.number().int().positive().max(10_000_000).optional(),
   })
   .strict()
   .refine((config) => !config.provider || MODEL_PROVIDERS[config.provider].protocol === config.protocol, {

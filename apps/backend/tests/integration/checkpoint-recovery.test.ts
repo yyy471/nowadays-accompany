@@ -358,7 +358,7 @@ test(
       await restored.conversation.waitForIdle(fixture.roleId);
 
       assert.equal(model.requests.length, 1);
-      assert.match(model.requests[0]!.system, /重启前的新状态/);
+      assert.match(model.requests[0]!.turnContext ?? "", /重启前的新状态/);
       const original = restored.conversation.getExecution(
         fixture.roleId,
         seeded.executionId,

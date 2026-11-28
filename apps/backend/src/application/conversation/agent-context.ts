@@ -1,18 +1,45 @@
 import { AppError } from "../../domain/errors.js";
-import type { MemoryDelivery, ModelMessage, ModelProtocol, ModelRequest } from "../../domain/model.js";
+import type {
+  MemoryDelivery,
+  ModelMessage,
+  ModelProtocol,
+  ModelRequest,
+  ModelSystemBlock,
+} from "../../domain/model.js";
 import type { ModelProvider, VertexSafetyLevel } from "../../domain/model-providers.js";
 import type { WorldbookMatch, WorldbookSelection } from "../../domain/worldbook.js";
 import { renderWebReadingPrefix, webReadingCandidates, webReadingRequest } from "../../domain/web-reading.js";
 import { serializeModelRequest } from "../../model/protocols.js";
 import { createLocalDateFormatter } from "../../storage/memory/evidence.js";
 import { readsInExcerpt } from "../memory/memory-read-projection.js";
+import {
+  DEFAULT_AGENT_INPUT_CHARS,
+  DEFAULT_AGENT_OUTPUT_RESERVE_CHARS,
+  DEFAULT_DIALOGUE_INPUT_TOKENS,
+  DEFAULT_DIALOGUE_OUTPUT_TOKENS,
+  estimateTextTokens,
+  estimateWireRequestTokens,
+  getTokenEstimationMeta,
+  resolveDialogueBudget,
+  type StaticTokenCountCache,
+} from "./context-budget.js";
 
-// 无显式绑定容量时，以 UTF-16 字符计量序列化后的生成请求和回复预留。
-export const DEFAULT_AGENT_INPUT_CHARS = 128_000;
-export const DEFAULT_AGENT_OUTPUT_RESERVE_CHARS = 4_096;
+export {
+  DEFAULT_AGENT_INPUT_CHARS,
+  DEFAULT_AGENT_OUTPUT_RESERVE_CHARS,
+  DEFAULT_DIALOGUE_INPUT_TOKENS,
+  DEFAULT_DIALOGUE_OUTPUT_TOKENS,
+};
 
 export interface AgentSystemPrompt {
+  /** 兼容旧调用方；若同时提供 stablePrefix，则按 DL-202 分层拼装。 */
   required: string;
+  /** DL-202 Layer 1：长期稳定前缀（固定指令、完整核心设定、工具规则与技能清单）。 */
+  stablePrefix?: string;
+  /** DL-202 Layer 2：周期内稳定材料（窗口滚动摘要、持久场景/衣柜清单）。 */
+  cycleStable?: string;
+  /** DL-202 Layer 4：本轮必选可变材料（当前状态、业务精度时间、任务/自主/穿搭决定、按需角色卡片段）。 */
+  turnRequired?: string;
   optional: readonly (string | { text: string; recall: MemoryDelivery })[];
   worldbook?: readonly WorldbookMatch[];
   requiredFooter?: string;
@@ -26,6 +53,14 @@ interface MessageGroup {
   index: number;
 }
 
+export type SelectedAgentContext = ModelRequest & {
+  worldbookSelection: WorldbookSelection[];
+  memoryReads: MemoryDelivery[];
+  budgetMode: "tokens" | "chars";
+  budgetUsed: number;
+  budgetLimit: number;
+};
+
 /** 只裁本次出站投影，图状态和持久化原文保留给后续轮次及回查。 */
 export function selectAgentContext(input: {
   request: ModelRequest;
@@ -36,13 +71,52 @@ export function selectAgentContext(input: {
   baseUrl: string;
   maxInputChars?: number;
   maxOutputChars?: number;
+  contextWindowTokens?: number;
+  maxInputTokens?: number;
+  maxOutputTokens?: number;
+  tokenCountCache?: StaticTokenCountCache;
   resuming: boolean;
   originalModelResource?: boolean;
   evidenceQuery: string;
-}): ModelRequest & { worldbookSelection: WorldbookSelection[]; memoryReads: MemoryDelivery[] } {
-  const maxInputChars = input.maxInputChars ?? DEFAULT_AGENT_INPUT_CHARS;
-  const reserve = input.maxOutputChars ?? DEFAULT_AGENT_OUTPUT_RESERVE_CHARS;
-  const request = { ...input.request, system: input.prompt.required, messages: [] as ModelMessage[] };
+}): SelectedAgentContext {
+  const layered = input.prompt.stablePrefix !== undefined;
+  const budget = resolveDialogueBudget({
+    ...(input.contextWindowTokens === undefined ? {} : { contextWindowTokens: input.contextWindowTokens }),
+    ...(input.maxInputTokens === undefined ? {} : { maxInputTokens: input.maxInputTokens }),
+    ...(input.maxOutputTokens === undefined ? {} : { maxOutputTokens: input.maxOutputTokens }),
+    ...(input.maxInputChars === undefined ? {} : { maxInputChars: input.maxInputChars }),
+    ...(input.maxOutputChars === undefined ? {} : { maxOutputChars: input.maxOutputChars }),
+  });
+
+  const systemBlocks: ModelSystemBlock[] = [];
+  if (layered) {
+    const stableText = input.prompt.stablePrefix!.trim();
+    if (stableText.length > 0) {
+      systemBlocks.push({ text: stableText, cacheControl: "ephemeral" });
+    }
+    const cycleText = input.prompt.cycleStable?.trim() ?? "";
+    if (cycleText.length > 0) {
+      systemBlocks.push({ text: cycleText, cacheControl: "ephemeral" });
+    }
+  }
+  const baseSystem = layered
+    ? systemBlocks.map((block) => block.text).join("\n\n")
+    : input.prompt.required;
+
+  const request: ModelRequest = {
+    ...input.request,
+    system: baseSystem,
+    ...(layered ? { systemBlocks, promptCaching: true } : {}),
+    ...(budget.wireMaxOutputTokens === undefined
+      ? {}
+      : { maxOutputTokens: budget.wireMaxOutputTokens }),
+    messages: [],
+  };
+  let legacySystemExtra = "";
+  const turnRequiredBase = layered ? (input.prompt.turnRequired?.trim() ?? "") : "";
+  const turnWorldbookLines: string[] = [];
+  const turnOptionalLines: string[] = [];
+
   const groups = groupMessages(input.request.messages, input);
   // 原文里的“今天”指说话当天。将日期附到相应的出站消息，同时纳入各协议的容量计算。
   const clock = input.prompt.dialogueClock;
@@ -55,6 +129,7 @@ export function selectAgentContext(input: {
       if (date !== clock.today) dateLabels.set(source.messageId, `[消息发送日 ${date}]`);
     }
   }
+
   const selected = new Map<number, ModelMessage[]>();
   for (const group of groups) {
     if (group.active) {
@@ -65,28 +140,125 @@ export function selectAgentContext(input: {
       selected.set(group.index, group.messages);
     }
   }
+
   const withSelection = (): ModelRequest => {
     let hasDates = false;
-    const messages = [...selected.entries()].sort(([a], [b]) => a - b).flatMap(([, group]) => group).map(message => {
-      const label = message.source?.messageId && dateLabels.get(message.source.messageId);
-      if (!label) return message;
-      hasDates = true;
-      return { ...message, content: `${label}\n${message.content}` };
-    });
-    const dateNote = hasDates && clock ? `本轮当地日期 ${clock.today}。旧消息中相对日期以其发送日为准。` : "";
-    const system = [request.system, dateNote, input.prompt.requiredFooter].filter(Boolean).join("\n");
+    const messages = [...selected.entries()]
+      .sort(([a], [b]) => a - b)
+      .flatMap(([, group]) => group)
+      .map((message) => {
+        const label = message.source?.messageId && dateLabels.get(message.source.messageId);
+        if (!label) return message;
+        hasDates = true;
+        return { ...message, content: `${label}\n${message.content}` };
+      });
+    const dateNote =
+      hasDates && clock
+        ? `本轮当地日期 ${clock.today}。旧消息中相对日期以其发送日为准。`
+        : "";
+    if (layered) {
+      const turnParts = [
+        turnRequiredBase,
+        dateNote,
+        turnWorldbookLines.join("\n"),
+        turnOptionalLines.join("\n"),
+      ].filter((part) => part.length > 0);
+      const turnContext = turnParts.join("\n");
+      return {
+        ...request,
+        messages,
+        ...(turnContext.length > 0 ? { turnContext } : {}),
+      };
+    }
+    const system = [
+      request.system + legacySystemExtra,
+      dateNote,
+      input.prompt.requiredFooter,
+    ]
+      .filter(Boolean)
+      .join("\n");
     return { ...request, system, messages };
   };
-  const size = () => serializeModelRequest(input.protocol, input.baseUrl, withSelection(), input.provider, input.vertexSafety).length;
-  const fits = () => size() + reserve <= maxInputChars;
-  const minimumChars = size();
-  if (minimumChars + reserve > maxInputChars) {
+
+  const measure = (candidate: ModelRequest): number => {
+    const serialized = serializeModelRequest(
+      input.protocol,
+      input.baseUrl,
+      candidate,
+      input.provider,
+      input.vertexSafety,
+    );
+    if (budget.mode === "chars") {
+      return serialized.length;
+    }
+    return estimateWireRequestTokens(
+      serialized,
+      input.protocol,
+      candidate.modelName,
+      input.provider,
+    );
+  };
+  const fits = (): boolean => {
+    const used = measure(withSelection());
+    return budget.mode === "chars"
+      ? used + budget.effectiveOutputLimit <= budget.effectiveInputLimit
+      : used <= budget.effectiveInputLimit;
+  };
+
+  const minimumRequest = withSelection();
+  const minimumUsed = measure(minimumRequest);
+  const minimumExceeds =
+    budget.mode === "chars"
+      ? minimumUsed + budget.effectiveOutputLimit > budget.effectiveInputLimit
+      : minimumUsed > budget.effectiveInputLimit;
+
+  if (minimumExceeds) {
+    const countBlock = (kind: string, text: string): number => {
+      if (budget.mode === "chars") return text.length;
+      return input.tokenCountCache
+        ? input.tokenCountCache.count(kind, text, input.protocol, request.modelName, input.provider)
+        : estimateTextTokens(text, input.protocol, request.modelName, input.provider);
+    };
+    const stableText = layered ? (input.prompt.stablePrefix ?? "") : input.prompt.required;
+    const cycleText = layered ? (input.prompt.cycleStable ?? "") : "";
+    const toolsText = request.tools.length > 0 ? JSON.stringify(request.tools) : "";
+    const turnText = minimumRequest.turnContext ?? "";
+    const currentInputText = minimumRequest.messages.map((m) => m.content).join("\n");
+    const overflow =
+      budget.mode === "chars"
+        ? minimumUsed + budget.effectiveOutputLimit - budget.effectiveInputLimit
+        : minimumUsed - budget.effectiveInputLimit;
     throw new AppError(422, "MODEL_CONTEXT_EXCEEDED", "模型容量不足以容纳本轮必要上下文", {
-      maxInputChars,
-      outputReserveChars: reserve,
-      minimumInputChars: minimumChars,
+      budgetMode: budget.mode,
+      ...(budget.mode === "chars"
+        ? {
+            maxInputChars: budget.effectiveInputLimit,
+            outputReserveChars: budget.effectiveOutputLimit,
+            minimumInputChars: minimumUsed,
+          }
+        : {
+            effectiveContextWindowTokens: budget.effectiveContextWindow,
+            effectiveInputTokens: budget.effectiveInputLimit,
+            effectiveOutputTokens: budget.effectiveOutputLimit,
+            minimumInputTokens: minimumUsed,
+            overflowTokens: overflow,
+            estimationAccuracy: getTokenEstimationMeta(
+              input.protocol,
+              request.modelName,
+              input.provider,
+            ),
+          }),
+      breakdown: {
+        stablePrefix: countBlock("stable_prefix", stableText),
+        tools: countBlock("tools", toolsText),
+        cycleStable: countBlock("cycle_stable", cycleText),
+        turnDynamic: countBlock("turn_dynamic", turnText),
+        currentInput: countBlock("current_input", currentInputText),
+        totalRequired: minimumUsed,
+      },
     });
   }
+
   const query = decisionQuery(input.evidenceQuery, input.request.messages);
   const terms = contextTerms(query);
   const rank = (message: ModelMessage) => contextRelevance(query, terms, message);
@@ -127,48 +299,87 @@ export function selectAgentContext(input: {
     };
     if (!replace(message)) fitRelevantPartial(message, terms, true, replace);
   }
+
   // 设定按整条取舍，同一次调用同时受设定上限和真实协议请求上限约束。
   const worldbookSelection: WorldbookSelection[] = [];
   let worldbookChars = 0;
   let includedEntries = 0;
   for (const match of input.prompt.worldbook ?? []) {
     const heading = includedEntries === 0
-      ? "\n已知世界设定，只在合适时自然使用。原文明确的事实可以肯定地说，亲历需有经历作依据。未交代的具体规则、物件状态和他人经历保持未知，有理由推测时说出不确定。可以运用日常常识、演绎自己此刻的言行。"
+      ? "已知世界设定，只在合适时自然使用。原文明确的事实可以肯定地说，亲历需有经历作依据。未交代的具体规则、物件状态和他人经历保持未知，有理由推测时说出不确定。可以运用日常常识、演绎自己此刻的言行。"
       : "";
-    const line = heading + "\n" + JSON.stringify({ 条目: match.title, 设定: match.content });
+    const entryLine = JSON.stringify({ 条目: match.title, 设定: match.content });
+    const line = heading ? `${heading}\n${entryLine}` : entryLine;
     let included = false;
-    if (includedEntries < 6 && worldbookChars + line.length <= 4000) {
-      const previous = request.system;
-      request.system += line;
-      included = fits();
-      if (included) {
-        includedEntries++;
-        worldbookChars += line.length;
+    if (includedEntries < 6 && worldbookChars + line.length + 1 <= 4000) {
+      if (layered) {
+        turnWorldbookLines.push(line);
+        included = fits();
+        if (included) {
+          includedEntries += 1;
+          worldbookChars += line.length + 1;
+        } else {
+          turnWorldbookLines.pop();
+        }
       } else {
-        request.system = previous;
+        const previous = legacySystemExtra;
+        legacySystemExtra += `\n${line}`;
+        included = fits();
+        if (included) {
+          includedEntries += 1;
+          worldbookChars += line.length + 1;
+        } else {
+          legacySystemExtra = previous;
+        }
       }
     }
-    worldbookSelection.push({ revision: match.revision, bookId: match.bookId, entryId: match.entryId,
-      messageIds: match.messageIds, status: included ? "included" : "budget_omitted" });
+    worldbookSelection.push({
+      revision: match.revision,
+      bookId: match.bookId,
+      entryId: match.entryId,
+      messageIds: match.messageIds,
+      status: included ? "included" : "budget_omitted",
+    });
   }
+
   const memoryReads: MemoryDelivery[] = [];
   for (const part of input.prompt.optional) {
     const line = typeof part === "string" ? part : part.text;
-    const previous = request.system;
-    request.system = `${previous}\n${line}`;
-    if (!fits()) request.system = previous;
-    else if (typeof part !== "string") memoryReads.push(part.recall);
+    if (layered) {
+      turnOptionalLines.push(line);
+      if (!fits()) {
+        turnOptionalLines.pop();
+      } else if (typeof part !== "string") {
+        memoryReads.push(part.recall);
+      }
+    } else {
+      const previous = legacySystemExtra;
+      legacySystemExtra = `${previous}\n${line}`;
+      if (!fits()) legacySystemExtra = previous;
+      else if (typeof part !== "string") memoryReads.push(part.recall);
+    }
   }
+
+  // 按交互倒序装入已提交历史（最新优先；超限时最早的历史按完整交互收缩并保留 history_lookup 回查）。
   for (const group of optionalGroups.slice().reverse()) {
     if (!selected.has(group.index) && !addGroup(group, group.messages)) {
       addGroup(group, group.messages.map(referenceMessage));
     }
   }
+
   const final = withSelection();
+  const finalUsed = measure(final);
   for (const message of final.messages) {
     if (message.source?.memoryReads) memoryReads.push(...message.source.memoryReads);
   }
-  return { ...final, worldbookSelection, memoryReads };
+  return {
+    ...final,
+    worldbookSelection,
+    memoryReads,
+    budgetMode: budget.mode,
+    budgetUsed: finalUsed,
+    budgetLimit: budget.effectiveInputLimit,
+  };
 }
 
 function fitRelevantPartial(
@@ -185,7 +396,7 @@ function fitRelevantPartial(
   const reads = message.source?.memoryReads;
   if (message.role === "tool" && reads?.length && message.toolName === "memory_search") {
     // 按完整搜索结果缩减，避免把被截掉的后排记录也计入召回。
-    const body = JSON.parse(message.content) as { result: { items: Array<{title: string; snippet: string}> } };
+    const body = JSON.parse(message.content) as { result: { items: Array<{ title: string; snippet: string }> } };
     for (let count = reads.length - 1; count > 0; count--) {
       const content = JSON.stringify({ ...body, result: { ...body.result, items: body.result.items.slice(0, count) } });
       if (replace({ ...message, content, source: { ...message.source, memoryReads: reads.slice(0, count) } })) return;
@@ -198,7 +409,7 @@ function fitRelevantPartial(
       const size = Math.floor((low + high) / 2);
       const snippet = detail.slice(0, beforeSurrogatePair(detail, size));
       const content = JSON.stringify({ ...body, result: { ...body.result, items: [{ type: reads[0]!.type, id: reads[0]!.id, snippet }] } });
-      if (snippet && replace({ ...message, content, source: { ...message.source, memoryReads: reads.slice(0,1) } })) low = size + 1;
+      if (snippet && replace({ ...message, content, source: { ...message.source, memoryReads: reads.slice(0, 1) } })) low = size + 1;
       else high = size - 1;
     }
     return;

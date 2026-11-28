@@ -107,7 +107,7 @@ test("新建角色开始活动一次；真实预置也先等显式启用，重�
   await until(() => env.app.services.autonomy.listWakes(builtin.roleId)[0]?.status === "completed");
   const builtinWake = env.app.services.autonomy.listWakes(builtin.roleId);
   assert.equal(builtinWake.length, 1);
-  assert.match(model.requests[1]!.system, /第一次开始活动/);
+  assert.match(model.requests[1]!.turnContext ?? "", /第一次开始活动/);
 });
 
 test("先启用后绑定保留资格，已有用户消息优先", async (t) => {

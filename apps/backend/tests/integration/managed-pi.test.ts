@@ -105,7 +105,7 @@ assert.equal(label,"verified-label","FIRST_TEST_FAILED");console.log("MOD_TEST_P
   function finish(request: ModelRequest): ModelEvent[] {
     switch (phase) {
       case "result":
-        assert.ok(request.system.includes(jobId) && request.system.includes("工程复测完成"));
+        assert.ok((request.turnContext ?? "").includes(jobId) && (request.turnContext ?? "").includes("工程复测完成"));
         phase = "inspect"; return event("pi_task_result", { jobId });
       case "inspect": {
         inspected = result(request);
@@ -278,8 +278,8 @@ test("重启收敛遗留 running，停机保留 wake，恢复时用户新消息�
     restarted.services.activity.resume(id);
     await restarted.conversation.waitForIdle(id,20000);
     assert.equal(model.requests.length,3);
-    assert.ok(!model.requests[1]!.system.includes(jobId));
-    assert.ok(model.requests[2]!.system.includes(jobId));
+    assert.ok(!(model.requests[1]!.turnContext ?? "").includes(jobId));
+    assert.ok((model.requests[2]!.turnContext ?? "").includes(jobId));
     const messages = restarted.services.messages.list(id,windowId,null,20).items;
     const first = messages.find(m=>m.content==="先处理新的消息");
     const second = messages.find(m=>m.content==="旧工程结果待核查");
@@ -332,7 +332,7 @@ test("自主工程在前台提交前结束，只在自主窗口领取一次并�
     allowReply.resolve();
     await app.conversation.waitForIdle(id,30000);
     assert.equal(model.requests.length,3);
-    assert.ok(model.requests[2]!.system.includes(job.job_id!));
+    assert.ok((model.requests[2]!.turnContext ?? "").includes(job.job_id!));
     assert.ok(model.requests[2]!.tools.some(t=>t.name==="autonomy_share"));
     const [activity] = app.services.autonomy.listActivities(id);
     assert.equal(activity?.summary,"已收下工程结果");
@@ -385,7 +385,7 @@ for (const reason of ["AWAITING_USER_INPUT", "CIRCUIT_BREAKER"]) {
         "SELECT execution_id FROM engineering_wakes WHERE job_id=?").get(job.jobId), { execution_id: null }));
       send("可以继续");
       await app.conversation.waitForIdle(roleId, 30000);
-      assert.ok(model.requests.at(-1)!.system.includes(job.jobId));
+      assert.ok((model.requests.at(-1)!.turnContext ?? "").includes(job.jobId));
       assert.equal(app.conversation.getTask(roleId, parent.taskId).status, "completed");
     } finally {
       await f.close();

@@ -141,7 +141,7 @@ test("配置闭环：建角色、配服务、存绑定后可以对话", { timeou
       "active",
     );
     await fixture.app.conversation.waitForIdle(roleId);
-    assert.match(model.requests[0]!.system, /第一次开始活动/);
+    assert.match(model.requests[0]!.turnContext ?? "", /第一次开始活动/);
     assert.equal(fixture.app.services.autonomy.listWakes(roleId)[0]?.status, "completed");
 
     const submitted = await api(

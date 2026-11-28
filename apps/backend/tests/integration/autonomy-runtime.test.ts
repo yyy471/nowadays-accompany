@@ -89,10 +89,11 @@ test("an autonomous wake reads local material, shares to the main window and sch
   const clock: Clock = { value: new Date("2026-11-04T02:00:00.000Z") };
   const model = new ScriptedChatModel([
     (request): ModelEvent[] => {
-      assert.match(request.system, /自主活动/);
-      assert.match(request.system, /整理书架上的旧地图/);
-      assert.doesNotMatch(request.system, /当前执行在继续原任务/);
-      assert.doesNotMatch(request.system, /本轮用户已发送的消息/);
+      const turn = request.turnContext ?? "";
+      assert.match(turn, /自主活动/);
+      assert.match(turn, /整理书架上的旧地图/);
+      assert.doesNotMatch(turn, /当前执行在继续原任务/);
+      assert.doesNotMatch(turn, /本轮用户已发送的消息/);
       return [
         {
           type: "tool_call",
@@ -493,8 +494,9 @@ test("budget exhaustion pauses the activity and leaves the unexecuted tool reque
       { type: "completed", stopReason: "tool_calls" },
     ],
     (request): ModelEvent[] => {
-      assert.match(request.system, /额度恢复或中断后继续/);
-      assert.match(request.system, /当前执行在继续原任务/);
+      const turn = request.turnContext ?? "";
+      assert.match(turn, /额度恢复或中断后继续/);
+      assert.match(turn, /当前执行在继续原任务/);
       return [
         {
           type: "tool_call",
@@ -668,8 +670,9 @@ test("user conversations can schedule independent future autonomy after the conv
       { type: "completed", stopReason: "stop" },
     ],
     (request): ModelEvent[] => {
-      assert.match(request.system,/这是一次自主活动/);
-      assert.match(request.system,/晚点整理今天聊到的旅行计划/);
+      const turn = request.turnContext ?? "";
+      assert.match(turn,/这是一次自主活动/);
+      assert.match(turn,/晚点整理今天聊到的旅行计划/);
       return [{type:"text_delta",text:"补完了路线笔记。"},{type:"completed",stopReason:"stop"}];
     },
   ]);

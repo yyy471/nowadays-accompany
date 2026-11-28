@@ -147,12 +147,12 @@ class SupersedeModel implements ModelPort {
       return;
     }
     if (this.requests.length === 2) {
-      assert.match(request.system, /本轮用户已发送的消息/);
+      assert.match(request.turnContext ?? "", /本轮用户已发送的消息/);
       yield { type: "text_delta", text: "先回你：我在。" };
       yield { type: "completed", stopReason: "stop" };
       return;
     }
-    assert.match(request.system, /当前执行在继续原任务/);
+    assert.match(request.turnContext ?? "", /当前执行在继续原任务/);
     yield { type: "text_delta", text: "接着把书架整理完了。" };
     yield { type: "completed", stopReason: "stop" };
   }

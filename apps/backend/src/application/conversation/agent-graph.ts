@@ -37,6 +37,7 @@ import type { WorldbookSelection } from "../../domain/worldbook.js";
 import type { ConversationStore } from "../../storage/conversation/conversation-store.js";
 import type { RoleStore } from "../../storage/role/role-store.js";
 import { decisionQuery, selectAgentContext, type AgentSystemPrompt } from "./agent-context.js";
+import type { StaticTokenCountCache } from "./context-budget.js";
 
 export interface AgentModelHandle {
   model: ModelPort;
@@ -48,6 +49,9 @@ export interface AgentModelHandle {
   baseUrl?: string;
   maxInputChars?: number;
   maxOutputChars?: number;
+  contextWindowTokens?: number;
+  maxInputTokens?: number;
+  maxOutputTokens?: number;
 }
 
 export interface AgentToolReservation {
@@ -118,6 +122,14 @@ export interface AgentGraphDeps {
   onSegmentHalt?: (kind: AgentSegmentStopKind) => void;
   /** 模型调用结束时上报全局 Token 账本（DL-183）。 */
   onModelCallFinished?: (event: TokenUsageCallEvent) => void;
+  /** 实例级静态块 token 计数缓存（DL-202）。 */
+  tokenCountCache?: StaticTokenCountCache;
+  /** 本轮上下文接近有效预算上限时回调，供窗口周期提前安排滚动摘要（DL-202）。 */
+  onContextBudgetPressure?: (info: {
+    used: number;
+    limit: number;
+    mode: "tokens" | "chars";
+  }) => void;
 }
 
 /** 办事任务单段执行上限；达到后提交进度回复并自动切段续行（DL-154）。 */
@@ -282,7 +294,14 @@ export class AgentGraphRunner {
           "SELECT 1 FROM model_calls WHERE model_call_id = ? AND role_id = ? AND resource_id = ?",
         ).get(state.modelCallId, state.roleId, current.resourceId) !== undefined
       : true;
-    const { worldbookSelection, memoryReads, ...request } = selectAgentContext({
+    const {
+      worldbookSelection,
+      memoryReads,
+      budgetMode,
+      budgetUsed,
+      budgetLimit,
+      ...request
+    } = selectAgentContext({
       request: {
         modelName: current.modelName,
         resourceId: current.resourceId,
@@ -300,10 +319,21 @@ export class AgentGraphRunner {
       baseUrl: current.baseUrl ?? "",
       ...(current.maxInputChars === undefined ? {} : { maxInputChars: current.maxInputChars }),
       ...(current.maxOutputChars === undefined ? {} : { maxOutputChars: current.maxOutputChars }),
+      ...(current.contextWindowTokens === undefined ? {} : { contextWindowTokens: current.contextWindowTokens }),
+      ...(current.maxInputTokens === undefined ? {} : { maxInputTokens: current.maxInputTokens }),
+      ...(current.maxOutputTokens === undefined ? {} : { maxOutputTokens: current.maxOutputTokens }),
+      ...(this.deps.tokenCountCache === undefined ? {} : { tokenCountCache: this.deps.tokenCountCache }),
       resuming,
       originalModelResource: originalModel,
       evidenceQuery,
     });
+    if (budgetLimit > 0) {
+      this.deps.onContextBudgetPressure?.({
+        used: budgetUsed,
+        limit: budgetLimit,
+        mode: budgetMode,
+      });
+    }
     this.firstModelBoundary = false;
     this.deps.checkRunning();
     const counted = this.deps.meter?.consume("model") ?? false;
@@ -1242,13 +1272,15 @@ export class AgentGraphRunner {
   }
 
   private toolSpecs(): ModelToolSpec[] {
-    const tools = this.deps.tools;
+    const tools = [...this.deps.tools].sort((a, b) =>
+      a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+    );
     this.toolMap.clear();
     for (const tool of tools) this.toolMap.set(tool.name, tool);
     return tools.map((tool) => ({
       name: tool.name,
       description: tool.description,
-      inputSchema: tool.inputSchema,
+      inputSchema: canonicalizeSchemaObject(tool.inputSchema),
     }));
   }
 
@@ -1327,6 +1359,24 @@ export class AgentGraphRunner {
     this.deps.store.saveInternalToolReceipt({ ...common, counted, outcome, now: this.deps.now().toISOString() });
     return outcome;
   }
+}
+
+/** 递归按字典序规范化 JSON Schema 对象键，确保同版本工具定义序列化逐字节一致（DL-202）。 */
+function canonicalizeSchemaObject(
+  value: Record<string, unknown>,
+): Record<string, unknown> {
+  const canonicalize = (node: unknown): unknown => {
+    if (node === null || typeof node !== "object") return node;
+    if (Array.isArray(node)) return node.map(canonicalize);
+    const input = node as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(input).sort()) {
+      const child = input[key];
+      if (child !== undefined) out[key] = canonicalize(child);
+    }
+    return out;
+  };
+  return canonicalize(value) as Record<string, unknown>;
 }
 
 /** 未派发调用的诊断码：区分暂停、续行、熔断与轮次上限四种收尾原因。 */

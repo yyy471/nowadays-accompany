@@ -101,7 +101,7 @@ test("全链路 7 类调用记账、缓存字段保留、删角色与删服务�
         yield { type: "completed", stopReason: "stop" };
         return;
       }
-      if (request.system.includes("你第一次开始活动")) {
+      if ((request.turnContext ?? "").includes("你第一次开始活动")) {
         yield { type: "text_delta", text: "今天先翻翻新到的书。" };
         yield {
           type: "usage",

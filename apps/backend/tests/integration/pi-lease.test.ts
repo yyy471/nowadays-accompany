@@ -190,7 +190,7 @@ for (const mode of ["pi_task_cancel", "role_stop", "task_cancel", "task_finish"]
       } else {
         assert.ok(read().execution_id);
         assert.equal(app.conversation.listTasks(roleId).find(t=>t.taskId===parent.taskId)?.status,"completed");
-        assert.ok(model.requests.at(-1)?.system.includes(jobId));
+        assert.ok((model.requests.at(-1)?.turnContext ?? "").includes(jobId));
       }
     } finally { release.resolve(); await f.close(); upstream.closeAllConnections(); await new Promise<void>(r => upstream.close(() => r())); }
   });

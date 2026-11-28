@@ -88,6 +88,9 @@ export interface BackendAppOptions {
   embeddingBatchTimeoutMs?: number;
   /** 工程模型代理的首包/空闲超时与非流式正文上限（测试可缩短）。 */
   piModelProxyOptions?: PiModelProxyOptions;
+  /** 30+n 窗口周期策略与摘要整理器注入（DL-202）。 */
+  windowCycle?: import("../application/conversation/window-context-cycle.js").WindowCyclePolicy;
+  windowSummaryCompactor?: import("../application/conversation/window-context-cycle.js").WindowSummaryCompactor;
 }
 
 import { MediaMaintenance } from '../application/media/media-maintenance.js';
@@ -399,6 +402,12 @@ function assembleBackendApp(
       ...(options.modelPortFactory === undefined
         ? {}
         : { modelPortFactory: options.modelPortFactory }),
+      ...(options.windowCycle === undefined
+        ? {}
+        : { windowCycle: options.windowCycle }),
+      ...(options.windowSummaryCompactor === undefined
+        ? {}
+        : { windowSummaryCompactor: options.windowSummaryCompactor }),
       memoryRuntime,
       autonomy,
       activity: activity.gate,

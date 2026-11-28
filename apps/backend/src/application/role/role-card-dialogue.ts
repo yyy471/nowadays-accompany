@@ -137,3 +137,192 @@ export function roleCardForDialogue(card: string, userMessages: readonly string[
   if (!hasDescription && voice.length) kept.push("口吻片段（只示范表达，非当前经历）：", ...voice);
   return kept.join("\n").trim();
 }
+
+export interface SplitRoleCardResult {
+  /** 长期稳定核心设定正文（不含按需展开的开场白/示例对话，不做 2000 字符截断）。 */
+  coreText: string;
+  /** 去重且键序确定的核心结构化载荷 JSON（为空时为 null）。 */
+  corePayloadJson: string | null;
+  /** 仅在用户当轮显式要求查看原卡/开场白/示例对话时返回的临时参考（放入本轮可变材料，不污染稳定前缀）。 */
+  onDemandReference: string | null;
+}
+
+function stableJsonStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJsonStringify(item)).join(",")}]`;
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record)
+    .filter((key) => record[key] !== undefined)
+    .sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableJsonStringify(record[key])}`).join(",")}}`;
+}
+
+function deduplicatePayloadFields(
+  fields: Record<string, unknown>,
+  seenTexts: Set<string>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(fields)) {
+    if (key === "description" && typeof value === "string") {
+      const normalized = value.trim();
+      if (normalized.length === 0 || seenTexts.has(normalized)) {
+        continue;
+      }
+      seenTexts.add(normalized);
+    }
+    if (key === "data" && value !== null && typeof value === "object" && !Array.isArray(value)) {
+      const nested = deduplicatePayloadFields(value as Record<string, unknown>, seenTexts);
+      if (Object.keys(nested).length > 0) {
+        out.data = nested;
+      }
+      continue;
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
+function extractOmittedScriptSections(
+  card: string,
+  wanted: { readExamples: boolean; readOpening: boolean },
+): string {
+  const lines = card.split(/\r?\n/u);
+  const collected: string[] = [];
+  let active: { level: number; kind: ScriptSection } | undefined;
+  let fence = "";
+  for (let i = 0; i < lines.length; i += 1) {
+    const row = lines[i]!;
+    const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(row);
+    if (marker) {
+      if (!fence) fence = marker[1]!;
+      else if (marker[1]!.startsWith(fence) && !marker[2]!.trim()) fence = "";
+      if (active) collected.push(row);
+      continue;
+    }
+    const heading = fence ? null : /^ {0,3}(#{1,6})[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/u.exec(row);
+    if (!fence && !active && wanted.readExamples && /^\s*(?:对话示例|示例对话|Example Dialogues)\s*[:：]\s*$/iu.test(row)) {
+      let end = i + 1;
+      while (end < lines.length && /^\s*(?:\{\{(?:user|char)\}\}|用户|角色|user|assistant|character)\s*[:：]/iu.test(lines[end]!)) end += 1;
+      if (end > i + 1) {
+        collected.push(...lines.slice(i, end));
+        i = end - 1;
+        continue;
+      }
+    }
+    const underline = !heading && !fence && /^ {0,3}[^\s]/u.test(row)
+      ? /^ {0,3}(=+|-+)[ \t]*$/u.exec(lines[i + 1] ?? "")
+      : null;
+    const level = heading?.[1]?.length ?? (underline ? (underline[1]!.startsWith("=") ? 1 : 2) : 0);
+    if (level) {
+      if (active && level <= active.level) active = undefined;
+      const section = scriptSection(heading?.[2] ?? row);
+      if (!active && section && (section === "examples" ? wanted.readExamples : wanted.readOpening)) {
+        active = { level, kind: section };
+      }
+    }
+    if (active) {
+      collected.push(row);
+      if (underline) {
+        i += 1;
+        collected.push(lines[i]!);
+      }
+    } else if (underline) {
+      i += 1;
+    }
+  }
+  return collected.join("\n").trim();
+}
+
+/**
+ * DL-202 角色卡拆分：
+ * - 长期稳定前缀固定承载完整核心设定与去重后的结构化核心字段，绝不随当轮问话变化；
+ * - 当轮用户显式索要查看开场白、示例对话或完整原卡时，按需提取为临时参考放入本轮可变材料。
+ */
+export function splitRoleCardForDialogue(
+  definitionText: string,
+  definitionPayload: Record<string, unknown>,
+  userMessages: readonly string[],
+  adminSeat: boolean,
+): SplitRoleCardResult {
+  const coreText = adminSeat
+    ? definitionText
+    : roleCardForDialogue(definitionText, []);
+  const rawCorePayload = roleCardPayloadForDialogue(
+    definitionPayload,
+    [],
+    adminSeat,
+  );
+  const seenTexts = new Set<string>();
+  const trimmedCore = coreText.trim();
+  const trimmedRaw = definitionText.trim();
+  if (trimmedCore.length > 0) seenTexts.add(trimmedCore);
+  if (trimmedRaw.length > 0) seenTexts.add(trimmedRaw);
+  const dedupedPayload = deduplicatePayloadFields(rawCorePayload, seenTexts);
+  const corePayloadJson =
+    Object.keys(dedupedPayload).length > 0
+      ? stableJsonStringify(dedupedPayload)
+      : null;
+
+  if (adminSeat || userMessages.length === 0) {
+    return { coreText, corePayloadJson, onDemandReference: null };
+  }
+
+  const { readCard, readExamples, readOpening } = requestedSections(userMessages);
+  if (!readCard && !readExamples && !readOpening) {
+    return { coreText, corePayloadJson, onDemandReference: null };
+  }
+
+  const extras: string[] = [];
+  if (readCard) {
+    if (definitionText !== coreText) {
+      extras.push(`角色卡完整原文（按本轮用户要求临时提供）：\n${definitionText}`);
+    }
+    const fullPayload = roleCardPayloadForDialogue(definitionPayload, userMessages, false);
+    const fullPayloadJson =
+      Object.keys(fullPayload).length > 0 ? stableJsonStringify(fullPayload) : null;
+    if (fullPayloadJson !== null && fullPayloadJson !== corePayloadJson) {
+      extras.push(`角色卡完整结构化字段（按本轮用户要求临时提供）：${fullPayloadJson}`);
+    }
+  } else {
+    const omittedText = extractOmittedScriptSections(definitionText, {
+      readExamples,
+      readOpening,
+    });
+    if (omittedText.length > 0) {
+      extras.push(`角色卡按需片段（仅本轮参考，非已发生经历）：\n${omittedText}`);
+    }
+    const onDemandPayload: Record<string, unknown> = {};
+    const collectField = (source: Record<string, unknown>, key: "first_mes" | "mes_example") => {
+      if (typeof source[key] === "string" && source[key]!.trim().length > 0) {
+        onDemandPayload[key] = source[key];
+      }
+    };
+    const dataField =
+      definitionPayload.data !== null &&
+      typeof definitionPayload.data === "object" &&
+      !Array.isArray(definitionPayload.data)
+        ? (definitionPayload.data as Record<string, unknown>)
+        : null;
+    if (readOpening) {
+      collectField(definitionPayload, "first_mes");
+      if (dataField && onDemandPayload.first_mes === undefined) collectField(dataField, "first_mes");
+    }
+    if (readExamples) {
+      collectField(definitionPayload, "mes_example");
+      if (dataField && onDemandPayload.mes_example === undefined) collectField(dataField, "mes_example");
+    }
+    if (Object.keys(onDemandPayload).length > 0) {
+      extras.push(`角色卡按需结构化字段（仅本轮参考）：${stableJsonStringify(onDemandPayload)}`);
+    }
+  }
+
+  return {
+    coreText,
+    corePayloadJson,
+    onDemandReference: extras.length > 0 ? extras.join("\n") : null,
+  };
+}

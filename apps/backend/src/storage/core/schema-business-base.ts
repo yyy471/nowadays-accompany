@@ -21,10 +21,11 @@ import {
   BUSINESS_V22_SQL,
 } from "./schema-business-migrations.js";
 
-export const BUSINESS_SCHEMA_VERSION = 32;
+export const BUSINESS_SCHEMA_VERSION = 33;
 
 export const BUSINESS_TABLES = [
   "engineering_jobs", "engineering_wakes",
+  "window_context_states",
   "roles",
   "windows",
   "messages",

@@ -107,12 +107,24 @@ export interface ModelToolSpec {
   inputSchema: Record<string, unknown>;
 }
 
+/** 分段系统提示块；供支持显式缓存断点的协议（如 Anthropic Messages）按层标注缓存。 */
+export interface ModelSystemBlock {
+  text: string;
+  cacheControl?: "ephemeral";
+}
+
 export interface ModelRequest {
   modelName: string;
   resourceId?: string;
   /** 一段对话的稳定标识，仅供要求会话请求头的网关使用。 */
   sessionId?: string;
   system: string;
+  /** 可选分段系统提示；缺省时由各协议直接使用 system 字符串。 */
+  systemBlocks?: readonly ModelSystemBlock[];
+  /** 本轮可变宿主上下文（状态、时间、触发世界书、自动召回等），置于已提交历史之后、当前输入之前，不落入持久历史。 */
+  turnContext?: string;
+  /** 是否为支持显式前缀缓存断点的协议启用缓存标注（DL-202）。 */
+  promptCaching?: boolean;
   messages: ModelMessage[];
   tools: ModelToolSpec[];
   maxOutputTokens?: number;

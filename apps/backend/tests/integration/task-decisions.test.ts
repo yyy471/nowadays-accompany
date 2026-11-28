@@ -98,8 +98,8 @@ class TwoPhaseReadingModel implements ModelPort {
       return;
     }
     if (round === 2) {
-      // 任务编号来自系统提示中的任务简报。
-      const match = /taskId=([0-9a-f-]{36})/.exec(request.system);
+      // 任务编号来自本轮上下文中的任务简报。
+      const match = /taskId=([0-9a-f-]{36})/.exec(request.turnContext ?? "");
       assert.ok(match, "系统提示应包含当前任务编号");
       const schedule = request.tools.find(
         (candidate) => candidate.name === "autonomy_schedule",
@@ -152,7 +152,7 @@ class TwoPhaseReadingModel implements ModelPort {
         ),
         "接回原链时应重放已保存的工具结果",
       );
-      assert.match(request.system, /已读完前半部分/);
+      assert.match(request.turnContext ?? "", /已读完前半部分/);
       const finish = request.tools.find(
         (candidate) => candidate.name === "task_finish",
       );

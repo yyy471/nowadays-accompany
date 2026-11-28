@@ -184,6 +184,26 @@ CREATE INDEX IF NOT EXISTS idx_memory_search_embeddings_role_model
   ON memory_search_embeddings(role_id, model_key);
 `;
 
+/**
+ * V33：主对话窗口级滚动摘要与 30+n 历史周期边界状态（410 R2-14 / DL-202）。
+ * 按 window_id 独立维护，与跨窗口长期记忆整理职责解耦；属于本机可重建派生状态，
+ * 不纳入角色迁移包必填表，窗口删除时随外键级联清理。
+ */
+const BUSINESS_V33_SQL = `
+CREATE TABLE IF NOT EXISTS window_context_states (
+  window_id TEXT PRIMARY KEY REFERENCES windows(window_id) ON DELETE CASCADE,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  summary_version INTEGER NOT NULL DEFAULT 0 CHECK (summary_version >= 0),
+  summary_text TEXT NOT NULL DEFAULT '',
+  covered_until_sequence INTEGER NOT NULL DEFAULT 0 CHECK (covered_until_sequence >= 0),
+  history_left_sequence INTEGER NOT NULL DEFAULT 0 CHECK (history_left_sequence >= 0),
+  cycle_start_sequence INTEGER NOT NULL DEFAULT 0 CHECK (cycle_start_sequence >= 0),
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_window_context_states_role
+  ON window_context_states(role_id);
+`;
+
 export function openBusinessDatabase(
   dbPath: string,
   options: DatabaseOpenOptions = {},
@@ -191,7 +211,7 @@ export function openBusinessDatabase(
   return openVersionedDatabase(
     dbPath,
     BUSINESS_SCHEMA_VERSION,
-    BUSINESS_SCHEMA_V22_SQL + BUSINESS_V23_SQL + BUSINESS_V24_SQL + BUSINESS_V26_SQL + BUSINESS_V27_SQL + BUSINESS_V28_SQL + BUSINESS_V29_SQL + BUSINESS_V30_SQL + BUSINESS_V31_SQL + BUSINESS_V32_SQL,
+    BUSINESS_SCHEMA_V22_SQL + BUSINESS_V23_SQL + BUSINESS_V24_SQL + BUSINESS_V26_SQL + BUSINESS_V27_SQL + BUSINESS_V28_SQL + BUSINESS_V29_SQL + BUSINESS_V30_SQL + BUSINESS_V31_SQL + BUSINESS_V32_SQL + BUSINESS_V33_SQL,
     {
       1: (db) => {
         db.exec(BUSINESS_V2_SQL);
@@ -248,6 +268,7 @@ export function openBusinessDatabase(
         addColumnIfMissing(db, "engineering_jobs", "model_name", "TEXT");
       },
       31: (db) => db.exec(BUSINESS_V32_SQL),
+      32: (db) => db.exec(BUSINESS_V33_SQL),
     },
     BUSINESS_TABLES,
     BUSINESS_INDEXES,
