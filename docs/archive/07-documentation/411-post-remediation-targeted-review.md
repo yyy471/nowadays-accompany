@@ -136,3 +136,16 @@
 - **`R3-08` 宽目录扫描**：实测同步 `readdirSync` 在单层 3,000 / 10,000 / 25,000 项时阻塞并发 `/v1/health` 峰值达 `91.5 / 143.1 / 147.1 ms`。基于实测将 `GET /v1/roles/:roleId/workspace/notes` 切换至新增异步 `RoleWorkspaceService.listNotesWithMetaAsync()`（`fs.promises.opendir` 增量读取、每 64 项 `setImmediate` 让出事件循环、超限立即关闭句柄，保留跳目录、深度 6 与截断语义）。复测同条件下并发 `/v1/health` 峰值降至 **`3.4 / 2.6 / 2.5 ms`**（降幅 **96.3%～98.3%**）。
 - **`R3-09` 混合检索准备阶段**：实测 100 / 500 / 2,000 文档库下 `collectCandidates` 的逐条 `experienceDateOf` 查询与全量加载解码向量使热查询达 `6.0 / 18.7 / 71.1 ms`、按日过滤达 `2.4 / 11.5 / 41.9 ms`、2,000 文档热查询内存增量 `25.95 MB`。优化为单 SQL `LEFT JOIN` 下推类型与日期过滤、推迟缓存读取至查询向量成功后并按候选 `document_id` 500 条分片加载、经 `cosineSimilarityWithBlob` 原地打分不驻留全量 `Float32Array` 映射。复测同基准：热查询降至 **`2.4 / 8.7 / 35.8 ms`**（**-50%～-60%**），按日过滤降至 **`1.0 / 1.7 / 5.7 ms`**（**-58%～-86%**），2,000 文档热查询 RSS 增量降至 **`11.43 MB`**（**-56%**），召回排序完全一致。
 - 仓库 Node 24.22.2 定向复验：后端 `tsc --noEmit` 0 错误，`memory-hybrid-search` + `memory-delivery` + `workspace-and-transfer-http` **35/35** 通过（含异步扫描上限及 `cosineSimilarityWithBlob` 对齐/非对齐缓冲区与长度校验）。
+
+### 全仓离线门禁终验（2026-11-28，基线 `1595f61`）
+
+- 411 全部 16 项（`R3-01`～`R3-16`）与 410 追加专项 `R2-14`（`DL-202` 主对话上下文与前缀缓存）均已合入并重新打包同步 `apps/desktop/build-staging`（Node v24.22.2 ABI 复核通过）。
+- 仓库 Node 24.22.2 实跑完整离线门禁 `node scripts/verify.mjs gate` **11/11 全通**（墙钟 214.4s，`gitStatus` 为空，`realServiceCalls=0`）：
+  - `docs`：核心 13 份、归档 162 份，0 错误 0 警告；
+  - `hygiene`：跟踪文件 914 个，0 错误，1 项既有生成令牌文件体积告警（`character-tokens.css` 108.3 KB）；
+  - `renderer-check`（令牌/样式/类型）、`renderer-tests` **230/230**、`renderer-build` 通过；
+  - `desktop-tests` **40/40**（含脱仓生产包冒烟）、`feed-integration` **3/3**、`backend-eval-tests` **8/8** 通过；
+  - `accept-offline` **21/21 步**通过（含 `typecheck`、`review-typecheck`、交付 **5/5**、93 文件 **735/735**、进程重启冒烟与 81 场景），报告：`test-results/backend-acceptance/p5-2026-11-28T11-32-59-241Z-44701523/summary.json`；
+  - `pi-tests` 串行 **14/14**（`survivors=0`）；
+  - `desktop-e2e` 默认并发 3 全量 **29/29**（83.8s），报告：`test-results/desktop-e2e/e2e-2026-11-28T11-35-09-761Z-3467ccbc/gates.json`。
+- **边界声明**：本轮为实施方离线全量自验，不替代独立复核；干净 Windows 便携 EXE 实机冷启与真实云端模型/缓存费用、TTS、ComfyUI 联调（`R2-12` / `DELIV-02`）仍按边界单独留证。

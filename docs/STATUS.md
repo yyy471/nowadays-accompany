@@ -4,6 +4,8 @@
 
 ## 1. 当前结论概览
 
+**410 `R2-14`（`DL-202` 主对话上下文与前缀缓存）与 411 全部 16 项（`R3-01`～`R3-16`）已完成实施，并通过全仓离线门禁 `node scripts/verify.mjs gate` 11/11 全通（基线 `1595f61`，实施方离线自验；独立复核、干净机便携 EXE 与真实云端/媒体/缓存费用联调仍单独留证）。** 主对话升级角色业务库至 V33（`window_context_states`），以 `128k` 输入 / `10k` 输出 token 预算、完整核心角色设定（取消 2,000 字截断）、四协议 `systemBlocks` + `turnContext` 稳定前缀分层（Anthropic ≤4 缓存断点、工具确定性排序）及 `30+n` 周期历史切换+原子滚动摘要收口。仓库 Node 24.22.2 实跑：`accept-offline` **21/21**（93 文件 **735/735** + 交付 **5/5** + 进程冒烟 + 81 场景，`realServiceCalls=0`）、`pi-tests` 串行 **14/14**（`survivors=0`）、`backend-eval` **8/8**、`feed-integration` **3/3**、渲染器 `check` + **230/230** + 构建、桌面壳 **40/40**、Electron 39 并发 E2E **29/29**、文档巡检 0 错误 0 警告、仓库卫生 0 错误。[410 R2-14 记录](./archive/07-documentation/410-second-round-strict-audit-backlog.md#r2-14-实施与第-4-轮全仓离线门禁终验2026-11-28) · [411 终验记录](./archive/07-documentation/411-post-remediation-targeted-review.md#全仓离线门禁终验2026-11-28基线-1595f61)
+
 **411 第九阶段 `R3-08`、`R3-09` 已完成基准实测、优化与定向离线复验（411 全部 16 项实施收口）。** 工作空间笔记 HTTP 接口改为 `fs.promises.opendir` 异步分批枚举，25,000 项宽目录扫描期间并发 `/v1/health` 峰值由 `147.1 ms` 降至 `2.5 ms`；混合检索改为单 SQL 联表过滤、按候选分片加载向量及原地 BLOB 余弦打分，2,000 文档热查询由 `71.1 ms` 降至 `35.8 ms`、按日过滤由 `41.9 ms` 降至 `5.7 ms`。后端类型检查与 35 项定向测试通过。[411 第九阶段](./archive/07-documentation/411-post-remediation-targeted-review.md#第九阶段-r3-08-和-r3-09-基准测量与定向优化)
 
 **411 第八阶段 `R3-07`、`R3-16` 已修复并通过定向离线复验。** 根级 `scripts/verify.mjs` 在 `fast`（含 `apps/pi-mcp/` 变更映射与关键字过滤）、`unit` 和 `gate` 中接入串行 `pi-tests` 独立项；`scripts/check-docs.mjs` 对核心文档与 `410+` 审计文档补齐源码 `#L` 行号越界巡检，并修正 3 份规范中 6 处旧行号引用。文档巡检 0 错误 0 警告、正负向验证通过。[411 第八阶段](./archive/07-documentation/411-post-remediation-targeted-review.md#第八阶段-r3-07-和-r3-16-门禁接入与行号越界巡检)
