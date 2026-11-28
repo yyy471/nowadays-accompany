@@ -20,12 +20,12 @@
 | [R2-01](#r2-01-桌面代理在请求取消时-promise-永久挂起且缺少流式背压) | 409 新引入（R8b） | 运行时 Bug / 泄漏 | **P0** | `main.cjs` 取消代理调无参 `destroy()` 不触发 `error`，Promise 永不结算；流响应无背压 | 否 | `[x]` 已修复 |
 | [R2-02](#r2-02-混合检索-embedding-存在漏防重定向缺账本绕维护与首聊阻塞四重硬伤) | 409 新引入（R14） | 安全 / 账本 / 性能 | **P0** | 缺 `redirect: "error"`、跨协议乱配不拦、未入 Token 账本与维护守卫、海量未向量化记忆阻塞首聊且超时丢已算结果 | 关联 `DL-51` / `DL-183` | `[ ]` 待排查 |
 | [R2-03](#r2-03-运行态单角色迁移接口存在主线程硬阻塞无体积上限与写路径过宽问题) | 409 新引入（R11） | 安全 / DoS | **P0** | `Atomics.wait` 同步冻住主线程 200ms、`readFileSync` 无上限易 OOM、导出路径只拦两子目录、`/workspace/path` 仍向渲染层暴露 | 否 | `[x]` 已修复 |
-| [R2-08](#r2-08-模型流式生成请求完全缺少首包超时与流空闲超时) | 底层核心 | 稳定性 / 死锁 | **P0** | 四条流式协议入口均未设首包或 chunk 空闲超时，上游半开连接可永久锁死角色执行槽位 | 否 | `[ ]` 待排查 |
+| [R2-08](#r2-08-模型流式生成请求完全缺少首包超时与流空闲超时) | 底层核心 | 稳定性 / 死锁 | **P0** | 四条流式协议入口均未设首包或 chunk 空闲超时，上游半开连接可永久锁死角色执行槽位 | 否 | `[x]` 已修复 |
 | [R2-04](#r2-04-工作空间笔记扫描未跳过依赖目录且无遍历数上限) | 409 新引入（R11） | 性能 / DoS | **P1** | `RoleWorkspaceService.listNotes` 不跳过 `node_modules` 且无总访问数上限，易同步卡死主线程 | 否 | `[ ]` 待排查 |
 | [R2-05](#r2-05-pi-步骤日志并发无序写盘竞态且硬依赖-sdk-私有内部路径) | 409 新引入（R6） | 并发 Bug / 脆性 | **P1** | `worker.mjs` 并发 `writeSteps()` 无串行队列与原子改名易 `EBUSY`/错序；硬导入 SDK 未导出内部路径 `./utils/paths.js` | 否 | `[ ]` 待排查 |
 | [R2-06](#r2-06-热生效配置把删除图生图服饰参考图误划入免停机区) | 409 新引入（R9b） | 并发竞态 | **P1** | `DELETE .../scene-image/outfits/:outfitId/reference` 免停机且立刻删盘，与在途自动 `img2img` 任务竞态报错 | 关联 `DL-148` | `[ ]` 待排查 |
 | [R2-07](#r2-07-roleaccess-连接池缺少坏句柄校验与异常驱逐自愈) | 409 新引入（R4） | 稳定性 / 容错 | **P1** | `borrow()` 不验 `db.open`，遇到 `SQLITE_IOERR`/`SQLITE_CORRUPT` 不驱逐脏连接，坏句柄滞留 60s | 否 | `[ ]` 待排查 |
-| [R2-09](#r2-09-google-服务账号凭据-token-地址允许任意明文-http-触发-ssrf) | 底层核心 | 安全边界 | **P1** | `parseServiceAccountCredential` 放行明文 `http:` 且不限域名，篡改 JSON 可将签名 JWT 发往恶意或内网地址 | 否 | `[ ]` 待排查 |
+| [R2-09](#r2-09-google-服务账号凭据-token-地址允许任意明文-http-触发-ssrf) | 底层核心 | 安全边界 | **P1** | `parseServiceAccountCredential` 放行明文 `http:` 且不限域名，篡改 JSON 可将签名 JWT 发往恶意或内网地址 | 否 | `[x]` 已修复 |
 | [R2-10](#r2-10-未配置生图服务时手动点击过场图仍静默生成假占位图落盘) | 底层核心 | 产品缺陷 | **P1** | `ConfiguredSceneImageGenerator` 仍回退 `FakeSceneImageGenerator`，向真实角色库写入假占位 PNG | 需确认边界（`DL-142` / `DL-150`） | `[ ]` 待排查 |
 | [R2-11](#r2-11-仓储层与核心执行层仍残存-11-个千行至近三千行巨石文件) | 架构遗留 | 架构债务 | **P1** | R12 仅拆掉 2 个 >100 KB 告警文件；`memory-store`、`schema.ts`（V32）等 11 个核心文件仍超千行 | 否 | `[ ]` 待排查 |
 | [R2-12](#r2-12-离线验证与真实交付最后一公里仍未闭环) | 交付遗留 | 交付 / 质量 | **P1** | 脱仓冷启 health 仍 4.27s（未达 `<2s`）、干净机便携 EXE 未实机验收、`DELIV-02` 真实云端/媒体联调仍为 0 | 否 | `[ ]` 待排查 |
@@ -174,7 +174,7 @@
 
 ### R2-08 模型流式生成请求完全缺少首包超时与流空闲超时
 
-- **优先级**：P0 · **来源**：底层核心 · **状态**：`[ ]` 待排查
+- **优先级**：P0 · **来源**：底层核心 · **状态**：`[x]` 已修复（R2，2026-11-28）
 - **证据位置**：
   - [apps/backend/src/model/protocols.ts](../../../apps/backend/src/model/protocols.ts#L139-L164)（`streamOpenAiChat` 未传 `timeoutMs` 且 `rawResponse.push(data)` 无上限）
   - [apps/backend/src/model/protocols.ts](../../../apps/backend/src/model/protocols.ts#L275-L290)（`streamOpenAiResponses` 未传 `timeoutMs`）
@@ -195,7 +195,7 @@
 
 ### R2-09 Google 服务账号凭据 token 地址允许任意明文 HTTP 触发 SSRF
 
-- **优先级**：P1 · **来源**：底层核心 · **状态**：`[ ]` 待排查
+- **优先级**：P1 · **来源**：底层核心 · **状态**：`[x]` 已修复（R2，2026-11-28）
 - **证据位置**：
   - [apps/backend/src/model/google-gemini.ts](../../../apps/backend/src/model/google-gemini.ts#L763-L790)（第 781 行放行 `http:` 且不校验主机名）
   - [apps/backend/src/model/google-gemini.ts](../../../apps/backend/src/model/google-gemini.ts#L814-L825)（直接向 `account.tokenUri` POST 签名后的 JWT）
@@ -301,3 +301,15 @@
   - 后端 `tsc --noEmit` 0 错误；`role-transfer-package` + `role-transfer` + `workspace-and-transfer-http` **22/22** 全通过（含 256 MiB 超限 413、缺失文件 `<50ms` 快速失败、目录拒绝、`appRoot`/`data`/`secrets`/`extensions` 与非 `.json` 拦截）；
   - 桌面壳全量单测 **38/38** 全通过（含新增 `backend-proxy.test.cjs` 5/5：预中止 `<50ms`、响应头前中止 `<100ms`、SSE 中途取消关闭上游、4 MiB 慢消费背压、分片流式上传防整包缓冲，`preload-boundary` 4/4 与脱仓生产包冒烟）；
   - Electron 39 实窗 E2E `extension-ui-slots.e2e.cjs` 通过。
+
+#### R2：`R2-08`（四协议流式首包/空闲超时与有界 `rawResponse`）+ `R2-09`（Google 服务账号 `token_uri` SSRF 白名单）
+- **流式超时与内存收敛（`R2-08`）**：
+  - `apps/backend/src/model/protocols.ts` 新增并导出 `DEFAULT_STREAM_HEADER_TIMEOUT_MS = 90_000`、`DEFAULT_STREAM_IDLE_TIMEOUT_MS = 90_000`、`DEFAULT_MAX_RAW_RESPONSE_BYTES = 256 * 1024` 与 `RawResponseCollector`；
+  - 重构 `HttpModelAdapter.request()`：采用独立 `AbortController` + `.unref()` 计时器并在 `fetch()` 解析响应头后的 `finally` 中立即 `clearTimeout`，确保首包超时在响应头抵达后彻底解除，不误杀长时间正常吐字的流式回复；`listGoogleModels` 仍严格使用短列表超时 `listTimeoutMs`；
+  - `readSse()` 为每次 `reader.read()` 增加空闲超时竞态，超时先置标记并拒绝 `Promise.race` 再 `reader.cancel()` 关闭底层 TCP 连接（修复 `reader.cancel()` 先把 pending read 结算为 `done: true` 导致误报 `STREAM_TRUNCATED` 的微任务竞态），原样抛出 `ModelRequestTimeoutError`；
+  - `streamOpenAiChat`、`streamOpenAiResponses`、`streamAnthropic`、`streamGoogleGemini` 全部接入首包超时、空闲超时与 `RawResponseCollector`（超限后停止堆积并追加 `{ _truncated: true, maxBytes }`，正文流不截断）。
+- **Google 服务账号 OAuth SSRF 防护（`R2-09`）**：
+  - `apps/backend/src/model/google-gemini.ts` 将 `parseServiceAccountCredential` 默认收紧为仅允许 `https:`、默认端口且主机名在 `TRUSTED_GOOGLE_OAUTH_HOSTS`（`oauth2.googleapis.com`、`accounts.google.com`）内，同时拒绝含内嵌凭据的 URL；离线测试通过显式 `HttpModelAdapterOptions.allowCustomGoogleTokenUri: true` 注入回环 mock OAuth 端点。
+- **精准离线复验（仓库 Node `v24.22.2`）**：
+  - 后端 `tsc --noEmit` 0 错误；
+  - `model-protocols` + `google-gemini` + `model-continuation` + `model-providers` **43/43** 全通过（覆盖四协议首包挂死超时、流中途挂死超时关连接、长流超过 headerTimeout 正常完成、1024 B 有界 `rawResponse` 截断、及 4 类恶意 `token_uri` 零出站拦截）。

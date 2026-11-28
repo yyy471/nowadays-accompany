@@ -822,6 +822,7 @@ test("google-gemini listModels 支持 AI Studio 与 Vertex 格式，并支持 GC
     const vertexOAuthAdapter = new HttpModelAdapter(
       { protocol: "google-gemini", baseUrl: `${server.baseUrl}/vertex` },
       saJson,
+      { allowCustomGoogleTokenUri: true },
     );
     assert.deepEqual(await vertexOAuthAdapter.listModels(), ["gemini-2.5-pro"]);
     await collectEvents(vertexOAuthAdapter, [{ role: "user", content: "ping" }]);
@@ -833,6 +834,54 @@ test("google-gemini listModels 支持 AI Studio 与 Vertex 格式，并支持 GC
       "Bearer ya29.offline-oauth-token",
     );
     assert.equal(server.requests.at(-1)?.headers["x-goog-api-key"], undefined);
+  } finally {
+    await server.close();
+  }
+});
+
+test("服务账号 token_uri 默认拒绝非官方地址且不会发出任何请求（SSRF 防护）", async () => {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const server = await startHttpMock(() => ({
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ models: [] }),
+  }));
+  try {
+    const loopbackPort = new URL(server.baseUrl).port;
+    const tokenUris = [
+      `http://127.0.0.1:${loopbackPort}/token`,
+      "http://169.254.169.254/latest/meta-data",
+      "https://evil.example.com/token",
+      "https://oauth2.googleapis.com:8443/token",
+    ];
+    for (const tokenUri of tokenUris) {
+      const credential = JSON.stringify({
+        type: "service_account",
+        client_email: "bot@demo.iam.gserviceaccount.com",
+        private_key: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+        token_uri: tokenUri,
+      });
+      const adapter = new HttpModelAdapter(
+        { protocol: "google-gemini", baseUrl: server.baseUrl },
+        credential,
+      );
+      const isRejected = (error: unknown): boolean => {
+        const appError = error as {
+          code?: string;
+          details?: { reason?: string };
+        };
+        return (
+          appError.code === "MODEL_REQUEST_FAILED" &&
+          appError.details?.reason === "invalid_api_key"
+        );
+      };
+      await assert.rejects(() => adapter.listModels(), isRejected, tokenUri);
+      await assert.rejects(
+        () => collectEvents(adapter, [{ role: "user", content: "ping" }]),
+        isRejected,
+        tokenUri,
+      );
+    }
+    assert.equal(server.requests.length, 0);
   } finally {
     await server.close();
   }

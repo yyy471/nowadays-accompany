@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs";
 import http from "node:http";
+import type { Socket } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -239,6 +240,84 @@ async function startRawServer(
 
 function sse(data: unknown): string {
   return `data: ${JSON.stringify(data)}\n\n`;
+}
+
+interface ControlledServer {
+  baseUrl: string;
+  close(): Promise<void>;
+}
+
+/** 允许测试精确控制响应头与每个数据块的发送时机。 */
+async function startControlledServer(
+  handler: (request: http.IncomingMessage, response: http.ServerResponse) => void,
+): Promise<ControlledServer> {
+  const sockets = new Set<Socket>();
+  const server = http.createServer(handler);
+  server.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}/v1`,
+    async close() {
+      for (const socket of sockets) {
+        socket.destroy();
+      }
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    },
+  };
+}
+
+async function waitForClose(closed: Promise<void>, timeoutMs: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      closed,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("upstream connection did not close")),
+          timeoutMs,
+        );
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+const STREAM_PROTOCOLS: readonly ModelProtocol[] = [
+  "openai-chat",
+  "openai-responses",
+  "anthropic-messages",
+  "google-gemini",
+];
+
+async function streamAll(
+  adapter: HttpModelAdapter,
+  events: ModelEvent[],
+): Promise<void> {
+  for await (const event of adapter.stream({
+    modelName: "mock-model",
+    system: "你是测试角色。",
+    messages: [{ role: "user", content: "读取 note.md" }],
+    tools: [TOOL],
+    maxOutputTokens: 32,
+  })) {
+    events.push(event);
+  }
+}
+
+function isModelTimeout(error: unknown): boolean {
+  return (error as { code?: string }).code === "MODEL_REQUEST_TIMEOUT";
 }
 
 const ENDINGS: Record<ModelProtocol, string> = {
@@ -787,6 +866,177 @@ test("streams require a complete protocol terminal and mark explicit incompletes
       );
     } finally {
       await toolServer.close();
+    }
+  }
+});
+
+test("streams time out waiting for response headers and close upstream", async () => {
+  for (const protocol of STREAM_PROTOCOLS) {
+    let upstreamClosed = false;
+    let resolveClosed!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      resolveClosed = resolve;
+    });
+    const server = await startControlledServer((_request, response) => {
+      response.on("close", () => {
+        upstreamClosed = true;
+        resolveClosed();
+      });
+      // 故意不发送响应头，模拟上游静默挂起。
+    });
+    try {
+      const adapter = new HttpModelAdapter(
+        { protocol, baseUrl: server.baseUrl },
+        undefined,
+        { streamHeaderTimeoutMs: 120 },
+      );
+      const startedAt = Date.now();
+      await assert.rejects(() => collect(adapter), isModelTimeout, protocol);
+      assert.ok(
+        Date.now() - startedAt < 3_000,
+        `${protocol}: header timeout should fire promptly`,
+      );
+      await waitForClose(closed, 2_000);
+      assert.equal(upstreamClosed, true, protocol);
+    } finally {
+      await server.close();
+    }
+  }
+});
+
+test("streams time out on mid-stream idle gaps and close upstream", async () => {
+  for (const protocol of STREAM_PROTOCOLS) {
+    let resolveClosed!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      resolveClosed = resolve;
+    });
+    const server = await startControlledServer((_request, response) => {
+      response.on("close", () => resolveClosed());
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.write(textDelta(protocol, "部分"));
+      // 之后保持连接但不再发送任何字节，模拟半途挂起。
+    });
+    try {
+      const adapter = new HttpModelAdapter(
+        { protocol, baseUrl: server.baseUrl },
+        undefined,
+        { streamIdleTimeoutMs: 120 },
+      );
+      const events: ModelEvent[] = [];
+      await assert.rejects(
+        () => streamAll(adapter, events),
+        isModelTimeout,
+        protocol,
+      );
+      assert.equal(
+        events.some(
+          (event) => event.type === "text_delta" && event.text === "部分",
+        ),
+        true,
+        protocol,
+      );
+      await waitForClose(closed, 2_000);
+    } finally {
+      await server.close();
+    }
+  }
+});
+
+test("active streams longer than the header timeout are not killed by it", async () => {
+  for (const protocol of STREAM_PROTOCOLS) {
+    let interval: ReturnType<typeof setInterval> | undefined;
+    const server = await startControlledServer((_request, response) => {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      let sent = 0;
+      interval = setInterval(() => {
+        if (sent < 6) {
+          response.write(textDelta(protocol, "x"));
+          sent += 1;
+          return;
+        }
+        if (interval !== undefined) {
+          clearInterval(interval);
+          interval = undefined;
+        }
+        response.end(ENDINGS[protocol]);
+      }, 80);
+      response.on("close", () => {
+        if (interval !== undefined) {
+          clearInterval(interval);
+          interval = undefined;
+        }
+      });
+    });
+    try {
+      const adapter = new HttpModelAdapter(
+        { protocol, baseUrl: server.baseUrl },
+        undefined,
+        { streamHeaderTimeoutMs: 300, streamIdleTimeoutMs: 2_000 },
+      );
+      const startedAt = Date.now();
+      const events = await collect(adapter);
+      assert.ok(
+        Date.now() - startedAt > 300,
+        `${protocol}: stream should outlive the header timeout`,
+      );
+      assert.equal(
+        events
+          .filter((event) => event.type === "text_delta")
+          .map((event) => event.text)
+          .join(""),
+        "xxxxxx",
+        protocol,
+      );
+      const completed = events.find((event) => event.type === "completed");
+      assert.ok(completed, protocol);
+      assert.equal(completed.incomplete, undefined, protocol);
+    } finally {
+      await server.close();
+    }
+  }
+});
+
+test("raw responses are bounded without truncating stream text", async () => {
+  for (const protocol of STREAM_PROTOCOLS) {
+    const delta = "a".repeat(200);
+    const body =
+      Array.from({ length: 8 }, () => textDelta(protocol, delta)).join("") +
+      ENDINGS[protocol];
+    const server = await startRawServer(() => ({ body }));
+    try {
+      const adapter = new HttpModelAdapter(
+        { protocol, baseUrl: server.baseUrl },
+        undefined,
+        { maxRawResponseBytes: 1024 },
+      );
+      const events = await collect(adapter);
+      assert.equal(
+        events
+          .filter((event) => event.type === "text_delta")
+          .map((event) => event.text)
+          .join(""),
+        delta.repeat(8),
+        protocol,
+      );
+      const completed = events.find((event) => event.type === "completed");
+      assert.ok(completed, protocol);
+      const raw = completed.rawResponse;
+      assert.ok(Array.isArray(raw), protocol);
+      const rawItems = raw as unknown[];
+      const marker = rawItems.at(-1) as { _truncated?: boolean; maxBytes?: number };
+      assert.equal(marker._truncated, true, protocol);
+      assert.equal(marker.maxBytes, 1024, protocol);
+      const collectedBytes = rawItems
+        .slice(0, -1)
+        .reduce<number>(
+          (total, item) =>
+            total + Buffer.byteLength(JSON.stringify(item), "utf8"),
+          0,
+        );
+      assert.ok(collectedBytes <= 1024, `${protocol}:${collectedBytes}`);
+      assert.ok(rawItems.length < 9, `${protocol}: raw response should stop early`);
+    } finally {
+      await server.close();
     }
   }
 });

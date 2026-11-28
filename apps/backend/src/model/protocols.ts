@@ -29,13 +29,32 @@ import {
 
 const DEFAULT_LIST_TIMEOUT_MS = 20_000;
 
+/** 流式请求从建立连接到收到响应头的等待上限。 */
+export const DEFAULT_STREAM_HEADER_TIMEOUT_MS = 90_000;
+/** 流式请求相邻 SSE 数据块之间的空闲上限（不含已到达字节的读取时间）。 */
+export const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 90_000;
+/** 单个流式调用最多保留的原始响应字节数，避免长流无限占用内存。 */
+export const DEFAULT_MAX_RAW_RESPONSE_BYTES = 256 * 1024;
+
 export interface HttpModelAdapterOptions {
   /** 列表等短请求的等待上限；流式请求沿用调用方提供的信号。 */
   listTimeoutMs?: number;
+  /** 流式请求等待响应头的上限。 */
+  streamHeaderTimeoutMs?: number;
+  /** 流式请求相邻数据块的空闲上限。 */
+  streamIdleTimeoutMs?: number;
+  /** 流式请求保留的原始响应字节上限。 */
+  maxRawResponseBytes?: number;
+  /** 仅测试使用：允许服务账号 token_uri 指向本地 mock OAuth 服务。 */
+  allowCustomGoogleTokenUri?: boolean;
 }
 
 export class HttpModelAdapter implements ModelPort {
   private readonly listTimeoutMs: number;
+  private readonly streamHeaderTimeoutMs: number;
+  private readonly streamIdleTimeoutMs: number;
+  private readonly maxRawResponseBytes: number;
+  private readonly allowCustomGoogleTokenUri: boolean;
   private readonly googleTokenCache: { current: GoogleOAuthTokenCache | undefined } = {
     current: undefined,
   };
@@ -46,6 +65,13 @@ export class HttpModelAdapter implements ModelPort {
     options: HttpModelAdapterOptions = {},
   ) {
     this.listTimeoutMs = options.listTimeoutMs ?? DEFAULT_LIST_TIMEOUT_MS;
+    this.streamHeaderTimeoutMs =
+      options.streamHeaderTimeoutMs ?? DEFAULT_STREAM_HEADER_TIMEOUT_MS;
+    this.streamIdleTimeoutMs =
+      options.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS;
+    this.maxRawResponseBytes =
+      options.maxRawResponseBytes ?? DEFAULT_MAX_RAW_RESPONSE_BYTES;
+    this.allowCustomGoogleTokenUri = options.allowCustomGoogleTokenUri ?? false;
   }
 
   async listModels(signal?: AbortSignal): Promise<string[]> {
@@ -56,6 +82,9 @@ export class HttpModelAdapter implements ModelPort {
         cacheRef: this.googleTokenCache,
         transport: this.googleTransport(),
         timeoutMs: this.listTimeoutMs,
+        headerTimeoutMs: this.streamHeaderTimeoutMs,
+        maxRawResponseBytes: this.maxRawResponseBytes,
+        allowCustomTokenUri: this.allowCustomGoogleTokenUri,
         ...(signal === undefined ? {} : { signal }),
       });
     }
@@ -113,6 +142,9 @@ export class HttpModelAdapter implements ModelPort {
         request,
         transport: this.googleTransport(),
         serializedBody: serializeModelRequest("google-gemini", this.config.baseUrl, request, this.config.provider, this.config.vertexSafety),
+        headerTimeoutMs: this.streamHeaderTimeoutMs,
+        maxRawResponseBytes: this.maxRawResponseBytes,
+        allowCustomTokenUri: this.allowCustomGoogleTokenUri,
       });
     }
     return this.streamAnthropic(request);
@@ -121,7 +153,11 @@ export class HttpModelAdapter implements ModelPort {
   private googleTransport(): GoogleGeminiTransport {
     return {
       request: (url, init, options) => this.request(url, init, options),
-      readSse: (response) => readSse(response),
+      readSse: (response, options) =>
+        readSse(response, undefined, {
+          idleTimeoutMs: this.streamIdleTimeoutMs,
+          ...(options?.signal === undefined ? {} : { signal: options.signal }),
+        }),
       parseStreamJson,
       continuationItems: (message, protocol, model, base) => continuationItems(message, protocol, model, base, this.config.provider),
     };
@@ -144,13 +180,17 @@ export class HttpModelAdapter implements ModelPort {
         body: serializeModelRequest("openai-chat", baseUrl, request, provider),
         ...(request.signal ? { signal: request.signal } : {}),
       },
+      {
+        timeoutMs: this.streamHeaderTimeoutMs,
+        ...(request.signal ? { signal: request.signal } : {}),
+      },
     );
     request.onAccepted?.();
     const toolBuffers = new Map<
       number,
       { callId: string; name: string; arguments: string }
     >();
-    const rawResponse: unknown[] = [];
+    const rawResponse = new RawResponseCollector(this.maxRawResponseBytes);
     const reasoning = provider ? new ChatReasoning(provider) : null;
     let finishReason: string | null = null;
     let usage: ModelUsage | null = null;
@@ -161,9 +201,12 @@ export class HttpModelAdapter implements ModelPort {
       arguments: unknown;
     }> = [];
     try {
-      for await (const payload of readSse(response, sseState)) {
+      for await (const payload of readSse(response, sseState, {
+        idleTimeoutMs: this.streamIdleTimeoutMs,
+        ...(request.signal ? { signal: request.signal } : {}),
+      })) {
         const data = parseStreamJson(payload.data);
-        rawResponse.push(data);
+        rawResponse.push(data, Buffer.byteLength(payload.data, "utf8"));
         const choices = data.choices as
           | Array<{
               delta?: {
@@ -262,7 +305,7 @@ export class HttpModelAdapter implements ModelPort {
       type: "completed",
       stopReason: finishReason,
       ...(incomplete ? { incomplete: true } : {}),
-      rawResponse: rawResponse.length === 0 ? undefined : rawResponse,
+      rawResponse: rawResponse.finish(),
       ...(provider && (Object.keys(fields).length > 0 || parsedTools.length > 0) ? {
         continuation: { protocol: "openai-chat", provider, baseUrl, modelName: request.modelName, items: [fields] },
       } : {}),
@@ -280,13 +323,17 @@ export class HttpModelAdapter implements ModelPort {
         body: serializeModelRequest("openai-responses", this.config.baseUrl, request, this.config.provider),
         ...(request.signal ? { signal: request.signal } : {}),
       },
+      {
+        timeoutMs: this.streamHeaderTimeoutMs,
+        ...(request.signal ? { signal: request.signal } : {}),
+      },
     );
     request.onAccepted?.();
     const toolBuffers = new Map<
       string,
       { callId: string; name: string; arguments: string }
     >();
-    const rawResponse: unknown[] = [];
+    const rawResponse = new RawResponseCollector(this.maxRawResponseBytes);
     let usage: ModelUsage | null = null;
     let terminal:
       | {
@@ -303,9 +350,12 @@ export class HttpModelAdapter implements ModelPort {
       arguments: unknown;
     }> = [];
     try {
-      for await (const payload of readSse(response)) {
+      for await (const payload of readSse(response, undefined, {
+        idleTimeoutMs: this.streamIdleTimeoutMs,
+        ...(request.signal ? { signal: request.signal } : {}),
+      })) {
         const data = parseStreamJson(payload.data);
-        rawResponse.push(data);
+        rawResponse.push(data, Buffer.byteLength(payload.data, "utf8"));
         const type = data.type as string | undefined;
         if (type === "response.output_text.delta") {
           if (typeof data.delta === "string") {
@@ -449,7 +499,7 @@ export class HttpModelAdapter implements ModelPort {
         terminal.status ??
         (incomplete ? "incomplete" : "completed"),
       ...(incomplete ? { incomplete: true } : {}),
-      rawResponse: rawResponse.length === 0 ? undefined : rawResponse,
+      rawResponse: rawResponse.finish(),
       ...((outputItems ?? [...finishedItems.values()]).length === 0
         ? {}
         : {
@@ -477,13 +527,17 @@ export class HttpModelAdapter implements ModelPort {
         body: serializeModelRequest("anthropic-messages", this.config.baseUrl, request, this.config.provider),
         ...(request.signal ? { signal: request.signal } : {}),
       },
+      {
+        timeoutMs: this.streamHeaderTimeoutMs,
+        ...(request.signal ? { signal: request.signal } : {}),
+      },
     );
     request.onAccepted?.();
     const toolBuffers = new Map<
       number,
       { callId: string; name: string; arguments: string; initial: unknown }
     >();
-    const rawResponse: unknown[] = [];
+    const rawResponse = new RawResponseCollector(this.maxRawResponseBytes);
     let rawInputTokens: number | undefined;
     let cacheReadTokens: number | undefined;
     let cacheCreationTokens: number | undefined;
@@ -515,9 +569,12 @@ export class HttpModelAdapter implements ModelPort {
       arguments: unknown;
     }> = [];
     try {
-      for await (const payload of readSse(response)) {
+      for await (const payload of readSse(response, undefined, {
+        idleTimeoutMs: this.streamIdleTimeoutMs,
+        ...(request.signal ? { signal: request.signal } : {}),
+      })) {
         const data = parseStreamJson(payload.data);
-        rawResponse.push(data);
+        rawResponse.push(data, Buffer.byteLength(payload.data, "utf8"));
         const type = data.type as string | undefined;
         if (type === "message_start") {
           const messageUsage = (
@@ -689,7 +746,7 @@ export class HttpModelAdapter implements ModelPort {
       type: "completed",
       stopReason,
       ...(incomplete ? { incomplete: true } : {}),
-      rawResponse: rawResponse.length === 0 ? undefined : rawResponse,
+      rawResponse: rawResponse.finish(),
       ...(contentBlocks.size === 0
         ? {}
         : {
@@ -730,12 +787,22 @@ export class HttpModelAdapter implements ModelPort {
     init: RequestInit,
     options: { timeoutMs?: number; signal?: AbortSignal } = {},
   ): Promise<Response> {
-    const timeout =
-      options.timeoutMs === undefined
-        ? null
-        : AbortSignal.timeout(options.timeoutMs);
-    const signals = [init.signal, options.signal, timeout].filter(
-      (signal): signal is AbortSignal => signal !== null && signal !== undefined,
+    // 这里是“响应头/首字节”超时：一旦 fetch 解析出响应头就立即清除计时器，
+    // 否则长时间持续输出的流会被总时长上限误杀。
+    const timeoutMs = options.timeoutMs;
+    const headerController =
+      timeoutMs === undefined ? undefined : new AbortController();
+    let headerTimedOut = false;
+    const headerTimer =
+      timeoutMs === undefined || headerController === undefined
+        ? undefined
+        : setTimeout(() => {
+            headerTimedOut = true;
+            headerController.abort(new ModelRequestTimeoutError(timeoutMs));
+          }, timeoutMs);
+    headerTimer?.unref?.();
+    const signals = [init.signal, options.signal, headerController?.signal].filter(
+      (candidate): candidate is AbortSignal => candidate !== null && candidate !== undefined,
     );
     const signal =
       signals.length === 0
@@ -752,8 +819,8 @@ export class HttpModelAdapter implements ModelPort {
         ...(signal === undefined ? {} : { signal }),
       });
     } catch (error) {
-      if (timeout?.aborted === true) {
-        throw new ModelRequestTimeoutError(options.timeoutMs ?? 0);
+      if (headerTimedOut) {
+        throw new ModelRequestTimeoutError(timeoutMs ?? 0);
       }
       if (
         error instanceof Error &&
@@ -766,6 +833,10 @@ export class HttpModelAdapter implements ModelPort {
       throw new ModelRequestFailedError("模型服务不可达", {
         reason: error instanceof Error ? error.name : "NETWORK_ERROR",
       });
+    } finally {
+      if (headerTimer !== undefined) {
+        clearTimeout(headerTimer);
+      }
     }
     if (response.status >= 300 && response.status < 400) {
       throw new ModelRedirectBlockedError(response.status);
@@ -785,6 +856,42 @@ export class HttpModelAdapter implements ModelPort {
       );
     }
     return response;
+  }
+}
+
+/**
+ * 有界原始响应收集器：超过上限后停止收集，并在结尾附加截断标记。
+ * 长流只保留前若干字节的协议帧，避免 rawResponse 无上限增长。
+ */
+export class RawResponseCollector {
+  private readonly items: unknown[] = [];
+  private bytes = 0;
+  private truncated = false;
+
+  constructor(private readonly maxBytes = DEFAULT_MAX_RAW_RESPONSE_BYTES) {}
+
+  push(item: unknown, rawByteLength?: number): void {
+    if (this.truncated) {
+      return;
+    }
+    const size =
+      rawByteLength ?? Buffer.byteLength(JSON.stringify(item) ?? "", "utf8");
+    if (this.bytes + size > this.maxBytes) {
+      this.truncated = true;
+      return;
+    }
+    this.bytes += size;
+    this.items.push(item);
+  }
+
+  finish(): unknown[] | undefined {
+    if (this.items.length === 0 && !this.truncated) {
+      return undefined;
+    }
+    if (this.truncated) {
+      return [...this.items, { _truncated: true, maxBytes: this.maxBytes }];
+    }
+    return this.items;
   }
 }
 
@@ -1246,20 +1353,57 @@ interface SseState {
 async function* readSse(
   response: Response,
   state?: SseState,
+  options: { idleTimeoutMs?: number; signal?: AbortSignal } = {},
 ): AsyncGenerator<SsePayload> {
   const body = response.body;
   if (!body) {
     throw new ModelRequestFailedError("模型响应缺少流正文");
   }
+  // options.signal 已同时传给 fetch；外部取消会让 body reader 以 AbortError 结束，
+  // 这里只需负责“相邻数据块之间的空闲超时”。
+  const idleTimeoutMs = options.idleTimeoutMs;
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let eventName: string | undefined;
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let idleTimedOut = false;
+      let done = false;
+      let value: Uint8Array | undefined;
+      try {
+        const read = reader.read();
+        if (idleTimeoutMs === undefined) {
+          ({ done, value } = await read);
+        } else {
+          ({ done, value } = await Promise.race([
+            read,
+            new Promise<never>((_resolve, reject) => {
+              timer = setTimeout(() => {
+                idleTimedOut = true;
+                const timeoutError = new ModelRequestTimeoutError(idleTimeoutMs);
+                reject(timeoutError);
+                // 先拒绝 race 再取消底层流，避免 reader.cancel() 先把 pending read 结算为 done: true。
+                void reader.cancel(timeoutError).catch(() => undefined);
+              }, idleTimeoutMs);
+              timer.unref?.();
+            }),
+          ]));
+        }
+      } finally {
+        if (timer !== undefined) {
+          clearTimeout(timer);
+        }
+      }
+      if (idleTimedOut && idleTimeoutMs !== undefined) {
+        throw new ModelRequestTimeoutError(idleTimeoutMs);
+      }
       if (done) {
         break;
+      }
+      if (value === undefined) {
+        continue;
       }
       buffer += decoder.decode(value, { stream: true });
       let newline = buffer.indexOf("\n");
@@ -1300,6 +1444,9 @@ async function* readSse(
       }
     }
   } catch (error) {
+    if (error instanceof ModelRequestTimeoutError) {
+      throw error;
+    }
     if (error instanceof Error && error.name === "AbortError") {
       throw error;
     }

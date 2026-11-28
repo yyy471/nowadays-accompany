@@ -19,6 +19,12 @@ const DEFAULT_GOOGLE_OAUTH_TOKEN_URI = "https://oauth2.googleapis.com/token";
 const DEFAULT_CLOUD_PLATFORM_SCOPE =
   "https://www.googleapis.com/auth/cloud-platform";
 const TOKEN_REFRESH_SKEW_MS = 60_000;
+const DEFAULT_MAX_RAW_RESPONSE_BYTES = 256 * 1024;
+/** 服务账号 token_uri 默认只允许官方 Google OAuth 端点，防止凭据被发往任意地址。 */
+const TRUSTED_GOOGLE_OAUTH_HOSTS = new Set([
+  "oauth2.googleapis.com",
+  "accounts.google.com",
+]);
 
 export interface GoogleOAuthTokenCache {
   keyHash: string;
@@ -32,7 +38,10 @@ export interface GoogleGeminiTransport {
     init: RequestInit,
     options?: { timeoutMs?: number; signal?: AbortSignal },
   ): Promise<Response>;
-  readSse(response: Response): AsyncIterable<{ event: string | undefined; data: string }>;
+  readSse(
+    response: Response,
+    options?: { signal?: AbortSignal },
+  ): AsyncIterable<{ event: string | undefined; data: string }>;
   parseStreamJson(data: string): Record<string, unknown>;
   continuationItems(
     message: Extract<ModelMessage, { role: "assistant" }>,
@@ -174,7 +183,11 @@ export async function buildGoogleHeaders(
   accept: string,
   cacheRef: { current: GoogleOAuthTokenCache | undefined },
   transport: Pick<GoogleGeminiTransport, "request">,
-  options: { timeoutMs?: number; signal?: AbortSignal } = {},
+  options: {
+    timeoutMs?: number;
+    signal?: AbortSignal;
+    allowCustomTokenUri?: boolean;
+  } = {},
 ): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
     "content-type": "application/json",
@@ -183,7 +196,7 @@ export async function buildGoogleHeaders(
   if (credential === undefined) {
     return headers;
   }
-  const serviceAccount = parseServiceAccountCredential(credential);
+  const serviceAccount = parseServiceAccountCredential(credential, options);
   if (serviceAccount === null) {
     headers["x-goog-api-key"] = credential;
     return headers;
@@ -206,6 +219,9 @@ export async function listGoogleModels(input: {
   cacheRef: { current: GoogleOAuthTokenCache | undefined };
   transport: Pick<GoogleGeminiTransport, "request">;
   timeoutMs: number;
+  headerTimeoutMs?: number;
+  maxRawResponseBytes?: number;
+  allowCustomTokenUri?: boolean;
   signal?: AbortSignal;
 }): Promise<string[]> {
   const presets = vertexModelPresets("google-gemini", input.baseUrl);
@@ -218,6 +234,9 @@ export async function listGoogleModels(input: {
     {
       timeoutMs: input.timeoutMs,
       ...(input.signal === undefined ? {} : { signal: input.signal }),
+      ...(input.allowCustomTokenUri === undefined
+        ? {}
+        : { allowCustomTokenUri: input.allowCustomTokenUri }),
     },
   );
   const cleanBase = input.baseUrl.replace(/\/+$/, "");
@@ -229,7 +248,10 @@ export async function listGoogleModels(input: {
   for (;;) {
     let response: Response;
     try {
-      response = await input.transport.request(url.href, { method: "GET", headers }, { signal, timeoutMs: input.timeoutMs });
+      response = await input.transport.request(url.href, { method: "GET", headers }, {
+        signal,
+        timeoutMs: input.timeoutMs,
+      });
     } catch (error) {
       if (error instanceof ModelRequestFailedError && isVertexPublisherBaseUrl(cleanBase)) {
         const status = isPlainRecord(error.details) ? error.details.status : undefined;
@@ -266,6 +288,9 @@ export async function* streamGoogleGemini(input: {
   request: ModelRequest;
   transport: GoogleGeminiTransport;
   serializedBody: string;
+  headerTimeoutMs?: number;
+  maxRawResponseBytes?: number;
+  allowCustomTokenUri?: boolean;
 }): AsyncGenerator<ModelEvent> {
   const { request, transport } = input;
   const headers = await buildGoogleHeaders(
@@ -273,7 +298,15 @@ export async function* streamGoogleGemini(input: {
     "text/event-stream",
     input.cacheRef,
     transport,
-    request.signal === undefined ? {} : { signal: request.signal },
+    {
+      ...(input.headerTimeoutMs === undefined
+        ? {}
+        : { timeoutMs: input.headerTimeoutMs }),
+      ...(request.signal === undefined ? {} : { signal: request.signal }),
+      ...(input.allowCustomTokenUri === undefined
+        ? {}
+        : { allowCustomTokenUri: input.allowCustomTokenUri }),
+    },
   );
   const response = await transport.request(
     buildGeminiStreamUrl(input.baseUrl, request.modelName),
@@ -283,12 +316,33 @@ export async function* streamGoogleGemini(input: {
       body: input.serializedBody,
       ...(request.signal === undefined ? {} : { signal: request.signal }),
     },
+    {
+      ...(input.headerTimeoutMs === undefined
+        ? {}
+        : { timeoutMs: input.headerTimeoutMs }),
+      ...(request.signal === undefined ? {} : { signal: request.signal }),
+    },
   );
   request.onAccepted?.();
 
   const accumulatedParts: Record<string, unknown>[] = [];
   const toolCalls: Array<{ callId: string; name: string; arguments: unknown }> = [];
   const rawResponse: unknown[] = [];
+  const maxRawResponseBytes =
+    input.maxRawResponseBytes ?? DEFAULT_MAX_RAW_RESPONSE_BYTES;
+  let rawResponseBytes = 0;
+  let rawResponseTruncated = false;
+  const pushRawResponse = (item: unknown, rawByteLength: number): void => {
+    if (rawResponseTruncated) {
+      return;
+    }
+    if (rawResponseBytes + rawByteLength > maxRawResponseBytes) {
+      rawResponseTruncated = true;
+      return;
+    }
+    rawResponseBytes += rawByteLength;
+    rawResponse.push(item);
+  };
   let rawFinishReason: string | null = null;
   let promptBlockReason: string | null = null;
   let inputTokens: number | undefined;
@@ -314,9 +368,12 @@ export async function* streamGoogleGemini(input: {
   };
 
   try {
-    for await (const frame of transport.readSse(response)) {
+    for await (const frame of transport.readSse(
+      response,
+      request.signal === undefined ? undefined : { signal: request.signal },
+    )) {
       const payload = transport.parseStreamJson(frame.data);
-      rawResponse.push(payload);
+      pushRawResponse(payload, Buffer.byteLength(frame.data, "utf8"));
       if (isPlainRecord(payload.error)) {
         throw new ModelRequestFailedError("模型请求失败", {
           reason: mapGoogleErrorReason(payload.error) ?? "MESSAGE_ERROR",
@@ -436,7 +493,12 @@ export async function* streamGoogleGemini(input: {
     type: "completed",
     stopReason: normalized.stopReason,
     ...(normalized.incomplete ? { incomplete: true } : {}),
-    rawResponse: rawResponse.length === 0 ? undefined : rawResponse,
+    rawResponse:
+      rawResponse.length === 0 && !rawResponseTruncated
+        ? undefined
+        : rawResponseTruncated
+          ? [...rawResponse, { _truncated: true, maxBytes: maxRawResponseBytes }]
+          : rawResponse,
     ...(continuation === undefined ? {} : { continuation }),
   };
 }
@@ -742,6 +804,7 @@ function normalizeGeminiFinishReason(rawFinishReason: string): {
 
 function parseServiceAccountCredential(
   credential: string,
+  options?: { allowCustomTokenUri?: boolean },
 ): GoogleServiceAccount | null {
   const trimmed = credential.trim();
   if (!trimmed.startsWith("{")) {
@@ -777,14 +840,40 @@ function parseServiceAccountCredential(
       reason: "invalid_api_key",
     });
   }
-  if (
-    (parsedTokenUrl.protocol !== "https:" && parsedTokenUrl.protocol !== "http:") ||
-    parsedTokenUrl.username.length > 0 ||
-    parsedTokenUrl.password.length > 0
-  ) {
-    throw new ModelRequestFailedError("Google 服务账号 token_uri 协议不受支持", {
+  // 凭据（用户名/密码）永远不能出现在 token_uri 中。
+  if (parsedTokenUrl.username.length > 0 || parsedTokenUrl.password.length > 0) {
+    throw new ModelRequestFailedError("Google 服务账号 token_uri 无效", {
       reason: "invalid_api_key",
     });
+  }
+  const tokenHost = parsedTokenUrl.hostname.toLowerCase();
+  const isLoopbackHost =
+    tokenHost === "127.0.0.1" ||
+    tokenHost === "localhost" ||
+    tokenHost === "::1" ||
+    tokenHost === "[::1]";
+  const isTrustedHost = TRUSTED_GOOGLE_OAUTH_HOSTS.has(tokenHost);
+  if (options?.allowCustomTokenUri === true) {
+    // 仅测试场景：允许 http/https 指向 loopback mock OAuth 服务或官方地址。
+    if (
+      (parsedTokenUrl.protocol !== "https:" && parsedTokenUrl.protocol !== "http:") ||
+      (!isLoopbackHost && !isTrustedHost)
+    ) {
+      throw new ModelRequestFailedError(
+        "Google 服务账号 token_uri 仅允许官方 HTTPS Google OAuth 地址",
+        { reason: "invalid_api_key" },
+      );
+    }
+  } else if (
+    parsedTokenUrl.protocol !== "https:" ||
+    parsedTokenUrl.port !== "" ||
+    !isTrustedHost
+  ) {
+    // 默认严格限制：必须是官方 HTTPS 主机且不允许自定义端口，防止 SSRF。
+    throw new ModelRequestFailedError(
+      "Google 服务账号 token_uri 仅允许官方 HTTPS Google OAuth 地址",
+      { reason: "invalid_api_key" },
+    );
   }
   return { clientEmail, privateKey, tokenUri: parsedTokenUrl.toString() };
 }
