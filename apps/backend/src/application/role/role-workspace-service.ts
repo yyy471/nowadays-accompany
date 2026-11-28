@@ -92,6 +92,86 @@ export class RoleWorkspaceService {
     return this.listNotesWithMeta(roleId).items;
   }
 
+  /**
+   * 异步分批枚举工作空间笔记（411 R3-08）：
+   * 使用 `fs.promises.opendir` 按项推进并定期让出事件循环，避免宽目录首层同步
+   * `readdirSync` 阻塞 `/v1/health` 与实时事件流，同时在达到访问上限时提前关闭目录句柄。
+   */
+  async listNotesWithMetaAsync(roleId: string): Promise<WorkspaceNotesListResult> {
+    const root = this.getWorkspaceDir(roleId);
+    const maxVisitedEntries = this.deps.maxVisitedEntries ?? DEFAULT_MAX_VISITED_ENTRIES;
+    const maxNoteEntries = this.deps.maxNoteEntries ?? DEFAULT_MAX_NOTE_ENTRIES;
+    const items: WorkspaceNoteEntry[] = [];
+    let visited = 0;
+    let truncated = false;
+    const yieldToEventLoop = (): Promise<void> =>
+      new Promise((resolve) => setImmediate(resolve));
+
+    const walk = async (dir: string, depth: number): Promise<void> => {
+      let handle: fs.Dir;
+      try {
+        handle = await fs.promises.opendir(dir);
+      } catch {
+        return;
+      }
+      const subdirs: string[] = [];
+      try {
+        for await (const entry of handle) {
+          if (truncated) break;
+          // 隐藏项与依赖目录都不进入浏览范围；依赖目录在计数与递归前就跳过。
+          if (entry.name.startsWith(".")) continue;
+          if (entry.isDirectory() && SKIPPED_DIRECTORIES.has(entry.name.toLowerCase())) continue;
+          visited += 1;
+          if (visited > maxVisitedEntries) {
+            truncated = true;
+            break;
+          }
+          if (visited % 64 === 0) {
+            await yieldToEventLoop();
+          }
+          const full = path.join(dir, entry.name);
+          let info: fs.Stats;
+          try {
+            info = await fs.promises.lstat(full);
+          } catch {
+            continue;
+          }
+          if (info.isSymbolicLink()) continue;
+          if (info.isDirectory()) {
+            if (SKIPPED_DIRECTORIES.has(entry.name.toLowerCase())) continue;
+            if (depth + 1 >= MAX_WALK_DEPTH) continue;
+            subdirs.push(full);
+            continue;
+          }
+          if (!info.isFile() || !isNoteExtension(entry.name)) continue;
+          if (items.length >= maxNoteEntries) {
+            truncated = true;
+            break;
+          }
+          items.push({
+            relativePath: path.relative(root, full).split(path.sep).join("/"),
+            name: entry.name,
+            sizeBytes: info.size,
+            updatedAt: info.mtime.toISOString(),
+          });
+        }
+      } finally {
+        await handle.close().catch(() => {});
+      }
+      for (const subdir of subdirs) {
+        if (truncated) break;
+        await walk(subdir, depth + 1);
+      }
+    };
+
+    await walk(root, 0);
+    items.sort((left, right) => {
+      if (left.updatedAt !== right.updatedAt) return left.updatedAt < right.updatedAt ? 1 : -1;
+      return left.relativePath < right.relativePath ? -1 : left.relativePath > right.relativePath ? 1 : 0;
+    });
+    return { items, truncated };
+  }
+
   listNotesWithMeta(roleId: string): WorkspaceNotesListResult {
     const root = this.getWorkspaceDir(roleId);
     const maxVisitedEntries = this.deps.maxVisitedEntries ?? DEFAULT_MAX_VISITED_ENTRIES;

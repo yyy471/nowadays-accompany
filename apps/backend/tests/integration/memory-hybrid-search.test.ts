@@ -15,6 +15,7 @@ import {
 } from "../../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths } from "../../src/bootstrap/config.js";
 import {
+  cosineSimilarityWithBlob,
   EMBEDDING_SPACE_KEY_PREFIX,
   encodeVectorBlob,
   embeddingSpaceKey,
@@ -1676,4 +1677,24 @@ test("R3-04 向量空间指纹稳定且随资源、端点、协议、服务商�
     embeddingSpaceKey(base),
     embeddingSpaceKey({ ...base, modelName: "alias-b" }),
   );
+});
+
+test("R3-09 cosineSimilarityWithBlob 兼容对齐与非对齐缓冲区偏移并拦截无效长度", () => {
+  const query = normalizeVector([1, 2, 3, 4]);
+  const same = encodeVectorBlob(query);
+  const ortho = encodeVectorBlob(normalizeVector([-2, 1, -4, 3]));
+  // 4 字节对齐路径
+  const alignedScore = cosineSimilarityWithBlob(query, same, 4);
+  assert.ok(alignedScore !== null && Math.abs(alignedScore - 1) < 1e-5);
+  // 故意错开 1 字节偏移覆盖非对齐回退路径
+  const padded = Buffer.concat([Buffer.from([0x7f]), same]);
+  const unaligned = padded.subarray(1);
+  assert.equal(unaligned.byteOffset % 4, 1);
+  const unalignedScore = cosineSimilarityWithBlob(query, unaligned, 4);
+  assert.ok(unalignedScore !== null && Math.abs(unalignedScore - 1) < 1e-5);
+  const orthoScore = cosineSimilarityWithBlob(query, ortho, 4);
+  assert.ok(orthoScore !== null && Math.abs(orthoScore) < 1e-5);
+  // 维度或字节长度不匹配返回 null
+  assert.equal(cosineSimilarityWithBlob(query, same, 3), null);
+  assert.equal(cosineSimilarityWithBlob(query, same.subarray(0, 12), 4), null);
 });

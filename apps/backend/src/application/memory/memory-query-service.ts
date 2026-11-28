@@ -41,7 +41,7 @@ import type { RoleAccess } from "../role/role-access.js";
 import { eventWorldbookReferences, type EventWorldbookReference } from "../../storage/role/worldbook-store.js";
 import {
   cosineSimilarity,
-  decodeVectorBlob,
+  cosineSimilarityWithBlob,
   encodeVectorBlob,
   fuseRrfRankings,
   normalizeVector,
@@ -304,6 +304,8 @@ export class MemoryQueryService {
       return this.search(roleId, request, context);
     }
     const tokens = memoryQueryTokens(query, context.mode);
+    // 先仅收集经结构化条件过滤的候选与 FTS 排序，推迟向量 BLOB 读取至查询向量成功返回后，
+    // 避免查询超时/失败时浪费缓存读取与解码，并支持按候选集合缩小 SQL 读取范围（411 R3-09）。
     const prepared = this.access.withStore(roleId, (storage) => {
       const db = storage.business.db;
       const candidates = this.collectCandidates(db, roleId, request);
@@ -313,26 +315,7 @@ export class MemoryQueryService {
         tokens,
         matches,
       );
-      const cached = this.loadCachedVectors(db, roleId, port.modelKey);
-      const vectors = new Map<number, Float32Array>();
-      const pending: PendingEmbedding[] = [];
-      for (const candidate of candidates) {
-        const document = candidate.document;
-        const text = `${document.title}\n${document.body}`;
-        const contentHash = sha256(text);
-        const row = cached.get(document.document_id);
-        const vector = row !== undefined &&
-            row.content_hash === contentHash &&
-            row.dimensions > 0
-          ? decodeVectorBlob(row.vector_blob, row.dimensions)
-          : null;
-        if (vector !== null && vector.length > 0) {
-          vectors.set(document.document_id, vector);
-        } else {
-          pending.push({ documentId: document.document_id, contentHash, text });
-        }
-      }
-      return { candidates, ftsMatchedIds, vectors, pending };
+      return { candidates, ftsMatchedIds };
     });
 
     let queryVector: Float32Array;
@@ -351,23 +334,52 @@ export class MemoryQueryService {
       return this.search(roleId, request, context);
     }
 
-    // 缓存键已按向量空间隔离；若上游在原地改变了维度，同键旧向量
-    // 不能继续复用，必须重新向量化，否则相似度恒为 0 且永不回填。
-    const reeligible: PendingEmbedding[] = [];
-    for (const candidate of prepared.candidates) {
-      const documentId = candidate.document.document_id;
-      const vector = prepared.vectors.get(documentId);
-      if (vector === undefined || vector.length === queryVector.length) {
-        continue;
+    // 仅加载当前候选集对应的向量缓存，并在单次扫描中直接完成哈希校验、维度比对与余弦打分，
+    // 不在内存中保留整份 Float32Array 映射，减少大角色库检索时的峰值内存与无效解码。
+    const vectorRanked: VectorRankedDocument[] = [];
+    const pending: PendingEmbedding[] = [];
+    let availableVectorCount = 0;
+    this.access.withStore(roleId, (storage) => {
+      const cached = this.loadCachedVectors(
+        storage.business.db,
+        roleId,
+        port.modelKey,
+        prepared.candidates.map((candidate) => candidate.document.document_id),
+      );
+      const reeligible: PendingEmbedding[] = [];
+      const uncached: PendingEmbedding[] = [];
+      for (const candidate of prepared.candidates) {
+        const document = candidate.document;
+        const text = `${document.title}\n${document.body}`;
+        const contentHash = sha256(text);
+        const row = cached.get(document.document_id);
+        if (row !== undefined && row.content_hash === contentHash && row.dimensions > 0) {
+          if (row.dimensions === queryVector.length) {
+            const similarity = cosineSimilarityWithBlob(
+              queryVector,
+              row.vector_blob,
+              row.dimensions,
+            );
+            if (similarity !== null) {
+              availableVectorCount += 1;
+              if (similarity >= HYBRID_MIN_SIMILARITY) {
+                vectorRanked.push({
+                  documentId: document.document_id,
+                  similarity,
+                });
+              }
+              continue;
+            }
+          } else if (row.vector_blob.byteLength === row.dimensions * 4) {
+            // 同键旧向量维度漂移：优先排入重算队列，避免持续命中旧缓存。
+            reeligible.push({ documentId: document.document_id, contentHash, text });
+            continue;
+          }
+        }
+        uncached.push({ documentId: document.document_id, contentHash, text });
       }
-      prepared.vectors.delete(documentId);
-      const document = candidate.document;
-      const text = `${document.title}\n${document.body}`;
-      reeligible.push({ documentId, contentHash: sha256(text), text });
-    }
-    if (reeligible.length > 0) {
-      prepared.pending = [...reeligible, ...prepared.pending];
-    }
+      pending.push(...reeligible, ...uncached);
+    });
 
     // 在线增量补算：最多 N 批且受总预算约束，每批成功立即落盘。
     const deadline = Date.now() + this.onlineBackfillBudgetMs;
@@ -377,13 +389,13 @@ export class MemoryQueryService {
       batchIndex < this.onlineBackfillMaxBatches;
       batchIndex += 1
     ) {
-      if (nextOffset >= prepared.pending.length || this.closed) {
+      if (nextOffset >= pending.length || this.closed) {
         break;
       }
       if (Date.now() >= deadline) {
         break;
       }
-      const batch = prepared.pending.slice(
+      const batch = pending.slice(
         nextOffset,
         nextOffset + this.embeddingBatchSize,
       );
@@ -412,7 +424,11 @@ export class MemoryQueryService {
           ),
         );
         for (const [documentId, vector] of batchVectors) {
-          prepared.vectors.set(documentId, vector);
+          availableVectorCount += 1;
+          const similarity = cosineSimilarity(queryVector, vector);
+          if (similarity >= HYBRID_MIN_SIMILARITY) {
+            vectorRanked.push({ documentId, similarity });
+          }
         }
         nextOffset += batch.length;
       } catch {
@@ -421,18 +437,18 @@ export class MemoryQueryService {
       }
     }
 
-    if (nextOffset < prepared.pending.length && !this.closed) {
+    if (nextOffset < pending.length && !this.closed) {
       this.scheduleBackgroundBackfill(
         roleId,
         port.modelKey,
         port.resourceId,
-        prepared.pending.slice(nextOffset),
+        pending.slice(nextOffset),
         queryVector.length,
       );
     }
 
     // 没有任何可用向量时退回纯 FTS5，避免空融合改变既有检索语义。
-    if (prepared.vectors.size === 0) {
+    if (availableVectorCount === 0) {
       return this.search(roleId, request, context);
     }
 
@@ -440,21 +456,6 @@ export class MemoryQueryService {
       const db = storage.business.db;
       const store = new MemoryStore(db);
       const now = this.now().toISOString();
-      const vectors = prepared.vectors;
-      const vectorRanked: VectorRankedDocument[] = [];
-      for (const candidate of prepared.candidates) {
-        const vector = vectors.get(candidate.document.document_id);
-        if (vector === undefined) {
-          continue;
-        }
-        const similarity = cosineSimilarity(queryVector, vector);
-        if (similarity >= HYBRID_MIN_SIMILARITY) {
-          vectorRanked.push({
-            documentId: candidate.document.document_id,
-            similarity,
-          });
-        }
-      }
       vectorRanked.sort(
         (left, right) =>
           right.similarity - left.similarity || left.documentId - right.documentId,
@@ -1109,48 +1110,55 @@ export class MemoryQueryService {
   }
 
   /**
-   * 混合检索的候选集：只做结构化过滤（类型、日期、标签、有效日期），
-   * 不要求字面命中，语义召回才能覆盖零重叠的同义改写。
+   * 混合检索的候选集：单条 SQL 联表取回有效经历日期并下推类型与日期过滤，
+   * 避免逐条 N+1 查询，且不要求字面命中以保留同义改写召回能力（411 R3-09）。
    */
   private collectCandidates(
     db: Database.Database,
     roleId: string,
     request: MemorySearchRequest,
   ): HybridCandidate[] {
-    const documents = db
+    const clauses: string[] = [
+      "d.role_id = ?",
+      "COALESCE(e.experience_date, s.experience_date, di.experience_date) IS NOT NULL",
+    ];
+    const params: unknown[] = [roleId];
+    const wantedTypes = request.types?.length ? [...new Set(request.types)] : [];
+    if (wantedTypes.length > 0) {
+      clauses.push(`d.record_type IN (${wantedTypes.map(() => "?").join(", ")})`);
+      params.push(...wantedTypes);
+    }
+    if (request.dateFrom) {
+      clauses.push("COALESCE(e.experience_date, s.experience_date, di.experience_date) >= ?");
+      params.push(request.dateFrom);
+    }
+    if (request.dateTo) {
+      clauses.push("COALESCE(e.experience_date, s.experience_date, di.experience_date) <= ?");
+      params.push(request.dateTo);
+    }
+    const rows = db
       .prepare(
-        `SELECT document_id, record_type, record_id, title, body, updated_at
-         FROM memory_search_documents WHERE role_id = ?`,
+        `SELECT d.document_id, d.record_type, d.record_id, d.title, d.body, d.updated_at,
+                COALESCE(e.experience_date, s.experience_date, di.experience_date) AS experience_date
+         FROM memory_search_documents d
+         LEFT JOIN memory_events e
+           ON d.record_type = 'event' AND e.event_id = d.record_id AND e.role_id = d.role_id
+         LEFT JOIN daily_summaries s
+           ON d.record_type = 'daily_summary' AND s.summary_id = d.record_id AND s.role_id = d.role_id
+         LEFT JOIN diaries di
+           ON d.record_type = 'diary' AND di.diary_id = d.record_id AND di.role_id = d.role_id
+         WHERE ${clauses.join(" AND ")}`,
       )
-      .all(roleId) as DocumentRow[];
-    const wantedTypes = new Set(request.types ?? []);
+      .all(...params) as Array<DocumentRow & { experience_date: string }>;
     const tagFilters = tagFiltersOf(request);
     const eventTags = tagFilters.length ? this.loadEventTags(db, roleId) : undefined;
     const candidates: HybridCandidate[] = [];
-    for (const document of documents) {
-      if (wantedTypes.size > 0 && !wantedTypes.has(document.record_type)) {
-        continue;
-      }
-      const experienceDate = this.experienceDateOf(
-        db,
-        roleId,
-        document.record_type,
-        document.record_id,
-      );
-      if (experienceDate === null) {
-        continue;
-      }
-      if (request.dateFrom && experienceDate < request.dateFrom) {
-        continue;
-      }
-      if (request.dateTo && experienceDate > request.dateTo) {
-        continue;
-      }
+    for (const row of rows) {
       if (tagFilters.length > 0) {
-        if (document.record_type !== "event") {
+        if (row.record_type !== "event") {
           continue;
         }
-        const tags = eventTags?.get(document.record_id);
+        const tags = eventTags?.get(row.record_id);
         const matchesAll = tagFilters.every((filter) => {
           const values = tags?.get(filter.dimension);
           return filter.values.some((value) =>
@@ -1161,7 +1169,17 @@ export class MemoryQueryService {
           continue;
         }
       }
-      candidates.push({ document, experienceDate });
+      candidates.push({
+        document: {
+          document_id: row.document_id,
+          record_type: row.record_type,
+          record_id: row.record_id,
+          title: row.title,
+          body: row.body,
+          updated_at: row.updated_at,
+        },
+        experienceDate: row.experience_date,
+      });
     }
     return candidates;
   }
@@ -1206,21 +1224,33 @@ export class MemoryQueryService {
     return ranked.map((item) => item.documentId);
   }
 
+  /** 仅加载当次候选文档对应的向量缓存；按 500 条分片避免触及 SQLite 参数上限。 */
   private loadCachedVectors(
     db: Database.Database,
     roleId: string,
     modelKey: string,
+    candidateIds: readonly number[],
   ): Map<number, CachedEmbeddingRow> {
-    const rows = db
-      .prepare(
-        `SELECT document_id, content_hash, dimensions, vector_blob
-         FROM memory_search_embeddings
-         WHERE role_id = ? AND model_key = ?`,
-      )
-      .all(roleId, modelKey) as CachedEmbeddingRow[];
-    return new Map<number, CachedEmbeddingRow>(
-      rows.map((row): [number, CachedEmbeddingRow] => [row.document_id, row]),
-    );
+    const map = new Map<number, CachedEmbeddingRow>();
+    if (candidateIds.length === 0) {
+      return map;
+    }
+    const chunkSize = 500;
+    for (let offset = 0; offset < candidateIds.length; offset += chunkSize) {
+      const slice = candidateIds.slice(offset, offset + chunkSize);
+      const placeholders = slice.map(() => "?").join(", ");
+      const rows = db
+        .prepare(
+          `SELECT document_id, content_hash, dimensions, vector_blob
+           FROM memory_search_embeddings
+           WHERE role_id = ? AND model_key = ? AND document_id IN (${placeholders})`,
+        )
+        .all(roleId, modelKey, ...slice) as CachedEmbeddingRow[];
+      for (const row of rows) {
+        map.set(row.document_id, row);
+      }
+    }
+    return map;
   }
 
   /** 向量缓存是派生数据，写失败不应影响本次检索结果。 */

@@ -400,6 +400,9 @@ export function decodeVectorBlob(
   return vector;
 }
 
+const IS_LITTLE_ENDIAN =
+  new Uint8Array(new Uint32Array([0x01020304]).buffer)[0] === 0x04;
+
 /** 维度不等或空向量返回 0，避免脏缓存放大不相关结果。 */
 export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
   if (a.length === 0 || a.length !== b.length) {
@@ -411,6 +414,45 @@ export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
   for (let index = 0; index < a.length; index += 1) {
     const left = a[index] ?? 0;
     const right = b[index] ?? 0;
+    dot += left * right;
+    normA += left * left;
+    normB += right * right;
+  }
+  if (normA === 0 || normB === 0) {
+    return 0;
+  }
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+/**
+ * 直接对 SQLite 向量 BLOB 与查询向量求余弦相似度，避免批量解码分配临时 Float32Array。
+ * 维度或字节长度无效时返回 null，交由调用方触发重算。
+ */
+export function cosineSimilarityWithBlob(
+  query: Float32Array,
+  blob: Buffer,
+  dimensions: number,
+): number | null {
+  if (
+    !Number.isInteger(dimensions) ||
+    dimensions <= 0 ||
+    blob.byteLength !== dimensions * 4
+  ) {
+    return null;
+  }
+  if (query.length !== dimensions) {
+    return null;
+  }
+  if (IS_LITTLE_ENDIAN && blob.byteOffset % 4 === 0) {
+    const view = new Float32Array(blob.buffer, blob.byteOffset, dimensions);
+    return cosineSimilarity(query, view);
+  }
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let index = 0; index < dimensions; index += 1) {
+    const left = query[index] ?? 0;
+    const right = blob.readFloatLE(index * 4);
     dot += left * right;
     normA += left * left;
     normB += right * right;

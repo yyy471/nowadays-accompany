@@ -130,3 +130,9 @@
 - `scripts/repo-paths.mjs` 导出 `piMcpDir`，`scripts/verify.mjs` 新增 `piTests()`（固定 `--test-concurrency=1` 串行执行 `apps/pi-mcp/test/*.test.mjs`），接入 `fast`（支持单改 `apps/pi-mcp/` 变更映射、无改动默认集及关键字过滤）、`unit` 与 `gate` 独立结果列，失败时使对应根命令返回非零。
 - `scripts/check-docs.mjs` 补齐源码 `#L` / `#Lstart-Lend` 行号越界巡检（`docs/line-range-oob` 告警），覆盖全部核心文档（含 `docs/specs/`）及 `410+` 非历史归档文档，保留 `410` 之前历史归档豁免；同步修正 3 份现行规范中 6 处重构前残留行号链接。
 - 仓库 Node 24.22.2 定向复验：`check-docs.mjs` 错误 0、警告 0；临时注入 `#L99999` 精准报 `docs/line-range-oob`；`verify.mjs fast -- worker-helpers` 触发 `pi-tests:1` 通过，临时注入失败 Pi 用例时 `verify.mjs` 返回退出码 1，`check-repo-hygiene.mjs` 错误 0。
+
+### 第九阶段 `R3-08` 和 `R3-09` 基准测量与定向优化
+
+- **`R3-08` 宽目录扫描**：实测同步 `readdirSync` 在单层 3,000 / 10,000 / 25,000 项时阻塞并发 `/v1/health` 峰值达 `91.5 / 143.1 / 147.1 ms`。基于实测将 `GET /v1/roles/:roleId/workspace/notes` 切换至新增异步 `RoleWorkspaceService.listNotesWithMetaAsync()`（`fs.promises.opendir` 增量读取、每 64 项 `setImmediate` 让出事件循环、超限立即关闭句柄，保留跳目录、深度 6 与截断语义）。复测同条件下并发 `/v1/health` 峰值降至 **`3.4 / 2.6 / 2.5 ms`**（降幅 **96.3%～98.3%**）。
+- **`R3-09` 混合检索准备阶段**：实测 100 / 500 / 2,000 文档库下 `collectCandidates` 的逐条 `experienceDateOf` 查询与全量加载解码向量使热查询达 `6.0 / 18.7 / 71.1 ms`、按日过滤达 `2.4 / 11.5 / 41.9 ms`、2,000 文档热查询内存增量 `25.95 MB`。优化为单 SQL `LEFT JOIN` 下推类型与日期过滤、推迟缓存读取至查询向量成功后并按候选 `document_id` 500 条分片加载、经 `cosineSimilarityWithBlob` 原地打分不驻留全量 `Float32Array` 映射。复测同基准：热查询降至 **`2.4 / 8.7 / 35.8 ms`**（**-50%～-60%**），按日过滤降至 **`1.0 / 1.7 / 5.7 ms`**（**-58%～-86%**），2,000 文档热查询 RSS 增量降至 **`11.43 MB`**（**-56%**），召回排序完全一致。
+- 仓库 Node 24.22.2 定向复验：后端 `tsc --noEmit` 0 错误，`memory-hybrid-search` + `memory-delivery` + `workspace-and-transfer-http` **35/35** 通过（含异步扫描上限及 `cosineSimilarityWithBlob` 对齐/非对齐缓冲区与长度校验）。

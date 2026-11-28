@@ -198,6 +198,9 @@ test("工作空间笔记扫描：跳过依赖目录并受访问数与笔记数�
     const visited = visitedService.listNotesWithMeta(visitedRole.roleId);
     assert.equal(visited.truncated, true);
     assert.ok(visited.items.length <= 15, `访问上限内条目数应不超过 15，实际 ${visited.items.length}`);
+    const visitedAsync = await visitedService.listNotesWithMetaAsync(visitedRole.roleId);
+    assert.equal(visitedAsync.truncated, true);
+    assert.ok(visitedAsync.items.length <= 15, `异步访问上限内条目数应不超过 15，实际 ${visitedAsync.items.length}`);
 
     // 笔记数上限：5 篇笔记只返回前 3 篇，并标记截断。
     const noteRole = app.services.roles.createRole({ displayName: "笔记上限角色", definition: { text: "多篇笔记。" } });
@@ -213,6 +216,9 @@ test("工作空间笔记扫描：跳过依赖目录并受访问数与笔记数�
     const limited = noteService.listNotesWithMeta(noteRole.roleId);
     assert.equal(limited.items.length, 3);
     assert.equal(limited.truncated, true);
+    const limitedAsync = await noteService.listNotesWithMetaAsync(noteRole.roleId);
+    assert.equal(limitedAsync.items.length, 3);
+    assert.equal(limitedAsync.truncated, true);
   } finally {
     await app.close();
   }
