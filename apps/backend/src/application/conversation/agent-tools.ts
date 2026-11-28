@@ -367,7 +367,7 @@ function memorySearchTool(
           );
         }
         try {
-          const result = memory.search(roleId, parsed.data, {
+          const result = await memory.searchHybrid(roleId, parsed.data, {
             mode: "agent",
             executionId: context.executionId,
           });

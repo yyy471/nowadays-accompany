@@ -10,7 +10,7 @@ import { EngineeringPool } from "../../src/mcp/engineering-pool.js";
 import { RoleAccess } from "../../src/application/role/role-access.js";
 import { EngineeringJobs } from "../../src/storage/conversation/engineering-jobs.js";
 import { RoleStorage } from "../../src/storage/core/role-storage.js";
-import { APP_SCHEMA_VERSION } from "../../src/storage/core/schema.js";
+import { APP_SCHEMA_VERSION, BUSINESS_SCHEMA_VERSION } from "../../src/storage/core/schema.js";
 import { createFixture } from "../fixtures/conversation-fixture.js";
 
 test("工程设置校验宿主会话、来源及新成员；只有显式开启修复席位绑定", async t => {
@@ -207,7 +207,7 @@ test("V14 全局与 V30 角色库迁移保留历史工程和空池默认值", as
     assert.deepEqual(app.services.engineeringPool.settings(), { enabled: true, mode: "priority", allowShell: false, members: [], readiness: "empty" });
     const store = RoleStorage.openExisting(paths);
     try {
-      assert.equal(store.business.schemaVersion, 31);
+      assert.equal(store.business.schemaVersion, BUSINESS_SCHEMA_VERSION);
       const old = new EngineeringJobs(store.business.db).find("old");
       assert.equal(old?.summary, "旧回执");
       assert.equal(old?.modelResourceId, null);

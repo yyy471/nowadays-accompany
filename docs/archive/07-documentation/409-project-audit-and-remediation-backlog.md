@@ -34,7 +34,7 @@
 | [DELIV-02](#deliv-02-真实云端模型多模态与媒体服务全链路联调长期缺位) | 质量/验证 | **P1** | 624+ 离线测试掩盖真实模型、长上下文、TTS、ComfyUI 实机并发缺陷 | 否 | `[ ]` 待排查 |
 | [ARCH-01](#arch-01-后端与前端存在多个两千至三千行级上帝文件) | 架构债务 | **P1** | `conversation-service.ts` 3803 行、`Settings.tsx` 2116 行等触发仓库体积告警 | 否 | 首轮拆解已闭环，R12 精准复验通过 |
 | [ARCH-02](#arch-02-桌面端四条通信通道混用且动态页退化为-15-秒全量轮询) | 架构债务 | **P2** | `desk://`、直连 `127.0.0.1`、`nd-ext://`、`ipcMain` 混用；动态页无推送 | 否 | 已修复，R8b 精准复验通过 |
-| [ARCH-03](#arch-03-记忆检索纯依赖字面-fts5-trigram缺乏语义召回能力) | 核心能力 | **P2** | 换个同义说法即召回失效，制约精细记忆模型的实际效果 | 需确认（`DL-51`） | `[ ]` 待排查 |
+| [ARCH-03](#arch-03-记忆检索纯依赖字面-fts5-trigram缺乏语义召回能力) | 核心能力 | **P2** | 换个同义说法即召回失效，制约精细记忆模型的实际效果 | 方案 A 已确认（`DL-51`） | 已修复，R14 精准复验通过 |
 | [ARCH-04](#arch-04-启动期同步-ipc-阻塞令牌暴露给渲染层与维护期隐性-on-存储扫描) | 性能/架构 | **P2** | `preload` 同步 `sendSync` 并暴露 `hostHeaders`；`MediaMaintenance` 逐角色开关双库 | 否 | 已修复，R8a 精准复验通过 |
 | [UX-05](#ux-05-单角色迁移与角色工作空间笔记缺少桌面图形入口) | 功能短板 | **P2** | 角色导出/导入停留在 CLI；用户需手工翻数据目录看角色 Markdown 笔记 | 否 | 已修复，R11 精准复验通过 |
 | [UX-06](#ux-06-多窗口跳转丢失上下文与主角色自改权限割裂) | 操作体验 | **P2** | 对话页跳设置返回后丢子窗口；主角色能管别人却改不了自己任何配置 | 方案 A 已确认（`DL-159`） | 已修复，R9a + R13 精准复验通过 |
@@ -408,7 +408,11 @@ Windows、仓库 Node 24.22.2、离线夹具下，主审核人独立执行以下
 
 ### ARCH-03 记忆检索纯依赖字面 `FTS5 trigram`，缺乏语义召回能力
 
-- **优先级**：P2 · **状态**：`[ ]` 待排查 · **决策影响**：需先讨论确认检索架构（关联 [DL-51](../../161-digital-life-direction-decisions.md#dl-51-第一版召回基线多维条件过滤与全文检索)）
+- **优先级**：P2 · **状态**：已修复，R14 精准复验通过（方案 A，用户于 2026-11-28 确认） · **决策影响**：已补充登记至 [DL-51](../../161-digital-life-direction-decisions.md#dl-51-第一版召回基线多维条件过滤与全文检索)
+- **R14 实施与复验（2026-11-28）**：
+  - **可选向量缓存与 RRF 融合**：[schema.ts](../../../apps/backend/src/storage/core/schema.ts) 将业务库升至 V32 新增派生表 `memory_search_embeddings`（`ON DELETE CASCADE` 级联清理，不纳入迁移包）；新增 [memory-hybrid-search.ts](../../../apps/backend/src/application/memory/memory-hybrid-search.ts)（`HttpOpenAiEmbeddingPort`、小端 Float32 BLOB 编解码、L2 归一化、余弦相似度与 RRF 融合）与 [memory-embedding-settings.ts](../../../apps/backend/src/application/memory/memory-embedding-settings.ts)（基于 `app_meta` 默认关闭的全局可选配置与 `GET/PUT /v1/memory/embedding-settings`）；
+  - **无感降级与全入口接入**：[memory-query-service.ts](../../../apps/backend/src/application/memory/memory-query-service.ts) 保持同步 `search()` 零改动，新增 `searchHybrid()`（未配置或超时/报错静默退回纯 FTS5），接入 `autoRecall`（`conversation-prompt-builder.ts` / `conversation-execution-runner.ts` / `agent-graph.ts`）、`agent-tools.ts`、`admin-tools.ts` 与 `POST /v1/roles/:roleId/memory/search`；桌面端在「设置 → 本机」新增默认关闭的 [MemoryEmbeddingGroup.tsx](../../../apps/desktop/renderer/src/components/config/MemoryEmbeddingGroup.tsx) 配置块；
+  - **精准复验与中文同义基准（Node 24.22.2）**：后端 `typecheck` + **46/46** 测试（`memory-hybrid-search` 5/5、`memory-query`、`storage-schema`、`engineering-settings`、`role-transfer`）+ `conversation-review.acceptance.ts`（10/10）全通过；12 组中文零重叠同义改写基准实测纯 FTS5 `recall@3 < 0.25`、混合召回 `recall@3 = 1.0` 且 `MRR >= 0.9`；渲染器 `check`（38 CSS 0 违规）+ `memory-embedding-settings` **5/5** + 生产构建、Electron 39 `settings-workspace` 与 `check-repo-hygiene.mjs`（手写源码 `>100 KB` 告警仍为 0）全通过。
 - **证据位置**：
   - [docs/specs/storage-memory-and-autonomy.md](../../specs/storage-memory-and-autonomy.md#L15)
   - [apps/backend/src/application/memory/memory-query-service.ts](../../../apps/backend/src/application/memory/memory-query-service.ts)

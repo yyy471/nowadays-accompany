@@ -267,7 +267,7 @@ export class ConversationExecutionRunner {
           : storage.business.getTask(roleId, input.taskId);
       const exchangeTurn = exchangeWake(autonomy?.wakeId);
       const exchangeContext = exchangeTurn ? this.ctx.exchanges.recallContext(roleId, exchangeTurn.sessionId) : null;
-      const recall = this.ctx.prompt.autoRecall(
+      const recall = await this.ctx.prompt.autoRecall(
         roleId,
         execution.executionId,
         pendingMessages,
@@ -326,14 +326,14 @@ export class ConversationExecutionRunner {
         { text: autonomy?.intent ?? "" },
       ]);
       let previousStep: string | null = null;
-      const systemPrompt = (messages: readonly ModelMessage[], round: number): AgentSystemPrompt => {
+      const systemPrompt = async (messages: readonly ModelMessage[], round: number): Promise<AgentSystemPrompt> => {
         const latest = round > 0 ? [...messages].reverse().find((message) => message.role === "assistant" && message.toolCalls?.length) : undefined;
         const calls = latest?.role === "assistant" ? latest.toolCalls ?? [] : [];
         const step = recallStepTopic(calls);
         // 从已命中的事件下钻到原文是同一步骤。保留这批线索，不另做检索或增加召回计数。
         const readingEvidence = calls.length > 0 && calls.every(call => memoryDetailTools.has(call.name));
         if (latest && !readingEvidence && step !== previousStep) {
-          activeRecall = step ? this.ctx.prompt.autoRecall(roleId, execution.executionId, [], [], step) : { briefs: [], warning: null };
+          activeRecall = step ? await this.ctx.prompt.autoRecall(roleId, execution.executionId, [], [], step) : { briefs: [], warning: null };
           previousStep = step;
         }
         const prompt = this.ctx.prompt.buildSystemPrompt({

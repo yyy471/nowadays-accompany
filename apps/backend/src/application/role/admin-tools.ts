@@ -353,7 +353,7 @@ export function createAdminTools(input: AdminToolServices): ConversationTool[] {
           }
           case "memories": {
             const query = stringArg(args, "query") ?? "";
-            const result = memory.search(roleId, {
+            const result = await memory.searchHybrid(roleId, {
               ...(query.length === 0 ? {} : { query }),
               limit,
             });

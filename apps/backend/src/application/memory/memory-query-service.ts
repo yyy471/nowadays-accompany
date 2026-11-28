@@ -39,10 +39,21 @@ import { localDateFromIso, sha256 } from "../../storage/memory/evidence.js";
 import { MemoryStore, type MemoryStatus } from "../../storage/memory/memory-store.js";
 import type { RoleAccess } from "../role/role-access.js";
 import { eventWorldbookReferences, type EventWorldbookReference } from "../../storage/role/worldbook-store.js";
+import {
+  cosineSimilarity,
+  decodeVectorBlob,
+  encodeVectorBlob,
+  fuseRrfRankings,
+  normalizeVector,
+  type EmbeddingPort,
+  type VectorRankedDocument,
+} from "./memory-hybrid-search.js";
 
 export interface MemoryQueryServiceOptions {
   timeZone?: string;
   now?: () => Date;
+  /** 可选 Embedding 端口解析器；返回 null 时混合检索零开销退回纯 FTS5。 */
+  resolveEmbeddingPort?: () => EmbeddingPort | null;
 }
 
 export interface SearchContext {
@@ -76,9 +87,25 @@ interface MatchInfo {
   like: boolean;
 }
 
+interface HybridCandidate {
+  document: DocumentRow;
+  experienceDate: string;
+}
+
+interface CachedEmbeddingRow {
+  document_id: number;
+  content_hash: string;
+  dimensions: number;
+  vector_blob: Buffer;
+}
+
+const HYBRID_MIN_SIMILARITY = 0.25;
+const EMBEDDING_BATCH_SIZE = 32;
+
 export class MemoryQueryService {
   private readonly timeZone: string | undefined;
   private readonly now: () => Date;
+  private readonly resolveEmbeddingPort: (() => EmbeddingPort | null) | undefined;
 
   constructor(
     private readonly access: RoleAccess,
@@ -86,6 +113,7 @@ export class MemoryQueryService {
   ) {
     this.timeZone = options.timeZone;
     this.now = options.now ?? (() => new Date());
+    this.resolveEmbeddingPort = options.resolveEmbeddingPort;
   }
 
   search(
@@ -138,6 +166,184 @@ export class MemoryQueryService {
         }
         throw new MemoryQueryFailedError();
       }
+    });
+  }
+
+  /**
+   * 可选混合检索：FTS5 与 Embedding 向量余弦相似度经 RRF 融合。
+   * 未配置端口、查询为空或任何外部调用失败时，静默退回同步 search，
+   * 保证与现有纯 FTS5 行为一致且不中断用户对话。
+   */
+  async searchHybrid(
+    roleId: string,
+    request: MemorySearchRequest,
+    context: SearchContext = { mode: "manual" },
+  ): Promise<MemorySearchOutcome> {
+    const port = this.resolveEmbeddingPort?.() ?? null;
+    const query = request.query?.trim() ?? "";
+    if (port === null || query.length === 0) {
+      return this.search(roleId, request, context);
+    }
+    const tokens = memoryQueryTokens(query, context.mode);
+    const prepared = this.access.withStore(roleId, (storage) => {
+      const db = storage.business.db;
+      const candidates = this.collectCandidates(db, roleId, request);
+      const matches = this.matchDocuments(db, roleId, tokens);
+      const ftsMatchedIds = this.rankFtsMatches(
+        candidates,
+        tokens,
+        matches,
+      );
+      const cached = this.loadCachedVectors(db, roleId, port.modelKey);
+      const vectors = new Map<number, Float32Array>();
+      const pending: Array<{
+        documentId: number;
+        contentHash: string;
+        text: string;
+      }> = [];
+      for (const candidate of candidates) {
+        const document = candidate.document;
+        const text = `${document.title}\n${document.body}`;
+        const contentHash = sha256(text);
+        const row = cached.get(document.document_id);
+        const vector = row !== undefined &&
+            row.content_hash === contentHash &&
+            row.dimensions > 0
+          ? decodeVectorBlob(row.vector_blob, row.dimensions)
+          : null;
+        if (vector !== null && vector.length > 0) {
+          vectors.set(document.document_id, vector);
+        } else {
+          pending.push({ documentId: document.document_id, contentHash, text });
+        }
+      }
+      return { candidates, ftsMatchedIds, vectors, pending };
+    });
+
+    let queryVector: Float32Array = new Float32Array(0);
+    const computed = new Map<number, Float32Array>();
+    try {
+      const queryEmbedding = await embedWithTimeout(port, [query], 3000);
+      const rawQuery = asEmbeddingVector(queryEmbedding[0]);
+      if (rawQuery === null) {
+        throw new Error("EMBEDDING_QUERY_VECTOR_INVALID");
+      }
+      queryVector = rawQuery;
+      for (let offset = 0; offset < prepared.pending.length; offset += EMBEDDING_BATCH_SIZE) {
+        const batch = prepared.pending.slice(offset, offset + EMBEDDING_BATCH_SIZE);
+        const embedded = await embedWithTimeout(
+          port,
+          batch.map((item) => item.text),
+          8000,
+        );
+        if (embedded.length !== batch.length) {
+          throw new Error("EMBEDDING_DOCUMENT_LENGTH_MISMATCH");
+        }
+        for (const [index, raw] of embedded.entries()) {
+          const target = batch[index];
+          if (target === undefined) {
+            continue;
+          }
+          const vector = asEmbeddingVector(raw);
+          if (vector === null) {
+            throw new Error("EMBEDDING_DOCUMENT_VECTOR_INVALID");
+          }
+          computed.set(target.documentId, vector);
+        }
+      }
+    } catch {
+      return this.search(roleId, request, context);
+    }
+
+    return this.access.withStore(roleId, (storage) => {
+      const db = storage.business.db;
+      const store = new MemoryStore(db);
+      const now = this.now().toISOString();
+      this.persistVectors(
+        db,
+        roleId,
+        port.modelKey,
+        prepared.pending,
+        computed,
+        now,
+      );
+      const vectors = new Map(prepared.vectors);
+      for (const [documentId, vector] of computed) {
+        vectors.set(documentId, vector);
+      }
+      const vectorRanked: VectorRankedDocument[] = [];
+      for (const candidate of prepared.candidates) {
+        const vector = vectors.get(candidate.document.document_id);
+        if (vector === undefined) {
+          continue;
+        }
+        const similarity = cosineSimilarity(queryVector, vector);
+        if (similarity >= HYBRID_MIN_SIMILARITY) {
+          vectorRanked.push({
+            documentId: candidate.document.document_id,
+            similarity,
+          });
+        }
+      }
+      vectorRanked.sort(
+        (left, right) =>
+          right.similarity - left.similarity || left.documentId - right.documentId,
+      );
+      const fused = fuseRrfRankings(prepared.ftsMatchedIds, vectorRanked, {
+        minSimilarity: HYBRID_MIN_SIMILARITY,
+      });
+      const byId = new Map<number, HybridCandidate>(
+        prepared.candidates.map((candidate): [number, HybridCandidate] => [
+          candidate.document.document_id,
+          candidate,
+        ]),
+      );
+      const items = [...fused.entries()]
+        .filter(([, score]) => score > 0)
+        .flatMap(([documentId, score]) => {
+          const candidate = byId.get(documentId);
+          if (candidate === undefined) {
+            return [];
+          }
+          const document = candidate.document;
+          return [{
+            type: document.record_type,
+            id: document.record_id,
+            title: document.title,
+            snippet: makeSnippet(document.body, tokens),
+            experienceDate: candidate.experienceDate,
+            updatedAt: document.updated_at,
+            rrfScore: score,
+          }];
+        })
+        .sort(compareHybridItems)
+        .slice(0, request.limit ?? 20)
+        .map((item, index) => ({
+          type: item.type,
+          id: item.id,
+          title: item.title,
+          snippet: item.snippet,
+          experienceDate: item.experienceDate,
+          rank: index + 1,
+        }));
+      const retrievalId = randomUUID();
+      store.saveRetrieval({
+        retrievalId,
+        roleId,
+        executionId: context.executionId ?? null,
+        mode: context.mode,
+        queryJson: JSON.stringify(request),
+        status: "succeeded",
+        errorCode: null,
+        now,
+        items: items.map((item) => ({
+          type: item.type,
+          id: item.id,
+          rank: item.rank,
+          delivered: false,
+        })),
+      });
+      return { retrievalId, items };
     });
   }
 
@@ -550,6 +756,161 @@ export class MemoryQueryService {
     }));
   }
 
+  /**
+   * 混合检索的候选集：只做结构化过滤（类型、日期、标签、有效日期），
+   * 不要求字面命中，语义召回才能覆盖零重叠的同义改写。
+   */
+  private collectCandidates(
+    db: Database.Database,
+    roleId: string,
+    request: MemorySearchRequest,
+  ): HybridCandidate[] {
+    const documents = db
+      .prepare(
+        `SELECT document_id, record_type, record_id, title, body, updated_at
+         FROM memory_search_documents WHERE role_id = ?`,
+      )
+      .all(roleId) as DocumentRow[];
+    const wantedTypes = new Set(request.types ?? []);
+    const tagFilters = tagFiltersOf(request);
+    const eventTags = tagFilters.length ? this.loadEventTags(db, roleId) : undefined;
+    const candidates: HybridCandidate[] = [];
+    for (const document of documents) {
+      if (wantedTypes.size > 0 && !wantedTypes.has(document.record_type)) {
+        continue;
+      }
+      const experienceDate = this.experienceDateOf(
+        db,
+        roleId,
+        document.record_type,
+        document.record_id,
+      );
+      if (experienceDate === null) {
+        continue;
+      }
+      if (request.dateFrom && experienceDate < request.dateFrom) {
+        continue;
+      }
+      if (request.dateTo && experienceDate > request.dateTo) {
+        continue;
+      }
+      if (tagFilters.length > 0) {
+        if (document.record_type !== "event") {
+          continue;
+        }
+        const tags = eventTags?.get(document.record_id);
+        const matchesAll = tagFilters.every((filter) => {
+          const values = tags?.get(filter.dimension);
+          return filter.values.some((value) =>
+            values?.has(normalizeTag(value)) ?? false,
+          );
+        });
+        if (!matchesAll) {
+          continue;
+        }
+      }
+      candidates.push({ document, experienceDate });
+    }
+    return candidates;
+  }
+
+  /** 用既有 compareSearchItems 语义给字面命中排序，保持与纯 FTS5 一致。 */
+  private rankFtsMatches(
+    candidates: readonly HybridCandidate[],
+    tokens: readonly string[],
+    matches: ReadonlyMap<number, MatchInfo>,
+  ): number[] {
+    if (matches.size === 0) {
+      return [];
+    }
+    const byId = new Map<number, HybridCandidate>(
+      candidates.map((candidate): [number, HybridCandidate] => [
+        candidate.document.document_id,
+        candidate,
+      ]),
+    );
+    const ranked = [...matches.entries()].flatMap(([documentId, match]) => {
+      const candidate = byId.get(documentId);
+      if (candidate === undefined) {
+        return [];
+      }
+      const document = candidate.document;
+      const haystack = `${document.title}\n${document.body}`.toLowerCase();
+      const tokenMatches = tokens.filter((token) =>
+        haystack.includes(token.toLowerCase()),
+      ).length;
+      return [{
+        documentId,
+        tokenMatches,
+        ftsScore: match.ftsScore,
+        like: match.like,
+        experienceDate: candidate.experienceDate,
+        updatedAt: document.updated_at,
+        type: document.record_type,
+        id: document.record_id,
+      }];
+    });
+    ranked.sort(compareSearchItems);
+    return ranked.map((item) => item.documentId);
+  }
+
+  private loadCachedVectors(
+    db: Database.Database,
+    roleId: string,
+    modelKey: string,
+  ): Map<number, CachedEmbeddingRow> {
+    const rows = db
+      .prepare(
+        `SELECT document_id, content_hash, dimensions, vector_blob
+         FROM memory_search_embeddings
+         WHERE role_id = ? AND model_key = ?`,
+      )
+      .all(roleId, modelKey) as CachedEmbeddingRow[];
+    return new Map<number, CachedEmbeddingRow>(
+      rows.map((row): [number, CachedEmbeddingRow] => [row.document_id, row]),
+    );
+  }
+
+  /** 向量缓存是派生数据，写失败不应影响本次检索结果。 */
+  private persistVectors(
+    db: Database.Database,
+    roleId: string,
+    modelKey: string,
+    pending: ReadonlyArray<{ documentId: number; contentHash: string }>,
+    computed: ReadonlyMap<number, Float32Array>,
+    now: string,
+  ): void {
+    if (pending.length === 0) {
+      return;
+    }
+    const insert = db.prepare(
+      `INSERT OR REPLACE INTO memory_search_embeddings
+       (document_id, role_id, model_key, content_hash, dimensions, vector_blob, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    );
+    try {
+      db.transaction(() => {
+        for (const item of pending) {
+          const vector = computed.get(item.documentId);
+          if (vector === undefined) {
+            continue;
+          }
+          insert.run(
+            item.documentId,
+            roleId,
+            modelKey,
+            item.contentHash,
+            vector.length,
+            encodeVectorBlob(vector),
+            now,
+          );
+        }
+      })();
+    } catch {
+      // 缓存写入失败只丢失本次复用机会，不改变检索语义。
+    }
+  }
+
   private matchDocuments(
     db: Database.Database,
     roleId: string,
@@ -740,6 +1101,82 @@ function compareSearchItems(
     return left.type.localeCompare(right.type);
   }
   return left.id.localeCompare(right.id);
+}
+
+function compareHybridItems(
+  left: {
+    rrfScore: number;
+    experienceDate: string;
+    updatedAt: string;
+    type: MemoryRecordType;
+    id: string;
+  },
+  right: {
+    rrfScore: number;
+    experienceDate: string;
+    updatedAt: string;
+    type: MemoryRecordType;
+    id: string;
+  },
+): number {
+  if (left.rrfScore !== right.rrfScore) {
+    return right.rrfScore - left.rrfScore;
+  }
+  if (left.experienceDate !== right.experienceDate) {
+    return right.experienceDate.localeCompare(left.experienceDate);
+  }
+  if (left.updatedAt !== right.updatedAt) {
+    return right.updatedAt.localeCompare(left.updatedAt);
+  }
+  if (left.type !== right.type) {
+    return left.type.localeCompare(right.type);
+  }
+  return left.id.localeCompare(right.id);
+}
+
+/**
+ * 校验端口返回值并统一归一化；允许 Float32Array 与普通数字数组，
+ * 其他形状或非有限值一律视为外部返回异常。
+ */
+function asEmbeddingVector(value: unknown): Float32Array | null {
+  if (value instanceof Float32Array) {
+    return value.length === 0 ? null : normalizeVector(value);
+  }
+  if (Array.isArray(value) && value.length > 0) {
+    if (!value.every((item) =>
+      typeof item === "number" && Number.isFinite(item))) {
+      return null;
+    }
+    return normalizeVector(value as number[]);
+  }
+  return null;
+}
+
+/**
+ * 以固定上限等待外部 Embedding，超时主动 abort；
+ * 端口即使忽略 signal，Promise.race 也会保证检索层及时降级。
+ */
+async function embedWithTimeout(
+  port: EmbeddingPort,
+  texts: readonly string[],
+  timeoutMs: number,
+): Promise<Float32Array[]> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort(new Error("EMBEDDING_TIMEOUT"));
+      reject(new Error("EMBEDDING_TIMEOUT"));
+    }, timeoutMs);
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([port.embed(texts, controller.signal), timeout]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
 }
 
 function makeSnippet(body: string, tokens: readonly string[]): string {

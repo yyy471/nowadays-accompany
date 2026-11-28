@@ -31,13 +31,13 @@ import type { ConversationContext } from "./conversation-internal-types.js";
 export class ConversationPromptBuilder {
   constructor(private readonly ctx: ConversationContext) {}
 
-  autoRecall(
+  async autoRecall(
     roleId: string,
     executionId: string,
     pendingMessages: readonly ClaimedMessage[],
     recent: readonly ConversationMessageView[],
     extraQuery = "",
-  ): { briefs: RecallBrief[]; warning: string | null } {
+  ): Promise<{ briefs: RecallBrief[]; warning: string | null }> {
     const parts = [...pendingMessages].reverse().map((message) => message.content);
     parts.push(extraQuery);
     // 只在用户简短承接前文时借用最近一轮，避免角色自己反复提的旧事持续占据召回。
@@ -54,7 +54,7 @@ export class ConversationPromptBuilder {
     if (!query) return { briefs: [], warning: null };
     const dates = extractDateRange(query, this.ctx.now(), this.ctx.timeZone);
     try {
-      const result = this.ctx.memory.search(
+      const result = await this.ctx.memory.searchHybrid(
         roleId,
         {
           ...(query.length === 0 ? {} : { query }),

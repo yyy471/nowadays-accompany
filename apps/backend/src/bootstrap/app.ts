@@ -12,6 +12,8 @@ import { VoiceService } from "../application/media/voice-service.js";
 import { ImageServiceService } from "../application/media/image-service.js";
 import { SceneImageSettingsService } from "../application/media/scene-image-settings.js";
 import { MemoryQueryService } from "../application/memory/memory-query-service.js";
+import { MemoryEmbeddingSettingsService } from "../application/memory/memory-embedding-settings.js";
+import type { EmbeddingPort } from "../application/memory/memory-hybrid-search.js";
 import {
   MemoryRuntime,
   type MemoryModelFactory,
@@ -77,6 +79,8 @@ export interface BackendAppOptions {
   roleDeletionWaitMs?: number;
   /** 模型／媒体维护等待依赖角色停止的超时阈值（默认 20 秒，测试可覆写）。 */
   maintenancePauseTimeoutMs?: number;
+  /** 离线测试注入的 Embedding 端口；null 或不提供时默认关闭混合检索。 */
+  embeddingPort?: EmbeddingPort | null;
 }
 
 import { MediaMaintenance } from '../application/media/media-maintenance.js';
@@ -153,6 +157,14 @@ function assembleBackendApp(
     ),
   );
   const roleService = new RoleService(appStore, config.dataRoot, roleAccess);
+  const memoryEmbeddingSettings = new MemoryEmbeddingSettingsService({
+    appStore,
+    credentials,
+    now,
+    ...(options.embeddingPort === undefined
+      ? {}
+      : { overridePort: options.embeddingPort }),
+  });
   const activity = new RoleActivityService(appStore, { now });
   // 状态流只广播变更主题与角色，前端据此增量重取。
   const feedEvents = new FeedEventHub(now);
@@ -243,6 +255,7 @@ function assembleBackendApp(
   const memoryService = new MemoryQueryService(roleAccess, {
     now,
     ...(options.timeZone === undefined ? {} : { timeZone: options.timeZone }),
+    resolveEmbeddingPort: () => memoryEmbeddingSettings.resolvePort(),
   });
   const modelService = new ModelService(appStore, config.appRoot, {
     now,
@@ -534,6 +547,7 @@ function assembleBackendApp(
     messages: messageService,
     resources: resourceService,
     memory: memoryService,
+    memoryEmbeddingSettings,
     modelServices: modelService,
     conversation,
     autonomy,

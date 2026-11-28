@@ -68,7 +68,10 @@ export interface AgentGraphDeps {
   resolveModel: () => AgentModelHandle;
   tools: ConversationTool[];
   replyOnly?: boolean;
-  systemPrompt: (messages: readonly ModelMessage[], round: number) => string | AgentSystemPrompt;
+  systemPrompt: (
+    messages: readonly ModelMessage[],
+    round: number,
+  ) => string | AgentSystemPrompt | Promise<string | AgentSystemPrompt>;
   evidenceQuery?: (taskId: string | null) => string;
   selectEvidence?: (input: {
     roleId: string;
@@ -252,7 +255,7 @@ export class AgentGraphRunner {
     this.deps.checkRunning();
     this.checkTask(state.roleId, state.taskId);
     const current = this.deps.resolveModel();
-    const prompt = this.deps.systemPrompt(state.messages, state.round);
+    const prompt = await this.deps.systemPrompt(state.messages, state.round);
     const evidenceQuery = this.deps.evidenceQuery?.(state.taskId) ?? "";
     const evidence = this.deps.selectEvidence?.({
       roleId: state.roleId,

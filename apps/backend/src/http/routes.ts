@@ -28,6 +28,8 @@ import type { ConversationService } from "../application/conversation/conversati
 import type { AutonomyService } from "../application/conversation/autonomy-service.js";
 import type { FeedEventHub } from "../application/conversation/feed-events.js";
 import type { MemoryQueryService } from "../application/memory/memory-query-service.js";
+import type { MemoryEmbeddingSettingsService } from "../application/memory/memory-embedding-settings.js";
+import { memoryEmbeddingSettingsUpdateSchema } from "../application/memory/memory-embedding-settings.js";
 import type { MessageService } from "../application/conversation/message-service.js";
 import type { ModelService } from "../application/resources/model-service.js";
 import type { ResourceService } from "../application/resources/resource-service.js";
@@ -106,6 +108,7 @@ export interface ApiServices {
   messages: MessageService;
   resources: ResourceService;
   memory: MemoryQueryService;
+  memoryEmbeddingSettings: MemoryEmbeddingSettingsService;
   modelServices: ModelService;
   conversation: ConversationService;
   autonomy: AutonomyService;
@@ -997,9 +1000,30 @@ export function registerApiRoutes(
       );
       return {
         status: 200,
-        body: services.memory.search(params.roleId ?? "", body, {
+        body: await services.memory.searchHybrid(params.roleId ?? "", body, {
           mode: "manual",
         }),
+      };
+    },
+  );
+
+  // 全局可选 Embedding 配置：未开启时记忆检索完全走纯 FTS5（409 ARCH-03）。
+  router.add("GET", "/v1/memory/embedding-settings", (): JsonResponse => ({
+    status: 200,
+    body: { settings: services.memoryEmbeddingSettings.get() },
+  }));
+
+  router.add(
+    "PUT",
+    "/v1/memory/embedding-settings",
+    async ({ request }): Promise<JsonResponse> => {
+      const body = parseBody(
+        memoryEmbeddingSettingsUpdateSchema,
+        await readJsonBody(request),
+      );
+      return {
+        status: 200,
+        body: { settings: services.memoryEmbeddingSettings.update(body) },
       };
     },
   );

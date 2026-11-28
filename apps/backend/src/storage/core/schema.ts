@@ -12,7 +12,7 @@ import { MemoryStore } from "../memory/memory-store.js";
 import { retireLegacyWebPrefetchEvidence, WEB_READING_SCHEMA_SQL } from "../conversation/web-reading.js";
 
 export const APP_SCHEMA_VERSION = 17;
-export const BUSINESS_SCHEMA_VERSION = 31;
+export const BUSINESS_SCHEMA_VERSION = 32;
 export const EXECUTION_SCHEMA_VERSION = 2;
 
 export const APP_TABLES = [
@@ -70,6 +70,7 @@ export const BUSINESS_TABLES = [
   "call_metering",
   "memory_search_documents",
   "memory_search_fts",
+  "memory_search_embeddings",
   "autonomy_budget",
   "autonomy_wakes",
   "autonomy_activities",
@@ -2267,6 +2268,25 @@ ALTER TABLE engineering_jobs ADD COLUMN model_resource_id TEXT;
 ALTER TABLE engineering_jobs ADD COLUMN model_name TEXT;
 `;
 
+/**
+ * V32：可选混合记忆检索的向量缓存（409 ARCH-03 / DL-51 方案 A）。
+ * 本表是与 memory_search_fts 同类的本机派生缓存：不进入角色迁移数据，
+ * 目标机按需重建；文档删除时向量随外键级联清理。
+ */
+const BUSINESS_V32_SQL = `
+CREATE TABLE IF NOT EXISTS memory_search_embeddings (
+  document_id INTEGER PRIMARY KEY REFERENCES memory_search_documents(document_id) ON DELETE CASCADE,
+  role_id TEXT NOT NULL REFERENCES roles(role_id),
+  model_key TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  dimensions INTEGER NOT NULL,
+  vector_blob BLOB NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_memory_search_embeddings_role_model
+  ON memory_search_embeddings(role_id, model_key);
+`;
+
 export function openBusinessDatabase(
   dbPath: string,
   options: DatabaseOpenOptions = {},
@@ -2274,7 +2294,7 @@ export function openBusinessDatabase(
   return openVersionedDatabase(
     dbPath,
     BUSINESS_SCHEMA_VERSION,
-    BUSINESS_SCHEMA_V22_SQL + BUSINESS_V23_SQL + BUSINESS_V24_SQL + BUSINESS_V26_SQL + BUSINESS_V27_SQL + BUSINESS_V28_SQL + BUSINESS_V29_SQL + BUSINESS_V30_SQL + BUSINESS_V31_SQL,
+    BUSINESS_SCHEMA_V22_SQL + BUSINESS_V23_SQL + BUSINESS_V24_SQL + BUSINESS_V26_SQL + BUSINESS_V27_SQL + BUSINESS_V28_SQL + BUSINESS_V29_SQL + BUSINESS_V30_SQL + BUSINESS_V31_SQL + BUSINESS_V32_SQL,
     {
       1: (db) => {
         db.exec(BUSINESS_V2_SQL);
@@ -2330,6 +2350,7 @@ export function openBusinessDatabase(
         addColumnIfMissing(db, "engineering_jobs", "model_resource_id", "TEXT");
         addColumnIfMissing(db, "engineering_jobs", "model_name", "TEXT");
       },
+      31: (db) => db.exec(BUSINESS_V32_SQL),
     },
     BUSINESS_TABLES,
     BUSINESS_INDEXES,
