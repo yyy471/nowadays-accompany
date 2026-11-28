@@ -6,8 +6,8 @@ import { AppStore } from "../../storage/core/app-store.js";
 import { checkAppDatabaseFiles, checkedInstallEntry, lockInstallation } from "../../storage/core/installation-lock.js";
 import { canonicalJson, portableTransferTables, sha256 } from "./role-transfer-data.js";
 import {
-  captureRoleTransfer, readRoleTransferPackage, resolveRoleTransferBindings, roleTransferTimelineFacts,
-  roleTransferTimelineFingerprint, roleTransferWithAncestors, writeRoleTransferPackage,
+  captureRoleTransfer, MAX_ROLE_TRANSFER_PACKAGE_BYTES, readRoleTransferPackage, resolveRoleTransferBindings,
+  roleTransferTimelineFacts, roleTransferTimelineFingerprint, roleTransferWithAncestors, writeRoleTransferPackage,
   type ReadRoleTransferPackageOptions, type RoleTransferPackage,
 } from "./role-transfer-package.js";
 import { checkTransferRoleDirectory, publishRoleTransfer, recoverRoleTransfer, type PublicationHook } from "./role-transfer-publication.js";
@@ -170,6 +170,14 @@ function isInsideDirectory(directory: string, target: string): boolean {
   return relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`));
 }
 
+/**
+ * 校验迁移包路径：必须是 `.json` 且位于安装数据目录之外。
+ * HTTP 层在异步读包前先调用它，保持与同步 CLI 相同的路径安全顺序。
+ */
+export function assertRoleTransferPackagePath(config: BackendConfig, file: string): void {
+  assertPackageFileOutsideManagedDirs(config, file);
+}
+
 function assertPackageFileOutsideManagedDirs(config: BackendConfig, file: string): void {
   const target = path.resolve(file);
   // 迁移包必须是 JSON：先按扩展名拒绝明显不是迁移包的目标，避免误写到数据库等文件。
@@ -183,10 +191,19 @@ function assertPackageFileOutsideManagedDirs(config: BackendConfig, file: string
   }
 }
 
-function exportWithContext(config: BackendConfig, context: TransferContext, roleId: string, file: string) {
+function exportWithContext(
+  config: BackendConfig,
+  context: TransferContext,
+  roleId: string,
+  file: string,
+  options?: ReadRoleTransferPackageOptions,
+) {
   rolePaths(config.dataRoot, roleId);
   if (!checkTransferRoleDirectory(config, roleId)) throw new Error("ROLE_TRANSFER_ROLE_MISSING");
-  const pkg = captureRoleTransfer(config, roleId);
+  // 导出与写入共用同一预算：同步 CLI 未显式传参时也必须采用默认上限，
+  // 否则采集阶段会把默认值当成无限制。
+  const maxBytes = options?.maxBytes ?? MAX_ROLE_TRANSFER_PACKAGE_BYTES;
+  const pkg = captureRoleTransfer(config, roleId, [], { maxBytes });
   const evidence = timelineEvidence(pkg);
   const ancestors = context.read((db) => {
     const index = readIndex(db, roleId);
@@ -195,26 +212,33 @@ function exportWithContext(config: BackendConfig, context: TransferContext, role
       keepsMessageAnchors(evidence, snapshot)).map(({ fingerprint }) => fingerprint);
   });
   const exported = roleTransferWithAncestors(pkg, ancestors);
-  writeRoleTransferPackage(file, exported);
+  writeRoleTransferPackage(file, exported, { maxBytes });
   context.write((store) => store.db.transaction(() => saveSnapshot(store.db, pkg, evidence))());
   return { roleId, digest: exported.digest, timelineFingerprint: exported.timelineFingerprint, bindings: exported.bindings };
 }
 
-export function exportRoleTransfer(config: BackendConfig, roleId: string, file: string) {
-  return withInstallation(config, file, () => exportWithContext(config, installationContext(config), roleId, file));
+export function exportRoleTransfer(
+  config: BackendConfig,
+  roleId: string,
+  file: string,
+  options?: ReadRoleTransferPackageOptions,
+) {
+  return withInstallation(config, file, () => exportWithContext(config, installationContext(config), roleId, file, options));
 }
 
 /**
  * 运行态 HTTP 后端使用的导出：复用已打开的 `AppStore`，不再获取安装锁，
  * 也不关闭传入的 `store`。调用方负责先把角色停下来并驱逐角色库连接。
+ * `options.maxBytes` 与导入共用同一 UTF-8 字节预算。
  */
 export function exportRoleTransferWithStore(
   config: BackendConfig, store: AppStore, roleId: string, file: string,
+  options?: ReadRoleTransferPackageOptions,
 ) {
   assertPackageFileOutsideManagedDirs(config, file);
   const context = openedStoreContext(store);
   recoverPendingTransfer(config, context);
-  return exportWithContext(config, context, roleId, file);
+  return exportWithContext(config, context, roleId, file, options);
 }
 
 function compareTimelines(
@@ -252,7 +276,21 @@ function inspectTransfer(
   mapping: TransferMapping,
   options?: ReadRoleTransferPackageOptions,
 ) {
-  const incoming = readRoleTransferPackage(file, options);
+  return inspectTransferPackage(config, context, readRoleTransferPackage(file, options), mapping);
+}
+
+/**
+ * 使用已读取并校验过的包快照完成预检，不再重读文件。
+ *
+ * 运行态 HTTP 服务先用异步读取取得唯一快照，展示、守卫与令牌都基于它，
+ * 避免同一次操作混用两份读包结果。
+ */
+function inspectTransferPackage(
+  config: BackendConfig,
+  context: TransferContext,
+  incoming: RoleTransferPackage,
+  mapping: TransferMapping,
+) {
   const bindings = resolveRoleTransferBindings(config, incoming, mapping);
   const tables = portableTransferTables(incoming.tables);
   const portable = tables === incoming.tables ? incoming : { ...incoming, tables,
@@ -309,18 +347,33 @@ export function preflightRoleTransferWithStore(
   return inspectTransfer(config, context, file, mapping, options).preview;
 }
 
-function applyWithContext(
+/**
+ * 运行态 HTTP 预检（已读包）：调用方在异步读取前已完成路径检查与读取，
+ * 本函数只收敛残余事务并基于这份已校验快照生成预检结果。
+ */
+export function preflightRoleTransferPackageWithStore(
+  config: BackendConfig, store: AppStore,
+  incoming: RoleTransferPackage, mapping: TransferMapping = {},
+) {
+  const context = openedStoreContext(store);
+  recoverPendingTransfer(config, context);
+  return inspectTransferPackage(config, context, incoming, mapping).preview;
+}
+
+/**
+ * 使用已读取并校验过的包快照应用导入：令牌校验、守卫角色与发布都来自同一份快照。
+ */
+function applyInspectPackage(
   config: BackendConfig,
   context: TransferContext,
-  file: string,
+  incoming: RoleTransferPackage,
   token: string,
   mapping: TransferMapping,
   choice: TransferChoice | undefined,
   hook: PublicationHook | undefined,
-  options?: ReadRoleTransferPackageOptions,
 ) {
-  const { preview, incoming, incomingEvidence, bindings, index, selection } =
-    inspectTransfer(config, context, file, mapping, options);
+  const { preview, incomingEvidence, bindings, index, selection } =
+    inspectTransferPackage(config, context, incoming, mapping);
   if (token !== preview.token) throw new Error("ROLE_TRANSFER_PREFLIGHT_STALE");
   if (preview.requiresChoice && !choice) throw new Error("ROLE_TRANSFER_CHOICE_REQUIRED");
   if (choice === "local") {
@@ -363,6 +416,19 @@ function applyWithContext(
   return { ...preview, outcome: "published" };
 }
 
+function applyWithContext(
+  config: BackendConfig,
+  context: TransferContext,
+  file: string,
+  token: string,
+  mapping: TransferMapping,
+  choice: TransferChoice | undefined,
+  hook: PublicationHook | undefined,
+  options?: ReadRoleTransferPackageOptions,
+) {
+  return applyInspectPackage(config, context, readRoleTransferPackage(file, options), token, mapping, choice, hook);
+}
+
 export function applyRoleTransfer(
   config: BackendConfig,
   file: string,
@@ -370,9 +436,10 @@ export function applyRoleTransfer(
   mapping: TransferMapping = {},
   choice?: TransferChoice,
   hook?: PublicationHook,
+  options?: ReadRoleTransferPackageOptions,
 ) {
   return withInstallation(config, file, () =>
-    applyWithContext(config, installationContext(config), file, token, mapping, choice, hook));
+    applyWithContext(config, installationContext(config), file, token, mapping, choice, hook, options));
 }
 
 /** 运行态 HTTP 后端使用的导入：复用已打开的 `AppStore`，不获取安装锁。 */
@@ -390,4 +457,22 @@ export function applyRoleTransferWithStore(
   const context = openedStoreContext(store);
   recoverPendingTransfer(config, context);
   return applyWithContext(config, context, file, token, mapping, choice, hook, options);
+}
+
+/**
+ * 运行态 HTTP 导入（已读包）：调用方在异步读取前已完成路径检查与读取，
+ * 本函数收敛残余事务，再以这份已校验快照完成令牌、守卫与发布。
+ */
+export function applyRoleTransferPackageWithStore(
+  config: BackendConfig,
+  store: AppStore,
+  incoming: RoleTransferPackage,
+  token: string,
+  mapping: TransferMapping = {},
+  choice?: TransferChoice,
+  hook?: PublicationHook,
+) {
+  const context = openedStoreContext(store);
+  recoverPendingTransfer(config, context);
+  return applyInspectPackage(config, context, incoming, token, mapping, choice, hook);
 }

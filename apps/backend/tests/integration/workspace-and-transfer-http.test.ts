@@ -7,6 +7,7 @@ import test, { type TestContext } from "node:test";
 import { createBackendApp, listen } from "../../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths, type BackendConfig } from "../../src/bootstrap/config.js";
 import { RoleTransferHttpService } from "../../src/application/transfer/role-transfer-service.js";
+import { readRoleTransferPackageAsync } from "../../src/application/transfer/role-transfer-package.js";
 import { RoleWorkspaceService } from "../../src/application/role/role-workspace-service.js";
 import { AppError } from "../../src/domain/errors.js";
 
@@ -59,6 +60,26 @@ function exportDir(t: TestContext): string {
 
 function start(app: ReturnType<typeof createBackendApp>): Promise<string> {
   return listen(app.server, 0, "127.0.0.1").then((port) => `http://127.0.0.1:${port}`);
+}
+
+/** 复用运行态组件的迁移服务；测试可注入读包实现统计读取次数。 */
+function transferService(
+  app: ReturnType<typeof createBackendApp>,
+  config: BackendConfig,
+  extra: {
+    maxPackageBytes?: number;
+    readPackage?: (file: string, options?: { maxBytes?: number }) =>
+      Promise<Awaited<ReturnType<typeof readRoleTransferPackageAsync>>>;
+  } = {},
+): RoleTransferHttpService {
+  return new RoleTransferHttpService({
+    config,
+    appStore: app.appStore,
+    roleAccess: app.roleAccess,
+    activity: app.services.activity,
+    feedEvents: app.services.feedEvents,
+    ...extra,
+  });
 }
 
 test("工作空间笔记只读浏览：过滤扩展名、递归排序、越界与大文件限制", async (t) => {
@@ -398,6 +419,154 @@ test("HTTP 迁移：预检拒绝超过体积上限的迁移包并返回 413", as
       assert.equal(error.code, "ROLE_TRANSFER_PACKAGE_TOO_LARGE");
       return true;
     });
+  } finally {
+    await targetApp.close();
+    await sourceApp.close();
+  }
+});
+
+test("HTTP 迁移：运行态导出与读取共用体积预算，超限清理临时文件并保留目标", async (t) => {
+  const source = installation(t, "export-budget");
+  const app = createBackendApp(source, options);
+  try {
+    const role = app.services.roles.createRole({ displayName: "导出预算", definition: { text: "跨语言导出预算。" } });
+    const workspace = rolePaths(source.dataRoot, role.roleId).workspaceDir;
+    fs.writeFileSync(path.join(workspace, "中文笔记.md"), "多字节导出内容\n".repeat(16));
+    fs.writeFileSync(path.join(workspace, "素材.bin"), Buffer.from(Array.from({ length: 257 }, (_, index) => index & 0xff)));
+    const packets = exportDir(t);
+    const baseline = path.join(packets, "baseline.json");
+    await app.services.roleTransfer.exportRole(role.roleId, baseline);
+    const exact = fs.statSync(baseline).size;
+
+    const exactFile = path.join(packets, "exact.json");
+    const exactService = transferService(app, source, { maxPackageBytes: exact });
+    assert.equal((await exactService.exportRole(role.roleId, exactFile)).roleId, role.roleId);
+    assert.equal(fs.statSync(exactFile).size, exact);
+
+    const target = path.join(packets, "target.json");
+    fs.writeFileSync(target, "已有目标文件");
+    const overService = transferService(app, source, { maxPackageBytes: exact - 1 });
+    await assert.rejects(overService.exportRole(role.roleId, target), (error: unknown) => {
+      if (!(error instanceof AppError)) throw error;
+      assert.equal(error.status, 413);
+      assert.equal(error.code, "ROLE_TRANSFER_PACKAGE_TOO_LARGE");
+      return true;
+    });
+    assert.equal(fs.readFileSync(target, "utf8"), "已有目标文件");
+    assert.equal(fs.readdirSync(packets).filter((name) => name.startsWith(".role-transfer-")).length, 0);
+  } finally {
+    await app.close();
+  }
+});
+
+test("HTTP 迁移：预检与应用各自只读取一次包，换包后令牌失效", async (t) => {
+  const source = installation(t, "once-source");
+  const target = installation(t, "once-target");
+  const sourceApp = createBackendApp(source, options);
+  const targetApp = createBackendApp(target, options);
+  try {
+    const role = sourceApp.services.roles.createRole({ displayName: "单次读包", definition: { text: "只读取一次。" } });
+    const packets = exportDir(t);
+    const packet = path.join(packets, "role.json");
+    await sourceApp.services.roleTransfer.exportRole(role.roleId, packet);
+
+    let reads = 0;
+    const service = transferService(targetApp, target, {
+      readPackage: (file, options) => {
+        reads += 1;
+        return readRoleTransferPackageAsync(file, options);
+      },
+    });
+    const preview = await service.preflightImport(packet);
+    assert.equal(reads, 1, "预检只能读取一次包");
+    assert.equal(preview.roleId, role.roleId);
+    const applied = await service.applyImport({ file: packet, token: preview.token });
+    assert.equal(reads, 2, "应用只能再读取一次包");
+    assert.equal(applied.outcome, "published");
+
+    // 两次操作之间把文件替换为另一份合法包：应用重读后必须判定预检过期。
+    fs.writeFileSync(path.join(rolePaths(source.dataRoot, role.roleId).workspaceDir, "新增.md"), "预检之后的新事实");
+    const changed = path.join(packets, "changed.json");
+    await sourceApp.services.roleTransfer.exportRole(role.roleId, changed);
+    fs.copyFileSync(changed, packet);
+    await assert.rejects(service.applyImport({ file: packet, token: applied.token }), (error: unknown) => {
+      if (!(error instanceof AppError)) throw error;
+      assert.equal(error.code, "ROLE_TRANSFER_PREFLIGHT_STALE");
+      return true;
+    });
+  } finally {
+    await targetApp.close();
+    await sourceApp.close();
+  }
+});
+
+test("HTTP 迁移：读包后文件发生变化时，当次操作仍使用同一份快照", async (t) => {
+  const source = installation(t, "mutate-source");
+  const target = installation(t, "mutate-target");
+  const sourceApp = createBackendApp(source, options);
+  const targetApp = createBackendApp(target, options);
+  try {
+    const originalRole = sourceApp.services.roles.createRole({ displayName: "原始角色", definition: { text: "原始定义。" } });
+    const otherRole = sourceApp.services.roles.createRole({ displayName: "另一角色", definition: { text: "另一份包。" } });
+    const packets = exportDir(t);
+    const packet = path.join(packets, "role.json");
+    const alternate = path.join(packets, "alternate.json");
+    await sourceApp.services.roleTransfer.exportRole(originalRole.roleId, packet);
+    await sourceApp.services.roleTransfer.exportRole(otherRole.roleId, alternate);
+    const originalBytes = fs.readFileSync(packet);
+    const original = await readRoleTransferPackageAsync(packet);
+
+    let reads = 0;
+    const service = transferService(targetApp, target, {
+      readPackage: async (file, options) => {
+        const snapshot = await readRoleTransferPackageAsync(file, options);
+        reads += 1;
+        // 读取完成后立刻替换磁盘文件，模拟同一次操作内的外部变更。
+        fs.copyFileSync(alternate, packet);
+        return snapshot;
+      },
+    });
+    const preview = await service.preflightImport(packet);
+    assert.equal(reads, 1);
+    assert.equal(preview.roleId, original.roleId);
+    assert.equal(preview.displayName, "原始角色");
+    assert.equal(preview.packageDigest, original.digest);
+    assert.match(fs.readFileSync(packet, "utf8"), /另一角色/);
+
+    // 应用前恢复原始文件；应用读取后再次替换，发布仍基于本次读取的快照。
+    fs.writeFileSync(packet, originalBytes);
+    const applied = await service.applyImport({ file: packet, token: preview.token });
+    assert.equal(applied.outcome, "published");
+    assert.equal(applied.roleId, original.roleId);
+    assert.equal(reads, 2);
+  } finally {
+    await targetApp.close();
+    await sourceApp.close();
+  }
+});
+
+test("HTTP 迁移：角色运行时应用仍由守卫拒绝", async (t) => {
+  const source = installation(t, "running-source");
+  const target = installation(t, "running-target");
+  const sourceApp = createBackendApp(source, options);
+  const targetApp = createBackendApp(target, options);
+  try {
+    const role = sourceApp.services.roles.createRole({ displayName: "运行守卫", definition: { text: "运行时拒绝导入。" } });
+    const packet = path.join(exportDir(t), "role.json");
+    await sourceApp.services.roleTransfer.exportRole(role.roleId, packet);
+    const service = transferService(targetApp, target);
+    const first = await service.preflightImport(packet);
+    assert.equal((await service.applyImport({ file: packet, token: first.token })).outcome, "published");
+
+    targetApp.services.activity.resume(role.roleId);
+    const active = await service.preflightImport(packet);
+    assert.equal(active.localActivityState, "active");
+    await assert.rejects(service.applyImport({ file: packet, token: active.token }), (error: unknown) => {
+      if (!(error instanceof AppError)) throw error;
+      assert.equal(error.code, "ROLE_NOT_STOPPED");
+      return true;
+    });
+    assert.equal(targetApp.services.activity.view(role.roleId).state, "active");
   } finally {
     await targetApp.close();
     await sourceApp.close();

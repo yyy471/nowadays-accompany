@@ -408,3 +408,55 @@ test("迁移包读取：目录与符号链接按不安全路径拒绝", async (t
   assert.ok(Date.now() - linkStarted < 50, "符号链接应立即被拒绝");
   await assert.rejects(readRoleTransferPackageAsync(link), /ROLE_TRANSFER_UNSAFE_PATH/);
 });
+
+test("导出与读取共用最终 UTF-8 字节预算：恰好达限成功，超出一字节拒绝", async (t) => {
+  const config = installation();
+  const app = createBackendApp(config, options);
+  t.after(async () => { await app.close(); removeInstallation(config); });
+  const role = app.services.roles.createRole({
+    displayName: "预算角色", definition: { text: "多字节定义：雨天读书与远方来信。" },
+  });
+  const workspace = rolePaths(config.dataRoot, role.roleId).workspaceDir;
+  // 非 ASCII 笔记与二进制素材同时覆盖 Base64、非 ASCII 文字和 JSON 结构。
+  fs.writeFileSync(path.join(workspace, "中文笔记.md"), "多字节文字与 Base64 预算\n".repeat(12));
+  fs.writeFileSync(path.join(workspace, "素材.bin"), Buffer.from(Array.from({ length: 517 }, (_, index) => index & 0xff)));
+  const pkg = captureRoleTransfer(config, role.roleId);
+  assert.ok(pkg.files.some((entry) => entry.kind === "file" && entry.data.length > 0));
+  const dir = readFixtureDir(t);
+  const baseline = path.join(dir, "baseline.json");
+  writeRoleTransferPackage(baseline, pkg);
+  const exact = fs.statSync(baseline).size;
+  const serialized = canonicalJson(pkg);
+  assert.equal(Buffer.byteLength(serialized, "utf8"), exact);
+  assert.ok(Buffer.byteLength(serialized, "utf8") > serialized.length, "样例应包含非 ASCII 多字节字符");
+
+  // 写入端恰好达限成功，且同版本读取预检按同一预算放行。
+  const exactFile = path.join(dir, "exact.json");
+  writeRoleTransferPackage(exactFile, pkg, { maxBytes: exact });
+  assert.equal(fs.statSync(exactFile).size, exact);
+  assert.equal(readRoleTransferPackage(exactFile, { maxBytes: exact }).digest, pkg.digest);
+  assert.throws(() => readRoleTransferPackage(exactFile, { maxBytes: exact - 1 }), /ROLE_TRANSFER_PACKAGE_TOO_LARGE/);
+
+  // 超出一字节：可识别错误，且不创建临时文件、不改动已有目标。
+  const target = path.join(dir, "target.json");
+  fs.writeFileSync(target, "已有目标文件");
+  const before = fs.readdirSync(dir).sort();
+  assert.throws(() => writeRoleTransferPackage(target, pkg, { maxBytes: exact - 1 }), /ROLE_TRANSFER_PACKAGE_TOO_LARGE/);
+  assert.equal(fs.readFileSync(target, "utf8"), "已有目标文件");
+  assert.deepEqual(fs.readdirSync(dir).sort(), before);
+});
+
+test("导出采集按 stat 的 Base64 预估体积提前拒绝明显超限", async (t) => {
+  const config = installation();
+  const app = createBackendApp(config, options);
+  t.after(async () => { await app.close(); removeInstallation(config); });
+  const role = app.services.roles.createRole({ displayName: "采集预算", definition: { text: "大文件提前终止。" } });
+  const workspace = rolePaths(config.dataRoot, role.roleId).workspaceDir;
+  fs.writeFileSync(path.join(workspace, "large.md"), Buffer.alloc(4096, 0x61));
+  assert.throws(
+    () => captureRoleTransfer(config, role.roleId, [], { maxBytes: 512 }),
+    /ROLE_TRANSFER_PACKAGE_TOO_LARGE/,
+  );
+  // 未设置小上限时仍可正常采集，说明提前终止只针对明显超限输入。
+  assert.ok(captureRoleTransfer(config, role.roleId).files.length > 0);
+});

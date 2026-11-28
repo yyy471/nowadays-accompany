@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { rolePaths, type BackendConfig, type RolePaths } from "../../bootstrap/config.js";
 import type { AppStore } from "../../storage/core/app-store.js";
 import { checkedInstallEntry } from "../../storage/core/installation-lock.js";
-import { stageRoleTransfer, type RoleTransferBindings, type RoleTransferPackage } from "./role-transfer-package.js";
+import { stageValidatedRoleTransfer, type RoleTransferBindings, type RoleTransferPackage } from "./role-transfer-package.js";
 
 const transferDirectory = ".role-transfer";
 const operationIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -154,7 +154,8 @@ export function publishRoleTransfer(
   const hadLocal = checkTransferRoleDirectory(config, pkg.roleId);
   try {
     fs.mkdirSync(operation, { recursive: true, mode: 0o700 });
-    stageRoleTransfer(staged, pkg, bindings);
+    // 核心发布只接受已校验快照：读取阶段已完成摘要、结构与临时库校验。
+    stageValidatedRoleTransfer(staged, pkg, bindings);
     syncTree(operation);
     syncDirectory(root);
     syncDirectory(config.dataRoot);

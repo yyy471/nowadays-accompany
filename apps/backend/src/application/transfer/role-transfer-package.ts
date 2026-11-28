@@ -18,16 +18,19 @@ import {
   canonicalJson, normalizeExecutionFacts, portableTransferTables, rebuildTransferMemorySearch, sha256, sortedRows, TRANSFER_TABLES,
   transferColumns, type TransferRow, type TransferTables,
 } from "./role-transfer-data.js";
-import { assertRegularPath, captureTransferFiles, stageTransferFiles, validateTransferFiles } from "./role-transfer-files.js";
+import { assertRegularPath, captureTransferFiles, readBoundedFile, stageTransferFiles, validateTransferFiles } from "./role-transfer-files.js";
 
 export type { RoleTransferBinding, RoleTransferBindings } from "./role-transfer-bindings.js";
 
-/** 迁移包读取上限：256 MiB，避免超大文件一次性读入内存。 */
+/** 迁移包读写共用的最终 UTF-8 字节预算：256 MiB。 */
 export const MAX_ROLE_TRANSFER_PACKAGE_BYTES = 256 * 1024 * 1024;
 
 export interface ReadRoleTransferPackageOptions {
   maxBytes?: number;
 }
+
+/** 导出写入与读取共用同一体积预算，便于测试或受限部署调小。 */
+export type WriteRoleTransferPackageOptions = ReadRoleTransferPackageOptions;
 
 const digestSchema = z.string().regex(/^[0-9a-f]{64}$/);
 const transferPackageSchema = z.object({
@@ -48,7 +51,12 @@ const transferPackageSchema = z.object({
 
 export type RoleTransferPackage = Omit<z.infer<typeof transferPackageSchema>, "tables"> & { tables: TransferTables };
 
-export function captureRoleTransfer(config: BackendConfig, roleId: string, ancestors: readonly string[] = []): RoleTransferPackage {
+export function captureRoleTransfer(
+  config: BackendConfig,
+  roleId: string,
+  ancestors: readonly string[] = [],
+  options?: ReadRoleTransferPackageOptions,
+): RoleTransferPackage {
   const paths = rolePaths(config.dataRoot, roleId);
   const sourcePath = assertRegularPath(config.appRoot, `data/roles/${roleId}/business.sqlite`, false);
   const source = new Database(sourcePath, { readonly: true, fileMustExist: true });
@@ -75,7 +83,7 @@ export function captureRoleTransfer(config: BackendConfig, roleId: string, ances
     normalizeExecutionFacts(tables);
     const bindings = captureTransferBindings(working, roleId, credentials);
     for (const table of TRANSFER_TABLES) tables[table] = sortedRows(tables[table]);
-    const files = captureTransferFiles(paths.roleDir, tables, credentials);
+    const files = captureTransferFiles(paths.roleDir, tables, credentials, options?.maxBytes);
     const body = { version: 1 as const, roleId, builtinKey: builtinKey as RoleTransferPackage["builtinKey"], bindings, tables, files };
     const fingerprint = timelineFingerprint(body);
     return validateRoleTransfer(roleTransferWithAncestors({ ...body, timelineFingerprint: fingerprint }, ancestors));
@@ -114,13 +122,21 @@ function openAppReadOnly(config: BackendConfig): Database.Database | null {
   return new Database(file, { readonly: true, fileMustExist: true });
 }
 
-export function writeRoleTransferPackage(filePath: string, pkg: RoleTransferPackage): void {
+export function writeRoleTransferPackage(
+  filePath: string,
+  pkg: RoleTransferPackage,
+  options?: WriteRoleTransferPackageOptions,
+): void {
   validateRoleTransfer(pkg);
+  const maxBytes = options?.maxBytes ?? MAX_ROLE_TRANSFER_PACKAGE_BYTES;
+  const serialized = canonicalJson(pkg);
+  // 以最终 UTF-8 字节（含 Base64、非 ASCII 与 JSON 结构）为准，在创建临时文件前拒绝超限。
+  if (Buffer.byteLength(serialized, "utf8") > maxBytes) throw new Error("ROLE_TRANSFER_PACKAGE_TOO_LARGE");
   const resolved = path.resolve(filePath);
   const parent = path.dirname(resolved);
   const temporary = path.join(parent, `.role-transfer-${randomUUID()}.tmp`);
   try {
-    fs.writeFileSync(temporary, canonicalJson(pkg), { flag: "wx", mode: 0o600, flush: true });
+    fs.writeFileSync(temporary, serialized, { encoding: "utf8", flag: "wx", mode: 0o600, flush: true });
     // 独占复制发布完整文件，不覆盖已有包。此前的“临时文件 + 硬链接”在 Windows
     // 杀软/索引器持有句柄时会短时间保持 nlink=2，读入端的硬链接防护因此误判；
     // 迁移包本身由摘要与结构校验兜底，复制发布不降低读取安全性。
@@ -148,11 +164,34 @@ export function readRoleTransferPackage(
   assertRegularPath(path.dirname(resolved), path.basename(resolved), false);
   let candidate: unknown;
   try {
-    candidate = JSON.parse(fs.readFileSync(resolved, "utf8")) as unknown;
-  } catch {
+    candidate = JSON.parse(readBoundedFile(resolved, maxBytes).toString("utf8")) as unknown;
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("ROLE_TRANSFER_")) throw error;
     throw new Error("ROLE_TRANSFER_PACKAGE_INVALID");
   }
   return validateRoleTransfer(candidate);
+}
+
+/** 异步有界读取：与同步版本一致，防止读前替换或增长绕过体积上限。 */
+async function readBoundedFileAsync(file: string, maxBytes: number): Promise<Buffer> {
+  const handle = await fs.promises.open(file, "r");
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.nlink !== 1) throw new Error("ROLE_TRANSFER_UNSAFE_PATH");
+    if (stat.size > maxBytes) throw new Error("ROLE_TRANSFER_PACKAGE_TOO_LARGE");
+    const buffer = Buffer.allocUnsafe(stat.size + 1);
+    let total = 0;
+    while (total < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, total, buffer.length - total, total);
+      if (bytesRead === 0) break;
+      total += bytesRead;
+    }
+    if (total > stat.size) throw new Error("ROLE_TRANSFER_PACKAGE_TOO_LARGE");
+    if (total < stat.size) throw new Error("ROLE_TRANSFER_PACKAGE_INVALID");
+    return buffer.subarray(0, total);
+  } finally {
+    await handle.close();
+  }
 }
 
 /** 非阻塞版本：运行态 HTTP 服务使用，避免同步读取大包阻塞事件循环。 */
@@ -173,7 +212,7 @@ export async function readRoleTransferPackageAsync(
   assertRegularPath(path.dirname(resolved), path.basename(resolved), false);
   let candidate: unknown;
   try {
-    candidate = JSON.parse(await fs.promises.readFile(resolved, "utf8")) as unknown;
+    candidate = JSON.parse((await readBoundedFileAsync(resolved, maxBytes)).toString("utf8")) as unknown;
   } catch (error) {
     if (error instanceof SyntaxError) throw new Error("ROLE_TRANSFER_PACKAGE_INVALID");
     throw error;
@@ -196,6 +235,17 @@ export function resolveRoleTransferBindings(
 
 export function stageRoleTransfer(paths: RolePaths, pkg: RoleTransferPackage, bindings: RoleTransferBindings): void {
   validateRoleTransfer(pkg);
+  stageValidatedRoleTransfer(paths, pkg, bindings);
+}
+
+/**
+ * 窄口径暂存：调用方已持有通过 `validateRoleTransfer` 的快照。
+ *
+ * 运行态发布使用读取阶段就完成校验的 `incoming`，这里只做暂存路径、
+ * 绑定摘要与落库后的最终数据库检查，避免重复校验包摘要、深度序列化
+ * 和临时数据库。
+ */
+export function stageValidatedRoleTransfer(paths: RolePaths, pkg: RoleTransferPackage, bindings: RoleTransferBindings): void {
   if (paths.roleId !== pkg.roleId || bindings.packageDigest !== pkg.digest) throw new Error("ROLE_TRANSFER_STAGE_MISMATCH");
   const expected = rolePaths(path.dirname(path.dirname(paths.roleDir)), pkg.roleId);
   const safe = { ...expected, roleDir: paths.roleDir };

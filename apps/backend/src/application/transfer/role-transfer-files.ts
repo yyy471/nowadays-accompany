@@ -21,6 +21,34 @@ function components(relative: string): string[] {
   return parts;
 }
 
+/**
+ * 有界读取普通文件。
+ *
+ * 先用 fd 的 stat 结果校验体积，再只为声明大小分配缓冲区并读取至多
+ * `stat.size + 1` 字节。这样即便文件在 stat 与读取之间被替换或增长，
+ * 也不会一次性分配超过上限的内存，并能立即识别增长绕过。
+ */
+export function readBoundedFile(file: string, maxBytes: number): Buffer {
+  const fd = fs.openSync(file, "r");
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1) throw new Error("ROLE_TRANSFER_UNSAFE_PATH");
+    if (stat.size > maxBytes) throw new Error("ROLE_TRANSFER_PACKAGE_TOO_LARGE");
+    const buffer = Buffer.allocUnsafe(stat.size + 1);
+    let total = 0;
+    while (total < buffer.length) {
+      const read = fs.readSync(fd, buffer, total, buffer.length - total, total);
+      if (read === 0) break;
+      total += read;
+    }
+    if (total > stat.size) throw new Error("ROLE_TRANSFER_PACKAGE_TOO_LARGE");
+    if (total < stat.size) throw new Error("ROLE_TRANSFER_PACKAGE_INVALID");
+    return buffer.subarray(0, total);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 export function assertRegularPath(root: string, relative: string, directory: boolean): string {
   const parts = components(relative);
   let visible = root;
@@ -61,8 +89,19 @@ function materialPaths(tables: TransferTables): Set<string> {
   return paths;
 }
 
-export function captureTransferFiles(roleDir: string, tables: TransferTables, credentials: RoleTransferCredentialFilter): TransferFile[] {
+/** Base64 与路径都是最终 JSON 的确定子集，可作为超限判定的保守下界。 */
+function projectedFileBytes(relative: string, byteSize: number): number {
+  return Math.ceil(byteSize / 3) * 4 + Buffer.byteLength(relative, "utf8");
+}
+
+export function captureTransferFiles(
+  roleDir: string,
+  tables: TransferTables,
+  credentials: RoleTransferCredentialFilter,
+  maxBytes = Number.POSITIVE_INFINITY,
+): TransferFile[] {
   const files: TransferFile[] = [];
+  let projectedBytes = 0;
   function capture(relative: string, directory: boolean): void {
     const location = `files:${files.length + 1}`;
     credentials.assertSafeData(Buffer.from(relative), location);
@@ -75,7 +114,13 @@ export function captureTransferFiles(roleDir: string, tables: TransferTables, cr
       }
       return;
     }
-    const data = fs.readFileSync(source);
+    // 先按 stat 预估 Base64 后的累计体积；明显超限时在读取和编码前终止。
+    const projected = projectedFileBytes(relative, fs.statSync(source).size);
+    if (projectedBytes + projected > maxBytes) throw new Error("ROLE_TRANSFER_PACKAGE_TOO_LARGE");
+    // 剩余预算按 Base64 膨胀比折算回原始字节，读取期间文件增长也不能越过总预算。
+    const remaining = Math.max(0, Math.floor((maxBytes - projectedBytes) * 3 / 4));
+    projectedBytes += projected;
+    const data = readBoundedFile(source, remaining);
     credentials.assertSafeData(data, location);
     files.push({ path: relative, kind: "file", sha256: sha256(data), byteSize: data.length, data: data.toString("base64") });
   }
