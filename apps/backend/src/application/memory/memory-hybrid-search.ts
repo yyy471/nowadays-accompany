@@ -5,10 +5,15 @@
  * 不持有任何模块级可变业务状态；未配置 Embedding 时检索完全走既有 FTS5。
  */
 
+import { createHash } from "node:crypto";
 import type { ModelUsage } from "../../domain/model.js";
 
 /** Embedding 响应体上限：16 MiB，防止恶意或异常服务返回超大正文拖垮进程。 */
 export const MAX_EMBEDDING_RESPONSE_BYTES = 16 * 1024 * 1024;
+
+/** 向量空间指纹版本；升级时改变前缀即可让全部旧缓存键自然失效。 */
+export const EMBEDDING_SPACE_KEY_VERSION = 1;
+export const EMBEDDING_SPACE_KEY_PREFIX = `emb-space-v${EMBEDDING_SPACE_KEY_VERSION}:`;
 
 /**
  * 记忆语义检索只接受 OpenAI 兼容协议：
@@ -47,8 +52,47 @@ export function validateEmbeddingBaseUrl(baseUrl: unknown): string {
   return trimmed.replace(/\/+$/, "");
 }
 
+/**
+ * 用「资源 + 有效地址 + 协议 + 服务商 + 模型」生成带版本的向量空间指纹。
+ *
+ * 缓存键只描述向量空间本身：同一资源只改别名但实际指向同一空间可继续命中，
+ * 而资源、地址、协议或服务商变化会得到全新键，旧向量不会被新查询复用。
+ * 资源 ID 区分共享同一地址／模型但凭据上下文不同的服务；指纹绝不含凭据或引用，
+ * 避免把密钥信息写入角色库。
+ */
+export function embeddingSpaceKey(input: {
+  resourceId?: string | null;
+  baseUrl: string;
+  protocol: string;
+  provider?: string | null;
+  modelName: string;
+}): string {
+  const endpoint = canonicalEmbeddingEndpoint(
+    validateEmbeddingBaseUrl(input.baseUrl),
+  );
+  const canonical = JSON.stringify({
+    version: EMBEDDING_SPACE_KEY_VERSION,
+    resource: input.resourceId ?? null,
+    endpoint,
+    protocol: input.protocol,
+    provider: input.provider ?? null,
+    model: input.modelName.trim(),
+  });
+  const digest = createHash("sha256").update(canonical).digest("hex");
+  return `${EMBEDDING_SPACE_KEY_PREFIX}${digest}`;
+}
+
+/** 规范化端点：去掉末尾斜杠并按 URL 规则统一小写主机名与默认端口。 */
+function canonicalEmbeddingEndpoint(baseUrl: string): string {
+  const url = new URL(baseUrl);
+  const pathname = url.pathname.replace(/\/+$/, "");
+  return `${url.protocol}//${url.host}${pathname}${url.search}`;
+}
+
 export interface EmbeddingPort {
   readonly modelKey: string;
+  /** 实际提供服务的全局资源 ID；离线注入端口可省略。 */
+  readonly resourceId?: string;
   embed(texts: readonly string[], signal?: AbortSignal): Promise<Float32Array[]>;
   /** 可选：同时返回上游用量，供 Token 账本记账；未实现时视为无用量。 */
   embedWithUsage?(
@@ -61,6 +105,8 @@ export interface HttpOpenAiEmbeddingPortOptions {
   modelKey: string;
   baseUrl: string;
   modelName: string;
+  /** 实际提供服务的全局资源 ID，供后台回填登记在途依赖。 */
+  resourceId?: string;
   apiKey?: string;
   timeoutMs?: number;
   /** 响应正文字节上限，默认 16 MiB。 */
@@ -86,6 +132,7 @@ interface EmbeddingResponse {
  */
 export class HttpOpenAiEmbeddingPort implements EmbeddingPort {
   readonly modelKey: string;
+  readonly resourceId?: string;
   private readonly baseUrl: string;
   private readonly modelName: string;
   private readonly apiKey: string | undefined;
@@ -94,6 +141,9 @@ export class HttpOpenAiEmbeddingPort implements EmbeddingPort {
 
   constructor(options: HttpOpenAiEmbeddingPortOptions) {
     this.modelKey = options.modelKey;
+    if (options.resourceId !== undefined) {
+      this.resourceId = options.resourceId;
+    }
     this.baseUrl = validateEmbeddingBaseUrl(options.baseUrl);
     this.modelName = options.modelName;
     this.apiKey = options.apiKey;

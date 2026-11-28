@@ -64,6 +64,12 @@ export interface MemoryQueryServiceOptions {
   embeddingQueryTimeoutMs?: number;
   /** 单批文档向量化超时，默认 3000。 */
   embeddingBatchTimeoutMs?: number;
+  /** 角色是否允许后台回填（活动状态）；未提供时默认允许。 */
+  isRoleActive?: (roleId: string) => boolean;
+  /** 角色是否正在删除收尾；删除期间不再开启或继续后台回填。 */
+  isRoleDeleting?: (roleId: string) => boolean;
+  /** 后台回填任务真正结算（含取消收尾）后通知，用于让停止确认收敛；关闭路径不回调。 */
+  onBackfillIdle?: (roleId: string) => void;
 }
 
 export interface SearchContext {
@@ -115,6 +121,13 @@ interface PendingEmbedding {
   text: string;
 }
 
+interface BackfillTask {
+  promise: Promise<void>;
+  controller: AbortController;
+  /** 该向量空间实际使用的全局模型资源，用于维护与删除的在途依赖。 */
+  resourceId: string | undefined;
+}
+
 const HYBRID_MIN_SIMILARITY = 0.25;
 
 export class MemoryQueryService {
@@ -128,8 +141,11 @@ export class MemoryQueryService {
   private readonly onlineBackfillBudgetMs: number;
   private readonly embeddingQueryTimeoutMs: number;
   private readonly embeddingBatchTimeoutMs: number;
+  private readonly isRoleActive: ((roleId: string) => boolean) | undefined;
+  private readonly isRoleDeleting: ((roleId: string) => boolean) | undefined;
+  private readonly onBackfillIdle: ((roleId: string) => void) | undefined;
   /** 每个角色最多一个后台回填任务，实例级状态，避免模块级单例串角色。 */
-  private readonly backfillTasks = new Map<string, Promise<void>>();
+  private readonly backfillTasks = new Map<string, BackfillTask>();
   private closed = false;
 
   constructor(
@@ -160,15 +176,61 @@ export class MemoryQueryService {
       3000,
       1,
     );
+    this.isRoleActive = options.isRoleActive;
+    this.isRoleDeleting = options.isRoleDeleting;
+    this.onBackfillIdle = options.onBackfillIdle;
   }
 
   /**
-   * 停止新的后台回填并等待已排队的任务收尾。
-   * 必须在关闭角色存储之前调用（见 app.close）。
+   * 立即中止全部后台回填并等待收尾。即使注入端口忽略 signal，
+   * 检索层的取消竞速也会让 close 及时返回，随后上层才关闭角色存储。
    */
   async close(): Promise<void> {
     this.closed = true;
-    await Promise.allSettled([...this.backfillTasks.values()]);
+    const tasks = [...this.backfillTasks.values()];
+    for (const task of tasks) {
+      task.controller.abort();
+    }
+    await Promise.allSettled(tasks.map((task) => task.promise));
+  }
+
+  /** 该角色是否有后台回填在途；用于角色运行态与维护等待。 */
+  isBackfilling(roleId: string): boolean {
+    return this.backfillTasks.has(roleId);
+  }
+
+  /** 目标资源上正在回填的角色；与记忆／对话在途合并成外部依赖。 */
+  inflightRoleIds(resourceId: string): string[] {
+    const roles: string[] = [];
+    for (const [roleId, task] of this.backfillTasks) {
+      if (task.resourceId === resourceId) {
+        roles.push(roleId);
+      }
+    }
+    return roles.sort();
+  }
+
+  /**
+   * 停止请求触发的礼貌取消：只中止在途批次，任务条目保留到真正结算。
+   * 这样停止确认、资源维护与删除在清理期间仍能看到 isBackfilling 与在途依赖；
+   * 结算后由后台任务自行移除条目并回调 onBackfillIdle 收敛停止。
+   */
+  cancelBackgroundBackfill(roleId: string): void {
+    this.backfillTasks.get(roleId)?.controller.abort();
+  }
+
+  /**
+   * 删除收尾：中止该角色回填并等待任务真正结算。
+   * 必须在角色存储驱逐之前调用，避免收尾期间继续写库；不提前移除条目，
+   * 让删除期间的在途登记保持可见，由后台任务结算时自行清理。
+   */
+  async disposeRole(roleId: string): Promise<void> {
+    const task = this.backfillTasks.get(roleId);
+    if (task === undefined) {
+      return;
+    }
+    task.controller.abort();
+    await task.promise.catch(() => undefined);
   }
 
   search(
@@ -289,6 +351,24 @@ export class MemoryQueryService {
       return this.search(roleId, request, context);
     }
 
+    // 缓存键已按向量空间隔离；若上游在原地改变了维度，同键旧向量
+    // 不能继续复用，必须重新向量化，否则相似度恒为 0 且永不回填。
+    const reeligible: PendingEmbedding[] = [];
+    for (const candidate of prepared.candidates) {
+      const documentId = candidate.document.document_id;
+      const vector = prepared.vectors.get(documentId);
+      if (vector === undefined || vector.length === queryVector.length) {
+        continue;
+      }
+      prepared.vectors.delete(documentId);
+      const document = candidate.document;
+      const text = `${document.title}\n${document.body}`;
+      reeligible.push({ documentId, contentHash: sha256(text), text });
+    }
+    if (reeligible.length > 0) {
+      prepared.pending = [...reeligible, ...prepared.pending];
+    }
+
     // 在线增量补算：最多 N 批且受总预算约束，每批成功立即落盘。
     const deadline = Date.now() + this.onlineBackfillBudgetMs;
     let nextOffset = 0;
@@ -313,7 +393,13 @@ export class MemoryQueryService {
           port,
           batch,
           Math.min(this.embeddingBatchTimeoutMs, remainingMs),
+          undefined,
+          queryVector.length,
         );
+        // 落盘前复核：关机或删除收尾开始后不得再写角色库。
+        if (this.closed || this.isRoleDeleting?.(roleId) === true) {
+          break;
+        }
         // 先落盘再继续下一批：后续超时/失败也不会丢失已经算完的向量。
         this.access.withStore(roleId, (storage) =>
           this.persistVectors(
@@ -339,7 +425,9 @@ export class MemoryQueryService {
       this.scheduleBackgroundBackfill(
         roleId,
         port.modelKey,
+        port.resourceId,
         prepared.pending.slice(nextOffset),
+        queryVector.length,
       );
     }
 
@@ -434,6 +522,8 @@ export class MemoryQueryService {
     port: EmbeddingPort,
     batch: readonly PendingEmbedding[],
     timeoutMs: number,
+    signal?: AbortSignal,
+    expectedDimensions?: number,
   ): Promise<Map<number, Float32Array>> {
     if (batch.length === 0) {
       return new Map();
@@ -442,6 +532,7 @@ export class MemoryQueryService {
       port,
       batch.map((item) => item.text),
       timeoutMs,
+      signal,
     );
     if (embedded.length !== batch.length) {
       throw new Error("EMBEDDING_DOCUMENT_LENGTH_MISMATCH");
@@ -456,6 +547,14 @@ export class MemoryQueryService {
       if (vector === null) {
         throw new Error("EMBEDDING_DOCUMENT_VECTOR_INVALID");
       }
+      // 缓存键未变但维度漂移时，新返回的向量同样不能当作可用缓存。
+      // 在线补算与后台回填都按本次查询向量的维度校验，失配整批放弃。
+      if (
+        expectedDimensions !== undefined &&
+        vector.length !== expectedDimensions
+      ) {
+        throw new Error("EMBEDDING_DOCUMENT_DIMENSION_MISMATCH");
+      }
       vectors.set(target.documentId, vector);
     }
     return vectors;
@@ -464,40 +563,72 @@ export class MemoryQueryService {
   /**
    * 为单个角色登记后台回填任务。同一角色只保留一个任务，
    * 通过 setTimeout(0) 让出当前请求，避免拖慢实时检索。
+   * 角色已停止、正在删除或服务关闭时不再开启新任务。
    */
   private scheduleBackgroundBackfill(
     roleId: string,
     modelKey: string,
+    resourceId: string | undefined,
     pending: readonly PendingEmbedding[],
+    expectedDimensions: number,
   ): void {
     if (pending.length === 0 || this.closed) {
+      return;
+    }
+    if (!this.canRunBackground(roleId)) {
       return;
     }
     if (this.backfillTasks.has(roleId)) {
       return;
     }
+    const controller = new AbortController();
     const task: Promise<void> = new Promise<void>((resolve) => {
       const timer = setTimeout(() => resolve(), 0);
       timer.unref?.();
     })
-      .then(() => this.runBackgroundBackfill(roleId, modelKey, pending))
+      .then(() =>
+        this.runBackgroundBackfill(
+          roleId,
+          modelKey,
+          pending,
+          expectedDimensions,
+          controller.signal,
+        ))
       .catch(() => {})
       .finally(() => {
-        this.backfillTasks.delete(roleId);
+        if (this.backfillTasks.get(roleId)?.controller === controller) {
+          this.backfillTasks.delete(roleId);
+          // 条目移除后再通知，isBackfilling／在途依赖此时已经收敛。
+          // 关闭期间不回调：对话与调度可能已在收尾，避免重复收敛或恢复调度。
+          if (!this.closed) {
+            try {
+              this.onBackfillIdle?.(roleId);
+            } catch {
+              // 停止通知失败不得产生未处理的拒绝。
+            }
+          }
+        }
       });
-    this.backfillTasks.set(roleId, task);
+    this.backfillTasks.set(roleId, {
+      promise: task,
+      controller,
+      resourceId,
+    });
   }
 
   /**
    * 后台逐批补齐未向量化文档：
-   * - 每批前重新解析端口，禁用、模型切换或维护中都会干净停止；
-   * - 每批立即落盘，角色删除/存储异常时静默退出；
-   * - close() 后不再开启新批次。
+   * - 每批前重新解析端口，禁用、模型切换、维护中或活动停止都干净结束；
+   * - 取消、删除收尾与关机后不再开始下一批或写库；
+   * - 每批等嵌入返回后再次核对当前向量键，旧空间回调不会写入新键；
+   * - 角色存储不可写时静默退出。
    */
   private async runBackgroundBackfill(
     roleId: string,
     modelKey: string,
     pending: readonly PendingEmbedding[],
+    expectedDimensions: number,
+    signal: AbortSignal,
   ): Promise<void> {
     try {
       for (
@@ -505,7 +636,7 @@ export class MemoryQueryService {
         offset < pending.length;
         offset += this.embeddingBatchSize
       ) {
-        if (this.closed) {
+        if (signal.aborted || !this.canRunBackground(roleId)) {
           return;
         }
         const port = this.resolveEmbeddingPort?.(roleId) ?? null;
@@ -519,11 +650,18 @@ export class MemoryQueryService {
             port,
             batch,
             this.embeddingBatchTimeoutMs,
+            signal,
+            expectedDimensions,
           );
         } catch {
           return;
         }
-        if (this.closed) {
+        // 等嵌入返回后重新核对：中止、删除、活动停止或配置切换都不得再写。
+        if (signal.aborted || !this.canRunBackground(roleId)) {
+          return;
+        }
+        const current = this.resolveEmbeddingPort?.(roleId) ?? null;
+        if (current === null || current.modelKey !== modelKey) {
           return;
         }
         try {
@@ -531,7 +669,7 @@ export class MemoryQueryService {
             this.persistVectors(
               storage.business.db,
               roleId,
-              port.modelKey,
+              modelKey,
               batch,
               batchVectors,
               this.now().toISOString(),
@@ -545,6 +683,20 @@ export class MemoryQueryService {
     } catch {
       // 后台任务不向调用方抛出，失败即结束本轮回填。
     }
+  }
+
+  /** 后台回填只在角色可活动且不在删除收尾时运行。 */
+  private canRunBackground(roleId: string): boolean {
+    if (this.closed) {
+      return false;
+    }
+    if (this.isRoleDeleting?.(roleId) === true) {
+      return false;
+    }
+    if (this.isRoleActive !== undefined && !this.isRoleActive(roleId)) {
+      return false;
+    }
+    return true;
   }
 
   getEvent(roleId: string, eventId: string): EventDetail {
@@ -1360,28 +1512,57 @@ function asEmbeddingVector(value: unknown): Float32Array | null {
 }
 
 /**
- * 以固定上限等待外部 Embedding，超时主动 abort；
- * 端口即使忽略 signal，Promise.race 也会保证检索层及时降级。
+ * 以固定上限等待外部 Embedding，超时或外部取消都主动 abort；
+ * 端口即使忽略 signal，取消竞速也会保证检索层及时结束。
  */
 async function embedWithTimeout(
   port: EmbeddingPort,
   texts: readonly string[],
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<Float32Array[]> {
   const controller = new AbortController();
+  const combined = signal === undefined
+    ? controller.signal
+    : AbortSignal.any([signal, controller.signal]);
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
-      controller.abort(new Error("EMBEDDING_TIMEOUT"));
-      reject(new Error("EMBEDDING_TIMEOUT"));
+      const error = new Error("EMBEDDING_TIMEOUT");
+      controller.abort(error);
+      reject(error);
     }, timeoutMs);
     timer.unref?.();
   });
+  const cancelled = signal === undefined
+    ? null
+    : new Promise<never>((_, reject) => {
+        onAbort = () => {
+          const error = new Error("EMBEDDING_ABORTED");
+          controller.abort(error);
+          reject(error);
+        };
+        if (signal.aborted) {
+          onAbort();
+        } else {
+          signal.addEventListener("abort", onAbort, { once: true });
+        }
+      });
+  // 竞速可能先由端口成功结算；避免随后的取消 rejection 成为未处理异常。
+  cancelled?.catch(() => undefined);
   try {
-    return await Promise.race([port.embed(texts, controller.signal), timeout]);
+    return await Promise.race([
+      port.embed(texts, combined),
+      timeout,
+      ...(cancelled === null ? [] : [cancelled]),
+    ]);
   } finally {
     if (timer !== undefined) {
       clearTimeout(timer);
+    }
+    if (onAbort !== undefined) {
+      signal?.removeEventListener("abort", onAbort);
     }
   }
 }

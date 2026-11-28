@@ -180,6 +180,9 @@ function assembleBackendApp(
   let externalInflightRoleIds: (resourceId: string) => string[] = () => [];
   // 角色删除收尾期间拒绝该角色的新过场图任务（283 §14 R03）。
   let isRoleDeleting: (roleId: string) => boolean = () => false;
+  // 全局 Embedding 选择在资源服务之后装配；资源影响与删除经闭包读取。
+  let selectedEmbeddingResourceId: () => string | null = () => null;
+  let clearEmbeddingSelection: (resourceId: string) => void = () => undefined;
   const resourceService = new ResourceService(appStore, roleAccess, {
     appRoot: config.appRoot,
     credentialResolver: credentials,
@@ -194,6 +197,9 @@ function assembleBackendApp(
     wakePendingWork: (roleId) => wakePendingWork(roleId),
     externalInflightRoleIds: (resourceId) =>
       externalInflightRoleIds(resourceId),
+    selectedEmbeddingResourceId: () => selectedEmbeddingResourceId(),
+    clearEmbeddingSelection: (resourceId) =>
+      clearEmbeddingSelection(resourceId),
   });
   // 维护期间拒绝先恢复活动再领取调用（283 R01）。
   const mediaMaintenance = new MediaMaintenance(appStore, roleAccess, activity, resourceService.pauseRoles);
@@ -240,6 +246,10 @@ function assembleBackendApp(
       resourceService.isUnderMaintenance(resourceId),
     onModelCallFinished,
   });
+  selectedEmbeddingResourceId = () => memoryEmbeddingSettings.activeResourceId();
+  clearEmbeddingSelection = (resourceId) => {
+    memoryEmbeddingSettings.clearResource(resourceId);
+  };
   const sceneImageSettings = new SceneImageSettingsService(
     roleAccess,
     imageServices,
@@ -284,6 +294,11 @@ function assembleBackendApp(
     ...(options.embeddingBatchTimeoutMs === undefined
       ? {}
       : { embeddingBatchTimeoutMs: options.embeddingBatchTimeoutMs }),
+    // 后台回填只在角色活动且不在删除收尾时运行（R3-11）。
+    isRoleActive: (roleId) => activity.gate.canStart(roleId),
+    isRoleDeleting: (roleId) => isRoleDeleting(roleId),
+    // 取消后的回填真正结算（含停止中清理）再通知对话层确认停止。
+    onBackfillIdle: (roleId) => externalIdle(roleId),
   });
   const modelService = new ModelService(appStore, config.appRoot, {
     now,
@@ -393,8 +408,10 @@ function assembleBackendApp(
       // 后台句段标注等待维护结束后重新解析配置（278 §2.1）。
       waitForMaintenanceEnd: (resourceId, signal) =>
         resourceService.waitForMaintenanceEnd(resourceId, signal),
-      // 后台记忆也在途时，对话节点暂停与收尾都不能先确认停止（283 §5 R01）。
-      hasExternalWork: (roleId) => memoryRuntime?.isBusy(roleId) ?? false,
+      // 后台记忆整理与 Embedding 回填都在途时，对话节点暂停与收尾都不能先确认停止（283 §5 R01 / R3-11）。
+      hasExternalWork: (roleId) =>
+        (memoryRuntime?.isBusy(roleId) ?? false) ||
+        memoryService.isBackfilling(roleId),
       // 后台句段标注的调用领取（283 §13 R01）。
       claimModelCall: (roleId, resourceId) =>
         resourceService.claimModelCall(roleId, resourceId),
@@ -440,18 +457,22 @@ function assembleBackendApp(
     [...new Set([
       ...(memoryRuntime?.inflightRoleIds(resourceId) ?? []),
       ...conversation.inflightRoleIds(resourceId),
+      ...memoryService.inflightRoleIds(resourceId),
     ])].sort();
   externalIdle = (roleId) => conversation.notifyExternalIdle(roleId);
   activity.attachRuntime({
-    // 后台记忆整理也属于角色在途工作：停止确认与维护等待都要计入（283 §4 R01）。
+    // 后台记忆整理与 Embedding 回填也属于角色在途工作：停止确认与维护等待都要计入（283 §4 R01）。
     isRunning: (roleId) =>
       conversation.isRunning(roleId) ||
-      (memoryRuntime?.isBusy(roleId) ?? false),
+      (memoryRuntime?.isBusy(roleId) ?? false) ||
+      memoryService.isBackfilling(roleId),
     // 恢复后把停止时暂停的原任务链与到期待办接回调度（RA-R02）。
     stopExchanges: (roleId) => {
       autonomy.coplay.discard(batch => batch.roleId === roleId);
       void pi.stop(roleId).catch(error => console.warn("PI_STOP_FAILED", roleId, error));
       conversation.exchanges.stop(roleId);
+      // 礼貌停止后台回填：这里只中止，停止确认等任务结算后的 onBackfillIdle。
+      memoryService.cancelBackgroundBackfill(roleId);
     },
     resumeWork: (roleId) => conversation.rescheduleAfterStop(roleId),
   });
@@ -528,6 +549,8 @@ function assembleBackendApp(
           await pi.stop(roleId);
           await sceneImages.cancelRole(roleId);
           conversation.cancelQueuedAnnotations(roleId);
+          // 后台 Embedding 回填先中止并等待结算，再进入存储驱逐（R3-11）。
+          await memoryService.disposeRole(roleId);
           // 领取表与记忆队列共用一个删除期限；超时保留角色和队列（283 §15/§16）。
           const deadline = Date.now() + roleDeletionWaitMs;
           const remaining = () => Math.max(0, deadline - Date.now());

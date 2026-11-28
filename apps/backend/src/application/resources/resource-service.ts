@@ -120,6 +120,8 @@ export interface ResourceImpactView {
   roles: ResourceImpactRole[];
   /** 删除前会阻塞的角色／任务数量（与引用报告同一规则）。 */
   blockingTasks: number;
+  /** 该资源是当前全局启用的记忆 Embedding 选择。 */
+  globalEmbedding?: true;
 }
 
 export interface ResourceServiceOptions {
@@ -136,6 +138,10 @@ export interface ResourceServiceOptions {
   wakePendingWork?: (roleId?: string) => void;
   /** 目标服务上仍在途的后台调用角色；维护等待要覆盖已停止角色（283 §6 R01）。 */
   externalInflightRoleIds?: (resourceId: string) => string[];
+  /** 当前全局启用的记忆 Embedding 资源；未启用时返回 null。 */
+  selectedEmbeddingResourceId?: () => string | null;
+  /** 资源删除的决策事务内清理指向它的 Embedding 配置。 */
+  clearEmbeddingSelection?: (resourceId: string) => void;
 }
 
 const capabilityKind: Record<BindingCapability, ResourceKind> = {
@@ -161,6 +167,8 @@ export class ResourceService {
   }>();
   private readonly wakePendingWork: (roleId?: string) => void;
   private readonly externalInflightRoleIds: (resourceId: string) => string[];
+  private readonly selectedEmbeddingResourceId: () => string | null;
+  private readonly clearEmbeddingSelection: (resourceId: string) => void;
   /** 已领取的模型调用（标注、规划），按实际服务登记（283 §13 R01）。 */
   private readonly inflightClaims = new Map<
     number,
@@ -181,6 +189,9 @@ export class ResourceService {
     this.pauseRoles = options.pauseRoles ?? null;
     this.wakePendingWork = options.wakePendingWork ?? (() => undefined);
     this.externalInflightRoleIds = options.externalInflightRoleIds ?? (() => []);
+    this.selectedEmbeddingResourceId =
+      options.selectedEmbeddingResourceId ?? (() => null);
+    this.clearEmbeddingSelection = options.clearEmbeddingSelection ?? (() => undefined);
   }
 
   ensureManagedPi(adminRoleId: string): void {
@@ -707,6 +718,11 @@ export class ResourceService {
    */
   impact(resourceId: string): ResourceImpactView {
     const resource = this.appStore.getResource(resourceId);
+    // 全局 Embedding 选择对所有角色记忆检索生效：即使没有聊天／记忆
+    // 绑定，也要在影响与维护计划中标记实际依赖，才能协调暂停。
+    const globalEmbedding =
+      resource.kind === "model" &&
+      this.selectedEmbeddingResourceId() === resourceId;
     const roles: ResourceImpactRole[] = [];
     let blockingTasks = 0;
     for (const index of this.appStore.listRoleIndexes()) {
@@ -723,7 +739,9 @@ export class ResourceService {
       );
       const usages = new Set<"chat" | "memory" | "task">();
       if (targets.chatResourceId === resourceId) usages.add("chat");
-      if (targets.memoryResourceId === resourceId) usages.add("memory");
+      if (targets.memoryResourceId === resourceId || globalEmbedding) {
+        usages.add("memory");
+      }
       if (taskIds.length > 0) usages.add("task");
       if (usages.size === 0) continue;
       if (usages.has("task")) blockingTasks += taskIds.length;
@@ -742,6 +760,7 @@ export class ResourceService {
       kind: resource.kind,
       roles,
       blockingTasks,
+      ...(globalEmbedding ? { globalEmbedding: true as const } : {}),
     };
   }
 
@@ -934,6 +953,8 @@ export class ResourceService {
           }
           // 决策库：资源删除与待清理记录在同一事务里提交。
           this.appStore.recordResourceDeletion(resourceId, at);
+          // 全局 Embedding 选择挂在同一决策事务内；回滚时原配置保留。
+          this.clearEmbeddingSelection(resourceId);
           this.credentials.clearSecret(resourceId);
           this.appStore.deleteResource(resourceId);
         },

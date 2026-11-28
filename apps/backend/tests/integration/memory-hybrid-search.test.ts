@@ -5,7 +5,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import Database from "better-sqlite3";
 import {
   createBackendApp,
@@ -15,7 +15,9 @@ import {
 } from "../../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths } from "../../src/bootstrap/config.js";
 import {
+  EMBEDDING_SPACE_KEY_PREFIX,
   encodeVectorBlob,
+  embeddingSpaceKey,
   HttpOpenAiEmbeddingPort,
   isEmbeddingCompatibleProtocol,
   MAX_EMBEDDING_RESPONSE_BYTES,
@@ -1043,6 +1045,8 @@ test("R2-02 在线补算有界，后台回填补齐剩余向量并在关闭时�
     embeddingBatchTimeoutMs: 1000,
   });
   t.after(() => closeFixture(fixture));
+  // R3-11：后台回填只在角色活动时运行。
+  fixture.app.services.activity.resume(fixture.roleId);
 
   seedEvents(
     fixture,
@@ -1082,4 +1086,594 @@ test("R2-02 在线补算有界，后台回填补齐剩余向量并在关闭时�
 
   // close 应等待后台任务收尾且不抛错；重复关闭保持幂等。
   await fixture.app.close();
+});
+
+// ---------------------------------------------------------------------------
+// R3-04：版本化向量空间指纹；R3-11：后台回填生命周期与资源影响
+// ---------------------------------------------------------------------------
+
+interface StoredEmbeddingRow {
+  document_id: number;
+  model_key: string;
+  dimensions: number;
+  content_hash: string;
+  vector_blob: Buffer;
+}
+
+function embeddingRows(fixture: Fixture): StoredEmbeddingRow[] {
+  return withStorage(
+    fixture,
+    (storage) =>
+      storage.business.db
+        .prepare(
+          `SELECT document_id, model_key, dimensions, content_hash, vector_blob
+           FROM memory_search_embeddings WHERE role_id = ?`,
+        )
+        .all(fixture.roleId) as StoredEmbeddingRow[],
+  );
+}
+
+function configureEmbeddingDirect(
+  fixture: Fixture,
+  resourceId: string,
+  modelName = "text-embedding-test",
+): void {
+  fixture.app.services.memoryEmbeddingSettings.update({
+    enabled: true,
+    resourceId,
+    modelName,
+  });
+}
+
+test("R3-04 同资源同模型切换同维端点后使用新向量空间缓存", async (t) => {
+  const serverA = await startMockEmbeddingServer(({ body, response }) => {
+    const input = inputTextsOf(body);
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(
+      JSON.stringify({
+        data: input.map((_, index) => ({ index, embedding: [1, 0, 0] })),
+      }),
+    );
+  });
+  t.after(() => serverA.close());
+  const serverB = await startMockEmbeddingServer(({ body, response }) => {
+    const input = inputTextsOf(body);
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(
+      JSON.stringify({
+        data: input.map((_, index) => ({ index, embedding: [0, 1, 0] })),
+      }),
+    );
+  });
+  t.after(() => serverB.close());
+
+  const fixture = createFixture();
+  t.after(() => closeFixture(fixture));
+  const resources = fixture.app.services.resources;
+  const resource = resources.create({
+    kind: "model",
+    name: "同维 Embedding 服务",
+    config: { protocol: "openai-chat", baseUrl: `${serverA.baseUrl}/v1` },
+  });
+  configureEmbeddingDirect(fixture, resource.resourceId);
+  const event = seedEvent(fixture, {
+    content: "清晨去海边看日出，海风很凉。",
+    title: "海边日出",
+    summary: "我们清晨去海边看日出。",
+    occurredAt: "2026-11-01T01:10:00.000Z",
+  });
+
+  const memory = fixture.app.services.memory;
+  const request = { query: "海边日出", limit: 5 };
+  await memory.searchHybrid(fixture.roleId, request);
+  const firstRows = embeddingRows(fixture);
+  assert.equal(firstRows.length, 1);
+  const keyA = firstRows[0]!.model_key;
+  assert.ok(keyA.startsWith(EMBEDDING_SPACE_KEY_PREFIX));
+  assert.notEqual(
+    keyA,
+    `${resource.resourceId}:text-embedding-test`,
+    "旧版「资源:模型」缓存键必须失效",
+  );
+  assert.equal(firstRows[0]!.dimensions, 3);
+  assert.equal(serverA.requests.length, 2);
+
+  // 同一资源、同一模型别名，仅切换端点：新空间必须重新向量化。
+  resources.update(resource.resourceId, {
+    config: { protocol: "openai-chat", baseUrl: `${serverB.baseUrl}/v1` },
+  });
+  await memory.searchHybrid(fixture.roleId, request);
+  const secondRows = embeddingRows(fixture);
+  const keyB = secondRows[0]!.model_key;
+  assert.notEqual(keyB, keyA);
+  assert.equal(secondRows[0]!.dimensions, 3);
+  assert.equal(serverB.requests.length, 2, "新端点必须重新计算查询与文档向量");
+
+  // 新空间命中自己的缓存，不再重复请求文档向量。
+  await memory.searchHybrid(fixture.roleId, request);
+  assert.equal(serverB.requests.length, 3);
+
+  // 切回原端点同样得到全新的空间键，不复用 B 空间缓存。
+  resources.update(resource.resourceId, {
+    config: { protocol: "openai-chat", baseUrl: `${serverA.baseUrl}/v1` },
+  });
+  const back = await memory.searchHybrid(fixture.roleId, request);
+  assert.ok(back.items.some((item) => item.id === event.eventId));
+  assert.equal(serverA.requests.length, 4);
+  assert.equal(embeddingRows(fixture)[0]!.model_key, keyA);
+});
+
+test("R3-04 共享同一地址与模型的另一资源不复用旧向量空间", async (t) => {
+  const server = await startMockEmbeddingServer(({ body, response }) => {
+    const input = inputTextsOf(body);
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(
+      JSON.stringify({
+        data: input.map((_, index) => ({ index, embedding: [1, 0, 0] })),
+      }),
+    );
+  });
+  t.after(() => server.close());
+
+  const fixture = createFixture();
+  t.after(() => closeFixture(fixture));
+  const resources = fixture.app.services.resources;
+  const memory = fixture.app.services.memory;
+  const config = { protocol: "openai-chat" as const, baseUrl: `${server.baseUrl}/v1` };
+  const first = resources.create({
+    kind: "model",
+    name: "凭据上下文 A",
+    config,
+  });
+  const second = resources.create({
+    kind: "model",
+    name: "凭据上下文 B",
+    config,
+  });
+  configureEmbeddingDirect(fixture, first.resourceId);
+  seedEvent(fixture, {
+    content: "清晨去海边看日出。",
+    title: "海边日出",
+    summary: "我们清晨去海边看日出。",
+    occurredAt: "2026-11-01T01:10:00.000Z",
+  });
+  const request = { query: "海边日出", limit: 5 };
+
+  await memory.searchHybrid(fixture.roleId, request);
+  const keyA = embeddingRows(fixture)[0]!.model_key;
+  assert.equal(server.requests.length, 2);
+
+  configureEmbeddingDirect(fixture, second.resourceId);
+  await memory.searchHybrid(fixture.roleId, request);
+  const keyB = embeddingRows(fixture)[0]!.model_key;
+  assert.notEqual(keyB, keyA, "不同资源必须得到独立缓存键");
+  assert.equal(
+    server.requests.length,
+    4,
+    "新资源必须重新计算查询与文档向量，不能复用旧资源缓存",
+  );
+
+  await memory.searchHybrid(fixture.roleId, request);
+  assert.equal(server.requests.length, 5, "新资源自己的缓存可以复用");
+});
+
+test("R3-04 同缓存键返回维度漂移的文档向量时整批放弃", async (t) => {
+  let calls = 0;
+  const port: EmbeddingPort = {
+    modelKey: "offline:dimension-drift",
+    async embed(texts) {
+      calls += 1;
+      const values = calls === 1 ? [1, 0, 0] : [1, 0];
+      return texts.map(() => normalizeVector(values));
+    },
+  };
+  const fixture = createFixture({
+    embeddingPort: port,
+    embeddingBatchSize: 10,
+    embeddingBatchTimeoutMs: 500,
+  });
+  t.after(() => closeFixture(fixture));
+  const event = seedEvent(fixture, {
+    content: "清晨去海边看日出。",
+    title: "海边日出",
+    summary: "我们清晨去海边看日出。",
+    occurredAt: "2026-11-01T01:10:00.000Z",
+  });
+  const request = { query: "海边日出", limit: 5 };
+  const fts = fixture.app.services.memory.search(fixture.roleId, request);
+  const hybrid = await fixture.app.services.memory.searchHybrid(
+    fixture.roleId,
+    request,
+  );
+  assert.deepEqual(
+    hybrid.items.map((item) => item.id),
+    fts.items.map((item) => item.id),
+  );
+  assert.deepEqual(hybrid.items.map((item) => item.id), [event.eventId]);
+  assert.equal(calls, 2, "查询向量与首批文档向量各调用一次");
+  assert.equal(
+    embeddingRowCount(fixture),
+    0,
+    "与查询维度不符的返回向量不得写入缓存或参与融合",
+  );
+});
+
+test("R3-04 异维端点切换后旧向量不复用，维度失配重新回填", async (t) => {
+  const server3d = await startMockEmbeddingServer(({ body, response }) => {
+    const input = inputTextsOf(body);
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(
+      JSON.stringify({
+        data: input.map((_, index) => ({ index, embedding: [1, 0, 0] })),
+      }),
+    );
+  });
+  t.after(() => server3d.close());
+  const server2d = await startMockEmbeddingServer(({ body, response }) => {
+    const input = inputTextsOf(body);
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(
+      JSON.stringify({
+        data: input.map((_, index) => ({ index, embedding: [1, 0] })),
+      }),
+    );
+  });
+  t.after(() => server2d.close());
+
+  const fixture = createFixture();
+  t.after(() => closeFixture(fixture));
+  const resources = fixture.app.services.resources;
+  const memory = fixture.app.services.memory;
+  const resource = resources.create({
+    kind: "model",
+    name: "异维 Embedding 服务",
+    config: { protocol: "openai-chat", baseUrl: `${server3d.baseUrl}/v1` },
+  });
+  configureEmbeddingDirect(fixture, resource.resourceId);
+  seedEvent(fixture, {
+    content: "清晨去海边看日出。",
+    title: "海边日出",
+    summary: "我们清晨去海边看日出。",
+    occurredAt: "2026-11-01T01:10:00.000Z",
+  });
+  const request = { query: "海边日出", limit: 5 };
+
+  await memory.searchHybrid(fixture.roleId, request);
+  assert.equal(embeddingRows(fixture)[0]!.dimensions, 3);
+
+  resources.update(resource.resourceId, {
+    config: { protocol: "openai-chat", baseUrl: `${server2d.baseUrl}/v1` },
+  });
+  await memory.searchHybrid(fixture.roleId, request);
+  const switched = embeddingRows(fixture)[0]!;
+  assert.equal(switched.dimensions, 2, "新空间按新端点维度落库");
+  assert.equal(server2d.requests.length, 2);
+
+  await memory.searchHybrid(fixture.roleId, request);
+  assert.equal(server2d.requests.length, 3, "同空间缓存应可复用");
+
+  // 即使缓存键未变，维度与当前查询不符的旧向量也必须重新回填。
+  withStorage(fixture, (storage) => {
+    storage.business.db
+      .prepare(
+        `UPDATE memory_search_embeddings
+         SET dimensions = ?, vector_blob = ? WHERE document_id = ?`,
+      )
+      .run(
+        3,
+        encodeVectorBlob(normalizeVector([1, 0, 0])),
+        switched.document_id,
+      );
+  });
+  await memory.searchHybrid(fixture.roleId, request);
+  assert.equal(server2d.requests.length, 5, "维度失配必须重新向量化文档");
+  assert.equal(embeddingRows(fixture)[0]!.dimensions, 2);
+});
+
+test("R3-11 停止角色不调度后台回填，恢复活动后继续补齐", async (t) => {
+  const port = new CountingEmbeddingPort();
+  const fixture = createFixture({
+    embeddingPort: port,
+    embeddingBatchSize: 10,
+    onlineBackfillMaxBatches: 0,
+    embeddingBatchTimeoutMs: 1000,
+  });
+  t.after(() => closeFixture(fixture));
+  seedEvents(
+    fixture,
+    Array.from({ length: 25 }, (_, index) => ({
+      content: `停启记忆第 ${index + 1} 条。`,
+      title: `停启记忆 ${index + 1}`,
+      summary: `停启记忆第 ${index + 1} 条摘要。`,
+      occurredAt: new Date(Date.UTC(2026, 8, 1, 0, 0, index)).toISOString(),
+    })),
+  );
+  const memory = fixture.app.services.memory;
+  const request = { query: "停启记忆", limit: 5 };
+
+  await memory.searchHybrid(fixture.roleId, request);
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert.equal(embeddingRowCount(fixture), 0, "已停止角色不得启动后台回填");
+  assert.equal(memory.isBackfilling(fixture.roleId), false);
+
+  fixture.app.services.activity.resume(fixture.roleId);
+  await memory.searchHybrid(fixture.roleId, request);
+  await waitForCondition(() => embeddingRowCount(fixture) === 25, 10_000);
+  assert.equal(embeddingRowCount(fixture), 25);
+  await waitForCondition(() => !memory.isBackfilling(fixture.roleId), 5_000);
+});
+
+interface HangingEmbeddingServer extends MockEmbeddingServer {
+  pending: http.ServerResponse[];
+}
+
+async function startHangingDocumentServer(
+  query: string,
+): Promise<HangingEmbeddingServer> {
+  const pending: http.ServerResponse[] = [];
+  const base = await startMockEmbeddingServer(({ body, response }) => {
+    const input = inputTextsOf(body);
+    if (input.length === 1 && input[0] === query) {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({ data: [{ index: 0, embedding: [1, 0, 0] }] }),
+      );
+      return;
+    }
+    // 文档向量请求挂起：由测试决定取消或收尾。
+    pending.push(response);
+  });
+  return { ...base, pending };
+}
+
+function flushHangingResponses(server: HangingEmbeddingServer): void {
+  for (const response of server.pending) {
+    try {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({ data: [{ index: 0, embedding: [1, 0, 0] }] }),
+      );
+    } catch {
+      // 传输已由取消关闭。
+    }
+  }
+}
+
+async function startActiveHangingFixture(
+  t: TestContext,
+  query: string,
+): Promise<{
+  fixture: Fixture;
+  server: HangingEmbeddingServer;
+  resourceId: string;
+  query: { query: string; limit: number };
+}> {
+  const server = await startHangingDocumentServer(query);
+  t.after(async () => {
+    flushHangingResponses(server);
+    await server.close();
+  });
+  const fixture = createFixture({
+    onlineBackfillMaxBatches: 0,
+    embeddingBatchSize: 2,
+    embeddingBatchTimeoutMs: 30_000,
+  });
+  t.after(() => closeFixture(fixture));
+  fixture.app.services.activity.resume(fixture.roleId);
+  const resource = fixture.app.services.resources.create({
+    kind: "model",
+    name: "挂起 Embedding 服务",
+    config: { protocol: "openai-chat", baseUrl: `${server.baseUrl}/v1` },
+  });
+  configureEmbeddingDirect(fixture, resource.resourceId);
+  seedEvents(
+    fixture,
+    Array.from({ length: 6 }, (_, index) => ({
+      content: `挂起记忆第 ${index + 1} 条。`,
+      title: `挂起记忆 ${index + 1}`,
+      summary: `挂起记忆第 ${index + 1} 条摘要。`,
+      occurredAt: new Date(Date.UTC(2026, 8, 1, 0, 0, index)).toISOString(),
+    })),
+  );
+  const request = { query, limit: 5 };
+  await fixture.app.services.memory.searchHybrid(fixture.roleId, request);
+  await waitForCondition(() => server.pending.length > 0, 5_000);
+  return { fixture, server, resourceId: resource.resourceId, query: request };
+}
+
+test("R3-11 停止请求中止后台回填，结算后异步确认停止且不再写库", async (t) => {
+  const query = "目标记忆";
+  const { fixture, resourceId } = await startActiveHangingFixture(t, query);
+  const memory = fixture.app.services.memory;
+  assert.equal(memory.isBackfilling(fixture.roleId), true);
+  assert.ok(
+    fixture.app.services.resources
+      .inflightRoleIds(resourceId)
+      .includes(fixture.roleId),
+    "后台回填必须计入资源在途依赖",
+  );
+
+  const stopped = fixture.app.services.activity.requestStop(fixture.roleId);
+  assert.equal(
+    stopped.confirmed,
+    false,
+    "在途回填结算前不得提前确认停止",
+  );
+  assert.equal(
+    memory.isBackfilling(fixture.roleId),
+    true,
+    "中止后任务条目保留到真正结算，停止确认与资源维护仍能看到在途依赖",
+  );
+  await waitForCondition(
+    () => fixture.app.services.activity.view(fixture.roleId).state === "stopped",
+    5_000,
+  );
+  assert.equal(memory.isBackfilling(fixture.roleId), false);
+  await waitForCondition(
+    () =>
+      !fixture.app.services.resources
+        .inflightRoleIds(resourceId)
+        .includes(fixture.roleId),
+    5_000,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(embeddingRowCount(fixture), 0, "取消后不得再写角色库");
+});
+
+test("R3-11 close 立即中止忽略 signal 的慢回填", async (t) => {
+  const query = "目标记忆";
+  const { fixture } = await startActiveHangingFixture(t, query);
+  const memory = fixture.app.services.memory;
+  assert.equal(memory.isBackfilling(fixture.roleId), true);
+
+  const startedAt = Date.now();
+  await fixture.app.close();
+  const elapsed = Date.now() - startedAt;
+  assert.ok(elapsed < 2000, `close 应立刻返回，实际 ${elapsed}ms`);
+  assert.equal(embeddingRowCount(fixture), 0);
+});
+
+test("R3-11 删除角色等待回填收尾，之后不再写库", async (t) => {
+  const query = "目标记忆";
+  const { fixture, resourceId } = await startActiveHangingFixture(t, query);
+  const memory = fixture.app.services.memory;
+  assert.equal(memory.isBackfilling(fixture.roleId), true);
+
+  const startedAt = Date.now();
+  const result = await fixture.app.services.roleDeletion.remove(
+    fixture.roleId,
+    true,
+  );
+  assert.equal(result.roleId, fixture.roleId);
+  assert.ok(Date.now() - startedAt < 3000, "删除应等待回填取消而不是批次超时");
+  assert.equal(memory.isBackfilling(fixture.roleId), false);
+  assert.equal(
+    fixture.app.services.resources
+      .inflightRoleIds(resourceId)
+      .filter((roleId) => roleId === fixture.roleId).length,
+    0,
+  );
+  assert.equal(embeddingRowCount(fixture), 0);
+  assert.equal(
+    fixture.app.services.roles.listRoles()
+      .some((role) => role.roleId === fixture.roleId),
+    false,
+  );
+});
+
+test("R3-11 全局 Embedding 选择进入影响与维护计划，删除时清理配置", async (t) => {
+  const server = await startMockEmbeddingServer(({ body, response }) => {
+    const input = inputTextsOf(body);
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(
+      JSON.stringify({
+        data: input.map((_, index) => ({ index, embedding: [1, 0, 0] })),
+      }),
+    );
+  });
+  t.after(() => server.close());
+  const fixture = createFixture();
+  t.after(() => closeFixture(fixture));
+  fixture.app.services.activity.resume(fixture.roleId);
+  const resources = fixture.app.services.resources;
+  const settings = fixture.app.services.memoryEmbeddingSettings;
+  const selected = resources.create({
+    kind: "model",
+    name: "全局 Embedding 服务",
+    config: { protocol: "openai-chat", baseUrl: `${server.baseUrl}/v1` },
+  });
+  const unrelated = resources.create({
+    kind: "model",
+    name: "无关模型服务",
+    config: { protocol: "openai-chat", baseUrl: "http://127.0.0.1:1/v1" },
+  });
+  configureEmbeddingDirect(fixture, selected.resourceId);
+
+  const impact = resources.impact(selected.resourceId);
+  assert.equal(impact.globalEmbedding, true);
+  const dependency = impact.roles.find(
+    (role) => role.roleId === fixture.roleId,
+  );
+  assert.ok(dependency !== undefined);
+  assert.ok(dependency.usages.includes("memory"));
+  assert.equal(
+    resources.references(selected.resourceId).canDelete,
+    true,
+    "全局选择不改变既有 canDelete 规则",
+  );
+
+  const plan = resources.maintenancePlan(selected.resourceId, {
+    config: { protocol: "openai-chat", baseUrl: `${server.baseUrl}/v2` },
+  });
+  assert.equal(plan.connectionChanged, true);
+  assert.ok(plan.pauseRoleIds.includes(fixture.roleId));
+
+  // 停用的选择无法再接收新调用：不进入影响范围，也不因维护暂停角色。
+  resources.update(selected.resourceId, { enabled: false });
+  assert.equal(resources.impact(selected.resourceId).globalEmbedding, undefined);
+  const disabledPlan = resources.maintenancePlan(selected.resourceId, {
+    config: { protocol: "openai-chat", baseUrl: `${server.baseUrl}/v2` },
+  });
+  assert.deepEqual(
+    disabledPlan.pauseRoleIds,
+    [],
+    "不能接收新调用的 Embedding 资源不应暂停角色",
+  );
+  assert.equal(settings.get().ready, false);
+
+  // 删除非选中资源不改变现有 Embedding 配置。
+  resources.remove(unrelated.resourceId);
+  assert.deepEqual(settings.get().resourceId, selected.resourceId);
+  assert.equal(settings.get().enabled, true);
+
+  // 删除选中资源即使已停用，也要在同一决策事务内清空配置。
+  resources.remove(selected.resourceId);
+  const cleared = settings.get();
+  assert.equal(cleared.enabled, false);
+  assert.equal(cleared.resourceId, null);
+  assert.equal(cleared.modelName, null);
+  assert.equal(cleared.ready, false);
+});
+
+test("R3-04 向量空间指纹稳定且随资源、端点、协议、服务商与模型区分", () => {
+  const base = {
+    baseUrl: "http://Example.Test:8080/v1/",
+    protocol: "openai-chat",
+    provider: "openai",
+    modelName: "text-embedding-test",
+  };
+  assert.equal(embeddingSpaceKey(base), embeddingSpaceKey({ ...base }));
+  assert.equal(
+    embeddingSpaceKey(base),
+    embeddingSpaceKey({ ...base, baseUrl: "http://example.test:8080/v1" }),
+  );
+  assert.notEqual(
+    embeddingSpaceKey(base),
+    embeddingSpaceKey({ ...base, resourceId: "resource-a" }),
+  );
+  assert.notEqual(
+    embeddingSpaceKey({ ...base, resourceId: "resource-a" }),
+    embeddingSpaceKey({ ...base, resourceId: "resource-b" }),
+    "共享同一地址与模型的另一资源必须使用独立向量空间",
+  );
+  assert.equal(
+    embeddingSpaceKey({ ...base, resourceId: "resource-a" }),
+    embeddingSpaceKey({ ...base, resourceId: "resource-a" }),
+  );
+  assert.notEqual(
+    embeddingSpaceKey(base),
+    embeddingSpaceKey({ ...base, baseUrl: "http://example.test:8080/v2" }),
+  );
+  assert.notEqual(
+    embeddingSpaceKey(base),
+    embeddingSpaceKey({ ...base, protocol: "openai-responses" }),
+  );
+  assert.notEqual(
+    embeddingSpaceKey(base),
+    embeddingSpaceKey({ ...base, provider: "other" }),
+  );
+  assert.notEqual(
+    embeddingSpaceKey(base),
+    embeddingSpaceKey({ ...base, modelName: "alias-b" }),
+  );
 });

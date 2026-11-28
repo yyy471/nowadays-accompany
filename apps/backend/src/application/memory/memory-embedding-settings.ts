@@ -7,6 +7,7 @@ import type { AppStore, ResourceRecord } from "../../storage/core/app-store.js";
 import type { CredentialResolver } from "../resources/credential-resolver.js";
 import {
   HttpOpenAiEmbeddingPort,
+  embeddingSpaceKey,
   isEmbeddingCompatibleProtocol,
   validateEmbeddingBaseUrl,
   type EmbeddingPort,
@@ -197,8 +198,16 @@ export class MemoryEmbeddingSettingsService {
         ? resource.config.credentialRef
         : undefined;
       const apiKey = this.credentials.resolve(resourceId, credentialRef);
+      const modelKey = embeddingSpaceKey({
+        resourceId,
+        baseUrl,
+        protocol,
+        provider: providerOf(resource),
+        modelName,
+      });
       const inner = new HttpOpenAiEmbeddingPort({
-        modelKey: `${resourceId}:${modelName}`,
+        modelKey,
+        resourceId,
         baseUrl,
         modelName,
         ...(apiKey === undefined ? {} : { apiKey }),
@@ -246,7 +255,14 @@ export class MemoryEmbeddingSettingsService {
       : undefined;
     const apiKey = this.credentials.resolve(resource.resourceId, credentialRef);
     const port = new HttpOpenAiEmbeddingPort({
-      modelKey: `${resource.resourceId}:${input.modelName}`,
+      modelKey: embeddingSpaceKey({
+        resourceId: resource.resourceId,
+        baseUrl,
+        protocol,
+        provider: providerOf(resource),
+        modelName: input.modelName,
+      }),
+      resourceId: resource.resourceId,
       baseUrl,
       modelName: input.modelName,
       ...(apiKey === undefined ? {} : { apiKey }),
@@ -381,9 +397,50 @@ export class MemoryEmbeddingSettingsService {
     };
     return {
       modelKey: inner.modelKey,
+      ...(inner.resourceId === undefined ? {} : { resourceId: inner.resourceId }),
       embed: async (texts, signal) => (await run(texts, signal)).vectors,
       embedWithUsage: run,
     };
+  }
+
+  /**
+   * 运行时实际启用的全局 Embedding 资源；未配置、停用或配置无法发起新调用时为 null。
+   * 资源影响与维护计划用它判断「所有角色记忆检索都依赖该模型服务」；
+   * 已停用／协议不兼容／地址非法的选择不计入依赖，不会因此暂停角色。
+   */
+  activeResourceId(): string | null {
+    const settings = this.read();
+    if (
+      !settings.enabled ||
+      settings.resourceId === null ||
+      settings.modelName === null
+    ) {
+      return null;
+    }
+    const resource = this.tryGetResource(settings.resourceId);
+    if (
+      resource === null ||
+      resource.kind !== "model" ||
+      !resource.enabled ||
+      !isEmbeddingCompatibleProtocol(resource.config.protocol) ||
+      !isValidEmbeddingBaseUrl(resource.config.baseUrl)
+    ) {
+      return null;
+    }
+    return resource.resourceId;
+  }
+
+  /**
+   * 资源删除时清理指向它的全局配置（无论当前是否启用），避免悬挂。
+   * 只清理同一资源的选择；指向其他资源的设置原样保留。
+   */
+  clearResource(resourceId: string): boolean {
+    const settings = this.read();
+    if (settings.resourceId !== resourceId) {
+      return false;
+    }
+    this.appStore.setMeta(SETTINGS_META_KEY, JSON.stringify(DEFAULT_SETTINGS));
+    return true;
   }
 
   private read(): MemoryEmbeddingSettings {
@@ -425,6 +482,12 @@ function isValidEmbeddingBaseUrl(baseUrl: unknown): boolean {
   } catch {
     return false;
   }
+}
+
+function providerOf(resource: ResourceRecord): string | null {
+  return typeof resource.config.provider === "string"
+    ? resource.config.provider
+    : null;
 }
 
 function invalidSettings(message: string): AppError {
