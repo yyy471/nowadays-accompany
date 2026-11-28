@@ -27,7 +27,7 @@
 | [R2-07](#r2-07-roleaccess-连接池缺少坏句柄校验与异常驱逐自愈) | 409 新引入（R4） | 稳定性 / 容错 | **P1** | `borrow()` 不验 `db.open`，遇到 `SQLITE_IOERR`/`SQLITE_CORRUPT` 不驱逐脏连接，坏句柄滞留 60s | 否 | `[x]` 已修复 |
 | [R2-09](#r2-09-google-服务账号凭据-token-地址允许任意明文-http-触发-ssrf) | 底层核心 | 安全边界 | **P1** | `parseServiceAccountCredential` 放行明文 `http:` 且不限域名，篡改 JSON 可将签名 JWT 发往恶意或内网地址 | 否 | `[x]` 已修复 |
 | [R2-10](#r2-10-未配置生图服务时手动点击过场图仍静默生成假占位图落盘) | 底层核心 | 产品缺陷 | **P1** | `ConfiguredSceneImageGenerator` 仍回退 `FakeSceneImageGenerator`，向真实角色库写入假占位 PNG | 需确认边界（`DL-142` / `DL-150`） | `[x]` 已修复 |
-| [R2-11](#r2-11-仓储层与核心执行层仍残存-11-个千行至近三千行巨石文件) | 架构遗留 | 架构债务 | **P1** | R12 仅拆掉 2 个 >100 KB 告警文件；`memory-store`、`schema.ts`（V32）等 11 个核心文件仍超千行 | 否 | `[ ]` 待排查 |
+| [R2-11](#r2-11-仓储层与核心执行层仍残存-11-个千行至近三千行巨石文件) | 架构遗留 | 架构债务 | **P1** | R12 仅拆掉 2 个 >100 KB 告警文件；`memory-store`、`schema.ts`（V32）等 11 个核心文件仍超千行 | 否 | `[x]` 已修复 |
 | [R2-12](#r2-12-离线验证与真实交付最后一公里仍未闭环) | 交付遗留 | 交付 / 质量 | **P1** | 脱仓冷启 health 仍 4.27s（未达 `<2s`）、干净机便携 EXE 未实机验收、`DELIV-02` 真实云端/媒体联调仍为 0 | 否 | `[ ]` 待排查 |
 | [R2-13](#r2-13-409-文档状态残留与并发-e2e-像素帧抖动) | 文档与测试 | 一致性 / 稳定性 | **P2** | `409` 正文 `BUG-03` 仍标 `[ ]`、`STATUS.md` 标题日期滞后、3 并发 E2E `settings-media-sheet` 像素帧抖动 | 否 | `[x]` 已修复 |
 
@@ -228,7 +228,7 @@
 
 ### R2-11 仓储层与核心执行层仍残存 11 个千行至近三千行巨石文件
 
-- **优先级**：P1 · **来源**：架构遗留（409 `ARCH-01` 二期深化） · **状态**：`[ ]` 待排查
+- **优先级**：P1 · **来源**：架构遗留（409 `ARCH-01` 二期深化） · **状态**：`[x]` 已修复（R7，2026-11-28）
 - **证据位置（2026-11-28 最新实测行数）**：
   - 后端存储层：[memory-store.ts](../../../apps/backend/src/storage/memory/memory-store.ts)（2776 行）、[conversation-store.ts](../../../apps/backend/src/storage/conversation/conversation-store.ts)（2497 行）、[schema.ts](../../../apps/backend/src/storage/core/schema.ts)（2373 行，`app` V17 / `business` V32）、[role-store.ts](../../../apps/backend/src/storage/role/role-store.ts)（2207 行）、[autonomy-store.ts](../../../apps/backend/src/storage/conversation/autonomy-store.ts)（1261 行）
   - 后端业务/协议层：[agent-tools.ts](../../../apps/backend/src/application/conversation/agent-tools.ts)（1820 行）、[voice-service.ts](../../../apps/backend/src/application/media/voice-service.ts)（1642 行）、[agent-graph.ts](../../../apps/backend/src/application/conversation/agent-graph.ts)（1386 行）、[protocols.ts](../../../apps/backend/src/model/protocols.ts)（1293 行）、[conversation-execution-runner.ts](../../../apps/backend/src/application/conversation/conversation-execution-runner.ts)（1266 行，R12 新拆分产物仍超 1200 行）、[admin-tools.ts](../../../apps/backend/src/application/role/admin-tools.ts)（1231 行）、[routes.ts](../../../apps/backend/src/http/routes.ts)（1229 行）
@@ -366,3 +366,14 @@
   - 后端 `tsc --noEmit` 0 错误；`scene-image-core` + `scene-image-planning` + `scene-image-auto` + `comfyui-client` + `token-usage` **66/66** 全通过（含未配置默认后端返回 `409 SCENE_IMAGE_NOT_CONFIGURED`、任务表/素材表/目录均为 0）；
   - 渲染器 `npm run check`（38 CSS 0 违规）+ `conversation-window-model` **21/21** + Vite 生产构建全通过；
   - Electron 39 `settings-media-sheet.e2e.cjs` 通过（实测 `midChangedPixels: 0`、`portraitThemeChangedPixels: 0 / 173677`）。
+
+#### R7：`R2-11`（四大核心巨石文件结构拆解至单文件 ≤800 行）
+- **纯结构拆解（零行为/契约变更）**：
+  - `apps/backend/src/storage/core/schema.ts`（2582 行 → **14 行**门面）：拆出 `schema-verify.ts`（315 行）、`schema-app.ts`（393 行）、`schema-business-base.ts`（601 行）、`schema-business-migrations.ts`（628 行）、`schema-business-migrations-v2.ts`（254 行）、`schema-business-verify.ts`（468 行）；
+  - `apps/backend/src/storage/memory/memory-store.ts`（2873 行 → **317 行**门面）：拆出 `memory-store-types.ts`（688 行）、`memory-evidence-store.ts`（659 行）、`memory-summary-diary-store.ts`（642 行）、`memory-batch-store.ts`（486 行）、`memory-event-store.ts`（449 行）、`memory-search-store.ts`（194 行）；
+  - `apps/backend/src/model/protocols.ts`（1471 行 → **327 行**门面）：拆出 `protocol-serializers.ts`（331 行）、`anthropic-stream.ts`（260 行）、`sse-reader.ts`（239 行）、`openai-responses-stream.ts`（217 行）、`openai-chat-stream.ts`（168 行）、`stream-transport.ts`（15 行）；
+  - `apps/desktop/renderer/src/conversation/use-window-session.ts`（1142 行 → **462 行** Hook）：拆出 `session-events.ts`（308 行）、`session-types.ts`（251 行）、`session-snapshot.ts`（216 行）。
+- **精准离线复验（仓库 Node `v24.22.2`）**：
+  - 后端 `tsc --noEmit` 0 错误；`storage-schema` + `model-protocols` + `google-gemini` + `model-continuation` + `model-providers` + `memory-hybrid-search` + `memory-delivery` **66/66** 全通过；
+  - 渲染器 `npm run check`（38 CSS 0 违规）+ 全量单测 **225/225** + Vite 生产构建通过；
+  - `check-repo-hygiene.mjs` 0 错误（全部拆分产物单文件均 ≤688 行）。
