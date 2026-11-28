@@ -68,7 +68,8 @@ docs/
 | [仓库治理与架构优化方案（P0 → P3 归档）](./archive/07-documentation/repo-optimization-plan.md) | Monorepo 目录结构重组、命名标准化、磁盘清理与验证提速定稿方案（P0～P3 已全部实施并归档） |
 | [405 仓库结构重组与验证提速执行记录](./archive/07-documentation/405-repo-optimization-execution-record.md) | Phase A–E（P0～P3 含 Wave 1～6）完整落地细节、与方案差异、冷热终验实测与独立复核结论 |
 | [409 项目严苛审计与待处理修复清单](./archive/07-documentation/409-project-audit-and-remediation-backlog.md) | 2026-11-27 全仓库严苛审计：24 项 P0～P2 缺陷、安全边界、架构债务、操作体验与交付打包待处理清单（含多轮源码复核修订） |
-| [410 第二轮全仓严苛复查与待处理修复清单](./archive/07-documentation/410-second-round-strict-audit-backlog.md) | 2026-11-28 第二轮严苛复查（基线 `11b624d`）：13 项新发现（含 7 项 409 R6～R14 新引入 Bug/安全退步与 6 项底层核心隐患及交付债务） |
+| [410 第二轮全仓严苛复查与待处理修复清单](./archive/07-documentation/410-second-round-strict-audit-backlog.md) | 2026-11-28 第二轮严苛复查（基线 `11b624d`）：13 项初版复查项（实施方离线自验与边界口径）及用户确认追加专项 `R2-14`（`DL-202` 主对话上下文与前缀缓存，待实施） |
+| [411 修订后定向复核与修订清单](./archive/07-documentation/411-post-remediation-targeted-review.md) | 409、410 后续复核与全仓补查（`R3-01`～`R3-16`），覆盖 Pi 代理超时、角色迁移、桌面代理、向量缓存与回填生命周期、TTS 重定向、SSE 保活、笔记浏览与门禁缺口 |
 
 ### 06 · 项目操作链路简化与闭环复验（`archive/06-workflow-simplification/`，`277`–`310`）
 

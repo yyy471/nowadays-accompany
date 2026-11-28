@@ -3,7 +3,7 @@
 > **创建日期**：2026-11-28 · **审计基线**：`dev-front` `11b624d`（409 首轮 23/24 离线项收口后）  
 > **性质**：第二轮严苛源码审计待处理清单，覆盖 409 R6～R14 新代码引入的新缺陷与安全退步，以及此前未触及的底层核心模块隐患与交付闭环缺口（非已确认需求；涉及调整既有 `DL-xx` 边界或策略的条目已显式标注「需先确认决策」）。  
 > **维护约定**：本轮全部排查、方案确认、修复提交与复验记录均按条目追加在本文件内，不再另起编号文件。  
-> **关联入口**：[首轮审计清单 409](./409-project-audit-and-remediation-backlog.md) · [当前状态看板](../../STATUS.md) · [产品方向与决策 161](../../161-digital-life-direction-decisions.md) · [现行规范总览](../../specs/README.md)
+> **关联入口**：[首轮审计清单 409](./409-project-audit-and-remediation-backlog.md) · [修订后定向复核 411](./411-post-remediation-targeted-review.md) · [当前状态看板](../../STATUS.md) · [产品方向与决策 161](../../161-digital-life-direction-decisions.md) · [现行规范总览](../../specs/README.md)
 
 ---
 
@@ -11,25 +11,28 @@
 
 409 首轮审计的 19 笔提交（`0e496c4`～`11b624d`）已将原清单 24 项中的 23 项离线闭环（`RoleAccess` 已统一注入、桌面托管态已接入 DPAPI 主密钥、`desk://` 已去除 `sendSync` 并收口明文令牌、Pi 默认收紧为无 Shell、`conversation-service.ts` 与 `Settings.tsx` 已消除 100 KB 告警）。
 
-本轮按同样严苛标准对 **R6～R14 新增代码**与**未充分审计的底层核心模块**重新源码深查，共确认 **13 项**新待处理问题：其中 **7 项**为 R6～R14 新引入问题（`R2-01`～`R2-07`），**6 项**为底层核心模块隐患、剩余架构债务与真实交付盲区（`R2-08`～`R2-13`）。
+本轮按同样严苛标准对 **R6～R14 新增代码**与**未充分审计的底层核心模块**重新源码深查，初版确认 **13 项**待处理问题：其中 **7 项**为 R6～R14 新引入问题（`R2-01`～`R2-07`），**6 项**为底层核心模块隐患、剩余架构债务与真实交付盲区（`R2-08`～`R2-13`）；在 R1～R8 实施方离线自验完成后，经用户确认又追加 **1 项**专项需求 [R2-14](#r2-14-主对话上下文与前缀缓存)（`DL-202`，共 **14 项**）。
+
+> **自验与复核边界**：下文 R1～R8 及「第 3 轮全仓离线门禁终验」均属于**实施方离线自验**，不替代独立复核。后续定向复核及新检出的返工/遗漏项统一登记于 [411 修订后定向复核与修订清单](./411-post-remediation-targeted-review.md)（`R3-01`～`R3-16`）。
 
 ### 0.1 优先级总表（逐项排查索引）
 
 | 编号 | 来源维度 | 类别 | 优先级 | 问题摘要 | 是否涉及修订 `DL-xx` | 状态 |
 | --- | --- | --- | :---: | --- | :---: | :---: |
-| [R2-01](#r2-01-桌面代理在请求取消时-promise-永久挂起且缺少流式背压) | 409 新引入（R8b） | 运行时 Bug / 泄漏 | **P0** | `main.cjs` 取消代理调无参 `destroy()` 不触发 `error`，Promise 永不结算；流响应无背压 | 否 | `[x]` 已修复 |
-| [R2-02](#r2-02-混合检索-embedding-存在漏防重定向缺账本绕维护与首聊阻塞四重硬伤) | 409 新引入（R14） | 安全 / 账本 / 性能 | **P0** | 缺 `redirect: "error"`、跨协议乱配不拦、未入 Token 账本与维护守卫、海量未向量化记忆阻塞首聊且超时丢已算结果 | 关联 `DL-51` / `DL-183` | `[x]` 已修复 |
-| [R2-03](#r2-03-运行态单角色迁移接口存在主线程硬阻塞无体积上限与写路径过宽问题) | 409 新引入（R11） | 安全 / DoS | **P0** | `Atomics.wait` 同步冻住主线程 200ms、`readFileSync` 无上限易 OOM、导出路径只拦两子目录、`/workspace/path` 仍向渲染层暴露 | 否 | `[x]` 已修复 |
-| [R2-08](#r2-08-模型流式生成请求完全缺少首包超时与流空闲超时) | 底层核心 | 稳定性 / 死锁 | **P0** | 四条流式协议入口均未设首包或 chunk 空闲超时，上游半开连接可永久锁死角色执行槽位 | 否 | `[x]` 已修复 |
-| [R2-04](#r2-04-工作空间笔记扫描未跳过依赖目录且无遍历数上限) | 409 新引入（R11） | 性能 / DoS | **P1** | `RoleWorkspaceService.listNotes` 不跳过 `node_modules` 且无总访问数上限，易同步卡死主线程 | 否 | `[x]` 已修复 |
-| [R2-05](#r2-05-pi-步骤日志并发无序写盘竞态且硬依赖-sdk-私有内部路径) | 409 新引入（R6） | 并发 Bug / 脆性 | **P1** | `worker.mjs` 并发 `writeSteps()` 无串行队列与原子改名易 `EBUSY`/错序；硬导入 SDK 未导出内部路径 `./utils/paths.js` | 否 | `[x]` 已修复 |
-| [R2-06](#r2-06-热生效配置把删除图生图服饰参考图误划入免停机区) | 409 新引入（R9b） | 并发竞态 | **P1** | `DELETE .../scene-image/outfits/:outfitId/reference` 免停机且立刻删盘，与在途自动 `img2img` 任务竞态报错 | 关联 `DL-148` | `[x]` 已修复 |
-| [R2-07](#r2-07-roleaccess-连接池缺少坏句柄校验与异常驱逐自愈) | 409 新引入（R4） | 稳定性 / 容错 | **P1** | `borrow()` 不验 `db.open`，遇到 `SQLITE_IOERR`/`SQLITE_CORRUPT` 不驱逐脏连接，坏句柄滞留 60s | 否 | `[x]` 已修复 |
-| [R2-09](#r2-09-google-服务账号凭据-token-地址允许任意明文-http-触发-ssrf) | 底层核心 | 安全边界 | **P1** | `parseServiceAccountCredential` 放行明文 `http:` 且不限域名，篡改 JSON 可将签名 JWT 发往恶意或内网地址 | 否 | `[x]` 已修复 |
-| [R2-10](#r2-10-未配置生图服务时手动点击过场图仍静默生成假占位图落盘) | 底层核心 | 产品缺陷 | **P1** | `ConfiguredSceneImageGenerator` 仍回退 `FakeSceneImageGenerator`，向真实角色库写入假占位 PNG | 需确认边界（`DL-142` / `DL-150`） | `[x]` 已修复 |
-| [R2-11](#r2-11-仓储层与核心执行层仍残存-11-个千行至近三千行巨石文件) | 架构遗留 | 架构债务 | **P1** | R12 仅拆掉 2 个 >100 KB 告警文件；`memory-store`、`schema.ts`（V32）等 11 个核心文件仍超千行 | 否 | `[x]` 已修复 |
-| [R2-12](#r2-12-离线验证与真实交付最后一公里仍未闭环) | 交付遗留 | 交付 / 质量 | **P1** | 脱仓冷启 health 仍 4.27s（未达 `<2s`）、干净机便携 EXE 未实机验收、`DELIV-02` 真实云端/媒体联调仍为 0 | 否 | `[~]` 离线冷启已优化，实机与真实服务待留证 |
-| [R2-13](#r2-13-409-文档状态残留与并发-e2e-像素帧抖动) | 文档与测试 | 一致性 / 稳定性 | **P2** | `409` 正文 `BUG-03` 仍标 `[ ]`、`STATUS.md` 标题日期滞后、3 并发 E2E `settings-media-sheet` 像素帧抖动 | 否 | `[x]` 已修复 |
+| [R2-01](#r2-01-桌面代理在请求取消时-promise-永久挂起且缺少流式背压) | 409 新引入（R8b） | 运行时 Bug / 泄漏 | **P0** | `main.cjs` 取消代理调无参 `destroy()` 不触发 `error`，Promise 永不结算；流响应无背压 | 否 | `[~]` 实施方自验通过，411 复核检出返工（`R3-03`） |
+| [R2-02](#r2-02-混合检索-embedding-存在漏防重定向缺账本绕维护与首聊阻塞四重硬伤) | 409 新引入（R14） | 安全 / 账本 / 性能 | **P0** | 缺 `redirect: "error"`、跨协议乱配不拦、未入 Token 账本与维护守卫、海量未向量化记忆阻塞首聊且超时丢已算结果 | 关联 `DL-51` / `DL-183` | `[~]` 实施方自验通过，411 复核检出返工（`R3-04`、`R3-11`） |
+| [R2-03](#r2-03-运行态单角色迁移接口存在主线程硬阻塞无体积上限与写路径过宽问题) | 409 新引入（R11） | 安全 / DoS | **P0** | `Atomics.wait` 同步冻住主线程 200ms、`readFileSync` 无上限易 OOM、导出路径只拦两子目录、`/workspace/path` 仍向渲染层暴露 | 否 | `[~]` 实施方自验通过，411 复核检出返工（`R3-01`、`R3-02`） |
+| [R2-08](#r2-08-模型流式生成请求完全缺少首包超时与流空闲超时) | 底层核心 | 稳定性 / 死锁 | **P0** | 四条流式协议入口均未设首包或 chunk 空闲超时，上游半开连接可永久锁死角色执行槽位 | 否 | `[~]` 实施方自验通过，411 复核检出漏网（`R3-10`） |
+| [R2-04](#r2-04-工作空间笔记扫描未跳过依赖目录且无遍历数上限) | 409 新引入（R11） | 性能 / DoS | **P1** | `RoleWorkspaceService.listNotes` 不跳过 `node_modules` 且无总访问数上限，易同步卡死主线程 | 否 | `[~]` 实施方自验通过，411 复核检出返工（`R3-05`、`R3-06`） |
+| [R2-05](#r2-05-pi-步骤日志并发无序写盘竞态且硬依赖-sdk-私有内部路径) | 409 新引入（R6） | 并发 Bug / 脆性 | **P1** | `worker.mjs` 并发 `writeSteps()` 无串行队列与原子改名易 `EBUSY`/错序；硬导入 SDK 未导出内部路径 `./utils/paths.js` | 否 | `[x]` 实施方离线自验通过（待独立复核） |
+| [R2-06](#r2-06-热生效配置把删除图生图服饰参考图误划入免停机区) | 409 新引入（R9b） | 并发竞态 | **P1** | `DELETE .../scene-image/outfits/:outfitId/reference` 免停机且立刻删盘，与在途自动 `img2img` 任务竞态报错 | 关联 `DL-148` | `[x]` 实施方离线自验通过（待独立复核） |
+| [R2-07](#r2-07-roleaccess-连接池缺少坏句柄校验与异常驱逐自愈) | 409 新引入（R4） | 稳定性 / 容错 | **P1** | `borrow()` 不验 `db.open`，遇到 `SQLITE_IOERR`/`SQLITE_CORRUPT` 不驱逐脏连接，坏句柄滞留 60s | 否 | `[x]` 实施方离线自验通过（待独立复核） |
+| [R2-09](#r2-09-google-服务账号凭据-token-地址允许任意明文-http-触发-ssrf) | 底层核心 | 安全边界 | **P1** | `parseServiceAccountCredential` 放行明文 `http:` 且不限域名，篡改 JSON 可将签名 JWT 发往恶意或内网地址 | 否 | `[x]` 实施方离线自验通过（待独立复核） |
+| [R2-10](#r2-10-未配置生图服务时手动点击过场图仍静默生成假占位图落盘) | 底层核心 | 产品缺陷 | **P1** | `ConfiguredSceneImageGenerator` 仍回退 `FakeSceneImageGenerator`，向真实角色库写入假占位 PNG | 已确认（`DL-150`） | `[x]` 实施方离线自验通过（待独立复核） |
+| [R2-11](#r2-11-仓储层与核心执行层仍残存-11-个千行至近三千行巨石文件) | 架构遗留 | 架构债务 | **P1** | R7 首期已拆 4 个核心文件至 ≤688 行；当前全仓非测试源码仍余 12 个 >1,000 行巨石文件待续拆 | 否 | `[~]` 部分完成（首期 4/16 已拆，余 12 个千行文件待续拆） |
+| [R2-12](#r2-12-离线验证与真实交付最后一公里仍未闭环) | 交付遗留 | 交付 / 质量 | **P1** | 脱仓全新冷启仍 4.63s（未达 `<2s`；常态温启 0.42s），干净机便携 EXE 未实机验收，`DELIV-02` 真实联调仍为 0 | 否 | `[~]` 离线温启达标、冷启减半；实机与真实服务待留证 |
+| [R2-13](#r2-13-409-文档状态残留与并发-e2e-像素帧抖动) | 文档与测试 | 一致性 / 稳定性 | **P2** | `409` 正文 `BUG-03` 仍标 `[ ]`、`STATUS.md` 标题日期滞后、3 并发 E2E `settings-media-sheet` 像素帧抖动 | 否 | `[x]` 实施方离线自验通过（待独立复核） |
+| [R2-14](#r2-14-主对话上下文与前缀缓存) | 用户确认追加 | 上下文 / 缓存 | **P1** | 主对话 128k 输入 / 10k 输出 token 预算、完整核心角色设定、稳定前缀与 `30+n` 周期历史切换 | 已登记 `DL-202` | `[ ]` 待实施与独立复验 |
 
 ### 0.2 建议修复分期路线
 
@@ -43,8 +46,8 @@
 
 ### R2-01 桌面代理在请求取消时 Promise 永久挂起且缺少流式背压
 
-- **优先级**：P0 · **来源**：409 R8b · **状态**：`[x]` 已修复（R1，2026-11-28）
-- **证据位置**：
+- **优先级**：P0 · **来源**：409 R8b · **状态**：`[~]` 实施方离线自验通过（R1，2026-11-28）；后续复核检出返工见 [411 `R3-03`](./411-post-remediation-targeted-review.md#r3-03-p1-桌面代理将上游意外断流传成正常结束)
+- **证据位置（基线 `11b624d` 原始行号；R1 已将代理逻辑抽离至 [backend-proxy.cjs](../../../apps/desktop/electron/backend-proxy.cjs)）**：
   - [apps/desktop/electron/main.cjs](../../../apps/desktop/electron/main.cjs#L317-L325)（`onAbort` 与预中止分支调用无参 `upstreamReq.destroy()`）
   - [apps/desktop/electron/main.cjs](../../../apps/desktop/electron/main.cjs#L286-L313)（`ReadableStream` 缺少背压控制）
   - [apps/desktop/electron/main.cjs](../../../apps/desktop/electron/main.cjs#L366-L368)（非 GET 请求整包 `arrayBuffer()` + `Buffer.from()` 双份缓冲）
@@ -63,7 +66,7 @@
 
 ### R2-02 混合检索 Embedding 存在漏防重定向、缺账本、绕维护与首聊阻塞四重硬伤
 
-- **优先级**：P0 · **来源**：409 R14（`ARCH-03`） · **状态**：`[x]` 已修复（R3，2026-11-28） · **决策关联**：[DL-51](../../161-digital-life-direction-decisions.md#dl-51-第一版召回基线多维条件过滤与全文检索) · [DL-183](../../161-digital-life-direction-decisions.md#dl-183-全局设置页提供持久-token-消耗统计)
+- **优先级**：P0 · **来源**：409 R14（`ARCH-03`） · **状态**：`[~]` 实施方离线自验通过（R3，2026-11-28）；后续复核检出返工见 [411 `R3-04`](./411-post-remediation-targeted-review.md#r3-04-p1-更换-embedding-服务后可能复用旧向量空间) 与 [411 `R3-11`](./411-post-remediation-targeted-review.md#r3-11-p1-memoryqueryservice-后台-embedding-回填未接入角色停止删除与资源影响生命周期) · **决策关联**：[DL-51](../../161-digital-life-direction-decisions.md#dl-51-第一版召回基线多维条件过滤与全文检索) · [DL-183](../../161-digital-life-direction-decisions.md#dl-183-全局设置页提供持久-token-消耗统计)
 - **证据位置**：
   - [apps/backend/src/application/memory/memory-hybrid-search.ts](../../../apps/backend/src/application/memory/memory-hybrid-search.ts#L65-L82)（`fetch` 未禁重定向、`response.json()` 无响应大小上限）
   - [apps/backend/src/application/memory/memory-embedding-settings.ts](../../../apps/backend/src/application/memory/memory-embedding-settings.ts#L86-L138)（仅校验 `kind === "model"`，未校验协议兼容与服务维护态）
@@ -85,7 +88,7 @@
 
 ### R2-03 运行态单角色迁移接口存在主线程硬阻塞、无体积上限与写路径过宽问题
 
-- **优先级**：P0 · **来源**：409 R11（`UX-05`） · **状态**：`[x]` 已修复（R1，2026-11-28）
+- **优先级**：P0 · **来源**：409 R11（`UX-05`） · **状态**：`[~]` 实施方离线自验通过（R1，2026-11-28）；后续复核检出返工见 [411 `R3-01`](./411-post-remediation-targeted-review.md#r3-01-p1-导出成功的角色包可能超过同版本导入上限) 与 [411 `R3-02`](./411-post-remediation-targeted-review.md#r3-02-p1-一次-http-迁移操作使用了两次读包结果)
 - **证据位置**：
   - [apps/backend/src/application/transfer/role-transfer-package.ts](../../../apps/backend/src/application/transfer/role-transfer-package.ts#L133-L152)（第 142 行 `Atomics.wait` 同步阻塞 20×10ms；第 147 行 `fs.readFileSync` 无体积上限）
   - [apps/backend/src/application/transfer/role-transfer.ts](../../../apps/backend/src/application/transfer/role-transfer.ts#L157-L168)（导出路径只拦截 `data/roles` 与 `data/.role-transfer`）
@@ -108,7 +111,7 @@
 
 ### R2-04 工作空间笔记扫描未跳过依赖目录且无遍历数上限
 
-- **优先级**：P1 · **来源**：409 R11（`UX-05`） · **状态**：`[x]` 已修复（R4，2026-11-28）
+- **优先级**：P1 · **来源**：409 R11（`UX-05`） · **状态**：`[~]` 实施方离线自验通过（R4，2026-11-28）；后续复核检出返工见 [411 `R3-05` / `R3-06`](./411-post-remediation-targeted-review.md#二可修项)
 - **证据位置**：
   - [apps/backend/src/application/role/role-workspace-service.ts](../../../apps/backend/src/application/role/role-workspace-service.ts#L82-L118)
   - 对照已有安全写法：[apps/backend/src/mcp/local-server.ts](../../../apps/backend/src/mcp/local-server.ts#L103-L114)（跳过 `node_modules`、限制 `visited > 2000`）
@@ -174,13 +177,13 @@
 
 ### R2-08 模型流式生成请求完全缺少首包超时与流空闲超时
 
-- **优先级**：P0 · **来源**：底层核心 · **状态**：`[x]` 已修复（R2，2026-11-28）
-- **证据位置**：
-  - [apps/backend/src/model/protocols.ts](../../../apps/backend/src/model/protocols.ts#L139-L164)（`streamOpenAiChat` 未传 `timeoutMs` 且 `rawResponse.push(data)` 无上限）
-  - [apps/backend/src/model/protocols.ts](../../../apps/backend/src/model/protocols.ts#L275-L290)（`streamOpenAiResponses` 未传 `timeoutMs`）
-  - [apps/backend/src/model/protocols.ts](../../../apps/backend/src/model/protocols.ts#L472-L490)（`streamAnthropic` 未传 `timeoutMs`）
+- **优先级**：P0 · **来源**：底层核心 · **状态**：`[~]` 实施方离线自验通过（R2，2026-11-28）；后续补查检出 `PiModelProxy` 漏网，见 [411 `R3-10`](./411-post-remediation-targeted-review.md#r3-10-p0-pimodelproxy-漏接流式首包与空闲超时且非-sse-响应无体积上限)
+- **证据位置（基线 `11b624d` 定位；R7 已将 `protocols.ts` 拆缩至 332 行并拆出各协议流与 `sse-reader.ts`）**：
+  - [apps/backend/src/model/openai-chat-stream.ts](../../../apps/backend/src/model/openai-chat-stream.ts)（原 `protocols.ts` `streamOpenAiChat` 未传 `timeoutMs` 且 `rawResponse.push(data)` 无上限）
+  - [apps/backend/src/model/openai-responses-stream.ts](../../../apps/backend/src/model/openai-responses-stream.ts)（原 `protocols.ts` `streamOpenAiResponses` 未传 `timeoutMs`）
+  - [apps/backend/src/model/anthropic-stream.ts](../../../apps/backend/src/model/anthropic-stream.ts)（原 `protocols.ts` `streamAnthropic` 未传 `timeoutMs`）
   - [apps/backend/src/model/google-gemini.ts](../../../apps/backend/src/model/google-gemini.ts#L278-L295)（`streamGoogleGemini` 未传 `timeoutMs`）
-  - [apps/backend/src/model/protocols.ts](../../../apps/backend/src/model/protocols.ts#L728-L753) 与 [protocols.ts#L1246-L1290](../../../apps/backend/src/model/protocols.ts#L1246-L1290)（`readSse` 中 `reader.read()` 无 chunk 空闲超时）
+  - [apps/backend/src/model/sse-reader.ts](../../../apps/backend/src/model/sse-reader.ts) 与 [apps/backend/src/model/protocols.ts](../../../apps/backend/src/model/protocols.ts)（原 `protocols.ts` `readSse` 中 `reader.read()` 无 chunk 空闲超时）
 - **根因分析**：
   `listModels` 设置了 `timeoutMs: 20_000`，但全部四条流式生成路径在建立连接与读取 SSE 分片期间**没有任何超时保护**。离线本地假服务器永远即时返回，因此现有 672 项测试无法暴露该问题；但在真实公网/代理调用中，TCP 半开、厂商网关假死不吐字不关连接极为常见，一旦发生即永久卡死整个角色的串行调度队列。此外每条流式协议都把全部原始分片塞进 `rawResponse` 数组，超长推理/输出时徒增内存占用。
 - **修复建议**：
@@ -228,11 +231,10 @@
 
 ### R2-11 仓储层与核心执行层仍残存 11 个千行至近三千行巨石文件
 
-- **优先级**：P1 · **来源**：架构遗留（409 `ARCH-01` 二期深化） · **状态**：`[x]` 已修复（R7，2026-11-28）
-- **证据位置（2026-11-28 最新实测行数）**：
-  - 后端存储层：[memory-store.ts](../../../apps/backend/src/storage/memory/memory-store.ts)（2776 行）、[conversation-store.ts](../../../apps/backend/src/storage/conversation/conversation-store.ts)（2497 行）、[schema.ts](../../../apps/backend/src/storage/core/schema.ts)（2373 行，`app` V17 / `business` V32）、[role-store.ts](../../../apps/backend/src/storage/role/role-store.ts)（2207 行）、[autonomy-store.ts](../../../apps/backend/src/storage/conversation/autonomy-store.ts)（1261 行）
-  - 后端业务/协议层：[agent-tools.ts](../../../apps/backend/src/application/conversation/agent-tools.ts)（1820 行）、[voice-service.ts](../../../apps/backend/src/application/media/voice-service.ts)（1642 行）、[agent-graph.ts](../../../apps/backend/src/application/conversation/agent-graph.ts)（1386 行）、[protocols.ts](../../../apps/backend/src/model/protocols.ts)（1293 行）、[conversation-execution-runner.ts](../../../apps/backend/src/application/conversation/conversation-execution-runner.ts)（1266 行，R12 新拆分产物仍超 1200 行）、[admin-tools.ts](../../../apps/backend/src/application/role/admin-tools.ts)（1231 行）、[routes.ts](../../../apps/backend/src/http/routes.ts)（1229 行）
-  - 桌面渲染层：[VoicePanel.tsx](../../../apps/desktop/renderer/src/components/voice/VoicePanel.tsx)（1102 行）、[use-window-session.ts](../../../apps/desktop/renderer/src/conversation/use-window-session.ts)（1099 行）
+- **优先级**：P1 · **来源**：架构遗留（409 `ARCH-01` 二期深化） · **状态**：`[~]` 部分完成（R7 首期已拆 4 个核心文件至 ≤688 行；截至 `f4b1ee4` 全仓非测试源码仍余 12 个 >1,000 行文件待续拆）
+- **证据位置（基线 `11b624d` 实测行数，以及 `f4b1ee4` 剩余 12 个千行非测试文件实测）**：
+  - R7 首期已拆（≤688 行）：[memory-store.ts](../../../apps/backend/src/storage/memory/memory-store.ts)（2776 → 317 行）、[schema.ts](../../../apps/backend/src/storage/core/schema.ts)（2373 → 14 行）、[protocols.ts](../../../apps/backend/src/model/protocols.ts)（1293 → 332 行）、[use-window-session.ts](../../../apps/desktop/renderer/src/conversation/use-window-session.ts)（1099 → 462 行）
+  - 剩余 12 个 >1,000 行非测试源码（`f4b1ee4` 实测）：[conversation-store.ts](../../../apps/backend/src/storage/conversation/conversation-store.ts)（2612 行）、[role-store.ts](../../../apps/backend/src/storage/role/role-store.ts)（2326 行）、[agent-tools.ts](../../../apps/backend/src/application/conversation/agent-tools.ts)（1880 行）、[voice-service.ts](../../../apps/backend/src/application/media/voice-service.ts)（1711 行）、[agent-graph.ts](../../../apps/backend/src/application/conversation/agent-graph.ts)（1454 行）、[memory-query-service.ts](../../../apps/backend/src/application/memory/memory-query-service.ts)（1422 行，R3 混合检索增至千行以上）、[conversation-execution-runner.ts](../../../apps/backend/src/application/conversation/conversation-execution-runner.ts)（1352 行）、[routes.ts](../../../apps/backend/src/http/routes.ts)（1330 行）、[autonomy-store.ts](../../../apps/backend/src/storage/conversation/autonomy-store.ts)（1324 行）、[admin-tools.ts](../../../apps/backend/src/application/role/admin-tools.ts)（1276 行）、[resource-service.ts](../../../apps/backend/src/application/resources/resource-service.ts)（1223 行）、[VoicePanel.tsx](../../../apps/desktop/renderer/src/components/voice/VoicePanel.tsx)（1168 行）
 - **根因分析**：
   409 R12 仅消除了 `check-repo-hygiene.mjs` 的两个 >100 KB 告警文件，底层 5 个超长 SQLite 仓储文件与 32 个版本挤在一起的 `schema.ts` 尚未拆解，新增业务仍在往大文件尾部叠加（如 V32 向量缓存、R13 管理员工具、R14 混合检索查询）。
 - **修复建议**：
@@ -385,12 +387,13 @@
   - `apps/backend/src/application/media/image-inspect.ts` 与 `apps/backend/src/scene/fake-generator.ts` 将 `sharp` 改为在异步解码/生成时按需动态 `import()`；
   - `apps/desktop/electron/main.cjs` 启动托管后端时注入 Node 24 原生 `NODE_COMPILE_CACHE`（默认 `<userData>/node-compile-cache`）；`apps/backend/src/main.ts` 在 `listening` 事件补充 `bootMs` 指标。
 - **对比实测（仓库 Node `v24.22.2`，Windows x64）**：
-  - 全新脱仓临时拷贝 `packaged-backend-smoke.test.cjs`（含 Windows Defender 首次扫描全新 `node.exe`）：首包 `/v1/health 200` 由优化前 **`8,395 ms`** 降至 **`4,632 ms`**（**-44.8%**，单测总耗时 56.6s → 41.2s，1/1 通过）；
-  - 已落位 `build-staging` 带 `NODE_COMPILE_CACHE` 二次/常规启动实测：首包 `/v1/health 200` **`443 ms` → `417 ms`**（进程内 `bootMs = 147–153 ms`，稳定 `<0.5s`，远优于 `<2s` 目标）；
+  - 全新脱仓临时拷贝 `packaged-backend-smoke.test.cjs`（**全新冷启**，含 Windows Defender 首次扫描全新 `node.exe`）：首包 `/v1/health 200` 由优化前 **`8,395 ms`** 降至 **`4,632 ms`**（**-44.8%**，单测总耗时 56.6s → 41.2s，1/1 通过；**仍未达 `<2s` 冷启目标**）；
+  - 已落位 `build-staging` 带 `NODE_COMPILE_CACHE` **二次/常态温启**实测：首包 `/v1/health 200` **`443 ms` → `417 ms`**（进程内 `bootMs = 147–153 ms`，稳定 `<0.5s`）；
   - 后端 `typecheck` + `npm run build` + `mcp-local` 5/5 通过。
-- **明确边界**：以上均为离线与本机打包态实测；干净无 Node 的 Windows 虚拟机便携 EXE 实机验收与 `DELIV-02` 真实云端模型/ComfyUI/TTS 联调仍需在真实外部环境下另行执行与留证。
+- **明确边界**：以上均为离线与本机打包态实施方自测；同条件首次冷启 `<2s` 实测、干净无 Node 的 Windows 虚拟机便携 EXE 实机验收与 `DELIV-02` 真实云端模型/ComfyUI/TTS 联调仍需在真实外部环境下另行执行与留证。
 
 ### 第 3 轮全仓离线门禁终验（2026-11-28）
+- **验证性质**：实施方全仓离线自验（不替代独立复核；后续复核返工与补查项见 [411](./411-post-remediation-targeted-review.md)）。
 - **并发 E2E 稳定性收口**：
   - `apps/desktop/tests/e2e/settings-media-sheet.e2e.cjs` 将羽化中段采帧升级为拦截单次 `.theme-feather` Web Animation 并定格在 `currentTime = 220ms`，彻底消除 3 并发窗口遮挡导致 `rAF` 节流跳过 500ms 过渡窗口的偶发超时；
   - `apps/desktop/tests/e2e/cross-page-share.e2e.cjs` 在打开配置纸笺后先等待纸笺初始焦点落定，再聚焦草稿输入框，消除高并发下焦点竞态。
@@ -401,4 +404,53 @@
   - 桌面壳全量单测：**38/38 通过**（含 `backend-proxy` 5/5、`preload-boundary` 4/4 与脱仓生产包冒烟）；
   - Electron 39 E2E（`node scripts/verify.mjs e2e`，默认 **3 并发**）：**29/29 全绿通过**（85.1s，`settings-media-sheet` 8.48s、`cross-page-share` 5.15s），报告 `test-results/desktop-e2e/e2e-2026-11-28T07-14-46-524Z-abf18613/gates.json`；
   - 仓库巡检：`check-docs.mjs` **0 错误 0 警告**；`check-repo-hygiene.mjs` **0 错误**（手写超大源码告警 0）。
-- **离线 vs 真实边界声明**：410 清单 12 项离线可闭环项与 `R2-12` 离线冷启动优化已全部验证关闭；`R2-12` 剩余的**干净无 Node Windows 便携 EXE 实机验收**与 **`DELIV-02` 真实云端模型/ComfyUI/TTS 联调**需在真实外部服务与干净机环境另行执行并留证，不以离线全通外推。
+- **自验、复核与真实交付边界声明**：本轮结果属于**实施方离线自验**，不替代独立复核；后续定向复核及全仓补查已在 [411 修订后定向复核与修订清单](./411-post-remediation-targeted-review.md) 登记返工与新遗漏项（`R3-01`～`R3-16`）。此外 `R2-11` 仍有 12 个 >1,000 行非测试文件待续拆、`R2-14` 待实施、`R2-12` 的全新冷启 `<2s` 实测、**干净无 Node Windows 便携 EXE 实机验收**与 **`DELIV-02` 真实云端模型/ComfyUI/TTS 联调**仍待另行执行并留证，不以离线全通外推。
+
+### 第 4 轮文档复查与口径修正（2026-11-28）
+- 对照 `dev-front@f4b1ee4` 与 [411](./411-post-remediation-targeted-review.md) 统一修正本文件口径：
+  1. 顶部概述与 `0.1 优先级总表` 纳入追加专项 `R2-14`（共 14 项），并区分「实施方离线自验」与「411 复核检出返工」；
+  2. 将 `R2-11` 由 `[x]` 修正为 `[~] 部分完成`（实测 `f4b1ee4` 仍余 12 个 >1,000 行非测试文件），将 `R2-12` 明确拆分为全新冷启 `4.63s` 与常态温启 `0.42s`；
+  3. 修正 `R2-08` 中 3 处因 R7 拆缩 `protocols.ts`（332 行）导致的越界 `#L` 链接，标明 `R2-01`/`R2-08` 拆分后新文件路径；
+  4. 为 `R2-14` 补齐 3 条实施前技术细则（Anthropic 显式缓存断点、`roleCardForDialogue` 按需展示解耦、窗口级滚动摘要载体边界）。
+
+## R2-14 主对话上下文与前缀缓存
+
+**2026-11-28 用户确认，待实施与独立复验。** 本项追加于原 13 项终验之后。决策依据为 [DL-202](../../161-digital-life-direction-decisions.md#dl-202-主对话-token-预算完整角色设定与按整理周期追加历史)，沿用 DL-164 对当前请求及必要证据的优先级。适用于主对话及工具续轮；记忆整理、句段标注、生图规划沿用各自预算。
+
+### 容量与角色卡
+
+- 主对话默认输入上限 **128,000 token**，输出上限 **10,000 token**。先按模型能力确定输出上限，再取输入目标、模型输入上限和总窗口扣除输出预留后三者的最小值。例如总窗口 128,000、输出预留 10,000 时，输入最多 118,000。支持的协议显式传递有效输出上限。
+- 按模型与协议核算实际出站内容，包含系统材料、工具 Schema、历史和回执。优先使用对应 tokenizer 或官方计数能力；未知兼容模型标明保守估算及误差，处理供应商超限。静态块计数按版本复用。旧字符配置保留单位，迁移时显式区分。
+- 核心设定包括角色名、背景、性格和初始场景，完整常驻，取消前 2,000 字符与可丢续文的切分。纯文本长卡默认保留全部核心正文，明确识别的开场白、示例对话按用途分离。结构化字段按明确来源去重，原卡保留。后来的状态与经历可改变当前行为。
+- 先让可选材料让位。若完整核心卡、当轮必要工具、用户请求及必要证据仍装不下，报告有效窗口、各项占用与超额量，供用户调整模型或设定。
+
+### 请求拼接顺序
+
+| 位置 | 内容与约束 |
+| --- | --- |
+| 长期稳定前缀 | 固定指令、完整核心角色设定、本轮有权使用的工具定义。工具与 Schema 顺序确定，同版本生成相同文本。按供应商协议组织工具和系统指令。角色设定修订和工具启停按既有生效规则处理。 |
+| 周期内稳定材料 | 上一周期完成的历史摘要，以及已确认持续适用、角色知情的场景资料。场景失效时及时撤下。 |
+| 已提交历史 | 固定左边界、按原顺序追加用户原话、角色回复及配对的工具调用与结果。 |
+| 本轮可变材料 | 默认依次装入当前状态、本轮触发的世界书、召回记忆、业务所需精度的当前时间。采用固定布局，避免逐轮重新排序。优先保障本轮任务所需证据，历史与 RAG 共享剩余容量。 |
+| 当前输入 | 本轮用户消息或工具回执保留真实身份。动态材料使用协议允许的宿主来源，避开必须相邻的工具调用与结果。若协议要求可信动态上下文位于历史之前，优先保住核心卡与工具的稳定前缀。 |
+
+动态材料只参与当轮请求。下一轮追加的是实际提交的消息；状态、旧时间与召回片段不会随临时提示反复写入对话历史。前缀稳定表示具备复用条件，实际命中取决于供应商行为。
+
+### 实施前补充技术细则（对齐现行源码，不改动 `DL-202` 边界）
+
+1. **跨协议前缀缓存机制显式适配**：OpenAI / Gemini 依赖隐式前缀匹配，但 Anthropic Messages 协议必须显式注入 `cache_control: { type: "ephemeral" }` 断点（遵守断点数量上限与最小 token 门槛），建议按「工具定义尾 / 长期稳定前缀尾 / 周期稳定材料尾」分层落位。
+2. **解耦角色卡按需展开，禁止污染长期稳定前缀**：现行 [role-card-dialogue.ts](../../../apps/backend/src/application/role/role-card-dialogue.ts#L49-L51) 会随当轮用户消息临时切换是否展开开场白/示例对话。实施 `R2-14` 时，长期稳定前缀中的核心卡保持固定形态；用户当轮索要查看的开场白或示例对话作为临时参考放入「本轮可变材料」，避免单次询问击穿整条前缀缓存。
+3. **窗口级滚动摘要载体与跨窗口记忆区分**：现行角色业务库仅有跨窗口长期记忆表（`memory_events` / `daily_summaries` / `diaries`），主对话仅直接读取 `listRecentMessages(windowId, 30)`。「上一周期完成的历史摘要」应落为**按 `windowId` 维护的窗口级滚动摘要状态**（显式保存 `summaryVersion`、覆盖终点消息 `coveredUntilSequence` 与新左边界），与 `MemoryRuntime` 跨窗口长期记忆整理职责解耦，避免混淆计量与覆盖边界。
+
+### 30+n 历史与摘要切换
+
+1. 周期开始保留最近约 30 条已提交的公开消息，向前对齐完整交互，保留工具调用配对。周期内只向右追加。当前输入提交后进入下轮历史，避免重复。
+2. n 表示周期新增的公开消息数。整理器若按消息计数，按新增消息达到阈值 T 触发；若按完成的决策轮计数，另记轮数 r，以 r 达到 T 触发。多条合批、工具续轮与重试沿用各自身份，避免混用计量单位。
+3. 达阈值启动整理，等待期间沿用旧窗口，允许 n 暂时超过触发阈值。新摘要携带明确覆盖终点，只有其覆盖准备移出的历史，才将摘要版本与新左边界原子切换。整理失败保留原有可用材料。
+4. 接近有效 token 上限可提前整理；必要时按完整交互收缩，并保留可回查原文及当前步骤必需证据。缓存目标服从本轮信息完整性和实际模型容量。
+
+### 验收与费用核对
+
+- 长卡分别使用超过一万中文字符、约 12k token 两种输入。核对实际协议请求中的卡尾、跨日状态、换窗口、工具续轮、修卡生效、旧配置迁移及小模型超限行为。
+- 用同一消息序列覆盖普通轮次、整理延迟或失败、摘要覆盖不足、周期切换、合批与重试。检查历史无缺口、无重复、工具配对完整，可变状态与世界书当轮生效。
+- 离线比较相邻请求的最长共同前缀，记录首次变化位置及原因。真实服务对照固定 30 条滑窗与 30+n，分别统计冷请求、周期内请求、切换轮次的实际输入、缓存读写、输出 token 与整段对话总费用；缺失回执标记未知。真实节省金额与命中率待联调留证。
