@@ -40,6 +40,7 @@ function removeSessionToken(filePath: string, token: string): void {
 }
 
 async function main(): Promise<void> {
+  const bootStartedAt = performance.now();
   const config = parseBackendConfig(process.argv.slice(2));
   // 会话令牌与主密钥只交给当前进程，子进程无需继承。
   delete process.env.NOWADAYS_HOST_TOKEN;
@@ -90,6 +91,7 @@ async function main(): Promise<void> {
           host: config.host,
           port,
           appRoot: config.appRoot,
+          bootMs: Math.round(performance.now() - bootStartedAt),
           ...(tokenPath === undefined ? {} : { sessionTokenPath: tokenPath }),
         }));
         await shutdownRequested;

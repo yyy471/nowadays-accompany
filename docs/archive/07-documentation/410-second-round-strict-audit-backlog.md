@@ -28,7 +28,7 @@
 | [R2-09](#r2-09-google-服务账号凭据-token-地址允许任意明文-http-触发-ssrf) | 底层核心 | 安全边界 | **P1** | `parseServiceAccountCredential` 放行明文 `http:` 且不限域名，篡改 JSON 可将签名 JWT 发往恶意或内网地址 | 否 | `[x]` 已修复 |
 | [R2-10](#r2-10-未配置生图服务时手动点击过场图仍静默生成假占位图落盘) | 底层核心 | 产品缺陷 | **P1** | `ConfiguredSceneImageGenerator` 仍回退 `FakeSceneImageGenerator`，向真实角色库写入假占位 PNG | 需确认边界（`DL-142` / `DL-150`） | `[x]` 已修复 |
 | [R2-11](#r2-11-仓储层与核心执行层仍残存-11-个千行至近三千行巨石文件) | 架构遗留 | 架构债务 | **P1** | R12 仅拆掉 2 个 >100 KB 告警文件；`memory-store`、`schema.ts`（V32）等 11 个核心文件仍超千行 | 否 | `[x]` 已修复 |
-| [R2-12](#r2-12-离线验证与真实交付最后一公里仍未闭环) | 交付遗留 | 交付 / 质量 | **P1** | 脱仓冷启 health 仍 4.27s（未达 `<2s`）、干净机便携 EXE 未实机验收、`DELIV-02` 真实云端/媒体联调仍为 0 | 否 | `[ ]` 待排查 |
+| [R2-12](#r2-12-离线验证与真实交付最后一公里仍未闭环) | 交付遗留 | 交付 / 质量 | **P1** | 脱仓冷启 health 仍 4.27s（未达 `<2s`）、干净机便携 EXE 未实机验收、`DELIV-02` 真实云端/媒体联调仍为 0 | 否 | `[~]` 离线冷启已优化，实机与真实服务待留证 |
 | [R2-13](#r2-13-409-文档状态残留与并发-e2e-像素帧抖动) | 文档与测试 | 一致性 / 稳定性 | **P2** | `409` 正文 `BUG-03` 仍标 `[ ]`、`STATUS.md` 标题日期滞后、3 并发 E2E `settings-media-sheet` 像素帧抖动 | 否 | `[x]` 已修复 |
 
 ### 0.2 建议修复分期路线
@@ -246,7 +246,7 @@
 
 ### R2-12 离线验证与真实交付“最后一公里”仍未闭环
 
-- **优先级**：P1 · **来源**：409 `DELIV-01` 遗留 + `DELIV-02` 未启动 · **状态**：`[ ]` 待排查
+- **优先级**：P1 · **来源**：409 `DELIV-01` 遗留 + `DELIV-02` 未启动 · **状态**：`[~]` 离线冷启动已优化（R8，2026-11-28），干净机便携 EXE 与真实服务联调待实机留证
 - **证据位置**：
   - [docs/STATUS.md](../../STATUS.md#L7)（23/24 离线闭环，真实服务与干净机便携 EXE 仍待办）
   - [docs/STATUS.md](../../STATUS.md#L37)（脱仓冷启首个 `/v1/health` 实测 `4267 ms`，未达到原 `<2s` 目标）
@@ -377,3 +377,15 @@
   - 后端 `tsc --noEmit` 0 错误；`storage-schema` + `model-protocols` + `google-gemini` + `model-continuation` + `model-providers` + `memory-hybrid-search` + `memory-delivery` **66/66** 全通过；
   - 渲染器 `npm run check`（38 CSS 0 违规）+ 全量单测 **225/225** + Vite 生产构建通过；
   - `check-repo-hygiene.mjs` 0 错误（全部拆分产物单文件均 ≤688 行）。
+
+#### R8：`R2-12`（打包态后端冷启动剖析与优化）
+- **瓶颈剖析实测**：顶层静态导入 `@modelcontextprotocol/sdk/client`（冷加载 ~930 ms）与 `sharp`/libvips（冷加载 ~187 ms）在启动期从未被调用，却在每次进程拉起时强制触发大量小文件读取与原生 DLL 加载。
+- **优化改动**：
+  - `apps/backend/src/mcp/client.ts` 将 `@modelcontextprotocol/sdk/client/index.js` 与 `stdio.js` 改为在 `McpToolClient.connect()` 内按需动态 `import()`；
+  - `apps/backend/src/application/media/image-inspect.ts` 与 `apps/backend/src/scene/fake-generator.ts` 将 `sharp` 改为在异步解码/生成时按需动态 `import()`；
+  - `apps/desktop/electron/main.cjs` 启动托管后端时注入 Node 24 原生 `NODE_COMPILE_CACHE`（默认 `<userData>/node-compile-cache`）；`apps/backend/src/main.ts` 在 `listening` 事件补充 `bootMs` 指标。
+- **对比实测（仓库 Node `v24.22.2`，Windows x64）**：
+  - 全新脱仓临时拷贝 `packaged-backend-smoke.test.cjs`（含 Windows Defender 首次扫描全新 `node.exe`）：首包 `/v1/health 200` 由优化前 **`8,395 ms`** 降至 **`4,632 ms`**（**-44.8%**，单测总耗时 56.6s → 41.2s，1/1 通过）；
+  - 已落位 `build-staging` 带 `NODE_COMPILE_CACHE` 二次/常规启动实测：首包 `/v1/health 200` **`443 ms` → `417 ms`**（进程内 `bootMs = 147–153 ms`，稳定 `<0.5s`，远优于 `<2s` 目标）；
+  - 后端 `typecheck` + `npm run build` + `mcp-local` 5/5 通过。
+- **明确边界**：以上均为离线与本机打包态实测；干净无 Node 的 Windows 虚拟机便携 EXE 实机验收与 `DELIV-02` 真实云端模型/ComfyUI/TTS 联调仍需在真实外部环境下另行执行与留证。

@@ -1,4 +1,3 @@
-import sharp from "sharp";
 import { AppError } from "../../domain/errors.js";
 import type { InspectedImage } from "../../domain/appearance.js";
 
@@ -46,6 +45,8 @@ export async function inspectImage(
     });
   }
   try {
+    // sharp / libvips 原生库仅在真正解码图片时按需加载，避免拖慢后端冷启动（410 R2-12）。
+    const { default: sharp } = await import("sharp");
     // animated 让多帧 WebP 解码全部帧，避免只验证首帧。
     const options = { failOn: "error" as const, animated: true };
     const image = sharp(data, options);

@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import sharp from "sharp";
 import { SceneImageCanceledError } from "../domain/errors.js";
 import type {
   GeneratedSceneImage,
@@ -38,6 +37,7 @@ export class FakeSceneImageGenerator implements SceneImageGeneratorPort {
     if (isAborted(input.signal)) {
       throw new SceneImageCanceledError();
     }
+    const { default: sharp } = await import("sharp");
     const { width, height } = this.sizes[input.layerMode];
     const base = await sharp(renderGradient(input, width, height), {
       raw: { width, height, channels: 3 },
@@ -50,7 +50,7 @@ export class FakeSceneImageGenerator implements SceneImageGeneratorPort {
     const data =
       reference === undefined
         ? base
-        : await compositeReference(base, reference.data, width, height);
+        : await compositeReference(sharp, base, reference.data, width, height);
     if (isAborted(input.signal)) {
       throw new SceneImageCanceledError();
     }
@@ -60,6 +60,7 @@ export class FakeSceneImageGenerator implements SceneImageGeneratorPort {
 
 /** 把参考图缩放到画面下部，模拟“人物加背景”的构图差异。 */
 async function compositeReference(
+  sharp: typeof import("sharp").default,
   base: Buffer,
   reference: Buffer,
   width: number,

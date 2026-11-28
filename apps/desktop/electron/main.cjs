@@ -127,6 +127,8 @@ async function startManagedBackend() {
           NOWADAYS_HOST_TOKEN: hostToken,
           ...(masterKey.masterKeyBase64 ? { NOWADAYS_MASTER_KEY: masterKey.masterKeyBase64 } : {}),
           NOWADAYS_PI_MCP_ROOT: layout.piMcpRoot,
+          // 启用 Node 24 原生 V8 编译缓存，加速打包态后端冷/温启动（410 R2-12）。
+          NODE_COMPILE_CACHE: process.env.NODE_COMPILE_CACHE || join(app.getPath("userData"), "node-compile-cache"),
           NO_COLOR: "1"
         },
         stdio: ["pipe", "pipe", "pipe"],

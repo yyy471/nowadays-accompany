@@ -1,8 +1,7 @@
 import { z } from "zod";
 import path from "node:path";
 import { managedPiCommand } from "../domain/resource.js";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 
 export { managedPiCommand };
 
@@ -43,6 +42,11 @@ export class McpToolClient {
     config: McpServerConfig,
     options: { isolatedEnv?: boolean; cwd?: string; timeoutMs?: number; onClose?: () => void; onPiTerminal?: (receipt: PiReceipt) => void } = {},
   ): Promise<McpToolClient> {
+    // MCP SDK 模块仅在真正连接工具服务时按需加载，避免拖慢后端冷启动（410 R2-12）。
+    const [{ Client }, { StdioClientTransport }] = await Promise.all([
+      import("@modelcontextprotocol/sdk/client/index.js"),
+      import("@modelcontextprotocol/sdk/client/stdio.js"),
+    ]);
     const pi = config.command === managedPiCommand;
     const transport = new StdioClientTransport({
       command: pi ? process.execPath : config.command,
