@@ -36,6 +36,9 @@ function createFixture(
   options: Parameters<typeof baseCreateFixture>[1] = {},
 ): Fixture {
   return baseCreateFixture(scripts, {
+    // 未配置 ComfyUI 的离线链路需要显式注入占位生成器；
+    // 正式产品路径未配置即 409，不再静默回退。
+    sceneImageGenerator: new FakeSceneImageGenerator(),
     sceneImagePlanner: new FixedSceneImagePlanner(),
     ...options,
   });
@@ -46,6 +49,7 @@ function createFixtureWithModel(
   options: Parameters<typeof baseCreateFixtureWithModel>[1] = {},
 ): Fixture {
   return baseCreateFixtureWithModel(model, {
+    sceneImageGenerator: new FakeSceneImageGenerator(),
     sceneImagePlanner: new FixedSceneImagePlanner(),
     ...options,
   });
@@ -467,6 +471,7 @@ test("a v12 role database migrates to v13 and keeps messages, segments and event
       timeZone: "Asia/Shanghai",
       modelPortFactory: () => model,
       disableMemoryRuntime: true,
+      sceneImageGenerator: new FakeSceneImageGenerator(),
       sceneImagePlanner: new FixedSceneImagePlanner(),
     });
     const role = app.services.roles.createRole({
@@ -527,6 +532,7 @@ test("a v12 role database migrates to v13 and keeps messages, segments and event
       timeZone: "Asia/Shanghai",
       modelPortFactory: () => model,
       disableMemoryRuntime: true,
+      sceneImageGenerator: new FakeSceneImageGenerator(),
       sceneImagePlanner: new FixedSceneImagePlanner(),
     });
     const migrated = app.services.messages.list(
@@ -583,6 +589,7 @@ test("restart settles unfinished tasks as interrupted and keeps the result reada
       timeZone: "Asia/Shanghai",
       modelPortFactory: () => model,
       disableMemoryRuntime: true,
+      sceneImageGenerator: new FakeSceneImageGenerator(),
       sceneImagePlanner: new FixedSceneImagePlanner(),
     });
     const role = app.services.roles.createRole({
@@ -679,6 +686,7 @@ test("restart settles unfinished tasks as interrupted and keeps the result reada
       timeZone: "Asia/Shanghai",
       modelPortFactory: () => model,
       disableMemoryRuntime: true,
+      sceneImageGenerator: new FakeSceneImageGenerator(),
       sceneImagePlanner: new FixedSceneImagePlanner(),
     });
     const settled = app.services.sceneImages.getTask(
@@ -762,6 +770,97 @@ test("SSE reconnect from an earlier cursor replays task state without duplicates
     );
   } finally {
     await fixture.close();
+  }
+});
+
+test("R2-10 Plan A: an unconfigured image service rejects manual generation without tasks or files", { timeout: 30_000 }, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nowadays-scene-unconfigured-"));
+  const config = parseBackendConfig(["--app-root", root, "--port", "0"]);
+  const model = new ScriptedChatModel([replyScript()]);
+  let app: BackendApp | undefined;
+  try {
+    // 正式默认装配：不注入 sceneImageGenerator，角色也没有配置任何生图服务。
+    app = createBackendApp(config, {
+      typingMs: 1000,
+      timeZone: "Asia/Shanghai",
+      modelPortFactory: () => model,
+      disableMemoryRuntime: true,
+      disablePresetAssistant: true,
+    });
+    const role = app.services.roles.createRole({
+      displayName: "阿澄",
+      definition: { text: "你是阿澄。" },
+    });
+    app.services.activity.resume(role.roleId);
+    const resource = app.services.resources.create({
+      kind: "model",
+      name: "离线对话模型",
+      config: { protocol: "openai-chat", baseUrl: "http://offline.invalid/v1" },
+    });
+    app.services.resources.replaceBindings(role.roleId, [
+      {
+        capability: "chat_model",
+        resourceId: resource.resourceId,
+        modelName: "offline-chat",
+        enabled: true,
+      },
+    ]);
+    app.conversation.submitMessage(role.roleId, role.defaultWindowId, {
+      content: "今天做什么？",
+      submissionId: randomUUID(),
+      sourcePlatform: "nowadays",
+    });
+    await app.conversation.waitForIdle(role.roleId);
+    const page = app.services.messages.list(
+      role.roleId,
+      role.defaultWindowId,
+      null,
+      50,
+    );
+    const reply = page.items.find((message) => message.sender === "assistant");
+    assert.ok(reply);
+
+    const port = await listen(app.server, 0, "127.0.0.1");
+    const response = await fetch(
+      `http://127.0.0.1:${port}/v1/roles/${role.roleId}/windows/${role.defaultWindowId}/messages/${reply.messageId}/scene-images`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          idempotencyKey: "unconfigured-scene-image",
+          layerMode: "background",
+        }),
+      },
+    );
+    assert.equal(response.status, 409);
+    const payload = (await response.json()) as { error: { code: string } };
+    assert.equal(payload.error.code, "SCENE_IMAGE_NOT_CONFIGURED");
+
+    // 未配置即拒绝：不得留下任务、素材或磁盘上的占位图。
+    const counts = withStorageFor(config, role.roleId, (storage) => ({
+      tasks: (
+        storage.business.db
+          .prepare("SELECT COUNT(*) AS total FROM scene_image_tasks")
+          .get() as { total: number }
+      ).total,
+      assets: (
+        storage.business.db
+          .prepare("SELECT COUNT(*) AS total FROM scene_image_assets")
+          .get() as { total: number }
+      ).total,
+    }));
+    assert.deepEqual(counts, { tasks: 0, assets: 0 });
+    const sceneImageDir = rolePaths(
+      config.dataRoot,
+      role.roleId,
+    ).sceneImageDir;
+    assert.deepEqual(
+      fs.existsSync(sceneImageDir) ? fs.readdirSync(sceneImageDir) : [],
+      [],
+    );
+  } finally {
+    await app?.close();
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 });
   }
 });
 

@@ -91,6 +91,16 @@ let proc, ws, seq = 0, logs = '';
 const waiting = new Map(), errors = [];
 function cmd(method, params = {}) { return new Promise((resolve, reject) => { const id = ++seq; waiting.set(id, { resolve, reject }); ws.send(JSON.stringify({ id, method, params })); }); }
 async function ev(expression) { const result = await cmd('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }); if (result.exceptionDetails) throw Error('EVAL: ' + JSON.stringify(result.exceptionDetails.exception?.description || result.exceptionDetails.text)); return result.result.value; }
+// 立绘像素断言前等到图片解码、动画落定且合成器提交两帧，避免并发下采到中间帧。
+async function waitPortraitSettled() {
+  await until(() => ev(`(() => {
+    const img = document.querySelector('.config-stage .config-portrait img');
+    return !!img && img.complete && img.naturalWidth > 0;
+  })()`), 'portrait decoded');
+  await ev(`document.querySelector('.config-stage .config-portrait img')?.decode().catch(() => {})`);
+  await until(() => ev('document.getAnimations().every(a => a.playState !== \'running\')'), 'portrait animations settled', 8000);
+  await ev('new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))');
+}
 const clickTab = async (label) => {
   const ok = await ev(`(()=>{const b=[...document.querySelectorAll('.config-tabs button')].find(x=>x.textContent.includes(${JSON.stringify(label)}));if(!b)return false;b.click();return true;})()`);
   if (!ok) throw Error('no tab ' + label);
@@ -134,7 +144,7 @@ async function run(verify) {
   assert.equal(await ev(`document.querySelector('${imageRow}').hasAttribute('tabindex')`), false);
   assert.match(await ev(`document.querySelector('${imageRow}').innerText`), /画室.*art/);
   await until(() => ev("document.querySelector('.config-stage .config-portrait img')?.naturalWidth > 0"), 'fixture portrait loaded');
-  await delay(700);
+  await waitPortraitSettled();
   const portrait = await ev(`(()=>{const r=document.querySelector('.config-stage .config-portrait').getBoundingClientRect();return {x:Math.ceil(r.x)+3,y:Math.ceil(r.y)+3,width:Math.floor(r.width)-6,height:Math.floor(r.height)-6,scale:1};})()`);
   const changeTheme = async preset => {
     await ev(`document.querySelector('.ui-theme-switcher [data-theme-choice="${preset}"]').click()`);
@@ -149,6 +159,7 @@ async function run(verify) {
   const middle = await cmd('Page.captureScreenshot', {format:'png',clip:portrait});
   const midPixels = PNG.sync.read(Buffer.from(middle.data,'base64'));
   await until(() => ev("!document.querySelector('.theme-snapshot') && document.documentElement.dataset.uiPreset==='nightwave'"), '夜幕收束');
+  await waitPortraitSettled();
   const night = await cmd('Page.captureScreenshot', { format: 'png', clip: portrait });
   fs.writeFileSync(path.join(out, 'portrait-nightwave.png'), Buffer.from(night.data, 'base64'));
   const originalPixels = PNG.sync.read(Buffer.from(before.data, 'base64'));
@@ -182,7 +193,7 @@ async function run(verify) {
   await until(() => ev("document.querySelector('.config-sheet h3')?.textContent==='生图 · 参数'"), 'image compact');
   assert.equal(await ev("[...document.querySelectorAll('.config-sheet .config-grp')].filter(e=>!e.hidden).length"), 1);
   await until(() => ev("document.activeElement?.matches('.config-sheet input[type=number]')"), 'compact focus');
-  await delay(300);
+  await waitPortraitSettled();
   const after = await cmd('Page.captureScreenshot', {format:'png',clip:portrait});
   fs.writeFileSync(path.join(out,'portrait-after.png'), Buffer.from(after.data,'base64'));
   const visiblePixels = PNG.sync.read(Buffer.from(after.data, 'base64'));

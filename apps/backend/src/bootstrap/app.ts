@@ -48,7 +48,6 @@ import { AppStore } from "../storage/core/app-store.js";
 import { SecretStore } from "../storage/core/secret-store.js";
 import { SecretCipher } from "../security/secret-cipher.js";
 import { FixedSceneImagePlanner } from "../scene/fixed-planner.js";
-import { FakeSceneImageGenerator } from "../scene/fake-generator.js";
 import { ConfiguredSceneImageGenerator } from "../scene/comfyui-generator.js";
 import { ModelSceneImagePlanner } from "../scene/model-planner.js";
 import type { BackendConfig } from "./config.js";
@@ -455,7 +454,7 @@ function assembleBackendApp(
     resumeWork: (roleId) => conversation.rescheduleAfterStop(roleId),
   });
   const configuredSceneGenerator = new ConfiguredSceneImageGenerator({
-    source: sceneImageSettings.source, fallback: new FakeSceneImageGenerator(),
+    source: sceneImageSettings.source,
   });
   const sceneImages = new SceneImageService(appStore, roleAccess, config.dataRoot, {
     captureImageService: roleId => {

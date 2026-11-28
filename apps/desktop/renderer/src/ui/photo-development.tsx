@@ -2,10 +2,12 @@ import { useState } from 'react';
 import '../styles/photo-development.css';
 
 /** 相纸反馈可用于舞台与媒体预览，不负责发起请求。 */
-export function PhotoDevelopment({ state, reason, onRetry, pendingLabel = '相纸显影中…', failureLabel = '过场图没有生成' }: {
+export function PhotoDevelopment({ state, reason, onRetry, actionLabel, onAction, pendingLabel = '相纸显影中…', failureLabel = '过场图没有生成' }: {
   state: 'pending' | 'failed' | 'developed';
   reason?: string | null;
   onRetry?: () => void;
+  actionLabel?: string;
+  onAction?: () => void;
   pendingLabel?: string;
   failureLabel?: string;
 }) {
@@ -14,6 +16,7 @@ export function PhotoDevelopment({ state, reason, onRetry, pendingLabel = '相�
     {state === 'pending' ? <><span className="photo-development-light" aria-hidden="true" /><span>{pendingLabel}</span></> : <>
       <span>{failureLabel}：{reason || '暂时无法完成，请再试一次。'}</span>
       {onRetry && <button type="button" onClick={onRetry}>重试</button>}
+      {onAction && actionLabel && <button type="button" onClick={onAction}>{actionLabel}</button>}
     </>}
   </div>;
 }

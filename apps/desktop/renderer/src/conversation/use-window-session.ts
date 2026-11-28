@@ -982,7 +982,8 @@ export function useWindowSession({
     }).catch(error => {
       if (state.current.generation !== generation || roleRef.current !== targetRole || state.current.windowId !== targetWindow) return;
       const message = errorText(error);
-      state.current.sceneRequestErrors.set(messageId, { reason: message, mode });
+      const code = error instanceof ApiError ? error.code : undefined;
+      state.current.sceneRequestErrors.set(messageId, { reason: message, mode, ...(code ? { code } : {}) });
       emit({ reason: 'error', message });
     }).finally(() => {
       requests.delete(messageId);

@@ -20,6 +20,7 @@ import { APP_SCHEMA_VERSION } from "../../src/storage/core/schema.js";
 import { TokenUsageStore } from "../../src/storage/core/token-usage-store.js";
 import type { ModelEvent, ModelPort, ModelRequest } from "../../src/domain/model.js";
 import type { TokenUsageCallEvent, TokenUsageSummaryView } from "../../src/domain/token-usage.js";
+import { FakeSceneImageGenerator } from "../../src/scene/fake-generator.js";
 
 function tempRoot(prefix = "nowadays-p26-usage-"): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -153,6 +154,8 @@ test("全链路 7 类调用记账、缓存字段保留、删角色与删服务�
     disablePresetAssistant: true,
     disableMemoryRuntime: true,
     modelPortFactory: () => modelPort,
+    // 离线链路未配置 ComfyUI，显式注入占位生成器。
+    sceneImageGenerator: new FakeSceneImageGenerator(),
   });
   const port = await listen(app.server, 0, "127.0.0.1");
   const baseUrl = `http://127.0.0.1:${port}`;

@@ -284,10 +284,14 @@ export function ChatPane({
         const pending = atEnd && feedback.pending;
         const failure = atEnd ? feedback.error : null;
         const canDraw = atEnd && snapshot.sceneImagesAvailable && !!row.segmentId;
+        const needsImageConfig = failure?.code === 'SCENE_IMAGE_NOT_CONFIGURED' || failure?.code === 'IMAGE_SERVICE_DISABLED';
         let sceneControl: ReactNode = null;
         if (scene?.status === 'succeeded' || pending || failure || canDraw) sceneControl = <>
           {scene?.status === 'succeeded' && <button type="button" className="dialogue-scene-chip" onClick={() => onOpenScene(scene)}>查看{scene.mode === 'background' ? '背景图' : '人物场景图'}</button>}
-          {pending ? <PhotoDevelopment state="pending" /> : failure ? <PhotoDevelopment state="failed" reason={failure.reason} onRetry={canDraw ? () => onRetryScene(row.messageId, failure.mode) : undefined} />
+          {pending ? <PhotoDevelopment state="pending" /> : failure ? <PhotoDevelopment state="failed" reason={failure.reason}
+            actionLabel={needsImageConfig ? '去生图设置' : undefined}
+            onAction={needsImageConfig ? onConfigureModel : undefined}
+            onRetry={needsImageConfig ? undefined : canDraw ? () => onRetryScene(row.messageId, failure.mode) : undefined} />
             : !scene && canDraw ? <button type="button" className="dialogue-scene-chip" data-history-generate={row.messageId !== snapshot.latestSceneTarget || undefined} onClick={() => onGenerateScene(row.messageId)}><Icon name="image" size={15} />生成过场图</button> : null}
         </>;
         const located = location?.rowId === row.id ? location : null;

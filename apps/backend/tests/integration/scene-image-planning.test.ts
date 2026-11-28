@@ -356,6 +356,8 @@ test("an invalid plan range fails the task while the reply stays readable", { ti
         endSegmentId: "segment-from-another-message",
       })),
     ]),
+    // 未配置 ComfyUI 的离线链路需要显式注入占位生成器。
+    { sceneImageGenerator: new FakeSceneImageGenerator() },
   );
   try {
     const reply = await send(fixture, "去河边走走吧");

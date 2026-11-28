@@ -15,6 +15,7 @@ import type {
   SceneImageTaskRecord,
 } from "../../src/domain/scene-image.js";
 import { FixedSceneImagePlanner } from "../../src/scene/fixed-planner.js";
+import { FakeSceneImageGenerator } from "../../src/scene/fake-generator.js";
 import { CHARACTER_PAINTING_STYLE, SCENE_PAINTING_STYLE } from "../../src/scene/comfyui-generator.js";
 import { ComfyUiClient } from "../../src/scene/comfyui-client.js";
 import {
@@ -1212,7 +1213,11 @@ test("a configured service timeout ends the task and clears the remote prompt", 
 
 test("a task accepted before configuration keeps the fallback generator", { timeout: 60_000 }, async () => {
   const planner = new GatedScenePlanner();
-  const context = await setup({ sceneImagePlanner: planner });
+  // 正式路径未配置即 409；这里显式注入占位生成器验证任务接收时的快照语义。
+  const context = await setup({
+    sceneImagePlanner: planner,
+    sceneImageGenerator: new FakeSceneImageGenerator(),
+  });
   try {
     const replyId = await createReply(context);
     const created = await api(

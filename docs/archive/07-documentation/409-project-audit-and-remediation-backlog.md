@@ -113,7 +113,7 @@
 
 ### BUG-03 `RoleAccess.withStore` 每次操作现开现关两个 SQLite 库，且实例未统一
 
-- **优先级**：P1 · **状态**：`[ ]` 待排查
+- **优先级**：P1 · **状态**：`[x]` 已修复（R4，2026-11-27）
 - **证据位置**：
   - [apps/backend/src/application/role/role-access.ts](../../../apps/backend/src/application/role/role-access.ts#L35-L69)
   - [apps/backend/src/storage/core/role-storage.ts](../../../apps/backend/src/storage/core/role-storage.ts#L14-L47)

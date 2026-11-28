@@ -42,6 +42,21 @@ test("过场图请求失败保留重试图层与旧图，重试期间隐藏旧�
   });
 });
 
+test("过场图失败保留可操作的错误码，供界面直达生图设置", () => {
+  const requestErrors = new Map([['m1', { reason: '还没有配置生图服务。', mode: 'background', code: 'SCENE_IMAGE_NOT_CONFIGURED' }]]);
+  assert.deepEqual(targetModule.sceneFeedback([], new Set(), requestErrors, 'm1'), {
+    pending: false, error: { reason: '还没有配置生图服务。', mode: 'background', code: 'SCENE_IMAGE_NOT_CONFIGURED' }
+  });
+  const failedTask = { id: 't', messageId: 'm1', mode: 'full_scene', status: 'failed', errorCode: 'IMAGE_SERVICE_DISABLED', errorSummary: '生图服务已停用' };
+  assert.deepEqual(targetModule.sceneFeedback([failedTask], new Set(), new Map(), 'm1'), {
+    pending: false, error: { reason: '生图服务已停用', mode: 'full_scene', code: 'IMAGE_SERVICE_DISABLED' }
+  });
+  const withoutCode = { ...failedTask, errorCode: null };
+  assert.deepEqual(targetModule.sceneFeedback([withoutCode], new Set(), new Map(), 'm1'), {
+    pending: false, error: { reason: '生图服务已停用', mode: 'full_scene' }
+  });
+});
+
 test("历史结构化消息按保存的原文重建，历史与实时的行标识相同", () => {
   const text = "### 权限\n\n- **查看**状态";
   const registry = targetModule.createRowIdRegistry();

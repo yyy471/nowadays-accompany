@@ -26,10 +26,10 @@
 | [R2-06](#r2-06-热生效配置把删除图生图服饰参考图误划入免停机区) | 409 新引入（R9b） | 并发竞态 | **P1** | `DELETE .../scene-image/outfits/:outfitId/reference` 免停机且立刻删盘，与在途自动 `img2img` 任务竞态报错 | 关联 `DL-148` | `[x]` 已修复 |
 | [R2-07](#r2-07-roleaccess-连接池缺少坏句柄校验与异常驱逐自愈) | 409 新引入（R4） | 稳定性 / 容错 | **P1** | `borrow()` 不验 `db.open`，遇到 `SQLITE_IOERR`/`SQLITE_CORRUPT` 不驱逐脏连接，坏句柄滞留 60s | 否 | `[x]` 已修复 |
 | [R2-09](#r2-09-google-服务账号凭据-token-地址允许任意明文-http-触发-ssrf) | 底层核心 | 安全边界 | **P1** | `parseServiceAccountCredential` 放行明文 `http:` 且不限域名，篡改 JSON 可将签名 JWT 发往恶意或内网地址 | 否 | `[x]` 已修复 |
-| [R2-10](#r2-10-未配置生图服务时手动点击过场图仍静默生成假占位图落盘) | 底层核心 | 产品缺陷 | **P1** | `ConfiguredSceneImageGenerator` 仍回退 `FakeSceneImageGenerator`，向真实角色库写入假占位 PNG | 需确认边界（`DL-142` / `DL-150`） | `[ ]` 待排查 |
+| [R2-10](#r2-10-未配置生图服务时手动点击过场图仍静默生成假占位图落盘) | 底层核心 | 产品缺陷 | **P1** | `ConfiguredSceneImageGenerator` 仍回退 `FakeSceneImageGenerator`，向真实角色库写入假占位 PNG | 需确认边界（`DL-142` / `DL-150`） | `[x]` 已修复 |
 | [R2-11](#r2-11-仓储层与核心执行层仍残存-11-个千行至近三千行巨石文件) | 架构遗留 | 架构债务 | **P1** | R12 仅拆掉 2 个 >100 KB 告警文件；`memory-store`、`schema.ts`（V32）等 11 个核心文件仍超千行 | 否 | `[ ]` 待排查 |
 | [R2-12](#r2-12-离线验证与真实交付最后一公里仍未闭环) | 交付遗留 | 交付 / 质量 | **P1** | 脱仓冷启 health 仍 4.27s（未达 `<2s`）、干净机便携 EXE 未实机验收、`DELIV-02` 真实云端/媒体联调仍为 0 | 否 | `[ ]` 待排查 |
-| [R2-13](#r2-13-409-文档状态残留与并发-e2e-像素帧抖动) | 文档与测试 | 一致性 / 稳定性 | **P2** | `409` 正文 `BUG-03` 仍标 `[ ]`、`STATUS.md` 标题日期滞后、3 并发 E2E `settings-media-sheet` 像素帧抖动 | 否 | `[ ]` 待排查 |
+| [R2-13](#r2-13-409-文档状态残留与并发-e2e-像素帧抖动) | 文档与测试 | 一致性 / 稳定性 | **P2** | `409` 正文 `BUG-03` 仍标 `[ ]`、`STATUS.md` 标题日期滞后、3 并发 E2E `settings-media-sheet` 像素帧抖动 | 否 | `[x]` 已修复 |
 
 ### 0.2 建议修复分期路线
 
@@ -211,7 +211,7 @@
 
 ### R2-10 未配置生图服务时，手动点击过场图仍静默生成假占位图落盘
 
-- **优先级**：P1 · **来源**：底层核心 · **状态**：`[ ]` 待排查 · **决策关联**：[DL-142](../../161-digital-life-direction-decisions.md) · [DL-150](../../161-digital-life-direction-decisions.md#dl-150-生图首版适配-comfyui先测-moss-image)
+- **优先级**：P1 · **来源**：底层核心 · **状态**：`[x]` 已修复（R6，2026-11-28，确认方案 A） · **决策关联**：[DL-142](../../161-digital-life-direction-decisions.md) · [DL-150](../../161-digital-life-direction-decisions.md#dl-150-生图首版适配-comfyui先测-moss-image)
 - **证据位置**：
   - [apps/backend/src/scene/comfyui-generator.ts](../../../apps/backend/src/scene/comfyui-generator.ts#L182-L185)（注释明写「正式版应改为未配置即失败」）
   - [apps/backend/src/scene/comfyui-generator.ts](../../../apps/backend/src/scene/comfyui-generator.ts#L216-L220)（`runtime === null` 时直接调用 `this.options.fallback.generate(input)`）
@@ -264,7 +264,7 @@
 
 ### R2-13 409 文档状态残留与并发 E2E 像素帧抖动
 
-- **优先级**：P2 · **来源**：文档与测试一致性 · **状态**：`[ ]` 待排查
+- **优先级**：P2 · **来源**：文档与测试一致性 · **状态**：`[x]` 已修复（R6，2026-11-28）
 - **证据位置**：
   - [docs/archive/07-documentation/409-project-audit-and-remediation-backlog.md](./409-project-audit-and-remediation-backlog.md#L116)（顶层总表已标 `BUG-03` 已修复，正文第 116 行仍残留 `[ ] 待排查`）
   - [docs/STATUS.md](../../STATUS.md#L1)（标题日期仍为 `2026-11-27`，正文已是 `2026-11-28`）
@@ -353,3 +353,16 @@
 - **精准离线复验（仓库 Node `v24.22.2`）**：
   - 后端 `tsc --noEmit` 0 错误；`role-activity` + `scene-image-auto` + `scene-image-core` + `scene-image-planning` **43/43** 全通过（含活跃/停机中删参考图返回 `409 ROLE_NOT_STOPPED`、停机后返回 `200`，以及 `img2img` 在途热替换按固定旧图完成并在结算后清理旧文件实测）；
   - 渲染器 `npm run check`（38 CSS 0 违规）+ Vite 生产构建全通过。
+
+#### R6：`R2-10`（`DL-150` 方案 A：移除生产假占位图回退并引导配置）+ `R2-13`（文档状态对齐与 `settings-media-sheet` 并发像素等待稳定化）
+- **决策落地**：用户确认方案 A 并已登记至 [161 `DL-150`](../../161-digital-life-direction-decisions.md#dl-150-生图首版适配-comfyui先测-moss-image)。
+- **`R2-10` 后端与桌面改动**：
+  - `apps/backend/src/scene/comfyui-generator.ts` 将 `fallback` 改为测试专用可选参数，`lock()` 与 `generate()` 在无回退且未配置生图服务时立即抛出 `409 SCENE_IMAGE_NOT_CONFIGURED`；`apps/backend/src/bootstrap/app.ts` 移除生产默认装配中的 `FakeSceneImageGenerator`；
+  - `apps/desktop/renderer/src/conversation/window-model.ts`、`use-window-session.ts`、`ui/photo-development.tsx` 与 `ChatPane.tsx` 透传错误码并在 `SCENE_IMAGE_NOT_CONFIGURED` / `IMAGE_SERVICE_DISABLED` 时展示「去生图设置」直达按钮（完全复用既有 `.photo-development button` 样式）。
+- **`R2-13` 文档与并发稳定性**：
+  - 修正 `409` 第 116 行 `BUG-03` 残留状态及 `STATUS.md` 标题日期（`2026-11-28`）；
+  - `apps/desktop/tests/e2e/settings-media-sheet.e2e.cjs` 新增 `waitPortraitSettled()`（校验 `img.complete && naturalWidth > 0` + `img.decode()` + `document.getAnimations()` 全部落定 + 双帧 `requestAnimationFrame`），替换固定 `delay(700)`/`delay(300)` 竞态。
+- **精准离线复验（仓库 Node `v24.22.2`）**：
+  - 后端 `tsc --noEmit` 0 错误；`scene-image-core` + `scene-image-planning` + `scene-image-auto` + `comfyui-client` + `token-usage` **66/66** 全通过（含未配置默认后端返回 `409 SCENE_IMAGE_NOT_CONFIGURED`、任务表/素材表/目录均为 0）；
+  - 渲染器 `npm run check`（38 CSS 0 违规）+ `conversation-window-model` **21/21** + Vite 生产构建全通过；
+  - Electron 39 `settings-media-sheet.e2e.cjs` 通过（实测 `midChangedPixels: 0`、`portraitThemeChangedPixels: 0 / 173677`）。

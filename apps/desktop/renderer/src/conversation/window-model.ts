@@ -31,14 +31,14 @@ export function latestSceneTarget(entries: readonly { record: MessageView; segme
   return null;
 }
 
-export type SceneRequestError = { reason: string; mode: SceneLayerMode };
+export type SceneRequestError = { reason: string; mode: SceneLayerMode; code?: string };
 
 /** 请求错误与后台任务失败都保留原图层，重试时不需要再次选择。 */
 export function sceneFeedback(scenes: readonly PerfScene[], requests: ReadonlySet<string>, errors: ReadonlyMap<string, SceneRequestError>, messageId: string) {
   const latest = scenes.filter(scene => scene.messageId === messageId).at(-1);
   const pending = requests.has(messageId) || latest?.status === 'generating';
   const error = errors.get(messageId) ?? (latest?.status === 'failed'
-    ? { reason: latest.errorSummary || latest.errorCode || '暂时无法完成，请再试一次。', mode: latest.mode } : null);
+    ? { reason: latest.errorSummary || latest.errorCode || '暂时无法完成，请再试一次。', mode: latest.mode, ...(latest.errorCode ? { code: latest.errorCode } : {}) } : null);
   return { pending, error: pending ? null : error };
 }
 

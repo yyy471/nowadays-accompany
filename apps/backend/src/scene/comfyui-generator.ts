@@ -174,14 +174,18 @@ export class ComfyUiImageGenerator {
 
 export interface ConfiguredSceneImageGeneratorOptions {
   source: SceneImageRuntimeSource;
-  /** 未配置真实服务时沿用占位生成器，保持首轮原型的演示行为。 */
-  fallback: SceneImageGeneratorPort;
+  /**
+   * 仅供测试显式注入：未配置生图服务时用占位生成器离线验证任务链路。
+   * 正式产品行为是未配置即失败，因此默认不提供回退。
+   */
+  fallback?: SceneImageGeneratorPort;
   generator?: ComfyUiImageGenerator;
 }
 
 /**
- * 过场图生成入口：配了 ComfyUI 就走真实服务，没配就走占位生成器。
- * 首版这样保留原有离线演示；正式版应改为「未配置即失败」。
+ * 过场图生成入口：配了 ComfyUI 就走真实服务，未配置则明确失败
+ * （409 SCENE_IMAGE_NOT_CONFIGURED），不会生成占位图。
+ * fallback 只在测试显式注入时用于离线验证。
  */
 export class ConfiguredSceneImageGenerator
   implements SceneImageGeneratorPort
@@ -192,10 +196,13 @@ export class ConfiguredSceneImageGenerator
     this.comfy = options.generator ?? new ComfyUiImageGenerator();
   }
 
-  /** 任务接收时固定配置；未配置真实服务时固定为回退占位生成器。 */
+  /** 任务接收时固定配置；未配置且无测试回退时直接拒绝，不创建任务。 */
   lock(roleId: string): SceneImageConfigSnapshot | null {
     const settings = this.options.source.getSettings(roleId);
     if (settings === null) {
+      if (this.options.fallback === undefined) {
+        throw new SceneImageNotConfiguredError("角色还没有配置生图服务");
+      }
       return { version: 1, settings: null, service: null };
     }
     const service = this.options.source.findServiceRecord(settings.serviceId);
@@ -216,6 +223,9 @@ export class ConfiguredSceneImageGenerator
   async generate(input: SceneImageGenerationInput): Promise<GeneratedSceneImage> {
     const runtime = this.runtimeFor(input);
     if (runtime === null) {
+      if (this.options.fallback === undefined) {
+        throw new SceneImageNotConfiguredError("角色还没有配置生图服务");
+      }
       return this.options.fallback.generate(input);
     }
     const outfitId = input.outfit.outfitId;
