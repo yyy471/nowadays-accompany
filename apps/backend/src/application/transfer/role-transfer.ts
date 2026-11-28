@@ -7,7 +7,8 @@ import { checkAppDatabaseFiles, checkedInstallEntry, lockInstallation } from "..
 import { canonicalJson, portableTransferTables, sha256 } from "./role-transfer-data.js";
 import {
   captureRoleTransfer, readRoleTransferPackage, resolveRoleTransferBindings, roleTransferTimelineFacts,
-  roleTransferTimelineFingerprint, roleTransferWithAncestors, writeRoleTransferPackage, type RoleTransferPackage,
+  roleTransferTimelineFingerprint, roleTransferWithAncestors, writeRoleTransferPackage,
+  type ReadRoleTransferPackageOptions, type RoleTransferPackage,
 } from "./role-transfer-package.js";
 import { checkTransferRoleDirectory, publishRoleTransfer, recoverRoleTransfer, type PublicationHook } from "./role-transfer-publication.js";
 
@@ -154,16 +155,31 @@ function readIndex(db: Database.Database | null, roleId: string): RoleIndexFacts
   return index;
 }
 
+/**
+ * 判断目标是否位于目录内（含目录本身）。
+ *
+ * Windows 文件系统大小写不敏感，比较前统一小写，避免 `AppRoot` 与
+ * `approot` 之间的漏判。
+ */
+function isInsideDirectory(directory: string, target: string): boolean {
+  const win32 = process.platform === "win32";
+  const relative = path.relative(
+    win32 ? directory.toLowerCase() : directory,
+    win32 ? target.toLowerCase() : target,
+  );
+  return relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`));
+}
+
 function assertPackageFileOutsideManagedDirs(config: BackendConfig, file: string): void {
   const target = path.resolve(file);
+  // 迁移包必须是 JSON：先按扩展名拒绝明显不是迁移包的目标，避免误写到数据库等文件。
+  if (path.extname(target).toLowerCase() !== ".json") throw new Error("ROLE_TRANSFER_PACKAGE_EXTENSION_INVALID");
   const parent = fs.realpathSync(path.dirname(target));
-  const dataRoot = fs.realpathSync(config.dataRoot);
-  for (const directory of ["roles", ".role-transfer"]) {
-    const managed = path.join(dataRoot, directory);
-    const relative = path.relative(managed, path.join(parent, path.basename(target)));
-    if (relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`))) {
-      throw new Error("ROLE_TRANSFER_PACKAGE_IN_MANAGED_DIRECTORY");
-    }
+  const resolvedTarget = path.join(parent, path.basename(target));
+  // 应用根目录与数据目录都禁止写入迁移包，防止覆盖安装数据或角色库。
+  if (isInsideDirectory(fs.realpathSync(config.appRoot), resolvedTarget) ||
+      isInsideDirectory(fs.realpathSync(config.dataRoot), resolvedTarget)) {
+    throw new Error("ROLE_TRANSFER_PACKAGE_IN_MANAGED_DIRECTORY");
   }
 }
 
@@ -229,8 +245,14 @@ function compareTimelines(
   return "unknown";
 }
 
-function inspectTransfer(config: BackendConfig, context: TransferContext, file: string, mapping: TransferMapping) {
-  const incoming = readRoleTransferPackage(file);
+function inspectTransfer(
+  config: BackendConfig,
+  context: TransferContext,
+  file: string,
+  mapping: TransferMapping,
+  options?: ReadRoleTransferPackageOptions,
+) {
+  const incoming = readRoleTransferPackage(file, options);
   const bindings = resolveRoleTransferBindings(config, incoming, mapping);
   const tables = portableTransferTables(incoming.tables);
   const portable = tables === incoming.tables ? incoming : { ...incoming, tables,
@@ -279,11 +301,12 @@ export function preflightRoleTransfer(config: BackendConfig, file: string, mappi
 /** 运行态 HTTP 后端使用的预检：复用已打开的 `AppStore`，不获取安装锁。 */
 export function preflightRoleTransferWithStore(
   config: BackendConfig, store: AppStore, file: string, mapping: TransferMapping = {},
+  options?: ReadRoleTransferPackageOptions,
 ) {
   assertPackageFileOutsideManagedDirs(config, file);
   const context = openedStoreContext(store);
   recoverPendingTransfer(config, context);
-  return inspectTransfer(config, context, file, mapping).preview;
+  return inspectTransfer(config, context, file, mapping, options).preview;
 }
 
 function applyWithContext(
@@ -294,8 +317,10 @@ function applyWithContext(
   mapping: TransferMapping,
   choice: TransferChoice | undefined,
   hook: PublicationHook | undefined,
+  options?: ReadRoleTransferPackageOptions,
 ) {
-  const { preview, incoming, incomingEvidence, bindings, index, selection } = inspectTransfer(config, context, file, mapping);
+  const { preview, incoming, incomingEvidence, bindings, index, selection } =
+    inspectTransfer(config, context, file, mapping, options);
   if (token !== preview.token) throw new Error("ROLE_TRANSFER_PREFLIGHT_STALE");
   if (preview.requiresChoice && !choice) throw new Error("ROLE_TRANSFER_CHOICE_REQUIRED");
   if (choice === "local") {
@@ -359,9 +384,10 @@ export function applyRoleTransferWithStore(
   mapping: TransferMapping = {},
   choice?: TransferChoice,
   hook?: PublicationHook,
+  options?: ReadRoleTransferPackageOptions,
 ) {
   assertPackageFileOutsideManagedDirs(config, file);
   const context = openedStoreContext(store);
   recoverPendingTransfer(config, context);
-  return applyWithContext(config, context, file, token, mapping, choice, hook);
+  return applyWithContext(config, context, file, token, mapping, choice, hook, options);
 }

@@ -22,6 +22,13 @@ import { assertRegularPath, captureTransferFiles, stageTransferFiles, validateTr
 
 export type { RoleTransferBinding, RoleTransferBindings } from "./role-transfer-bindings.js";
 
+/** 迁移包读取上限：256 MiB，避免超大文件一次性读入内存。 */
+export const MAX_ROLE_TRANSFER_PACKAGE_BYTES = 256 * 1024 * 1024;
+
+export interface ReadRoleTransferPackageOptions {
+  maxBytes?: number;
+}
+
 const digestSchema = z.string().regex(/^[0-9a-f]{64}$/);
 const transferPackageSchema = z.object({
   version: z.literal(1),
@@ -126,27 +133,50 @@ export function writeRoleTransferPackage(filePath: string, pkg: RoleTransferPack
 /**
  * 读取迁移包。
  *
- * Windows 在杀软或索引器持有句柄时，文件刚写出后的极短时间内仍可能
- * 触发 `ROLE_TRANSFER_UNSAFE_PATH`；这里只对该瞬态错误做短暂重试，
- * 最终仍按同一路径规则拒绝，不会放过符号链接、越界路径或持久异常文件。
+ * 读取前先做安全与体积检查：符号链接、非普通文件、缺失文件立即拒绝，
+ * 超过 `maxBytes` 的包在读取内容前就返回错误，避免把超大文件读入内存。
  */
-export function readRoleTransferPackage(filePath: string): RoleTransferPackage {
+export function readRoleTransferPackage(
+  filePath: string,
+  options?: ReadRoleTransferPackageOptions,
+): RoleTransferPackage {
   const resolved = path.resolve(filePath);
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      assertRegularPath(path.dirname(resolved), path.basename(resolved), false);
-      break;
-    } catch (error) {
-      const retryable = error instanceof Error && error.message === "ROLE_TRANSFER_UNSAFE_PATH";
-      if (!retryable || attempt >= 20) throw error;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
-    }
-  }
+  const maxBytes = options?.maxBytes ?? MAX_ROLE_TRANSFER_PACKAGE_BYTES;
+  const stat = fs.lstatSync(resolved, { throwIfNoEntry: false });
+  if (!stat || stat.isSymbolicLink() || !stat.isFile()) throw new Error("ROLE_TRANSFER_UNSAFE_PATH");
+  if (stat.size > maxBytes) throw new Error("ROLE_TRANSFER_PACKAGE_TOO_LARGE");
+  assertRegularPath(path.dirname(resolved), path.basename(resolved), false);
   let candidate: unknown;
   try {
     candidate = JSON.parse(fs.readFileSync(resolved, "utf8")) as unknown;
   } catch {
     throw new Error("ROLE_TRANSFER_PACKAGE_INVALID");
+  }
+  return validateRoleTransfer(candidate);
+}
+
+/** 非阻塞版本：运行态 HTTP 服务使用，避免同步读取大包阻塞事件循环。 */
+export async function readRoleTransferPackageAsync(
+  filePath: string,
+  options?: ReadRoleTransferPackageOptions,
+): Promise<RoleTransferPackage> {
+  const resolved = path.resolve(filePath);
+  const maxBytes = options?.maxBytes ?? MAX_ROLE_TRANSFER_PACKAGE_BYTES;
+  let stat: fs.Stats;
+  try {
+    stat = await fs.promises.lstat(resolved);
+  } catch {
+    throw new Error("ROLE_TRANSFER_UNSAFE_PATH");
+  }
+  if (stat.isSymbolicLink() || !stat.isFile()) throw new Error("ROLE_TRANSFER_UNSAFE_PATH");
+  if (stat.size > maxBytes) throw new Error("ROLE_TRANSFER_PACKAGE_TOO_LARGE");
+  assertRegularPath(path.dirname(resolved), path.basename(resolved), false);
+  let candidate: unknown;
+  try {
+    candidate = JSON.parse(await fs.promises.readFile(resolved, "utf8")) as unknown;
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new Error("ROLE_TRANSFER_PACKAGE_INVALID");
+    throw error;
   }
   return validateRoleTransfer(candidate);
 }

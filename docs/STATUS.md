@@ -1,8 +1,10 @@
-# 项目当前状态与基线（2026-11-27）
+# 项目当前状态与基线（2026-11-28）
 
 本文件集中维护当前开发状态、待办事项与最新验收基线，替代过去堆在 `AGENTS.md` 顶部的历史流水账。历史过程细节请直接查看 `archive/` 下各专项复核与实施记录。
 
 ## 1. 当前结论概览
+
+**410 R1（`R2-01` + `R2-03`）已完成修复与精准复验。** 桌面代理抽取至独立模块 `apps/desktop/electron/backend-proxy.cjs`（同步登记 `package.json` 打包清单）：统一 `fail(err)` 结算预中止/响应头前中止/连接关闭并向 `upstreamReq.destroy(err)` 传错，消除取消挂起 Promise；`ReadableStream` 接入 `desiredSize <= 0` `pause()/pull() resume()` 流式背压；非 GET/HEAD 请求体改为 `Readable.fromWeb(request.body).pipe(upstreamReq)` 流式透传，并在同源代理拦截 `/v1/roles/*/workspace/path` 返回 404（仅主进程 IPC 内部直连）。后端角色迁移移除 `readRoleTransferPackage` 的 `Atomics.wait` 同步睡眠阻塞，新增 `MAX_ROLE_TRANSFER_PACKAGE_BYTES`（256 MiB，超限返回 `413 ROLE_TRANSFER_PACKAGE_TOO_LARGE`）与非阻塞 `readRoleTransferPackageAsync`，并将 `assertPackageFileOutsideManagedDirs` 收紧为禁止整个 `appRoot`/`dataRoot` 且强制 `.json` 后缀（`400 ROLE_TRANSFER_PACKAGE_EXTENSION_INVALID`）。Node 24.22.2 下后端 `typecheck` + 迁移/工作空间 22/22 测试、桌面壳 38/38 全量单测（含 5 项代理取消/背压/流式上传新单测与脱仓包冒烟）全通过。[410 R1 专项记录](./archive/07-documentation/410-second-round-strict-audit-backlog.md#第-2-轮实施与复验记录2026-11-28)
 
 **409 全量离线门禁终验（2026-11-28）全通（23/24 离线项闭环，真实服务与干净机便携 EXE 仍单独留证）。** 本轮先修复门禁暴露的 5 处旧测试对新契约适配（`process-smoke` 补传 `--app-root`、`worldbooks` 适配 `DL-148` 热生效、`startup-flow-fixes` 适配首绑默认启用、`tts-unified`/`background-tools` 降级后清理连接池）及 1 处 320px 窄屏关系页装饰条留白（`relations-exlibris.css`）。仓库 Node 24.22.2 实跑：`accept-offline` **21/21 步**（含后端 **672/672** + 交付 **5/5** + 进程重启冒烟 + 81 场景）、`backend-eval` **8/8**、`feed-integration` **3/3**、Pi 子包 **11/11**（`survivors=0`）、渲染器 `check`（38 CSS 0 违规）+ **222/222** + 构建、桌面壳 **32/32**、串行 Electron 39 E2E **29/29**（3 并发 28/29，仅 `settings-media-sheet` 像素帧抖动），文档巡检 0 错误 0 警告，仓库卫生手写源码超限告警 0，新增进程残留 0。[409 全量终验记录](./archive/07-documentation/409-project-audit-and-remediation-backlog.md#第-4-轮全仓离线门禁终验2026-11-28)
 

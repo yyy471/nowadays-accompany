@@ -26,6 +26,15 @@ function installation(t: TestContext): BackendConfig {
   return parseBackendConfig(["--app-root", root, "--port", "0"]);
 }
 
+/** 迁移包必须放在安装目录之外：测试统一用独立兄弟目录承载。 */
+function exportDir(t: TestContext): string {
+  const resultRoot = process.env.P1_REVIEW_TMP_ROOT ?? path.resolve(backend, "../../test-results/backend-acceptance");
+  fs.mkdirSync(resultRoot, { recursive: true });
+  const dir = fs.mkdtempSync(path.join(resultRoot, "role-transfer-packets-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 }));
+  return dir;
+}
+
 async function createRole(config: BackendConfig) {
   const app = createBackendApp(config, options);
   try {
@@ -53,7 +62,7 @@ test("本地 CLI 与正常后端争用安装锁，异常启动后释放，进程
   const source = installation(t);
   const target = installation(t);
   const role = await createRole(source);
-  const packet = path.join(source.appRoot, "role.json");
+  const packet = path.join(exportDir(t), "role.json");
   const active = createBackendApp(source, options);
   active.roleAccess.withStore(role.roleId, storage => { storage.business.db.prepare("SELECT 1").get(); storage.checkpoint.db.prepare("SELECT 1").get(); });
   try {
@@ -89,9 +98,10 @@ test("共同基线区分相同、前进、分化和未知，选择保留本机�
   const b = installation(t);
   const role = await createRole(a);
   const id = role.roleId;
-  const baseline = path.join(a.appRoot, "base.json");
-  const ahead = path.join(b.appRoot, "ahead.json");
-  const branch = path.join(b.appRoot, "branch.json");
+  const packets = exportDir(t);
+  const baseline = path.join(packets, "base.json");
+  const ahead = path.join(packets, "ahead.json");
+  const branch = path.join(packets, "branch.json");
   fs.writeFileSync(note(a, id, "共同.md"), "共同事实");
   exportRoleTransfer(a, id, baseline);
   transfer(b, baseline);
@@ -119,9 +129,9 @@ test("共同基线区分相同、前进、分化和未知，选择保留本机�
   assert.equal(preflightRoleTransfer(a, branch).token, divergent.token);
 
   // 篡改祖先声明也不能自动覆盖本机独有事实。
-  const forged = path.join(b.appRoot, "forged.json");
+  const forged = path.join(packets, "forged.json");
   const candidate = readRoleTransferPackage(branch);
-  const local = path.join(a.appRoot, "local.json");
+  const local = path.join(packets, "local.json");
   exportRoleTransfer(a, id, local);
   const localPackage = readRoleTransferPackage(local);
   writeRoleTransferPackage(forged, roleTransferWithAncestors(candidate, [localPackage.timelineFingerprint]));
@@ -162,7 +172,7 @@ test("同名笔记改写与目标映射版本变更使旧预检失效", async (t
   } finally {
     await destination.close();
   }
-  const packet = path.join(a.appRoot, "role.json");
+  const packet = path.join(exportDir(t), "role.json");
   fs.writeFileSync(note(a, roleId, "相同.md"), "旧内容");
   const exported = exportRoleTransfer(a, roleId, packet);
   const mapping = { [exported.bindings[0]!.key]: targetId };
@@ -194,13 +204,14 @@ test("笔记已改写时按两边各自新增的用户消息识别分化", async
   }
   await send(a, "共同生活的第一天");
   fs.writeFileSync(note(a, roleId, "日记.md"), "第一天");
-  const common = path.join(a.appRoot, "common.json");
+  const packets = exportDir(t);
+  const common = path.join(packets, "common.json");
   exportRoleTransfer(a, roleId, common);
   transfer(b, common);
   await send(a, "在 A 的新经历");
   await send(b, "在 B 的新经历");
   fs.writeFileSync(note(a, roleId, "日记.md"), "A 写了不同的内容");
-  const later = path.join(a.appRoot, "later.json");
+  const later = path.join(packets, "later.json");
   exportRoleTransfer(a, roleId, later);
   const preview = preflightRoleTransfer(b, later);
   assert.equal(preview.relation, "diverged");
@@ -211,7 +222,8 @@ test("保留的孤留历史参与预检，待删、未初始化、不同预置�
   const a = installation(t);
   const b = installation(t);
   const role = await createRole(a);
-  const packet = path.join(a.appRoot, "old.json");
+  const packets = exportDir(t);
+  const packet = path.join(packets, "old.json");
   exportRoleTransfer(a, role.roleId, packet);
   transfer(b, packet);
   const local = createBackendApp(b, options);
@@ -244,7 +256,7 @@ test("保留的孤留历史参与预检，待删、未初始化、不同预置�
   assert.notEqual(presetId, destinationPreset.appStore.getRoleIndexByBuiltinKey("xiacheng")!.roleId);
   await originPreset.close();
   await destinationPreset.close();
-  const presetPacket = path.join(a.appRoot, "preset.json");
+  const presetPacket = path.join(packets, "preset.json");
   exportRoleTransfer(a, presetId, presetPacket);
   assert.throws(() => preflightRoleTransfer(b, presetPacket), /ROLE_TRANSFER_PRESET_KEY_IN_USE/);
 });
@@ -252,8 +264,9 @@ test("保留的孤留历史参与预检，待删、未初始化、不同预置�
 test("进程在换名各阶段退出时，下一次正常启动恢复到完整角色库", { timeout: 60_000 }, async (t) => {
   const source = installation(t);
   const role = await createRole(source);
-  const base = path.join(source.appRoot, "base.json");
-  const newer = path.join(source.appRoot, "new.json");
+  const packets = exportDir(t);
+  const base = path.join(packets, "base.json");
+  const newer = path.join(packets, "new.json");
   const roleId = role.roleId;
   exportRoleTransfer(source, roleId, base);
   fs.writeFileSync(note(source, roleId, "新增.md"), "未来");
@@ -326,7 +339,7 @@ test("迁入主角色的工程历史不能续用或锁住目标机的同 ID 模�
     jobs.settle(jobId, "completed", "源机回执", new Date().toISOString());
     store.business.pauseTask({ roleId, taskId, waitReason: "AWAITING_ENGINEERING_JOB", endReason: "等工程" });
   } finally { store.close(); await origin.close(); }
-  const packet = path.join(source.appRoot, "seat.json");
+  const packet = path.join(exportDir(t), "seat.json");
   exportRoleTransfer(source, roleId, packet);
   transfer(target, packet);
   const destination = createBackendApp(target, options);
@@ -351,6 +364,7 @@ test("迁入主角色的工程历史不能续用或锁住目标机的同 ID 模�
 
 test("工程迁移保留回执，收敛在途作业和旧包悬空等待", async t => {
   const source = installation(t), target = installation(t), legacy = installation(t);
+  const packets = exportDir(t);
   const { roleId, defaultWindowId: windowId } = await createRole(source);
   const store = RoleStorage.openExisting(rolePaths(source.dataRoot, roleId));
   const tasks: string[] = [], ids = [randomUUID(), randomUUID()];
@@ -365,7 +379,7 @@ test("工程迁移保留回执，收敛在途作业和旧包悬空等待", async
     }
     jobs.settle(ids[0]!, "completed", "结果已存档", new Date().toISOString());
   } finally { store.close(); }
-  const file = path.join(source.appRoot, "engineering.json");
+  const file = path.join(packets, "engineering.json");
   exportRoleTransfer(source, roleId, file);
   transfer(target, file);
   const imported = RoleStorage.openExisting(rolePaths(target.dataRoot, roleId));
@@ -386,7 +400,7 @@ test("工程迁移保留回执，收敛在途作业和旧包悬空等待", async
     Reflect.deleteProperty(row, "model_resource_id");
     Reflect.deleteProperty(row, "model_name");
   }
-  const v30File = path.join(source.appRoot, "jobs-v30.json");
+  const v30File = path.join(packets, "jobs-v30.json");
   pkg.timelineFingerprint = roleTransferTimelineFingerprint(pkg);
   writeRoleTransferPackage(v30File, roleTransferWithAncestors(pkg, []));
   const v30 = installation(t);
@@ -400,7 +414,7 @@ test("工程迁移保留回执，收敛在途作业和旧包悬空等待", async
   } finally { oldJobs.close(); }
   Reflect.deleteProperty(pkg.tables, "engineering_jobs");
   Reflect.deleteProperty(pkg.tables, "engineering_wakes");
-  const oldFile = path.join(source.appRoot, "legacy.json");
+  const oldFile = path.join(packets, "legacy.json");
   pkg.timelineFingerprint = roleTransferTimelineFingerprint(pkg);
   writeRoleTransferPackage(oldFile, roleTransferWithAncestors(pkg, []));
   transfer(legacy, oldFile);
@@ -425,7 +439,7 @@ test("startup assembly failure drains warmed role storage before releasing insta
     RoleStorage.openExisting = originalOpen;
     ExtensionHost.prototype.restore = originalRestore;
   }
-  const packet = path.join(source.appRoot, "after-startup-failure.json");
+  const packet = path.join(exportDir(t), "after-startup-failure.json");
   assert.throws(() => exportRoleTransfer(source, role.roleId, packet), /INSTALLATION_BUSY/);
   await new Promise<void>(resolve => setImmediate(resolve));
   exportRoleTransfer(source, role.roleId, packet);

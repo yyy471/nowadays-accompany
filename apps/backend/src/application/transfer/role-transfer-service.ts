@@ -5,7 +5,7 @@ import type { AppStore } from "../../storage/core/app-store.js";
 import type { FeedEventHub } from "../conversation/feed-events.js";
 import type { RoleAccess } from "../role/role-access.js";
 import type { RoleActivityService } from "../role/role-activity-service.js";
-import { readRoleTransferPackage } from "./role-transfer-package.js";
+import { readRoleTransferPackageAsync, MAX_ROLE_TRANSFER_PACKAGE_BYTES } from "./role-transfer-package.js";
 import { checkTransferRoleDirectory } from "./role-transfer-publication.js";
 import {
   applyRoleTransferWithStore,
@@ -20,6 +20,8 @@ export interface RoleTransferHttpServiceDeps {
   roleAccess: RoleAccess;
   activity: RoleActivityService;
   feedEvents: FeedEventHub;
+  /** 迁移包读取上限，默认 256 MiB；测试或受限部署可调小。 */
+  maxPackageBytes?: number;
 }
 
 /** ROLE_TRANSFER_* 错误到 HTTP 语意的映射（英文 code + 中文说明）。 */
@@ -30,6 +32,8 @@ const TRANSFER_STATUS: Readonly<Record<string, number>> = {
   ROLE_TRANSFER_PRESET_KEY_IN_USE: 409,
   ROLE_TRANSFER_ROLE_PENDING_DELETION: 409,
   ROLE_TRANSFER_ROLE_NOT_READY: 409,
+  ROLE_TRANSFER_PACKAGE_TOO_LARGE: 413,
+  ROLE_TRANSFER_PACKAGE_EXTENSION_INVALID: 400,
 };
 
 const TRANSFER_MESSAGES: Readonly<Record<string, string>> = {
@@ -41,7 +45,9 @@ const TRANSFER_MESSAGES: Readonly<Record<string, string>> = {
   ROLE_TRANSFER_ROLE_NOT_READY: "角色尚未初始化完成，暂不能迁移",
   ROLE_TRANSFER_PACKAGE_INVALID: "迁移包内容不合法",
   ROLE_TRANSFER_PACKAGE_DIGEST_MISMATCH: "迁移包摘要校验失败",
-  ROLE_TRANSFER_PACKAGE_IN_MANAGED_DIRECTORY: "迁移包不能放在角色数据目录内",
+  ROLE_TRANSFER_PACKAGE_TOO_LARGE: "迁移包体积超过上限（最大 256 MiB）",
+  ROLE_TRANSFER_PACKAGE_EXTENSION_INVALID: "迁移包文件必须使用 .json 扩展名",
+  ROLE_TRANSFER_PACKAGE_IN_MANAGED_DIRECTORY: "迁移包不能放在应用数据目录内",
   ROLE_TRANSFER_UNSAFE_PATH: "迁移包路径不安全或文件不存在",
   ROLE_TRANSFER_MAPPING_KEY_UNKNOWN: "目标映射包含迁移包中不存在的绑定",
 };
@@ -83,6 +89,10 @@ export class RoleTransferHttpService {
 
   constructor(private readonly deps: RoleTransferHttpServiceDeps) {}
 
+  private get maxBytes(): number {
+    return this.deps.maxPackageBytes ?? MAX_ROLE_TRANSFER_PACKAGE_BYTES;
+  }
+
   private enqueue<T>(action: () => Promise<T> | T): Promise<T> {
     const run = this.queue.then(() => action());
     this.queue = run.then(() => undefined, () => undefined);
@@ -111,7 +121,8 @@ export class RoleTransferHttpService {
   preflightImport(file: string, mapping: Record<string, string> = {}) {
     return this.enqueue(async () => {
       try {
-        const incoming = readRoleTransferPackage(file);
+        const maxBytes = this.maxBytes;
+        const incoming = await readRoleTransferPackageAsync(file, { maxBytes });
         const roleId = incoming.roleId;
         const rawDisplayName = incoming.tables.roles[0]?.display_name;
         const displayName = typeof rawDisplayName === "string" ? rawDisplayName : null;
@@ -121,7 +132,9 @@ export class RoleTransferHttpService {
           // 已停止角色先关闭本机连接，确保 WAL 落盘后预检读到完整时间线。
           if (localActivityState === "stopped") await this.deps.roleAccess.evict(roleId);
         }
-        const preview = preflightRoleTransferWithStore(this.deps.config, this.deps.appStore, file, mapping);
+        const preview = preflightRoleTransferWithStore(
+          this.deps.config, this.deps.appStore, file, mapping, { maxBytes },
+        );
         return { ...preview, displayName, localActivityState };
       } catch (error) {
         return mapTransferError(error);
@@ -137,7 +150,8 @@ export class RoleTransferHttpService {
   }) {
     return this.enqueue(async () => {
       try {
-        const incoming = readRoleTransferPackage(input.file);
+        const maxBytes = this.maxBytes;
+        const incoming = await readRoleTransferPackageAsync(input.file, { maxBytes });
         const roleId = incoming.roleId;
         const exists =
           Boolean(this.deps.appStore.getRoleIndex(roleId)) ||
@@ -149,6 +163,7 @@ export class RoleTransferHttpService {
               try {
                 return applyRoleTransferWithStore(
                   this.deps.config, this.deps.appStore, input.file, input.token, mapping, input.choice,
+                  undefined, { maxBytes },
                 );
               } finally {
                 this.deps.roleAccess.unblock(roleId);
@@ -156,6 +171,7 @@ export class RoleTransferHttpService {
             })
           : applyRoleTransferWithStore(
               this.deps.config, this.deps.appStore, input.file, input.token, mapping, input.choice,
+              undefined, { maxBytes },
             );
         if (result.outcome === "published") {
           this.deps.feedEvents.emit("role_activity", result.roleId);

@@ -17,9 +17,9 @@
 
 | 编号 | 来源维度 | 类别 | 优先级 | 问题摘要 | 是否涉及修订 `DL-xx` | 状态 |
 | --- | --- | --- | :---: | --- | :---: | :---: |
-| [R2-01](#r2-01-桌面代理在请求取消时-promise-永久挂起且缺少流式背压) | 409 新引入（R8b） | 运行时 Bug / 泄漏 | **P0** | `main.cjs` 取消代理调无参 `destroy()` 不触发 `error`，Promise 永不结算；流响应无背压 | 否 | `[ ]` 待排查 |
+| [R2-01](#r2-01-桌面代理在请求取消时-promise-永久挂起且缺少流式背压) | 409 新引入（R8b） | 运行时 Bug / 泄漏 | **P0** | `main.cjs` 取消代理调无参 `destroy()` 不触发 `error`，Promise 永不结算；流响应无背压 | 否 | `[x]` 已修复 |
 | [R2-02](#r2-02-混合检索-embedding-存在漏防重定向缺账本绕维护与首聊阻塞四重硬伤) | 409 新引入（R14） | 安全 / 账本 / 性能 | **P0** | 缺 `redirect: "error"`、跨协议乱配不拦、未入 Token 账本与维护守卫、海量未向量化记忆阻塞首聊且超时丢已算结果 | 关联 `DL-51` / `DL-183` | `[ ]` 待排查 |
-| [R2-03](#r2-03-运行态单角色迁移接口存在主线程硬阻塞无体积上限与写路径过宽问题) | 409 新引入（R11） | 安全 / DoS | **P0** | `Atomics.wait` 同步冻住主线程 200ms、`readFileSync` 无上限易 OOM、导出路径只拦两子目录、`/workspace/path` 仍向渲染层暴露 | 否 | `[ ]` 待排查 |
+| [R2-03](#r2-03-运行态单角色迁移接口存在主线程硬阻塞无体积上限与写路径过宽问题) | 409 新引入（R11） | 安全 / DoS | **P0** | `Atomics.wait` 同步冻住主线程 200ms、`readFileSync` 无上限易 OOM、导出路径只拦两子目录、`/workspace/path` 仍向渲染层暴露 | 否 | `[x]` 已修复 |
 | [R2-08](#r2-08-模型流式生成请求完全缺少首包超时与流空闲超时) | 底层核心 | 稳定性 / 死锁 | **P0** | 四条流式协议入口均未设首包或 chunk 空闲超时，上游半开连接可永久锁死角色执行槽位 | 否 | `[ ]` 待排查 |
 | [R2-04](#r2-04-工作空间笔记扫描未跳过依赖目录且无遍历数上限) | 409 新引入（R11） | 性能 / DoS | **P1** | `RoleWorkspaceService.listNotes` 不跳过 `node_modules` 且无总访问数上限，易同步卡死主线程 | 否 | `[ ]` 待排查 |
 | [R2-05](#r2-05-pi-步骤日志并发无序写盘竞态且硬依赖-sdk-私有内部路径) | 409 新引入（R6） | 并发 Bug / 脆性 | **P1** | `worker.mjs` 并发 `writeSteps()` 无串行队列与原子改名易 `EBUSY`/错序；硬导入 SDK 未导出内部路径 `./utils/paths.js` | 否 | `[ ]` 待排查 |
@@ -43,7 +43,7 @@
 
 ### R2-01 桌面代理在请求取消时 Promise 永久挂起且缺少流式背压
 
-- **优先级**：P0 · **来源**：409 R8b · **状态**：`[ ]` 待排查
+- **优先级**：P0 · **来源**：409 R8b · **状态**：`[x]` 已修复（R1，2026-11-28）
 - **证据位置**：
   - [apps/desktop/electron/main.cjs](../../../apps/desktop/electron/main.cjs#L317-L325)（`onAbort` 与预中止分支调用无参 `upstreamReq.destroy()`）
   - [apps/desktop/electron/main.cjs](../../../apps/desktop/electron/main.cjs#L286-L313)（`ReadableStream` 缺少背压控制）
@@ -85,7 +85,7 @@
 
 ### R2-03 运行态单角色迁移接口存在主线程硬阻塞、无体积上限与写路径过宽问题
 
-- **优先级**：P0 · **来源**：409 R11（`UX-05`） · **状态**：`[ ]` 待排查
+- **优先级**：P0 · **来源**：409 R11（`UX-05`） · **状态**：`[x]` 已修复（R1，2026-11-28）
 - **证据位置**：
   - [apps/backend/src/application/transfer/role-transfer-package.ts](../../../apps/backend/src/application/transfer/role-transfer-package.ts#L133-L152)（第 142 行 `Atomics.wait` 同步阻塞 20×10ms；第 147 行 `fs.readFileSync` 无体积上限）
   - [apps/backend/src/application/transfer/role-transfer.ts](../../../apps/backend/src/application/transfer/role-transfer.ts#L157-L168)（导出路径只拦截 `data/roles` 与 `data/.role-transfer`）
@@ -284,3 +284,20 @@
 ### 第 1 轮成稿校验（2026-11-28）
 - 对照 `HEAD (11b624d)` 逐项复核 13 条问题的源码文件路径、精确行号范围、函数行为与跨文档 `DL-xx` 锚点；
 - 运行 `node scripts/check-docs.mjs`、`node scripts/check-repo-hygiene.mjs` 及全篇内部/外部锚点与行号区间脚本，确保 0 断链、0 警告、0 越界行号。
+
+### 第 2 轮实施与复验记录（2026-11-28）
+
+#### R1：`R2-01`（桌面代理取消结算、流式背压与请求体流式转发）+ `R2-03`（运行态角色迁移防阻塞、体积上限与路径/代理收紧）
+- **桌面代理（`R2-01` + `R2-03`）**：
+  - 将代理逻辑独立至 `apps/desktop/electron/backend-proxy.cjs`（同步加入 `apps/desktop/package.json` `build.files` 打包清单），`main.cjs` 保留 `maxSockets: 64` 独立 HTTP/HTTPS 连接池并透传 `request.signal`；
+  - 预中止与响应头前中止经统一 `fail(err)` 稳定结算并向 `upstreamReq.destroy(err)` 传入明确 `AbortError`，消除无参 `destroy()` 不触发 `error` 导致的永久挂起 Promise；`main.cjs` 对主动中止不再伪装成 503 `BACKEND_OFFLINE`；
+  - 响应 `ReadableStream` 增加背压控制：`(controller.desiredSize ?? 0) <= 0` 时调用 `upstreamRes.pause()`，`pull()` 时 `upstreamRes.resume()`；
+  - 非 GET/HEAD 带 Web `ReadableStream` 请求体改为 `Readable.fromWeb(request.body).pipe(upstreamReq)` 流式转发，消除主进程整包 `arrayBuffer()` + `Buffer.from()` 双份缓冲；
+  - `isBlockedProxyPath` 在 `desk://bundle/v1/*` 中显式拦截 `/v1/roles/*/workspace/path`（返回 404），仅 Electron 主进程 `desk:open-role-workspace` IPC 内部访问。
+- **后端迁移（`R2-03`）**：
+  - `role-transfer-package.ts` 彻底移除 `Atomics.wait` 同步睡眠阻塞，缺失/目录/符号链接直接快速失败，读取前校验 `stat.size <= MAX_ROLE_TRANSFER_PACKAGE_BYTES`（256 MiB，超限抛 `ROLE_TRANSFER_PACKAGE_TOO_LARGE`），并新增非阻塞 `readRoleTransferPackageAsync` 供运行态 `RoleTransferHttpService` 使用（映射为 `413`）；
+  - `role-transfer.ts` 收紧 `assertPackageFileOutsideManagedDirs`：禁止导出/预检/导入包落入整个 `appRoot` 或 `dataRoot`（Windows 大小写不敏感比对），并强制要求 `.json` 扩展名（`400 ROLE_TRANSFER_PACKAGE_EXTENSION_INVALID`）。
+- **精准离线复验（仓库 Node `v24.22.2`）**：
+  - 后端 `tsc --noEmit` 0 错误；`role-transfer-package` + `role-transfer` + `workspace-and-transfer-http` **22/22** 全通过（含 256 MiB 超限 413、缺失文件 `<50ms` 快速失败、目录拒绝、`appRoot`/`data`/`secrets`/`extensions` 与非 `.json` 拦截）；
+  - 桌面壳全量单测 **38/38** 全通过（含新增 `backend-proxy.test.cjs` 5/5：预中止 `<50ms`、响应头前中止 `<100ms`、SSE 中途取消关闭上游、4 MiB 慢消费背压、分片流式上传防整包缓冲，`preload-boundary` 4/4 与脱仓生产包冒烟）；
+  - Electron 39 实窗 E2E `extension-ui-slots.e2e.cjs` 通过。

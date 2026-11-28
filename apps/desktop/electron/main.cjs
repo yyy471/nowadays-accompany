@@ -11,6 +11,7 @@ const { resolveBackendLayout, resolveNodeExecutable } = require("./backend-paths
 const { createBackendLog, summarizeBackendFailure } = require("./backend-log.cjs");
 const { resolveManagedMasterKey } = require("./master-key.cjs");
 const { extensionHandler, allowSlotNavigation } = require("./extension-protocol.cjs");
+const { isBlockedProxyPath, proxyBackendRequest } = require("./backend-proxy.cjs");
 const { createWindowIntent } = require("./window-intent.cjs");
 
 const home = "desk://bundle/index.html";
@@ -249,85 +250,6 @@ function trusted(event) {
 const backendHttpAgent = new http.Agent({ keepAlive: true, maxSockets: 64 });
 const backendHttpsAgent = new https.Agent({ keepAlive: true, maxSockets: 64 });
 
-function proxyBackendRequest(targetUrl, request, headers, body) {
-  return new Promise((resolveResponse, rejectResponse) => {
-    const parsed = new URL(targetUrl);
-    const transport = parsed.protocol === "https:" ? https : http;
-    const reqHeaders = {};
-    for (const [name, value] of headers.entries()) {
-      const lower = name.toLowerCase();
-      if (lower === "host" || lower === "connection" || lower === "content-length") continue;
-      reqHeaders[name] = value;
-    }
-    if (body) reqHeaders["content-length"] = String(body.byteLength);
-    let settled = false;
-    const upstreamReq = transport.request(parsed, {
-      method: request.method,
-      headers: reqHeaders,
-      agent: parsed.protocol === "https:" ? backendHttpsAgent : backendHttpAgent
-    }, (upstreamRes) => {
-      const responseHeaders = new Headers();
-      for (let i = 0; i < upstreamRes.rawHeaders.length; i += 2) {
-        const name = upstreamRes.rawHeaders[i];
-        const value = upstreamRes.rawHeaders[i + 1];
-        if (!name) continue;
-        const lower = name.toLowerCase();
-        if (lower === "transfer-encoding" || lower === "connection" || lower === "keep-alive") continue;
-        responseHeaders.append(name, value ?? "");
-      }
-      const status = upstreamRes.statusCode ?? 502;
-      if (request.method === "HEAD" || status === 204 || status === 304) {
-        upstreamRes.resume();
-        settled = true;
-        resolveResponse(new Response(null, { status, headers: responseHeaders }));
-        return;
-      }
-      let closed = false;
-      const stream = new ReadableStream({
-        start(controller) {
-          upstreamRes.on("data", (chunk) => {
-            if (closed) return;
-            try { controller.enqueue(chunk); }
-            catch { closed = true; upstreamReq.destroy(); }
-          });
-          upstreamRes.on("end", () => {
-            if (closed) return;
-            closed = true;
-            try { controller.close(); } catch { /* 已关闭 */ }
-          });
-          upstreamRes.on("aborted", () => {
-            if (closed) return;
-            closed = true;
-            try { controller.close(); } catch { /* 已关闭 */ }
-          });
-          upstreamRes.on("error", (err) => {
-            if (closed) return;
-            closed = true;
-            try { controller.error(err); } catch { /* 已关闭 */ }
-          });
-        },
-        cancel() {
-          closed = true;
-          upstreamReq.destroy();
-        }
-      });
-      settled = true;
-      resolveResponse(new Response(stream, { status, headers: responseHeaders }));
-    });
-    const onAbort = () => upstreamReq.destroy();
-    if (request.signal) {
-      if (request.signal.aborted) { upstreamReq.destroy(); return; }
-      request.signal.addEventListener("abort", onAbort, { once: true });
-      upstreamReq.once("close", () => request.signal.removeEventListener("abort", onAbort));
-    }
-    upstreamReq.on("error", (err) => {
-      if (!settled) { settled = true; rejectResponse(err); }
-    });
-    if (body) upstreamReq.end(Buffer.from(body));
-    else upstreamReq.end();
-  });
-}
-
 function startDesk() {
   protocol.handle("desk", async (request) => {
     const { hostname, pathname, search } = new URL(request.url);
@@ -353,8 +275,8 @@ function startDesk() {
 
     // 2. 同源代理 /v1/* 请求（含 HTTP 与 SSE）至真实本地后端；使用独立 Node 连接池避免 Chromium 单源 6 连接阻塞。
     if (pathname.startsWith("/v1/")) {
-      // 扩展文件只通过 nd-ext 加载，避免同一份代码也能从桌面来源取得。
-      if (/^\/v1\/extensions\/[^/]+\/ui\//.test(pathname)) return new Response(null, { status: 404 });
+      // 扩展文件只通过 nd-ext 加载、workspace/path 只允许主进程 IPC 访问，渲染层一律 404。
+      if (isBlockedProxyPath(pathname)) return new Response(null, { status: 404 });
       const offline = () => Response.json(
         { error: { code: "BACKEND_OFFLINE", message: "本地服务暂时连不上" } }, { status: 503 }
       );
@@ -363,12 +285,14 @@ function startDesk() {
       const headers = new Headers(request.headers);
       // 主进程代理向固定后端补签：所有方法统一签发，渲染层不再持有宿主令牌。
       if (hostToken && !pathname.startsWith("/v1/internal/")) headers.set("X-Nowadays-Host-Token", hostToken);
-      const body = request.method !== "GET" && request.method !== "HEAD" && request.body
-        ? await request.arrayBuffer()
-        : null;
       try {
-        return await proxyBackendRequest(targetUrl, request, headers, body);
-      } catch {
+        return await proxyBackendRequest(targetUrl, request, headers, {
+          httpAgent: backendHttpAgent,
+          httpsAgent: backendHttpsAgent
+        });
+      } catch (err) {
+        // 用户主动中止是正常信号，继续向上抛出，不能伪装成后端离线。
+        if (request.signal?.aborted || err?.name === "AbortError") throw err;
         return offline();
       }
     }

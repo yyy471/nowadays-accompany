@@ -8,7 +8,7 @@ import test from "node:test";
 import { parseBackendConfig, rolePaths } from "../../src/bootstrap/config.js";
 import { createBackendApp, listen } from "../../src/bootstrap/app.js";
 import {
-  captureRoleTransfer, readRoleTransferPackage, resolveRoleTransferBindings,
+  captureRoleTransfer, readRoleTransferPackage, readRoleTransferPackageAsync, resolveRoleTransferBindings,
   roleTransferTimelineFingerprint, stageRoleTransfer, writeRoleTransferPackage,
 } from "../../src/application/transfer/role-transfer-package.js";
 import { canonicalJson, sha256 } from "../../src/application/transfer/role-transfer-data.js";
@@ -35,6 +35,13 @@ function installation() {
 
 function removeInstallation(config: ReturnType<typeof installation>): void {
   fs.rmSync(config.appRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+}
+
+/** 迁移包读取用例使用独立临时目录，避免与安装目录或并发用例互相干扰。 */
+function readFixtureDir(t: import("node:test").TestContext): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nowadays-transfer-read-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
+  return dir;
 }
 
 const options = { disablePresetAssistant: true, disableMemoryRuntime: true };
@@ -355,4 +362,49 @@ test("角色选择的生图模型随未映射及没有全局模型名的服务�
   const targetPackage = captureRoleTransfer(target, role.roleId);
   assert.equal(targetPackage.bindings.find((item) => item.capability === "image")?.modelName, roleModel);
   assert.equal(targetPackage.timelineFingerprint, sourcePackage.timelineFingerprint);
+});
+
+test("迁移包读取：超过字节上限时在解析前拒绝", async (t) => {
+  const dir = readFixtureDir(t);
+  const file = path.join(dir, "huge.json");
+  fs.writeFileSync(file, Buffer.alloc(1024, 0x7b));
+  assert.throws(() => readRoleTransferPackage(file, { maxBytes: 16 }), /ROLE_TRANSFER_PACKAGE_TOO_LARGE/);
+  await assert.rejects(readRoleTransferPackageAsync(file, { maxBytes: 16 }), /ROLE_TRANSFER_PACKAGE_TOO_LARGE/);
+  // 未设置上限时按默认 256 MiB 放行体积检查，随后因内容不是合法 JSON 失败。
+  assert.throws(() => readRoleTransferPackage(file), /ROLE_TRANSFER_PACKAGE_INVALID/);
+});
+
+test("迁移包读取：缺失文件立即失败，不再有 200ms 阻塞重试", async (t) => {
+  const dir = readFixtureDir(t);
+  const missing = path.join(dir, "missing.json");
+  const started = Date.now();
+  assert.throws(() => readRoleTransferPackage(missing), /ROLE_TRANSFER_UNSAFE_PATH/);
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 50, `缺失文件应在 50ms 内返回，实际 ${elapsed}ms`);
+  await assert.rejects(readRoleTransferPackageAsync(missing), /ROLE_TRANSFER_UNSAFE_PATH/);
+});
+
+test("迁移包读取：目录与符号链接按不安全路径拒绝", async (t) => {
+  const dir = readFixtureDir(t);
+  const directory = path.join(dir, "packet-dir.json");
+  fs.mkdirSync(directory);
+  const directoryStarted = Date.now();
+  assert.throws(() => readRoleTransferPackage(directory), /ROLE_TRANSFER_UNSAFE_PATH/);
+  assert.ok(Date.now() - directoryStarted < 50, "目录应立即被拒绝");
+  await assert.rejects(readRoleTransferPackageAsync(directory), /ROLE_TRANSFER_UNSAFE_PATH/);
+
+  const target = path.join(dir, "target.json");
+  fs.writeFileSync(target, "{}");
+  const link = path.join(dir, "link.json");
+  try {
+    fs.symlinkSync(target, link, "file");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EPERM") throw error;
+    t.diagnostic("当前 Windows 沙箱拒绝创建文件符号链接，已执行目录拒绝检查。");
+    return;
+  }
+  const linkStarted = Date.now();
+  assert.throws(() => readRoleTransferPackage(link), /ROLE_TRANSFER_UNSAFE_PATH/);
+  assert.ok(Date.now() - linkStarted < 50, "符号链接应立即被拒绝");
+  await assert.rejects(readRoleTransferPackageAsync(link), /ROLE_TRANSFER_UNSAFE_PATH/);
 });

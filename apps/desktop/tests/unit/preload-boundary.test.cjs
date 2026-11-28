@@ -9,6 +9,7 @@ const path = require("node:path");
 
 const electronDir = path.resolve(__dirname, "../../electron");
 const read = name => fs.readFileSync(path.join(electronDir, name), "utf8");
+const { isBlockedProxyPath } = require(path.join(electronDir, "backend-proxy.cjs"));
 
 test("设置 preload 零 sendSync、不暴露 hostHeaders 与 desk:config", () => {
   const preload = read("settings-preload.cjs");
@@ -27,4 +28,11 @@ test("主进程代理补签宿主令牌并透传中止信号，不再注册 onBe
   assert.doesNotMatch(main, /onBeforeSendHeaders/);
   assert.match(main, /request\.signal/);
   assert.match(main, /maxSockets:\s*64/);
+});
+
+test("桌面代理拦截扩展 UI 与 workspace/path，放行普通角色接口", () => {
+  assert.equal(isBlockedProxyPath("/v1/roles/abc/workspace/path"), true);
+  assert.equal(isBlockedProxyPath("/v1/roles/abc/workspace/path/"), true);
+  assert.equal(isBlockedProxyPath("/v1/extensions/demo/ui/index.html"), true);
+  assert.equal(isBlockedProxyPath("/v1/roles/abc/workspace/notes"), false);
 });

@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import test, { type TestContext } from "node:test";
 import { createBackendApp, listen } from "../../src/bootstrap/app.js";
 import { parseBackendConfig, rolePaths, type BackendConfig } from "../../src/bootstrap/config.js";
+import { RoleTransferHttpService } from "../../src/application/transfer/role-transfer-service.js";
+import { AppError } from "../../src/domain/errors.js";
 
 /**
  * 409 UX-05：角色工作空间 Markdown 笔记只读浏览与运行态单角色迁移接口。
@@ -43,6 +45,15 @@ function installation(t: TestContext, label: string): BackendConfig {
   const root = fs.mkdtempSync(path.join(resultRoot, `${label}-`));
   t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 }));
   return parseBackendConfig(["--app-root", root, "--port", "0"]);
+}
+
+/** 迁移包必须放在安装目录之外：测试统一用独立兄弟目录承载。 */
+function exportDir(t: TestContext): string {
+  const resultRoot = process.env.P1_REVIEW_TMP_ROOT ?? path.resolve(backend, "../../test-results/backend-acceptance");
+  fs.mkdirSync(resultRoot, { recursive: true });
+  const dir = fs.mkdtempSync(path.join(resultRoot, "transfer-packets-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 }));
+  return dir;
 }
 
 function start(app: ReturnType<typeof createBackendApp>): Promise<string> {
@@ -138,7 +149,7 @@ test("HTTP 迁移：运行中导出 409，停机导出后新机预检映射并�
     sourceApp.services.resources.replaceBindings(role.roleId, [
       { capability: "chat_model", resourceId: model.resourceId, modelName: "source", enabled: true },
     ]);
-    const packet = path.join(source.appRoot, "role.json");
+    const packet = path.join(exportDir(t), "role.json");
 
     // 新建角色默认停机；恢复活动后导出必须被停机租约拒绝。
     assert.equal((await api(sourceBase, "POST", `/v1/roles/${role.roleId}/activity/resume`)).status, 200);
@@ -214,7 +225,8 @@ test("HTTP 迁移：本机与迁移包分化时要求显式选择，可保留本
       });
 
     send(sourceApp, "共同生活的第一天");
-    const baseline = path.join(source.appRoot, "base.json");
+    const packets = exportDir(t);
+    const baseline = path.join(packets, "base.json");
     assert.equal((await api(sourceBase, "POST", `/v1/roles/${roleId}/transfer/export`, { file: baseline })).status, 200);
     const firstPreflight = await api(targetBase, "POST", "/v1/role-transfers/preflight", { file: baseline });
     assert.equal(firstPreflight.status, 200, JSON.stringify(firstPreflight.body));
@@ -229,7 +241,7 @@ test("HTTP 迁移：本机与迁移包分化时要求显式选择，可保留本
     // 两边从同一基线各自新增用户消息，形成分化时间线。
     send(sourceApp, "在源机的新经历");
     send(targetApp, "在目标机的新经历");
-    const branch = path.join(source.appRoot, "branch.json");
+    const branch = path.join(packets, "branch.json");
     assert.equal((await api(sourceBase, "POST", `/v1/roles/${roleId}/transfer/export`, { file: branch })).status, 200);
 
     const preflight = await api(targetBase, "POST", "/v1/role-transfers/preflight", { file: branch });
@@ -262,6 +274,68 @@ test("HTTP 迁移：本机与迁移包分化时要求显式选择，可保留本
     const activity = await api(targetBase, "GET", `/v1/roles/${roleId}/activity`);
     assert.equal(activity.status, 200);
     assert.equal((activity.body.activity as { state: string }).state, "stopped");
+  } finally {
+    await targetApp.close();
+    await sourceApp.close();
+  }
+});
+
+test("HTTP 迁移：导出拒绝应用目录内路径与非 JSON 扩展名", async (t) => {
+  const source = installation(t, "export-path-source");
+  const app = createBackendApp(source, options);
+  try {
+    const base = await start(app);
+    const role = app.services.roles.createRole({ displayName: "路径角色", definition: { text: "拒绝越界。" } });
+    // 预置真实安装中常见的子目录，验证它们同样属于受管区域。
+    for (const directory of ["secrets", "extensions"]) {
+      fs.mkdirSync(path.join(source.appRoot, directory), { recursive: true });
+    }
+    const packets = exportDir(t);
+    const candidates: Array<[string, string]> = [
+      [path.join(source.appRoot, "role.json"), "ROLE_TRANSFER_PACKAGE_IN_MANAGED_DIRECTORY"],
+      [path.join(source.appRoot, "data", "app.sqlite"), "ROLE_TRANSFER_PACKAGE_EXTENSION_INVALID"],
+      [path.join(source.appRoot, "secrets", "x.json"), "ROLE_TRANSFER_PACKAGE_IN_MANAGED_DIRECTORY"],
+      [path.join(source.appRoot, "extensions", "x.json"), "ROLE_TRANSFER_PACKAGE_IN_MANAGED_DIRECTORY"],
+      [path.join(packets, "out.txt"), "ROLE_TRANSFER_PACKAGE_EXTENSION_INVALID"],
+    ];
+    for (const [file, code] of candidates) {
+      const rejected = await api(base, "POST", `/v1/roles/${role.roleId}/transfer/export`, { file });
+      assert.equal(rejected.status, 400, `${file}: ${JSON.stringify(rejected.body)}`);
+      assert.equal(errorOf(rejected).code, code, file);
+    }
+  } finally {
+    await app.close();
+  }
+});
+
+test("HTTP 迁移：预检拒绝超过体积上限的迁移包并返回 413", async (t) => {
+  const source = installation(t, "oversized-source");
+  const target = installation(t, "oversized-target");
+  const sourceApp = createBackendApp(source, options);
+  const targetApp = createBackendApp(target, options);
+  try {
+    const sourceBase = await start(sourceApp);
+    const role = sourceApp.services.roles.createRole({ displayName: "大包角色", definition: { text: "体积上限。" } });
+    const packet = path.join(exportDir(t), "role.json");
+    const exported = await api(sourceBase, "POST", `/v1/roles/${role.roleId}/transfer/export`, { file: packet });
+    assert.equal(exported.status, 200, JSON.stringify(exported.body));
+    assert.ok(fs.statSync(packet).size > 64);
+
+    // 直接构造带小上限的服务实例，验证预检在读取内容前就拒绝超大包。
+    const service = new RoleTransferHttpService({
+      config: target,
+      appStore: targetApp.appStore,
+      roleAccess: targetApp.roleAccess,
+      activity: targetApp.services.activity,
+      feedEvents: targetApp.services.feedEvents,
+      maxPackageBytes: 64,
+    });
+    await assert.rejects(service.preflightImport(packet), (error: unknown) => {
+      if (!(error instanceof AppError)) throw error;
+      assert.equal(error.status, 413);
+      assert.equal(error.code, "ROLE_TRANSFER_PACKAGE_TOO_LARGE");
+      return true;
+    });
   } finally {
     await targetApp.close();
     await sourceApp.close();
