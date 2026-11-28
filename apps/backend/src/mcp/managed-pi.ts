@@ -175,7 +175,16 @@ export class ManagedPi {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
-  private notify() { for (const listener of this.listeners) listener(); }
+  private notify() {
+    for (const listener of this.listeners) {
+      try {
+        listener();
+      } catch {
+        // 单个订阅者（例如已断开的 SSE 响应）异常不影响其他订阅者；
+        // `finish()` 仍会继续执行后续的 `schedule()`，避免工程排队停滞。
+      }
+    }
+  }
   private finish(id: string, status: EngineeringTerminal, summary: string) {
     const job = this.jobs.get(id);
     if (!job) return;

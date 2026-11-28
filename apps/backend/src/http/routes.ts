@@ -88,6 +88,7 @@ import {
   updateResourceSchema,
 } from "./schemas.js";
 import { parseBody, queryInt } from "./validation.js";
+import { startSse } from "./sse.js";
 import { registerAppearanceRoutes } from "./appearance-routes.js";
 import { registerSceneImageRoutes } from "./scene-image-routes.js";
 import { registerImageServiceRoutes } from "./image-service-routes.js";
@@ -170,19 +171,20 @@ export function registerApiRoutes(
   });
   router.add("GET", "/v1/engineering/events", ({ response }) => {
     response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
-    const send = () => response.write("event: snapshot\ndata: " + JSON.stringify(services.pi.running()) + "\n\n");
-    response.once("close", services.pi.subscribe(send));
+    const sse = startSse(response);
+    const send = () => sse.write("event: snapshot\ndata: " + JSON.stringify(services.pi.running()) + "\n\n");
+    sse.disposeWith(services.pi.subscribe(send));
     send();
     return undefined;
   });
   // 状态流变更推送：只发送主题与序号，客户端按需重取对应角色的数据。
   router.add("GET", "/v1/feed-events", ({ response }) => {
     response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
-    response.write(`event: ready\ndata: ${JSON.stringify({ seq: services.feedEvents.currentSeq() })}\n\n`);
-    const unsubscribe = services.feedEvents.subscribe((event) => {
-      response.write(`id: ${event.seq}\nevent: change\ndata: ${JSON.stringify(event)}\n\n`);
-    });
-    response.once("close", unsubscribe);
+    const sse = startSse(response);
+    sse.write(`event: ready\ndata: ${JSON.stringify({ seq: services.feedEvents.currentSeq() })}\n\n`);
+    sse.disposeWith(services.feedEvents.subscribe((event) => {
+      sse.write(`id: ${event.seq}\nevent: change\ndata: ${JSON.stringify(event)}\n\n`);
+    }));
     return undefined;
   });
   const { activity } = services;
@@ -219,17 +221,17 @@ export function registerApiRoutes(
       replay.push(...history.shares.map(share => ({ ...share, roleId, windowId })));
     }
     response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
+    const sse = startSse(response);
     const writeShare = (share: CoplayShare) => {
       cursors[share.roleId] = share.streamEventId;
-      response.write(`id: ${JSON.stringify(cursors)}\nevent: coplay-share\ndata: ${JSON.stringify({ ...share, source: "autonomy_share" })}\n\n`);
+      sse.write(`id: ${JSON.stringify(cursors)}\nevent: coplay-share\ndata: ${JSON.stringify({ ...share, source: "autonomy_share" })}\n\n`);
     };
-    response.write(`id: ${JSON.stringify(cursors)}\n`);
-    const unsubscribe = services.extensions.subscribeUi((event, data) => {
+    sse.write(`id: ${JSON.stringify(cursors)}\n`);
+    sse.disposeWith(services.extensions.subscribeUi((event, data) => {
       if (event === "coplay-share") writeShare(data as CoplayShare);
-      else response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-    });
+      else sse.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    }));
     for (const share of replay) writeShare(share);
-    response.once("close", unsubscribe);
     return undefined;
   });
   router.add("GET", "/v1/extensions/:extId/ui/*asset", ({ params, url, response }) => {

@@ -422,6 +422,55 @@ test("工程登记失败回收本次草稿，保留已有工程目录", async t 
   } finally { await f.close(); }
 });
 
+test("单个通知监听者异常不影响其他监听者与工程收尾调度", async () => {
+  const f = createFixtureWithModel(new ScriptedChatModel([]));
+  try {
+    const pi = f.app.services.pi;
+    const roleId = f.roleId;
+    const jobId = randomUUID();
+    const taskId = withStorage({ ...f, roleId }, ({ business }) => {
+      const task = business.createTask({ roleId, goal: "通知隔离" });
+      new EngineeringJobs(business.db).register({
+        jobId, roleId, taskId: task.taskId, windowId: f.windowId, origin: "user", extId: "probe",
+        title: "通知隔离", workDir: f.app.services.extensions.work.workspace("probe", jobId),
+        startedAt: new Date().toISOString(), modelResourceId: null, modelName: null,
+      });
+      return task.taskId;
+    });
+    const internals = pi as unknown as {
+      jobs: Map<string, {
+        roleId: string; taskId: string; owner: unknown; connection: Promise<unknown>;
+        token: string; timer: NodeJS.Timeout;
+      }>;
+      schedule: (roleId: string) => void;
+      finish: (id: string, status: string, summary: string) => void;
+    };
+    const scheduled: string[] = [];
+    internals.schedule = id => scheduled.push(id);
+    internals.jobs.set(jobId, {
+      roleId, taskId, owner: undefined, connection: Promise.resolve(),
+      token: "unused", timer: setTimeout(() => undefined, 60_000).unref(),
+    });
+    const seen: string[] = [];
+    const stopThrowing = pi.subscribe(() => {
+      seen.push("throwing");
+      throw new Error("SSE_SUBSCRIBER_FAILED");
+    });
+    const stopCounting = pi.subscribe(() => { seen.push("counting"); });
+    try {
+      internals.finish(jobId, "completed", "完成");
+    } finally {
+      stopThrowing();
+      stopCounting();
+    }
+    assert.deepEqual(seen, ["throwing", "counting"]);
+    assert.deepEqual(scheduled, [roleId]);
+    withStorage({ ...f, roleId }, ({ business }) => {
+      assert.equal(new EngineeringJobs(business.db).find(jobId)?.status, "completed");
+    });
+  } finally { await f.close(); }
+});
+
 test("New jobs read the current shell setting for the same parent task", async t => {
   const f = createFixtureWithModel(new ScriptedChatModel([say("done")]), { disablePresetAssistant: false, presetAssetsDir: "tests/fixtures" });
   const { app } = f;

@@ -77,6 +77,8 @@
 
 ### 2.4 SSE 事件类型与消息接收等待原因
 
+工程、动态和扩展事件流每 15 秒发送注释心跳。响应结束、连接关闭或写入失败时释放订阅和计时器，工程订阅者的异常由宿主隔离。[事件流写入](../../apps/backend/src/http/sse.ts)
+
 1. **SSE 数据帧与心跳**（[conversation-service.ts](../../apps/backend/src/application/conversation/conversation-service.ts#L620-L647)）：
    - 每条持久化流事件发送为 `id: <streamEventId>\nevent: execution\ndata: {"streamEventId":...,"type":...,...}\n\n`。
    - 游标解析（[routes.ts](../../apps/backend/src/http/routes.ts#L972-L998)）：同时存在查询参数 `?after=` 与请求头 `Last-Event-ID` 时取 `Math.max(...)`，防止 `EventSource` 带旧 URL 自动重连时重复吐字。
