@@ -37,7 +37,7 @@ import { resolveCredential } from "../../model/credentials.js";
 import { HttpModelAdapter } from "../../model/protocols.js";
 import { AppearanceStore } from "../../storage/media/appearance-store.js";
 import { SceneImageSettingsStore } from "../../storage/media/scene-image-settings-store.js";
-import { discardReferenceFile, MAX_SCENE_REFERENCE_BYTES, readSceneReference, removeSceneReference, requireReferenceOutfit, saveSceneReference } from "../../storage/media/scene-reference.js";
+import { discardReferenceFile, hasUnfinishedSceneImageTasks, MAX_SCENE_REFERENCE_BYTES, readSceneReference, removeSceneReference, requireReferenceOutfit, saveSceneReference, sceneReference, type SceneReference } from "../../storage/media/scene-reference.js";
 import {
   composeSceneImagePrompt,
   ComfyUiImageGenerator,
@@ -97,6 +97,11 @@ export interface SceneImageSettingsServiceOptions {
   } | null;
   /** 模型调用结束时上报全局 Token 账本（DL-183）。 */
   onModelCallFinished?: (event: TokenUsageCallEvent) => void;
+  /**
+   * 等待某角色的在途过场图任务收尾。有在途任务时热替换参考图会延迟清理旧文件，
+   * 由该回调决定何时可以安全清理。
+   */
+  whenSceneImagesIdle?: (roleId: string) => Promise<void>;
 }
 
 export interface GenerateAnchorPromptInput {
@@ -133,6 +138,9 @@ export class SceneImageSettingsService {
   private readonly maintenance: SceneImageSettingsServiceOptions["maintenance"];
   private readonly claim: SceneImageSettingsServiceOptions["claim"];
   private readonly onModelCallFinished: ((event: TokenUsageCallEvent) => void) | undefined;
+  private whenSceneImagesIdle: ((roleId: string) => Promise<void>) | undefined;
+  /** 等待在途任务结束后再清理的旧参考图任务；关闭时统一等待。 */
+  private readonly pendingCleanups = new Set<Promise<void>>();
   readonly source: SceneImageRuntimeSource;
 
   constructor(
@@ -167,11 +175,22 @@ export class SceneImageSettingsService {
     this.maintenance = options.maintenance ?? null;
     this.claim = options.claim ?? null;
     this.onModelCallFinished = options.onModelCallFinished;
+    this.whenSceneImagesIdle = options.whenSceneImagesIdle;
     this.source = {
       getSettings: (roleId) => this.read(roleId),
       findServiceRecord: (serviceId) => this.imageServices.findRecord(serviceId),
       findService: (serviceId) => this.imageServices.findConnection(serviceId),
     };
+  }
+
+  /** 在过场图服务就绪后接线，避免构造期循环依赖（app.ts 在创建时立即调用）。 */
+  setWhenSceneImagesIdle(fn: (roleId: string) => Promise<void>): void {
+    this.whenSceneImagesIdle = fn;
+  }
+
+  /** 等待已调度的延迟清理；关闭时爆发的失败不影响进程收尾。 */
+  async close(): Promise<void> {
+    await Promise.allSettled([...this.pendingCleanups]);
   }
 
   listReferences(roleId: string) {
@@ -184,7 +203,38 @@ export class SceneImageSettingsService {
     if (image.data.length > MAX_SCENE_REFERENCE_BYTES) throw new AppError(413, "SCENE_REFERENCE_TOO_LARGE", "服饰参考图上限为 8 MiB");
     this.roleAccess.withStore(roleId, storage => requireReferenceOutfit(storage, roleId, outfitId));
     const info = await inspectImage(image.data, image.fileName);
-    return this.roleAccess.withStore(roleId, storage => saveSceneReference(storage, roleId, outfitId, image, info));
+    const saved = this.roleAccess.withStore(roleId, storage => {
+      // 有在途任务时保留旧文件，等任务按固定引用读取完再清理。
+      const deferDiscard = hasUnfinishedSceneImageTasks(storage, roleId);
+      return saveSceneReference(storage, roleId, outfitId, image, info, { deferDiscard });
+    });
+    if (saved.deferredDiscard !== null) {
+      this.trackCleanup(this.deferReferenceDiscard(roleId, outfitId, saved.deferredDiscard));
+    }
+    return { outfitId: saved.outfitId, assetId: saved.assetId, mediaType: saved.mediaType };
+  }
+
+  /**
+   * 等待该角色的过场图任务全部结算后再清理被替换的旧参考图。
+   * 任务已换成新图或角色已被删除时，按当前状态判断是否仍需要删除。
+   */
+  private async deferReferenceDiscard(roleId: string, outfitId: string, old: SceneReference): Promise<void> {
+    try {
+      await this.whenSceneImagesIdle?.(roleId);
+    } catch { /* 空闲等待超时或角色删除：落到下面按当前引用重新判定。 */ }
+    try {
+      this.roleAccess.withStore(roleId, (storage) => {
+        if (sceneReference(storage, roleId, outfitId)?.assetId !== old.assetId && !hasUnfinishedSceneImageTasks(storage, roleId)) {
+          discardReferenceFile(storage, old);
+        }
+      });
+    } catch { /* 角色已删除或存储已关闭。 */ }
+  }
+
+  private trackCleanup(task: Promise<void>): void {
+    const tracked = task.catch(() => undefined);
+    this.pendingCleanups.add(tracked);
+    void tracked.finally(() => { this.pendingCleanups.delete(tracked); });
   }
 
   readReference(roleId: string, outfitId: string) {

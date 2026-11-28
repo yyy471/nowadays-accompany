@@ -835,6 +835,15 @@ test("DL-148 方案 A：分级热生效与受保护变更", { timeout: 40_000 },
       await api(base, "DELETE", `${role}/appearance/outfits/${outfitId}`),
       "ACTIVE",
     );
+    // 删除服饰参考图与其它素材删除同级：运行中拒绝，必须确认停止后才可清理。
+    assertRoleNotStopped(
+      await api(
+        base,
+        "DELETE",
+        `${role}/scene-image/outfits/${outfitId}/reference`,
+      ),
+      "ACTIVE",
+    );
 
     // stopping 态：受保护写入同样拒绝。
     const stop = await api(base, "POST", `${role}/activity/stop`);
@@ -856,6 +865,14 @@ test("DL-148 方案 A：分级热生效与受保护变更", { timeout: 40_000 },
       await api(base, "DELETE", `${role}/appearance/outfits/${outfitId}`),
       "STOPPING",
     );
+    assertRoleNotStopped(
+      await api(
+        base,
+        "DELETE",
+        `${role}/scene-image/outfits/${outfitId}/reference`,
+      ),
+      "STOPPING",
+    );
 
     model.release.resolve();
     await fixture.app.conversation.waitForIdle(fixture.roleId);
@@ -863,6 +880,15 @@ test("DL-148 方案 A：分级热生效与受保护变更", { timeout: 40_000 },
       activityOf(await api(base, "GET", `${role}/activity`)).state,
       "stopped",
     );
+
+    // 已确认停止后，参考图删除与其它素材删除一样放行。
+    const referenceRemoved = await api(
+      base,
+      "DELETE",
+      `${role}/scene-image/outfits/${outfitId}/reference`,
+    );
+    assert.equal(referenceRemoved.status, 200);
+    assert.deepEqual(referenceRemoved.body, { removed: true });
   } finally {
     model.release.resolve();
     await fixture.close();

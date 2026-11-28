@@ -23,7 +23,7 @@
 | [R2-08](#r2-08-模型流式生成请求完全缺少首包超时与流空闲超时) | 底层核心 | 稳定性 / 死锁 | **P0** | 四条流式协议入口均未设首包或 chunk 空闲超时，上游半开连接可永久锁死角色执行槽位 | 否 | `[x]` 已修复 |
 | [R2-04](#r2-04-工作空间笔记扫描未跳过依赖目录且无遍历数上限) | 409 新引入（R11） | 性能 / DoS | **P1** | `RoleWorkspaceService.listNotes` 不跳过 `node_modules` 且无总访问数上限，易同步卡死主线程 | 否 | `[x]` 已修复 |
 | [R2-05](#r2-05-pi-步骤日志并发无序写盘竞态且硬依赖-sdk-私有内部路径) | 409 新引入（R6） | 并发 Bug / 脆性 | **P1** | `worker.mjs` 并发 `writeSteps()` 无串行队列与原子改名易 `EBUSY`/错序；硬导入 SDK 未导出内部路径 `./utils/paths.js` | 否 | `[x]` 已修复 |
-| [R2-06](#r2-06-热生效配置把删除图生图服饰参考图误划入免停机区) | 409 新引入（R9b） | 并发竞态 | **P1** | `DELETE .../scene-image/outfits/:outfitId/reference` 免停机且立刻删盘，与在途自动 `img2img` 任务竞态报错 | 关联 `DL-148` | `[ ]` 待排查 |
+| [R2-06](#r2-06-热生效配置把删除图生图服饰参考图误划入免停机区) | 409 新引入（R9b） | 并发竞态 | **P1** | `DELETE .../scene-image/outfits/:outfitId/reference` 免停机且立刻删盘，与在途自动 `img2img` 任务竞态报错 | 关联 `DL-148` | `[x]` 已修复 |
 | [R2-07](#r2-07-roleaccess-连接池缺少坏句柄校验与异常驱逐自愈) | 409 新引入（R4） | 稳定性 / 容错 | **P1** | `borrow()` 不验 `db.open`，遇到 `SQLITE_IOERR`/`SQLITE_CORRUPT` 不驱逐脏连接，坏句柄滞留 60s | 否 | `[x]` 已修复 |
 | [R2-09](#r2-09-google-服务账号凭据-token-地址允许任意明文-http-触发-ssrf) | 底层核心 | 安全边界 | **P1** | `parseServiceAccountCredential` 放行明文 `http:` 且不限域名，篡改 JSON 可将签名 JWT 发往恶意或内网地址 | 否 | `[x]` 已修复 |
 | [R2-10](#r2-10-未配置生图服务时手动点击过场图仍静默生成假占位图落盘) | 底层核心 | 产品缺陷 | **P1** | `ConfiguredSceneImageGenerator` 仍回退 `FakeSceneImageGenerator`，向真实角色库写入假占位 PNG | 需确认边界（`DL-142` / `DL-150`） | `[ ]` 待排查 |
@@ -141,7 +141,7 @@
 
 ### R2-06 热生效配置把「删除图生图服饰参考图」误划入免停机区
 
-- **优先级**：P1 · **来源**：409 R9b（`UX-01`） · **状态**：`[ ]` 待排查 · **决策关联**：[DL-148](../../161-digital-life-direction-decisions.md#dl-148-配置修改直接删除与运行限制)
+- **优先级**：P1 · **来源**：409 R9b（`UX-01`） · **状态**：`[x]` 已修复（R5，2026-11-28，确认方案 A） · **决策关联**：[DL-148](../../161-digital-life-direction-decisions.md#dl-148-配置修改直接删除与运行限制)
 - **证据位置**：
   - [apps/backend/src/http/config-writes.ts](../../../apps/backend/src/http/config-writes.ts#L15-L44)（第 39 行 `DELETE /v1/roles/:roleId/scene-image/outfits/:outfitId/reference` 位于 `ROLE_HOT_CONFIG_WRITES`）
   - [apps/backend/src/storage/media/scene-reference.ts](../../../apps/backend/src/storage/media/scene-reference.ts#L45-L73)（删除与覆盖替换时立即 `fs.unlinkSync` 旧文件）
@@ -339,4 +339,17 @@
 - **精准离线复验（仓库 Node `v24.22.2`）**：
   - 后端 `tsc --noEmit` 0 错误；`role-access` + `workspace-and-transfer-http` **11/11** 全通过；
   - Pi 子包全量串行测试 **14/14** 全通过（含新增 `worker-helpers` 3/3 与真实 Pi SDK 进程回收 `survivors=0`）；
+  - 渲染器 `npm run check`（38 CSS 0 违规）+ Vite 生产构建全通过。
+
+#### R5：`R2-06`（`DL-148` 方案 A 补齐：删除图生图服饰参考图回归停机保护 + 热替换在途引用锁定与延迟清理）
+- **决策落地**：用户确认方案 A 并已登记至 [161 `DL-148`](../../161-digital-life-direction-decisions.md#dl-148-配置修改直接删除与运行限制)。
+- **后端改动**：
+  - `apps/backend/src/http/config-writes.ts` 将 `DELETE /v1/roles/:roleId/scene-image/outfits/:outfitId/reference` 移回 `ROLE_CONFIG_WRITES`（8 项停机保护、11 项热生效）；
+  - `apps/backend/src/storage/media/scene-reference.ts` 导出 `SceneReference`、`listSceneReferences`、`readSceneReferenceByRecord`、`hasUnfinishedSceneImageTasks`，并在 `saveSceneReference` 支持 `{ deferDiscard: true }` 返回 `deferredDiscard`；
+  - `apps/backend/src/domain/scene-image.ts` 与 `apps/backend/src/application/media/scene-image-service.ts` 在 `captureAutomaticConfig` 与 `requestManual` 接收 `img2img` 任务时将当前服饰参考图固定至 `config.pinnedReferences`，执行阶段优先经 `readSceneReferenceByRecord` 读取固定快照；
+  - `apps/backend/src/application/media/scene-image-settings.ts` 与 `apps/backend/src/bootstrap/app.ts` 在 `uploadReference` 检测到该角色存在在途 `scene_image_tasks` 时保留旧文件，待 `sceneImages.waitForIdle(roleId)` 收尾后核对并回收旧文件（`app.close()` 中在 `sceneImages.close()` 之后等待清理收尾）。
+- **桌面端改动**：
+  - `apps/desktop/renderer/src/components/config/role/RoleEditor.tsx`、`ImagePanel.tsx` 与 `OutfitReferences.tsx` 为移除服饰参考图接入 `guardDelete={guardAction}` 停机守卫，同时保留上传/替换参考图与生图参数保存的热生效体验（零新增样式）。
+- **精准离线复验（仓库 Node `v24.22.2`）**：
+  - 后端 `tsc --noEmit` 0 错误；`role-activity` + `scene-image-auto` + `scene-image-core` + `scene-image-planning` **43/43** 全通过（含活跃/停机中删参考图返回 `409 ROLE_NOT_STOPPED`、停机后返回 `200`，以及 `img2img` 在途热替换按固定旧图完成并在结算后清理旧文件实测）；
   - 渲染器 `npm run check`（38 CSS 0 违规）+ Vite 生产构建全通过。

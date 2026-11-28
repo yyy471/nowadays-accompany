@@ -501,6 +501,8 @@ function assembleBackendApp(
       : { imageInspector: options.sceneImageInspector }),
     isRoleDeleting: (roleId) => isRoleDeleting(roleId),
   });
+  // 参考图热替换时等待过场图任务收尾再清理旧文件；此处接线避免构造期循环依赖。
+  sceneImageSettings.setWhenSceneImagesIdle((roleId) => sceneImages.waitForIdle(roleId));
   conversation.setSceneImageService(sceneImages);
   const waitForMemoryIdle = async (
     roleId: string,
@@ -612,7 +614,7 @@ function assembleBackendApp(
       for (const result of stopped) if (result.status === "rejected") throw result.reason;
     } finally {
       try { unsubscribeActivityFeed(); }
-      finally { try { await sceneImages.close(); }
+      finally { try { await sceneImages.close(); await sceneImageSettings.close(); }
       finally { await extensions.close(); } }
     }
   })();

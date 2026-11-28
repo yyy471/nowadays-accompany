@@ -10,8 +10,9 @@ function describeRefError(reason: unknown): string {
   if (reason instanceof ApiError) return describeImageFailure(reason.code, errorText(reason));
   return errorText(reason);
 }
-export function OutfitReferences({ roleId, outfits, guardWrite, onChanged }: {
+export function OutfitReferences({ roleId, outfits, guardWrite, guardDelete, onChanged }: {
   roleId: string; outfits: Outfit[]; guardWrite: <T>(action: () => Promise<T>, verb?: string) => Promise<T>;
+  guardDelete?: <T>(action: () => Promise<T>, verb?: string) => Promise<T>;
   onChanged: () => void;
 }) {
   const [refs, setRefs] = useState<Entry[]>([]);
@@ -35,13 +36,18 @@ export function OutfitReferences({ roleId, outfits, guardWrite, onChanged }: {
     if (file && file.size > 8 * 1024 * 1024) { setError('服饰参考图上限为 8 MiB。'); return; }
     pending.current = true; setBusy(outfitId); setError('');
     try {
-      await guardWrite(async () => {
+      const action = async () => {
         if (!alive.current) return;
         if (file) {
           const data = new FormData(); data.append('image', file);
           await api(url(outfitId), { method: 'PUT', body: data });
         } else await api(url(outfitId), { method: 'DELETE' });
-      }, file ? '保存服饰参考图' : '移除服饰参考图');
+      };
+      if (file) await guardWrite(action, '保存服饰参考图');
+      else {
+        const removeGuard: <T>(action: () => Promise<T>, verb?: string) => Promise<T> = guardDelete ?? guardWrite;
+        await removeGuard(action, '移除服饰参考图');
+      }
       if (alive.current) { refresh(value => value + 1); onChanged(); }
     } catch (reason) { if (alive.current) setError(describeRefError(reason)); }
     finally { pending.current = false; if (alive.current) setBusy(''); }

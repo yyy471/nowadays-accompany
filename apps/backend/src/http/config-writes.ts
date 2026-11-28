@@ -20,6 +20,7 @@ export const ROLE_CONFIG_WRITES: ReadonlySet<string> = new Set([
   "DELETE /v1/roles/:roleId/appearance/outfits/:outfitId",
   "DELETE /v1/roles/:roleId/appearance/outfits/:outfitId/sprites/:assetId",
   "DELETE /v1/roles/:roleId/appearance/outfits/:outfitId/home/:assetId",
+  "DELETE /v1/roles/:roleId/scene-image/outfits/:outfitId/reference",
 ]);
 
 /**
@@ -36,7 +37,6 @@ export const ROLE_HOT_CONFIG_WRITES: ReadonlySet<string> = new Set([
   "PUT /v1/roles/:roleId/autonomy/budget",
   "PUT /v1/roles/:roleId/scene-image",
   "PUT /v1/roles/:roleId/scene-image/outfits/:outfitId/reference",
-  "DELETE /v1/roles/:roleId/scene-image/outfits/:outfitId/reference",
   "POST /v1/roles/:roleId/appearance/outfits",
   "PATCH /v1/roles/:roleId/appearance/outfits/:outfitId",
   "POST /v1/roles/:roleId/appearance/outfits/:outfitId/home",

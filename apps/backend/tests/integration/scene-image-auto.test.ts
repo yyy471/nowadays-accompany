@@ -1,13 +1,19 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
-import { createBackendApp } from "../../src/bootstrap/app.js";
-import { parseBackendConfig } from "../../src/bootstrap/config.js";
+import sharp from "sharp";
+import { createBackendApp, listen } from "../../src/bootstrap/app.js";
+import { parseBackendConfig, rolePaths } from "../../src/bootstrap/config.js";
 import type { ModelEvent, ModelPort, ModelRequest } from "../../src/domain/model.js";
+import type { SceneImageSettingsRecord } from "../../src/domain/scene-image-settings.js";
 import { sceneImageSettingsSchema } from "../../src/domain/scene-image-settings.js";
 import { FakeSceneImageGenerator } from "../../src/scene/fake-generator.js";
+import { FixedSceneImagePlanner } from "../../src/scene/fixed-planner.js";
+import { defaultComfyWorkflow } from "../../src/scene/comfyui-workflow.js";
 import { SceneImageStore } from "../../src/storage/media/scene-image-store.js";
-import { createFixtureWithModel, withStorage, type Fixture } from "../fixtures/conversation-fixture.js";
+import { createFixtureWithModel, deferred, withStorage, type Fixture } from "../fixtures/conversation-fixture.js";
 
 class SceneDecisionModel implements ModelPort {
   decisions = 0;
@@ -184,4 +190,195 @@ test("停用服务在维护窗口期间仍按无服务跳过，启用服务遇�
     await pendingMaint?.catch(() => undefined);
     await f.close();
   }
+});
+
+async function waitUntil(
+  condition: () => boolean,
+  timeoutMs = 5_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (condition()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("WAIT_TIMEOUT");
+}
+
+function referenceRow(
+  fixture: Fixture,
+  outfitId: string,
+): { assetId: string; relativePath: string } {
+  return withStorage(fixture, (storage) =>
+    storage.business.db
+      .prepare(
+        "SELECT asset_id AS assetId, relative_path AS relativePath FROM role_scene_references WHERE role_id=? AND outfit_id=?",
+      )
+      .get(fixture.roleId, outfitId) as {
+      assetId: string;
+      relativePath: string;
+    },
+  );
+}
+
+test("img2img 热替换服饰参考图：在途任务按固定旧图完成，旧文件在结算后清理", { timeout: 30_000 }, async (t) => {
+  const fake = new FakeSceneImageGenerator({ full_scene: { width: 32, height: 32 } });
+  const started = deferred<void>();
+  const release = deferred<void>();
+  const received: Buffer[] = [];
+  let lockSettings: SceneImageSettingsRecord | null = null;
+  const f = createFixtureWithModel(new SceneDecisionModel(), {
+    sceneImagePlanner: new FixedSceneImagePlanner(),
+    sceneImageGenerator: {
+      lock: () =>
+        lockSettings === null
+          ? null
+          : {
+              version: 1,
+              settings: lockSettings,
+              service: {
+                protocol: "comfyui",
+                baseUrl: "http://127.0.0.1:1",
+                timeoutMs: null,
+              },
+            },
+      async generate(input) {
+        received.push(input.references?.[0]?.data ?? Buffer.alloc(0));
+        started.resolve();
+        await release.promise;
+        return fake.generate(input);
+      },
+    },
+  });
+  t.after(() => {
+    release.resolve();
+    return f.close();
+  });
+  const port = await listen(f.app.server, 0, "127.0.0.1");
+  const base = `http://127.0.0.1:${port}`;
+  const roleBase = `/v1/roles/${f.roleId}/scene-image`;
+
+  const service = f.app.services.imageServices.create({
+    name: "离线图生图",
+    config: { protocol: "comfyui", baseUrl: "http://127.0.0.1:1" },
+  });
+  const graph = defaultComfyWorkflow();
+  graph["12"] = { class_type: "LoadImage", inputs: { image: "stored.png" } };
+  graph["13"] = { class_type: "VAEEncode", inputs: { pixels: ["12", 0], vae: ["3", 0] } };
+  graph["9"]!.inputs.latent_image = ["13", 0];
+  f.app.services.sceneImageSettings.save(
+    f.roleId,
+    sceneImageSettingsSchema.parse({
+      serviceId: service.serviceId,
+      modelType: "img2img",
+      modelPath: "offline.safetensors",
+      workflow: graph,
+    }),
+  );
+  lockSettings = f.app.services.sceneImageSettings.get(f.roleId).settings;
+  assert.ok(lockSettings, "图生图配置应已保存");
+
+  const outfit = await f.app.services.appearance.importOutfit(f.roleId, {
+    name: "旧装",
+  });
+  const oldPicture = await sharp({
+    create: { width: 16, height: 16, channels: 3, background: "red" },
+  })
+    .png()
+    .toBuffer();
+  const newPicture = await sharp({
+    create: { width: 16, height: 16, channels: 3, background: "blue" },
+  })
+    .png()
+    .toBuffer();
+  const referenceEndpoint = `${roleBase}/outfits/${outfit.outfitId}/reference`;
+  const upload = async (bytes: Buffer) => {
+    const form = new FormData();
+    form.append(
+      "image",
+      new Blob([new Uint8Array(bytes)], { type: "image/png" }),
+      "ref.png",
+    );
+    const response = await fetch(`${base}${referenceEndpoint}`, {
+      method: "PUT",
+      body: form,
+    });
+    return { status: response.status, body: await response.text() };
+  };
+  assert.equal((await upload(oldPicture)).status, 200);
+
+  // 目标回复绑定这套服饰，手动整幅图任务才会带参考图参与生成。
+  f.app.conversation.submitMessage(f.roleId, f.windowId, {
+    content: "今天穿这件出门。",
+    submissionId: randomUUID(),
+    sourcePlatform: "nowadays",
+  });
+  await f.app.conversation.waitForIdle(f.roleId);
+  const reply = f.app.services.messages
+    .list(f.roleId, f.windowId, null, 100)
+    .items.filter((item) => item.sender === "assistant")
+    .at(-1);
+  assert.ok(reply, "脚本化回复应已落库");
+  withStorage(f, (storage) => {
+    storage.business.db
+      .prepare("UPDATE message_segments SET outfit_id = ? WHERE message_id = ?")
+      .run(outfit.outfitId, reply.messageId);
+  });
+
+  const { task } = f.app.services.sceneImages.requestManual(
+    f.roleId,
+    f.windowId,
+    reply.messageId,
+    { layerMode: "full_scene", idempotencyKey: randomUUID() },
+  );
+  await started.promise;
+  assert.equal(
+    f.app.services.sceneImages.getTask(f.roleId, f.windowId, task.taskId).status,
+    "generating",
+  );
+
+  const roleDir = rolePaths(f.app.config.dataRoot, f.roleId).roleDir;
+  const oldReference = referenceRow(f, outfit.outfitId);
+  const oldPath = path.join(roleDir, oldReference.relativePath);
+  assert.ok(fs.existsSync(oldPath), "旧参考图应已写入磁盘");
+
+  // 任务尚未结束时热替换：立即成功，但旧文件保留给在途任务读取。
+  const replaced = await upload(newPicture);
+  assert.equal(replaced.status, 200);
+  const savedReference = JSON.parse(replaced.body) as {
+    outfitId: string;
+    assetId: string;
+    mediaType: string;
+  };
+  assert.equal(savedReference.outfitId, outfit.outfitId);
+  assert.equal(savedReference.mediaType, "image/png");
+  assert.notEqual(savedReference.assetId, oldReference.assetId);
+  assert.ok(fs.existsSync(oldPath), "在途任务运行期间旧参考图不应被删除");
+
+  const newReference = referenceRow(f, outfit.outfitId);
+  const newPath = path.join(roleDir, newReference.relativePath);
+  assert.equal(newReference.assetId, savedReference.assetId);
+  assert.ok(fs.existsSync(newPath), "新参考图应已写入磁盘");
+  const current = await fetch(`${base}${referenceEndpoint}`);
+  assert.deepEqual(Buffer.from(await current.arrayBuffer()), newPicture);
+
+  release.resolve();
+  await f.app.services.sceneImages.waitForIdle(f.roleId);
+  const settled = f.app.services.sceneImages.getTask(
+    f.roleId,
+    f.windowId,
+    task.taskId,
+  );
+  assert.equal(settled.status, "succeeded", settled.errorSummary ?? undefined);
+  assert.equal(settled.errorCode, null);
+  assert.deepEqual(
+    received,
+    [oldPicture],
+    "在途任务应使用任务接收时固定的旧参考图",
+  );
+
+  // 任务结算后由延迟清理删除被替换的旧文件，新参考图保持不变。
+  await waitUntil(() => !fs.existsSync(oldPath));
+  assert.ok(fs.existsSync(newPath), "新参考图不应被清理");
+  const kept = await fetch(`${base}${referenceEndpoint}`);
+  assert.deepEqual(Buffer.from(await kept.arrayBuffer()), newPicture);
 });

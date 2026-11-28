@@ -32,7 +32,7 @@ import type {
 import { rolePaths } from "../../bootstrap/config.js";
 import type { AppStore } from "../../storage/core/app-store.js";
 import { ConversationStore } from "../../storage/conversation/conversation-store.js";
-import { readSceneReference } from "../../storage/media/scene-reference.js";
+import { readSceneReference, readSceneReferenceByRecord, type SceneReference } from "../../storage/media/scene-reference.js";
 import {
   SceneImageStore,
   type SceneImageCharacterReference,
@@ -118,9 +118,11 @@ export class SceneImageService {
     // 无可用服务也保存该轮的明确决定；不允许自动任务使用手动占位图。
     try {
       const captured = this.captureImageService?.(roleId);
-      if (captured?.settings?.serviceId === settings.serviceId && captured.service) return captured;
+      if (captured?.settings?.serviceId === settings.serviceId && captured.service) {
+        return attachPinnedReferences(captured, db, roleId);
+      }
     } catch { /* 服务目录或配置当前不可用。 */ }
-    return { version: 1, settings, service: null };
+    return attachPinnedReferences({ version: 1, settings, service: null }, db, roleId);
   }
 
   dispatchAutomatic(roleId: string, windowId: string): void {
@@ -210,6 +212,11 @@ export class SceneImageService {
       }
       const first = segments[0]!;
       const last = segments.at(-1)!;
+      // 图生图在接收事务里固定当时的服饰参考图；之后热替换只影响后续任务。
+      const pinnedConfig =
+        config?.settings?.modelType === "img2img"
+          ? { ...config, pinnedReferences: pinnedReferencesFrom(db, roleId) }
+          : config;
       return store.createTask({
         roleId,
         windowId,
@@ -220,7 +227,7 @@ export class SceneImageService {
         startSegmentId: first.segmentId,
         endSegmentId: last.segmentId,
         idempotencyKey: input.idempotencyKey,
-        config,
+        config: pinnedConfig,
         now: this.nowIso(),
       });
     }); } catch (error) { release?.(); throw error; }
@@ -434,7 +441,13 @@ export class SceneImageService {
       let referenceError: unknown;
       if (outfit && img2img && (task.trigger !== "manual" || task.layerMode === "full_scene")) {
         // 在第一次异步规划前固定当时的服饰图；之后更换参考图不会改变这一轮。
-        try { pinnedReference = readSceneReference(storage, roleId, outfit.outfitId); }
+        // 优先用任务接收时固定的引用记录：热替换把当前行换掉后仍能读到旧文件。
+        const pinned = config?.pinnedReferences?.[outfit.outfitId];
+        try {
+          pinnedReference = pinned
+            ? readSceneReferenceByRecord(storage, { outfitId: outfit.outfitId, ...pinned })
+            : readSceneReference(storage, roleId, outfit.outfitId);
+        }
         catch (error) { referenceError = error; }
       }
       return {
@@ -737,6 +750,34 @@ export class SceneImageService {
   private nowIso(): string {
     return this.now().toISOString();
   }
+}
+
+/** 图生图任务接收时固定当时的服饰参考图；文生图或旧配置不附加。 */
+function attachPinnedReferences(
+  config: SceneImageConfigSnapshot,
+  db: Database.Database,
+  roleId: string,
+): SceneImageConfigSnapshot {
+  if (config.settings?.modelType !== "img2img") return config;
+  return { ...config, pinnedReferences: pinnedReferencesFrom(db, roleId) };
+}
+
+function pinnedReferencesFrom(
+  db: Database.Database,
+  roleId: string,
+): Record<string, { assetId: string; relativePath: string; mediaType: string }> {
+  const rows = db.prepare(
+    "SELECT outfit_id AS outfitId, asset_id AS assetId, relative_path AS relativePath, media_type AS mediaType FROM role_scene_references WHERE role_id = ?",
+  ).all(roleId) as SceneReference[];
+  const pinned: Record<string, { assetId: string; relativePath: string; mediaType: string }> = {};
+  for (const row of rows) {
+    pinned[row.outfitId] = {
+      assetId: row.assetId,
+      relativePath: row.relativePath,
+      mediaType: row.mediaType,
+    };
+  }
+  return pinned;
 }
 
 function normalizePlan(

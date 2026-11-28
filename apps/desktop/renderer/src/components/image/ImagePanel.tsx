@@ -39,6 +39,7 @@ type Props = {
   onDraftStateChange?: (state: ConfigDraftState) => void;
   onSummaryStatus?: (status: MediaSummaryStatus) => void;
   guardWrite?: <T>(action: () => Promise<T>, verb?: string, announceSuccess?: boolean) => Promise<T>;
+  guardDelete?: <T>(action: () => Promise<T>, verb?: string) => Promise<T>;
   pausedWrite?: boolean;
 };
 
@@ -100,6 +101,7 @@ export function ImagePanel({
   onDraftStateChange,
   onSummaryStatus,
   guardWrite = action => action(),
+  guardDelete,
   pausedWrite = false,
 }: Props) {
   const { sheet, closeNow } = useSheet();
@@ -765,7 +767,7 @@ export function ImagePanel({
       {anchorNotes.base && <p className="nd-image-source-note">{anchorNotes.base}</p>}
     </section>
 
-    {form.modelType === 'img2img' ? <OutfitReferences key={roleId} roleId={roleId} outfits={outfits} guardWrite={guardWrite}
+    {form.modelType === 'img2img' ? <OutfitReferences key={roleId} roleId={roleId} outfits={outfits} guardWrite={guardWrite} guardDelete={guardDelete ?? guardWrite}
       onChanged={() => invalidatePreview(true)} /> : <section className="nd-image-section" aria-label="服饰锚点提示词">
       <div className="nd-image-section-title">
         <h3>服饰锚点提示词</h3>

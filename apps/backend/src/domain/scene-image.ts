@@ -142,6 +142,15 @@ export interface SceneImageConfigSnapshot {
     baseUrl: string;
     timeoutMs: number | null;
   } | null;
+  /**
+   * 图生图任务接收时固定的服饰参考图。队列或规划期间参考图被热替换时，
+   * 本次任务仍按这份快照读取旧文件，清理等任务结算后再进行。
+   */
+  pinnedReferences?: Record<string, {
+    assetId: string;
+    relativePath: string;
+    mediaType: string;
+  }>;
 }
 
 export interface SceneImageGenerationInput {
