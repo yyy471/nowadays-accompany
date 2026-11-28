@@ -3,7 +3,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   formatNoteBytes,
+  noteListFeedback,
+  notePreviewView,
   pickSelectedNotePath,
+  type NoteDetailRequest,
+  type NoteDetailState,
   type WorkspaceNoteSummary
 } from "../src/components/config/role/workspace-notes.ts";
 import {
@@ -77,6 +81,49 @@ test("pickSelectedNotePath：空列表清空选择，失效路径退回第一条
   assert.equal(pickSelectedNotePath(items, "notes/a.md"), "notes/a.md");
   assert.equal(pickSelectedNotePath(items, "removed.md"), "drafts/b.md");
   assert.equal(pickSelectedNotePath(items, ""), "drafts/b.md");
+});
+
+test("noteListFeedback：完整空列表显示空态，截断空列表只提示扫描范围", () => {
+  assert.deepEqual(noteListFeedback(false, 0, false), { kind: "empty", message: "工作空间里还没有 Markdown 笔记。" });
+  assert.deepEqual(noteListFeedback(false, 0, true), { kind: "scan-empty", message: "当前扫描范围内未找到 Markdown 笔记。" });
+});
+
+test("noteListFeedback：截断非空提示数量，加载与正常列表各自独立", () => {
+  assert.deepEqual(noteListFeedback(false, 2, true), {
+    kind: "truncated",
+    message: "工作空间目录较大，仅展示前 2 篇笔记（已跳过 node_modules 等依赖目录）。"
+  });
+  assert.equal(noteListFeedback(true, 0, false).kind, "loading");
+  assert.equal(noteListFeedback(false, 2, false).kind, "list");
+});
+
+const request = (overrides: Partial<NoteDetailRequest> = {}): NoteDetailRequest => ({
+  roleId: "role-a",
+  path: "notes/a.md",
+  revision: 0,
+  ...overrides
+});
+
+const detail = (relativePath: string, content: string) => ({ ...note(relativePath), content });
+
+test("notePreviewView：没有选中路径时显示占位", () => {
+  assert.deepEqual(notePreviewView(null, null), { kind: "placeholder" });
+});
+
+test("notePreviewView：A 已就绪时切到 B，身份不匹配立即回到加载中", () => {
+  const state: NoteDetailState = { phase: "ready", request: request(), note: detail("notes/a.md", "笔记 A 正文") };
+  assert.deepEqual(notePreviewView(request(), state), { kind: "content", note: detail("notes/a.md", "笔记 A 正文") });
+  assert.deepEqual(notePreviewView(request({ path: "notes/b.md" }), state), { kind: "loading" });
+  assert.deepEqual(notePreviewView(request({ roleId: "role-b" }), state), { kind: "loading" });
+  assert.deepEqual(notePreviewView(request({ revision: 1 }), state), { kind: "loading" });
+});
+
+test("notePreviewView：旧请求的加载与失败也不会落到新选择上", () => {
+  const staleLoading: NoteDetailState = { phase: "loading", request: request() };
+  const staleError: NoteDetailState = { phase: "error", request: request(), error: "读取失败" };
+  assert.deepEqual(notePreviewView(request({ path: "notes/b.md" }), staleLoading), { kind: "loading" });
+  assert.deepEqual(notePreviewView(request({ path: "notes/b.md" }), staleError), { kind: "loading" });
+  assert.deepEqual(notePreviewView(request(), staleError), { kind: "error", message: "读取失败" });
 });
 
 test("transferRelationMeta：每种关系都有可见标签、说明与状态色调", () => {

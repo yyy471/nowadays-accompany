@@ -58,6 +58,12 @@ const library = [{ directory:'skill', name:'临时方法', description:'整理�
 const modelPatches = [];
 const savedSecrets = {};
 const requests = [];
+const noteSummaries = ['a', 'b', 'c'].map(name => ({ relativePath: `notes/${name}.md`, name: `${name}.md`, sizeBytes: 512, updatedAt: '2026-11-27T08:00:00.000Z' }));
+const noteBodies = Object.fromEntries(noteSummaries.map(item => [item.relativePath, `笔记 ${item.name.slice(0, 1).toUpperCase()} 正文`]));
+let noteList = { items: noteSummaries, truncated: false };
+let holdNotePath = '';
+let heldNoteReleases = [];
+let failNotePath = '';
 const readRaw = (req, fn) => { const chunks = []; req.on('data', chunk => chunks.push(chunk)); req.on('end', () => fn(Buffer.concat(chunks))); };
 const json = (res, body, status = 200) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
 const server = http.createServer((req, res) => {
@@ -74,6 +80,16 @@ const server = http.createServer((req, res) => {
   if (role && (p.endsWith('/activity/stop') || p.endsWith('/activity/resume'))) { roleStates[role.roleId] = p.endsWith('/stop') ? 'stopped' : 'active'; return json(res, { activity: { roleId: role.roleId, state: roleStates[role.roleId], running: false, initStatus: 'ready' } }); }
   if (role && p.endsWith('/activity')) return json(res, { activity: { roleId: role.roleId, state: roleStates[role.roleId], running: false, initStatus: 'ready' } });
   if (p.endsWith('/state')) return json(res, { state: {}, stateVersion: 1, updatedAt: '2026-11-11T00:00:00Z' });
+  if (/^\/v1\/roles\/[^/]+\/workspace\/notes$/.test(p)) return json(res, noteList);
+  if (/^\/v1\/roles\/[^/]+\/workspace\/note$/.test(p)) {
+    const relativePath = url.searchParams.get('path') || '';
+    const summary = noteSummaries.find(item => item.relativePath === relativePath);
+    const respond = () => json(res, { note: { ...summary, content: noteBodies[relativePath] } });
+    if (!summary) return json(res, { error: { message: '笔记不存在' } }, 404);
+    if (failNotePath === relativePath) return json(res, { error: { message: '读取笔记失败' } }, 500);
+    if (holdNotePath === relativePath) { heldNoteReleases.push(respond); return; }
+    return respond();
+  }
   if (p.endsWith('/appearance/outfits')) return json(res, { items: wardrobes[role?.roleId] || [] });
   const outfitMatch = /\/appearance\/outfits\/([^/]+)(?:\/(home|sprites)(?:\/([^/]+))?)?$/.exec(p);
   if (outfitMatch && role) {
@@ -1009,6 +1025,52 @@ async function run() {
   await openRoleRow('media:voice');
   await sheetText('sample.wav');
   await close();
+
+  // R3-05 / R3-06：笔记列表三种空态与按角色、路径、刷新轮次绑定的详情预览。
+  await tab('扩展');
+  // 旧角色编辑器仍挂载为 [hidden]，所有笔记选择器都限定到可见编辑器并过滤不可见/inert 节点。
+  const notesScope = `${editor} .workspace-notes`;
+  const noteNodes = selector => `[...document.querySelectorAll(${JSON.stringify(`${editor} ${selector}`)})].filter(node=>node.getClientRects().length && !node.closest('[inert]'))`;
+  const noteNode = selector => `${noteNodes(selector)}[0]`;
+  const noteItem = relativePath => `${noteNodes('.workspace-notes-item')}.find(item=>item.textContent.includes(${JSON.stringify(relativePath)}))`;
+  const noteSays = (selector, text) => `${noteNodes(selector)}.some(node=>node.textContent===${JSON.stringify(text)})`;
+  const noteHas = (selector, text) => `${noteNodes(selector)}.some(node=>node.textContent.includes(${JSON.stringify(text)}))`;
+  await click(`${noteNodes('.ui-disclosure-trigger')}.find(trigger=>trigger.textContent.includes('书案笔记'))`);
+  await until(() => ev(`${noteNodes('.workspace-notes-item')}.length===3`));
+  await until(() => ev(`${noteNode('.workspace-note-body')}?.textContent==='笔记 A 正文'`));
+  const notePreviewText = `${noteNode('.workspace-notes-preview')}?.innerText || ''`;
+  // 慢响应：选中 B 后只能看到加载提示，不能继续展示 A 的正文。
+  holdNotePath = 'notes/b.md';
+  await click(noteItem('notes/b.md'));
+  await until(() => heldNoteReleases.length > 0);
+  assert.match(await ev(notePreviewText), /正在读取笔记/);
+  assert.doesNotMatch(await ev(notePreviewText), /笔记 A 正文/);
+  holdNotePath = '';
+  heldNoteReleases.forEach(release => release()); heldNoteReleases = [];
+  await until(() => ev(`${noteNode('.workspace-note-body')}?.textContent==='笔记 B 正文'`));
+  // 失败只属于当前选择，不能回退显示上一份成功的正文。
+  failNotePath = 'notes/c.md';
+  await click(noteItem('notes/c.md'));
+  await until(() => ev(`!!${noteNode('.workspace-notes-preview')}?.querySelector('[role=alert]')`));
+  assert.doesNotMatch(await ev(notePreviewText), /笔记 B 正文/);
+  failNotePath = '';
+  noteList = { items: [], truncated: false };
+  await click(button('刷新', notesScope));
+  await until(() => ev(noteSays('.workspace-notes-empty', '工作空间里还没有 Markdown 笔记。')));
+  assert.equal(await ev(noteHas('.workspace-notes-notice', '仅展示前')), false, '完整空列表不带截断提示');
+  noteList = { items: [], truncated: true };
+  await click(button('刷新', notesScope));
+  await until(() => ev(noteSays('.workspace-notes-notice', '当前扫描范围内未找到 Markdown 笔记。')));
+  assert.equal(await ev(`${noteNodes('.workspace-notes-empty')}.length`), 0, '截断空列表不显示完整空态');
+  assert.equal(await ev(noteHas('.workspace-notes-notice', '仅展示前')), false, '截断空列表不提示前 0 篇');
+  noteList = { items: noteSummaries, truncated: true };
+  await click(button('刷新', notesScope));
+  await until(() => ev(noteHas('.workspace-notes-notice', '仅展示前 3 篇笔记')));
+  assert.equal(await ev(`${noteNodes('.workspace-notes-item')}.length`), 3, '截断非空保留列表');
+  assert.equal(await ev(`${noteNodes('.workspace-notes-empty')}.length`), 0, '截断非空只显示截断提示');
+  noteList = { items: noteSummaries, truncated: false };
+  await click(button('刷新', notesScope));
+  await until(() => ev(`${noteNodes('.workspace-notes-item')}.length===3`));
 
   await pickRole('__new');
   await sheetTitle('新建角色');

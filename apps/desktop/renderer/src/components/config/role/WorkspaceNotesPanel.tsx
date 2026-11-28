@@ -5,7 +5,10 @@ import { Button, Disclosure } from '../../../ui';
 import {
   formatNoteBytes,
   formatNoteTimestamp,
+  noteListFeedback,
+  notePreviewView,
   pickSelectedNotePath,
+  type NoteDetailState,
   type WorkspaceNoteDetail,
   type WorkspaceNoteSummary
 } from './workspace-notes';
@@ -21,12 +24,13 @@ export function WorkspaceNotesPanel({ roleId, active }: Props) {
   const [selected, setSelected] = useState<{ roleId: string; path: string } | null>(null);
   // 选中路径与角色绑定：角色切换的同一帧里不会拿旧路径去请求新角色。
   const selectedPath = selected?.roleId === roleId ? selected.path : '';
-  const [note, setNote] = useState<WorkspaceNoteDetail | null>(null);
-  const [listLoading, setListLoading] = useState(false);
-  const [noteLoading, setNoteLoading] = useState(false);
-  const [listError, setListError] = useState('');
-  const [noteError, setNoteError] = useState('');
   const [revision, setRevision] = useState(0);
+  // 详情响应携带请求身份；渲染时只认可与当前角色、路径和轮次一致的响应。
+  const [noteState, setNoteState] = useState<NoteDetailState | null>(null);
+  const noteRequest = selectedPath ? { roleId, path: selectedPath, revision } : null;
+  const preview = notePreviewView(noteRequest, noteState);
+  const [listLoading, setListLoading] = useState(false);
+  const [listError, setListError] = useState('');
   const [directoryNotice, setDirectoryNotice] = useState('');
 
   // 角色切换时清空旧选择，避免把上一个角色的笔记带到新角色。
@@ -34,9 +38,8 @@ export function WorkspaceNotesPanel({ roleId, active }: Props) {
     setItems([]);
     setTruncated(false);
     setSelected(null);
-    setNote(null);
+    setNoteState(null);
     setListError('');
-    setNoteError('');
     setDirectoryNotice('');
   }, [roleId]);
 
@@ -62,17 +65,16 @@ export function WorkspaceNotesPanel({ roleId, active }: Props) {
   }, [open, active, roleId, revision]);
 
   useEffect(() => {
-    if (!open || !active || !selectedPath) { setNote(null); return; }
+    if (!open || !active || !selectedPath) { setNoteState(null); return; }
     const request = new AbortController();
-    setNoteLoading(true);
-    setNoteError('');
+    const identity = { roleId, path: selectedPath, revision };
+    setNoteState({ phase: 'loading', request: identity });
     api<{ note: WorkspaceNoteDetail }>(
       `/v1/roles/${encodeURIComponent(roleId)}/workspace/note?path=${encodeURIComponent(selectedPath)}`,
       { signal: request.signal }
     )
-      .then(result => { if (!request.signal.aborted) setNote(result.note); })
-      .catch(error => { if (!request.signal.aborted) setNoteError(errorText(error)); })
-      .finally(() => { if (!request.signal.aborted) setNoteLoading(false); });
+      .then(result => { if (!request.signal.aborted) setNoteState({ phase: 'ready', request: identity, note: result.note }); })
+      .catch(error => { if (!request.signal.aborted) setNoteState({ phase: 'error', request: identity, error: errorText(error) }); });
     return () => request.abort();
   }, [open, active, roleId, selectedPath, revision]);
 
@@ -88,6 +90,8 @@ export function WorkspaceNotesPanel({ roleId, active }: Props) {
     }
   };
 
+  const listFeedback = noteListFeedback(listLoading, items.length, truncated);
+
   return <Disclosure title="书案笔记（工作空间）" open={open} onOpenChange={setOpen}>
     <div className="workspace-notes">
       <div className="workspace-notes-tools">
@@ -96,9 +100,9 @@ export function WorkspaceNotesPanel({ roleId, active }: Props) {
         {directoryNotice && <p className="workspace-notes-notice" role="status">{directoryNotice}</p>}
       </div>
       {listError && <p className="workspace-notes-error" role="alert">{listError}</p>}
-      {!listError && listLoading && !items.length && <p className="workspace-notes-notice" role="status">正在读取工作空间笔记…</p>}
-      {!listError && !listLoading && items.length === 0 && <p className="workspace-notes-empty">工作空间里还没有 Markdown 笔记。</p>}
-      {!listError && truncated && <p className="workspace-notes-notice" role="status">工作空间目录较大，仅展示前 {items.length} 篇笔记（已跳过 node_modules 等依赖目录）。</p>}
+      {!listError && listFeedback.kind !== 'list' && (listFeedback.kind === 'empty'
+        ? <p className="workspace-notes-empty">{listFeedback.message}</p>
+        : <p className="workspace-notes-notice" role="status">{listFeedback.message}</p>)}
       {items.length > 0 && <div className="workspace-notes-layout">
         <ul className="workspace-notes-list" aria-label="工作空间笔记">
           {items.map(item => <li key={item.relativePath}>
@@ -111,11 +115,11 @@ export function WorkspaceNotesPanel({ roleId, active }: Props) {
           </li>)}
         </ul>
         <div className="workspace-notes-preview">
-          {noteError ? <p className="workspace-notes-error" role="alert">{noteError}</p>
-            : noteLoading && !note ? <p className="workspace-notes-notice" role="status">正在读取笔记…</p>
-            : note ? <>
-              <header className="workspace-notes-preview-head"><strong>{note.name}</strong><small>{note.relativePath}</small></header>
-              <pre className="workspace-note-body">{note.content}</pre>
+          {preview.kind === 'error' ? <p className="workspace-notes-error" role="alert">{preview.message}</p>
+            : preview.kind === 'loading' ? <p className="workspace-notes-notice" role="status">正在读取笔记…</p>
+            : preview.kind === 'content' ? <>
+              <header className="workspace-notes-preview-head"><strong>{preview.note.name}</strong><small>{preview.note.relativePath}</small></header>
+              <pre className="workspace-note-body">{preview.note.content}</pre>
             </> : <p className="workspace-notes-notice">选择左侧笔记查看内容。</p>}
         </div>
       </div>}
