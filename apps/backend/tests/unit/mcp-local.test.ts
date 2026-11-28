@@ -184,6 +184,66 @@ test("workspace writes reject existing and missing-parent directory links", asyn
   }
 });
 
+test("workspace_read uses a bounded descriptor read for oversized files", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nowadays-mcp-read-limit-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, "large.txt");
+  const descriptor = fs.openSync(file, "w");
+  try {
+    const prefix = Buffer.alloc(1_000_001, 0x61);
+    fs.writeSync(descriptor, prefix, 0, prefix.length, 0);
+    fs.ftruncateSync(descriptor, 8_000_000);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  const marker = path.join(root, "unbounded-read.txt");
+  const target = fs.realpathSync(file);
+  const preload = path.join(root, "instrument-read.mjs");
+  fs.writeFileSync(
+    preload,
+    [
+      'import fs from "node:fs";',
+      "const readSync = fs.readSync;",
+      "fs.readSync = (...args) => {",
+      '  if (typeof args[3] === "number" && args[3] > 1_000_001) {',
+      `    fs.writeFileSync(${JSON.stringify(marker)}, String(args[3]));`,
+      "  }",
+      "  return readSync.apply(fs, args);",
+      "};",
+      "const readFileSync = fs.readFileSync;",
+      "fs.readFileSync = (...args) => {",
+      `  if (args[0] === ${JSON.stringify(target)}) {`,
+      `    fs.writeFileSync(${JSON.stringify(marker)}, "readFileSync");`,
+      "  }",
+      "  return readFileSync.apply(fs, args);",
+      "};",
+    ].join("\n"),
+  );
+  const client = await McpToolClient.connect({
+    command: process.execPath,
+    args: [
+      "--import",
+      pathToFileURL(preload).href,
+      "--import",
+      "tsx",
+      "src/mcp/local-server.ts",
+    ],
+    env: { NOWADAYS_WORKSPACE: root },
+  });
+  try {
+    const read = await callJson(client, "workspace_read", {
+      path: "large.txt",
+    });
+    assert.equal(read.ok, true);
+    assert.equal(read.bytes, 8_000_000);
+    assert.equal(read.truncated, true);
+    assert.equal(read.content, "a".repeat(1_000_000));
+    assert.equal(fs.existsSync(marker), false, "不得整文件读取，读取长度也不得超过 MAX_TEXT_BYTES + 1");
+  } finally {
+    await client.close();
+  }
+});
+
 async function callJson(
   client: McpToolClient,
   name: string,

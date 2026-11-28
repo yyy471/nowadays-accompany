@@ -40,21 +40,13 @@ if (mode === "workspace") {
     },
     async ({ path: relativePath }) => {
       const target = safePath(relativePath, true);
-      const stat = fs.statSync(target);
-      if (!stat.isFile()) {
-        throw new Error("NOT_A_FILE");
-      }
-      const buffer = fs.readFileSync(target);
-      const truncated = buffer.byteLength > MAX_TEXT_BYTES;
-      const content = buffer
-        .subarray(0, MAX_TEXT_BYTES)
-        .toString("utf8");
+      const { bytes, prefix } = readPrefix(target, MAX_TEXT_BYTES + 1);
       return jsonResult({
         ok: true,
         path: relativePath,
-        bytes: buffer.byteLength,
-        truncated,
-        content,
+        bytes,
+        truncated: prefix.length > MAX_TEXT_BYTES,
+        content: prefix.subarray(0, MAX_TEXT_BYTES).toString("utf8"),
       });
     },
   );
@@ -209,6 +201,38 @@ if (mode === "workspace") {
       );
     },
   );
+}
+
+/** 只读取限定前缀；短读时继续，直到读满或到达文件末尾。 */
+function readPrefix(
+  target: string,
+  maxBytes: number,
+): { bytes: number; prefix: Buffer } {
+  const descriptor = fs.openSync(target, "r");
+  try {
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile()) {
+      throw new Error("NOT_A_FILE");
+    }
+    const buffer = Buffer.allocUnsafe(maxBytes);
+    let total = 0;
+    while (total < maxBytes) {
+      const read = fs.readSync(
+        descriptor,
+        buffer,
+        total,
+        maxBytes - total,
+        null,
+      );
+      if (read <= 0) {
+        break;
+      }
+      total += read;
+    }
+    return { bytes: stat.size, prefix: buffer.subarray(0, total) };
+  } finally {
+    fs.closeSync(descriptor);
+  }
 }
 
 function safePath(relativePath: string, mustExist: boolean): string {

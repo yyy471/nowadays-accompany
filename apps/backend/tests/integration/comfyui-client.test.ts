@@ -5,7 +5,7 @@ import http from "node:http";
 import test from "node:test";
 import sharp from "sharp";
 import { listen } from "../../src/bootstrap/app.js";
-import { ImageGenerationFailedError } from "../../src/domain/errors.js";
+import { ImageGenerationFailedError, ImageServiceUnavailableError } from "../../src/domain/errors.js";
 import { sceneImageSettingsSchema } from "../../src/domain/scene-image-settings.js";
 import type {
   SceneImageGeneratorPort,
@@ -56,6 +56,12 @@ interface FakeComfy {
   historyPollsBeforeReady: number;
   /** 模拟卡住的 /history 请求，用于验证中止时的远端清理。 */
   historyDelayMs: number;
+  /** 模拟不结束的 JSON / 图片响应，验证流式上限在完成前生效。 */
+  objectInfoOverflow: boolean;
+  objectInfoCompleted: boolean;
+  viewOverflow: boolean;
+  viewBytesSent: number;
+  viewCompleted: boolean;
   close(): Promise<void>;
 }
 
@@ -85,6 +91,11 @@ async function startFakeComfy(): Promise<FakeComfy> {
     viewStatus: 200,
     historyPollsBeforeReady: 1,
     historyDelayMs: 0,
+    objectInfoOverflow: false,
+    objectInfoCompleted: false,
+    viewOverflow: false,
+    viewBytesSent: 0,
+    viewCompleted: false,
     close: async () => undefined,
   };
   let polls = 0;
@@ -125,6 +136,19 @@ async function startFakeComfy(): Promise<FakeComfy> {
       return;
     }
     if (request.method === "GET" && url === "/object_info") {
+      if (state.objectInfoOverflow) {
+        response.writeHead(200, { "content-type": "application/json" });
+        streamOverflow(
+          response,
+          Buffer.alloc(64 * 1024, 0x20),
+          20 * 1024 * 1024,
+          () => undefined,
+          () => {
+            state.objectInfoCompleted = true;
+          },
+        );
+        return;
+      }
       const nodes: Record<string, unknown> = {
         UNETLoader: {
           input: {
@@ -219,6 +243,21 @@ async function startFakeComfy(): Promise<FakeComfy> {
       return;
     }
     if (request.method === "GET" && url.startsWith("/view?")) {
+      if (state.viewOverflow) {
+        response.writeHead(200, { "content-type": "image/png" });
+        streamOverflow(
+          response,
+          Buffer.alloc(64 * 1024, 0),
+          40 * 1024 * 1024,
+          (bytes) => {
+            state.viewBytesSent = bytes;
+          },
+          () => {
+            state.viewCompleted = true;
+          },
+        );
+        return;
+      }
       if (state.viewStatus !== 200) {
         response.writeHead(state.viewStatus, { "content-type": "application/json" });
         response.end("{}");
@@ -237,9 +276,10 @@ async function startFakeComfy(): Promise<FakeComfy> {
   assert.ok(address !== null && typeof address === "object");
   state.baseUrl = `http://127.0.0.1:${address.port}`;
   state.close = () =>
-    new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve())),
-    );
+    new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+      server.closeAllConnections?.();
+    });
   return state;
 }
 
@@ -250,6 +290,39 @@ function respondJson(
 ): void {
   response.writeHead(status, { "content-type": "application/json" });
   response.end(JSON.stringify(body));
+}
+
+/** 持续写出直到达到上限；客户端提前取消时停止，从而验证“完成前中止”。 */
+function streamOverflow(
+  response: http.ServerResponse,
+  chunk: Buffer,
+  limit: number,
+  onSent: (bytes: number) => void,
+  onComplete: () => void,
+): void {
+  let sent = 0;
+  const writeMore = (): void => {
+    if (response.destroyed || response.writableEnded) {
+      return;
+    }
+    let flushed = true;
+    while (flushed && sent < limit) {
+      sent += chunk.byteLength;
+      onSent(sent);
+      flushed = response.write(chunk);
+    }
+    if (sent >= limit) {
+      onComplete();
+      response.end();
+      return;
+    }
+    if (flushed) {
+      setImmediate(writeMore);
+    } else {
+      response.once("drain", writeMore);
+    }
+  };
+  writeMore();
 }
 
 interface ApiResponse {
@@ -1897,5 +1970,71 @@ test("POST /scene-image/preview 接受包含 autoGenerateEnabled 与 autoCooldow
     assert.ok((res.body.dataBase64 as string).length > 0);
   } finally {
     await context.close();
+  }
+});
+
+test("object info rejects a streamed JSON response over the limit before completion", { timeout: 30_000 }, async () => {
+  const comfy = await startFakeComfy();
+  try {
+    comfy.objectInfoOverflow = true;
+    const client = new ComfyUiClient({
+      baseUrl: comfy.baseUrl,
+      requestTimeoutMs: 10_000,
+    });
+    await assert.rejects(
+      client.objectInfo(),
+      (error: unknown) =>
+        error instanceof ImageServiceUnavailableError &&
+        error.message.includes("16 MiB"),
+    );
+    assert.equal(comfy.objectInfoCompleted, false, "应在服务端完成前中止");
+  } finally {
+    await comfy.close();
+  }
+});
+
+test("view rejects a streamed image over 32 MiB before completion", { timeout: 30_000 }, async () => {
+  const comfy = await startFakeComfy();
+  try {
+    comfy.viewOverflow = true;
+    const client = new ComfyUiClient({
+      baseUrl: comfy.baseUrl,
+      requestTimeoutMs: 10_000,
+      generationTimeoutMs: 10_000,
+      pollIntervalMs: 10,
+    });
+    await assert.rejects(
+      client.run(defaultComfyWorkflow()),
+      (error: unknown) =>
+        error instanceof ImageGenerationFailedError &&
+        error.message.includes("32 MiB"),
+    );
+    assert.equal(comfy.viewCompleted, false, "应在服务端完成前中止");
+  } finally {
+    await comfy.close();
+  }
+});
+
+test("JSON responses reject an oversized declared length before reading", { timeout: 10_000 }, async () => {
+  const server = http.createServer((request, response) => {
+    request.resume();
+    response.writeHead(200, {
+      "content-type": "application/json",
+      "content-length": String(17 * 1024 * 1024),
+    });
+    response.flushHeaders();
+  });
+  const port = await listen(server, 0, "127.0.0.1");
+  try {
+    const client = new ComfyUiClient({
+      baseUrl: `http://127.0.0.1:${port}`,
+      requestTimeoutMs: 2_000,
+    });
+    await assert.rejects(client.objectInfo(), ImageServiceUnavailableError);
+  } finally {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+      server.closeAllConnections();
+    });
   }
 });

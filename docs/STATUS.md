@@ -14,6 +14,8 @@
 
 **411 第五阶段 `R3-12`、`R3-15` 已修复并通过定向离线复验。** 工程通知隔离订阅异常并继续派发，三条事件流定时保活，断开时清理订阅与计时器。后端类型检查、42 项定向测试及三路默认心跳复验通过。[411 第五阶段](./archive/07-documentation/411-post-remediation-targeted-review.md#第五阶段-r3-12-和-r3-15-事件流)
 
+**411 第六阶段 `R3-13`、`R3-14` 已修复并通过定向离线复验。** IndexTTS 拦截重定向，ComfyUI 和本地 MCP 采用有界读取。后端类型检查及语音、生图和本地 MCP 测试 69/69 通过。[411 第六阶段](./archive/07-documentation/411-post-remediation-targeted-review.md#第六阶段-r3-13-和-r3-14-出站响应与文件读取)
+
 **410 全量离线门禁终验（2026-11-28）全通（12/13 项全部闭环 + `R2-12` 离线冷启动优化收口；干净机便携 EXE 与 `DELIV-02` 真实云端/媒体服务联调仍单独实机留证）。** 补充收敛 `settings-media-sheet.e2e.cjs` 羽化中段采帧（拦截 `.theme-feather` Web Animation 定格 `currentTime=220ms` 消除并发窗口节流）与 `cross-page-share.e2e.cjs` 纸笺初始焦点落定等待。仓库 Node 24.22.2 实跑：`accept-offline` **21/21 步**（89 个测试文件 **696/696** + 交付 **5/5** + 进程重启冒烟 + 81 场景，`realServiceCalls=0`）、Pi 子包串行 **14/14**（`survivors=0`）、渲染器 `check`（38 CSS 0 违规）+ **225/225** + 构建、桌面壳 **38/38**（含脱仓生产包冒烟）、默认 3 并发 Electron 39 E2E **29/29**（85.1s 零抖动）、文档巡检 0 错误 0 警告、仓库卫生 0 错误。[410 全量终验记录](./archive/07-documentation/410-second-round-strict-audit-backlog.md#第-3-轮全仓离线门禁终验2026-11-28)
 
 **410 R8（`R2-12` 打包态冷启动优化）已完成实测与精准复验（410 全部 12 项离线可闭环项 + `R2-12` 冷启动优化收口；干净机便携 EXE 与 `DELIV-02` 真实云端/媒体联调仍按边界单独实机留证）。** 剖析定位到后端冷启动耗时主要来自顶层静态导入 `@modelcontextprotocol/sdk`（~930 ms）与 `sharp`（~187 ms）：现将 `mcp/client.ts` 的 SDK 导入与 `image-inspect.ts` / `fake-generator.ts` 的 `sharp` 导入改为按需动态加载，在 `apps/desktop/electron/main.cjs` 托管后端注入 Node 24 原生 `NODE_COMPILE_CACHE`，并在 `main.ts` `listening` 事件输出 `bootMs`。实测：同机脱仓全新拷贝（含 Defender 首次扫描全新 `node.exe`）`packaged-backend-smoke` 首包 `/v1/health 200` 由 `8,395 ms` 降至 **`4,632 ms`**（**-44.8%**，总耗时 56.6s → 41.2s）；已落位 `build-staging` 二次/带编译缓存启动实测 **`417 ms`**（`innerBootMs = 153 ms`，远优于 `<2s` 目标）。[410 R8 专项记录](./archive/07-documentation/410-second-round-strict-audit-backlog.md#r2-12-离线验证与真实交付最后一公里仍未闭环)
@@ -183,7 +185,7 @@ Windows Node 24.22.2 下，Pi 依赖的磁盘分配量 171,243,752 字节（DSH 
 
 **410 R2-14 / DL-202 已确认，待实施与独立复验。** 主对话按 128,000 输入、10,000 输出 token 装配，完整核心角色设定与工具形成稳定前缀，对话历史按整理周期采用 `30+n`。[方案与验收](./archive/07-documentation/410-second-round-strict-audit-backlog.md#r2-14-主对话上下文与前缀缓存)
 
-409、410 后续定向复核与全仓补查登记 8 项必修及 8 项可修、门禁与优化项。已通过 7 项必修及事件流保活的定向离线复验。必修项剩余 IndexTTS 重定向拦截（`R3-13`）。[411 专项清单](./archive/07-documentation/411-post-remediation-targeted-review.md)
+409、410 后续定向复核与全仓补查登记 8 项必修及 8 项可修、门禁与优化项。8 项必修、事件流保活和有界读取已通过定向离线复验。笔记浏览、仓库验证和性能测量仍在推进。[411 专项清单](./archive/07-documentation/411-post-remediation-targeted-review.md)
 
 1. **测试与历史回归**：[283 §29](./archive/06-workflow-simplification/283-278-workflow-simplification-independent-review.md#29-292-第-9-节独立复验) 的 292-R09 有界超时清理补修（含故障注入与零残留验证）及 [settings-review-fixes-check.cjs](../apps/desktop/tests/e2e/settings-review-fixes.e2e.cjs) 冲突自动合并／同用途冲突覆盖更新（同步修复 [Settings.tsx](../apps/desktop/renderer/src/pages/Settings.tsx#L531) `409` 自动合并后未调用 `mergeRefreshedBindings` 同步跨页草稿的问题）已在 [292 §10](./archive/06-workflow-simplification/292-278-remaining-deletion-maintenance.md#10-283-29292-r09doc-r01-邻接契约与-settings-review-fixes-checkcjs-收口自验) 完成自验，待独立复核。[278 §4](./archive/06-workflow-simplification/278-project-workflow-simplification-fix-plan.md#4-第一次配置与对话恢复) 首次配置与对话恢复、[237～239](./archive/02-desktop-ui-and-relations/237-dialogue-theme-transition.md) 明暗切换与布局独立复核仍待推进。
 2. **生图与对话后续增强**：对话页语音停用常驻同步、设置页 `img2img`／`OutfitReferences` UI E2E、ComfyUI 长等待取消清队列与 8 MiB／32 MiB 实机上限，以及未配置真实生图服务时的失败策略收口。角色级锚点适配已在夏澄上完成实施方自验（text2img 身份稳、`img2img` `denoise 0.45～0.55` 锁服饰、`≥0.70` 换装），方案见 [406](./archive/04-role-settings-and-media/406-role-image-anchor-adaptation.md)，待独立复核与接入视觉模型后的锚点自动提炼复验。

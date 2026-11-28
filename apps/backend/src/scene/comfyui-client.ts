@@ -31,6 +31,8 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
 const DEFAULT_GENERATION_TIMEOUT_MS = 180_000;
 const DEFAULT_POLL_INTERVAL_MS = 750;
 const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
+/** /object_info、catalog 与 history 等 JSON 响应的统一上限。 */
+const MAX_JSON_BYTES = 16 * 1024 * 1024;
 
 /**
  * ComfyUI HTTP 客户端。只用公开接口：
@@ -257,12 +259,17 @@ export class ComfyUiClient {
         fileName: image.filename,
       });
     }
-    const data = Buffer.from(await response.arrayBuffer());
+    let data: Buffer;
+    try {
+      data = await readBoundedBody(response, MAX_IMAGE_BYTES);
+    } catch (error) {
+      if (error instanceof ResponseTooLargeError) {
+        throw new ImageGenerationFailedError("生图结果超过 32 MiB 上限");
+      }
+      throw error;
+    }
     if (data.length === 0) {
       throw new ImageGenerationFailedError("生图结果为空");
-    }
-    if (data.length > MAX_IMAGE_BYTES) {
-      throw new ImageGenerationFailedError("生图结果超过 32 MiB 上限");
     }
     return { data, mediaType, fileName: image.filename };
   }
@@ -442,16 +449,85 @@ function assertOk(status: number, action: string): void {
 }
 
 async function readJson(response: Response): Promise<Record<string, unknown>> {
-  const text = await response.text();
-  if (text.length === 0) {
+  let raw: Buffer;
+  try {
+    raw = await readBoundedBody(response, MAX_JSON_BYTES);
+  } catch (error) {
+    if (error instanceof ResponseTooLargeError) {
+      throw new ImageServiceUnavailableError("生图服务响应超过 16 MiB 上限", {
+        maxBytes: MAX_JSON_BYTES,
+      });
+    }
+    throw error;
+  }
+  if (raw.length === 0) {
     return {};
   }
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(text) as unknown;
-    return asRecord(parsed) ?? {};
+    parsed = JSON.parse(new TextDecoder("utf-8").decode(raw)) as unknown;
   } catch {
     throw new ImageServiceUnavailableError("生图服务返回的不是 JSON");
   }
+  return asRecord(parsed) ?? {};
+}
+
+class ResponseTooLargeError extends Error {
+  constructor(readonly maxBytes: number) {
+    super("response body exceeds the size limit");
+  }
+}
+
+/**
+ * 流式读取响应正文并尽早拒绝超限响应。先看 Content-Length，
+ * 再在累计字节时中止上游；读取结束或异常时都释放 reader。
+ */
+async function readBoundedBody(
+  response: Response,
+  maxBytes: number,
+): Promise<Buffer> {
+  const declared = response.headers.get("content-length");
+  if (declared !== null) {
+    const length = Number(declared);
+    if (Number.isFinite(length) && length > maxBytes) {
+      await cancelResponseBody(response);
+      throw new ResponseTooLargeError(maxBytes);
+    }
+  }
+  if (response.body === null) {
+    return Buffer.alloc(0);
+  }
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  let completed = false;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        completed = true;
+        break;
+      }
+      total += value.byteLength;
+      if (total > maxBytes) {
+        throw new ResponseTooLargeError(maxBytes);
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    if (!completed) {
+      await reader.cancel().catch(() => {});
+    }
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, total);
+}
+
+async function cancelResponseBody(response: Response): Promise<void> {
+  if (response.body === null) {
+    return;
+  }
+  await response.body.cancel().catch(() => {});
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

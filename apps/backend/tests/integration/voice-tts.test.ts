@@ -697,6 +697,56 @@ test("IndexTTS closes the upstream response when its media type is rejected", as
   }
 });
 
+test("IndexTTS refuses redirects without following them", async () => {
+  let targetHits = 0;
+  const targetServer = http.createServer((_request, response) => {
+    targetHits += 1;
+    response.writeHead(200, { "content-type": "audio/wav" });
+    response.end(WAV_AUDIO);
+  });
+  const targetPort = await listen(targetServer, 0, "127.0.0.1");
+  const redirectClosed = deferred<void>();
+  let redirectHits = 0;
+  const redirectServer = http.createServer((request, response) => {
+    request.resume();
+    redirectHits += 1;
+    response.once("close", () => redirectClosed.resolve());
+    response.writeHead(302, {
+      location: `http://127.0.0.1:${targetPort}/tts`,
+    });
+    response.end();
+  });
+  const redirectPort = await listen(redirectServer, 0, "127.0.0.1");
+  try {
+    const client = new IndexTtsClient(`http://127.0.0.1:${redirectPort}`, 2_000);
+    await assert.rejects(
+      client.synthesize(synthesisInput()),
+      (error: unknown) =>
+        error instanceof TtsSynthesisFailedError &&
+        (error.details as { status?: number } | undefined)?.status === 302,
+    );
+    assert.equal(redirectHits, 1);
+    assert.equal(targetHits, 0, "不得访问重定向目标");
+    assert.equal(
+      await Promise.race([
+        redirectClosed.promise.then(() => true),
+        delay(1000, false, { ref: false }),
+      ]),
+      true,
+      "拒绝后应关闭上游响应",
+    );
+  } finally {
+    await new Promise<void>((resolve) => {
+      redirectServer.close(() => resolve());
+      redirectServer.closeAllConnections();
+    });
+    await new Promise<void>((resolve) => {
+      targetServer.close(() => resolve());
+      targetServer.closeAllConnections();
+    });
+  }
+});
+
 test("voice base url rejects query and fragment and keeps the path prefix", async () => {
   const fake = await startFakeTts();
   const fixture = createFixture([]);

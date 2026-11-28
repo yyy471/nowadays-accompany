@@ -55,10 +55,18 @@ export class IndexTtsClient {
             emo_alpha: input.emoAlpha,
             duration_factor: durationFactor(input.speed),
           }),
+          redirect: "manual",
           signal: scope.signal,
         });
       } catch {
         throw scope.error();
+      }
+      if (isRedirect(response.status)) {
+        scope.abortUpstream();
+        await discardResponseBody(response);
+        throw new TtsSynthesisFailedError("语音服务返回了重定向，已拒绝跟随", {
+          status: response.status,
+        });
       }
       if (!response.ok) {
         let detail: string;
@@ -83,4 +91,16 @@ export function durationFactor(speed: number): number {
     return 1;
   }
   return Math.round(Math.min(2, Math.max(0.5, 1 / speed)) * 1000) / 1000;
+}
+
+function isRedirect(status: number): boolean {
+  return status >= 300 && status < 400;
+}
+
+/** 手动重定向被拒绝后，尽快释放不打算读取的响应正文。 */
+async function discardResponseBody(response: Response): Promise<void> {
+  if (response.body === null) {
+    return;
+  }
+  await response.body.cancel().catch(() => {});
 }
