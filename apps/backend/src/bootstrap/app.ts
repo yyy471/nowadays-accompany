@@ -81,6 +81,12 @@ export interface BackendAppOptions {
   maintenancePauseTimeoutMs?: number;
   /** 离线测试注入的 Embedding 端口；null 或不提供时默认关闭混合检索。 */
   embeddingPort?: EmbeddingPort | null;
+  /** 混合检索在线补算与后台回填的可选调优参数（测试与运维用）。 */
+  embeddingBatchSize?: number;
+  onlineBackfillMaxBatches?: number;
+  onlineBackfillBudgetMs?: number;
+  embeddingQueryTimeoutMs?: number;
+  embeddingBatchTimeoutMs?: number;
 }
 
 import { MediaMaintenance } from '../application/media/media-maintenance.js';
@@ -157,14 +163,6 @@ function assembleBackendApp(
     ),
   );
   const roleService = new RoleService(appStore, config.dataRoot, roleAccess);
-  const memoryEmbeddingSettings = new MemoryEmbeddingSettingsService({
-    appStore,
-    credentials,
-    now,
-    ...(options.embeddingPort === undefined
-      ? {}
-      : { overridePort: options.embeddingPort }),
-  });
   const activity = new RoleActivityService(appStore, { now });
   // 状态流只广播变更主题与角色，前端据此增量重取。
   const feedEvents = new FeedEventHub(now);
@@ -227,6 +225,20 @@ function assembleBackendApp(
   const onModelCallFinished = (event: import("../domain/token-usage.js").TokenUsageCallEvent) => {
     tokenUsage.recordCall(event);
   };
+  // Embedding 配置依赖资源维护与账本；放在两者就绪后创建，避免前向引用。
+  const memoryEmbeddingSettings = new MemoryEmbeddingSettingsService({
+    appStore,
+    credentials,
+    now,
+    ...(options.embeddingPort === undefined
+      ? {}
+      : { overridePort: options.embeddingPort }),
+    claimModelCall: (roleId, resourceId) =>
+      resourceService.claimModelCall(roleId, resourceId),
+    isUnderMaintenance: (resourceId) =>
+      resourceService.isUnderMaintenance(resourceId),
+    onModelCallFinished,
+  });
   const sceneImageSettings = new SceneImageSettingsService(
     roleAccess,
     imageServices,
@@ -255,7 +267,22 @@ function assembleBackendApp(
   const memoryService = new MemoryQueryService(roleAccess, {
     now,
     ...(options.timeZone === undefined ? {} : { timeZone: options.timeZone }),
-    resolveEmbeddingPort: () => memoryEmbeddingSettings.resolvePort(),
+    resolveEmbeddingPort: (roleId) => memoryEmbeddingSettings.resolvePort(roleId),
+    ...(options.embeddingBatchSize === undefined
+      ? {}
+      : { embeddingBatchSize: options.embeddingBatchSize }),
+    ...(options.onlineBackfillMaxBatches === undefined
+      ? {}
+      : { onlineBackfillMaxBatches: options.onlineBackfillMaxBatches }),
+    ...(options.onlineBackfillBudgetMs === undefined
+      ? {}
+      : { onlineBackfillBudgetMs: options.onlineBackfillBudgetMs }),
+    ...(options.embeddingQueryTimeoutMs === undefined
+      ? {}
+      : { embeddingQueryTimeoutMs: options.embeddingQueryTimeoutMs }),
+    ...(options.embeddingBatchTimeoutMs === undefined
+      ? {}
+      : { embeddingBatchTimeoutMs: options.embeddingBatchTimeoutMs }),
   });
   const modelService = new ModelService(appStore, config.appRoot, {
     now,
@@ -577,6 +604,8 @@ function assembleBackendApp(
   let closing: Promise<void> | undefined;
   const closeRuntime = (): Promise<void> => closing ??= (async () => {
     try {
+      // 先收干后台 Embedding 回填，再让上层关闭角色存储（避免写已关闭的库）。
+      await memoryService.close();
       const stopped = await Promise.allSettled([pi.close(), conversation.close()]);
       await toolProxy.drain();
       if (server.listening) await closeServer(server);

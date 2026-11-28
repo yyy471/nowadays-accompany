@@ -23,6 +23,24 @@ export type EmbeddingValidation =
   | { ok: true; payload: MemoryEmbeddingPayload }
   | { ok: false; message: string };
 
+export type EmbeddingModelOption = {
+  resourceId: string;
+  name: string;
+  protocol?: string;
+};
+
+/** 仅 OpenAI 兼容协议提供 `/embeddings`，其余协议不能用于语义召回。 */
+export function isEmbeddingCompatibleProtocol(protocol: unknown): boolean {
+  return protocol === 'openai-chat' || protocol === 'openai-responses';
+}
+
+/** 过滤出可安全用于 Embedding 的服务，避免 Anthropic / Google Vertex 误选。 */
+export function filterEmbeddingCompatibleModels<T extends { protocol?: string }>(
+  models: readonly T[],
+): T[] {
+  return models.filter(item => isEmbeddingCompatibleProtocol(item.protocol));
+}
+
 /** 后端快照 → 可编辑草稿；null 统一转为空串，便于受控输入。 */
 export function toEmbeddingDraft(settings: MemoryEmbeddingSettings): MemoryEmbeddingDraft {
   return {

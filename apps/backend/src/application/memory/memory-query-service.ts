@@ -53,7 +53,17 @@ export interface MemoryQueryServiceOptions {
   timeZone?: string;
   now?: () => Date;
   /** 可选 Embedding 端口解析器；返回 null 时混合检索零开销退回纯 FTS5。 */
-  resolveEmbeddingPort?: () => EmbeddingPort | null;
+  resolveEmbeddingPort?: (roleId: string) => EmbeddingPort | null;
+  /** 单批向量化的文档数（在线补算与后台回填共用），默认 32。 */
+  embeddingBatchSize?: number;
+  /** 实时检索路径最多同步补算的批次数，默认 2。 */
+  onlineBackfillMaxBatches?: number;
+  /** 实时检索路径同步补算的总预算（毫秒），默认 3000。 */
+  onlineBackfillBudgetMs?: number;
+  /** 查询向量化超时，默认 3000。 */
+  embeddingQueryTimeoutMs?: number;
+  /** 单批文档向量化超时，默认 3000。 */
+  embeddingBatchTimeoutMs?: number;
 }
 
 export interface SearchContext {
@@ -99,13 +109,28 @@ interface CachedEmbeddingRow {
   vector_blob: Buffer;
 }
 
+interface PendingEmbedding {
+  documentId: number;
+  contentHash: string;
+  text: string;
+}
+
 const HYBRID_MIN_SIMILARITY = 0.25;
-const EMBEDDING_BATCH_SIZE = 32;
 
 export class MemoryQueryService {
   private readonly timeZone: string | undefined;
   private readonly now: () => Date;
-  private readonly resolveEmbeddingPort: (() => EmbeddingPort | null) | undefined;
+  private readonly resolveEmbeddingPort:
+    | ((roleId: string) => EmbeddingPort | null)
+    | undefined;
+  private readonly embeddingBatchSize: number;
+  private readonly onlineBackfillMaxBatches: number;
+  private readonly onlineBackfillBudgetMs: number;
+  private readonly embeddingQueryTimeoutMs: number;
+  private readonly embeddingBatchTimeoutMs: number;
+  /** 每个角色最多一个后台回填任务，实例级状态，避免模块级单例串角色。 */
+  private readonly backfillTasks = new Map<string, Promise<void>>();
+  private closed = false;
 
   constructor(
     private readonly access: RoleAccess,
@@ -114,6 +139,36 @@ export class MemoryQueryService {
     this.timeZone = options.timeZone;
     this.now = options.now ?? (() => new Date());
     this.resolveEmbeddingPort = options.resolveEmbeddingPort;
+    this.embeddingBatchSize = boundedInt(options.embeddingBatchSize, 32, 1);
+    this.onlineBackfillMaxBatches = boundedInt(
+      options.onlineBackfillMaxBatches,
+      2,
+      0,
+    );
+    this.onlineBackfillBudgetMs = boundedInt(
+      options.onlineBackfillBudgetMs,
+      3000,
+      0,
+    );
+    this.embeddingQueryTimeoutMs = boundedInt(
+      options.embeddingQueryTimeoutMs,
+      3000,
+      1,
+    );
+    this.embeddingBatchTimeoutMs = boundedInt(
+      options.embeddingBatchTimeoutMs,
+      3000,
+      1,
+    );
+  }
+
+  /**
+   * 停止新的后台回填并等待已排队的任务收尾。
+   * 必须在关闭角色存储之前调用（见 app.close）。
+   */
+  async close(): Promise<void> {
+    this.closed = true;
+    await Promise.allSettled([...this.backfillTasks.values()]);
   }
 
   search(
@@ -171,15 +226,17 @@ export class MemoryQueryService {
 
   /**
    * 可选混合检索：FTS5 与 Embedding 向量余弦相似度经 RRF 融合。
-   * 未配置端口、查询为空或任何外部调用失败时，静默退回同步 search，
-   * 保证与现有纯 FTS5 行为一致且不中断用户对话。
+   *
+   * 实时路径只同步补算有限批次（默认 2 批 / 3 秒），每批算完立即增量落盘，
+   * 后续批次失败不会丢前序结果；剩余未向量化文档交给实例级后台回填。
+   * 未配置端口、查询为空或任何外部调用失败时静默退回同步 search。
    */
   async searchHybrid(
     roleId: string,
     request: MemorySearchRequest,
     context: SearchContext = { mode: "manual" },
   ): Promise<MemorySearchOutcome> {
-    const port = this.resolveEmbeddingPort?.() ?? null;
+    const port = this.resolveEmbeddingPort?.(roleId) ?? null;
     const query = request.query?.trim() ?? "";
     if (port === null || query.length === 0) {
       return this.search(roleId, request, context);
@@ -196,11 +253,7 @@ export class MemoryQueryService {
       );
       const cached = this.loadCachedVectors(db, roleId, port.modelKey);
       const vectors = new Map<number, Float32Array>();
-      const pending: Array<{
-        documentId: number;
-        contentHash: string;
-        text: string;
-      }> = [];
+      const pending: PendingEmbedding[] = [];
       for (const candidate of candidates) {
         const document = candidate.document;
         const text = `${document.title}\n${document.body}`;
@@ -220,38 +273,78 @@ export class MemoryQueryService {
       return { candidates, ftsMatchedIds, vectors, pending };
     });
 
-    let queryVector: Float32Array = new Float32Array(0);
-    const computed = new Map<number, Float32Array>();
+    let queryVector: Float32Array;
     try {
-      const queryEmbedding = await embedWithTimeout(port, [query], 3000);
+      const queryEmbedding = await embedWithTimeout(
+        port,
+        [query],
+        this.embeddingQueryTimeoutMs,
+      );
       const rawQuery = asEmbeddingVector(queryEmbedding[0]);
       if (rawQuery === null) {
         throw new Error("EMBEDDING_QUERY_VECTOR_INVALID");
       }
       queryVector = rawQuery;
-      for (let offset = 0; offset < prepared.pending.length; offset += EMBEDDING_BATCH_SIZE) {
-        const batch = prepared.pending.slice(offset, offset + EMBEDDING_BATCH_SIZE);
-        const embedded = await embedWithTimeout(
-          port,
-          batch.map((item) => item.text),
-          8000,
-        );
-        if (embedded.length !== batch.length) {
-          throw new Error("EMBEDDING_DOCUMENT_LENGTH_MISMATCH");
-        }
-        for (const [index, raw] of embedded.entries()) {
-          const target = batch[index];
-          if (target === undefined) {
-            continue;
-          }
-          const vector = asEmbeddingVector(raw);
-          if (vector === null) {
-            throw new Error("EMBEDDING_DOCUMENT_VECTOR_INVALID");
-          }
-          computed.set(target.documentId, vector);
-        }
-      }
     } catch {
+      return this.search(roleId, request, context);
+    }
+
+    // 在线增量补算：最多 N 批且受总预算约束，每批成功立即落盘。
+    const deadline = Date.now() + this.onlineBackfillBudgetMs;
+    let nextOffset = 0;
+    for (
+      let batchIndex = 0;
+      batchIndex < this.onlineBackfillMaxBatches;
+      batchIndex += 1
+    ) {
+      if (nextOffset >= prepared.pending.length || this.closed) {
+        break;
+      }
+      if (Date.now() >= deadline) {
+        break;
+      }
+      const batch = prepared.pending.slice(
+        nextOffset,
+        nextOffset + this.embeddingBatchSize,
+      );
+      const remainingMs = Math.max(50, deadline - Date.now());
+      try {
+        const batchVectors = await this.embedBatch(
+          port,
+          batch,
+          Math.min(this.embeddingBatchTimeoutMs, remainingMs),
+        );
+        // 先落盘再继续下一批：后续超时/失败也不会丢失已经算完的向量。
+        this.access.withStore(roleId, (storage) =>
+          this.persistVectors(
+            storage.business.db,
+            roleId,
+            port.modelKey,
+            batch,
+            batchVectors,
+            this.now().toISOString(),
+          ),
+        );
+        for (const [documentId, vector] of batchVectors) {
+          prepared.vectors.set(documentId, vector);
+        }
+        nextOffset += batch.length;
+      } catch {
+        // 保留已落盘的前序批次，停止本轮在线补算并交给后台回填。
+        break;
+      }
+    }
+
+    if (nextOffset < prepared.pending.length && !this.closed) {
+      this.scheduleBackgroundBackfill(
+        roleId,
+        port.modelKey,
+        prepared.pending.slice(nextOffset),
+      );
+    }
+
+    // 没有任何可用向量时退回纯 FTS5，避免空融合改变既有检索语义。
+    if (prepared.vectors.size === 0) {
       return this.search(roleId, request, context);
     }
 
@@ -259,18 +352,7 @@ export class MemoryQueryService {
       const db = storage.business.db;
       const store = new MemoryStore(db);
       const now = this.now().toISOString();
-      this.persistVectors(
-        db,
-        roleId,
-        port.modelKey,
-        prepared.pending,
-        computed,
-        now,
-      );
-      const vectors = new Map(prepared.vectors);
-      for (const [documentId, vector] of computed) {
-        vectors.set(documentId, vector);
-      }
+      const vectors = prepared.vectors;
       const vectorRanked: VectorRankedDocument[] = [];
       for (const candidate of prepared.candidates) {
         const vector = vectors.get(candidate.document.document_id);
@@ -345,6 +427,124 @@ export class MemoryQueryService {
       });
       return { retrievalId, items };
     });
+  }
+
+  /** 把一批文档向量化并校验形状；端口返回值异常视为本批失败。 */
+  private async embedBatch(
+    port: EmbeddingPort,
+    batch: readonly PendingEmbedding[],
+    timeoutMs: number,
+  ): Promise<Map<number, Float32Array>> {
+    if (batch.length === 0) {
+      return new Map();
+    }
+    const embedded = await embedWithTimeout(
+      port,
+      batch.map((item) => item.text),
+      timeoutMs,
+    );
+    if (embedded.length !== batch.length) {
+      throw new Error("EMBEDDING_DOCUMENT_LENGTH_MISMATCH");
+    }
+    const vectors = new Map<number, Float32Array>();
+    for (const [index, raw] of embedded.entries()) {
+      const target = batch[index];
+      if (target === undefined) {
+        continue;
+      }
+      const vector = asEmbeddingVector(raw);
+      if (vector === null) {
+        throw new Error("EMBEDDING_DOCUMENT_VECTOR_INVALID");
+      }
+      vectors.set(target.documentId, vector);
+    }
+    return vectors;
+  }
+
+  /**
+   * 为单个角色登记后台回填任务。同一角色只保留一个任务，
+   * 通过 setTimeout(0) 让出当前请求，避免拖慢实时检索。
+   */
+  private scheduleBackgroundBackfill(
+    roleId: string,
+    modelKey: string,
+    pending: readonly PendingEmbedding[],
+  ): void {
+    if (pending.length === 0 || this.closed) {
+      return;
+    }
+    if (this.backfillTasks.has(roleId)) {
+      return;
+    }
+    const task: Promise<void> = new Promise<void>((resolve) => {
+      const timer = setTimeout(() => resolve(), 0);
+      timer.unref?.();
+    })
+      .then(() => this.runBackgroundBackfill(roleId, modelKey, pending))
+      .catch(() => {})
+      .finally(() => {
+        this.backfillTasks.delete(roleId);
+      });
+    this.backfillTasks.set(roleId, task);
+  }
+
+  /**
+   * 后台逐批补齐未向量化文档：
+   * - 每批前重新解析端口，禁用、模型切换或维护中都会干净停止；
+   * - 每批立即落盘，角色删除/存储异常时静默退出；
+   * - close() 后不再开启新批次。
+   */
+  private async runBackgroundBackfill(
+    roleId: string,
+    modelKey: string,
+    pending: readonly PendingEmbedding[],
+  ): Promise<void> {
+    try {
+      for (
+        let offset = 0;
+        offset < pending.length;
+        offset += this.embeddingBatchSize
+      ) {
+        if (this.closed) {
+          return;
+        }
+        const port = this.resolveEmbeddingPort?.(roleId) ?? null;
+        if (port === null || port.modelKey !== modelKey) {
+          return;
+        }
+        const batch = pending.slice(offset, offset + this.embeddingBatchSize);
+        let batchVectors: Map<number, Float32Array>;
+        try {
+          batchVectors = await this.embedBatch(
+            port,
+            batch,
+            this.embeddingBatchTimeoutMs,
+          );
+        } catch {
+          return;
+        }
+        if (this.closed) {
+          return;
+        }
+        try {
+          this.access.withStore(roleId, (storage) =>
+            this.persistVectors(
+              storage.business.db,
+              roleId,
+              port.modelKey,
+              batch,
+              batchVectors,
+              this.now().toISOString(),
+            ),
+          );
+        } catch {
+          // 角色已删除或存储暂不可写：后台回填静默结束。
+          return;
+        }
+      }
+    } catch {
+      // 后台任务不向调用方抛出，失败即结束本轮回填。
+    }
   }
 
   getEvent(roleId: string, eventId: string): EventDetail {
@@ -1039,6 +1239,13 @@ export class MemoryQueryService {
 
 function normalizeTag(value: string): string {
   return value.trim().toLowerCase();
+}
+
+/** 取整并限制下界；非法值回退到安全默认，避免异常配置放大后台开销。 */
+function boundedInt(value: number | undefined, fallback: number, min: number): number {
+  return value !== undefined && Number.isFinite(value) && value >= min
+    ? Math.floor(value)
+    : fallback;
 }
 
 function tagFiltersOf(

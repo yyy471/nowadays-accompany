@@ -5,9 +5,56 @@
  * 不持有任何模块级可变业务状态；未配置 Embedding 时检索完全走既有 FTS5。
  */
 
+import type { ModelUsage } from "../../domain/model.js";
+
+/** Embedding 响应体上限：16 MiB，防止恶意或异常服务返回超大正文拖垮进程。 */
+export const MAX_EMBEDDING_RESPONSE_BYTES = 16 * 1024 * 1024;
+
+/**
+ * 记忆语义检索只接受 OpenAI 兼容协议：
+ * 两类协议都提供 `POST /embeddings` 与 Bearer 鉴权。
+ */
+export function isEmbeddingCompatibleProtocol(
+  protocol: unknown,
+): protocol is "openai-chat" | "openai-responses" {
+  return protocol === "openai-chat" || protocol === "openai-responses";
+}
+
+/**
+ * 校验并规范化 Embedding 基础地址。
+ * 只允许 http/https，且不得把账号密码混进 URL；返回去掉末尾斜杠的地址。
+ */
+export function validateEmbeddingBaseUrl(baseUrl: unknown): string {
+  if (typeof baseUrl !== "string") {
+    throw new Error("EMBEDDING_BASE_URL_INVALID");
+  }
+  const trimmed = baseUrl.trim();
+  if (trimmed.length === 0) {
+    throw new Error("EMBEDDING_BASE_URL_INVALID");
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error("EMBEDDING_BASE_URL_INVALID");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("EMBEDDING_BASE_URL_INVALID");
+  }
+  if (parsed.username !== "" || parsed.password !== "") {
+    throw new Error("EMBEDDING_BASE_URL_INVALID");
+  }
+  return trimmed.replace(/\/+$/, "");
+}
+
 export interface EmbeddingPort {
   readonly modelKey: string;
   embed(texts: readonly string[], signal?: AbortSignal): Promise<Float32Array[]>;
+  /** 可选：同时返回上游用量，供 Token 账本记账；未实现时视为无用量。 */
+  embedWithUsage?(
+    texts: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<{ vectors: Float32Array[]; usage: ModelUsage | null }>;
 }
 
 export interface HttpOpenAiEmbeddingPortOptions {
@@ -16,6 +63,8 @@ export interface HttpOpenAiEmbeddingPortOptions {
   modelName: string;
   apiKey?: string;
   timeoutMs?: number;
+  /** 响应正文字节上限，默认 16 MiB。 */
+  maxResponseBytes?: number;
 }
 
 interface EmbeddingResponseItem {
@@ -25,11 +74,15 @@ interface EmbeddingResponseItem {
 
 interface EmbeddingResponse {
   data?: unknown;
+  usage?: unknown;
 }
 
 /**
  * 兼容 OpenAI `/embeddings` 契约的 HTTP 端口。
  * 返回向量统一做 L2 归一化，调用方只需计算点积。
+ *
+ * 安全口径：禁止跟随重定向（避免 Bearer 凭据被带到非预期主机），
+ * 并在 JSON.parse 之前限制响应正文字节数。
  */
 export class HttpOpenAiEmbeddingPort implements EmbeddingPort {
   readonly modelKey: string;
@@ -37,21 +90,31 @@ export class HttpOpenAiEmbeddingPort implements EmbeddingPort {
   private readonly modelName: string;
   private readonly apiKey: string | undefined;
   private readonly timeoutMs: number;
+  private readonly maxResponseBytes: number;
 
   constructor(options: HttpOpenAiEmbeddingPortOptions) {
     this.modelKey = options.modelKey;
-    this.baseUrl = options.baseUrl.replace(/\/+$/, "");
+    this.baseUrl = validateEmbeddingBaseUrl(options.baseUrl);
     this.modelName = options.modelName;
     this.apiKey = options.apiKey;
     this.timeoutMs = options.timeoutMs ?? 4000;
+    this.maxResponseBytes =
+      options.maxResponseBytes ?? MAX_EMBEDDING_RESPONSE_BYTES;
   }
 
   async embed(
     texts: readonly string[],
     signal?: AbortSignal,
   ): Promise<Float32Array[]> {
+    return (await this.embedWithUsage(texts, signal)).vectors;
+  }
+
+  async embedWithUsage(
+    texts: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<{ vectors: Float32Array[]; usage: ModelUsage | null }> {
     if (texts.length === 0) {
-      return [];
+      return { vectors: [], usage: null };
     }
     const controller = new AbortController();
     const timer = setTimeout(() => {
@@ -74,16 +137,116 @@ export class HttpOpenAiEmbeddingPort implements EmbeddingPort {
           encoding_format: "float",
         }),
         signal: combined,
+        redirect: "manual",
       });
+      if (response.status >= 300 && response.status < 400) {
+        await cancelResponseBody(response);
+        throw new Error("EMBEDDING_REDIRECT_BLOCKED");
+      }
       if (!response.ok) {
+        await cancelResponseBody(response);
         throw new Error(`EMBEDDING_HTTP_${response.status}`);
       }
-      const payload = (await response.json()) as EmbeddingResponse;
-      return parseEmbeddingResponse(payload, texts.length);
+      const declaredLength = parseContentLength(
+        response.headers.get("content-length"),
+      );
+      if (declaredLength !== null && declaredLength > this.maxResponseBytes) {
+        await cancelResponseBody(response);
+        throw new Error("EMBEDDING_RESPONSE_TOO_LARGE");
+      }
+      const text = await readResponseTextWithLimit(
+        response,
+        this.maxResponseBytes,
+      );
+      let payload: EmbeddingResponse;
+      try {
+        payload = JSON.parse(text) as EmbeddingResponse;
+      } catch {
+        throw new Error("EMBEDDING_RESPONSE_INVALID");
+      }
+      if (
+        payload === null ||
+        typeof payload !== "object" ||
+        Array.isArray(payload)
+      ) {
+        throw new Error("EMBEDDING_RESPONSE_INVALID");
+      }
+      return {
+        vectors: parseEmbeddingResponse(payload, texts.length),
+        usage: parseEmbeddingUsage(payload),
+      };
     } finally {
       clearTimeout(timer);
     }
   }
+}
+
+function parseContentLength(raw: string | null): number | null {
+  if (raw === null) {
+    return null;
+  }
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+async function cancelResponseBody(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // 取消正文失败不影响错误码判定。
+  }
+}
+
+/**
+ * 增量读取正文并维护字节计数；一旦超过上限立即取消流并报错，
+ * 保证超限正文在 JSON.parse 之前就被拒绝。
+ */
+async function readResponseTextWithLimit(
+  response: Response,
+  maxBytes: number,
+): Promise<string> {
+  const body = response.body;
+  if (body === null) {
+    const text = await response.text();
+    if (Buffer.byteLength(text, "utf8") > maxBytes) {
+      throw new Error("EMBEDDING_RESPONSE_TOO_LARGE");
+    }
+    return text;
+  }
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    if (value === undefined) {
+      continue;
+    }
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      throw new Error("EMBEDDING_RESPONSE_TOO_LARGE");
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8");
+}
+
+/** `prompt_tokens` 优先、`total_tokens` 兜底；缺失或非法时返回 null。 */
+function parseEmbeddingUsage(payload: EmbeddingResponse): ModelUsage | null {
+  const usage = payload.usage;
+  if (usage === null || typeof usage !== "object" || Array.isArray(usage)) {
+    return null;
+  }
+  const record = usage as Record<string, unknown>;
+  for (const candidate of [record.prompt_tokens, record.total_tokens]) {
+    if (typeof candidate === "number" && Number.isFinite(candidate) && candidate >= 0) {
+      return { inputTokens: Math.floor(candidate) };
+    }
+  }
+  return null;
 }
 
 function parseEmbeddingResponse(

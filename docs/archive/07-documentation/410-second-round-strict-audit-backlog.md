@@ -18,7 +18,7 @@
 | 编号 | 来源维度 | 类别 | 优先级 | 问题摘要 | 是否涉及修订 `DL-xx` | 状态 |
 | --- | --- | --- | :---: | --- | :---: | :---: |
 | [R2-01](#r2-01-桌面代理在请求取消时-promise-永久挂起且缺少流式背压) | 409 新引入（R8b） | 运行时 Bug / 泄漏 | **P0** | `main.cjs` 取消代理调无参 `destroy()` 不触发 `error`，Promise 永不结算；流响应无背压 | 否 | `[x]` 已修复 |
-| [R2-02](#r2-02-混合检索-embedding-存在漏防重定向缺账本绕维护与首聊阻塞四重硬伤) | 409 新引入（R14） | 安全 / 账本 / 性能 | **P0** | 缺 `redirect: "error"`、跨协议乱配不拦、未入 Token 账本与维护守卫、海量未向量化记忆阻塞首聊且超时丢已算结果 | 关联 `DL-51` / `DL-183` | `[ ]` 待排查 |
+| [R2-02](#r2-02-混合检索-embedding-存在漏防重定向缺账本绕维护与首聊阻塞四重硬伤) | 409 新引入（R14） | 安全 / 账本 / 性能 | **P0** | 缺 `redirect: "error"`、跨协议乱配不拦、未入 Token 账本与维护守卫、海量未向量化记忆阻塞首聊且超时丢已算结果 | 关联 `DL-51` / `DL-183` | `[x]` 已修复 |
 | [R2-03](#r2-03-运行态单角色迁移接口存在主线程硬阻塞无体积上限与写路径过宽问题) | 409 新引入（R11） | 安全 / DoS | **P0** | `Atomics.wait` 同步冻住主线程 200ms、`readFileSync` 无上限易 OOM、导出路径只拦两子目录、`/workspace/path` 仍向渲染层暴露 | 否 | `[x]` 已修复 |
 | [R2-08](#r2-08-模型流式生成请求完全缺少首包超时与流空闲超时) | 底层核心 | 稳定性 / 死锁 | **P0** | 四条流式协议入口均未设首包或 chunk 空闲超时，上游半开连接可永久锁死角色执行槽位 | 否 | `[x]` 已修复 |
 | [R2-04](#r2-04-工作空间笔记扫描未跳过依赖目录且无遍历数上限) | 409 新引入（R11） | 性能 / DoS | **P1** | `RoleWorkspaceService.listNotes` 不跳过 `node_modules` 且无总访问数上限，易同步卡死主线程 | 否 | `[ ]` 待排查 |
@@ -63,7 +63,7 @@
 
 ### R2-02 混合检索 Embedding 存在漏防重定向、缺账本、绕维护与首聊阻塞四重硬伤
 
-- **优先级**：P0 · **来源**：409 R14（`ARCH-03`） · **状态**：`[ ]` 待排查 · **决策关联**：[DL-51](../../161-digital-life-direction-decisions.md#dl-51-第一版召回基线多维条件过滤与全文检索) · [DL-183](../../161-digital-life-direction-decisions.md#dl-183-全局设置页提供持久-token-消耗统计)
+- **优先级**：P0 · **来源**：409 R14（`ARCH-03`） · **状态**：`[x]` 已修复（R3，2026-11-28） · **决策关联**：[DL-51](../../161-digital-life-direction-decisions.md#dl-51-第一版召回基线多维条件过滤与全文检索) · [DL-183](../../161-digital-life-direction-decisions.md#dl-183-全局设置页提供持久-token-消耗统计)
 - **证据位置**：
   - [apps/backend/src/application/memory/memory-hybrid-search.ts](../../../apps/backend/src/application/memory/memory-hybrid-search.ts#L65-L82)（`fetch` 未禁重定向、`response.json()` 无响应大小上限）
   - [apps/backend/src/application/memory/memory-embedding-settings.ts](../../../apps/backend/src/application/memory/memory-embedding-settings.ts#L86-L138)（仅校验 `kind === "model"`，未校验协议兼容与服务维护态）
@@ -313,3 +313,16 @@
 - **精准离线复验（仓库 Node `v24.22.2`）**：
   - 后端 `tsc --noEmit` 0 错误；
   - `model-protocols` + `google-gemini` + `model-continuation` + `model-providers` **43/43** 全通过（覆盖四协议首包挂死超时、流中途挂死超时关连接、长流超过 headerTimeout 正常完成、1024 B 有界 `rawResponse` 截断、及 4 类恶意 `token_uri` 零出站拦截）。
+
+#### R3：`R2-02`（混合检索 Embedding 禁重定向、跨协议校验、维护守卫与账本、有界增量回填）
+- **出站安全与协议校验**：
+  - `apps/backend/src/application/memory/memory-hybrid-search.ts` 新增 `MAX_EMBEDDING_RESPONSE_BYTES`（16 MiB）、`isEmbeddingCompatibleProtocol`（仅 `openai-chat` / `openai-responses`）与 `validateEmbeddingBaseUrl`（仅 `http/https` 且禁内嵌凭据）；`HttpOpenAiEmbeddingPort` 强制 `redirect: "manual"` 拦截 3xx（`EMBEDDING_REDIRECT_BLOCKED`）、通过 `content-length` 与流式字节计数在 `JSON.parse` 前拒绝超限响应（`EMBEDDING_RESPONSE_TOO_LARGE`），并解析 `usage`；
+  - `apps/backend/src/application/memory/memory-embedding-settings.ts` 拒绝保存非 OpenAI 兼容协议或非法地址；新增 `testConnection` 及 `POST /v1/memory/embedding-settings/test` 探测接口（安全脱敏错误映射）。
+- **维护窗口、Token 账本与增量回填**：
+  - `MemoryEmbeddingSettingsService` 接入 `ResourceService.claimModelCall()` / `isUnderMaintenance()`（维护期零出站请求静默回退 FTS5）与 `TokenUsageService` 记账（检索归 `memory`、连接测试归 `connection_test`，遵循 `DL-183`）；
+  - `MemoryQueryService.searchHybrid` 限制在线补算为默认最多 2 批 / 3 秒总预算，**每批完成后立即增量落盘 `memory_search_embeddings`**，不因后续批次失败丢失已算向量；其余未向量化文档交给按 `roleId` 去重的实例级后台低优先级队列逐步回填，并在 `app.close()` 中于 `roleAccess.closeAll()` 前先收尾。
+- **桌面端适配**：
+  - `apps/desktop/renderer/src/components/config/memory-embedding.ts`、`MemoryEmbeddingGroup.tsx` 与 `Settings.tsx` 过滤仅展示 OpenAI 兼容模型服务，并新增「测试连接」按钮与即时维度反馈（完全复用设计系统组件与令牌）。
+- **精准离线复验（仓库 Node `v24.22.2`）**：
+  - 后端 `tsc --noEmit` 0 错误；`memory-hybrid-search` **11/11** 全通过（覆盖 302 拦截、声明与流式超限拒绝、跨协议 400、测试连接与混合检索用量入账、维护期零请求回退、中途失败前序向量持久化、200 条文档有界在线 + 后台补全与优雅关闭）；
+  - 渲染器 `npm run check`（38 CSS 0 违规）+ `memory-embedding-settings` **7/7** + Vite 生产构建全通过。

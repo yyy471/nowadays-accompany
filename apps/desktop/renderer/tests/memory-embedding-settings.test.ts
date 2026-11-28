@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   embeddingStatusLabel,
+  filterEmbeddingCompatibleModels,
+  isEmbeddingCompatibleProtocol,
   toEmbeddingDraft,
   validateEmbeddingDraft,
   type MemoryEmbeddingSettings,
@@ -74,5 +76,38 @@ test('embeddingStatusLabel 覆盖未加载、关闭、就绪与未就绪三态',
   assert.deepEqual(
     embeddingStatusLabel({ ...ready, ready: false }),
     { tone: 'dirty', label: '已启用（模型未就绪，自动退回 FTS5）' },
+  );
+});
+
+test('isEmbeddingCompatibleProtocol 仅放行 OpenAI 兼容协议', () => {
+  assert.equal(isEmbeddingCompatibleProtocol('openai-chat'), true);
+  assert.equal(isEmbeddingCompatibleProtocol('openai-responses'), true);
+  assert.equal(isEmbeddingCompatibleProtocol('anthropic-messages'), false);
+  assert.equal(isEmbeddingCompatibleProtocol('google-gemini'), false);
+  assert.equal(isEmbeddingCompatibleProtocol(undefined), false);
+  assert.equal(isEmbeddingCompatibleProtocol(null), false);
+  assert.equal(isEmbeddingCompatibleProtocol(42), false);
+});
+
+test('filterEmbeddingCompatibleModels 剔除非 OpenAI 兼容与缺省协议的服务', () => {
+  const models = [
+    { resourceId: 'chat', name: 'OpenAI Chat', protocol: 'openai-chat' },
+    { resourceId: 'responses', name: 'OpenAI Responses', protocol: 'openai-responses' },
+    { resourceId: 'anthropic', name: 'Anthropic', protocol: 'anthropic-messages' },
+    { resourceId: 'gemini', name: 'Google Gemini', protocol: 'google-gemini' },
+    { resourceId: 'legacy', name: '未声明协议' },
+  ];
+  assert.deepEqual(
+    filterEmbeddingCompatibleModels(models).map(item => item.resourceId),
+    ['chat', 'responses'],
+  );
+  assert.deepEqual(filterEmbeddingCompatibleModels([]), []);
+  // 空数组与全不兼容时保持空结果，不抛错。
+  assert.deepEqual(
+    filterEmbeddingCompatibleModels([
+      { resourceId: 'anthropic', name: 'Anthropic', protocol: 'anthropic-messages' },
+      { resourceId: 'unknown', name: '未知协议', protocol: 'some-provider' },
+    ]),
+    [],
   );
 });

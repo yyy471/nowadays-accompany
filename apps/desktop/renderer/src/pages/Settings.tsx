@@ -698,7 +698,7 @@ export function SettingsWorkspace({ page, roles, currentId, roleListError, retry
             }}/>}
           {settingsActive && settingsSection === 'local' && <div className="config-prose config-local-page"><header className="config-sec-head"><h2 tabIndex={-1}>本机</h2></header>
             <div className="config-grp" id="config-local-appearance"><div className="config-grp-label"><b>外观与动效</b></div><div className="config-grp-fields"><Field label="动效偏好"><Select value={motion.preference} onChange={event => motion.select(event.target.value as MotionPreference)}><option value="system">跟随系统</option><option value="reduced">减少动效</option><option value="full">完整动效</option></Select></Field></div></div>
-            <MemoryEmbeddingGroup active={settingsActive && settingsSection === 'local'} models={resources.filter(item => item.kind === 'model' && item.enabled)}/>
+            <MemoryEmbeddingGroup active={settingsActive && settingsSection === 'local'} models={resources.filter(item => item.kind === 'model' && item.enabled).map(item => ({ resourceId: item.resourceId, name: item.name, protocol: typeof item.config?.protocol === 'string' ? item.config.protocol : undefined }))}/>
             <div className="config-grp" id="config-local-connection"><div className="config-grp-label"><b>版本与连接</b></div><div className="config-grp-fields config-local-values">
               <div><span>资源读取</span><StatusDot status={resourceError ? 'error' : catalogReady.resources ? 'ok' : 'off'} label={resourceError ? T26.failed : catalogReady.resources ? T26.connected : '正在读取…'}/><SettingsRefresh label="刷新资源读取" success="资源读取已刷新" disabled={!catalogReady.resources} onRefresh={async signal => {
                 setCatalogReady(previous => ({ ...previous, resources: false }));

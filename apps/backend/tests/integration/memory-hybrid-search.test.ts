@@ -16,7 +16,11 @@ import {
 import { parseBackendConfig, rolePaths } from "../../src/bootstrap/config.js";
 import {
   encodeVectorBlob,
+  HttpOpenAiEmbeddingPort,
+  isEmbeddingCompatibleProtocol,
+  MAX_EMBEDDING_RESPONSE_BYTES,
   normalizeVector,
+  validateEmbeddingBaseUrl,
   type EmbeddingPort,
 } from "../../src/application/memory/memory-hybrid-search.js";
 import { localDateFromIso, registerMessageEvidence, sha256 } from "../../src/storage/memory/evidence.js";
@@ -79,53 +83,69 @@ interface SeededEvent {
   experienceDate: string;
 }
 
-function seedEvent(
+interface SeedEventInput {
+  content: string;
+  title: string;
+  summary: string;
+  occurredAt: string;
+  tags?: Record<string, string[]>;
+}
+
+/** 单连接批量落库，避免大量事件逐条开关 SQLite 连接拖慢测试。 */
+function seedEvents(
   fixture: Fixture,
-  input: {
-    content: string;
-    title: string;
-    summary: string;
-    occurredAt: string;
-    tags?: Record<string, string[]>;
-  },
-): SeededEvent {
+  inputs: ReadonlyArray<SeedEventInput>,
+): SeededEvent[] {
   return withStorage(fixture, (storage) => {
     const db = storage.business.db;
-    const submitted = storage.business.submitMessage(fixture.roleId, fixture.windowId, {
-      content: input.content,
-      submissionId: randomUUID(),
-      sourcePlatform: "nowadays",
-    });
-    db.prepare(
-      "UPDATE messages SET created_at = ?, updated_at = ? WHERE message_id = ?",
-    ).run(input.occurredAt, input.occurredAt, submitted.message.messageId);
-    registerMessageEvidence(db, {
-      roleId: fixture.roleId,
-      messageIds: [submitted.message.messageId],
-      executionId: null,
-      timeZone: "Asia/Shanghai",
-    });
     const store = new MemoryStore(db);
-    const evidence = store
-      .listEvidence(fixture.roleId)
-      .find((item) => item.sourceId === submitted.message.messageId);
-    assert.ok(evidence);
-    const experienceDate = localDateFromIso(input.occurredAt, "Asia/Shanghai");
-    const event = store.createEvent({
-      roleId: fixture.roleId,
-      title: input.title,
-      summary: input.summary,
-      subjectiveExperience: "",
-      occurredAtStart: input.occurredAt,
-      occurredAtEnd: null,
-      experienceDate,
-      tags: input.tags ?? {},
-      evidenceIds: [evidence.evidenceId],
-      currentRound: 0,
-      now: input.occurredAt,
+    return inputs.map((input): SeededEvent => {
+      const submitted = storage.business.submitMessage(
+        fixture.roleId,
+        fixture.windowId,
+        {
+          content: input.content,
+          submissionId: randomUUID(),
+          sourcePlatform: "nowadays",
+        },
+      );
+      db.prepare(
+        "UPDATE messages SET created_at = ?, updated_at = ? WHERE message_id = ?",
+      ).run(input.occurredAt, input.occurredAt, submitted.message.messageId);
+      registerMessageEvidence(db, {
+        roleId: fixture.roleId,
+        messageIds: [submitted.message.messageId],
+        executionId: null,
+        timeZone: "Asia/Shanghai",
+      });
+      const evidence = store
+        .listEvidence(fixture.roleId)
+        .find((item) => item.sourceId === submitted.message.messageId);
+      assert.ok(evidence);
+      const experienceDate = localDateFromIso(input.occurredAt, "Asia/Shanghai");
+      const event = store.createEvent({
+        roleId: fixture.roleId,
+        title: input.title,
+        summary: input.summary,
+        subjectiveExperience: "",
+        occurredAtStart: input.occurredAt,
+        occurredAtEnd: null,
+        experienceDate,
+        tags: input.tags ?? {},
+        evidenceIds: [evidence.evidenceId],
+        currentRound: 0,
+        now: input.occurredAt,
+      });
+      return { eventId: event.eventId, experienceDate };
     });
-    return { eventId: event.eventId, experienceDate };
   });
+}
+
+function seedEvent(
+  fixture: Fixture,
+  input: SeedEventInput,
+): SeededEvent {
+  return seedEvents(fixture, [input])[0]!;
 }
 
 test("V31 升级到 V32 建向量缓存表，删除文档时级联清理", async (t) => {
@@ -489,4 +509,577 @@ test("固定中文同义改写召回基准：纯 FTS5 漏召回，混合召回�
     filtered.items.every((item) => item.experienceDate === BENCHMARK_CLUSTERS[0]!.date),
     "混合检索不得绕过日期过滤",
   );
+});
+
+// ---------------------------------------------------------------------------
+// R2-02：重定向拦截、响应上限、跨协议校验、维护守卫、账本与有界回填
+// ---------------------------------------------------------------------------
+
+interface MockEmbeddingServer {
+  baseUrl: string;
+  requests: Array<{ path: string; body: unknown }>;
+  close(): Promise<void>;
+}
+
+async function startMockEmbeddingServer(
+  handler: (input: {
+    body: unknown;
+    index: number;
+    response: http.ServerResponse;
+  }) => void,
+): Promise<MockEmbeddingServer> {
+  const requests: Array<{ path: string; body: unknown }> = [];
+  const server = http.createServer((request, response) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      const raw = Buffer.concat(chunks).toString("utf8");
+      let body: unknown = null;
+      if (raw.length > 0) {
+        try {
+          body = JSON.parse(raw);
+        } catch {
+          body = raw;
+        }
+      }
+      requests.push({ path: request.url ?? "", body });
+      handler({ body, index: requests.length - 1, response });
+    });
+  });
+  await new Promise<void>((resolve) =>
+    server.listen(0, "127.0.0.1", () => resolve()));
+  const address = server.address() as AddressInfo;
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    requests,
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections?.();
+        server.close(() => resolve());
+      }),
+  };
+}
+
+function inputTextsOf(body: unknown): string[] {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return [];
+  }
+  const input = (body as { input?: unknown }).input;
+  return Array.isArray(input)
+    ? input.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function embeddingResponseBody(
+  input: readonly string[],
+  usage?: { prompt_tokens: number; total_tokens?: number },
+): string {
+  return JSON.stringify({
+    data: input.map((text, index) => ({
+      index,
+      embedding: text.includes("海") || text.includes("日出") ? [1, 0, 0] : [0, 0, 1],
+    })),
+    ...(usage === undefined ? {} : { usage }),
+  });
+}
+
+async function startAppServer(
+  fixture: Fixture,
+  hostToken: string,
+): Promise<{ baseUrl: string; headers: Record<string, string> }> {
+  const port = await listen(fixture.app.server, 0, fixture.app.config.host);
+  return {
+    baseUrl: `http://127.0.0.1:${port}`,
+    headers: {
+      "x-nowadays-host-token": hostToken,
+      "content-type": "application/json",
+    },
+  };
+}
+
+async function configureEmbedding(
+  baseUrl: string,
+  headers: Record<string, string>,
+  resourceId: string,
+  modelName: string,
+): Promise<void> {
+  const response = await fetch(`${baseUrl}/v1/memory/embedding-settings`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify({ enabled: true, resourceId, modelName }),
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json() as { settings: { ready: boolean } };
+  assert.equal(body.settings.ready, true);
+}
+
+interface TokenTotalsView {
+  totals: {
+    inputTokens: string;
+    totalTokens: string;
+    callCount: string;
+  };
+}
+
+async function readTokenTotals(
+  baseUrl: string,
+  headers: Record<string, string>,
+  category?: string,
+): Promise<TokenTotalsView> {
+  const params = new URLSearchParams({ range: "today" });
+  if (category !== undefined) {
+    params.set("category", category);
+  }
+  const response = await fetch(
+    `${baseUrl}/v1/usage/tokens?${params.toString()}`,
+    { headers },
+  );
+  assert.equal(response.status, 200);
+  return await response.json() as TokenTotalsView;
+}
+
+function embeddingRowCount(fixture: Fixture): number {
+  return withStorage(
+    fixture,
+    (storage) =>
+      (storage.business.db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM memory_search_embeddings WHERE role_id = ?",
+        )
+        .get(fixture.roleId) as { count: number }).count,
+  );
+}
+
+async function waitForCondition(
+  predicate: () => boolean,
+  timeoutMs: number,
+  intervalMs = 25,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      if (predicate()) return;
+    } catch {
+      // 后台任务可能正在写库，重试即可。
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  if (!predicate()) {
+    throw new Error(`WAIT_TIMEOUT_${timeoutMs}`);
+  }
+}
+
+test("R2-02 302 重定向被拒绝：端口报错、连接测试 502、检索静默回退 FTS5", async (t) => {
+  const redirectTarget = await startMockEmbeddingServer(({ response }) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ data: [] }));
+  });
+  t.after(() => redirectTarget.close());
+  const redirecting = await startMockEmbeddingServer(({ response }) => {
+    response.writeHead(302, {
+      location: `${redirectTarget.baseUrl}/v1/embeddings`,
+    });
+    response.end();
+  });
+  t.after(() => redirecting.close());
+
+  const directPort = new HttpOpenAiEmbeddingPort({
+    modelKey: "direct:redirect",
+    baseUrl: `${redirecting.baseUrl}/v1`,
+    modelName: "text-embedding-test",
+  });
+  await assert.rejects(
+    directPort.embed(["hello"]),
+    /EMBEDDING_REDIRECT_BLOCKED/,
+  );
+
+  const fixture = createFixture({}, "test-host-token");
+  t.after(() => closeFixture(fixture));
+  const { baseUrl, headers } = await startAppServer(fixture, "test-host-token");
+  const resource = fixture.app.services.resources.create({
+    kind: "model",
+    name: "重定向 Embedding 服务",
+    config: {
+      protocol: "openai-chat",
+      baseUrl: `${redirecting.baseUrl}/v1`,
+    },
+  });
+  await configureEmbedding(
+    baseUrl,
+    headers,
+    resource.resourceId,
+    "text-embedding-test",
+  );
+
+  const testResponse = await fetch(
+    `${baseUrl}/v1/memory/embedding-settings/test`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        resourceId: resource.resourceId,
+        modelName: "text-embedding-test",
+      }),
+    },
+  );
+  assert.equal(testResponse.status, 502);
+  const testBody = await testResponse.json() as {
+    error: { code: string; message: string };
+  };
+  assert.equal(testBody.error.code, "EMBEDDING_TEST_FAILED");
+
+  const event = seedEvent(fixture, {
+    content: "周末在杭州旧书店翻到一张旧地图。",
+    title: "杭州旧书店",
+    summary: "我们在杭州旧书店讨论植物书和旧地图。",
+    occurredAt: "2026-10-28T01:10:00.000Z",
+  });
+  const request = { query: "杭州 旧书店" };
+  const fts = fixture.app.services.memory.search(fixture.roleId, request);
+  const hybrid = await fixture.app.services.memory.searchHybrid(
+    fixture.roleId,
+    request,
+  );
+  assert.deepEqual(
+    hybrid.items.map((item) => item.id),
+    fts.items.map((item) => item.id),
+  );
+  assert.deepEqual(hybrid.items.map((item) => item.id), [event.eventId]);
+  assert.equal(
+    redirectTarget.requests.length,
+    0,
+    "不得跟随重定向访问目标地址",
+  );
+});
+
+test("R2-02 响应体超过上限时在 JSON.parse 之前拒绝", async (t) => {
+  assert.equal(MAX_EMBEDDING_RESPONSE_BYTES, 16 * 1024 * 1024);
+  const maxResponseBytes = 1024;
+
+  // 带 content-length：走声明长度短路。
+  const declared = await startMockEmbeddingServer(({ response }) => {
+    const body = `{"data":${"x".repeat(4096)}}`;
+    response.writeHead(200, {
+      "content-type": "application/json",
+      "content-length": Buffer.byteLength(body),
+    });
+    response.end(body);
+  });
+  t.after(() => declared.close());
+  const declaredPort = new HttpOpenAiEmbeddingPort({
+    modelKey: "direct:declared-too-large",
+    baseUrl: `${declared.baseUrl}/v1`,
+    modelName: "m",
+    maxResponseBytes,
+  });
+  await assert.rejects(
+    declaredPort.embed(["a"]),
+    /EMBEDDING_RESPONSE_TOO_LARGE/,
+  );
+
+  // 无 content-length（chunked）：走增量字节计数，且正文仍是非法 JSON，
+  // 若先 JSON.parse 会得到 EMBEDDING_RESPONSE_INVALID，证明上限检查更早。
+  const streamed = await startMockEmbeddingServer(({ response }) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.write('{"data":');
+    response.end(`${"x".repeat(4096)}}`);
+  });
+  t.after(() => streamed.close());
+  const streamedPort = new HttpOpenAiEmbeddingPort({
+    modelKey: "direct:streamed-too-large",
+    baseUrl: `${streamed.baseUrl}/v1`,
+    modelName: "m",
+    maxResponseBytes,
+  });
+  await assert.rejects(
+    streamedPort.embed(["a"]),
+    /EMBEDDING_RESPONSE_TOO_LARGE/,
+  );
+});
+
+test("R2-02 跨协议配置被拒绝，OpenAI 兼容连接测试成功并记入 connection_test", async (t) => {
+  assert.equal(isEmbeddingCompatibleProtocol("openai-chat"), true);
+  assert.equal(isEmbeddingCompatibleProtocol("openai-responses"), true);
+  assert.equal(isEmbeddingCompatibleProtocol("anthropic-messages"), false);
+  assert.equal(isEmbeddingCompatibleProtocol("google-gemini"), false);
+  assert.equal(validateEmbeddingBaseUrl("http://example.test/v1///"), "http://example.test/v1");
+  assert.throws(
+    () => validateEmbeddingBaseUrl("ftp://example.test/v1"),
+    /EMBEDDING_BASE_URL_INVALID/,
+  );
+  assert.throws(
+    () => validateEmbeddingBaseUrl("http://user:pass@example.test/v1"),
+    /EMBEDDING_BASE_URL_INVALID/,
+  );
+
+  const mock = await startMockEmbeddingServer(({ body, index, response }) => {
+    const input = inputTextsOf(body);
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(
+      embeddingResponseBody(
+        input.length === 0 ? ["check"] : input,
+        index === 0 ? { prompt_tokens: 7, total_tokens: 7 } : undefined,
+      ),
+    );
+  });
+  t.after(() => mock.close());
+
+  const fixture = createFixture({}, "test-host-token");
+  t.after(() => closeFixture(fixture));
+  const { baseUrl, headers } = await startAppServer(fixture, "test-host-token");
+  const resources = fixture.app.services.resources;
+
+  for (const protocol of ["anthropic-messages", "google-gemini"] as const) {
+    const resource = resources.create({
+      kind: "model",
+      name: `不兼容协议 ${protocol}`,
+      config: { protocol, baseUrl: "http://127.0.0.1:1/v1" },
+    });
+    const response = await fetch(`${baseUrl}/v1/memory/embedding-settings`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({
+        enabled: true,
+        resourceId: resource.resourceId,
+        modelName: "text-embedding-test",
+      }),
+    });
+    assert.equal(response.status, 400);
+    const body = await response.json() as { error: { code: string } };
+    assert.equal(body.error.code, "EMBEDDING_SETTINGS_INVALID");
+  }
+
+  const compatible = resources.create({
+    kind: "model",
+    name: "兼容 Embedding 服务",
+    config: { protocol: "openai-chat", baseUrl: `${mock.baseUrl}/v1` },
+  });
+  const testResponse = await fetch(
+    `${baseUrl}/v1/memory/embedding-settings/test`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        resourceId: compatible.resourceId,
+        modelName: "text-embedding-test",
+      }),
+    },
+  );
+  assert.equal(testResponse.status, 200);
+  const testBody = await testResponse.json() as {
+    result: { ok: boolean; dimensions: number; modelName: string };
+  };
+  assert.deepEqual(testBody.result, {
+    ok: true,
+    dimensions: 3,
+    modelName: "text-embedding-test",
+  });
+  assert.equal(mock.requests.length, 1);
+  const usage = await readTokenTotals(baseUrl, headers, "connection_test");
+  assert.equal(usage.totals.inputTokens, "7");
+  assert.equal(usage.totals.callCount, "1");
+
+  // 维护期间连接测试同样立即拒绝且不触网。
+  resources.beginMaintenance(compatible.resourceId);
+  try {
+    const blocked = await fetch(
+      `${baseUrl}/v1/memory/embedding-settings/test`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          resourceId: compatible.resourceId,
+          modelName: "text-embedding-test",
+        }),
+      },
+    );
+    assert.equal(blocked.status, 409);
+    const blockedBody = await blocked.json() as { error: { code: string } };
+    assert.equal(blockedBody.error.code, "RESOURCE_UNDER_MAINTENANCE");
+  } finally {
+    resources.endMaintenance(compatible.resourceId);
+  }
+  assert.equal(mock.requests.length, 1, "维护期间不得发出任何连接测试请求");
+});
+
+test("R2-02 混合检索用量入账，维护期零请求静默回退 FTS5", async (t) => {
+  const mock = await startMockEmbeddingServer(({ body, index, response }) => {
+    const input = inputTextsOf(body);
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(
+      embeddingResponseBody(
+        input.length === 0 ? ["check"] : input,
+        index === 0 ? { prompt_tokens: 42, total_tokens: 42 } : undefined,
+      ),
+    );
+  });
+  t.after(() => mock.close());
+
+  const fixture = createFixture({}, "test-host-token");
+  t.after(() => closeFixture(fixture));
+  const { baseUrl, headers } = await startAppServer(fixture, "test-host-token");
+  const resource = fixture.app.services.resources.create({
+    kind: "model",
+    name: "入账 Embedding 服务",
+    config: { protocol: "openai-chat", baseUrl: `${mock.baseUrl}/v1` },
+  });
+  await configureEmbedding(
+    baseUrl,
+    headers,
+    resource.resourceId,
+    "text-embedding-test",
+  );
+  const event = seedEvent(fixture, {
+    content: "清晨去海边看日出，海风很凉。",
+    title: "海边日出",
+    summary: "我们清晨去海边看日出。",
+    occurredAt: "2026-11-01T01:10:00.000Z",
+  });
+  const request = { query: "海边 日出" };
+
+  const before = await readTokenTotals(baseUrl, headers, "memory");
+  const hybrid = await fixture.app.services.memory.searchHybrid(
+    fixture.roleId,
+    request,
+  );
+  assert.ok(hybrid.items.some((item) => item.id === event.eventId));
+  const after = await readTokenTotals(baseUrl, headers, "memory");
+  assert.equal(
+    Number(after.totals.inputTokens) - Number(before.totals.inputTokens),
+    42,
+    "Embedding usage.prompt_tokens 必须进入 memory 用途账本",
+  );
+  assert.ok(mock.requests.length >= 2);
+
+  const requestsBeforeMaintenance = mock.requests.length;
+  fixture.app.services.resources.beginMaintenance(resource.resourceId);
+  try {
+    const fts = fixture.app.services.memory.search(fixture.roleId, request);
+    const during = await fixture.app.services.memory.searchHybrid(
+      fixture.roleId,
+      request,
+    );
+    assert.deepEqual(
+      during.items.map((item) => item.id),
+      fts.items.map((item) => item.id),
+    );
+  } finally {
+    fixture.app.services.resources.endMaintenance(resource.resourceId);
+  }
+  assert.equal(
+    mock.requests.length,
+    requestsBeforeMaintenance,
+    "维护期间不得向 /embeddings 发出任何请求",
+  );
+});
+
+class PartialBatchEmbeddingPort implements EmbeddingPort {
+  readonly modelKey = "offline:partial-batch";
+  calls = 0;
+
+  async embed(texts: readonly string[]): Promise<Float32Array[]> {
+    this.calls += 1;
+    // 第 1 次是查询向量，第 2 次是首批文档；之后全部失败。
+    if (this.calls <= 2) {
+      return texts.map(() => normalizeVector([1, 0, 0]));
+    }
+    throw new Error("EMBEDDING_NETWORK_FAILED");
+  }
+}
+
+test("R2-02 批次中途失败不丢已算向量（增量落盘）", async (t) => {
+  const port = new PartialBatchEmbeddingPort();
+  const fixture = createFixture({
+    embeddingPort: port,
+    embeddingBatchSize: 10,
+    onlineBackfillMaxBatches: 2,
+    embeddingBatchTimeoutMs: 500,
+  });
+  t.after(() => closeFixture(fixture));
+
+  const inputs: SeedEventInput[] = Array.from({ length: 50 }, (_, index) => ({
+    content: index === 0
+      ? "目标记忆：在河边散步时想起旧事。"
+      : `普通记忆第 ${index + 1} 条：日常散步记录。`,
+    title: index === 0 ? "目标记忆" : `普通记忆 ${index + 1}`,
+    summary: `第 ${index + 1} 条测试记忆。`,
+    occurredAt: new Date(Date.UTC(2026, 8, 1, 0, index)).toISOString(),
+  }));
+  seedEvents(fixture, inputs);
+
+  const hybrid = await fixture.app.services.memory.searchHybrid(
+    fixture.roleId,
+    { query: "目标记忆", limit: 5 },
+  );
+  assert.ok(hybrid.items.length > 0, "批次失败不得中断检索");
+  assert.equal(
+    port.calls,
+    3,
+    "查询 + 首批成功、第二批失败后应立即停止在线补算",
+  );
+  assert.equal(
+    embeddingRowCount(fixture),
+    10,
+    "首批 10 条向量必须已增量落盘，不能因第二批失败而丢失",
+  );
+});
+
+class CountingEmbeddingPort implements EmbeddingPort {
+  readonly modelKey = "offline:counting";
+  calls = 0;
+
+  async embed(texts: readonly string[]): Promise<Float32Array[]> {
+    this.calls += 1;
+    return texts.map(() => normalizeVector([1, 0, 0]));
+  }
+}
+
+test("R2-02 在线补算有界，后台回填补齐剩余向量并在关闭时收尾", async (t) => {
+  const port = new CountingEmbeddingPort();
+  const fixture = createFixture({
+    embeddingPort: port,
+    embeddingBatchSize: 20,
+    onlineBackfillMaxBatches: 2,
+    embeddingBatchTimeoutMs: 1000,
+  });
+  t.after(() => closeFixture(fixture));
+
+  seedEvents(
+    fixture,
+    Array.from({ length: 200 }, (_, index) => ({
+      content: `批量记忆第 ${index + 1} 条内容。`,
+      title: `批量记忆 ${index + 1}`,
+      summary: `批量记忆第 ${index + 1} 条的摘要。`,
+      occurredAt: new Date(Date.UTC(2026, 8, 1, 0, 0, index)).toISOString(),
+    })),
+  );
+
+  const startedAt = Date.now();
+  const outcome = await fixture.app.services.memory.searchHybrid(
+    fixture.roleId,
+    { query: "批量记忆", limit: 10 },
+  );
+  const elapsed = Date.now() - startedAt;
+  assert.ok(outcome.items.length > 0);
+  assert.ok(
+    elapsed < 5000,
+    `首轮检索不应等待全部 200 条文档，实际 ${elapsed}ms`,
+  );
+  assert.equal(
+    port.calls,
+    3,
+    "实时路径只允许查询向量 + 最多 2 批文档向量",
+  );
+  assert.equal(
+    embeddingRowCount(fixture),
+    40,
+    "首轮只同步落盘 2 批，剩余交给后台",
+  );
+
+  await waitForCondition(() => embeddingRowCount(fixture) === 200, 15_000);
+  assert.equal(embeddingRowCount(fixture), 200, "后台回填应补齐全部向量");
+  assert.equal(port.calls, 11, "查询 1 次 + 在线 2 批 + 后台 8 批");
+
+  // close 应等待后台任务收尾且不抛错；重复关闭保持幂等。
+  await fixture.app.close();
 });

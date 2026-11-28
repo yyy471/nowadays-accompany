@@ -29,7 +29,7 @@ import type { AutonomyService } from "../application/conversation/autonomy-servi
 import type { FeedEventHub } from "../application/conversation/feed-events.js";
 import type { MemoryQueryService } from "../application/memory/memory-query-service.js";
 import type { MemoryEmbeddingSettingsService } from "../application/memory/memory-embedding-settings.js";
-import { memoryEmbeddingSettingsUpdateSchema } from "../application/memory/memory-embedding-settings.js";
+import { memoryEmbeddingSettingsUpdateSchema, memoryEmbeddingTestSchema } from "../application/memory/memory-embedding-settings.js";
 import type { MessageService } from "../application/conversation/message-service.js";
 import type { ModelService } from "../application/resources/model-service.js";
 import type { ResourceService } from "../application/resources/resource-service.js";
@@ -1025,6 +1025,19 @@ export function registerApiRoutes(
         status: 200,
         body: { settings: services.memoryEmbeddingSettings.update(body) },
       };
+    },
+  );
+
+  router.add(
+    "POST",
+    "/v1/memory/embedding-settings/test",
+    async ({ request }): Promise<JsonResponse> => {
+      const input = parseBody(
+        memoryEmbeddingTestSchema,
+        await readJsonBody(request),
+      );
+      const result = await services.memoryEmbeddingSettings.testConnection(input);
+      return { status: 200, body: { result } };
     },
   );
 
